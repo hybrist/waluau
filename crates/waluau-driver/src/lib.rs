@@ -29,6 +29,6 @@ mod tests {
     fn rejects_invalid_fixture_file() {
         let source = fixture_source("mismatch");
         let err = super::compile_source(source).expect_err("compile should fail");
-        assert_eq!(err.to_string(), "return expects Number, got Bool");
+        assert_eq!(err.to_string(), "return expects f64, got bool");
     }
 }

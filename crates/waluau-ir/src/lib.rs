@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use waluau_ast::{BinaryOp, Expr, Function as AstFunction, Program, Stmt, Type};
+use waluau_ast::{BinaryOp, Expr, Function as AstFunction, NumericType, Program, Stmt, Type};
 use waluau_diagnostics::Diagnostic;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -34,12 +34,17 @@ pub struct BasicBlock {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Instruction {
     Param(usize),
-    Number(f64),
+    Number {
+        ty: NumericType,
+        value: f64,
+    },
     Bool(bool),
     Binary {
         op: BinaryOp,
         left: ValueId,
         right: ValueId,
+        operand_ty: Type,
+        result_ty: Type,
     },
     Call {
         name: String,
@@ -61,10 +66,23 @@ pub enum Terminator {
 }
 
 pub fn build(program: &Program) -> Result<Module, Diagnostic> {
+    let signatures: HashMap<_, _> = program
+        .functions
+        .iter()
+        .map(|function| {
+            (
+                function.name.clone(),
+                (
+                    function.params.iter().map(|param| param.ty).collect(),
+                    function.return_type,
+                ),
+            )
+        })
+        .collect();
     let functions = program
         .functions
         .iter()
-        .map(build_function)
+        .map(|function| build_function(function, &signatures))
         .collect::<Result<Vec<_>, _>>()?;
     let module = Module { functions };
     verify(&module)?;
@@ -122,7 +140,7 @@ fn verify_function(function: &Function) -> Result<(), Diagnostic> {
                         require_defined(defined.contains(value), value)?;
                     }
                 }
-                Instruction::Param(_) | Instruction::Number(_) | Instruction::Bool(_) => {}
+                Instruction::Param(_) | Instruction::Number { .. } | Instruction::Bool(_) => {}
             }
         }
 
@@ -185,15 +203,18 @@ impl Function {
     }
 }
 
-fn build_function(function: &AstFunction) -> Result<Function, Diagnostic> {
+fn build_function(
+    function: &AstFunction,
+    signatures: &HashMap<String, (Vec<Type>, Type)>,
+) -> Result<Function, Diagnostic> {
     let mut out = Function {
         name: function.name.clone(),
         params: function
             .params
             .iter()
-            .map(|param| (param.name.clone(), param.ty.clone()))
+            .map(|param| (param.name.clone(), param.ty))
             .collect(),
-        return_type: function.return_type.clone(),
+        return_type: function.return_type,
         entry: BlockId(0),
         blocks: BTreeMap::new(),
         next_value: 0,
@@ -209,38 +230,42 @@ fn build_function(function: &AstFunction) -> Result<Function, Diagnostic> {
     );
 
     let mut env = HashMap::new();
+    let mut type_env = HashMap::new();
     let entry = out.entry;
-    for (index, (name, _)) in out.params.clone().into_iter().enumerate() {
+    for (index, (name, ty)) in out.params.clone().into_iter().enumerate() {
         let value = out.next_value();
         block_mut(&mut out, entry)
             .instructions
             .push((value, Instruction::Param(index)));
         env.insert(name, value);
+        type_env.insert(out.params[index].0.clone(), ty);
     }
 
     let mut builder = Builder {
         function: out,
         current_block: BlockId(0),
         next_block: 1,
+        signatures,
     };
     for stmt in &function.body {
         if builder.current_block == DEAD_BLOCK {
             break;
         }
-        builder.lower_stmt(stmt, &mut env)?;
+        builder.lower_stmt(stmt, &mut env, &mut type_env)?;
     }
     Ok(builder.function)
 }
 
 const DEAD_BLOCK: BlockId = BlockId(usize::MAX);
 
-struct Builder {
+struct Builder<'a> {
     function: Function,
     current_block: BlockId,
     next_block: usize,
+    signatures: &'a HashMap<String, (Vec<Type>, Type)>,
 }
 
-impl Builder {
+impl Builder<'_> {
     fn new_block(&mut self) -> BlockId {
         let id = BlockId(self.next_block);
         self.next_block += 1;
@@ -271,17 +296,26 @@ impl Builder {
         &mut self,
         stmt: &Stmt,
         env: &mut HashMap<String, ValueId>,
+        types: &mut HashMap<String, Type>,
     ) -> Result<(), Diagnostic> {
         match stmt {
-            Stmt::Let { name, value, .. } | Stmt::Assign { name, value } => {
-                let value = self.lower_expr(value, env)?;
+            Stmt::Let { name, ty, value } => {
+                let value = self.lower_expr(value, env, types, Some(*ty))?;
+                env.insert(name.clone(), value);
+                types.insert(name.clone(), *ty);
+            }
+            Stmt::Assign { name, value } => {
+                let ty = *types.get(name).ok_or_else(|| {
+                    Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
+                })?;
+                let value = self.lower_expr(value, env, types, Some(ty))?;
                 env.insert(name.clone(), value);
             }
             Stmt::Expr(expr) => {
-                let _ = self.lower_expr(expr, env)?;
+                let _ = self.lower_expr(expr, env, types, None)?;
             }
             Stmt::Return(expr) => {
-                let value = self.lower_expr(expr, env)?;
+                let value = self.lower_expr(expr, env, types, Some(self.function.return_type))?;
                 self.set_terminator(self.current_block, Terminator::Return(value));
                 self.current_block = DEAD_BLOCK;
             }
@@ -290,10 +324,10 @@ impl Builder {
                 then_body,
                 else_body,
             } => {
-                self.lower_if(condition, then_body, else_body, env)?;
+                self.lower_if(condition, then_body, else_body, env, types)?;
             }
             Stmt::While { condition, body } => {
-                self.lower_while(condition, body, env)?;
+                self.lower_while(condition, body, env, types)?;
             }
         }
         Ok(())
@@ -305,8 +339,9 @@ impl Builder {
         then_body: &[Stmt],
         else_body: &[Stmt],
         env: &mut HashMap<String, ValueId>,
+        types: &mut HashMap<String, Type>,
     ) -> Result<(), Diagnostic> {
-        let condition = self.lower_expr(condition, env)?;
+        let condition = self.lower_expr(condition, env, types, Some(Type::Bool))?;
         let then_block = self.new_block();
         let else_block = self.new_block();
         let merge_block = self.new_block();
@@ -320,12 +355,13 @@ impl Builder {
         );
 
         let mut then_env = env.clone();
+        let mut then_types = types.clone();
         self.current_block = then_block;
         for stmt in then_body {
             if self.current_block == DEAD_BLOCK {
                 break;
             }
-            self.lower_stmt(stmt, &mut then_env)?;
+            self.lower_stmt(stmt, &mut then_env, &mut then_types)?;
         }
         let then_exit = self.current_block;
         if then_exit != DEAD_BLOCK {
@@ -333,12 +369,13 @@ impl Builder {
         }
 
         let mut else_env = env.clone();
+        let mut else_types = types.clone();
         self.current_block = else_block;
         for stmt in else_body {
             if self.current_block == DEAD_BLOCK {
                 break;
             }
-            self.lower_stmt(stmt, &mut else_env)?;
+            self.lower_stmt(stmt, &mut else_env, &mut else_types)?;
         }
         let else_exit = self.current_block;
         if else_exit != DEAD_BLOCK {
@@ -382,6 +419,7 @@ impl Builder {
         condition: &Expr,
         body: &[Stmt],
         env: &mut HashMap<String, ValueId>,
+        types: &mut HashMap<String, Type>,
     ) -> Result<(), Diagnostic> {
         let preheader = self.current_block;
         let header = self.new_block();
@@ -392,6 +430,7 @@ impl Builder {
         let mutated = collect_assigned_names(body);
         self.current_block = header;
         let mut loop_env = env.clone();
+        let loop_types = types.clone();
         let mut phis = HashMap::new();
         for name in &mutated {
             if let Some(initial) = env.get(name).copied() {
@@ -401,7 +440,7 @@ impl Builder {
             }
         }
 
-        let cond_value = self.lower_expr(condition, &loop_env)?;
+        let cond_value = self.lower_expr(condition, &loop_env, &loop_types, Some(Type::Bool))?;
         self.set_terminator(
             header,
             Terminator::Branch {
@@ -413,11 +452,12 @@ impl Builder {
 
         self.current_block = loop_body;
         let mut body_env = loop_env.clone();
+        let mut body_types = loop_types.clone();
         for stmt in body {
             if self.current_block == DEAD_BLOCK {
                 break;
             }
-            self.lower_stmt(stmt, &mut body_env)?;
+            self.lower_stmt(stmt, &mut body_env, &mut body_types)?;
         }
         let body_exit = self.current_block;
         if body_exit != DEAD_BLOCK {
@@ -440,26 +480,43 @@ impl Builder {
         &mut self,
         expr: &Expr,
         env: &HashMap<String, ValueId>,
+        types: &HashMap<String, Type>,
+        expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
         let value = match expr {
-            Expr::Number(number) => self.emit(Instruction::Number(*number)),
+            Expr::Number(number) => {
+                let ty = match self.infer_expr_type(expr, types, expected)? {
+                    Type::Numeric(ty) => ty,
+                    Type::Bool => unreachable!("number literal cannot lower as bool"),
+                };
+                self.emit(Instruction::Number { ty, value: *number })
+            }
             Expr::Bool(value) => self.emit(Instruction::Bool(*value)),
             Expr::Name(name) => *env.get(name).ok_or_else(|| {
                 Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
             })?,
             Expr::Binary { op, left, right } => {
-                let left = self.lower_expr(left, env)?;
-                let right = self.lower_expr(right, env)?;
+                let operand_ty =
+                    self.infer_binary_operand_type(left, right, op, types, expected)?;
+                let left = self.lower_expr(left, env, types, Some(operand_ty))?;
+                let right = self.lower_expr(right, env, types, Some(operand_ty))?;
+                let result_ty = self.infer_expr_type(expr, types, expected)?;
                 self.emit(Instruction::Binary {
                     op: *op,
                     left,
                     right,
+                    operand_ty,
+                    result_ty,
                 })
             }
             Expr::Call { name, args } => {
+                let (param_types, _) = self.signatures.get(name).ok_or_else(|| {
+                    Diagnostic::new(format!("unknown function '{name}' during IR lowering"))
+                })?;
                 let args = args
                     .iter()
-                    .map(|arg| self.lower_expr(arg, env))
+                    .zip(param_types.iter())
+                    .map(|(arg, param_ty)| self.lower_expr(arg, env, types, Some(*param_ty)))
                     .collect::<Result<Vec<_>, _>>()?;
                 self.emit(Instruction::Call {
                     name: name.clone(),
@@ -468,6 +525,93 @@ impl Builder {
             }
         };
         Ok(value)
+    }
+
+    fn infer_expr_type(
+        &self,
+        expr: &Expr,
+        types: &HashMap<String, Type>,
+        expected: Option<Type>,
+    ) -> Result<Type, Diagnostic> {
+        match expr {
+            Expr::Number(_) => match expected {
+                Some(Type::Numeric(ty)) => Ok(Type::Numeric(ty)),
+                Some(Type::Bool) => {
+                    Err(Diagnostic::new("numeric literal is not assignable to bool"))
+                }
+                None => Ok(Type::number()),
+            },
+            Expr::Bool(_) => Ok(Type::Bool),
+            Expr::Name(name) => types.get(name).copied().ok_or_else(|| {
+                Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
+            }),
+            Expr::Call { name, .. } => {
+                self.signatures
+                    .get(name)
+                    .map(|(_, ret)| *ret)
+                    .ok_or_else(|| {
+                        Diagnostic::new(format!("unknown function '{name}' during IR lowering"))
+                    })
+            }
+            Expr::Binary { op, left, right } => match op {
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                    self.infer_binary_operand_type(left, right, op, types, expected)
+                }
+                BinaryOp::Less
+                | BinaryOp::Greater
+                | BinaryOp::Eq
+                | BinaryOp::And
+                | BinaryOp::Or => Ok(Type::Bool),
+            },
+        }
+    }
+
+    fn infer_binary_operand_type(
+        &self,
+        left: &Expr,
+        right: &Expr,
+        op: &BinaryOp,
+        types: &HashMap<String, Type>,
+        expected: Option<Type>,
+    ) -> Result<Type, Diagnostic> {
+        let left_is_literal = matches!(left, Expr::Number(_));
+        let right_is_literal = matches!(right, Expr::Number(_));
+        let (left_ty, right_ty) = match (left_is_literal, right_is_literal) {
+            (true, false) => {
+                let right_ty = self.infer_expr_type(right, types, expected)?;
+                let left_ty = self.infer_expr_type(left, types, Some(right_ty))?;
+                (left_ty, right_ty)
+            }
+            (false, true) => {
+                let left_ty = self.infer_expr_type(left, types, expected)?;
+                let right_ty = self.infer_expr_type(right, types, Some(left_ty))?;
+                (left_ty, right_ty)
+            }
+            _ => {
+                let left_ty = self.infer_expr_type(left, types, expected)?;
+                let right_ty = self.infer_expr_type(right, types, Some(left_ty))?;
+                (left_ty, right_ty)
+            }
+        };
+        match op {
+            BinaryOp::And | BinaryOp::Or => Ok(Type::Bool),
+            BinaryOp::Eq if left_ty == right_ty => Ok(left_ty),
+            BinaryOp::Add
+            | BinaryOp::Sub
+            | BinaryOp::Mul
+            | BinaryOp::Div
+            | BinaryOp::Less
+            | BinaryOp::Greater
+            | BinaryOp::Eq => {
+                if left_ty.is_numeric() && right_ty.is_numeric() && left_ty == right_ty {
+                    Ok(left_ty)
+                } else {
+                    Err(Diagnostic::new(
+                        "could not resolve operand type during IR lowering",
+                    ))
+                }
+            }
+        }
     }
 }
 
@@ -543,13 +687,14 @@ fn predecessors(function: &Function) -> HashMap<BlockId, Vec<BlockId>> {
 #[cfg(test)]
 mod tests {
     use super::{Instruction, Terminator, build};
+    use waluau_ast::{NumericType, Type};
     use waluau_parser::parse;
 
     #[test]
     fn inserts_phi_after_if_merge() {
         let source = r#"
-            fn entry(flag: bool, x: number) -> number
-                let y: number = x
+            fn entry(flag: bool, x: i32) -> i32
+                let y: i32 = x
                 if flag then
                     y = y + 1
                 else
@@ -577,8 +722,8 @@ mod tests {
     #[test]
     fn inserts_phi_for_loop_carried_variable() {
         let source = r#"
-            fn entry(limit: number) -> number
-                let i: number = 0
+            fn entry(limit: i32) -> i32
+                let i: i32 = 0
                 while i < limit do
                     i = i + 1
                 end
@@ -607,7 +752,7 @@ mod tests {
     #[test]
     fn emits_branches_and_returns() {
         let source = r#"
-            fn entry(flag: bool, x: number) -> number
+            fn entry(flag: bool, x: i32) -> i32
                 if flag then
                     return x
                 end
@@ -629,5 +774,43 @@ mod tests {
             .count();
         assert_eq!(branch_count, 1);
         assert_eq!(return_count, 2);
+    }
+
+    #[test]
+    fn records_numeric_scalar_kinds_in_instructions() {
+        let source = r#"
+            fn entry(x: i32, y: f64) -> f64
+                let a: i32 = x + 1
+                let b: f64 = y + 2
+                return b
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let module = build(&program).expect("ir build should succeed");
+        let function = &module.functions[0];
+        assert!(function.blocks.values().any(|block| {
+            block.instructions.iter().any(|(_, instruction)| {
+                matches!(
+                    instruction,
+                    Instruction::Number {
+                        ty: NumericType::I32,
+                        ..
+                    }
+                )
+            })
+        }));
+        assert!(function.blocks.values().any(|block| {
+            block.instructions.iter().any(|(_, instruction)| {
+                matches!(
+                    instruction,
+                    Instruction::Binary {
+                        operand_ty: Type::Numeric(NumericType::F64),
+                        result_ty: Type::Numeric(NumericType::F64),
+                        ..
+                    }
+                )
+            })
+        }));
     }
 }

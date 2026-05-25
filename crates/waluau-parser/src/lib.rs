@@ -1,4 +1,4 @@
-use waluau_ast::{BinaryOp, Expr, Function, Param, Program, Stmt, Type};
+use waluau_ast::{BinaryOp, Expr, Function, NumericType, Param, Program, Stmt, Type};
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
 
@@ -239,9 +239,14 @@ impl Parser {
 
     fn parse_type(&mut self) -> Result<Type, Diagnostic> {
         match self.advance().map(|token| token.kind) {
-            Some(TokenKind::NumberType) => Ok(Type::Number),
+            Some(TokenKind::NumberType | TokenKind::F64Type) => Ok(Type::number()),
+            Some(TokenKind::U32Type) => Ok(Type::Numeric(NumericType::U32)),
+            Some(TokenKind::I32Type) => Ok(Type::Numeric(NumericType::I32)),
+            Some(TokenKind::F32Type) => Ok(Type::Numeric(NumericType::F32)),
             Some(TokenKind::BoolType) => Ok(Type::Bool),
-            _ => Err(Diagnostic::new("expected type (number or bool)")),
+            _ => Err(Diagnostic::new(
+                "expected type (number, u32, i32, f32, f64, or bool)",
+            )),
         }
     }
 
@@ -291,14 +296,15 @@ fn same_variant(a: &TokenKind, b: &TokenKind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::parse;
+    use waluau_ast::{NumericType, Type};
 
     #[test]
     fn parses_v0_function() {
         let source = r#"
-            fn choose(flag: bool, x: number, y: number) -> number
-                let result: number = x
+            fn choose(flag: bool, x: i32, y: number) -> f64
+                let result: f64 = y
                 if flag then
-                    result = y
+                    result = x + 1
                 else
                     result = x + y
                 end
@@ -308,5 +314,22 @@ mod tests {
 
         let program = parse(source).expect("parse should succeed");
         assert_eq!(program.functions.len(), 1);
+    }
+
+    #[test]
+    fn parses_numeric_type_aliases() {
+        let source = r#"
+            fn widen(x: number, y: f32, z: u32) -> f64
+                let result: f64 = x
+                return result
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert_eq!(function.params[0].ty, Type::Numeric(NumericType::F64));
+        assert_eq!(function.params[1].ty, Type::Numeric(NumericType::F32));
+        assert_eq!(function.params[2].ty, Type::Numeric(NumericType::U32));
+        assert_eq!(function.return_type, Type::Numeric(NumericType::F64));
     }
 }

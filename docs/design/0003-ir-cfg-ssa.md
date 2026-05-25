@@ -51,6 +51,9 @@ Required terminators:
 The initial lowering from HIR should use mutable locals. A small instruction set is enough for the first milestone:
 
 - `const.i32`
+- `const.u32`
+- `const.f32`
+- `const.f64`
 - `const.bool`
 - unary ops
 - binary ops
@@ -90,7 +93,7 @@ SSA verification must check:
 - definitions dominate uses
 - phi input count matches predecessor count
 - phi predecessor ordering matches block predecessor ordering
-- operand types match instruction expectations
+- operand types match instruction expectations, including concrete scalar widths
 - branch conditions have type `bool`
 - return values match the function return type
 

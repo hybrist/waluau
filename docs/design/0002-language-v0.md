@@ -62,10 +62,13 @@ end
 
 V0 supports:
 
+- `u32`
 - `i32`
+- `f32`
+- `f64`
 - `bool`
 
-Future additions may include `f64` and reference types, but they are not part of the first milestone.
+For source convenience, `number` is accepted as an alias for `f64`. It is not a separate semantic type.
 
 ## Typing Rules
 
@@ -88,6 +91,8 @@ end
 ```
 
 The condition `x` must be rejected because `i32` is not `bool`.
+
+Numeric operations require exact scalar agreement. `i32 + i32` is valid, but `i32 + f64` must be rejected unless the program is rewritten to use matching types.
 
 ## Semantics
 

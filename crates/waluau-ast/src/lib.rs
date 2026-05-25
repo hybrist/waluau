@@ -19,10 +19,49 @@ pub struct Param {
     pub ty: Type,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NumericType {
+    U32,
+    I32,
+    F32,
+    F64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Type {
-    Number,
+    Numeric(NumericType),
     Bool,
+}
+
+impl Type {
+    pub const fn number() -> Self {
+        Self::Numeric(NumericType::F64)
+    }
+
+    pub const fn is_numeric(self) -> bool {
+        matches!(self, Self::Numeric(_))
+    }
+}
+
+impl std::fmt::Display for NumericType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::U32 => "u32",
+            Self::I32 => "i32",
+            Self::F32 => "f32",
+            Self::F64 => "f64",
+        };
+        f.write_str(name)
+    }
+}
+
+impl std::fmt::Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Numeric(ty) => ty.fmt(f),
+            Self::Bool => f.write_str("bool"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -14,7 +14,7 @@ mod tests {
     #[test]
     fn placeholder_error_until_codegen_lands() {
         let source = r#"
-            fn entry(x: number) -> number
+            fn entry(x: i32) -> i32
                 return x + 1
             end
         "#;
