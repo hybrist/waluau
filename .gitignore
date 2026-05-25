@@ -5,3 +5,7 @@
 .beads-credential-key
 
 /target/
+node_modules/
+dist/
+.pnpm-debug.log
+

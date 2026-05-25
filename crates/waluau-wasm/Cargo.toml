@@ -1,0 +1,15 @@
+[package]
+name = "waluau-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+waluau-diagnostics.workspace = true
+waluau-hir.workspace = true
+waluau-ir.workspace = true
+waluau-parser.workspace = true
