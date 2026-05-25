@@ -6,9 +6,11 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+wasm-encoder = "0.224"
+wasmparser = "0.224"
+waluau-ast.workspace = true
 waluau-diagnostics.workspace = true
 waluau-ir.workspace = true
 
 [dev-dependencies]
-wasmparser = "0.224"
 waluau-parser.workspace = true
