@@ -10,6 +10,7 @@ members = [
     "crates/waluau-hir",
     "crates/waluau-ir",
     "crates/waluau-codegen-wasm",
+    "crates/waluau-wasm",
 ]
 default-members = ["crates/waluau-cli"]
 resolver = "3"

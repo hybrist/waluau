@@ -196,6 +196,16 @@ name = "waluau-span"
 version = "0.1.0"
 
 [[package]]
+name = "waluau-wasm"
+version = "0.1.0"
+dependencies = [
+ "waluau-diagnostics",
+ "waluau-hir",
+ "waluau-ir",
+ "waluau-parser",
+]
+
+[[package]]
 name = "wasmparser"
 version = "0.224.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

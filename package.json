@@ -1,0 +1,8 @@
+{
+  "name": "waluau-monorepo",
+  "private": true,
+  "scripts": {
+    "build:wasm": "rustup run stable cargo build --target wasm32-unknown-unknown --manifest-path crates/waluau-wasm/Cargo.toml && mkdir -p apps/playground/public && cp target/wasm32-unknown-unknown/debug/waluau_wasm.wasm apps/playground/public/",
+    "dev": "pnpm --filter playground dev"
+  }
+}
