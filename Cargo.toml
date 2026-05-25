@@ -1,0 +1,33 @@
+[workspace]
+members = [
+    "crates/waluau-cli",
+    "crates/waluau-driver",
+    "crates/waluau-span",
+    "crates/waluau-diagnostics",
+    "crates/waluau-ast",
+    "crates/waluau-lexer",
+    "crates/waluau-parser",
+    "crates/waluau-hir",
+    "crates/waluau-ir",
+    "crates/waluau-codegen-wasm",
+]
+default-members = ["crates/waluau-cli"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.85"
+
+[workspace.dependencies]
+waluau-ast = { path = "crates/waluau-ast" }
+waluau-cli = { path = "crates/waluau-cli" }
+waluau-codegen-wasm = { path = "crates/waluau-codegen-wasm" }
+waluau-diagnostics = { path = "crates/waluau-diagnostics" }
+waluau-driver = { path = "crates/waluau-driver" }
+waluau-hir = { path = "crates/waluau-hir" }
+waluau-ir = { path = "crates/waluau-ir" }
+waluau-lexer = { path = "crates/waluau-lexer" }
+waluau-parser = { path = "crates/waluau-parser" }
+waluau-span = { path = "crates/waluau-span" }
