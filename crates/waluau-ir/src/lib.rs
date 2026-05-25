@@ -39,6 +39,11 @@ pub enum Instruction {
         value: f64,
     },
     Bool(bool),
+    Cast {
+        value: ValueId,
+        from: Type,
+        to: Type,
+    },
     Binary {
         op: BinaryOp,
         left: ValueId,
@@ -114,6 +119,7 @@ fn verify_function(function: &Function) -> Result<(), Diagnostic> {
                     require_defined(defined.contains(left), left)?;
                     require_defined(defined.contains(right), right)?;
                 }
+                Instruction::Cast { value, .. } => require_defined(defined.contains(value), value)?,
                 Instruction::Call { args, .. } => {
                     for arg in args {
                         require_defined(defined.contains(arg), arg)?;
@@ -492,22 +498,34 @@ impl Builder<'_> {
                 self.emit(Instruction::Number { ty, value: *number })
             }
             Expr::Bool(value) => self.emit(Instruction::Bool(*value)),
-            Expr::Name(name) => *env.get(name).ok_or_else(|| {
-                Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
-            })?,
+            Expr::Name(name) => {
+                let value = *env.get(name).ok_or_else(|| {
+                    Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
+                })?;
+                let actual = *types.get(name).ok_or_else(|| {
+                    Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
+                })?;
+                self.coerce_value(value, actual, expected)?
+            }
+            Expr::Cast { expr, ty } => {
+                let value = self.lower_expr(expr, env, types, None)?;
+                let actual = self.infer_expr_type(expr, types, None)?;
+                let cast = self.explicit_cast(value, actual, *ty)?;
+                self.coerce_value(cast, *ty, expected)?
+            }
             Expr::Binary { op, left, right } => {
-                let operand_ty =
-                    self.infer_binary_operand_type(left, right, op, types, expected)?;
+                let operand_ty = self.infer_binary_operand_type(left, right, op, types, None)?;
                 let left = self.lower_expr(left, env, types, Some(operand_ty))?;
                 let right = self.lower_expr(right, env, types, Some(operand_ty))?;
-                let result_ty = self.infer_expr_type(expr, types, expected)?;
-                self.emit(Instruction::Binary {
+                let raw_result_ty = self.infer_expr_type(expr, types, None)?;
+                let value = self.emit(Instruction::Binary {
                     op: *op,
                     left,
                     right,
                     operand_ty,
-                    result_ty,
-                })
+                    result_ty: raw_result_ty,
+                });
+                self.coerce_value(value, raw_result_ty, expected)?
             }
             Expr::Call { name, args } => {
                 let (param_types, _) = self.signatures.get(name).ok_or_else(|| {
@@ -518,10 +536,12 @@ impl Builder<'_> {
                     .zip(param_types.iter())
                     .map(|(arg, param_ty)| self.lower_expr(arg, env, types, Some(*param_ty)))
                     .collect::<Result<Vec<_>, _>>()?;
-                self.emit(Instruction::Call {
+                let value = self.emit(Instruction::Call {
                     name: name.clone(),
                     args,
-                })
+                });
+                let actual = self.infer_expr_type(expr, types, None)?;
+                self.coerce_value(value, actual, expected)?
             }
         };
         Ok(value)
@@ -545,6 +565,11 @@ impl Builder<'_> {
             Expr::Name(name) => types.get(name).copied().ok_or_else(|| {
                 Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
             }),
+            Expr::Cast { expr, ty } => {
+                let actual = self.infer_expr_type(expr, types, None)?;
+                require_numeric_cast(actual, *ty)?;
+                Ok(*ty)
+            }
             Expr::Call { name, .. } => {
                 self.signatures
                     .get(name)
@@ -555,7 +580,8 @@ impl Builder<'_> {
             }
             Expr::Binary { op, left, right } => match op {
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
-                    self.infer_binary_operand_type(left, right, op, types, expected)
+                    let raw = self.infer_binary_operand_type(left, right, op, types, None)?;
+                    coerce_type(raw, expected)
                 }
                 BinaryOp::Less
                 | BinaryOp::Greater
@@ -574,44 +600,168 @@ impl Builder<'_> {
         types: &HashMap<String, Type>,
         expected: Option<Type>,
     ) -> Result<Type, Diagnostic> {
-        let left_is_literal = matches!(left, Expr::Number(_));
-        let right_is_literal = matches!(right, Expr::Number(_));
-        let (left_ty, right_ty) = match (left_is_literal, right_is_literal) {
-            (true, false) => {
-                let right_ty = self.infer_expr_type(right, types, expected)?;
-                let left_ty = self.infer_expr_type(left, types, Some(right_ty))?;
-                (left_ty, right_ty)
-            }
-            (false, true) => {
-                let left_ty = self.infer_expr_type(left, types, expected)?;
-                let right_ty = self.infer_expr_type(right, types, Some(left_ty))?;
-                (left_ty, right_ty)
-            }
-            _ => {
-                let left_ty = self.infer_expr_type(left, types, expected)?;
-                let right_ty = self.infer_expr_type(right, types, Some(left_ty))?;
-                (left_ty, right_ty)
-            }
+        let expected_numeric = match expected {
+            Some(Type::Numeric(numeric)) => Some(numeric),
+            _ => None,
         };
+
         match op {
             BinaryOp::And | BinaryOp::Or => Ok(Type::Bool),
-            BinaryOp::Eq if left_ty == right_ty => Ok(left_ty),
+            BinaryOp::Eq => {
+                let left_ty = self.infer_expr_type(left, types, None)?;
+                if left_ty == Type::Bool {
+                    let right_ty = self.infer_expr_type(right, types, Some(Type::Bool))?;
+                    if right_ty == Type::Bool {
+                        Ok(Type::Bool)
+                    } else {
+                        Err(Diagnostic::new(
+                            "could not resolve operand type during IR lowering",
+                        ))
+                    }
+                } else {
+                    infer_numeric_common_type(
+                        left,
+                        right,
+                        types,
+                        expected_numeric,
+                        |expr, expected| self.infer_expr_type(expr, types, expected),
+                    )
+                }
+            }
             BinaryOp::Add
             | BinaryOp::Sub
             | BinaryOp::Mul
             | BinaryOp::Div
             | BinaryOp::Less
-            | BinaryOp::Greater
-            | BinaryOp::Eq => {
-                if left_ty.is_numeric() && right_ty.is_numeric() && left_ty == right_ty {
-                    Ok(left_ty)
+            | BinaryOp::Greater => {
+                infer_numeric_common_type(left, right, types, expected_numeric, |expr, expected| {
+                    self.infer_expr_type(expr, types, expected)
+                })
+            }
+        }
+    }
+
+    fn coerce_value(
+        &mut self,
+        value: ValueId,
+        actual: Type,
+        expected: Option<Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        match expected {
+            None => Ok(value),
+            Some(expected) if actual == expected => Ok(value),
+            Some(expected) => {
+                let target = coerce_type(actual, Some(expected))?;
+                if target == actual {
+                    Ok(value)
                 } else {
-                    Err(Diagnostic::new(
-                        "could not resolve operand type during IR lowering",
-                    ))
+                    Ok(self.emit(Instruction::Cast {
+                        value,
+                        from: actual,
+                        to: target,
+                    }))
                 }
             }
         }
+    }
+
+    fn explicit_cast(
+        &mut self,
+        value: ValueId,
+        from: Type,
+        to: Type,
+    ) -> Result<ValueId, Diagnostic> {
+        require_numeric_cast(from, to)?;
+        if from == to {
+            Ok(value)
+        } else {
+            Ok(self.emit(Instruction::Cast { value, from, to }))
+        }
+    }
+}
+
+fn infer_numeric_common_type(
+    left: &Expr,
+    right: &Expr,
+    _types: &HashMap<String, Type>,
+    expected: Option<NumericType>,
+    infer: impl Fn(&Expr, Option<Type>) -> Result<Type, Diagnostic>,
+) -> Result<Type, Diagnostic> {
+    match (
+        matches!(left, Expr::Number(_)),
+        matches!(right, Expr::Number(_)),
+    ) {
+        (true, true) => {
+            let ty = Type::Numeric(expected.unwrap_or(NumericType::F64));
+            let left_ty = infer(left, Some(ty))?;
+            let right_ty = infer(right, Some(ty))?;
+            if left_ty == right_ty {
+                Ok(left_ty)
+            } else {
+                Err(Diagnostic::new(
+                    "could not resolve operand type during IR lowering",
+                ))
+            }
+        }
+        (true, false) => {
+            let right_ty = infer(right, None)?;
+            let left_ty = infer(left, Some(right_ty))?;
+            common_numeric_type(left_ty, right_ty)
+        }
+        (false, true) => {
+            let left_ty = infer(left, None)?;
+            let right_ty = infer(right, Some(left_ty))?;
+            common_numeric_type(left_ty, right_ty)
+        }
+        (false, false) => {
+            let left_ty = infer(left, None)?;
+            let right_ty = infer(right, None)?;
+            common_numeric_type(left_ty, right_ty)
+        }
+    }
+}
+
+fn common_numeric_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
+    match (left, right) {
+        (Type::Numeric(left), Type::Numeric(right)) => left
+            .common(right)
+            .map(Type::Numeric)
+            .ok_or_else(|| Diagnostic::new("could not resolve operand type during IR lowering")),
+        _ => Err(Diagnostic::new(
+            "could not resolve operand type during IR lowering",
+        )),
+    }
+}
+
+fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic> {
+    match expected {
+        None => Ok(actual),
+        Some(expected) if actual == expected => Ok(expected),
+        Some(Type::Numeric(expected_numeric)) => match actual {
+            Type::Numeric(actual_numeric)
+                if actual_numeric.can_implicitly_widen_to(expected_numeric) =>
+            {
+                Ok(Type::Numeric(expected_numeric))
+            }
+            Type::Numeric(actual_numeric) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {actual_numeric} to {expected_numeric}",
+            ))),
+            Type::Bool => Err(Diagnostic::new(format!(
+                "cannot implicitly convert bool to {expected_numeric}",
+            ))),
+        },
+        Some(Type::Bool) => Err(Diagnostic::new(format!(
+            "cannot implicitly convert {actual} to bool",
+        ))),
+    }
+}
+
+fn require_numeric_cast(actual: Type, target: Type) -> Result<(), Diagnostic> {
+    match (actual, target) {
+        (Type::Numeric(_), Type::Numeric(_)) => Ok(()),
+        _ => Err(Diagnostic::new(
+            "casts require numeric source and destination types",
+        )),
     }
 }
 
@@ -813,5 +963,32 @@ mod tests {
                 )
             })
         }));
+    }
+
+    #[test]
+    fn inserts_casts_for_implicit_and_explicit_conversions() {
+        let source = r#"
+            fn entry(x: i32, y: i64) -> i32
+                let widened: i64 = x
+                let sum: i64 = widened + y
+                return sum :: i32
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let module = build(&program).expect("ir build should succeed");
+        let function = &module.functions[0];
+        let casts = function
+            .blocks
+            .values()
+            .flat_map(|block| {
+                block
+                    .instructions
+                    .iter()
+                    .map(|(_, instruction)| instruction)
+            })
+            .filter(|instruction| matches!(instruction, Instruction::Cast { .. }))
+            .count();
+        assert_eq!(casts, 2, "expected implicit widen and explicit narrow cast");
     }
 }

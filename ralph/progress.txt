@@ -9,3 +9,5 @@
 2026-05-25: Completed `waluau-7s2` by replacing the single `number` semantic type with explicit scalar kinds (`u32`, `i32`, `f32`, `f64`) while keeping `number` as an alias for `f64`; updated lexer/parser/type checking, taught literal resolution and numeric-op checking to require matching scalar types, threaded resolved scalar kinds into IR constants and binary instructions, refreshed docs, added parser/HIR/IR coverage, and ran `./check` cleanly.
 
 2026-05-25: Completed `waluau-wur` by extending scalar type support to include `u64` and `i64` across AST/lexer/parser/type checking/IR/docs/tests; kept `number` as the `f64` alias; documented and tracked the remaining precise full-range 64-bit literal work in follow-up issue `waluau-wsd`; ran `./check` cleanly.
+
+2026-05-25: Completed `waluau-htb` by adding postfix numeric cast syntax (`expr :: Type`), implicit non-lossy widening rules across assignments/returns/calls/numeric operators, and explicit cast lowering via IR `Cast` instructions; updated language docs, added parser/type-check/IR coverage for accepted and rejected conversion cases, and ran `./check` cleanly.

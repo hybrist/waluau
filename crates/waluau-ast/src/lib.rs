@@ -45,6 +45,30 @@ impl Type {
     }
 }
 
+impl NumericType {
+    pub fn can_implicitly_widen_to(self, target: Self) -> bool {
+        use NumericType::{F32, F64, I32, I64, U32, U64};
+
+        match (self, target) {
+            (from, to) if from == to => true,
+            (U32, U64 | I64 | F64) => true,
+            (I32, I64 | F64) => true,
+            (F32, F64) => true,
+            _ => false,
+        }
+    }
+
+    pub fn common(self, other: Self) -> Option<Self> {
+        if self.can_implicitly_widen_to(other) {
+            Some(other)
+        } else if other.can_implicitly_widen_to(self) {
+            Some(self)
+        } else {
+            None
+        }
+    }
+}
+
 impl std::fmt::Display for NumericType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self {
@@ -97,6 +121,10 @@ pub enum Expr {
     Number(f64),
     Bool(bool),
     Name(String),
+    Cast {
+        expr: Box<Expr>,
+        ty: Type,
+    },
     Binary {
         op: BinaryOp,
         left: Box<Expr>,

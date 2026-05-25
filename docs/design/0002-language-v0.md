@@ -78,8 +78,8 @@ For source convenience, `number` is accepted as an alias for `f64`. It is not a 
 - All function parameters require explicit type annotations.
 - All functions require explicit return types.
 - Branch conditions must have type `bool`.
-- Assignment requires exact type agreement.
-- Return expressions must match the declared return type.
+- Assignment allows implicit numeric widening only when the destination can represent the full source range.
+- Return expressions follow the same implicit numeric widening rule.
 
 Example of a required error:
 
@@ -94,7 +94,9 @@ end
 
 The condition `x` must be rejected because `i32` is not `bool`.
 
-Numeric operations require exact scalar agreement. `i32 + i32` is valid, but `i32 + f64` must be rejected unless the program is rewritten to use matching types.
+Numeric operations use the smallest predictable implicit conversion rule: keep exact scalar agreement by default, allow only non-lossy widening when a common type exists, and require explicit casts for narrowing or lossy conversions. For example, `i32 + i64` widens to `i64`, `i32 + f64` widens to `f64`, and `i64 + f64` must be rejected unless one side is rewritten with `::`.
+
+Explicit numeric casts use postfix `expr :: Type` syntax. Casts are only valid between numeric scalar types.
 
 ## Semantics
 

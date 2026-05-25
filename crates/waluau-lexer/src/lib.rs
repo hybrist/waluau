@@ -41,6 +41,7 @@ pub enum TokenKind {
     Greater,
     AndAnd,
     OrOr,
+    ColonColon,
     Colon,
     Comma,
     LParen,
@@ -64,7 +65,13 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
         let (kind, consumed) = match c {
             '(' => (TokenKind::LParen, 1),
             ')' => (TokenKind::RParen, 1),
-            ':' => (TokenKind::Colon, 1),
+            ':' => {
+                if matches!(chars.get(i + 1), Some(':')) {
+                    (TokenKind::ColonColon, 2)
+                } else {
+                    (TokenKind::Colon, 1)
+                }
+            }
             ',' => (TokenKind::Comma, 1),
             '+' => (TokenKind::Plus, 1),
             '*' => (TokenKind::Star, 1),

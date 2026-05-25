@@ -164,10 +164,23 @@ impl Parser {
 
     fn parse_mul(&mut self) -> Result<Expr, Diagnostic> {
         self.parse_binary(
-            Parser::parse_primary,
+            Parser::parse_cast,
             &[TokenKind::Star, TokenKind::Slash],
             &[BinaryOp::Mul, BinaryOp::Div],
         )
+    }
+
+    fn parse_cast(&mut self) -> Result<Expr, Diagnostic> {
+        let mut expr = self.parse_primary()?;
+        while self.check_simple(&TokenKind::ColonColon) {
+            self.advance();
+            let ty = self.parse_type()?;
+            expr = Expr::Cast {
+                expr: Box::new(expr),
+                ty,
+            };
+        }
+        Ok(expr)
     }
 
     fn parse_binary(
@@ -334,5 +347,24 @@ mod tests {
         assert_eq!(function.params[2].ty, Type::Numeric(NumericType::U64));
         assert_eq!(function.params[3].ty, Type::Numeric(NumericType::I64));
         assert_eq!(function.return_type, Type::Numeric(NumericType::F64));
+    }
+
+    #[test]
+    fn parses_postfix_numeric_casts() {
+        let source = r#"
+            fn cast(x: i64) -> i32
+                return (x + 1) :: i32
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert!(matches!(
+            &function.body[0],
+            waluau_ast::Stmt::Return(waluau_ast::Expr::Cast {
+                ty: Type::Numeric(NumericType::I32),
+                ..
+            })
+        ));
     }
 }

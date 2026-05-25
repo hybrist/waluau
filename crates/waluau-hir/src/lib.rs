@@ -84,7 +84,7 @@ fn check_stmt(
             then_body,
             else_body,
         } => {
-            let condition_ty = infer_expr(condition, vars, signatures, Some(Type::Bool))?;
+            let condition_ty = infer_expr(condition, vars, signatures, None)?;
             if condition_ty != Type::Bool {
                 return Err(Diagnostic::new("if condition must be bool"));
             }
@@ -101,7 +101,7 @@ fn check_stmt(
             Ok(then_returns && else_returns)
         }
         Stmt::While { condition, body } => {
-            let condition_ty = infer_expr(condition, vars, signatures, Some(Type::Bool))?;
+            let condition_ty = infer_expr(condition, vars, signatures, None)?;
             if condition_ty != Type::Bool {
                 return Err(Diagnostic::new("while condition must be bool"));
             }
@@ -137,10 +137,18 @@ fn infer_expr(
     match expr {
         Expr::Number(value) => resolve_number_literal(*value, expected),
         Expr::Bool(_) => Ok(Type::Bool),
-        Expr::Name(name) => vars
-            .get(name)
-            .cloned()
-            .ok_or_else(|| Diagnostic::new(format!("unknown name '{name}'"))),
+        Expr::Name(name) => {
+            let actual = vars
+                .get(name)
+                .cloned()
+                .ok_or_else(|| Diagnostic::new(format!("unknown name '{name}'")))?;
+            coerce_type(actual, expected)
+        }
+        Expr::Cast { expr, ty } => {
+            let actual = infer_expr(expr, vars, signatures, None)?;
+            require_numeric_cast(actual, *ty)?;
+            coerce_type(*ty, expected)
+        }
         Expr::Call { name, args } => {
             let (params, ret) = signatures
                 .get(name)
@@ -162,19 +170,16 @@ fn infer_expr(
                     )));
                 }
             }
-            Ok(*ret)
+            coerce_type(*ret, expected)
         }
         Expr::Binary { op, left, right } => match op {
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
-                let operand_hint = expected.filter(|ty| ty.is_numeric());
-                let (left_ty, right_ty) =
-                    infer_numeric_pair(left, right, vars, signatures, operand_hint)?;
-                require_same_numeric(left_ty, right_ty)?;
-                Ok(left_ty)
+                let operand_ty =
+                    infer_numeric_common_type(left, right, vars, signatures, expected)?;
+                coerce_type(operand_ty, expected)
             }
             BinaryOp::Less | BinaryOp::Greater => {
-                let (left_ty, right_ty) = infer_numeric_pair(left, right, vars, signatures, None)?;
-                require_same_numeric(left_ty, right_ty)?;
+                let _ = infer_numeric_common_type(left, right, vars, signatures, None)?;
                 Ok(Type::Bool)
             }
             BinaryOp::And | BinaryOp::Or => {
@@ -185,9 +190,18 @@ fn infer_expr(
             }
             BinaryOp::Eq => {
                 let left_ty = infer_expr(left, vars, signatures, None)?;
-                let right_ty = infer_expr(right, vars, signatures, Some(left_ty))?;
-                if left_ty != right_ty {
-                    return Err(Diagnostic::new("== requires both sides to have same type"));
+                if left_ty == Type::Bool {
+                    let right_ty = infer_expr(right, vars, signatures, Some(Type::Bool))?;
+                    if right_ty != Type::Bool {
+                        return Err(Diagnostic::new("== requires both sides to have same type"));
+                    }
+                } else if left_ty.is_numeric() {
+                    let _ = infer_numeric_common_type(left, right, vars, signatures, None)?;
+                } else {
+                    let right_ty = infer_expr(right, vars, signatures, Some(left_ty))?;
+                    if left_ty != right_ty {
+                        return Err(Diagnostic::new("== requires both sides to have same type"));
+                    }
                 }
                 Ok(Type::Bool)
             }
@@ -195,32 +209,56 @@ fn infer_expr(
     }
 }
 
-fn infer_numeric_pair(
+fn infer_numeric_common_type(
     left: &Expr,
     right: &Expr,
     vars: &HashMap<String, Type>,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
     expected: Option<Type>,
-) -> Result<(Type, Type), Diagnostic> {
+) -> Result<Type, Diagnostic> {
+    let expected_numeric = match expected {
+        Some(Type::Numeric(numeric)) => Some(numeric),
+        _ => None,
+    };
+
     match (
         matches!(left, Expr::Number(_)),
         matches!(right, Expr::Number(_)),
     ) {
+        (true, true) => {
+            let ty = expected_numeric.unwrap_or(NumericType::F64);
+            let left_ty = infer_expr(left, vars, signatures, Some(Type::Numeric(ty)))?;
+            let right_ty = infer_expr(right, vars, signatures, Some(Type::Numeric(ty)))?;
+            require_same_numeric(left_ty, right_ty)?;
+            Ok(left_ty)
+        }
         (true, false) => {
-            let right_ty = infer_expr(right, vars, signatures, expected)?;
+            let right_ty = infer_expr(right, vars, signatures, None)?;
             let left_ty = infer_expr(left, vars, signatures, Some(right_ty))?;
-            Ok((left_ty, right_ty))
+            common_numeric_type(left_ty, right_ty)
         }
         (false, true) => {
-            let left_ty = infer_expr(left, vars, signatures, expected)?;
+            let left_ty = infer_expr(left, vars, signatures, None)?;
             let right_ty = infer_expr(right, vars, signatures, Some(left_ty))?;
-            Ok((left_ty, right_ty))
+            common_numeric_type(left_ty, right_ty)
         }
         _ => {
-            let left_ty = infer_expr(left, vars, signatures, expected)?;
-            let right_ty = infer_expr(right, vars, signatures, Some(left_ty))?;
-            Ok((left_ty, right_ty))
+            let left_ty = infer_expr(left, vars, signatures, None)?;
+            let right_ty = infer_expr(right, vars, signatures, None)?;
+            common_numeric_type(left_ty, right_ty)
         }
+    }
+}
+
+fn common_numeric_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
+    match (left, right) {
+        (Type::Numeric(left), Type::Numeric(right)) => left
+            .common(right)
+            .map(Type::Numeric)
+            .ok_or_else(|| Diagnostic::new("operation requires compatible numeric operands")),
+        _ => Err(Diagnostic::new(
+            "operation requires compatible numeric operands",
+        )),
     }
 }
 
@@ -231,6 +269,38 @@ fn require_same_numeric(left: Type, right: Type) -> Result<(), Diagnostic> {
         Err(Diagnostic::new(
             "operation requires matching numeric operands",
         ))
+    }
+}
+
+fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic> {
+    match expected {
+        None => Ok(actual),
+        Some(expected) if actual == expected => Ok(expected),
+        Some(Type::Numeric(expected_numeric)) => match actual {
+            Type::Numeric(actual_numeric)
+                if actual_numeric.can_implicitly_widen_to(expected_numeric) =>
+            {
+                Ok(Type::Numeric(expected_numeric))
+            }
+            Type::Numeric(actual_numeric) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {actual_numeric} to {expected_numeric}",
+            ))),
+            Type::Bool => Err(Diagnostic::new(format!(
+                "cannot implicitly convert bool to {expected_numeric}",
+            ))),
+        },
+        Some(Type::Bool) => Err(Diagnostic::new(format!(
+            "cannot implicitly convert {actual} to bool",
+        ))),
+    }
+}
+
+fn require_numeric_cast(actual: Type, target: Type) -> Result<(), Diagnostic> {
+    match (actual, target) {
+        (Type::Numeric(_), Type::Numeric(_)) => Ok(()),
+        _ => Err(Diagnostic::new(
+            "casts require numeric source and destination types",
+        )),
     }
 }
 
@@ -380,7 +450,7 @@ mod tests {
     #[test]
     fn rejects_mixed_numeric_operands() {
         let source = r#"
-            fn entry(x: i32, y: f64) -> i32
+            fn entry(x: i64, y: f64) -> i64
                 return x + y
             end
         "#;
@@ -389,7 +459,7 @@ mod tests {
         let error = super::type_check(&program).expect_err("type check should fail");
         assert_eq!(
             error.to_string(),
-            "operation requires matching numeric operands"
+            "operation requires compatible numeric operands"
         );
     }
 
@@ -402,6 +472,52 @@ mod tests {
                     return a
                 end
                 return x + 2
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn accepts_implicit_numeric_widening() {
+        let source = r#"
+            fn widen(x: i32, y: f32, z: u32) -> f64
+                let a: i64 = x
+                let b: f64 = x + 1
+                let c: f64 = y
+                let d: i64 = z + 1
+                if a < d then
+                    return b
+                end
+                return c
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn requires_explicit_cast_for_narrowing() {
+        let source = r#"
+            fn narrow(x: i64) -> i32
+                return x
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.to_string(), "cannot implicitly convert i64 to i32");
+    }
+
+    #[test]
+    fn accepts_explicit_numeric_casts() {
+        let source = r#"
+            fn narrow(x: i64, y: f64) -> i32
+                let a: i32 = x :: i32
+                let b: i32 = y :: i32
+                return a + b
             end
         "#;
 
