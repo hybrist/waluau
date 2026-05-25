@@ -8,3 +8,7 @@ rust-version.workspace = true
 [dependencies]
 waluau-diagnostics.workspace = true
 waluau-ir.workspace = true
+
+[dev-dependencies]
+wasmparser = "0.224"
+waluau-parser.workspace = true

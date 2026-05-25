@@ -3,3 +3,5 @@
 2026-05-25: Completed `waluau-hya` by implementing a v0 frontend slice end-to-end: AST types, lexer, parser, and semantic type checker for numbers/bools, typed locals/functions, branches, loops, calls, and returns; added parser/type-check/driver tests for valid and invalid programs; ran `./check` cleanly and closed the issue.
 
 2026-05-25: Completed `waluau-0cl` by implementing initial CFG+SSA IR lowering from AST with block terminators, value instructions, mutable-local environment tracking, merge/loop phi insertion, module/function verification, and textual dump support; added IR tests for if-merge phi nodes, loop-carried phi nodes, and branch/return structure; ran `./check` cleanly and closed the issue.
+
+2026-05-25: Completed `waluau-5zo` by wiring `waluau_codegen_wasm::emit` to accept a built IR module and return a clear placeholder diagnostic, adding a crate-local smoke test that parses+lows a tiny function and asserts the current error contract, and updating dev-dependencies for parser/wasm validation support; ran `./check` cleanly and closed the task while leaving `waluau-92r` in progress for real Wasm lowering.
