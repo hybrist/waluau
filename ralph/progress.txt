@@ -1,0 +1,1 @@
+2026-05-25: Verified repo is green with ./check, reviewed beads state, and completed `waluau-olc` (Bootstrap Waluau compiler) by confirming architecture docs and follow-up implementation issues are in place; closed the epic.
