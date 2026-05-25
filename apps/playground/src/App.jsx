@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 const fixtureModules = import.meta.glob('../../../fixtures/*.walu', {
   eager: true,
@@ -23,10 +23,9 @@ const DEFAULT_PRESET = PRESETS[0]?.source ?? '';
 
 export default function App() {
   const [code, setCode] = useState(DEFAULT_PRESET);
-  const [output, setOutput] = useState('');
   const [status, setStatus] = useState('loading'); // 'loading', 'ready', 'success', 'error'
-  const [errorMsg, setErrorMsg] = useState('');
-  const [activeTab, setActiveTab] = useState('ir'); // 'ir', 'logs', 'info'
+  const [loadErrorMsg, setLoadErrorMsg] = useState('');
+  const [activeTab, setActiveTab] = useState('ir'); // 'ir', 'logs'
   const [wasmInstance, setWasmInstance] = useState(null);
   
   const textareaRef = useRef(null);
@@ -51,18 +50,23 @@ export default function App() {
         const obj = await WebAssembly.instantiate(buffer, { env: {} });
         setWasmInstance(obj.instance);
         setStatus('ready');
+        setLoadErrorMsg('');
       } catch (err) {
         console.error('WASM load error:', err);
         setStatus('error');
-        setErrorMsg(`Failed to load WASM compiler: ${err.message}`);
+        setLoadErrorMsg(`Failed to load WASM compiler: ${err.message}`);
       }
     }
     initWasm();
   }, []);
 
-  // Run compiler when code or WASM instance changes
-  useEffect(() => {
-    if (!wasmInstance) return;
+  const compilation = useMemo(() => {
+    if (!wasmInstance) {
+      return {
+        output: '',
+        errorMsg: status === 'error' ? loadErrorMsg : '',
+      };
+    }
 
     try {
       // 1. Encode source string to UTF-8 bytes
@@ -95,24 +99,39 @@ export default function App() {
 
       // Parse output
       if (rawResult.startsWith('Success:\n')) {
-        setOutput(rawResult.substring(9));
-        setStatus('success');
-        setErrorMsg('');
+        return {
+          output: rawResult.substring(9),
+          errorMsg: '',
+        };
       } else if (rawResult.startsWith('Error:\n')) {
-        setOutput('');
-        setStatus('error');
-        setErrorMsg(rawResult.substring(7));
+        return {
+          output: '',
+          errorMsg: rawResult.substring(7),
+        };
       } else {
-        setOutput(rawResult);
-        setStatus('ready');
-        setErrorMsg('');
+        return {
+          output: rawResult,
+          errorMsg: '',
+        };
       }
     } catch (err) {
       console.error('Compilation error:', err);
-      setStatus('error');
-      setErrorMsg(`Compilation crashed: ${err.message}`);
+      return {
+        output: '',
+        errorMsg: `Compilation crashed: ${err.message}`,
+      };
     }
-  }, [code, wasmInstance]);
+  }, [code, loadErrorMsg, status, wasmInstance]);
+
+  const output = compilation.output;
+  const errorMsg = compilation.errorMsg;
+  const displayStatus = wasmInstance
+    ? errorMsg
+      ? 'error'
+      : output
+        ? 'success'
+        : 'ready'
+    : status;
 
   // Split lines for line numbering
   const lineCount = code.split('\n').length;
@@ -139,13 +158,13 @@ export default function App() {
 
         <div className="header-controls">
           {/* Status Badge */}
-          <div className={`status-badge ${status}`}>
+          <div className={`status-badge ${displayStatus}`}>
             <span className="pulse-dot"></span>
             <span className="status-text">
-              {status === 'loading' && 'Loading Compiler...'}
-              {status === 'ready' && 'Ready'}
-              {status === 'success' && 'Compilation Succeeded'}
-              {status === 'error' && 'Compilation Failed'}
+              {displayStatus === 'loading' && 'Loading Compiler...'}
+              {displayStatus === 'ready' && 'Ready'}
+              {displayStatus === 'success' && 'Compilation Succeeded'}
+              {displayStatus === 'error' && 'Compilation Failed'}
             </span>
           </div>
         </div>
@@ -204,12 +223,6 @@ export default function App() {
               >
                 Compiler Diagnostics
               </button>
-              <button
-                className={`tab-btn ${activeTab === 'info' ? 'active' : ''}`}
-                onClick={() => setActiveTab('info')}
-              >
-                Language Guide
-              </button>
             </div>
           </div>
 
@@ -221,7 +234,7 @@ export default function App() {
                     <div className="spinner"></div>
                     <p>Initializing Waluau compiler module...</p>
                   </div>
-                ) : status === 'error' && !output ? (
+                ) : displayStatus === 'error' && !output ? (
                   <div className="error-state">
                     <svg className="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <circle cx="12" cy="12" r="10" />
@@ -242,73 +255,31 @@ export default function App() {
             {activeTab === 'logs' && (
               <div className="logs-container">
                 <h3>Compilation Log</h3>
-                <div className={`log-card ${status}`}>
+                 <div className={`log-card ${displayStatus}`}>
                   <div className="log-header">
                     <span className="log-bullet"></span>
                     <span className="log-title">
-                      {status === 'success' && 'Build Succeeded'}
-                      {status === 'error' && 'Build Failed'}
-                      {status === 'ready' && 'Ready'}
-                      {status === 'loading' && 'Loading...'}
+                      {displayStatus === 'success' && 'Build Succeeded'}
+                      {displayStatus === 'error' && 'Build Failed'}
+                      {displayStatus === 'ready' && 'Ready'}
+                      {displayStatus === 'loading' && 'Loading...'}
                     </span>
                   </div>
                   <div className="log-body">
-                    {status === 'success' && (
+                    {displayStatus === 'success' && (
                       <p className="success-text">
                         The program parsed and type-checked successfully! The intermediate representation was constructed and verified without errors.
                       </p>
                     )}
-                    {status === 'error' && (
+                    {displayStatus === 'error' && (
                       <div className="error-details">
                         <p className="failure-text">Compiler diagnostics returned the following error:</p>
                         <pre className="error-block">{errorMsg}</pre>
                       </div>
                     )}
-                    {status === 'ready' && <p>No compilation has run yet. Enter code to trigger compiler.</p>}
+                    {displayStatus === 'ready' && <p>No compilation has run yet. Enter code to trigger compiler.</p>}
                   </div>
                 </div>
-              </div>
-            )}
-
-            {activeTab === 'info' && (
-              <div className="info-container">
-                <h3>Waluau Language syntax guide</h3>
-                <p>
-                  Waluau is a statically-typed scripting language with syntax inspired by Lua. It compiles down to a structured intermediate representation (IR) ready for Wasm code generation.
-                </p>
-
-                <h4>Types</h4>
-                <ul>
-                  <li><code>number</code>: Double-precision floating point numbers.</li>
-                  <li><code>bool</code>: Boolean values (<code>true</code> / <code>false</code>).</li>
-                </ul>
-
-                <h4>Function Declaration</h4>
-                <pre className="syntax-code">
-{`fn functionName(param1: type, param2: type) -> returnType
-    -- body
-    return val
-end`}
-                </pre>
-
-                <h4>Variables & Assignment</h4>
-                <pre className="syntax-code">
-{`let name: type = val -- Variable declaration
-name = newVal        -- Variable assignment`}
-                </pre>
-
-                <h4>Control Flow</h4>
-                <pre className="syntax-code">
-{`if condition then
-    -- then body
-else
-    -- else body
-end
-
-while condition do
-    -- loop body
-end`}
-                </pre>
               </div>
             )}
           </div>

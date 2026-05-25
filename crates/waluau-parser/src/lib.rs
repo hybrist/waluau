@@ -241,11 +241,13 @@ impl Parser {
         match self.advance().map(|token| token.kind) {
             Some(TokenKind::NumberType | TokenKind::F64Type) => Ok(Type::number()),
             Some(TokenKind::U32Type) => Ok(Type::Numeric(NumericType::U32)),
+            Some(TokenKind::U64Type) => Ok(Type::Numeric(NumericType::U64)),
             Some(TokenKind::I32Type) => Ok(Type::Numeric(NumericType::I32)),
+            Some(TokenKind::I64Type) => Ok(Type::Numeric(NumericType::I64)),
             Some(TokenKind::F32Type) => Ok(Type::Numeric(NumericType::F32)),
             Some(TokenKind::BoolType) => Ok(Type::Bool),
             _ => Err(Diagnostic::new(
-                "expected type (number, u32, i32, f32, f64, or bool)",
+                "expected type (number, u32, u64, i32, i64, f32, f64, or bool)",
             )),
         }
     }
@@ -319,7 +321,7 @@ mod tests {
     #[test]
     fn parses_numeric_type_aliases() {
         let source = r#"
-            fn widen(x: number, y: f32, z: u32) -> f64
+            fn widen(x: number, y: f32, z: u64, w: i64) -> f64
                 let result: f64 = x
                 return result
             end
@@ -329,7 +331,8 @@ mod tests {
         let function = &program.functions[0];
         assert_eq!(function.params[0].ty, Type::Numeric(NumericType::F64));
         assert_eq!(function.params[1].ty, Type::Numeric(NumericType::F32));
-        assert_eq!(function.params[2].ty, Type::Numeric(NumericType::U32));
+        assert_eq!(function.params[2].ty, Type::Numeric(NumericType::U64));
+        assert_eq!(function.params[3].ty, Type::Numeric(NumericType::I64));
         assert_eq!(function.return_type, Type::Numeric(NumericType::F64));
     }
 }

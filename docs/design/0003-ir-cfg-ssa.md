@@ -52,6 +52,8 @@ The initial lowering from HIR should use mutable locals. A small instruction set
 
 - `const.i32`
 - `const.u32`
+- `const.i64`
+- `const.u64`
 - `const.f32`
 - `const.f64`
 - `const.bool`

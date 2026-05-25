@@ -779,10 +779,11 @@ mod tests {
     #[test]
     fn records_numeric_scalar_kinds_in_instructions() {
         let source = r#"
-            fn entry(x: i32, y: f64) -> f64
-                let a: i32 = x + 1
-                let b: f64 = y + 2
-                return b
+            fn entry(x: i64, y: u64, z: f64) -> f64
+                let a: i64 = x + 1
+                let b: u64 = y + 2
+                let c: f64 = z + 3
+                return c
             end
         "#;
 
@@ -794,7 +795,7 @@ mod tests {
                 matches!(
                     instruction,
                     Instruction::Number {
-                        ty: NumericType::I32,
+                        ty: NumericType::I64,
                         ..
                     }
                 )

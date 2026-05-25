@@ -275,6 +275,12 @@ fn validate_numeric_literal(value: f64, expected: NumericType) -> Result<(), Dia
                 Err(Diagnostic::new("numeric literal is out of range for i32"))
             }
         }
+        NumericType::I64 => validate_integer_literal_range(
+            value,
+            "i64",
+            -(1_i64 << 53) as f64,
+            (1_i64 << 53) as f64,
+        ),
         NumericType::U32 => {
             if value.fract() != 0.0 {
                 return Err(Diagnostic::new(
@@ -287,6 +293,28 @@ fn validate_numeric_literal(value: f64, expected: NumericType) -> Result<(), Dia
                 Err(Diagnostic::new("numeric literal is out of range for u32"))
             }
         }
+        NumericType::U64 => validate_integer_literal_range(value, "u64", 0.0, (1_u64 << 53) as f64),
+    }
+}
+
+fn validate_integer_literal_range(
+    value: f64,
+    ty_name: &str,
+    min: f64,
+    max: f64,
+) -> Result<(), Diagnostic> {
+    if value.fract() != 0.0 {
+        return Err(Diagnostic::new(format!(
+            "numeric literal must be an integer for {ty_name}",
+        )));
+    }
+
+    if (min..=max).contains(&value) {
+        Ok(())
+    } else {
+        Err(Diagnostic::new(format!(
+            "numeric literal is out of range for {ty_name}",
+        )))
     }
 }
 
@@ -333,12 +361,15 @@ mod tests {
     #[test]
     fn accepts_numeric_alias_and_scalar_types() {
         let source = r#"
-            fn widen(x: number, y: f32, z: u32) -> f64
+            fn widen(x: number, y: f32, z: u64, w: i64) -> f64
                 let sum: f64 = x + 1
                 if z > 0 then
                     return sum
                 end
-                return x + 2
+                if w > 0 then
+                    return x + 2
+                end
+                return x + 3
             end
         "#;
 
@@ -360,5 +391,21 @@ mod tests {
             error.to_string(),
             "operation requires matching numeric operands"
         );
+    }
+
+    #[test]
+    fn accepts_small_i64_and_u64_literals() {
+        let source = r#"
+            fn entry(x: i64, y: u64) -> i64
+                let a: i64 = x + 1
+                if y > 0 then
+                    return a
+                end
+                return x + 2
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
     }
 }
