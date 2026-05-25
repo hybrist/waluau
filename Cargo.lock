@@ -50,8 +50,10 @@ dependencies = [
 name = "waluau-ir"
 version = "0.1.0"
 dependencies = [
+ "waluau-ast",
  "waluau-diagnostics",
  "waluau-hir",
+ "waluau-parser",
 ]
 
 [[package]]

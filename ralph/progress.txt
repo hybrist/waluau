@@ -1,3 +1,5 @@
 2026-05-25: Verified repo is green with ./check, reviewed beads state, and completed `waluau-olc` (Bootstrap Waluau compiler) by confirming architecture docs and follow-up implementation issues are in place; closed the epic.
 
 2026-05-25: Completed `waluau-hya` by implementing a v0 frontend slice end-to-end: AST types, lexer, parser, and semantic type checker for numbers/bools, typed locals/functions, branches, loops, calls, and returns; added parser/type-check/driver tests for valid and invalid programs; ran `./check` cleanly and closed the issue.
+
+2026-05-25: Completed `waluau-0cl` by implementing initial CFG+SSA IR lowering from AST with block terminators, value instructions, mutable-local environment tracking, merge/loop phi insertion, module/function verification, and textual dump support; added IR tests for if-merge phi nodes, loop-carried phi nodes, and branch/return structure; ran `./check` cleanly and closed the issue.
