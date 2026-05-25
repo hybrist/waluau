@@ -33,6 +33,8 @@ name = "waluau-driver"
 version = "0.1.0"
 dependencies = [
  "waluau-diagnostics",
+ "waluau-hir",
+ "waluau-parser",
 ]
 
 [[package]]
@@ -41,6 +43,7 @@ version = "0.1.0"
 dependencies = [
  "waluau-ast",
  "waluau-diagnostics",
+ "waluau-parser",
 ]
 
 [[package]]
@@ -55,6 +58,7 @@ dependencies = [
 name = "waluau-lexer"
 version = "0.1.0"
 dependencies = [
+ "waluau-diagnostics",
  "waluau-span",
 ]
 

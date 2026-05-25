@@ -7,3 +7,5 @@ rust-version.workspace = true
 
 [dependencies]
 waluau-diagnostics.workspace = true
+waluau-hir.workspace = true
+waluau-parser.workspace = true
