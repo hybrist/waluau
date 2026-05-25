@@ -118,7 +118,7 @@ pub enum Stmt {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr {
-    Number(f64),
+    Number(NumberLiteral),
     Bool(bool),
     Name(String),
     Cast {
@@ -134,6 +134,11 @@ pub enum Expr {
         name: String,
         args: Vec<Expr>,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NumberLiteral {
+    pub raw: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -30,7 +30,7 @@ pub enum TokenKind {
     True,
     False,
     Identifier(String),
-    Number(f64),
+    Number(String),
     Plus,
     Minus,
     Star,
@@ -111,9 +111,15 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 while end < chars.len() && (chars[end].is_ascii_digit() || chars[end] == '.') {
                     end += 1;
                 }
-                let number = source[i..end]
-                    .parse::<f64>()
-                    .map_err(|_| Diagnostic::new("invalid number literal"))?;
+                let number = source[i..end].to_string();
+                if number.matches('.').count() > 1 {
+                    return Err(Diagnostic::new("invalid number literal"));
+                }
+                if number.contains('.') {
+                    number
+                        .parse::<f64>()
+                        .map_err(|_| Diagnostic::new("invalid number literal"))?;
+                }
                 tokens.push(Token {
                     kind: TokenKind::Number(number),
                     span: Span {

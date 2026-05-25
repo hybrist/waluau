@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use waluau_ast::{BinaryOp, Expr, Function as AstFunction, NumericType, Program, Stmt, Type};
+use waluau_ast::{
+    BinaryOp, Expr, Function as AstFunction, NumberLiteral, NumericType, Program, Stmt, Type,
+};
 use waluau_diagnostics::Diagnostic;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -36,7 +38,7 @@ pub enum Instruction {
     Param(usize),
     Number {
         ty: NumericType,
-        value: f64,
+        literal: NumberLiteral,
     },
     Bool(bool),
     Cast {
@@ -495,7 +497,10 @@ impl Builder<'_> {
                     Type::Numeric(ty) => ty,
                     Type::Bool => unreachable!("number literal cannot lower as bool"),
                 };
-                self.emit(Instruction::Number { ty, value: *number })
+                self.emit(Instruction::Number {
+                    ty,
+                    literal: number.clone(),
+                })
             }
             Expr::Bool(value) => self.emit(Instruction::Bool(*value)),
             Expr::Name(name) => {
@@ -946,6 +951,28 @@ mod tests {
                     instruction,
                     Instruction::Number {
                         ty: NumericType::I64,
+                        literal,
+                    } if literal.raw == "1"
+                )
+            })
+        }));
+        assert!(function.blocks.values().any(|block| {
+            block.instructions.iter().any(|(_, instruction)| {
+                matches!(
+                    instruction,
+                    Instruction::Number {
+                        ty: NumericType::U64,
+                        literal,
+                    } if literal.raw == "2"
+                )
+            })
+        }));
+        assert!(function.blocks.values().any(|block| {
+            block.instructions.iter().any(|(_, instruction)| {
+                matches!(
+                    instruction,
+                    Instruction::Number {
+                        ty: NumericType::I64,
                         ..
                     }
                 )
@@ -960,6 +987,30 @@ mod tests {
                         result_ty: Type::Numeric(NumericType::F64),
                         ..
                     }
+                )
+            })
+        }));
+    }
+
+    #[test]
+    fn preserves_full_range_integer_literals_in_ir() {
+        let source = r#"
+            fn entry() -> u64
+                return 18446744073709551615
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let module = build(&program).expect("ir build should succeed");
+        let function = &module.functions[0];
+        assert!(function.blocks.values().any(|block| {
+            block.instructions.iter().any(|(_, instruction)| {
+                matches!(
+                    instruction,
+                    Instruction::Number {
+                        ty: NumericType::U64,
+                        literal,
+                    } if literal.raw == "18446744073709551615"
                 )
             })
         }));

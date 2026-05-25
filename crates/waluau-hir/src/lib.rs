@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use waluau_ast::{BinaryOp, Expr, Function, NumericType, Program, Stmt, Type};
+use waluau_ast::{BinaryOp, Expr, Function, NumberLiteral, NumericType, Program, Stmt, Type};
 use waluau_diagnostics::Diagnostic;
 
 pub fn type_check(program: &Program) -> Result<(), Diagnostic> {
@@ -135,7 +135,7 @@ fn infer_expr(
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
     match expr {
-        Expr::Number(value) => resolve_number_literal(*value, expected),
+        Expr::Number(value) => resolve_number_literal(value, expected),
         Expr::Bool(_) => Ok(Type::Bool),
         Expr::Name(name) => {
             let actual = vars
@@ -312,7 +312,10 @@ fn require_bool_pair(left: Type, right: Type) -> Result<(), Diagnostic> {
     }
 }
 
-fn resolve_number_literal(value: f64, expected: Option<Type>) -> Result<Type, Diagnostic> {
+fn resolve_number_literal(
+    value: &NumberLiteral,
+    expected: Option<Type>,
+) -> Result<Type, Diagnostic> {
     match expected {
         Some(Type::Numeric(numeric)) => {
             validate_numeric_literal(value, numeric)?;
@@ -323,69 +326,48 @@ fn resolve_number_literal(value: f64, expected: Option<Type>) -> Result<Type, Di
     }
 }
 
-fn validate_numeric_literal(value: f64, expected: NumericType) -> Result<(), Diagnostic> {
+fn validate_numeric_literal(
+    value: &NumberLiteral,
+    expected: NumericType,
+) -> Result<(), Diagnostic> {
     match expected {
         NumericType::F32 => {
+            let value = parse_float_literal(value)?;
             if (value as f32).is_finite() || value == f64::INFINITY || value == f64::NEG_INFINITY {
                 Ok(())
             } else {
                 Err(Diagnostic::new("numeric literal is out of range for f32"))
             }
         }
-        NumericType::F64 => Ok(()),
-        NumericType::I32 => {
-            if value.fract() != 0.0 {
-                return Err(Diagnostic::new(
-                    "numeric literal must be an integer for i32",
-                ));
-            }
-            if (i32::MIN as f64..=i32::MAX as f64).contains(&value) {
-                Ok(())
-            } else {
-                Err(Diagnostic::new("numeric literal is out of range for i32"))
-            }
-        }
-        NumericType::I64 => validate_integer_literal_range(
-            value,
-            "i64",
-            -(1_i64 << 53) as f64,
-            (1_i64 << 53) as f64,
-        ),
-        NumericType::U32 => {
-            if value.fract() != 0.0 {
-                return Err(Diagnostic::new(
-                    "numeric literal must be an integer for u32",
-                ));
-            }
-            if (0.0..=u32::MAX as f64).contains(&value) {
-                Ok(())
-            } else {
-                Err(Diagnostic::new("numeric literal is out of range for u32"))
-            }
-        }
-        NumericType::U64 => validate_integer_literal_range(value, "u64", 0.0, (1_u64 << 53) as f64),
+        NumericType::F64 => parse_float_literal(value).map(|_| ()),
+        NumericType::I32 => parse_integer_literal::<i32>(value, "i32").map(|_| ()),
+        NumericType::I64 => parse_integer_literal::<i64>(value, "i64").map(|_| ()),
+        NumericType::U32 => parse_integer_literal::<u32>(value, "u32").map(|_| ()),
+        NumericType::U64 => parse_integer_literal::<u64>(value, "u64").map(|_| ()),
     }
 }
 
-fn validate_integer_literal_range(
-    value: f64,
-    ty_name: &str,
-    min: f64,
-    max: f64,
-) -> Result<(), Diagnostic> {
-    if value.fract() != 0.0 {
+fn parse_float_literal(value: &NumberLiteral) -> Result<f64, Diagnostic> {
+    value
+        .raw
+        .parse::<f64>()
+        .map_err(|_| Diagnostic::new("invalid number literal"))
+}
+
+fn parse_integer_literal<T>(value: &NumberLiteral, ty_name: &str) -> Result<T, Diagnostic>
+where
+    T: std::str::FromStr,
+{
+    if value.raw.contains('.') {
         return Err(Diagnostic::new(format!(
             "numeric literal must be an integer for {ty_name}",
         )));
     }
 
-    if (min..=max).contains(&value) {
-        Ok(())
-    } else {
-        Err(Diagnostic::new(format!(
-            "numeric literal is out of range for {ty_name}",
-        )))
-    }
+    value
+        .raw
+        .parse::<T>()
+        .map_err(|_| Diagnostic::new(format!("numeric literal is out of range for {ty_name}",)))
 }
 
 #[cfg(test)]
@@ -464,12 +446,16 @@ mod tests {
     }
 
     #[test]
-    fn accepts_small_i64_and_u64_literals() {
+    fn accepts_full_range_i64_and_u64_literals() {
         let source = r#"
             fn entry(x: i64, y: u64) -> i64
                 let a: i64 = x + 1
+                let b: u64 = 18446744073709551615
                 if y > 0 then
                     return a
+                end
+                if b > 0 then
+                    return 9223372036854775807
                 end
                 return x + 2
             end
@@ -477,6 +463,19 @@ mod tests {
 
         let program = parse(source).expect("parse should succeed");
         super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn rejects_out_of_range_u64_literals() {
+        let source = r#"
+            fn entry() -> u64
+                return 18446744073709551616
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.to_string(), "numeric literal is out of range for u64");
     }
 
     #[test]

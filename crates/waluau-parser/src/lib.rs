@@ -1,4 +1,6 @@
-use waluau_ast::{BinaryOp, Expr, Function, NumericType, Param, Program, Stmt, Type};
+use waluau_ast::{
+    BinaryOp, Expr, Function, NumberLiteral, NumericType, Param, Program, Stmt, Type,
+};
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
 
@@ -218,7 +220,7 @@ impl Parser {
             .advance()
             .ok_or_else(|| Diagnostic::new("unexpected end of input"))?;
         match token.kind {
-            TokenKind::Number(value) => Ok(Expr::Number(value)),
+            TokenKind::Number(value) => Ok(Expr::Number(NumberLiteral { raw: value })),
             TokenKind::True => Ok(Expr::Bool(true)),
             TokenKind::False => Ok(Expr::Bool(false)),
             TokenKind::Identifier(name) => {
@@ -311,7 +313,7 @@ fn same_variant(a: &TokenKind, b: &TokenKind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::parse;
-    use waluau_ast::{NumericType, Type};
+    use waluau_ast::{NumberLiteral, NumericType, Type};
 
     #[test]
     fn parses_v0_function() {
@@ -365,6 +367,23 @@ mod tests {
                 ty: Type::Numeric(NumericType::I32),
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn preserves_large_integer_literal_text() {
+        let source = r#"
+            fn entry() -> u64
+                return 18446744073709551615
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert!(matches!(
+            &function.body[0],
+            waluau_ast::Stmt::Return(waluau_ast::Expr::Number(NumberLiteral { raw }))
+                if raw == "18446744073709551615"
         ));
     }
 }
