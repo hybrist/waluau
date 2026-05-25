@@ -11,24 +11,23 @@ pub fn run() -> Result<(), Diagnostic> {
 
 #[cfg(test)]
 mod tests {
+    fn fixture_source(name: &str) -> &'static str {
+        match name {
+            "add" => include_str!("../../../fixtures/add.walu"),
+            "mismatch" => include_str!("../../../fixtures/mismatch.walu"),
+            other => panic!("unknown fixture: {other}"),
+        }
+    }
+
     #[test]
-    fn compiles_valid_program() {
-        let source = r#"
-            fn entry(x: number, y: number) -> number
-                let z: number = x + y
-                return z
-            end
-        "#;
+    fn compiles_valid_fixture_file() {
+        let source = fixture_source("add");
         super::compile_source(source).expect("compile should succeed");
     }
 
     #[test]
-    fn rejects_invalid_program() {
-        let source = r#"
-            fn entry(x: number) -> number
-                return true
-            end
-        "#;
+    fn rejects_invalid_fixture_file() {
+        let source = fixture_source("mismatch");
         let err = super::compile_source(source).expect_err("compile should fail");
         assert_eq!(err.to_string(), "return expects Number, got Bool");
     }

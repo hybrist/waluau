@@ -1,30 +1,28 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const PRESETS = {
-  add: `fn add(x: number, y: number) -> number
-    let z: number = x + y
-    return z
-end`,
-  fib: `fn fib(n: number) -> number
-    if n < 2 then
-        return n
-    end
-    return fib(n - 1) + fib(n - 2)
-end`,
-  mismatch: `fn entry(x: number) -> number
-    return true
-end`,
-  control: `fn check(val: number) -> bool
-    if val > 10 then
-        return true
-    else
-        return false
-    end
-end`
-};
+const fixtureModules = import.meta.glob('../../../fixtures/*.walu', {
+  eager: true,
+  query: '?raw',
+  import: 'default'
+});
+
+const PRESETS = Object.entries(fixtureModules)
+  .map(([path, source]) => ({
+    key: path.split('/').pop().replace(/\.walu$/, ''),
+    label: path
+      .split('/').pop()
+      .replace(/\.walu$/, '')
+      .split('-')
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' '),
+    source
+  }))
+  .sort((left, right) => left.label.localeCompare(right.label));
+
+const DEFAULT_PRESET = PRESETS[0]?.source ?? '';
 
 export default function App() {
-  const [code, setCode] = useState(PRESETS.add);
+  const [code, setCode] = useState(DEFAULT_PRESET);
   const [output, setOutput] = useState('');
   const [status, setStatus] = useState('loading'); // 'loading', 'ready', 'success', 'error'
   const [errorMsg, setErrorMsg] = useState('');
@@ -120,8 +118,8 @@ export default function App() {
   const lineCount = code.split('\n').length;
   const lineNumbers = Array.from({ length: Math.max(lineCount, 1) }, (_, i) => i + 1);
 
-  const selectPreset = (key) => {
-    setCode(PRESETS[key]);
+  const selectPreset = (source) => {
+    setCode(source);
   };
 
   return (
@@ -156,10 +154,11 @@ export default function App() {
       {/* Preset toolbar */}
       <div className="presets-bar">
         <span className="presets-label">Examples:</span>
-        <button className="preset-btn" onClick={() => selectPreset('add')}>Simple Add</button>
-        <button className="preset-btn" onClick={() => selectPreset('fib')}>Fibonacci</button>
-        <button className="preset-btn" onClick={() => selectPreset('control')}>If-Else Control</button>
-        <button className="preset-btn" onClick={() => selectPreset('mismatch')}>Type Mismatch</button>
+        {PRESETS.map((preset) => (
+          <button key={preset.key} className="preset-btn" onClick={() => selectPreset(preset.source)}>
+            {preset.label}
+          </button>
+        ))}
       </div>
 
       <main className="playground-main">

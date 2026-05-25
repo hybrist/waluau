@@ -1,0 +1,3 @@
+fn entry(x: number) -> number
+    return true
+end
