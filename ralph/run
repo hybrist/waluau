@@ -1,0 +1,26 @@
+#!/bin/bash
+set -e
+
+MAX_ITERATIONS=${1:-10}
+
+echo "Starting Ralph loop (max $MAX_ITERATIONS iterations)"
+echo ""
+
+for ((i=1; i<=MAX_ITERATIONS; i++)); do
+    # Check if there's work available
+    if [[ -z "$(bd list --status open -n 1 2>/dev/null)" ]]; then
+        echo "No open issues remaining. Exiting loop."
+        break
+    fi
+
+    echo "=========================================="
+    echo "Ralph iteration $i of $MAX_ITERATIONS"
+    echo "=========================================="
+
+    opencode run "$(<./ralph/RALPH.md)" \
+        --dangerously-skip-permissions \
+        --format json
+done
+
+echo ""
+echo "Ralph loop finished after $((i-1)) iteration(s)"
