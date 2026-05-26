@@ -1,16 +1,34 @@
-# React + Vite
+# Waluau Playground
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The playground is a Vite app that loads the `waluau-wasm` compiler artifact built from the Rust workspace.
 
-Currently, two official plugins are available:
+## Local development
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+From the repository root:
 
-## React Compiler
+```bash
+pnpm install
+pnpm dev
+```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+The dev server watches Rust sources and rebuilds `waluau_wasm.wasm` automatically.
 
-## Expanding the ESLint configuration
+## Production build
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+From the repository root:
+
+```bash
+pnpm build:playground
+```
+
+This builds the Rust wasm target first and then emits the Vite site into `apps/playground/dist`.
+
+## Vercel
+
+The repository includes a root-level [`vercel.json`](../../vercel.json) so Vercel can deploy the playground directly from the monorepo root:
+
+- `installCommand`: `pnpm install --frozen-lockfile`
+- `buildCommand`: `pnpm build:playground`
+- `outputDirectory`: `apps/playground/dist`
+
+Create a single Vercel project connected to this repository and keep its Root Directory at the repository root so the build can access the Rust workspace.
