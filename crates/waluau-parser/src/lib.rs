@@ -12,19 +12,35 @@ pub fn parse(source: &str) -> Result<Program, Diagnostic> {
 struct Parser {
     tokens: Vec<Token>,
     index: usize,
+    diagnostics: Vec<String>,
 }
 
 impl Parser {
     fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, index: 0 }
+        Self {
+            tokens,
+            index: 0,
+            diagnostics: Vec::new(),
+        }
     }
 
     fn parse_program(&mut self) -> Result<Program, Diagnostic> {
         let mut functions = Vec::new();
         while self.peek().is_some() {
-            functions.push(self.parse_function()?);
+            match self.parse_function() {
+                Ok(function) => functions.push(function),
+                Err(error) => {
+                    self.record_error(error);
+                    self.sync_to_next_function();
+                }
+            }
         }
-        Ok(Program { functions })
+
+        if self.diagnostics.is_empty() {
+            Ok(Program { functions })
+        } else {
+            Err(Diagnostic::new(self.diagnostics.join("\n")))
+        }
     }
 
     fn parse_function(&mut self) -> Result<Function, Diagnostic> {
@@ -51,7 +67,7 @@ impl Parser {
         self.expect_simple(TokenKind::RParen, "expected ')'")?;
         self.expect_simple(TokenKind::Colon, "expected ':' before return type")?;
         let return_type = self.parse_type()?;
-        let body = self.parse_block_until(&[TokenKind::End])?;
+        let body = self.parse_block_until(&[TokenKind::End]);
         self.expect_simple(TokenKind::End, "expected 'end' after function body")?;
         Ok(Function {
             name,
@@ -61,7 +77,7 @@ impl Parser {
         })
     }
 
-    fn parse_block_until(&mut self, end_markers: &[TokenKind]) -> Result<Vec<Stmt>, Diagnostic> {
+    fn parse_block_until(&mut self, end_markers: &[TokenKind]) -> Vec<Stmt> {
         let mut statements = Vec::new();
         while let Some(token) = self.peek() {
             if end_markers
@@ -70,9 +86,17 @@ impl Parser {
             {
                 break;
             }
-            statements.push(self.parse_stmt()?);
+
+            let start_index = self.index;
+            match self.parse_stmt() {
+                Ok(statement) => statements.push(statement),
+                Err(error) => {
+                    self.record_error(error);
+                    self.synchronize_statement(end_markers, start_index);
+                }
+            }
         }
-        Ok(statements)
+        statements
     }
 
     fn parse_stmt(&mut self) -> Result<Stmt, Diagnostic> {
@@ -92,7 +116,7 @@ impl Parser {
             self.advance();
             let condition = self.parse_expr()?;
             self.expect_simple(TokenKind::Do, "expected 'do' after while condition")?;
-            let body = self.parse_block_until(&[TokenKind::End])?;
+            let body = self.parse_block_until(&[TokenKind::End]);
             self.expect_simple(TokenKind::End, "expected 'end' after while")?;
             return Ok(Stmt::While { condition, body });
         }
@@ -131,14 +155,13 @@ impl Parser {
     fn parse_if_clause(&mut self) -> Result<Stmt, Diagnostic> {
         let condition = self.parse_expr()?;
         self.expect_simple(TokenKind::Then, "expected 'then' after if condition")?;
-        let then_body =
-            self.parse_block_until(&[TokenKind::ElseIf, TokenKind::Else, TokenKind::End])?;
+        let then_body = self.parse_block_until(&[TokenKind::ElseIf, TokenKind::Else, TokenKind::End]);
         let else_body = if self.check_simple(&TokenKind::ElseIf) {
             self.advance();
             vec![self.parse_if_clause()?]
         } else if self.check_simple(&TokenKind::Else) {
             self.advance();
-            self.parse_block_until(&[TokenKind::End])?
+            self.parse_block_until(&[TokenKind::End])
         } else {
             Vec::new()
         };
@@ -279,7 +302,7 @@ impl Parser {
                 self.expect_simple(TokenKind::RParen, "expected ')' after expression")?;
                 Ok(inner)
             }
-            _ => Err(Diagnostic::new("expected expression")),
+            _ => Err(self.diagnostic_at_current("expected expression")),
         }
     }
 
@@ -292,7 +315,7 @@ impl Parser {
             Some(TokenKind::I64Type) => Ok(Type::Numeric(NumericType::I64)),
             Some(TokenKind::F32Type) => Ok(Type::Numeric(NumericType::F32)),
             Some(TokenKind::BoolType) => Ok(Type::Bool),
-            _ => Err(Diagnostic::new(
+            _ => Err(self.diagnostic_at_current(
                 "expected type (number, u32, u64, i32, i64, f32, f64, or bool)",
             )),
         }
@@ -301,7 +324,7 @@ impl Parser {
     fn expect_identifier(&mut self) -> Result<String, Diagnostic> {
         match self.advance().map(|token| token.kind) {
             Some(TokenKind::Identifier(name)) => Ok(name),
-            _ => Err(Diagnostic::new("expected identifier")),
+            _ => Err(self.diagnostic_at_current("expected identifier")),
         }
     }
 
@@ -312,7 +335,10 @@ impl Parser {
         if same_variant(&token.kind, &expected) {
             Ok(())
         } else {
-            Err(Diagnostic::new(message))
+            Err(Diagnostic::new(format!(
+                "{message} at {}..{}",
+                token.span.start, token.span.end
+            )))
         }
     }
 
@@ -335,6 +361,67 @@ impl Parser {
         self.index += usize::from(token.is_some());
         token
     }
+
+    fn record_error(&mut self, diagnostic: Diagnostic) {
+        self.diagnostics.push(diagnostic.to_string());
+    }
+
+    fn diagnostic_at_current(&self, message: &str) -> Diagnostic {
+        if self.index == 0 {
+            return Diagnostic::new(message);
+        }
+
+        if let Some(token) = self.tokens.get(self.index.saturating_sub(1)) {
+            Diagnostic::new(format!("{message} at {}..{}", token.span.start, token.span.end))
+        } else {
+            Diagnostic::new(message)
+        }
+    }
+
+    fn sync_to_next_function(&mut self) {
+        while let Some(token) = self.peek() {
+            if matches!(token.kind, TokenKind::Function) {
+                return;
+            }
+            self.advance();
+        }
+    }
+
+    fn synchronize_statement(&mut self, end_markers: &[TokenKind], start_index: usize) {
+        let mut depth = 0usize;
+        while let Some(token) = self.peek() {
+            if depth == 0
+                && (is_statement_start(&token.kind)
+                    || end_markers
+                        .iter()
+                        .any(|marker| same_variant(&token.kind, marker)))
+            {
+                return;
+            }
+
+            match token.kind {
+                TokenKind::If | TokenKind::While | TokenKind::Function => depth += 1,
+                TokenKind::End if depth > 0 => depth -= 1,
+                _ => {}
+            }
+            self.advance();
+        }
+
+        if self.index == start_index {
+            self.advance();
+        }
+    }
+}
+
+fn is_statement_start(kind: &TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::Local
+            | TokenKind::If
+            | TokenKind::While
+            | TokenKind::Return
+            | TokenKind::Identifier(_)
+    )
 }
 
 fn same_variant(a: &TokenKind, b: &TokenKind) -> bool {
