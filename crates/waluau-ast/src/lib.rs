@@ -121,6 +121,10 @@ pub enum Expr {
     Number(NumberLiteral),
     Bool(bool),
     Name(String),
+    Unary {
+        op: UnaryOp,
+        expr: Box<Expr>,
+    },
     Cast {
         expr: Box<Expr>,
         ty: Type,
@@ -152,4 +156,10 @@ pub enum BinaryOp {
     Greater,
     And,
     Or,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UnaryOp {
+    Neg,
+    Not,
 }
