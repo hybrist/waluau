@@ -1,0 +1,9 @@
+fn sum_to(n: i32) -> i32
+    let acc: i32 = 0
+    let i: i32 = n
+    while i > 0 do
+        acc = acc + i
+        i = i - 1
+    end
+    return acc
+end

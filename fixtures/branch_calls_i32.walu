@@ -1,0 +1,11 @@
+fn inc(x: i32) -> i32
+    return x + 1
+end
+
+fn max_plus_one(x: i32, y: i32) -> i32
+    if x > y then
+        return inc(x)
+    else
+        return inc(y)
+    end
+end
