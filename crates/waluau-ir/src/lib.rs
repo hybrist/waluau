@@ -105,7 +105,11 @@ pub fn verify(module: &Module) -> Result<(), Diagnostic> {
             (
                 function.name.clone(),
                 (
-                    function.params.iter().map(|(_, ty)| *ty).collect::<Vec<_>>(),
+                    function
+                        .params
+                        .iter()
+                        .map(|(_, ty)| *ty)
+                        .collect::<Vec<_>>(),
                     function.return_type,
                 ),
             )
@@ -414,7 +418,10 @@ fn compute_dominators(
                 })
             };
             next.insert(block);
-            if dominators.get(&block).is_some_and(|current| *current != next) {
+            if dominators
+                .get(&block)
+                .is_some_and(|current| *current != next)
+            {
                 dominators.insert(block, next);
                 changed = true;
             }
@@ -435,11 +442,7 @@ fn resolve_phi_types(
                 let Instruction::Phi(incoming) = instruction else {
                     continue;
                 };
-                if definitions
-                    .get(value)
-                    .and_then(|def| def.ty)
-                    .is_some()
-                {
+                if definitions.get(value).and_then(|def| def.ty).is_some() {
                     continue;
                 }
                 let mut incoming_ty = None;
@@ -1413,37 +1416,40 @@ mod tests {
             return_type: Type::Numeric(NumericType::I64),
             entry: BlockId(0),
             next_value: 2,
-            blocks: BTreeMap::from([(
-                BlockId(0),
-                BasicBlock {
-                    id: BlockId(0),
-                    instructions: vec![(
-                        ValueId(0),
-                        Instruction::Number {
-                            ty: NumericType::I64,
-                            literal: NumberLiteral { raw: "1".into() },
+            blocks: BTreeMap::from([
+                (
+                    BlockId(0),
+                    BasicBlock {
+                        id: BlockId(0),
+                        instructions: vec![(
+                            ValueId(0),
+                            Instruction::Number {
+                                ty: NumericType::I64,
+                                literal: NumberLiteral { raw: "1".into() },
+                            },
+                        )],
+                        terminator: Terminator::Branch {
+                            condition: ValueId(0),
+                            then_block: BlockId(1),
+                            else_block: BlockId(1),
                         },
-                    )],
-                    terminator: Terminator::Branch {
-                        condition: ValueId(0),
-                        then_block: BlockId(1),
-                        else_block: BlockId(1),
                     },
-                },
-            ), (
-                BlockId(1),
-                BasicBlock {
-                    id: BlockId(1),
-                    instructions: vec![(
-                        ValueId(1),
-                        Instruction::Number {
-                            ty: NumericType::I64,
-                            literal: NumberLiteral { raw: "0".into() },
-                        },
-                    )],
-                    terminator: Terminator::Return(ValueId(1)),
-                },
-            )]),
+                ),
+                (
+                    BlockId(1),
+                    BasicBlock {
+                        id: BlockId(1),
+                        instructions: vec![(
+                            ValueId(1),
+                            Instruction::Number {
+                                ty: NumericType::I64,
+                                literal: NumberLiteral { raw: "0".into() },
+                            },
+                        )],
+                        terminator: Terminator::Return(ValueId(1)),
+                    },
+                ),
+            ]),
         };
         let err = verify(&Module {
             functions: vec![function],
@@ -1537,7 +1543,10 @@ mod tests {
                         id: BlockId(3),
                         instructions: vec![(
                             ValueId(3),
-                            Instruction::Phi(vec![(BlockId(2), ValueId(2)), (BlockId(1), ValueId(1))]),
+                            Instruction::Phi(vec![
+                                (BlockId(2), ValueId(2)),
+                                (BlockId(1), ValueId(1)),
+                            ]),
                         )],
                         terminator: Terminator::Return(ValueId(3)),
                     },
