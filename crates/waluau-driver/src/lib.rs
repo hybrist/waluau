@@ -1,3 +1,7 @@
+use std::ffi::OsString;
+use std::fs;
+use std::path::{Path, PathBuf};
+
 use waluau_diagnostics::Diagnostic;
 
 pub fn compile_source(source: &str) -> Result<Vec<u8>, Diagnostic> {
@@ -8,11 +12,88 @@ pub fn compile_source(source: &str) -> Result<Vec<u8>, Diagnostic> {
 }
 
 pub fn run() -> Result<(), Diagnostic> {
+    run_with_args(std::env::args_os().skip(1))
+}
+
+pub fn run_with_args<I>(args: I) -> Result<(), Diagnostic>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let options = parse_args(args)?;
+    let source = fs::read_to_string(&options.input)
+        .map_err(|error| io_error("read input file", &options.input, error))?;
+    let wasm = compile_source(&source)?;
+    fs::write(&options.output, wasm)
+        .map_err(|error| io_error("write output file", &options.output, error))?;
     Ok(())
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct CliOptions {
+    input: PathBuf,
+    output: PathBuf,
+}
+
+fn parse_args<I>(args: I) -> Result<CliOptions, Diagnostic>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut input = None;
+    let mut output = None;
+    let mut pending_output_flag = false;
+
+    for arg in args {
+        if pending_output_flag {
+            output = Some(PathBuf::from(arg));
+            pending_output_flag = false;
+            continue;
+        }
+
+        match arg.to_str() {
+            Some("-o" | "--output") => pending_output_flag = true,
+            Some(flag) if flag.starts_with('-') => {
+                return Err(Diagnostic::new(format!(
+                    "unsupported flag `{flag}`\nusage: waluau <input.walu> [-o <output.wasm>]"
+                )));
+            }
+            _ if input.is_none() => input = Some(PathBuf::from(arg)),
+            _ => {
+                return Err(Diagnostic::new(
+                    "too many positional arguments\nusage: waluau <input.walu> [-o <output.wasm>]",
+                ));
+            }
+        }
+    }
+
+    if pending_output_flag {
+        return Err(Diagnostic::new(
+            "missing path after -o/--output\nusage: waluau <input.walu> [-o <output.wasm>]",
+        ));
+    }
+
+    let input = input.ok_or_else(|| {
+        Diagnostic::new("missing input path\nusage: waluau <input.walu> [-o <output.wasm>]")
+    })?;
+    let output = output.unwrap_or_else(|| default_output_path(&input));
+
+    Ok(CliOptions { input, output })
+}
+
+fn default_output_path(input: &Path) -> PathBuf {
+    input.with_extension("wasm")
+}
+
+fn io_error(action: &str, path: &Path, error: std::io::Error) -> Diagnostic {
+    Diagnostic::new(format!("{action} `{}`: {error}", path.display()))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+    use std::fs;
+    use std::path::Path;
+
+    use tempfile::tempdir;
     use wasmtime::{Engine, Instance, Module, Store};
 
     fn fixture_source(name: &str) -> &'static str {
@@ -29,6 +110,10 @@ mod tests {
         let mut store = Store::new(&engine, ());
         let instance = Instance::new(&mut store, &module, &[]).expect("instance should create");
         (store, instance)
+    }
+
+    fn os(value: impl AsRef<Path>) -> OsString {
+        value.as_ref().as_os_str().to_owned()
     }
 
     #[test]
@@ -173,5 +258,39 @@ mod tests {
         let source = fixture_source("mismatch");
         let err = super::compile_source(source).expect_err("compile should fail");
         assert_eq!(err.to_string(), "return expects f64, got bool");
+    }
+
+    #[test]
+    fn cli_writes_default_output_file() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("add.walu");
+        let output_path = tempdir.path().join("add.wasm");
+        fs::write(&input_path, fixture_source("add")).expect("fixture should write");
+
+        super::run_with_args([os(&input_path)]).expect("cli run should succeed");
+
+        let wasm = fs::read(&output_path).expect("default output should exist");
+        Module::new(&Engine::default(), wasm).expect("output should be valid wasm");
+    }
+
+    #[test]
+    fn cli_reports_compile_diagnostics() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("mismatch.walu");
+        let output_path = tempdir.path().join("custom-output.wasm");
+        fs::write(&input_path, fixture_source("mismatch")).expect("fixture should write");
+
+        let error = super::run_with_args([
+            os(&input_path),
+            OsString::from("--output"),
+            os(&output_path),
+        ])
+        .expect_err("cli run should fail");
+
+        assert_eq!(error.to_string(), "return expects f64, got bool");
+        assert!(
+            !output_path.exists(),
+            "failed compilation must not write output"
+        );
     }
 }
