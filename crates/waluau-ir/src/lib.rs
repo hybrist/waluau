@@ -520,7 +520,9 @@ impl Builder<'_> {
                         let operand_ty = match actual {
                             Type::Numeric(ty) => ty,
                             Type::Bool => {
-                                return Err(Diagnostic::new("unary '-' requires a numeric operand"));
+                                return Err(Diagnostic::new(
+                                    "unary '-' requires a numeric operand",
+                                ));
                             }
                         };
                         let zero = self.emit(Instruction::Number {
