@@ -1,19 +1,19 @@
-fn return_u64_small() -> u64
-    let x: u64 = 42
+function return_u64_small(): u64
+    local x: u64 = 42
     return x
 end
 
-fn return_i64_small() -> i64
-    let x: i64 = 42
+function return_i64_small(): i64
+    local x: i64 = 42
     return x
 end
 
-fn return_u64_max() -> u64
-    let x: u64 = 18446744073709551615
+function return_u64_max(): u64
+    local x: u64 = 18446744073709551615
     return x
 end
 
-fn return_i64_max() -> i64
-    let x: i64 = 9223372036854775807
+function return_i64_max(): i64
+    local x: i64 = 9223372036854775807
     return x
 end

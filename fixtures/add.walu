@@ -1,4 +1,4 @@
-fn add(x: number, y: number) -> number
-    let z: number = x + y
+function add(x: number, y: number): number
+    local z: number = x + y
     return z
 end
