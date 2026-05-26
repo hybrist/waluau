@@ -6,6 +6,7 @@ use std::os::raw::c_char;
 struct CompileResult {
     ir: String,
     wat: String,
+    wasm: Vec<u8>,
 }
 
 #[unsafe(no_mangle)]
@@ -72,7 +73,11 @@ fn compile_source_to_string(source: &str) -> Result<String, String> {
     let wasm_bytes = waluau_codegen_wasm::emit(&module).map_err(|e| e.to_string())?;
     let wat = wasmprinter::print_bytes(&wasm_bytes).map_err(|e| e.to_string())?;
 
-    let result = CompileResult { ir: ir_dump, wat };
+    let result = CompileResult {
+        ir: ir_dump,
+        wat,
+        wasm: wasm_bytes,
+    };
 
     serde_json::to_string(&result).map_err(|e| e.to_string())
 }
