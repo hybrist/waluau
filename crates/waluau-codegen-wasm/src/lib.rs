@@ -700,7 +700,7 @@ mod tests {
     #[test]
     fn emits_valid_wasm_for_scalar_program() {
         let source = r#"
-            fn entry(x: i32) -> i32
+            function entry(x: i32): i32
                 return x + 1
             end
         "#;

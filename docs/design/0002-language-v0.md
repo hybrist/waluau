@@ -14,6 +14,8 @@ The language is Lua-like in syntax, but not Lua-compatible in semantics.
 
 The compiler should reject unsupported dynamic behavior explicitly rather than partially inheriting Lua rules.
 
+V0 surface syntax follows Lua/Luau spellings: `function`, `local`, return type annotations with `:`, and logical operators `and` / `or`. Alternate spellings (`fn`, `let`, `->`, `&&`, `||`) are rejected with diagnostics.
+
 ## Included in V0
 
 - integer literals

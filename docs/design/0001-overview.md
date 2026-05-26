@@ -33,6 +33,7 @@ The repository should use a monorepo layout from the beginning so the project ca
       0001-overview.md
       0002-language-v0.md
       0003-ir-cfg-ssa.md
+      0004-arrays-m2.md
   tests/
     fixtures/
     integration/

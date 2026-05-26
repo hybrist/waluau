@@ -1210,8 +1210,8 @@ mod tests {
     #[test]
     fn inserts_phi_after_if_merge() {
         let source = r#"
-            fn entry(flag: bool, x: i32) -> i32
-                let y: i32 = x
+            function entry(flag: bool, x: i32): i32
+                local y: i32 = x
                 if flag then
                     y = y + 1
                 else
@@ -1239,8 +1239,8 @@ mod tests {
     #[test]
     fn inserts_phi_for_loop_carried_variable() {
         let source = r#"
-            fn entry(limit: i32) -> i32
-                let i: i32 = 0
+            function entry(limit: i32): i32
+                local i: i32 = 0
                 while i < limit do
                     i = i + 1
                 end
@@ -1269,7 +1269,7 @@ mod tests {
     #[test]
     fn emits_branches_and_returns() {
         let source = r#"
-            fn entry(flag: bool, x: i32) -> i32
+            function entry(flag: bool, x: i32): i32
                 if flag then
                     return x
                 end
@@ -1296,10 +1296,10 @@ mod tests {
     #[test]
     fn records_numeric_scalar_kinds_in_instructions() {
         let source = r#"
-            fn entry(x: i64, y: u64, z: f64) -> f64
-                let a: i64 = x + 1
-                let b: u64 = y + 2
-                let c: f64 = z + 3
+            function entry(x: i64, y: u64, z: f64): f64
+                local a: i64 = x + 1
+                local b: u64 = y + 2
+                local c: f64 = z + 3
                 return c
             end
         "#;
@@ -1357,7 +1357,7 @@ mod tests {
     #[test]
     fn preserves_full_range_integer_literals_in_ir() {
         let source = r#"
-            fn entry() -> u64
+            function entry(): u64
                 return 18446744073709551615
             end
         "#;
@@ -1381,9 +1381,9 @@ mod tests {
     #[test]
     fn inserts_casts_for_implicit_and_explicit_conversions() {
         let source = r#"
-            fn entry(x: i32, y: i64) -> i32
-                let widened: i64 = x
-                let sum: i64 = widened + y
+            function entry(x: i32, y: i64): i32
+                local widened: i64 = x
+                local sum: i64 = widened + y
                 return sum :: i32
             end
         "#;

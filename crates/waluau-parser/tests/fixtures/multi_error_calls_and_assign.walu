@@ -1,0 +1,5 @@
+function broken_c(x: i32): i32
+    x =
+    local y: = 1
+    return x
+end

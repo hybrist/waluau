@@ -10,8 +10,8 @@ pub struct Token {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TokenKind {
-    Fn,
-    Let,
+    Function,
+    Local,
     If,
     Then,
     ElseIf,
@@ -41,14 +41,13 @@ pub enum TokenKind {
     EqualEqual,
     Less,
     Greater,
-    AndAnd,
-    OrOr,
+    And,
+    Or,
     ColonColon,
     Colon,
     Comma,
     LParen,
     RParen,
-    Arrow,
 }
 
 pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
@@ -89,21 +88,23 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
             }
             '-' => {
                 if matches!(chars.get(i + 1), Some('>')) {
-                    (TokenKind::Arrow, 2)
+                    return Err(Diagnostic::new(
+                        "unsupported '->' return type annotation, use ':'",
+                    ));
                 } else {
                     (TokenKind::Minus, 1)
                 }
             }
             '&' => {
                 if matches!(chars.get(i + 1), Some('&')) {
-                    (TokenKind::AndAnd, 2)
+                    return Err(Diagnostic::new("unsupported '&&', use 'and'"));
                 } else {
                     return Err(Diagnostic::new("unexpected '&', expected '&&'"));
                 }
             }
             '|' => {
                 if matches!(chars.get(i + 1), Some('|')) {
-                    (TokenKind::OrOr, 2)
+                    return Err(Diagnostic::new("unsupported '||', use 'or'"));
                 } else {
                     return Err(Diagnostic::new("unexpected '|', expected '||'"));
                 }
@@ -140,8 +141,14 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 }
                 let text = &source[i..end];
                 let kind = match text {
-                    "fn" => TokenKind::Fn,
-                    "let" => TokenKind::Let,
+                    "fn" => {
+                        return Err(Diagnostic::new("unsupported 'fn', use 'function'"));
+                    }
+                    "let" => {
+                        return Err(Diagnostic::new("unsupported 'let', use 'local'"));
+                    }
+                    "function" => TokenKind::Function,
+                    "local" => TokenKind::Local,
                     "if" => TokenKind::If,
                     "then" => TokenKind::Then,
                     "elseif" => TokenKind::ElseIf,
@@ -151,6 +158,8 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                     "do" => TokenKind::Do,
                     "return" => TokenKind::Return,
                     "not" => TokenKind::Not,
+                    "and" => TokenKind::And,
+                    "or" => TokenKind::Or,
                     "number" => TokenKind::NumberType,
                     "u32" => TokenKind::U32Type,
                     "u64" => TokenKind::U64Type,

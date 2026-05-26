@@ -12,23 +12,39 @@ pub fn parse(source: &str) -> Result<Program, Diagnostic> {
 struct Parser {
     tokens: Vec<Token>,
     index: usize,
+    diagnostics: Vec<String>,
 }
 
 impl Parser {
     fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, index: 0 }
+        Self {
+            tokens,
+            index: 0,
+            diagnostics: Vec::new(),
+        }
     }
 
     fn parse_program(&mut self) -> Result<Program, Diagnostic> {
         let mut functions = Vec::new();
         while self.peek().is_some() {
-            functions.push(self.parse_function()?);
+            match self.parse_function() {
+                Ok(function) => functions.push(function),
+                Err(error) => {
+                    self.record_error(error);
+                    self.sync_to_next_function();
+                }
+            }
         }
-        Ok(Program { functions })
+
+        if self.diagnostics.is_empty() {
+            Ok(Program { functions })
+        } else {
+            Err(Diagnostic::new(self.diagnostics.join("\n")))
+        }
     }
 
     fn parse_function(&mut self) -> Result<Function, Diagnostic> {
-        self.expect_simple(TokenKind::Fn, "expected 'fn'")?;
+        self.expect_simple(TokenKind::Function, "expected 'function'")?;
         let name = self.expect_identifier()?;
         self.expect_simple(TokenKind::LParen, "expected '('")?;
         let mut params = Vec::new();
@@ -49,9 +65,9 @@ impl Parser {
             }
         }
         self.expect_simple(TokenKind::RParen, "expected ')'")?;
-        self.expect_simple(TokenKind::Arrow, "expected '->'")?;
+        self.expect_simple(TokenKind::Colon, "expected ':' before return type")?;
         let return_type = self.parse_type()?;
-        let body = self.parse_block_until(&[TokenKind::End])?;
+        let body = self.parse_block_until(&[TokenKind::End]);
         self.expect_simple(TokenKind::End, "expected 'end' after function body")?;
         Ok(Function {
             name,
@@ -61,7 +77,7 @@ impl Parser {
         })
     }
 
-    fn parse_block_until(&mut self, end_markers: &[TokenKind]) -> Result<Vec<Stmt>, Diagnostic> {
+    fn parse_block_until(&mut self, end_markers: &[TokenKind]) -> Vec<Stmt> {
         let mut statements = Vec::new();
         while let Some(token) = self.peek() {
             if end_markers
@@ -70,13 +86,21 @@ impl Parser {
             {
                 break;
             }
-            statements.push(self.parse_stmt()?);
+
+            let start_index = self.index;
+            match self.parse_stmt() {
+                Ok(statement) => statements.push(statement),
+                Err(error) => {
+                    self.record_error(error);
+                    self.synchronize_statement(end_markers, start_index);
+                }
+            }
         }
-        Ok(statements)
+        statements
     }
 
     fn parse_stmt(&mut self) -> Result<Stmt, Diagnostic> {
-        if self.check_simple(&TokenKind::Let) {
+        if self.check_simple(&TokenKind::Local) {
             self.advance();
             let name = self.expect_identifier()?;
             self.expect_simple(TokenKind::Colon, "expected ':' after local name")?;
@@ -92,7 +116,7 @@ impl Parser {
             self.advance();
             let condition = self.parse_expr()?;
             self.expect_simple(TokenKind::Do, "expected 'do' after while condition")?;
-            let body = self.parse_block_until(&[TokenKind::End])?;
+            let body = self.parse_block_until(&[TokenKind::End]);
             self.expect_simple(TokenKind::End, "expected 'end' after while")?;
             return Ok(Stmt::While { condition, body });
         }
@@ -132,13 +156,13 @@ impl Parser {
         let condition = self.parse_expr()?;
         self.expect_simple(TokenKind::Then, "expected 'then' after if condition")?;
         let then_body =
-            self.parse_block_until(&[TokenKind::ElseIf, TokenKind::Else, TokenKind::End])?;
+            self.parse_block_until(&[TokenKind::ElseIf, TokenKind::Else, TokenKind::End]);
         let else_body = if self.check_simple(&TokenKind::ElseIf) {
             self.advance();
             vec![self.parse_if_clause()?]
         } else if self.check_simple(&TokenKind::Else) {
             self.advance();
-            self.parse_block_until(&[TokenKind::End])?
+            self.parse_block_until(&[TokenKind::End])
         } else {
             Vec::new()
         };
@@ -150,13 +174,13 @@ impl Parser {
     }
 
     fn parse_or(&mut self) -> Result<Expr, Diagnostic> {
-        self.parse_binary(Parser::parse_and, &[TokenKind::OrOr], &[BinaryOp::Or])
+        self.parse_binary(Parser::parse_and, &[TokenKind::Or], &[BinaryOp::Or])
     }
 
     fn parse_and(&mut self) -> Result<Expr, Diagnostic> {
         self.parse_binary(
             Parser::parse_comparison,
-            &[TokenKind::AndAnd],
+            &[TokenKind::And],
             &[BinaryOp::And],
         )
     }
@@ -279,7 +303,7 @@ impl Parser {
                 self.expect_simple(TokenKind::RParen, "expected ')' after expression")?;
                 Ok(inner)
             }
-            _ => Err(Diagnostic::new("expected expression")),
+            _ => Err(self.diagnostic_at_current("expected expression")),
         }
     }
 
@@ -292,7 +316,7 @@ impl Parser {
             Some(TokenKind::I64Type) => Ok(Type::Numeric(NumericType::I64)),
             Some(TokenKind::F32Type) => Ok(Type::Numeric(NumericType::F32)),
             Some(TokenKind::BoolType) => Ok(Type::Bool),
-            _ => Err(Diagnostic::new(
+            _ => Err(self.diagnostic_at_current(
                 "expected type (number, u32, u64, i32, i64, f32, f64, or bool)",
             )),
         }
@@ -301,7 +325,7 @@ impl Parser {
     fn expect_identifier(&mut self) -> Result<String, Diagnostic> {
         match self.advance().map(|token| token.kind) {
             Some(TokenKind::Identifier(name)) => Ok(name),
-            _ => Err(Diagnostic::new("expected identifier")),
+            _ => Err(self.diagnostic_at_current("expected identifier")),
         }
     }
 
@@ -312,7 +336,10 @@ impl Parser {
         if same_variant(&token.kind, &expected) {
             Ok(())
         } else {
-            Err(Diagnostic::new(message))
+            Err(Diagnostic::new(format!(
+                "{message} at {}..{}",
+                token.span.start, token.span.end
+            )))
         }
     }
 
@@ -335,6 +362,70 @@ impl Parser {
         self.index += usize::from(token.is_some());
         token
     }
+
+    fn record_error(&mut self, diagnostic: Diagnostic) {
+        self.diagnostics.push(diagnostic.to_string());
+    }
+
+    fn diagnostic_at_current(&self, message: &str) -> Diagnostic {
+        if self.index == 0 {
+            return Diagnostic::new(message);
+        }
+
+        if let Some(token) = self.tokens.get(self.index.saturating_sub(1)) {
+            Diagnostic::new(format!(
+                "{message} at {}..{}",
+                token.span.start, token.span.end
+            ))
+        } else {
+            Diagnostic::new(message)
+        }
+    }
+
+    fn sync_to_next_function(&mut self) {
+        while let Some(token) = self.peek() {
+            if matches!(token.kind, TokenKind::Function) {
+                return;
+            }
+            self.advance();
+        }
+    }
+
+    fn synchronize_statement(&mut self, end_markers: &[TokenKind], start_index: usize) {
+        let mut depth = 0usize;
+        while let Some(token) = self.peek() {
+            if depth == 0
+                && (is_statement_start(&token.kind)
+                    || end_markers
+                        .iter()
+                        .any(|marker| same_variant(&token.kind, marker)))
+            {
+                return;
+            }
+
+            match token.kind {
+                TokenKind::If | TokenKind::While | TokenKind::Function => depth += 1,
+                TokenKind::End if depth > 0 => depth -= 1,
+                _ => {}
+            }
+            self.advance();
+        }
+
+        if self.index == start_index {
+            self.advance();
+        }
+    }
+}
+
+fn is_statement_start(kind: &TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::Local
+            | TokenKind::If
+            | TokenKind::While
+            | TokenKind::Return
+            | TokenKind::Identifier(_)
+    )
 }
 
 fn same_variant(a: &TokenKind, b: &TokenKind) -> bool {
@@ -349,8 +440,8 @@ mod tests {
     #[test]
     fn parses_v0_function() {
         let source = r#"
-            fn choose(flag: bool, x: i32, y: number) -> f64
-                let result: f64 = y
+            function choose(flag: bool, x: i32, y: number): f64
+                local result: f64 = y
                 if flag then
                     result = x + 1
                 else
@@ -367,8 +458,8 @@ mod tests {
     #[test]
     fn parses_numeric_type_aliases() {
         let source = r#"
-            fn widen(x: number, y: f32, z: u64, w: i64) -> f64
-                let result: f64 = x
+            function widen(x: number, y: f32, z: u64, w: i64): f64
+                local result: f64 = x
                 return result
             end
         "#;
@@ -385,7 +476,7 @@ mod tests {
     #[test]
     fn parses_postfix_numeric_casts() {
         let source = r#"
-            fn cast(x: i64) -> i32
+            function cast(x: i64): i32
                 return (x + 1) :: i32
             end
         "#;
@@ -404,7 +495,7 @@ mod tests {
     #[test]
     fn preserves_large_integer_literal_text() {
         let source = r#"
-            fn entry() -> u64
+            function entry(): u64
                 return 18446744073709551615
             end
         "#;
@@ -421,7 +512,7 @@ mod tests {
     #[test]
     fn parses_unary_and_elseif_forms() {
         let source = r#"
-            fn entry(flag: bool, x: i32) -> i32
+            function entry(flag: bool, x: i32): i32
                 if not flag then
                     return -x
                 elseif x > 0 then
@@ -454,5 +545,36 @@ mod tests {
                 )
             )
         ));
+    }
+
+    #[test]
+    fn rejects_legacy_function_local_and_return_syntax() {
+        let source = r#"
+            fn entry(x: i32) -> i32
+                let y: i32 = x
+                return y
+            end
+        "#;
+
+        let error = parse(source).expect_err("parse should fail");
+        let message = error.to_string();
+        assert!(
+            message.contains("unsupported 'fn'")
+                || message.contains("unsupported 'let'")
+                || message.contains("unsupported '->'")
+        );
+    }
+
+    #[test]
+    fn rejects_symbolic_logical_operators() {
+        let source = r#"
+            function entry(a: bool, b: bool): bool
+                return a && b || a
+            end
+        "#;
+
+        let error = parse(source).expect_err("parse should fail");
+        let message = error.to_string();
+        assert!(message.contains("unsupported '&&'") || message.contains("unsupported '||'"));
     }
 }
