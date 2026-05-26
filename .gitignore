@@ -1,5 +1,6 @@
 
 # Beads / Dolt files (added by bd init)
+.beads/
 .dolt/
 *.db
 .beads-credential-key
@@ -8,4 +9,3 @@
 node_modules/
 dist/
 .pnpm-debug.log
-
