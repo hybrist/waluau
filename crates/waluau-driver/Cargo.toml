@@ -13,4 +13,5 @@ waluau-ir.workspace = true
 waluau-parser.workspace = true
 
 [dev-dependencies]
+tempfile = "3"
 wasmtime = "25"
