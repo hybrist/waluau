@@ -6,7 +6,7 @@ This project uses **bd** (beads) for issue tracking. Run `bd prime` for full wor
 
 ```bash
 git config beads.role maintainer                      # First-time local role setup
-bd bootstrap --yes                                   # First-time local bootstrap from tracked queue / remote
+bd bootstrap --yes                                   # First-time local bootstrap from the Dolt upstream
 bd ready              # Find available work
 bd show <id>          # View issue details
 bd update <id> --claim  # Claim work atomically
@@ -125,9 +125,9 @@ bd close bd-42 --reason "Completed" --json
 bd automatically syncs via Dolt:
 
 - Each write auto-commits to Dolt history
-- The shared queue snapshot lives in tracked `.beads/issues.jsonl`
-- Each checkout keeps its own untracked `.beads/embeddeddolt/` database
-- Use `bd dolt push`/`bd dolt pull` for Dolt sync and commit `.beads/issues.jsonl` when it changes
+- The Dolt upstream is the source of truth for the shared queue
+- Each checkout keeps its own untracked `.beads/embeddeddolt/` database and local exports
+- Use `bd dolt push`/`bd dolt pull` for shared-state sync
 - No manual export/import needed!
 
 ### Important Rules

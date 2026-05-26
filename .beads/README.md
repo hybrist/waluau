@@ -1,6 +1,6 @@
-This repository tracks the shared Beads project queue via `.beads/issues.jsonl`.
+This repository uses the Beads Dolt upstream as the source of truth.
 
-Each checkout keeps its own embedded Dolt database under `.beads/embeddeddolt/`, which stays untracked via `.beads/.gitignore`.
+Each checkout keeps its own embedded Dolt database and local export files under `.beads/`, all untracked except for shared bootstrap config.
 
 Bootstrap a fresh clone or worktree with:
 
@@ -10,10 +10,8 @@ bd bootstrap --yes
 bd ready --json
 ```
 
-After mutations, sync both stores:
+After mutations, sync the upstream state with:
 
 ```sh
 bd dolt push
-git add .beads/issues.jsonl
-git commit -m "Update beads export"
 ```

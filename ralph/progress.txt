@@ -21,3 +21,5 @@
 2026-05-26: Completed `waluau-n4d` by moving the driver's inline Wasmtime execution programs into reusable `fixtures/*.walu` files for branch/call, loop, and i64/u64 literal coverage; updated `waluau-driver` tests to load those fixtures via `include_str!`; ran `cargo test -p waluau-driver` and `./check` cleanly.
 
 2026-05-25: Completed `waluau-ro5` by committing a tracked `.beads` queue seed (`config.yaml` and `issues.jsonl`), keeping each checkout's embedded Dolt state local via `.beads/.gitignore`, documenting the real bootstrap flow (`git config beads.role ...` plus `bd bootstrap --yes`) in `AGENTS.md`, `ralph/RALPH.md`, and `.beads/README.md`, validating that a fresh temp repo can bootstrap and see the shared queue, running `./check` cleanly, closing the issue, and pushing beads state to the Dolt remote.
+
+2026-05-25: Completed `waluau-pc1` by removing the checked-in `.beads/issues.jsonl` export, disabling Beads auto-staging for exports in `.beads/config.yaml`, updating `.beads/.gitignore` and bootstrap docs to treat the Dolt upstream as the only shared queue source of truth, and re-validating the workflow with `./check`.

@@ -44,6 +44,9 @@
 #   git-push: false    # Disable git push (export locally only)
 #   git-repo: ""       # Separate git repo for backups (default: project repo)
 
+export:
+  git-add: false
+
 # Integration settings (access with 'bd config get/set')
 # Non-secret keys (stored in the database):
 # - jira.url, jira.project
