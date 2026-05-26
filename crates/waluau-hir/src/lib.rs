@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use waluau_ast::{BinaryOp, Expr, Function, NumberLiteral, NumericType, Program, Stmt, Type};
+use waluau_ast::{
+    BinaryOp, Expr, Function, NumberLiteral, NumericType, Program, Stmt, Type, UnaryOp,
+};
 use waluau_diagnostics::Diagnostic;
 
 pub fn type_check(program: &Program) -> Result<(), Diagnostic> {
@@ -122,6 +124,9 @@ fn check_stmt(
             Ok(true)
         }
         Stmt::Expr(expr) => {
+            if !matches!(expr, Expr::Call { .. }) {
+                return Err(Diagnostic::new("expression statements must be calls"));
+            }
             let _ = infer_expr(expr, vars, signatures, None)?;
             Ok(false)
         }
@@ -144,6 +149,22 @@ fn infer_expr(
                 .ok_or_else(|| Diagnostic::new(format!("unknown name '{name}'")))?;
             coerce_type(actual, expected)
         }
+        Expr::Unary { op, expr } => match op {
+            UnaryOp::Neg => {
+                let actual = infer_expr(expr, vars, signatures, expected)?;
+                match actual {
+                    Type::Numeric(_) => coerce_type(actual, expected),
+                    Type::Bool => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                }
+            }
+            UnaryOp::Not => {
+                let actual = infer_expr(expr, vars, signatures, Some(Type::Bool))?;
+                if actual != Type::Bool {
+                    return Err(Diagnostic::new("unary 'not' requires a bool operand"));
+                }
+                coerce_type(Type::Bool, expected)
+            }
+        },
         Expr::Cast { expr, ty } => {
             let actual = infer_expr(expr, vars, signatures, None)?;
             require_numeric_cast(actual, *ty)?;
@@ -522,5 +543,37 @@ mod tests {
 
         let program = parse(source).expect("parse should succeed");
         super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn accepts_unary_negation_not_and_elseif() {
+        let source = r#"
+            fn entry(flag: bool, x: i32) -> i32
+                if not flag then
+                    return -x
+                elseif x > 0 then
+                    return x
+                else
+                    return 0
+                end
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn rejects_non_call_expression_statements() {
+        let source = r#"
+            fn entry(x: i32) -> i32
+                x + 1
+                return x
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.to_string(), "expression statements must be calls");
     }
 }

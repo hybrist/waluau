@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use waluau_ast::{
     BinaryOp, Expr, Function as AstFunction, NumberLiteral, NumericType, Program, Stmt, Type,
+    UnaryOp,
 };
 use waluau_diagnostics::Diagnostic;
 
@@ -512,6 +513,47 @@ impl Builder<'_> {
                 })?;
                 self.coerce_value(value, actual, expected)?
             }
+            Expr::Unary { op, expr } => {
+                let actual = self.infer_expr_type(expr, types, None)?;
+                match op {
+                    UnaryOp::Neg => {
+                        let operand_ty = match actual {
+                            Type::Numeric(ty) => ty,
+                            Type::Bool => {
+                                return Err(Diagnostic::new("unary '-' requires a numeric operand"));
+                            }
+                        };
+                        let zero = self.emit(Instruction::Number {
+                            ty: operand_ty,
+                            literal: NumberLiteral {
+                                raw: "0".to_string(),
+                            },
+                        });
+                        let operand =
+                            self.lower_expr(expr, env, types, Some(Type::Numeric(operand_ty)))?;
+                        let value = self.emit(Instruction::Binary {
+                            op: BinaryOp::Sub,
+                            left: zero,
+                            right: operand,
+                            operand_ty: Type::Numeric(operand_ty),
+                            result_ty: Type::Numeric(operand_ty),
+                        });
+                        self.coerce_value(value, Type::Numeric(operand_ty), expected)?
+                    }
+                    UnaryOp::Not => {
+                        let operand = self.lower_expr(expr, env, types, Some(Type::Bool))?;
+                        let false_value = self.emit(Instruction::Bool(false));
+                        let value = self.emit(Instruction::Binary {
+                            op: BinaryOp::Eq,
+                            left: operand,
+                            right: false_value,
+                            operand_ty: Type::Bool,
+                            result_ty: Type::Bool,
+                        });
+                        self.coerce_value(value, Type::Bool, expected)?
+                    }
+                }
+            }
             Expr::Cast { expr, ty } => {
                 let value = self.lower_expr(expr, env, types, None)?;
                 let actual = self.infer_expr_type(expr, types, None)?;
@@ -570,6 +612,23 @@ impl Builder<'_> {
             Expr::Name(name) => types.get(name).copied().ok_or_else(|| {
                 Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
             }),
+            Expr::Unary { op, expr } => match op {
+                UnaryOp::Neg => {
+                    let actual = self.infer_expr_type(expr, types, expected)?;
+                    match actual {
+                        Type::Numeric(_) => coerce_type(actual, expected),
+                        Type::Bool => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                    }
+                }
+                UnaryOp::Not => {
+                    let actual = self.infer_expr_type(expr, types, Some(Type::Bool))?;
+                    if actual == Type::Bool {
+                        Ok(Type::Bool)
+                    } else {
+                        Err(Diagnostic::new("unary 'not' requires a bool operand"))
+                    }
+                }
+            },
             Expr::Cast { expr, ty } => {
                 let actual = self.infer_expr_type(expr, types, None)?;
                 require_numeric_cast(actual, *ty)?;

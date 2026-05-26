@@ -1,5 +1,5 @@
 use waluau_ast::{
-    BinaryOp, Expr, Function, NumberLiteral, NumericType, Param, Program, Stmt, Type,
+    BinaryOp, Expr, Function, NumberLiteral, NumericType, Param, Program, Stmt, Type, UnaryOp,
 };
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
@@ -86,22 +86,7 @@ impl Parser {
             return Ok(Stmt::Let { name, ty, value });
         }
         if self.check_simple(&TokenKind::If) {
-            self.advance();
-            let condition = self.parse_expr()?;
-            self.expect_simple(TokenKind::Then, "expected 'then' after if condition")?;
-            let then_body = self.parse_block_until(&[TokenKind::Else, TokenKind::End])?;
-            let else_body = if self.check_simple(&TokenKind::Else) {
-                self.advance();
-                self.parse_block_until(&[TokenKind::End])?
-            } else {
-                Vec::new()
-            };
-            self.expect_simple(TokenKind::End, "expected 'end' after if")?;
-            return Ok(Stmt::If {
-                condition,
-                then_body,
-                else_body,
-            });
+            return self.parse_if_stmt();
         }
         if self.check_simple(&TokenKind::While) {
             self.advance();
@@ -134,6 +119,34 @@ impl Parser {
 
     fn parse_expr(&mut self) -> Result<Expr, Diagnostic> {
         self.parse_or()
+    }
+
+    fn parse_if_stmt(&mut self) -> Result<Stmt, Diagnostic> {
+        self.expect_simple(TokenKind::If, "expected 'if'")?;
+        let stmt = self.parse_if_clause()?;
+        self.expect_simple(TokenKind::End, "expected 'end' after if")?;
+        Ok(stmt)
+    }
+
+    fn parse_if_clause(&mut self) -> Result<Stmt, Diagnostic> {
+        let condition = self.parse_expr()?;
+        self.expect_simple(TokenKind::Then, "expected 'then' after if condition")?;
+        let then_body =
+            self.parse_block_until(&[TokenKind::ElseIf, TokenKind::Else, TokenKind::End])?;
+        let else_body = if self.check_simple(&TokenKind::ElseIf) {
+            self.advance();
+            vec![self.parse_if_clause()?]
+        } else if self.check_simple(&TokenKind::Else) {
+            self.advance();
+            self.parse_block_until(&[TokenKind::End])?
+        } else {
+            Vec::new()
+        };
+        Ok(Stmt::If {
+            condition,
+            then_body,
+            else_body,
+        })
     }
 
     fn parse_or(&mut self) -> Result<Expr, Diagnostic> {
@@ -173,7 +186,7 @@ impl Parser {
     }
 
     fn parse_cast(&mut self) -> Result<Expr, Diagnostic> {
-        let mut expr = self.parse_primary()?;
+        let mut expr = self.parse_unary()?;
         while self.check_simple(&TokenKind::ColonColon) {
             self.advance();
             let ty = self.parse_type()?;
@@ -183,6 +196,24 @@ impl Parser {
             };
         }
         Ok(expr)
+    }
+
+    fn parse_unary(&mut self) -> Result<Expr, Diagnostic> {
+        if self.check_simple(&TokenKind::Minus) {
+            self.advance();
+            return Ok(Expr::Unary {
+                op: UnaryOp::Neg,
+                expr: Box::new(self.parse_unary()?),
+            });
+        }
+        if self.check_simple(&TokenKind::Not) {
+            self.advance();
+            return Ok(Expr::Unary {
+                op: UnaryOp::Not,
+                expr: Box::new(self.parse_unary()?),
+            });
+        }
+        self.parse_primary()
     }
 
     fn parse_binary(
@@ -313,7 +344,7 @@ fn same_variant(a: &TokenKind, b: &TokenKind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::parse;
-    use waluau_ast::{NumberLiteral, NumericType, Type};
+    use waluau_ast::{NumberLiteral, NumericType, Type, UnaryOp};
 
     #[test]
     fn parses_v0_function() {
@@ -384,6 +415,44 @@ mod tests {
             &function.body[0],
             waluau_ast::Stmt::Return(waluau_ast::Expr::Number(NumberLiteral { raw }))
                 if raw == "18446744073709551615"
+        ));
+    }
+
+    #[test]
+    fn parses_unary_and_elseif_forms() {
+        let source = r#"
+            fn entry(flag: bool, x: i32) -> i32
+                if not flag then
+                    return -x
+                elseif x > 0 then
+                    return x
+                else
+                    return 0
+                end
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert!(matches!(
+            &function.body[0],
+            waluau_ast::Stmt::If {
+                condition: waluau_ast::Expr::Unary {
+                    op: UnaryOp::Not,
+                    ..
+                },
+                else_body,
+                ..
+            } if matches!(
+                else_body.as_slice(),
+                [waluau_ast::Stmt::If {
+                    then_body,
+                    ..
+                }] if matches!(
+                    then_body.as_slice(),
+                    [waluau_ast::Stmt::Return(waluau_ast::Expr::Name(name))] if name == "x"
+                )
+            )
         ));
     }
 }
