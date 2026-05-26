@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use waluau_ast::{BinaryOp, NumericType, Type};
+use waluau_ast::{BinaryOp, NumberLiteral, NumericType, Type};
 use waluau_diagnostics::Diagnostic;
 use waluau_ir::{
     BasicBlock, Function as IrFunction, Instruction as IrInstruction, Module, Terminator, ValueId,
@@ -234,8 +234,8 @@ fn emit_block(
     for (value, instruction) in &block.instructions {
         match instruction {
             IrInstruction::Param(_) | IrInstruction::Phi(_) => {}
-            IrInstruction::Number { ty, value: number } => {
-                emit_numeric_const(out, *ty, *number);
+            IrInstruction::Number { ty, literal } => {
+                emit_numeric_const(out, *ty, literal)?;
                 out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
             }
             IrInstruction::Bool(flag) => {
@@ -356,21 +356,56 @@ fn emit_phi_copies(
     Ok(())
 }
 
-fn emit_numeric_const(out: &mut Function, ty: NumericType, value: f64) {
+fn emit_numeric_const(
+    out: &mut Function,
+    ty: NumericType,
+    literal: &NumberLiteral,
+) -> Result<(), Diagnostic> {
     match ty {
-        NumericType::U32 | NumericType::I32 => {
-            out.instruction(&Instruction::I32Const(value as i32));
+        NumericType::U32 => {
+            out.instruction(&Instruction::I32Const(
+                parse_numeric_literal::<u32>(literal, "u32")? as i32,
+            ));
         }
-        NumericType::U64 | NumericType::I64 => {
-            out.instruction(&Instruction::I64Const(value as i64));
+        NumericType::I32 => {
+            out.instruction(&Instruction::I32Const(parse_numeric_literal::<i32>(
+                literal, "i32",
+            )?));
+        }
+        NumericType::U64 => {
+            out.instruction(&Instruction::I64Const(
+                parse_numeric_literal::<u64>(literal, "u64")? as i64,
+            ));
+        }
+        NumericType::I64 => {
+            out.instruction(&Instruction::I64Const(parse_numeric_literal::<i64>(
+                literal, "i64",
+            )?));
         }
         NumericType::F32 => {
-            out.instruction(&Instruction::F32Const(value as f32));
+            out.instruction(&Instruction::F32Const(parse_numeric_literal::<f32>(
+                literal, "f32",
+            )?));
         }
         NumericType::F64 => {
-            out.instruction(&Instruction::F64Const(value));
+            out.instruction(&Instruction::F64Const(parse_numeric_literal::<f64>(
+                literal, "f64",
+            )?));
         }
     }
+
+    Ok(())
+}
+
+fn parse_numeric_literal<T>(literal: &NumberLiteral, ty_name: &str) -> Result<T, Diagnostic>
+where
+    T: std::str::FromStr,
+{
+    literal.raw.parse::<T>().map_err(|_| {
+        Diagnostic::new(format!(
+            "invalid {ty_name} numeric literal during wasm emission"
+        ))
+    })
 }
 
 fn emit_cast(out: &mut Function, from: Type, to: Type) -> Result<(), Diagnostic> {

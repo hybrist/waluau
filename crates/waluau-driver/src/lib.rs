@@ -101,6 +101,74 @@ mod tests {
     }
 
     #[test]
+    fn executes_i64_and_u64_locals_initialized_from_literals() {
+        let source = r#"
+            fn return_u64_small() -> u64
+                let x: u64 = 42
+                return x
+            end
+
+            fn return_i64_small() -> i64
+                let x: i64 = 42
+                return x
+            end
+
+            fn return_u64_max() -> u64
+                let x: u64 = 18446744073709551615
+                return x
+            end
+
+            fn return_i64_max() -> i64
+                let x: i64 = 9223372036854775807
+                return x
+            end
+        "#;
+
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+
+        let return_u64_small = instance
+            .get_typed_func::<(), u64>(&mut store, "return_u64_small")
+            .expect("return_u64_small export should exist");
+        assert_eq!(
+            return_u64_small
+                .call(&mut store, ())
+                .expect("call should succeed"),
+            42
+        );
+
+        let return_i64_small = instance
+            .get_typed_func::<(), i64>(&mut store, "return_i64_small")
+            .expect("return_i64_small export should exist");
+        assert_eq!(
+            return_i64_small
+                .call(&mut store, ())
+                .expect("call should succeed"),
+            42
+        );
+
+        let return_u64_max = instance
+            .get_typed_func::<(), u64>(&mut store, "return_u64_max")
+            .expect("return_u64_max export should exist");
+        assert_eq!(
+            return_u64_max
+                .call(&mut store, ())
+                .expect("call should succeed"),
+            u64::MAX
+        );
+
+        let return_i64_max = instance
+            .get_typed_func::<(), i64>(&mut store, "return_i64_max")
+            .expect("return_i64_max export should exist");
+        assert_eq!(
+            return_i64_max
+                .call(&mut store, ())
+                .expect("call should succeed"),
+            i64::MAX
+        );
+    }
+
+    #[test]
     fn rejects_invalid_fixture_file() {
         let source = fixture_source("mismatch");
         let err = super::compile_source(source).expect_err("compile should fail");
