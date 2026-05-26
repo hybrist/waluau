@@ -1,5 +1,12 @@
+use serde::Serialize;
 use std::ffi::CString;
 use std::os::raw::c_char;
+
+#[derive(Serialize)]
+struct CompileResult {
+    ir: String,
+    wat: String,
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn alloc(size: usize) -> *mut u8 {
@@ -56,10 +63,16 @@ fn compile_source_to_string(source: &str) -> Result<String, String> {
     waluau_hir::type_check(&program).map_err(|e| e.to_string())?;
     let module = waluau_ir::build(&program).map_err(|e| e.to_string())?;
 
-    let mut output = String::new();
+    let mut ir_dump = String::new();
     for function in &module.functions {
-        output.push_str(&function.dump());
-        output.push('\n');
+        ir_dump.push_str(&function.dump());
+        ir_dump.push('\n');
     }
-    Ok(output)
+
+    let wasm_bytes = waluau_codegen_wasm::emit(&module).map_err(|e| e.to_string())?;
+    let wat = wasmprinter::print_bytes(&wasm_bytes).map_err(|e| e.to_string())?;
+
+    let result = CompileResult { ir: ir_dump, wat };
+
+    serde_json::to_string(&result).map_err(|e| e.to_string())
 }

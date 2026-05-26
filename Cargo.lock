@@ -1196,10 +1196,14 @@ version = "0.1.0"
 name = "waluau-wasm"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
+ "waluau-codegen-wasm",
  "waluau-diagnostics",
  "waluau-hir",
  "waluau-ir",
  "waluau-parser",
+ "wasmprinter",
 ]
 
 [[package]]
