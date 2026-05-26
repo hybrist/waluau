@@ -98,59 +98,167 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
 }
 
 pub fn verify(module: &Module) -> Result<(), Diagnostic> {
+    let signatures: HashMap<_, _> = module
+        .functions
+        .iter()
+        .map(|function| {
+            (
+                function.name.clone(),
+                (
+                    function
+                        .params
+                        .iter()
+                        .map(|(_, ty)| *ty)
+                        .collect::<Vec<_>>(),
+                    function.return_type,
+                ),
+            )
+        })
+        .collect();
     for function in &module.functions {
-        verify_function(function)?;
+        verify_function(function, &signatures)?;
     }
     Ok(())
 }
 
-fn verify_function(function: &Function) -> Result<(), Diagnostic> {
+fn verify_function(
+    function: &Function,
+    signatures: &HashMap<String, (Vec<Type>, Type)>,
+) -> Result<(), Diagnostic> {
     let predecessors = predecessors(function);
-    let mut defined = HashSet::new();
+    let dominators = compute_dominators(function, &predecessors)?;
+    let mut definitions = HashMap::new();
     for block in function.blocks.values() {
-        for (value, _) in &block.instructions {
-            if !defined.insert(*value) {
+        for (value, instruction) in &block.instructions {
+            let ty = match instruction {
+                Instruction::Phi(_) => None,
+                _ => Some(infer_instruction_type(function, instruction, signatures)?),
+            };
+            if definitions
+                .insert(
+                    *value,
+                    ValueDefinition {
+                        block: block.id,
+                        ty,
+                    },
+                )
+                .is_some()
+            {
                 return Err(Diagnostic::new(format!("duplicate value id {:?}", value)));
             }
         }
     }
+    resolve_phi_types(function, &mut definitions)?;
 
     for block in function.blocks.values() {
-        for (_value, instruction) in &block.instructions {
+        let mut seen_in_block = HashSet::new();
+        for (value, instruction) in &block.instructions {
             match instruction {
-                Instruction::Binary { left, right, .. } => {
-                    require_defined(defined.contains(left), left)?;
-                    require_defined(defined.contains(right), right)?;
+                Instruction::Binary {
+                    left,
+                    right,
+                    operand_ty,
+                    ..
+                } => {
+                    let left_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *left,
+                    )?;
+                    let right_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *right,
+                    )?;
+                    if left_ty != *operand_ty || right_ty != *operand_ty {
+                        return Err(Diagnostic::new(format!(
+                            "binary operands in block {:?} must both have type {}",
+                            block.id, operand_ty
+                        )));
+                    }
                 }
-                Instruction::Cast { value, .. } => require_defined(defined.contains(value), value)?,
-                Instruction::Call { args, .. } => {
-                    for arg in args {
-                        require_defined(defined.contains(arg), arg)?;
+                Instruction::Cast { value, from, to } => {
+                    let value_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *value,
+                    )?;
+                    if value_ty != *from {
+                        return Err(Diagnostic::new(format!(
+                            "cast source in block {:?} has type {}, expected {}",
+                            block.id, value_ty, from
+                        )));
+                    }
+                    require_numeric_cast(*from, *to)?;
+                }
+                Instruction::Call { name, args } => {
+                    let (param_types, _) = signatures
+                        .get(name)
+                        .ok_or_else(|| Diagnostic::new(format!("unknown function '{}'", name)))?;
+                    if args.len() != param_types.len() {
+                        return Err(Diagnostic::new(format!(
+                            "call to '{}' has {} args but signature expects {}",
+                            name,
+                            args.len(),
+                            param_types.len()
+                        )));
+                    }
+                    for (arg, param_ty) in args.iter().zip(param_types.iter()) {
+                        let arg_ty = require_dominating_definition(
+                            &definitions,
+                            &dominators,
+                            &seen_in_block,
+                            block.id,
+                            *arg,
+                        )?;
+                        if arg_ty != *param_ty {
+                            return Err(Diagnostic::new(format!(
+                                "call argument in block {:?} has type {}, expected {}",
+                                block.id, arg_ty, param_ty
+                            )));
+                        }
                     }
                 }
                 Instruction::Phi(incoming) => {
-                    let pred_count = predecessors.get(&block.id).map_or(0, Vec::len);
-                    if incoming.len() > pred_count {
+                    let expected_preds = predecessors.get(&block.id).cloned().unwrap_or_default();
+                    if incoming.len() != expected_preds.len() {
                         return Err(Diagnostic::new(format!(
-                            "phi in block {:?} has too many incoming values",
-                            block.id
+                            "phi in block {:?} must have exactly {} incoming values",
+                            block.id,
+                            expected_preds.len()
                         )));
                     }
-                    for (pred, value) in incoming {
-                        if !predecessors
-                            .get(&block.id)
-                            .is_some_and(|preds| preds.contains(pred))
-                        {
+                    for (index, (pred, value)) in incoming.iter().enumerate() {
+                        if *pred != expected_preds[index] {
                             return Err(Diagnostic::new(format!(
-                                "phi in block {:?} references non-predecessor {:?}",
-                                block.id, pred
+                                "phi in block {:?} predecessor order mismatch at {}",
+                                block.id, index
                             )));
                         }
-                        require_defined(defined.contains(value), value)?;
+                        let value_def = definitions.get(value).ok_or_else(|| {
+                            Diagnostic::new(format!("use of undefined value {:?}", value))
+                        })?;
+                        if value_def.block != *pred
+                            && !dominators
+                                .get(pred)
+                                .is_some_and(|doms| doms.contains(&value_def.block))
+                        {
+                            return Err(Diagnostic::new(format!(
+                                "value {:?} does not dominate phi edge {:?} -> {:?}",
+                                value, pred, block.id
+                            )));
+                        }
                     }
                 }
                 Instruction::Param(_) | Instruction::Number { .. } | Instruction::Bool(_) => {}
             }
+            seen_in_block.insert(*value);
         }
 
         match &block.terminator {
@@ -160,11 +268,37 @@ fn verify_function(function: &Function) -> Result<(), Diagnostic> {
                 then_block,
                 else_block,
             } => {
-                require_defined(defined.contains(condition), condition)?;
+                let condition_ty = require_dominating_definition(
+                    &definitions,
+                    &dominators,
+                    &seen_in_block,
+                    block.id,
+                    *condition,
+                )?;
+                if condition_ty != Type::Bool {
+                    return Err(Diagnostic::new(format!(
+                        "branch condition in block {:?} must have type bool",
+                        block.id
+                    )));
+                }
                 require_block(function, *then_block)?;
                 require_block(function, *else_block)?;
             }
-            Terminator::Return(value) => require_defined(defined.contains(value), value)?,
+            Terminator::Return(value) => {
+                let value_ty = require_dominating_definition(
+                    &definitions,
+                    &dominators,
+                    &seen_in_block,
+                    block.id,
+                    *value,
+                )?;
+                if value_ty != function.return_type {
+                    return Err(Diagnostic::new(format!(
+                        "return in block {:?} has type {}, expected {}",
+                        block.id, value_ty, function.return_type
+                    )));
+                }
+            }
             Terminator::Unreachable => {}
         }
     }
@@ -172,15 +306,41 @@ fn verify_function(function: &Function) -> Result<(), Diagnostic> {
     Ok(())
 }
 
-fn require_defined(ok: bool, value: &ValueId) -> Result<(), Diagnostic> {
-    if ok {
-        Ok(())
-    } else {
-        Err(Diagnostic::new(format!(
-            "use of undefined value {:?}",
-            value
-        )))
+#[derive(Clone, Copy)]
+struct ValueDefinition {
+    block: BlockId,
+    ty: Option<Type>,
+}
+
+fn require_dominating_definition(
+    definitions: &HashMap<ValueId, ValueDefinition>,
+    dominators: &HashMap<BlockId, HashSet<BlockId>>,
+    seen_in_block: &HashSet<ValueId>,
+    use_block: BlockId,
+    value: ValueId,
+) -> Result<Type, Diagnostic> {
+    let definition = definitions
+        .get(&value)
+        .ok_or_else(|| Diagnostic::new(format!("use of undefined value {:?}", value)))?;
+    if definition.block == use_block {
+        if !seen_in_block.contains(&value) {
+            return Err(Diagnostic::new(format!(
+                "value {:?} does not dominate its use in block {:?}",
+                value, use_block
+            )));
+        }
+    } else if !dominators
+        .get(&use_block)
+        .is_some_and(|doms| doms.contains(&definition.block))
+    {
+        return Err(Diagnostic::new(format!(
+            "value {:?} does not dominate its use in block {:?}",
+            value, use_block
+        )));
     }
+    definition
+        .ty
+        .ok_or_else(|| Diagnostic::new(format!("could not infer type for value {:?}", value)))
 }
 
 fn require_block(function: &Function, block: BlockId) -> Result<(), Diagnostic> {
@@ -189,6 +349,146 @@ fn require_block(function: &Function, block: BlockId) -> Result<(), Diagnostic> 
     } else {
         Err(Diagnostic::new(format!("unknown block {:?}", block)))
     }
+}
+
+fn infer_instruction_type(
+    function: &Function,
+    instruction: &Instruction,
+    signatures: &HashMap<String, (Vec<Type>, Type)>,
+) -> Result<Type, Diagnostic> {
+    match instruction {
+        Instruction::Param(index) => function
+            .params
+            .get(*index)
+            .map(|(_, ty)| *ty)
+            .ok_or_else(|| Diagnostic::new(format!("param index {} out of bounds", index))),
+        Instruction::Number { ty, .. } => Ok(Type::Numeric(*ty)),
+        Instruction::Bool(_) => Ok(Type::Bool),
+        Instruction::Cast { to, .. } => Ok(*to),
+        Instruction::Binary { result_ty, .. } => Ok(*result_ty),
+        Instruction::Call { name, .. } => signatures
+            .get(name)
+            .map(|(_, ret)| *ret)
+            .ok_or_else(|| Diagnostic::new(format!("unknown function '{}'", name))),
+        // TODO: carry explicit phi type in IR once we add non-numeric heap values.
+        Instruction::Phi(_) => Ok(Type::number()),
+    }
+}
+
+fn compute_dominators(
+    function: &Function,
+    predecessors: &HashMap<BlockId, Vec<BlockId>>,
+) -> Result<HashMap<BlockId, HashSet<BlockId>>, Diagnostic> {
+    if !function.blocks.contains_key(&function.entry) {
+        return Err(Diagnostic::new(format!(
+            "entry block {:?} does not exist",
+            function.entry
+        )));
+    }
+    let all_blocks: HashSet<_> = function.blocks.keys().copied().collect();
+    let mut dominators = HashMap::new();
+    for id in function.blocks.keys().copied() {
+        if id == function.entry {
+            dominators.insert(id, HashSet::from([id]));
+        } else {
+            dominators.insert(id, all_blocks.clone());
+        }
+    }
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for block in function.blocks.keys().copied() {
+            if block == function.entry {
+                continue;
+            }
+            let preds = predecessors.get(&block).cloned().unwrap_or_default();
+            let mut next = if preds.is_empty() {
+                HashSet::new()
+            } else {
+                let mut it = preds.iter();
+                let first = it
+                    .next()
+                    .and_then(|pred| dominators.get(pred))
+                    .cloned()
+                    .unwrap_or_default();
+                it.fold(first, |acc, pred| {
+                    let pred_set = dominators.get(pred).cloned().unwrap_or_default();
+                    acc.intersection(&pred_set).copied().collect()
+                })
+            };
+            next.insert(block);
+            if dominators
+                .get(&block)
+                .is_some_and(|current| *current != next)
+            {
+                dominators.insert(block, next);
+                changed = true;
+            }
+        }
+    }
+    Ok(dominators)
+}
+
+fn resolve_phi_types(
+    function: &Function,
+    definitions: &mut HashMap<ValueId, ValueDefinition>,
+) -> Result<(), Diagnostic> {
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for block in function.blocks.values() {
+            for (value, instruction) in &block.instructions {
+                let Instruction::Phi(incoming) = instruction else {
+                    continue;
+                };
+                if definitions.get(value).and_then(|def| def.ty).is_some() {
+                    continue;
+                }
+                let mut incoming_ty = None;
+                let mut complete = true;
+                for (_, incoming_value) in incoming {
+                    let ty = definitions.get(incoming_value).and_then(|def| def.ty);
+                    let Some(ty) = ty else {
+                        complete = false;
+                        break;
+                    };
+                    if let Some(expected) = incoming_ty {
+                        if expected != ty {
+                            return Err(Diagnostic::new(format!(
+                                "phi in block {:?} has inconsistent incoming types",
+                                block.id
+                            )));
+                        }
+                    } else {
+                        incoming_ty = Some(ty);
+                    }
+                }
+                if complete {
+                    let resolved = incoming_ty.unwrap_or(Type::number());
+                    definitions
+                        .get_mut(value)
+                        .expect("phi definition must exist")
+                        .ty = Some(resolved);
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    for block in function.blocks.values() {
+        for (value, instruction) in &block.instructions {
+            if matches!(instruction, Instruction::Phi(_))
+                && definitions.get(value).and_then(|def| def.ty).is_none()
+            {
+                return Err(Diagnostic::new(format!(
+                    "could not infer phi type for value {:?}",
+                    value
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 impl Function {
@@ -902,8 +1202,12 @@ fn predecessors(function: &Function) -> HashMap<BlockId, Vec<BlockId>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Instruction, Terminator, build};
-    use waluau_ast::{NumericType, Type};
+    use std::collections::BTreeMap;
+
+    use super::{
+        BasicBlock, BlockId, Function, Instruction, Module, Terminator, ValueId, build, verify,
+    };
+    use waluau_ast::{NumberLiteral, NumericType, Type};
     use waluau_parser::parse;
 
     #[test]
@@ -1102,5 +1406,157 @@ mod tests {
             .filter(|instruction| matches!(instruction, Instruction::Cast { .. }))
             .count();
         assert_eq!(casts, 2, "expected implicit widen and explicit narrow cast");
+    }
+
+    #[test]
+    fn rejects_non_bool_branch_condition() {
+        let function = Function {
+            name: "entry".into(),
+            params: vec![],
+            return_type: Type::Numeric(NumericType::I64),
+            entry: BlockId(0),
+            next_value: 2,
+            blocks: BTreeMap::from([
+                (
+                    BlockId(0),
+                    BasicBlock {
+                        id: BlockId(0),
+                        instructions: vec![(
+                            ValueId(0),
+                            Instruction::Number {
+                                ty: NumericType::I64,
+                                literal: NumberLiteral { raw: "1".into() },
+                            },
+                        )],
+                        terminator: Terminator::Branch {
+                            condition: ValueId(0),
+                            then_block: BlockId(1),
+                            else_block: BlockId(1),
+                        },
+                    },
+                ),
+                (
+                    BlockId(1),
+                    BasicBlock {
+                        id: BlockId(1),
+                        instructions: vec![(
+                            ValueId(1),
+                            Instruction::Number {
+                                ty: NumericType::I64,
+                                literal: NumberLiteral { raw: "0".into() },
+                            },
+                        )],
+                        terminator: Terminator::Return(ValueId(1)),
+                    },
+                ),
+            ]),
+        };
+        let err = verify(&Module {
+            functions: vec![function],
+        })
+        .expect_err("expected verifier to reject non-bool branch");
+        assert!(err.to_string().contains("branch condition"));
+    }
+
+    #[test]
+    fn rejects_return_type_mismatch() {
+        let function = Function {
+            name: "entry".into(),
+            params: vec![],
+            return_type: Type::Bool,
+            entry: BlockId(0),
+            next_value: 1,
+            blocks: BTreeMap::from([(
+                BlockId(0),
+                BasicBlock {
+                    id: BlockId(0),
+                    instructions: vec![(
+                        ValueId(0),
+                        Instruction::Number {
+                            ty: NumericType::I64,
+                            literal: NumberLiteral { raw: "1".into() },
+                        },
+                    )],
+                    terminator: Terminator::Return(ValueId(0)),
+                },
+            )]),
+        };
+        let err = verify(&Module {
+            functions: vec![function],
+        })
+        .expect_err("expected verifier to reject return type mismatch");
+        assert!(err.to_string().contains("return in block"));
+    }
+
+    #[test]
+    fn rejects_phi_predecessor_order_mismatch() {
+        let function = Function {
+            name: "entry".into(),
+            params: vec![],
+            return_type: Type::Numeric(NumericType::I64),
+            entry: BlockId(0),
+            next_value: 5,
+            blocks: BTreeMap::from([
+                (
+                    BlockId(0),
+                    BasicBlock {
+                        id: BlockId(0),
+                        instructions: vec![(ValueId(0), Instruction::Bool(true))],
+                        terminator: Terminator::Branch {
+                            condition: ValueId(0),
+                            then_block: BlockId(1),
+                            else_block: BlockId(2),
+                        },
+                    },
+                ),
+                (
+                    BlockId(1),
+                    BasicBlock {
+                        id: BlockId(1),
+                        instructions: vec![(
+                            ValueId(1),
+                            Instruction::Number {
+                                ty: NumericType::I64,
+                                literal: NumberLiteral { raw: "1".into() },
+                            },
+                        )],
+                        terminator: Terminator::Jump(BlockId(3)),
+                    },
+                ),
+                (
+                    BlockId(2),
+                    BasicBlock {
+                        id: BlockId(2),
+                        instructions: vec![(
+                            ValueId(2),
+                            Instruction::Number {
+                                ty: NumericType::I64,
+                                literal: NumberLiteral { raw: "2".into() },
+                            },
+                        )],
+                        terminator: Terminator::Jump(BlockId(3)),
+                    },
+                ),
+                (
+                    BlockId(3),
+                    BasicBlock {
+                        id: BlockId(3),
+                        instructions: vec![(
+                            ValueId(3),
+                            Instruction::Phi(vec![
+                                (BlockId(2), ValueId(2)),
+                                (BlockId(1), ValueId(1)),
+                            ]),
+                        )],
+                        terminator: Terminator::Return(ValueId(3)),
+                    },
+                ),
+            ]),
+        };
+        let err = verify(&Module {
+            functions: vec![function],
+        })
+        .expect_err("expected verifier to reject phi predecessor ordering");
+        assert!(err.to_string().contains("predecessor order mismatch"));
     }
 }
