@@ -155,7 +155,8 @@ impl Parser {
     fn parse_if_clause(&mut self) -> Result<Stmt, Diagnostic> {
         let condition = self.parse_expr()?;
         self.expect_simple(TokenKind::Then, "expected 'then' after if condition")?;
-        let then_body = self.parse_block_until(&[TokenKind::ElseIf, TokenKind::Else, TokenKind::End]);
+        let then_body =
+            self.parse_block_until(&[TokenKind::ElseIf, TokenKind::Else, TokenKind::End]);
         let else_body = if self.check_simple(&TokenKind::ElseIf) {
             self.advance();
             vec![self.parse_if_clause()?]
@@ -372,7 +373,10 @@ impl Parser {
         }
 
         if let Some(token) = self.tokens.get(self.index.saturating_sub(1)) {
-            Diagnostic::new(format!("{message} at {}..{}", token.span.start, token.span.end))
+            Diagnostic::new(format!(
+                "{message} at {}..{}",
+                token.span.start, token.span.end
+            ))
         } else {
             Diagnostic::new(message)
         }
