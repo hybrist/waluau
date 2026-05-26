@@ -1,0 +1,5 @@
+function broken_a(x: i32): i32
+    local first = x
+    local second: i32 =
+    return x
+end
