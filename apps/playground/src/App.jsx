@@ -99,10 +99,18 @@ export default function App() {
 
       // Parse output
       if (rawResult.startsWith('Success:\n')) {
-        return {
-          output: rawResult.substring(9),
-          errorMsg: '',
-        };
+        try {
+          const parsed = JSON.parse(rawResult.substring(9));
+          return {
+            output: parsed,
+            errorMsg: '',
+          };
+        } catch (jsonErr) {
+          return {
+            output: '',
+            errorMsg: `Failed to parse compilation result: ${jsonErr.message}`,
+          };
+        }
       } else if (rawResult.startsWith('Error:\n')) {
         return {
           output: '',
@@ -125,6 +133,8 @@ export default function App() {
 
   const output = compilation.output;
   const errorMsg = compilation.errorMsg;
+  const outputIr = typeof output === 'object' ? output.ir : '';
+  const outputWat = typeof output === 'object' ? output.wat : '';
   const displayStatus = wasmInstance
     ? errorMsg
       ? 'error'
@@ -218,6 +228,12 @@ export default function App() {
                 Generated IR
               </button>
               <button
+                className={`tab-btn ${activeTab === 'wat' ? 'active' : ''}`}
+                onClick={() => setActiveTab('wat')}
+              >
+                Wasm Text (WAT)
+              </button>
+              <button
                 className={`tab-btn ${activeTab === 'logs' ? 'active' : ''}`}
                 onClick={() => setActiveTab('logs')}
               >
@@ -234,7 +250,7 @@ export default function App() {
                     <div className="spinner"></div>
                     <p>Initializing Waluau compiler module...</p>
                   </div>
-                ) : displayStatus === 'error' && !output ? (
+                ) : displayStatus === 'error' && !outputIr ? (
                   <div className="error-state">
                     <svg className="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <circle cx="12" cy="12" r="10" />
@@ -246,7 +262,32 @@ export default function App() {
                   </div>
                 ) : (
                   <pre className="ir-output">
-                    <code>{output || '-- No IR output generated. Write some valid code first.'}</code>
+                    <code>{outputIr || '-- No IR output generated. Write some valid code first.'}</code>
+                  </pre>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'wat' && (
+              <div className="output-container">
+                {status === 'loading' ? (
+                  <div className="loading-state">
+                    <div className="spinner"></div>
+                    <p>Initializing Waluau compiler module...</p>
+                  </div>
+                ) : displayStatus === 'error' && !outputWat ? (
+                  <div className="error-state">
+                    <svg className="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="12" y1="8" x2="12" y2="12" />
+                      <line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
+                    <h4>Compilation Error</h4>
+                    <pre className="diagnostic-output">{errorMsg}</pre>
+                  </div>
+                ) : (
+                  <pre className="wat-output">
+                    <code>{outputWat || '-- No WAT output generated. Write some valid code first.'}</code>
                   </pre>
                 )}
               </div>

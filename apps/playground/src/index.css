@@ -73,8 +73,7 @@ body {
   min-height: 100vh;
   padding: 24px;
   z-index: 1;
-  max-width: 1600px;
-  margin: 0 auto;
+  max-width: 100%;
 }
 
 /* Header styling */
@@ -375,6 +374,20 @@ body {
   font-size: 13.5px;
   line-height: 1.6;
   color: #a7f3d0;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.wat-output {
+  flex: 1;
+  background: #0d0f1a;
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  padding: 16px;
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: #a5f3fc;
   overflow: auto;
   white-space: pre-wrap;
 }

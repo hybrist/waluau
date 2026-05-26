@@ -13,3 +13,7 @@ waluau-diagnostics.workspace = true
 waluau-hir.workspace = true
 waluau-ir.workspace = true
 waluau-parser.workspace = true
+waluau-codegen-wasm.workspace = true
+wasmprinter = "0.217.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
