@@ -1,0 +1,6 @@
+# Commit the shared queue seed, but keep each checkout's embedded Dolt state local.
+*
+!.gitignore
+!README.md
+!config.yaml
+!issues.jsonl

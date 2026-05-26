@@ -5,6 +5,8 @@ This project uses **bd** (beads) for issue tracking. Run `bd prime` for full wor
 ## Quick Reference
 
 ```bash
+git config beads.role maintainer                      # First-time local role setup
+bd bootstrap --yes                                   # First-time local bootstrap from tracked queue / remote
 bd ready              # Find available work
 bd show <id>          # View issue details
 bd update <id> --claim  # Claim work atomically
@@ -49,6 +51,13 @@ cp -rf source dest          # NOT: cp -r source dest
 - Prevents duplicate tracking systems and confusion
 
 ### Quick Start
+
+**Bootstrap a fresh clone or worktree once:**
+
+```bash
+git config beads.role maintainer   # or contributor
+bd bootstrap --yes
+```
 
 **Check for ready work:**
 
@@ -116,7 +125,9 @@ bd close bd-42 --reason "Completed" --json
 bd automatically syncs via Dolt:
 
 - Each write auto-commits to Dolt history
-- Use `bd dolt push`/`bd dolt pull` for remote sync
+- The shared queue snapshot lives in tracked `.beads/issues.jsonl`
+- Each checkout keeps its own untracked `.beads/embeddeddolt/` database
+- Use `bd dolt push`/`bd dolt pull` for Dolt sync and commit `.beads/issues.jsonl` when it changes
 - No manual export/import needed!
 
 ### Important Rules
