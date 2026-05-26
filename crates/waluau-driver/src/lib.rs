@@ -99,6 +99,9 @@ mod tests {
     fn fixture_source(name: &str) -> &'static str {
         match name {
             "add" => include_str!("../../../fixtures/add.walu"),
+            "branch_calls_i32" => include_str!("../../../fixtures/branch_calls_i32.walu"),
+            "literals_i64_u64" => include_str!("../../../fixtures/literals_i64_u64.walu"),
+            "loop_sum_to_i32" => include_str!("../../../fixtures/loop_sum_to_i32.walu"),
             "mismatch" => include_str!("../../../fixtures/mismatch.walu"),
             other => panic!("unknown fixture: {other}"),
         }
@@ -132,19 +135,7 @@ mod tests {
 
     #[test]
     fn executes_branching_and_direct_calls() {
-        let source = r#"
-            fn inc(x: i32) -> i32
-                return x + 1
-            end
-
-            fn max_plus_one(x: i32, y: i32) -> i32
-                if x > y then
-                    return inc(x)
-                else
-                    return inc(y)
-                end
-            end
-        "#;
+        let source = fixture_source("branch_calls_i32");
         let wasm = super::compile_source(source).expect("compile should succeed");
         let (mut store, instance) = instantiate(&wasm);
         let max_plus_one = instance
@@ -166,17 +157,7 @@ mod tests {
 
     #[test]
     fn executes_loops() {
-        let source = r#"
-            fn sum_to(n: i32) -> i32
-                let acc: i32 = 0
-                let i: i32 = n
-                while i > 0 do
-                    acc = acc + i
-                    i = i - 1
-                end
-                return acc
-            end
-        "#;
+        let source = fixture_source("loop_sum_to_i32");
         let wasm = super::compile_source(source).expect("compile should succeed");
         let (mut store, instance) = instantiate(&wasm);
         let sum_to = instance
@@ -187,28 +168,7 @@ mod tests {
 
     #[test]
     fn executes_i64_and_u64_locals_initialized_from_literals() {
-        let source = r#"
-            fn return_u64_small() -> u64
-                let x: u64 = 42
-                return x
-            end
-
-            fn return_i64_small() -> i64
-                let x: i64 = 42
-                return x
-            end
-
-            fn return_u64_max() -> u64
-                let x: u64 = 18446744073709551615
-                return x
-            end
-
-            fn return_i64_max() -> i64
-                let x: i64 = 9223372036854775807
-                return x
-            end
-        "#;
-
+        let source = fixture_source("literals_i64_u64");
         let wasm = super::compile_source(source).expect("compile should succeed");
         let (mut store, instance) = instantiate(&wasm);
 
