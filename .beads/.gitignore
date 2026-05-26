@@ -1,0 +1,5 @@
+# Commit only shared Beads bootstrap config; keep local database/export state untracked.
+*
+!.gitignore
+!README.md
+!config.yaml

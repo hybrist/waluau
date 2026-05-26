@@ -1,0 +1,17 @@
+This repository uses the Beads Dolt upstream as the source of truth.
+
+Each checkout keeps its own embedded Dolt database and local export files under `.beads/`, all untracked except for shared bootstrap config.
+
+Bootstrap a fresh clone or worktree with:
+
+```sh
+git config beads.role maintainer
+bd bootstrap --yes
+bd ready --json
+```
+
+After mutations, sync the upstream state with:
+
+```sh
+bd dolt push
+```

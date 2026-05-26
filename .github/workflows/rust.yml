@@ -2,23 +2,9 @@ name: Rust
 
 on:
   pull_request:
-    paths:
-      - ".github/workflows/rust.yml"
-      - "crates/**"
-      - "fixtures/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "rust-toolchain.toml"
   push:
     branches:
       - main
-    paths:
-      - ".github/workflows/rust.yml"
-      - "crates/**"
-      - "fixtures/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "rust-toolchain.toml"
 
 concurrency:
   group: rust-${{ github.ref }}
