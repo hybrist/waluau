@@ -1,4 +1,4 @@
-fn fib(n: number) -> number
+function fib(n: number): number
     if n < 2 then
         return n
     end

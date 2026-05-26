@@ -1,4 +1,4 @@
-fn check(val: number) -> bool
+function check(val: number): bool
     if val > 10 then
         return true
     else

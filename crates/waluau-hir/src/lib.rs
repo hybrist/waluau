@@ -398,12 +398,12 @@ mod tests {
     #[test]
     fn type_checks_valid_program() {
         let source = r#"
-            fn add(x: i32, y: i32) -> i32
+            function add(x: i32, y: i32): i32
                 return x + y
             end
 
-            fn entry(flag: bool, x: i32, y: i32) -> i32
-                let z: i32 = add(x, y)
+            function entry(flag: bool, x: i32, y: i32): i32
+                local z: i32 = add(x, y)
                 if flag then
                     z = z + 1
                 else
@@ -419,7 +419,7 @@ mod tests {
     #[test]
     fn rejects_non_bool_condition() {
         let source = r#"
-            fn entry(x: i32) -> i32
+            function entry(x: i32): i32
                 if x then
                     return x
                 end
@@ -434,8 +434,8 @@ mod tests {
     #[test]
     fn accepts_numeric_alias_and_scalar_types() {
         let source = r#"
-            fn widen(x: number, y: f32, z: u64, w: i64) -> f64
-                let sum: f64 = x + 1
+            function widen(x: number, y: f32, z: u64, w: i64): f64
+                local sum: f64 = x + 1
                 if z > 0 then
                     return sum
                 end
@@ -453,7 +453,7 @@ mod tests {
     #[test]
     fn rejects_mixed_numeric_operands() {
         let source = r#"
-            fn entry(x: i64, y: f64) -> i64
+            function entry(x: i64, y: f64): i64
                 return x + y
             end
         "#;
@@ -469,9 +469,9 @@ mod tests {
     #[test]
     fn accepts_full_range_i64_and_u64_literals() {
         let source = r#"
-            fn entry(x: i64, y: u64) -> i64
-                let a: i64 = x + 1
-                let b: u64 = 18446744073709551615
+            function entry(x: i64, y: u64): i64
+                local a: i64 = x + 1
+                local b: u64 = 18446744073709551615
                 if y > 0 then
                     return a
                 end
@@ -489,7 +489,7 @@ mod tests {
     #[test]
     fn rejects_out_of_range_u64_literals() {
         let source = r#"
-            fn entry() -> u64
+            function entry(): u64
                 return 18446744073709551616
             end
         "#;
@@ -502,11 +502,11 @@ mod tests {
     #[test]
     fn accepts_implicit_numeric_widening() {
         let source = r#"
-            fn widen(x: i32, y: f32, z: u32) -> f64
-                let a: i64 = x
-                let b: f64 = x + 1
-                let c: f64 = y
-                let d: i64 = z + 1
+            function widen(x: i32, y: f32, z: u32): f64
+                local a: i64 = x
+                local b: f64 = x + 1
+                local c: f64 = y
+                local d: i64 = z + 1
                 if a < d then
                     return b
                 end
@@ -521,7 +521,7 @@ mod tests {
     #[test]
     fn requires_explicit_cast_for_narrowing() {
         let source = r#"
-            fn narrow(x: i64) -> i32
+            function narrow(x: i64): i32
                 return x
             end
         "#;
@@ -534,9 +534,9 @@ mod tests {
     #[test]
     fn accepts_explicit_numeric_casts() {
         let source = r#"
-            fn narrow(x: i64, y: f64) -> i32
-                let a: i32 = x :: i32
-                let b: i32 = y :: i32
+            function narrow(x: i64, y: f64): i32
+                local a: i32 = x :: i32
+                local b: i32 = y :: i32
                 return a + b
             end
         "#;
@@ -548,7 +548,7 @@ mod tests {
     #[test]
     fn accepts_unary_negation_not_and_elseif() {
         let source = r#"
-            fn entry(flag: bool, x: i32) -> i32
+            function entry(flag: bool, x: i32): i32
                 if not flag then
                     return -x
                 elseif x > 0 then
@@ -566,7 +566,7 @@ mod tests {
     #[test]
     fn rejects_non_call_expression_statements() {
         let source = r#"
-            fn entry(x: i32) -> i32
+            function entry(x: i32): i32
                 x + 1
                 return x
             end
