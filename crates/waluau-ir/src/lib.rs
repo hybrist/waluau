@@ -122,9 +122,9 @@ pub fn verify(module: &Module) -> Result<(), Diagnostic> {
                     function
                         .params
                         .iter()
-                        .map(|(_, ty)| *ty)
+                        .map(|(_, ty)| ty.clone())
                         .collect::<Vec<_>>(),
-                    function.return_type,
+                    function.return_type.clone(),
                 ),
             )
         })
@@ -209,7 +209,7 @@ fn verify_function(
                             block.id, value_ty, from
                         )));
                     }
-                    require_numeric_cast(*from, *to)?;
+                    require_numeric_cast(from.clone(), to.clone())?;
                 }
                 Instruction::Call { name, args } => {
                     let (param_types, _) = signatures
@@ -320,7 +320,7 @@ fn verify_function(
     Ok(())
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct ValueDefinition {
     block: BlockId,
     ty: Option<Type>,
@@ -354,6 +354,7 @@ fn require_dominating_definition(
     }
     definition
         .ty
+        .clone()
         .ok_or_else(|| Diagnostic::new(format!("could not infer type for value {:?}", value)))
 }
 
@@ -374,15 +375,15 @@ fn infer_instruction_type(
         Instruction::Param(index) => function
             .params
             .get(*index)
-            .map(|(_, ty)| *ty)
+            .map(|(_, ty)| ty.clone())
             .ok_or_else(|| Diagnostic::new(format!("param index {} out of bounds", index))),
         Instruction::Number { ty, .. } => Ok(Type::Numeric(*ty)),
         Instruction::Bool(_) => Ok(Type::Bool),
-        Instruction::Cast { to, .. } => Ok(*to),
-        Instruction::Binary { result_ty, .. } => Ok(*result_ty),
+        Instruction::Cast { to, .. } => Ok(to.clone()),
+        Instruction::Binary { result_ty, .. } => Ok(result_ty.clone()),
         Instruction::Call { name, .. } => signatures
             .get(name)
-            .map(|(_, ret)| *ret)
+            .map(|(_, ret)| ret.clone())
             .ok_or_else(|| Diagnostic::new(format!("unknown function '{}'", name))),
         // TODO: carry explicit phi type in IR once we add non-numeric heap values.
         Instruction::Phi(_) => Ok(Type::number()),
@@ -456,18 +457,24 @@ fn resolve_phi_types(
                 let Instruction::Phi(incoming) = instruction else {
                     continue;
                 };
-                if definitions.get(value).and_then(|def| def.ty).is_some() {
+                if definitions
+                    .get(value)
+                    .and_then(|def| def.ty.as_ref())
+                    .is_some()
+                {
                     continue;
                 }
                 let mut incoming_ty = None;
                 let mut complete = true;
                 for (_, incoming_value) in incoming {
-                    let ty = definitions.get(incoming_value).and_then(|def| def.ty);
+                    let ty = definitions
+                        .get(incoming_value)
+                        .and_then(|def| def.ty.as_ref());
                     let Some(ty) = ty else {
                         complete = false;
                         break;
                     };
-                    if let Some(expected) = incoming_ty {
+                    if let Some(ref expected) = incoming_ty {
                         if expected != ty {
                             return Err(Diagnostic::new(format!(
                                 "phi in block {:?} has inconsistent incoming types",
@@ -475,7 +482,7 @@ fn resolve_phi_types(
                             )));
                         }
                     } else {
-                        incoming_ty = Some(ty);
+                        incoming_ty = Some(ty.clone());
                     }
                 }
                 if complete {
@@ -493,7 +500,10 @@ fn resolve_phi_types(
     for block in function.blocks.values() {
         for (value, instruction) in &block.instructions {
             if matches!(instruction, Instruction::Phi(_))
-                && definitions.get(value).and_then(|def| def.ty).is_none()
+                && definitions
+                    .get(value)
+                    .and_then(|def| def.ty.as_ref())
+                    .is_none()
             {
                 return Err(Diagnostic::new(format!(
                     "could not infer phi type for value {:?}",

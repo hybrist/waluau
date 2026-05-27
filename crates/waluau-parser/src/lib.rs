@@ -707,8 +707,10 @@ mod tests {
         "#;
 
         let error = parse(source).expect_err("parse should fail");
-        assert!(error
-            .to_string()
-            .contains("table literals with named fields are not supported"));
+        assert!(
+            error
+                .to_string()
+                .contains("table literals with named fields are not supported")
+        );
     }
 }
