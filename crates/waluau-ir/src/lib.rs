@@ -812,6 +812,9 @@ impl Builder<'_> {
             Stmt::While { condition, body } => {
                 self.lower_while(condition, body, env, types)?;
             }
+            Stmt::Repeat { body, condition } => {
+                self.lower_repeat(body, condition, env, types)?;
+            }
         }
         Ok(())
     }
@@ -954,6 +957,74 @@ impl Builder<'_> {
 
         for (name, phi) in phis {
             env.insert(name, phi);
+        }
+        self.current_block = exit;
+        Ok(())
+    }
+
+    fn lower_repeat(
+        &mut self,
+        body: &[Stmt],
+        condition: &Expr,
+        env: &mut HashMap<String, ValueId>,
+        types: &mut HashMap<String, Type>,
+    ) -> Result<(), Diagnostic> {
+        let preheader = self.current_block;
+        let loop_body = self.new_block();
+        let check = self.new_block();
+        let exit = self.new_block();
+        self.set_terminator(preheader, Terminator::Jump(loop_body));
+
+        let mutated = collect_assigned_names(body);
+        self.current_block = loop_body;
+        let mut loop_env = env.clone();
+        let loop_types = types.clone();
+        let mut phis = HashMap::new();
+        for name in &mutated {
+            if let Some(initial) = env.get(name).copied() {
+                let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
+                loop_env.insert(name.clone(), phi);
+                phis.insert(name.clone(), phi);
+            }
+        }
+
+        let mut body_env = loop_env.clone();
+        let mut body_types = loop_types.clone();
+        for stmt in body {
+            if self.current_block == DEAD_BLOCK {
+                break;
+            }
+            self.lower_stmt(stmt, &mut body_env, &mut body_types)?;
+        }
+        let body_exit = self.current_block;
+        if body_exit == DEAD_BLOCK {
+            for (name, phi) in phis {
+                env.insert(name, phi);
+            }
+            self.current_block = exit;
+            return Ok(());
+        }
+        self.set_terminator(body_exit, Terminator::Jump(check));
+
+        self.current_block = check;
+        let cond_value = self.lower_expr(condition, &body_env, &body_types, Some(Type::Bool))?;
+        self.set_terminator(
+            check,
+            Terminator::Branch {
+                condition: cond_value,
+                then_block: exit,
+                else_block: loop_body,
+            },
+        );
+
+        for (name, phi) in &phis {
+            if let Some(next_value) = body_env.get(name).copied() {
+                add_phi_incoming(&mut self.function, loop_body, *phi, (check, next_value));
+            }
+        }
+
+        for (name, phi) in phis {
+            env.insert(name.clone(), body_env.get(&name).copied().unwrap_or(phi));
         }
         self.current_block = exit;
         Ok(())
@@ -1454,6 +1525,7 @@ fn collect_assigned_into(stmts: &[Stmt], out: &mut BTreeSet<String>) {
                 collect_assigned_into(else_body, out);
             }
             Stmt::While { body, .. } => collect_assigned_into(body, out),
+            Stmt::Repeat { body, .. } => collect_assigned_into(body, out),
             Stmt::Return(_) | Stmt::Expr(_) => {}
         }
     }
@@ -1561,6 +1633,50 @@ mod tests {
             loop_phi,
             Some(2),
             "expected loop phi with two incoming edges"
+        );
+    }
+
+    #[test]
+    fn lowers_repeat_until_with_post_test_condition() {
+        let source = r#"
+            function entry(limit: i32): i32
+                local i: i32 = 0
+                repeat
+                    i = i + 1
+                until i > limit
+                return i
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let module = build(&program).expect("ir build should succeed");
+        let function = &module.functions[0];
+        let repeat_branch = function.blocks.values().find(|block| {
+            matches!(
+                block.terminator,
+                Terminator::Branch {
+                    then_block,
+                    else_block,
+                    ..
+                } if then_block != else_block
+            )
+        });
+        assert!(
+            repeat_branch.is_some(),
+            "expected repeat-until branch terminator"
+        );
+        let loop_phi = function.blocks.values().find_map(|block| {
+            block.instructions.iter().find_map(|(_, instruction)| {
+                if let Instruction::Phi(incoming) = instruction {
+                    Some(incoming.len())
+                } else {
+                    None
+                }
+            })
+        });
+        assert_eq!(
+            loop_phi,
+            Some(2),
+            "expected repeat-until phi with two incoming edges"
         );
     }
 

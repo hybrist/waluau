@@ -140,6 +140,17 @@ fn check_stmt(
             }
             Ok(false)
         }
+        Stmt::Repeat { body, condition } => {
+            let mut loop_scope = vars.clone();
+            for stmt in body {
+                let _ = check_stmt(stmt, &mut loop_scope, signatures, expected_return)?;
+            }
+            let condition_ty = infer_expr(condition, &loop_scope, signatures, None)?;
+            if condition_ty != Type::Bool {
+                return Err(Diagnostic::new("repeat-until condition must be bool"));
+            }
+            Ok(false)
+        }
         Stmt::Return(expr) => {
             let ty = infer_expr(expr, vars, signatures, Some(expected_return.clone()))?;
             if &ty != expected_return {
@@ -757,5 +768,37 @@ mod tests {
             error.to_string(),
             "cannot implicitly convert {i64} to {i32}"
         );
+    }
+
+    #[test]
+    fn rejects_repeat_until_non_bool_condition() {
+        let source = r#"
+            function entry(x: i32): i32
+                repeat
+                    x = x + 1
+                until x
+                return x
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.to_string(), "repeat-until condition must be bool");
+    }
+
+    #[test]
+    fn type_checks_repeat_until_loop() {
+        let source = r#"
+            function entry(limit: i32): i32
+                local i: i32 = 0
+                repeat
+                    i = i + 1
+                until i > limit
+                return i
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
     }
 }
