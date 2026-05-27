@@ -207,3 +207,140 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
 
     Ok(tokens)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{lex, Token, TokenKind};
+    use waluau_diagnostics::Diagnostic;
+    use waluau_span::Span;
+
+    fn kinds(source: &str) -> Vec<TokenKind> {
+        lex(source)
+            .expect("lex should succeed")
+            .into_iter()
+            .map(|token| token.kind)
+            .collect()
+    }
+
+    fn err(source: &str) -> Diagnostic {
+        lex(source).expect_err("lex should fail")
+    }
+
+    #[test]
+    fn rejects_malformed_number_literals() {
+        assert_eq!(err("1..2").to_string(), "invalid number literal");
+        assert_eq!(err("12.34.56").to_string(), "invalid number literal");
+    }
+
+    #[test]
+    fn accepts_well_formed_number_literals() {
+        assert_eq!(
+            kinds("0 42 3.14 1."),
+            vec![
+                TokenKind::Number("0".into()),
+                TokenKind::Number("42".into()),
+                TokenKind::Number("3.14".into()),
+                TokenKind::Number("1.".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_operators() {
+        assert_eq!(
+            err("->").to_string(),
+            "unsupported '->' return type annotation, use ':'"
+        );
+        assert_eq!(err("&&").to_string(), "unsupported '&&', use 'and'");
+        assert_eq!(err("||").to_string(), "unsupported '||', use 'or'");
+        assert_eq!(err("&").to_string(), "unexpected '&', expected '&&'");
+        assert_eq!(err("|").to_string(), "unexpected '|', expected '||'");
+    }
+
+    #[test]
+    fn rejects_alternate_keyword_spellings() {
+        assert_eq!(err("fn").to_string(), "unsupported 'fn', use 'function'");
+        assert_eq!(err("let").to_string(), "unsupported 'let', use 'local'");
+    }
+
+    #[test]
+    fn distinguishes_keywords_from_identifiers() {
+        assert_eq!(
+            kinds("function local ifelse trueish not_a_keyword _foo Function"),
+            vec![
+                TokenKind::Function,
+                TokenKind::Local,
+                TokenKind::Identifier("ifelse".into()),
+                TokenKind::Identifier("trueish".into()),
+                TokenKind::Identifier("not_a_keyword".into()),
+                TokenKind::Identifier("_foo".into()),
+                TokenKind::Identifier("Function".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn tokenizes_compound_punctuation() {
+        assert_eq!(
+            kinds("== :: : ="),
+            vec![
+                TokenKind::EqualEqual,
+                TokenKind::ColonColon,
+                TokenKind::Colon,
+                TokenKind::Equal,
+            ]
+        );
+    }
+
+    #[test]
+    fn records_spans_for_tokens() {
+        let source = "local x = 42";
+        let tokens = lex(source).expect("lex should succeed");
+        assert_eq!(
+            tokens,
+            vec![
+                Token {
+                    kind: TokenKind::Local,
+                    span: Span { start: 0, end: 5 },
+                },
+                Token {
+                    kind: TokenKind::Identifier("x".into()),
+                    span: Span { start: 6, end: 7 },
+                },
+                Token {
+                    kind: TokenKind::Equal,
+                    span: Span { start: 8, end: 9 },
+                },
+                Token {
+                    kind: TokenKind::Number("42".into()),
+                    span: Span { start: 10, end: 12 },
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn records_spans_after_leading_whitespace() {
+        let source = "  return 1";
+        let tokens = lex(source).expect("lex should succeed");
+        assert_eq!(
+            tokens,
+            vec![
+                Token {
+                    kind: TokenKind::Return,
+                    span: Span { start: 2, end: 8 },
+                },
+                Token {
+                    kind: TokenKind::Number("1".into()),
+                    span: Span { start: 9, end: 10 },
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_unexpected_characters() {
+        assert_eq!(err("@").to_string(), "unexpected character '@'");
+        assert_eq!(err("local $").to_string(), "unexpected character '$'");
+    }
+}
