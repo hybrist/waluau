@@ -219,8 +219,18 @@ impl Parser {
     fn parse_mul(&mut self) -> Result<Expr, Diagnostic> {
         self.parse_binary(
             Parser::parse_cast,
-            &[TokenKind::Star, TokenKind::Slash],
-            &[BinaryOp::Mul, BinaryOp::Div],
+            &[
+                TokenKind::Star,
+                TokenKind::Slash,
+                TokenKind::DoubleSlash,
+                TokenKind::Percent,
+            ],
+            &[
+                BinaryOp::Mul,
+                BinaryOp::Div,
+                BinaryOp::FloorDiv,
+                BinaryOp::Mod,
+            ],
         )
     }
 
@@ -516,7 +526,7 @@ fn same_variant(a: &TokenKind, b: &TokenKind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::parse;
-    use waluau_ast::{NumberLiteral, NumericType, Type, UnaryOp};
+    use waluau_ast::{BinaryOp, NumberLiteral, NumericType, Type, UnaryOp};
 
     #[test]
     fn parses_v0_function() {
@@ -625,6 +635,57 @@ mod tests {
                     [waluau_ast::Stmt::Return(waluau_ast::Expr::Name(name))] if name == "x"
                 )
             )
+        ));
+    }
+
+    #[test]
+    fn parses_floor_division_with_multiplicative_precedence() {
+        let source = r#"
+            function entry(x: number, y: number, z: number): number
+                return -x // y * z % 2 / 3
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        let waluau_ast::Stmt::Return(waluau_ast::Expr::Binary {
+            op: BinaryOp::Div,
+            left: div_left,
+            ..
+        }) = &function.body[0]
+        else {
+            panic!("return should end with division");
+        };
+        let waluau_ast::Expr::Binary {
+            op: BinaryOp::Mod,
+            left: mod_left,
+            ..
+        } = div_left.as_ref()
+        else {
+            panic!("division left side should be modulo");
+        };
+        let waluau_ast::Expr::Binary {
+            op: BinaryOp::Mul,
+            left: mul_left,
+            ..
+        } = mod_left.as_ref()
+        else {
+            panic!("modulo left side should be multiplication");
+        };
+        let waluau_ast::Expr::Binary {
+            op: BinaryOp::FloorDiv,
+            left: floor_div_left,
+            ..
+        } = mul_left.as_ref()
+        else {
+            panic!("multiplication left side should be floor division");
+        };
+        assert!(matches!(
+            floor_div_left.as_ref(),
+            waluau_ast::Expr::Unary {
+                op: UnaryOp::Neg,
+                ..
+            }
         ));
     }
 

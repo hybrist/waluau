@@ -1196,7 +1196,12 @@ impl Builder<'_> {
                 coerce_type(element_ty, expected)
             }
             Expr::Binary { op, left, right } => match op {
-                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                BinaryOp::Add
+                | BinaryOp::Sub
+                | BinaryOp::Mul
+                | BinaryOp::Div
+                | BinaryOp::FloorDiv
+                | BinaryOp::Mod => {
                     let raw = self.infer_binary_operand_type(left, right, op, types, None)?;
                     coerce_type(raw, expected)
                 }
@@ -1249,6 +1254,8 @@ impl Builder<'_> {
             | BinaryOp::Sub
             | BinaryOp::Mul
             | BinaryOp::Div
+            | BinaryOp::FloorDiv
+            | BinaryOp::Mod
             | BinaryOp::Less
             | BinaryOp::Greater => {
                 infer_numeric_common_type(left, right, types, expected_numeric, |expr, expected| {
