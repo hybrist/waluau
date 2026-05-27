@@ -125,20 +125,35 @@ impl Parser {
             return Ok(Stmt::Return(self.parse_expr()?));
         }
 
-        if let Some(Token {
-            kind: TokenKind::Identifier(name),
-            ..
-        }) = self.peek().cloned()
-        {
-            if matches!(self.peek_n(1).map(|t| &t.kind), Some(TokenKind::Equal)) {
-                self.advance();
-                self.advance();
-                let value = self.parse_expr()?;
-                return Ok(Stmt::Assign { name, value });
-            }
+        if let Some(assignment) = self.try_parse_assignment()? {
+            return Ok(assignment);
         }
 
         Ok(Stmt::Expr(self.parse_expr()?))
+    }
+
+    fn try_parse_assignment(&mut self) -> Result<Option<Stmt>, Diagnostic> {
+        let checkpoint = self.index;
+        let target = match self.parse_postfix_expr() {
+            Ok(expr) => expr,
+            Err(error) => {
+                self.index = checkpoint;
+                return Err(error);
+            }
+        };
+        if !self.check_simple(&TokenKind::Equal) {
+            self.index = checkpoint;
+            return Ok(None);
+        }
+        self.advance();
+        let value = self.parse_expr()?;
+        Ok(Some(match target {
+            Expr::Name(name) => Stmt::Assign { name, value },
+            Expr::Index { base, index } => Stmt::IndexAssign { base, index, value },
+            _ => {
+                return Err(Diagnostic::new("invalid assignment target"));
+            }
+        }))
     }
 
     fn parse_expr(&mut self) -> Result<Expr, Diagnostic> {
@@ -237,7 +252,54 @@ impl Parser {
                 expr: Box::new(self.parse_unary()?),
             });
         }
-        self.parse_primary()
+        if self.check_simple(&TokenKind::Hash) {
+            self.advance();
+            return Ok(Expr::Unary {
+                op: UnaryOp::Len,
+                expr: Box::new(self.parse_unary()?),
+            });
+        }
+        self.parse_postfix_expr()
+    }
+
+    fn parse_postfix_expr(&mut self) -> Result<Expr, Diagnostic> {
+        let mut expr = self.parse_primary()?;
+        loop {
+            if self.check_simple(&TokenKind::LBracket) {
+                self.advance();
+                let index = self.parse_expr()?;
+                self.expect_simple(TokenKind::RBracket, "expected ']' after array index")?;
+                expr = Expr::Index {
+                    base: Box::new(expr),
+                    index: Box::new(index),
+                };
+                continue;
+            }
+            if let Expr::Name(name) = &expr {
+                if self.check_simple(&TokenKind::LParen) {
+                    self.advance();
+                    let mut args = Vec::new();
+                    if !self.check_simple(&TokenKind::RParen) {
+                        loop {
+                            args.push(self.parse_expr()?);
+                            if self.check_simple(&TokenKind::Comma) {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    self.expect_simple(TokenKind::RParen, "expected ')' after call arguments")?;
+                    expr = Expr::Call {
+                        name: name.clone(),
+                        args,
+                    };
+                    continue;
+                }
+            }
+            break;
+        }
+        Ok(expr)
     }
 
     fn parse_binary(
@@ -278,26 +340,8 @@ impl Parser {
             TokenKind::Number(value) => Ok(Expr::Number(NumberLiteral { raw: value })),
             TokenKind::True => Ok(Expr::Bool(true)),
             TokenKind::False => Ok(Expr::Bool(false)),
-            TokenKind::Identifier(name) => {
-                if self.check_simple(&TokenKind::LParen) {
-                    self.advance();
-                    let mut args = Vec::new();
-                    if !self.check_simple(&TokenKind::RParen) {
-                        loop {
-                            args.push(self.parse_expr()?);
-                            if self.check_simple(&TokenKind::Comma) {
-                                self.advance();
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                    self.expect_simple(TokenKind::RParen, "expected ')' after call arguments")?;
-                    Ok(Expr::Call { name, args })
-                } else {
-                    Ok(Expr::Name(name))
-                }
-            }
+            TokenKind::Identifier(name) => Ok(Expr::Name(name)),
+            TokenKind::LBrace => self.parse_array_literal(),
             TokenKind::LParen => {
                 let inner = self.parse_expr()?;
                 self.expect_simple(TokenKind::RParen, "expected ')' after expression")?;
@@ -307,7 +351,44 @@ impl Parser {
         }
     }
 
+    fn parse_array_literal(&mut self) -> Result<Expr, Diagnostic> {
+        let mut elements = Vec::new();
+        if !self.check_simple(&TokenKind::RBrace) {
+            loop {
+                if let Some(Token {
+                    kind: TokenKind::Identifier(_),
+                    ..
+                }) = self.peek()
+                {
+                    if matches!(
+                        self.peek_n(1).map(|token| &token.kind),
+                        Some(TokenKind::Equal)
+                    ) {
+                        return Err(Diagnostic::new(
+                            "table literals with named fields are not supported",
+                        ));
+                    }
+                }
+                elements.push(self.parse_expr()?);
+                if self.check_simple(&TokenKind::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect_simple(TokenKind::RBrace, "expected '}' after array literal")?;
+        Ok(Expr::ArrayLiteral { elements })
+    }
+
     fn parse_type(&mut self) -> Result<Type, Diagnostic> {
+        if self.check_simple(&TokenKind::LBrace) {
+            self.advance();
+            let element = self.parse_type()?;
+            self.expect_simple(TokenKind::RBrace, "expected '}' after array element type")?;
+            return Ok(Type::Array(Box::new(element)));
+        }
+
         match self.advance().map(|token| token.kind) {
             Some(TokenKind::NumberType | TokenKind::F64Type) => Ok(Type::number()),
             Some(TokenKind::U32Type) => Ok(Type::Numeric(NumericType::U32)),
@@ -317,7 +398,7 @@ impl Parser {
             Some(TokenKind::F32Type) => Ok(Type::Numeric(NumericType::F32)),
             Some(TokenKind::BoolType) => Ok(Type::Bool),
             _ => Err(self.diagnostic_at_current(
-                "expected type (number, u32, u64, i32, i64, f32, f64, or bool)",
+                "expected type (number, u32, u64, i32, i64, f32, f64, bool, or {T})",
             )),
         }
     }
@@ -576,5 +657,60 @@ mod tests {
         let error = parse(source).expect_err("parse should fail");
         let message = error.to_string();
         assert!(message.contains("unsupported '&&'") || message.contains("unsupported '||'"));
+    }
+
+    #[test]
+    fn parses_array_types_literals_indexing_and_length() {
+        let source = r#"
+            function score_count(): i32
+                local scores: {number} = {100, 250, 300}
+                scores[1] = 250
+                return #scores
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert_eq!(function.return_type, Type::Numeric(NumericType::I32));
+        assert!(matches!(
+            &function.body[0],
+            waluau_ast::Stmt::Let {
+                ty: Type::Array(element),
+                value: waluau_ast::Expr::ArrayLiteral { elements },
+                ..
+            } if elements.len() == 3
+                && **element == Type::number()
+        ));
+        assert!(matches!(
+            &function.body[1],
+            waluau_ast::Stmt::IndexAssign {
+                index,
+                ..
+            } if matches!(index.as_ref(), waluau_ast::Expr::Number(NumberLiteral { raw }) if raw == "1")
+        ));
+        assert!(matches!(
+            &function.body[2],
+            waluau_ast::Stmt::Return(waluau_ast::Expr::Unary {
+                op: UnaryOp::Len,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_named_table_literals() {
+        let source = r#"
+            function entry(): i32
+                local t: {i32} = {key = 1}
+                return 0
+            end
+        "#;
+
+        let error = parse(source).expect_err("parse should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("table literals with named fields are not supported")
+        );
     }
 }

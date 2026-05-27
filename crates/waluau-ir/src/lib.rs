@@ -73,6 +73,16 @@ pub enum Terminator {
     Unreachable,
 }
 
+const ARRAYS_UNSUPPORTED: &str = "arrays are not yet supported in code generation";
+
+fn reject_array_type(ty: &Type) -> Result<(), Diagnostic> {
+    if ty.is_array() {
+        Err(Diagnostic::new(ARRAYS_UNSUPPORTED))
+    } else {
+        Ok(())
+    }
+}
+
 pub fn build(program: &Program) -> Result<Module, Diagnostic> {
     let signatures: HashMap<_, _> = program
         .functions
@@ -81,8 +91,12 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
             (
                 function.name.clone(),
                 (
-                    function.params.iter().map(|param| param.ty).collect(),
-                    function.return_type,
+                    function
+                        .params
+                        .iter()
+                        .map(|param| param.ty.clone())
+                        .collect(),
+                    function.return_type.clone(),
                 ),
             )
         })
@@ -108,9 +122,9 @@ pub fn verify(module: &Module) -> Result<(), Diagnostic> {
                     function
                         .params
                         .iter()
-                        .map(|(_, ty)| *ty)
+                        .map(|(_, ty)| ty.clone())
                         .collect::<Vec<_>>(),
-                    function.return_type,
+                    function.return_type.clone(),
                 ),
             )
         })
@@ -195,7 +209,7 @@ fn verify_function(
                             block.id, value_ty, from
                         )));
                     }
-                    require_numeric_cast(*from, *to)?;
+                    require_numeric_cast(from.clone(), to.clone())?;
                 }
                 Instruction::Call { name, args } => {
                     let (param_types, _) = signatures
@@ -306,7 +320,7 @@ fn verify_function(
     Ok(())
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct ValueDefinition {
     block: BlockId,
     ty: Option<Type>,
@@ -340,6 +354,7 @@ fn require_dominating_definition(
     }
     definition
         .ty
+        .clone()
         .ok_or_else(|| Diagnostic::new(format!("could not infer type for value {:?}", value)))
 }
 
@@ -360,15 +375,15 @@ fn infer_instruction_type(
         Instruction::Param(index) => function
             .params
             .get(*index)
-            .map(|(_, ty)| *ty)
+            .map(|(_, ty)| ty.clone())
             .ok_or_else(|| Diagnostic::new(format!("param index {} out of bounds", index))),
         Instruction::Number { ty, .. } => Ok(Type::Numeric(*ty)),
         Instruction::Bool(_) => Ok(Type::Bool),
-        Instruction::Cast { to, .. } => Ok(*to),
-        Instruction::Binary { result_ty, .. } => Ok(*result_ty),
+        Instruction::Cast { to, .. } => Ok(to.clone()),
+        Instruction::Binary { result_ty, .. } => Ok(result_ty.clone()),
         Instruction::Call { name, .. } => signatures
             .get(name)
-            .map(|(_, ret)| *ret)
+            .map(|(_, ret)| ret.clone())
             .ok_or_else(|| Diagnostic::new(format!("unknown function '{}'", name))),
         // TODO: carry explicit phi type in IR once we add non-numeric heap values.
         Instruction::Phi(_) => Ok(Type::number()),
@@ -442,18 +457,24 @@ fn resolve_phi_types(
                 let Instruction::Phi(incoming) = instruction else {
                     continue;
                 };
-                if definitions.get(value).and_then(|def| def.ty).is_some() {
+                if definitions
+                    .get(value)
+                    .and_then(|def| def.ty.as_ref())
+                    .is_some()
+                {
                     continue;
                 }
                 let mut incoming_ty = None;
                 let mut complete = true;
                 for (_, incoming_value) in incoming {
-                    let ty = definitions.get(incoming_value).and_then(|def| def.ty);
+                    let ty = definitions
+                        .get(incoming_value)
+                        .and_then(|def| def.ty.as_ref());
                     let Some(ty) = ty else {
                         complete = false;
                         break;
                     };
-                    if let Some(expected) = incoming_ty {
+                    if let Some(ref expected) = incoming_ty {
                         if expected != ty {
                             return Err(Diagnostic::new(format!(
                                 "phi in block {:?} has inconsistent incoming types",
@@ -461,7 +482,7 @@ fn resolve_phi_types(
                             )));
                         }
                     } else {
-                        incoming_ty = Some(ty);
+                        incoming_ty = Some(ty.clone());
                     }
                 }
                 if complete {
@@ -479,7 +500,10 @@ fn resolve_phi_types(
     for block in function.blocks.values() {
         for (value, instruction) in &block.instructions {
             if matches!(instruction, Instruction::Phi(_))
-                && definitions.get(value).and_then(|def| def.ty).is_none()
+                && definitions
+                    .get(value)
+                    .and_then(|def| def.ty.as_ref())
+                    .is_none()
             {
                 return Err(Diagnostic::new(format!(
                     "could not infer phi type for value {:?}",
@@ -516,14 +540,19 @@ fn build_function(
     function: &AstFunction,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
 ) -> Result<Function, Diagnostic> {
+    for param in &function.params {
+        reject_array_type(&param.ty)?;
+    }
+    reject_array_type(&function.return_type)?;
+
     let mut out = Function {
         name: function.name.clone(),
         params: function
             .params
             .iter()
-            .map(|param| (param.name.clone(), param.ty))
+            .map(|param| (param.name.clone(), param.ty.clone()))
             .collect(),
-        return_type: function.return_type,
+        return_type: function.return_type.clone(),
         entry: BlockId(0),
         blocks: BTreeMap::new(),
         next_value: 0,
@@ -609,22 +638,26 @@ impl Builder<'_> {
     ) -> Result<(), Diagnostic> {
         match stmt {
             Stmt::Let { name, ty, value } => {
-                let value = self.lower_expr(value, env, types, Some(*ty))?;
+                let value = self.lower_expr(value, env, types, Some(ty.clone()))?;
                 env.insert(name.clone(), value);
-                types.insert(name.clone(), *ty);
+                types.insert(name.clone(), ty.clone());
             }
             Stmt::Assign { name, value } => {
-                let ty = *types.get(name).ok_or_else(|| {
+                let ty = types.get(name).cloned().ok_or_else(|| {
                     Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
                 })?;
                 let value = self.lower_expr(value, env, types, Some(ty))?;
                 env.insert(name.clone(), value);
             }
+            Stmt::IndexAssign { .. } => {
+                return Err(Diagnostic::new(ARRAYS_UNSUPPORTED));
+            }
             Stmt::Expr(expr) => {
                 let _ = self.lower_expr(expr, env, types, None)?;
             }
             Stmt::Return(expr) => {
-                let value = self.lower_expr(expr, env, types, Some(self.function.return_type))?;
+                let value =
+                    self.lower_expr(expr, env, types, Some(self.function.return_type.clone()))?;
                 self.set_terminator(self.current_block, Terminator::Return(value));
                 self.current_block = DEAD_BLOCK;
             }
@@ -797,6 +830,9 @@ impl Builder<'_> {
                 let ty = match self.infer_expr_type(expr, types, expected)? {
                     Type::Numeric(ty) => ty,
                     Type::Bool => unreachable!("number literal cannot lower as bool"),
+                    Type::Array(_) => {
+                        return Err(Diagnostic::new(ARRAYS_UNSUPPORTED));
+                    }
                 };
                 self.emit(Instruction::Number {
                     ty,
@@ -808,7 +844,7 @@ impl Builder<'_> {
                 let value = *env.get(name).ok_or_else(|| {
                     Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
                 })?;
-                let actual = *types.get(name).ok_or_else(|| {
+                let actual = types.get(name).cloned().ok_or_else(|| {
                     Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
                 })?;
                 self.coerce_value(value, actual, expected)?
@@ -823,6 +859,9 @@ impl Builder<'_> {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
+                            }
+                            Type::Array(_) => {
+                                return Err(Diagnostic::new(ARRAYS_UNSUPPORTED));
                             }
                         };
                         let zero = self.emit(Instruction::Number {
@@ -854,25 +893,28 @@ impl Builder<'_> {
                         });
                         self.coerce_value(value, Type::Bool, expected)?
                     }
+                    UnaryOp::Len => {
+                        return Err(Diagnostic::new(ARRAYS_UNSUPPORTED));
+                    }
                 }
             }
             Expr::Cast { expr, ty } => {
                 let value = self.lower_expr(expr, env, types, None)?;
                 let actual = self.infer_expr_type(expr, types, None)?;
-                let cast = self.explicit_cast(value, actual, *ty)?;
-                self.coerce_value(cast, *ty, expected)?
+                let cast = self.explicit_cast(value, actual, ty.clone())?;
+                self.coerce_value(cast, ty.clone(), expected)?
             }
             Expr::Binary { op, left, right } => {
                 let operand_ty = self.infer_binary_operand_type(left, right, op, types, None)?;
-                let left = self.lower_expr(left, env, types, Some(operand_ty))?;
-                let right = self.lower_expr(right, env, types, Some(operand_ty))?;
+                let left = self.lower_expr(left, env, types, Some(operand_ty.clone()))?;
+                let right = self.lower_expr(right, env, types, Some(operand_ty.clone()))?;
                 let raw_result_ty = self.infer_expr_type(expr, types, None)?;
                 let value = self.emit(Instruction::Binary {
                     op: *op,
                     left,
                     right,
                     operand_ty,
-                    result_ty: raw_result_ty,
+                    result_ty: raw_result_ty.clone(),
                 });
                 self.coerce_value(value, raw_result_ty, expected)?
             }
@@ -883,7 +925,7 @@ impl Builder<'_> {
                 let args = args
                     .iter()
                     .zip(param_types.iter())
-                    .map(|(arg, param_ty)| self.lower_expr(arg, env, types, Some(*param_ty)))
+                    .map(|(arg, param_ty)| self.lower_expr(arg, env, types, Some(param_ty.clone())))
                     .collect::<Result<Vec<_>, _>>()?;
                 let value = self.emit(Instruction::Call {
                     name: name.clone(),
@@ -891,6 +933,9 @@ impl Builder<'_> {
                 });
                 let actual = self.infer_expr_type(expr, types, None)?;
                 self.coerce_value(value, actual, expected)?
+            }
+            Expr::ArrayLiteral { .. } | Expr::Index { .. } => {
+                return Err(Diagnostic::new(ARRAYS_UNSUPPORTED));
             }
         };
         Ok(value)
@@ -908,18 +953,20 @@ impl Builder<'_> {
                 Some(Type::Bool) => {
                     Err(Diagnostic::new("numeric literal is not assignable to bool"))
                 }
+                Some(Type::Array(_)) => Err(Diagnostic::new(ARRAYS_UNSUPPORTED)),
                 None => Ok(Type::number()),
             },
             Expr::Bool(_) => Ok(Type::Bool),
-            Expr::Name(name) => types.get(name).copied().ok_or_else(|| {
+            Expr::Name(name) => types.get(name).cloned().ok_or_else(|| {
                 Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
             }),
             Expr::Unary { op, expr } => match op {
                 UnaryOp::Neg => {
-                    let actual = self.infer_expr_type(expr, types, expected)?;
+                    let actual = self.infer_expr_type(expr, types, expected.clone())?;
                     match actual {
                         Type::Numeric(_) => coerce_type(actual, expected),
                         Type::Bool => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                        Type::Array(_) => Err(Diagnostic::new(ARRAYS_UNSUPPORTED)),
                     }
                 }
                 UnaryOp::Not => {
@@ -930,19 +977,22 @@ impl Builder<'_> {
                         Err(Diagnostic::new("unary 'not' requires a bool operand"))
                     }
                 }
+                UnaryOp::Len => Err(Diagnostic::new(ARRAYS_UNSUPPORTED)),
             },
             Expr::Cast { expr, ty } => {
                 let actual = self.infer_expr_type(expr, types, None)?;
-                require_numeric_cast(actual, *ty)?;
-                Ok(*ty)
+                require_numeric_cast(actual, ty.clone())?;
+                Ok(ty.clone())
             }
-            Expr::Call { name, .. } => {
-                self.signatures
-                    .get(name)
-                    .map(|(_, ret)| *ret)
-                    .ok_or_else(|| {
-                        Diagnostic::new(format!("unknown function '{name}' during IR lowering"))
-                    })
+            Expr::Call { name, .. } => self
+                .signatures
+                .get(name)
+                .map(|(_, ret)| ret.clone())
+                .ok_or_else(|| {
+                    Diagnostic::new(format!("unknown function '{name}' during IR lowering"))
+                }),
+            Expr::ArrayLiteral { .. } | Expr::Index { .. } => {
+                Err(Diagnostic::new(ARRAYS_UNSUPPORTED))
             }
             Expr::Binary { op, left, right } => match op {
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
@@ -1017,7 +1067,7 @@ impl Builder<'_> {
             None => Ok(value),
             Some(expected) if actual == expected => Ok(value),
             Some(expected) => {
-                let target = coerce_type(actual, Some(expected))?;
+                let target = coerce_type(actual.clone(), Some(expected.clone()))?;
                 if target == actual {
                     Ok(value)
                 } else {
@@ -1037,7 +1087,7 @@ impl Builder<'_> {
         from: Type,
         to: Type,
     ) -> Result<ValueId, Diagnostic> {
-        require_numeric_cast(from, to)?;
+        require_numeric_cast(from.clone(), to.clone())?;
         if from == to {
             Ok(value)
         } else {
@@ -1059,7 +1109,7 @@ fn infer_numeric_common_type(
     ) {
         (true, true) => {
             let ty = Type::Numeric(expected.unwrap_or(NumericType::F64));
-            let left_ty = infer(left, Some(ty))?;
+            let left_ty = infer(left, Some(ty.clone()))?;
             let right_ty = infer(right, Some(ty))?;
             if left_ty == right_ty {
                 Ok(left_ty)
@@ -1071,12 +1121,12 @@ fn infer_numeric_common_type(
         }
         (true, false) => {
             let right_ty = infer(right, None)?;
-            let left_ty = infer(left, Some(right_ty))?;
+            let left_ty = infer(left, Some(right_ty.clone()))?;
             common_numeric_type(left_ty, right_ty)
         }
         (false, true) => {
             let left_ty = infer(left, None)?;
-            let right_ty = infer(right, Some(left_ty))?;
+            let right_ty = infer(right, Some(left_ty.clone()))?;
             common_numeric_type(left_ty, right_ty)
         }
         (false, false) => {
@@ -1115,9 +1165,15 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Bool => Err(Diagnostic::new(format!(
                 "cannot implicitly convert bool to {expected_numeric}",
             ))),
+            Type::Array(_) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert array to {expected_numeric}",
+            ))),
         },
         Some(Type::Bool) => Err(Diagnostic::new(format!(
             "cannot implicitly convert {actual} to bool",
+        ))),
+        Some(expected) => Err(Diagnostic::new(format!(
+            "cannot implicitly convert {actual} to {expected}",
         ))),
     }
 }
@@ -1150,6 +1206,7 @@ fn collect_assigned_into(stmts: &[Stmt], out: &mut BTreeSet<String>) {
             Stmt::Let { name, .. } | Stmt::Assign { name, .. } => {
                 out.insert(name.clone());
             }
+            Stmt::IndexAssign { .. } => {}
             Stmt::If {
                 then_body,
                 else_body,

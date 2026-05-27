@@ -46,6 +46,11 @@ pub enum TokenKind {
     ColonColon,
     Colon,
     Comma,
+    Hash,
+    LBrace,
+    RBrace,
+    LBracket,
+    RBracket,
     LParen,
     RParen,
 }
@@ -66,6 +71,11 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
         let (kind, consumed) = match c {
             '(' => (TokenKind::LParen, 1),
             ')' => (TokenKind::RParen, 1),
+            '[' => (TokenKind::LBracket, 1),
+            ']' => (TokenKind::RBracket, 1),
+            '{' => (TokenKind::LBrace, 1),
+            '}' => (TokenKind::RBrace, 1),
+            '#' => (TokenKind::Hash, 1),
             ':' => {
                 if matches!(chars.get(i + 1), Some(':')) {
                     (TokenKind::ColonColon, 2)
