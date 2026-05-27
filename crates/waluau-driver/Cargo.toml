@@ -14,4 +14,4 @@ waluau-parser.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
-wasmtime = "25"
+wasmtime = "34"
