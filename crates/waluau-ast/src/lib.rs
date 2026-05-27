@@ -130,6 +130,10 @@ pub enum Stmt {
         condition: Expr,
         body: Vec<Stmt>,
     },
+    Repeat {
+        body: Vec<Stmt>,
+        condition: Expr,
+    },
     Return(Expr),
     Expr(Expr),
 }

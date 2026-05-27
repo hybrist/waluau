@@ -102,6 +102,7 @@ mod tests {
             "branch_calls_i32" => include_str!("../../../fixtures/branch_calls_i32.walu"),
             "literals_i64_u64" => include_str!("../../../fixtures/literals_i64_u64.walu"),
             "loop_sum_to_i32" => include_str!("../../../fixtures/loop_sum_to_i32.walu"),
+            "repeat_until_sum" => include_str!("../../../fixtures/repeat_until_sum.walu"),
             "mismatch" => include_str!("../../../fixtures/mismatch.walu"),
             other => panic!("unknown fixture: {other}"),
         }
@@ -173,6 +174,25 @@ mod tests {
             .get_typed_func::<i32, i32>(&mut store, "sum_to")
             .expect("sum_to export should exist");
         assert_eq!(sum_to.call(&mut store, 5).expect("call should succeed"), 15);
+    }
+
+    #[test]
+    fn executes_repeat_until_loops() {
+        let source = fixture_source("repeat_until_sum");
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let sum_to = instance
+            .get_typed_func::<i32, i32>(&mut store, "sum_to")
+            .expect("sum_to export should exist");
+        assert_eq!(sum_to.call(&mut store, 5).expect("call should succeed"), 15);
+
+        let runs_once = instance
+            .get_typed_func::<(), i32>(&mut store, "runs_once")
+            .expect("runs_once export should exist");
+        assert_eq!(
+            runs_once.call(&mut store, ()).expect("call should succeed"),
+            1
+        );
     }
 
     #[test]

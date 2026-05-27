@@ -1,0 +1,17 @@
+function sum_to(n: i32): i32
+    local acc: i32 = 0
+    local i: i32 = 0
+    repeat
+        acc = acc + i
+        i = i + 1
+    until i > n
+    return acc
+end
+
+function runs_once(): i32
+    local count: i32 = 0
+    repeat
+        count = count + 1
+    until true
+    return count
+end

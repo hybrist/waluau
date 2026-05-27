@@ -120,6 +120,13 @@ impl Parser {
             self.expect_simple(TokenKind::End, "expected 'end' after while")?;
             return Ok(Stmt::While { condition, body });
         }
+        if self.check_simple(&TokenKind::Repeat) {
+            self.advance();
+            let body = self.parse_block_until(&[TokenKind::Until]);
+            self.expect_simple(TokenKind::Until, "expected 'until' after repeat body")?;
+            let condition = self.parse_expr()?;
+            return Ok(Stmt::Repeat { body, condition });
+        }
         if self.check_simple(&TokenKind::Return) {
             self.advance();
             return Ok(Stmt::Return(self.parse_expr()?));
@@ -485,7 +492,9 @@ impl Parser {
             }
 
             match token.kind {
-                TokenKind::If | TokenKind::While | TokenKind::Function => depth += 1,
+                TokenKind::If | TokenKind::While | TokenKind::Repeat | TokenKind::Function => {
+                    depth += 1
+                }
                 TokenKind::End if depth > 0 => depth -= 1,
                 _ => {}
             }
@@ -504,6 +513,7 @@ fn is_statement_start(kind: &TokenKind) -> bool {
         TokenKind::Local
             | TokenKind::If
             | TokenKind::While
+            | TokenKind::Repeat
             | TokenKind::Return
             | TokenKind::Identifier(_)
     )
@@ -712,5 +722,26 @@ mod tests {
                 .to_string()
                 .contains("table literals with named fields are not supported")
         );
+    }
+
+    #[test]
+    fn parses_repeat_until_loop() {
+        let source = r#"
+            function entry(limit: i32): i32
+                local i: i32 = 0
+                repeat
+                    i = i + 1
+                until i > limit
+                return i
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert!(matches!(
+            &function.body[1],
+            waluau_ast::Stmt::Repeat { body, condition } if body.len() == 1
+                && matches!(condition, waluau_ast::Expr::Binary { .. })
+        ));
     }
 }
