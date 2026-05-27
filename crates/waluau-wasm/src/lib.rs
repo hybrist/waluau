@@ -6,6 +6,8 @@ struct CompileResult {
     ir: String,
     wat: String,
     wasm: Vec<u8>,
+    #[serde(rename = "requiresWasmGc")]
+    requires_wasm_gc: bool,
 }
 
 /// Compile Waluau source to IR, WAT, and Wasm bytes.
@@ -26,6 +28,7 @@ fn compile_source(source: &str) -> Result<CompileResult, String> {
     let program = waluau_parser::parse(source).map_err(|e| e.to_string())?;
     waluau_hir::type_check(&program).map_err(|e| e.to_string())?;
     let module = waluau_ir::build(&program).map_err(|e| e.to_string())?;
+    let requires_wasm_gc = module_requires_wasm_gc(&module);
 
     let mut ir_dump = String::new();
     for function in &module.functions {
@@ -40,5 +43,56 @@ fn compile_source(source: &str) -> Result<CompileResult, String> {
         ir: ir_dump,
         wat,
         wasm: wasm_bytes,
+        requires_wasm_gc,
     })
+}
+
+fn module_requires_wasm_gc(module: &waluau_ir::Module) -> bool {
+    module
+        .functions
+        .iter()
+        .any(function_requires_wasm_gc)
+}
+
+fn function_requires_wasm_gc(function: &waluau_ir::Function) -> bool {
+    type_requires_wasm_gc(&function.return_type)
+        || function.params.iter().any(|(_, ty)| type_requires_wasm_gc(ty))
+        || function.blocks.values().any(|block| {
+            block.instructions.iter().any(|(_, instruction)| {
+                matches!(
+                    instruction,
+                    waluau_ir::Instruction::ArrayNew { .. }
+                        | waluau_ir::Instruction::ArrayGet { .. }
+                        | waluau_ir::Instruction::ArraySet { .. }
+                        | waluau_ir::Instruction::ArrayLen { .. }
+                )
+            })
+        })
+}
+
+fn type_requires_wasm_gc(ty: &waluau_ast::Type) -> bool {
+    matches!(ty, waluau_ast::Type::Array(_))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compile_source;
+
+    #[test]
+    fn scalar_program_does_not_require_wasm_gc() {
+        let source = r#"
+            function add_one(x: i32): i32
+                return x + 1
+            end
+        "#;
+        let result = compile_source(source).expect("compile should succeed");
+        assert!(!result.requires_wasm_gc);
+    }
+
+    #[test]
+    fn array_program_requires_wasm_gc() {
+        let source = include_str!("../../../fixtures/array_ops.walu");
+        let result = compile_source(source).expect("compile should succeed");
+        assert!(result.requires_wasm_gc);
+    }
 }

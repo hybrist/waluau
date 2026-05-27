@@ -9,6 +9,7 @@ rust-version.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
+waluau-ast.workspace = true
 waluau-diagnostics.workspace = true
 waluau-hir.workspace = true
 waluau-ir.workspace = true

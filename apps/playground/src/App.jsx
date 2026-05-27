@@ -160,6 +160,17 @@ function executeCall(instance, funcName, paramsInfo, inputValues) {
   }
 }
 
+function classifyWasmInstantiationError(err, requiresWasmGc) {
+  const message = err?.message || String(err);
+  if (!requiresWasmGc) {
+    return `Failed to instantiate WASM module: ${message}`;
+  }
+  return [
+    'This module requires Wasm GC (array reference types), but this browser runtime does not support it yet.',
+    `Runtime error: ${message}`
+  ].join('\n');
+}
+
 export default function App() {
   const [code, setCode] = useState(DEFAULT_PRESET);
   const [status, setStatus] = useState('loading'); // 'loading', 'ready', 'success', 'error'
@@ -241,6 +252,7 @@ export default function App() {
   const outputIr = typeof output === 'object' ? output.ir : '';
   const outputWat = typeof output === 'object' ? output.wat : '';
   const outputWasmBytes = typeof output === 'object' ? output.wasm : null;
+  const requiresWasmGc = typeof output === 'object' ? Boolean(output.requiresWasmGc) : false;
   const displayStatus = compilerReady
     ? errorMsg
       ? 'error'
@@ -299,7 +311,7 @@ export default function App() {
           console.error("Instantiation failed:", err);
           setRunInstance(null);
           setExportsList([]);
-          setRunError(`Failed to instantiate WASM module: ${err.message}`);
+          setRunError(classifyWasmInstantiationError(err, requiresWasmGc));
           setManualResults({});
         }
       }
@@ -310,7 +322,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [outputWasmBytes]);
+  }, [outputWasmBytes, requiresWasmGc]);
 
   const handleInputChange = (funcName, paramIndex, value) => {
     setFuncInputs(prev => {

@@ -15,7 +15,7 @@ import init, { compile } from './waluau-wasm/waluau_wasm.js';
 
 await init();
 
-const { ir, wat, wasm } = compile(sourceCode);
+const { ir, wat, wasm, requiresWasmGc } = compile(sourceCode);
 // wasm is a Uint8Array of the compiled module bytes
 ```
 
@@ -24,7 +24,7 @@ When using the `--target web` output consumed by Vite, call the default export o
 ```javascript
 const { default: init, compile } = await import('./waluau-wasm/waluau_wasm.js');
 await init();
-const { ir, wat, wasm } = compile(sourceCode);
+const { ir, wat, wasm, requiresWasmGc } = compile(sourceCode);
 ```
 
 ### `compile(source: string)`
@@ -36,6 +36,7 @@ Compiles Waluau source and returns:
 | `ir` | `string` | Textual IR dump |
 | `wat` | `string` | WebAssembly text format |
 | `wasm` | `Uint8Array` | Compiled Wasm bytes |
+| `requiresWasmGc` | `boolean` | `true` when the module uses array reference types and needs a Wasm GC-capable engine |
 
 Throws a string error message when parsing, type-checking, IR construction, or codegen fails.
 
@@ -52,4 +53,4 @@ Callers copied UTF-8 bytes into Wasm linear memory, read a null-terminated resul
 
 The wasm-bindgen surface replaces that with a single `compile(source)` call. There is no public allocation API anymore. Success and error handling use normal JavaScript values instead of the `Success:\n` / `Error:\n` prefixed C strings.
 
-The compile **result shape** (`{ ir, wat, wasm }`) is unchanged; only the transport layer and error signaling changed.
+The compile surface remains wasm-bindgen based and now returns `{ ir, wat, wasm, requiresWasmGc }`.
