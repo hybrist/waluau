@@ -48,15 +48,15 @@ fn compile_source(source: &str) -> Result<CompileResult, String> {
 }
 
 fn module_requires_wasm_gc(module: &waluau_ir::Module) -> bool {
-    module
-        .functions
-        .iter()
-        .any(function_requires_wasm_gc)
+    module.functions.iter().any(function_requires_wasm_gc)
 }
 
 fn function_requires_wasm_gc(function: &waluau_ir::Function) -> bool {
     type_requires_wasm_gc(&function.return_type)
-        || function.params.iter().any(|(_, ty)| type_requires_wasm_gc(ty))
+        || function
+            .params
+            .iter()
+            .any(|(_, ty)| type_requires_wasm_gc(ty))
         || function.blocks.values().any(|block| {
             block.instructions.iter().any(|(_, instruction)| {
                 matches!(
