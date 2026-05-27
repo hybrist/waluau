@@ -19,7 +19,7 @@ pub struct Param {
     pub ty: Type,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum NumericType {
     U32,
     U64,
@@ -29,7 +29,7 @@ pub enum NumericType {
     F64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Type {
     Numeric(NumericType),
     Bool,
