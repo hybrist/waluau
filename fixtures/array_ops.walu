@@ -1,0 +1,10 @@
+function array_len(): i32
+    local xs: {i32} = {10, 20, 30, 40}
+    return #xs
+end
+
+function array_sum(): i32
+    local xs: {i32} = {1, 2, 3}
+    xs[1] = 10
+    return xs[0] + xs[1] + xs[2]
+end
