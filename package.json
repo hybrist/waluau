@@ -3,8 +3,7 @@
   "private": true,
   "packageManager": "pnpm@10.20.0",
   "scripts": {
-    "build:wasm": "rustup toolchain install stable --profile minimal && rustup target add wasm32-unknown-unknown --toolchain stable && rustup run stable cargo build --target wasm32-unknown-unknown --manifest-path crates/waluau-wasm/Cargo.toml && mkdir -p apps/playground/public && cp target/wasm32-unknown-unknown/debug/waluau_wasm.wasm apps/playground/public/",
-    "build:playground": "pnpm build:wasm && pnpm --filter playground build",
+    "build:playground": "pnpm --filter playground build",
     "dev": "pnpm --filter playground dev"
   }
 }
