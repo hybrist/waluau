@@ -94,7 +94,7 @@ mod tests {
     use std::path::Path;
 
     use tempfile::tempdir;
-    use wasmtime::{Engine, Instance, Module, Store};
+    use wasmtime::{Config, Engine, Instance, Module, Store};
 
     fn fixture_source(name: &str) -> &'static str {
         match name {
@@ -109,6 +109,15 @@ mod tests {
 
     fn instantiate(wasm: &[u8]) -> (Store<()>, Instance) {
         let engine = Engine::default();
+        let module = Module::new(&engine, wasm).expect("module should compile");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instance should create");
+        (store, instance)
+    }
+
+    fn instantiate_with_gc(wasm: &[u8]) -> (Store<()>, Instance) {
+        let engine = Engine::new(Config::new().wasm_function_references(true).wasm_gc(true))
+            .expect("engine should configure wasm-gc");
         let module = Module::new(&engine, wasm).expect("module should compile");
         let mut store = Store::new(&engine, ());
         let instance = Instance::new(&mut store, &module, &[]).expect("instance should create");
@@ -210,6 +219,29 @@ mod tests {
                 .call(&mut store, ())
                 .expect("call should succeed"),
             i64::MAX
+        );
+    }
+
+    #[test]
+    fn executes_array_length_after_mutation() {
+        let source = r#"
+            function score_count(): i32
+                local scores: {number} = {100, 250, 300}
+                local first: number = scores[0]
+                scores[1] = first + 1
+                return #scores
+            end
+        "#;
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate_with_gc(&wasm);
+        let score_count = instance
+            .get_typed_func::<(), i32>(&mut store, "score_count")
+            .expect("score_count export should exist");
+        assert_eq!(
+            score_count
+                .call(&mut store, ())
+                .expect("call should succeed"),
+            3
         );
     }
 

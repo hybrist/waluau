@@ -58,6 +58,24 @@ pub enum Instruction {
         name: String,
         args: Vec<ValueId>,
     },
+    ArrayNew {
+        element_ty: Type,
+        elements: Vec<ValueId>,
+    },
+    ArrayGet {
+        array: ValueId,
+        index: ValueId,
+        element_ty: Type,
+    },
+    ArraySet {
+        array: ValueId,
+        index: ValueId,
+        value: ValueId,
+        element_ty: Type,
+    },
+    ArrayLen {
+        array: ValueId,
+    },
     Phi(Vec<(BlockId, ValueId)>),
 }
 
@@ -71,16 +89,6 @@ pub enum Terminator {
     },
     Return(ValueId),
     Unreachable,
-}
-
-const ARRAYS_UNSUPPORTED: &str = "arrays are not yet supported in code generation";
-
-fn reject_array_type(ty: &Type) -> Result<(), Diagnostic> {
-    if ty.is_array() {
-        Err(Diagnostic::new(ARRAYS_UNSUPPORTED))
-    } else {
-        Ok(())
-    }
 }
 
 pub fn build(program: &Program) -> Result<Module, Diagnostic> {
@@ -239,6 +247,121 @@ fn verify_function(
                         }
                     }
                 }
+                Instruction::ArrayNew {
+                    element_ty,
+                    elements,
+                } => {
+                    for element in elements {
+                        let element_value_ty = require_dominating_definition(
+                            &definitions,
+                            &dominators,
+                            &seen_in_block,
+                            block.id,
+                            *element,
+                        )?;
+                        if element_value_ty != *element_ty {
+                            return Err(Diagnostic::new(format!(
+                                "array literal element in block {:?} has type {}, expected {}",
+                                block.id, element_value_ty, element_ty
+                            )));
+                        }
+                    }
+                }
+                Instruction::ArrayGet {
+                    array,
+                    index,
+                    element_ty,
+                } => {
+                    let array_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *array,
+                    )?;
+                    let expected_array_ty = Type::Array(Box::new(element_ty.clone()));
+                    if array_ty != expected_array_ty {
+                        return Err(Diagnostic::new(format!(
+                            "array get in block {:?} expects {}, got {}",
+                            block.id, expected_array_ty, array_ty
+                        )));
+                    }
+                    let index_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *index,
+                    )?;
+                    if index_ty != Type::Numeric(NumericType::I32) {
+                        return Err(Diagnostic::new(format!(
+                            "array index in block {:?} must be i32",
+                            block.id
+                        )));
+                    }
+                }
+                Instruction::ArraySet {
+                    array,
+                    index,
+                    value,
+                    element_ty,
+                } => {
+                    let array_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *array,
+                    )?;
+                    let expected_array_ty = Type::Array(Box::new(element_ty.clone()));
+                    if array_ty != expected_array_ty {
+                        return Err(Diagnostic::new(format!(
+                            "array set in block {:?} expects {}, got {}",
+                            block.id, expected_array_ty, array_ty
+                        )));
+                    }
+                    let index_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *index,
+                    )?;
+                    if index_ty != Type::Numeric(NumericType::I32) {
+                        return Err(Diagnostic::new(format!(
+                            "array index in block {:?} must be i32",
+                            block.id
+                        )));
+                    }
+                    let value_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *value,
+                    )?;
+                    if value_ty != *element_ty {
+                        return Err(Diagnostic::new(format!(
+                            "array set value in block {:?} has type {}, expected {}",
+                            block.id, value_ty, element_ty
+                        )));
+                    }
+                }
+                Instruction::ArrayLen { array } => {
+                    let array_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *array,
+                    )?;
+                    if !array_ty.is_array() {
+                        return Err(Diagnostic::new(format!(
+                            "array.len operand in block {:?} must be an array",
+                            block.id
+                        )));
+                    }
+                }
                 Instruction::Phi(incoming) => {
                     let expected_preds = predecessors.get(&block.id).cloned().unwrap_or_default();
                     if incoming.len() != expected_preds.len() {
@@ -385,8 +508,13 @@ fn infer_instruction_type(
             .get(name)
             .map(|(_, ret)| ret.clone())
             .ok_or_else(|| Diagnostic::new(format!("unknown function '{}'", name))),
-        // TODO: carry explicit phi type in IR once we add non-numeric heap values.
-        Instruction::Phi(_) => Ok(Type::number()),
+        Instruction::ArrayNew { element_ty, .. } => Ok(Type::Array(Box::new(element_ty.clone()))),
+        Instruction::ArrayGet { element_ty, .. } => Ok(element_ty.clone()),
+        Instruction::ArraySet { .. } => Ok(Type::Numeric(NumericType::I32)),
+        Instruction::ArrayLen { .. } => Ok(Type::Numeric(NumericType::I32)),
+        Instruction::Phi(_) => Err(Diagnostic::new(
+            "phi type must be resolved before infer_instruction_type",
+        )),
     }
 }
 
@@ -486,7 +614,12 @@ fn resolve_phi_types(
                     }
                 }
                 if complete {
-                    let resolved = incoming_ty.unwrap_or(Type::number());
+                    let resolved = incoming_ty.ok_or_else(|| {
+                        Diagnostic::new(format!(
+                            "phi in block {:?} has no typed incoming values",
+                            block.id
+                        ))
+                    })?;
                     definitions
                         .get_mut(value)
                         .expect("phi definition must exist")
@@ -540,11 +673,6 @@ fn build_function(
     function: &AstFunction,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
 ) -> Result<Function, Diagnostic> {
-    for param in &function.params {
-        reject_array_type(&param.ty)?;
-    }
-    reject_array_type(&function.return_type)?;
-
     let mut out = Function {
         name: function.name.clone(),
         params: function
@@ -649,8 +777,21 @@ impl Builder<'_> {
                 let value = self.lower_expr(value, env, types, Some(ty))?;
                 env.insert(name.clone(), value);
             }
-            Stmt::IndexAssign { .. } => {
-                return Err(Diagnostic::new(ARRAYS_UNSUPPORTED));
+            Stmt::IndexAssign { base, index, value } => {
+                let base_ty = self.infer_expr_type(base, types, None)?;
+                let element_ty = base_ty.element_type().ok_or_else(|| {
+                    Diagnostic::new("array element assignment requires an array operand")
+                })?;
+                let array = self.lower_expr(base, env, types, Some(base_ty))?;
+                let index =
+                    self.lower_expr(index, env, types, Some(Type::Numeric(NumericType::I32)))?;
+                let value = self.lower_expr(value, env, types, Some(element_ty.clone()))?;
+                self.emit(Instruction::ArraySet {
+                    array,
+                    index,
+                    value,
+                    element_ty,
+                });
             }
             Stmt::Expr(expr) => {
                 let _ = self.lower_expr(expr, env, types, None)?;
@@ -831,7 +972,9 @@ impl Builder<'_> {
                     Type::Numeric(ty) => ty,
                     Type::Bool => unreachable!("number literal cannot lower as bool"),
                     Type::Array(_) => {
-                        return Err(Diagnostic::new(ARRAYS_UNSUPPORTED));
+                        return Err(Diagnostic::new(
+                            "numeric literal is not assignable to array",
+                        ));
                     }
                 };
                 self.emit(Instruction::Number {
@@ -861,7 +1004,9 @@ impl Builder<'_> {
                                 ));
                             }
                             Type::Array(_) => {
-                                return Err(Diagnostic::new(ARRAYS_UNSUPPORTED));
+                                return Err(Diagnostic::new(
+                                    "unary '-' requires a numeric operand",
+                                ));
                             }
                         };
                         let zero = self.emit(Instruction::Number {
@@ -894,7 +1039,13 @@ impl Builder<'_> {
                         self.coerce_value(value, Type::Bool, expected)?
                     }
                     UnaryOp::Len => {
-                        return Err(Diagnostic::new(ARRAYS_UNSUPPORTED));
+                        let actual = self.infer_expr_type(expr, types, None)?;
+                        if !actual.is_array() {
+                            return Err(Diagnostic::new("# requires an array operand"));
+                        }
+                        let array = self.lower_expr(expr, env, types, Some(actual))?;
+                        let len = self.emit(Instruction::ArrayLen { array });
+                        self.coerce_value(len, Type::Numeric(NumericType::I32), expected)?
                     }
                 }
             }
@@ -934,8 +1085,35 @@ impl Builder<'_> {
                 let actual = self.infer_expr_type(expr, types, None)?;
                 self.coerce_value(value, actual, expected)?
             }
-            Expr::ArrayLiteral { .. } | Expr::Index { .. } => {
-                return Err(Diagnostic::new(ARRAYS_UNSUPPORTED));
+            Expr::ArrayLiteral { elements } => {
+                let array_ty = self.infer_array_literal_type(elements, types, expected.clone())?;
+                let element_ty = array_ty
+                    .element_type()
+                    .expect("array literal must have element type");
+                let lowered = elements
+                    .iter()
+                    .map(|element| self.lower_expr(element, env, types, Some(element_ty.clone())))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let value = self.emit(Instruction::ArrayNew {
+                    element_ty,
+                    elements: lowered,
+                });
+                self.coerce_value(value, array_ty, expected)?
+            }
+            Expr::Index { base, index } => {
+                let base_ty = self.infer_expr_type(base, types, None)?;
+                let element_ty = base_ty
+                    .element_type()
+                    .ok_or_else(|| Diagnostic::new("indexing requires an array operand"))?;
+                let array = self.lower_expr(base, env, types, Some(base_ty))?;
+                let index =
+                    self.lower_expr(index, env, types, Some(Type::Numeric(NumericType::I32)))?;
+                let value = self.emit(Instruction::ArrayGet {
+                    array,
+                    index,
+                    element_ty: element_ty.clone(),
+                });
+                self.coerce_value(value, element_ty, expected)?
             }
         };
         Ok(value)
@@ -953,7 +1131,9 @@ impl Builder<'_> {
                 Some(Type::Bool) => {
                     Err(Diagnostic::new("numeric literal is not assignable to bool"))
                 }
-                Some(Type::Array(_)) => Err(Diagnostic::new(ARRAYS_UNSUPPORTED)),
+                Some(Type::Array(_)) => Err(Diagnostic::new(
+                    "numeric literal is not assignable to array",
+                )),
                 None => Ok(Type::number()),
             },
             Expr::Bool(_) => Ok(Type::Bool),
@@ -966,7 +1146,9 @@ impl Builder<'_> {
                     match actual {
                         Type::Numeric(_) => coerce_type(actual, expected),
                         Type::Bool => Err(Diagnostic::new("unary '-' requires a numeric operand")),
-                        Type::Array(_) => Err(Diagnostic::new(ARRAYS_UNSUPPORTED)),
+                        Type::Array(_) => {
+                            Err(Diagnostic::new("unary '-' requires a numeric operand"))
+                        }
                     }
                 }
                 UnaryOp::Not => {
@@ -977,7 +1159,14 @@ impl Builder<'_> {
                         Err(Diagnostic::new("unary 'not' requires a bool operand"))
                     }
                 }
-                UnaryOp::Len => Err(Diagnostic::new(ARRAYS_UNSUPPORTED)),
+                UnaryOp::Len => {
+                    let actual = self.infer_expr_type(expr, types, None)?;
+                    if !actual.is_array() {
+                        Err(Diagnostic::new("# requires an array operand"))
+                    } else {
+                        coerce_type(Type::Numeric(NumericType::I32), expected)
+                    }
+                }
             },
             Expr::Cast { expr, ty } => {
                 let actual = self.infer_expr_type(expr, types, None)?;
@@ -991,8 +1180,20 @@ impl Builder<'_> {
                 .ok_or_else(|| {
                     Diagnostic::new(format!("unknown function '{name}' during IR lowering"))
                 }),
-            Expr::ArrayLiteral { .. } | Expr::Index { .. } => {
-                Err(Diagnostic::new(ARRAYS_UNSUPPORTED))
+            Expr::ArrayLiteral { elements } => {
+                self.infer_array_literal_type(elements, types, expected)
+            }
+            Expr::Index { base, index } => {
+                let base_ty = self.infer_expr_type(base, types, None)?;
+                let element_ty = base_ty
+                    .element_type()
+                    .ok_or_else(|| Diagnostic::new("indexing requires an array operand"))?;
+                let index_ty =
+                    self.infer_expr_type(index, types, Some(Type::Numeric(NumericType::I32)))?;
+                if index_ty != Type::Numeric(NumericType::I32) {
+                    return Err(Diagnostic::new("array index must be i32"));
+                }
+                coerce_type(element_ty, expected)
             }
             Expr::Binary { op, left, right } => match op {
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
@@ -1093,6 +1294,43 @@ impl Builder<'_> {
         } else {
             Ok(self.emit(Instruction::Cast { value, from, to }))
         }
+    }
+
+    fn infer_array_literal_type(
+        &self,
+        elements: &[Expr],
+        types: &HashMap<String, Type>,
+        expected: Option<Type>,
+    ) -> Result<Type, Diagnostic> {
+        if elements.is_empty() {
+            return Err(Diagnostic::new(
+                "empty array literal requires explicit element type",
+            ));
+        }
+
+        let expected_element = expected.as_ref().and_then(Type::element_type);
+        let mut iter = elements.iter();
+        let first = iter.next().expect("non-empty array literal");
+        let mut element_ty = self.infer_expr_type(first, types, expected_element.clone())?;
+        for element in iter {
+            let actual = self.infer_expr_type(element, types, Some(element_ty.clone()))?;
+            element_ty = common_element_type(element_ty, actual)?;
+        }
+
+        coerce_type(Type::Array(Box::new(element_ty)), expected)
+    }
+}
+
+fn common_element_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
+    match (left, right) {
+        (Type::Numeric(left), Type::Numeric(right)) => left
+            .common(right)
+            .map(Type::Numeric)
+            .ok_or_else(|| Diagnostic::new("array literal elements must share a common type")),
+        (left, right) if left == right => Ok(left),
+        _ => Err(Diagnostic::new(
+            "array literal elements must share a common type",
+        )),
     }
 }
 
@@ -1543,6 +1781,45 @@ mod tests {
         })
         .expect_err("expected verifier to reject return type mismatch");
         assert!(err.to_string().contains("return in block"));
+    }
+
+    #[test]
+    fn lowers_array_literals_indexing_length_and_mutation() {
+        let source = r#"
+            function score_count(): i32
+                local scores: {number} = {100, 250, 300}
+                local first: number = scores[0]
+                scores[1] = first + 1
+                return #scores
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let module = build(&program).expect("ir build should succeed");
+        let function = &module.functions[0];
+        assert!(function.blocks.values().any(|block| {
+            block
+                .instructions
+                .iter()
+                .any(|(_, instruction)| matches!(instruction, Instruction::ArrayNew { .. }))
+        }));
+        assert!(function.blocks.values().any(|block| {
+            block
+                .instructions
+                .iter()
+                .any(|(_, instruction)| matches!(instruction, Instruction::ArrayGet { .. }))
+        }));
+        assert!(function.blocks.values().any(|block| {
+            block
+                .instructions
+                .iter()
+                .any(|(_, instruction)| matches!(instruction, Instruction::ArraySet { .. }))
+        }));
+        assert!(function.blocks.values().any(|block| {
+            block
+                .instructions
+                .iter()
+                .any(|(_, instruction)| matches!(instruction, Instruction::ArrayLen { .. }))
+        }));
     }
 
     #[test]
