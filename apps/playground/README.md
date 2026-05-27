@@ -11,7 +11,7 @@ pnpm install
 pnpm dev
 ```
 
-The dev server watches Rust sources and rebuilds `waluau_wasm.wasm` automatically.
+The dev server uses a Vite plugin that builds the Rust compiler crate and runs `wasm-bindgen` before serving. Rust source changes trigger an automatic rebuild and full reload.
 
 ## Production build
 
@@ -21,7 +21,7 @@ From the repository root:
 pnpm build:playground
 ```
 
-This builds the Rust wasm target first and then emits the Vite site into `apps/playground/dist`.
+This runs a release-mode Wasm build through the same Vite plugin, then emits the site into `apps/playground/dist`. No separate `build:wasm` step is required.
 
 ## Vercel
 

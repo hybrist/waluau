@@ -164,9 +164,9 @@ export default function App() {
   const [code, setCode] = useState(DEFAULT_PRESET);
   const [status, setStatus] = useState('loading'); // 'loading', 'ready', 'success', 'error'
   const [loadErrorMsg, setLoadErrorMsg] = useState('');
+  const [compilerReady, setCompilerReady] = useState(false);
+  const [compileSource, setCompileSource] = useState(null);
   const [activeTab, setActiveTab] = useState('ir'); // 'ir', 'logs', 'run'
-  const [wasmInstance, setWasmInstance] = useState(null);
-  
   const [runInstance, setRunInstance] = useState(null);
   const [runError, setRunError] = useState(null);
   const [exportsList, setExportsList] = useState([]);
@@ -184,30 +184,37 @@ export default function App() {
     }
   };
 
-  // Load WASM on mount
+  // Load wasm-bindgen compiler module on mount.
   useEffect(() => {
-    async function initWasm() {
-      try {
-        const response = await fetch('/waluau_wasm.wasm');
-        if (!response.ok) {
-          throw new Error(`Failed to fetch WASM module: ${response.statusText}`);
+    let cancelled = false;
+
+    import('./waluau-wasm/waluau_wasm.js')
+      .then(async (module) => {
+        await module.default();
+        if (cancelled) {
+          return;
         }
-        const buffer = await response.arrayBuffer();
-        const obj = await WebAssembly.instantiate(buffer, { env: {} });
-        setWasmInstance(obj.instance);
+        setCompileSource(() => module.compile);
+        setCompilerReady(true);
         setStatus('ready');
         setLoadErrorMsg('');
-      } catch (err) {
+      })
+      .catch((err) => {
+        if (cancelled) {
+          return;
+        }
         console.error('WASM load error:', err);
         setStatus('error');
         setLoadErrorMsg(`Failed to load WASM compiler: ${err.message}`);
-      }
-    }
-    initWasm();
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const compilation = useMemo(() => {
-    if (!wasmInstance) {
+    if (!compilerReady || !compileSource) {
       return {
         output: '',
         errorMsg: status === 'error' ? loadErrorMsg : '',
@@ -215,74 +222,26 @@ export default function App() {
     }
 
     try {
-      // 1. Encode source string to UTF-8 bytes
-      const encoder = new TextEncoder();
-      const sourceBytes = encoder.encode(code);
-      const len = sourceBytes.length;
-
-      // 2. Allocate memory in WASM for the source code
-      const ptr = wasmInstance.exports.alloc(len);
-
-      // 3. Write source bytes into the WASM memory buffer
-      const memory = new Uint8Array(wasmInstance.exports.memory.buffer);
-      memory.set(sourceBytes, ptr);
-
-      // 4. Call compile function
-      const resultPtr = wasmInstance.exports.compile(ptr, len);
-
-      // 5. Read the null-terminated result string from WASM memory
-      const resultMemory = new Uint8Array(wasmInstance.exports.memory.buffer);
-      let end = resultPtr;
-      while (resultMemory[end] !== 0) {
-        end++;
-      }
-      const decoder = new TextDecoder();
-      const rawResult = decoder.decode(resultMemory.subarray(resultPtr, end));
-
-      // 6. Free allocated memory in WASM
-      wasmInstance.exports.free_string(resultPtr);
-      wasmInstance.exports.dealloc(ptr, len);
-
-      // Parse output
-      if (rawResult.startsWith('Success:\n')) {
-        try {
-          const parsed = JSON.parse(rawResult.substring(9));
-          return {
-            output: parsed,
-            errorMsg: '',
-          };
-        } catch (jsonErr) {
-          return {
-            output: '',
-            errorMsg: `Failed to parse compilation result: ${jsonErr.message}`,
-          };
-        }
-      } else if (rawResult.startsWith('Error:\n')) {
-        return {
-          output: '',
-          errorMsg: rawResult.substring(7),
-        };
-      } else {
-        return {
-          output: rawResult,
-          errorMsg: '',
-        };
-      }
+      const parsed = compileSource(code);
+      return {
+        output: parsed,
+        errorMsg: '',
+      };
     } catch (err) {
-      console.error('Compilation error:', err);
+      const message = typeof err === 'string' ? err : err?.message || String(err);
       return {
         output: '',
-        errorMsg: `Compilation crashed: ${err.message}`,
+        errorMsg: message,
       };
     }
-  }, [code, loadErrorMsg, status, wasmInstance]);
+  }, [code, compileSource, compilerReady, loadErrorMsg, status]);
 
   const output = compilation.output;
   const errorMsg = compilation.errorMsg;
   const outputIr = typeof output === 'object' ? output.ir : '';
   const outputWat = typeof output === 'object' ? output.wat : '';
   const outputWasmBytes = typeof output === 'object' ? output.wasm : null;
-  const displayStatus = wasmInstance
+  const displayStatus = compilerReady
     ? errorMsg
       ? 'error'
       : output
