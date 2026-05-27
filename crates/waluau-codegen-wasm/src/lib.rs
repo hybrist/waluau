@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use waluau_ast::{BinaryOp, NumberLiteral, NumericType, Type};
 use waluau_diagnostics::Diagnostic;
@@ -6,12 +6,17 @@ use waluau_ir::{
     BasicBlock, Function as IrFunction, Instruction as IrInstruction, Module, Terminator, ValueId,
 };
 use wasm_encoder::{
-    BlockType, CodeSection, ExportKind, ExportSection, Function, FunctionSection, Instruction,
-    Module as WasmModule, TypeSection, ValType,
+    BlockType, CodeSection, ExportKind, ExportSection, Function, FunctionSection, HeapType,
+    Instruction, Module as WasmModule, RefType, StorageType, TypeSection, ValType,
 };
 use wasmparser::Validator;
 
 pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
+    let array_types = collect_array_types(module);
+    let function_type_count = module.functions.len() as u32;
+    let array_registry =
+        ArrayTypeRegistry::with_function_type_offset(&array_types, function_type_count);
+
     let signatures = module
         .functions
         .iter()
@@ -33,10 +38,17 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         let params = function
             .params
             .iter()
-            .map(|(_, ty)| wasm_type(ty.clone()))
+            .map(|(_, ty)| wasm_type(ty, &array_registry))
             .collect::<Result<Vec<_>, _>>()?;
-        let results = [wasm_type(function.return_type.clone())?];
+        let results = [wasm_type(&function.return_type, &array_registry)?];
         types.ty().function(params, results);
+    }
+    for array_ty in &array_types {
+        let element_ty = array_ty
+            .element_type()
+            .expect("array type must have element type");
+        let storage = array_storage_type(&element_ty, &array_registry)?;
+        types.ty().array(&storage, true);
     }
 
     let mut functions = FunctionSection::new();
@@ -45,7 +57,7 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     for (index, function) in module.functions.iter().enumerate() {
         functions.function(index as u32);
         exports.export(&function.name, ExportKind::Func, index as u32);
-        codes.function(&emit_function(function, &signatures)?);
+        codes.function(&emit_function(function, &signatures, &array_registry)?);
     }
 
     wasm.section(&types);
@@ -60,6 +72,103 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     Ok(bytes)
 }
 
+struct ArrayTypeRegistry {
+    indices: HashMap<String, u32>,
+}
+
+impl ArrayTypeRegistry {
+    fn with_function_type_offset(array_types: &[Type], function_type_count: u32) -> Self {
+        let indices = array_types
+            .iter()
+            .enumerate()
+            .map(|(offset, array_ty)| (type_key(array_ty), function_type_count + offset as u32))
+            .collect();
+        Self { indices }
+    }
+
+    fn index(&self, array_ty: &Type) -> Result<u32, Diagnostic> {
+        self.indices
+            .get(&type_key(array_ty))
+            .copied()
+            .ok_or_else(|| Diagnostic::new(format!("missing wasm array type for {array_ty}")))
+    }
+}
+
+fn type_key(ty: &Type) -> String {
+    ty.to_string()
+}
+
+fn collect_array_types(module: &Module) -> Vec<Type> {
+    let mut seen = BTreeSet::new();
+    let mut types = Vec::new();
+    for function in &module.functions {
+        for (_, ty) in &function.params {
+            insert_array_type(ty, &mut seen, &mut types);
+        }
+        insert_array_type(&function.return_type, &mut seen, &mut types);
+        for block in function.blocks.values() {
+            for (_, instruction) in &block.instructions {
+                collect_array_types_from_instruction(instruction, &mut seen, &mut types);
+            }
+        }
+    }
+    types.sort_by_key(array_type_depth);
+    types
+}
+
+fn array_type_depth(ty: &Type) -> usize {
+    match ty {
+        Type::Array(element) => 1 + array_type_depth(element),
+        _ => 0,
+    }
+}
+
+fn insert_array_type(ty: &Type, seen: &mut BTreeSet<String>, out: &mut Vec<Type>) {
+    if let Type::Array(element) = ty {
+        insert_array_type(element, seen, out);
+        if seen.insert(type_key(ty)) {
+            out.push(ty.clone());
+        }
+    }
+}
+
+fn collect_array_types_from_instruction(
+    instruction: &IrInstruction,
+    seen: &mut BTreeSet<String>,
+    out: &mut Vec<Type>,
+) {
+    match instruction {
+        IrInstruction::ArrayNew { element_ty, .. } => {
+            insert_array_type(&Type::Array(Box::new(element_ty.clone())), seen, out);
+        }
+        IrInstruction::ArrayGet { element_ty, .. } | IrInstruction::ArraySet { element_ty, .. } => {
+            insert_array_type(&Type::Array(Box::new(element_ty.clone())), seen, out);
+        }
+        IrInstruction::ArrayLen { .. } => {}
+        _ => {}
+    }
+}
+
+fn array_storage_type(
+    element_ty: &Type,
+    registry: &ArrayTypeRegistry,
+) -> Result<StorageType, Diagnostic> {
+    match element_ty {
+        Type::Numeric(NumericType::I32 | NumericType::U32) => Ok(StorageType::Val(ValType::I32)),
+        Type::Numeric(NumericType::I64 | NumericType::U64) => Ok(StorageType::Val(ValType::I64)),
+        Type::Numeric(NumericType::F32) => Ok(StorageType::Val(ValType::F32)),
+        Type::Numeric(NumericType::F64) => Ok(StorageType::Val(ValType::F64)),
+        Type::Bool => Ok(StorageType::Val(ValType::I32)),
+        Type::Array(_) => {
+            let index = registry.index(element_ty)?;
+            Ok(StorageType::Val(ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(index),
+            })))
+        }
+    }
+}
+
 #[derive(Clone)]
 struct FunctionSignature {
     index: u32,
@@ -69,6 +178,7 @@ struct FunctionSignature {
 fn emit_function(
     function: &IrFunction,
     signatures: &HashMap<String, FunctionSignature>,
+    array_registry: &ArrayTypeRegistry,
 ) -> Result<Function, Diagnostic> {
     let value_types = infer_value_types(function, signatures)?;
     let local_plan = build_local_plan(function, &value_types)?;
@@ -76,7 +186,7 @@ fn emit_function(
         local_plan
             .extra_locals
             .iter()
-            .map(|(_, ty)| wasm_type(ty.clone()))
+            .map(|(_, ty)| wasm_type(ty, array_registry))
             .collect::<Result<Vec<_>, _>>()?,
     );
     let mut out = Function::new(locals);
@@ -98,6 +208,7 @@ fn emit_function(
             signatures,
             &value_types,
             &local_plan,
+            array_registry,
         )?;
         out.instruction(&Instruction::End);
     }
@@ -170,6 +281,12 @@ fn infer_value_types(
                     })?
                     .result
                     .clone(),
+                IrInstruction::ArrayNew { element_ty, .. } => {
+                    Type::Array(Box::new(element_ty.clone()))
+                }
+                IrInstruction::ArrayGet { element_ty, .. } => element_ty.clone(),
+                IrInstruction::ArraySet { .. } => Type::Numeric(NumericType::I32),
+                IrInstruction::ArrayLen { .. } => Type::Numeric(NumericType::I32),
                 IrInstruction::Phi(_) => continue,
             };
             types.insert(*value, ty);
@@ -232,6 +349,7 @@ fn emit_block(
     signatures: &HashMap<String, FunctionSignature>,
     value_types: &BTreeMap<ValueId, Type>,
     local_plan: &LocalPlan,
+    array_registry: &ArrayTypeRegistry,
 ) -> Result<(), Diagnostic> {
     for (value, instruction) in &block.instructions {
         match instruction {
@@ -273,6 +391,57 @@ fn emit_block(
                     Diagnostic::new(format!("unknown function '{name}' during wasm emission"))
                 })?;
                 out.instruction(&Instruction::Call(callee.index));
+                out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
+            }
+            IrInstruction::ArrayNew {
+                element_ty,
+                elements,
+            } => {
+                for element in elements {
+                    out.instruction(&Instruction::LocalGet(local(local_plan, *element)?));
+                }
+                let array_ty = Type::Array(Box::new(element_ty.clone()));
+                let array_type_index = array_registry.index(&array_ty)?;
+                out.instruction(&Instruction::ArrayNewFixed {
+                    array_type_index,
+                    array_size: elements.len() as u32,
+                });
+                out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
+            }
+            IrInstruction::ArrayGet {
+                array,
+                index,
+                element_ty,
+            } => {
+                let array_local = local(local_plan, *array)?;
+                let index_local = local(local_plan, *index)?;
+                let array_ty = Type::Array(Box::new(element_ty.clone()));
+                let array_type_index = array_registry.index(&array_ty)?;
+                emit_bounds_check(out, array_local, index_local);
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::LocalGet(index_local));
+                out.instruction(&Instruction::ArrayGet(array_type_index));
+                out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
+            }
+            IrInstruction::ArraySet {
+                array,
+                index,
+                value: stored,
+                element_ty,
+            } => {
+                let array_local = local(local_plan, *array)?;
+                let index_local = local(local_plan, *index)?;
+                let array_ty = Type::Array(Box::new(element_ty.clone()));
+                let array_type_index = array_registry.index(&array_ty)?;
+                emit_bounds_check(out, array_local, index_local);
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::LocalGet(index_local));
+                out.instruction(&Instruction::LocalGet(local(local_plan, *stored)?));
+                out.instruction(&Instruction::ArraySet(array_type_index));
+            }
+            IrInstruction::ArrayLen { array } => {
+                out.instruction(&Instruction::LocalGet(local(local_plan, *array)?));
+                out.instruction(&Instruction::ArrayLen);
                 out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
             }
         }
@@ -506,12 +675,6 @@ fn emit_binary(
     operand_ty: Type,
     _result_ty: Type,
 ) -> Result<(), Diagnostic> {
-    if matches!(operand_ty, Type::Array(_)) {
-        return Err(Diagnostic::new(
-            "arrays are not yet supported in code generation",
-        ));
-    }
-
     match op {
         BinaryOp::Add => match operand_ty {
             Type::Numeric(NumericType::U32 | NumericType::I32) => {
@@ -676,6 +839,24 @@ fn emit_binary(
     Ok(())
 }
 
+fn emit_bounds_check(out: &mut Function, array_local: u32, index_local: u32) {
+    out.instruction(&Instruction::Block(BlockType::Empty));
+    out.instruction(&Instruction::LocalGet(index_local));
+    out.instruction(&Instruction::I32Const(0));
+    out.instruction(&Instruction::I32LtS);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    out.instruction(&Instruction::Unreachable);
+    out.instruction(&Instruction::End);
+    out.instruction(&Instruction::LocalGet(index_local));
+    out.instruction(&Instruction::LocalGet(array_local));
+    out.instruction(&Instruction::ArrayLen);
+    out.instruction(&Instruction::I32GeU);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    out.instruction(&Instruction::Unreachable);
+    out.instruction(&Instruction::End);
+    out.instruction(&Instruction::End);
+}
+
 fn local(local_plan: &LocalPlan, value: ValueId) -> Result<u32, Diagnostic> {
     local_plan
         .slots
@@ -684,15 +865,19 @@ fn local(local_plan: &LocalPlan, value: ValueId) -> Result<u32, Diagnostic> {
         .ok_or_else(|| Diagnostic::new(format!("missing local slot for value {:?}", value)))
 }
 
-fn wasm_type(ty: Type) -> Result<ValType, Diagnostic> {
+fn wasm_type(ty: &Type, array_registry: &ArrayTypeRegistry) -> Result<ValType, Diagnostic> {
     match ty {
         Type::Bool | Type::Numeric(NumericType::U32 | NumericType::I32) => Ok(ValType::I32),
         Type::Numeric(NumericType::U64 | NumericType::I64) => Ok(ValType::I64),
         Type::Numeric(NumericType::F32) => Ok(ValType::F32),
         Type::Numeric(NumericType::F64) => Ok(ValType::F64),
-        Type::Array(_) => Err(Diagnostic::new(
-            "arrays are not yet supported in code generation",
-        )),
+        Type::Array(_) => {
+            let index = array_registry.index(ty)?;
+            Ok(ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(index),
+            }))
+        }
     }
 }
 
@@ -720,6 +905,24 @@ mod tests {
         let source = r#"
             function entry(x: i32): i32
                 return x + 1
+            end
+        "#;
+        let program = waluau_parser::parse(source).expect("parse should succeed");
+        let ir = waluau_ir::build(&program).expect("ir should succeed");
+        let wasm = super::emit(&ir).expect("emit should succeed");
+        Validator::new()
+            .validate_all(&wasm)
+            .expect("emitted module should validate");
+    }
+
+    #[test]
+    fn emits_valid_wasm_for_array_program() {
+        let source = r#"
+            function score_count(): i32
+                local scores: {number} = {100, 250, 300}
+                local first: number = scores[0]
+                scores[1] = first + 1
+                return #scores
             end
         "#;
         let program = waluau_parser::parse(source).expect("parse should succeed");
