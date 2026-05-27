@@ -181,6 +181,17 @@ Frontend/HIR needs explicit constructs for:
 
 IR should gain explicit array operations rather than encoding them as opaque calls so the verifier and Wasm lowering can validate operand/result types.
 
+## Implementation Breakdown
+
+The M2 rollout is split into tracked implementation work so the design milestone can close independently from feature delivery:
+
+- frontend syntax and HIR typing: `waluau-liq`
+- IR representation and wasm-gc codegen: `waluau-dw8`
+- runtime/browser API exposure and diagnostics: `waluau-rdh`
+- end-to-end execution fixtures and playground-visible examples: `waluau-rso`
+
+These tasks intentionally keep tables and metatables out of scope. They may share tests and examples, but they should not introduce named fields, mixed-key table literals, table libraries, or metatable hooks as part of array support.
+
 ## Examples
 
 ```lua
