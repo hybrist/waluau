@@ -29,10 +29,11 @@ pub enum NumericType {
     F64,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Type {
     Numeric(NumericType),
     Bool,
+    Array(Box<Type>),
 }
 
 impl Type {
@@ -40,8 +41,19 @@ impl Type {
         Self::Numeric(NumericType::F64)
     }
 
-    pub const fn is_numeric(self) -> bool {
+    pub fn is_numeric(&self) -> bool {
         matches!(self, Self::Numeric(_))
+    }
+
+    pub fn is_array(&self) -> bool {
+        matches!(self, Self::Array(_))
+    }
+
+    pub fn element_type(&self) -> Option<Type> {
+        match self {
+            Self::Array(element) => Some(*element.clone()),
+            _ => None,
+        }
     }
 }
 
@@ -88,6 +100,7 @@ impl std::fmt::Display for Type {
         match self {
             Self::Numeric(ty) => ty.fmt(f),
             Self::Bool => f.write_str("bool"),
+            Self::Array(element) => write!(f, "{{{element}}}"),
         }
     }
 }
@@ -101,6 +114,11 @@ pub enum Stmt {
     },
     Assign {
         name: String,
+        value: Expr,
+    },
+    IndexAssign {
+        base: Box<Expr>,
+        index: Box<Expr>,
         value: Expr,
     },
     If {
@@ -138,6 +156,13 @@ pub enum Expr {
         name: String,
         args: Vec<Expr>,
     },
+    ArrayLiteral {
+        elements: Vec<Expr>,
+    },
+    Index {
+        base: Box<Expr>,
+        index: Box<Expr>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -162,4 +187,5 @@ pub enum BinaryOp {
 pub enum UnaryOp {
     Neg,
     Not,
+    Len,
 }

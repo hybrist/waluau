@@ -13,8 +13,12 @@ pub fn type_check(program: &Program) -> Result<(), Diagnostic> {
             (
                 function.name.clone(),
                 (
-                    function.params.iter().map(|param| param.ty).collect(),
-                    function.return_type,
+                    function
+                        .params
+                        .iter()
+                        .map(|param| param.ty.clone())
+                        .collect(),
+                    function.return_type.clone(),
                 ),
             )
         })
@@ -32,7 +36,7 @@ fn check_function(
 ) -> Result<(), Diagnostic> {
     let mut vars: HashMap<String, Type> = HashMap::new();
     for param in &function.params {
-        vars.insert(param.name.clone(), param.ty);
+        vars.insert(param.name.clone(), param.ty.clone());
     }
 
     let mut saw_return = false;
@@ -58,25 +62,48 @@ fn check_stmt(
 ) -> Result<bool, Diagnostic> {
     match stmt {
         Stmt::Let { name, ty, value } => {
-            let value_ty = infer_expr(value, vars, signatures, Some(*ty))?;
+            let value_ty = infer_expr(value, vars, signatures, Some(ty.clone()))?;
             if &value_ty != ty {
                 return Err(Diagnostic::new(format!(
                     "let '{}' expects {}, got {}",
                     name, ty, value_ty
                 )));
             }
-            vars.insert(name.clone(), *ty);
+            vars.insert(name.clone(), ty.clone());
             Ok(false)
         }
         Stmt::Assign { name, value } => {
             let existing = vars
                 .get(name)
                 .ok_or_else(|| Diagnostic::new(format!("unknown local '{name}'")))?;
-            let value_ty = infer_expr(value, vars, signatures, Some(*existing))?;
+            let value_ty = infer_expr(value, vars, signatures, Some(existing.clone()))?;
             if existing != &value_ty {
                 return Err(Diagnostic::new(format!(
                     "assignment to '{}' expects {}, got {}",
                     name, existing, value_ty
+                )));
+            }
+            Ok(false)
+        }
+        Stmt::IndexAssign { base, index, value } => {
+            let base_ty = infer_expr(base, vars, signatures, None)?;
+            let element_ty = base_ty.element_type().ok_or_else(|| {
+                Diagnostic::new("array element assignment requires an array operand")
+            })?;
+            let index_ty = infer_expr(
+                index,
+                vars,
+                signatures,
+                Some(Type::Numeric(NumericType::I32)),
+            )?;
+            if index_ty != Type::Numeric(NumericType::I32) {
+                return Err(Diagnostic::new("array index must be i32"));
+            }
+            let value_ty = infer_expr(value, vars, signatures, Some(element_ty.clone()))?;
+            if value_ty != element_ty {
+                return Err(Diagnostic::new(format!(
+                    "array element assignment expects {}, got {}",
+                    element_ty, value_ty
                 )));
             }
             Ok(false)
@@ -114,7 +141,7 @@ fn check_stmt(
             Ok(false)
         }
         Stmt::Return(expr) => {
-            let ty = infer_expr(expr, vars, signatures, Some(*expected_return))?;
+            let ty = infer_expr(expr, vars, signatures, Some(expected_return.clone()))?;
             if &ty != expected_return {
                 return Err(Diagnostic::new(format!(
                     "return expects {}, got {}",
@@ -151,10 +178,11 @@ fn infer_expr(
         }
         Expr::Unary { op, expr } => match op {
             UnaryOp::Neg => {
-                let actual = infer_expr(expr, vars, signatures, expected)?;
+                let actual = infer_expr(expr, vars, signatures, expected.clone())?;
                 match actual {
                     Type::Numeric(_) => coerce_type(actual, expected),
                     Type::Bool => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                    Type::Array(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                 }
             }
             UnaryOp::Not => {
@@ -164,11 +192,18 @@ fn infer_expr(
                 }
                 coerce_type(Type::Bool, expected)
             }
+            UnaryOp::Len => {
+                let actual = infer_expr(expr, vars, signatures, None)?;
+                if !actual.is_array() {
+                    return Err(Diagnostic::new("# requires an array operand"));
+                }
+                coerce_type(Type::Numeric(NumericType::I32), expected)
+            }
         },
         Expr::Cast { expr, ty } => {
             let actual = infer_expr(expr, vars, signatures, None)?;
-            require_numeric_cast(actual, *ty)?;
-            coerce_type(*ty, expected)
+            require_numeric_cast(actual, ty.clone())?;
+            coerce_type(ty.clone(), expected)
         }
         Expr::Call { name, args } => {
             let (params, ret) = signatures
@@ -183,7 +218,7 @@ fn infer_expr(
                 )));
             }
             for (expected, arg) in params.iter().zip(args) {
-                let actual = infer_expr(arg, vars, signatures, Some(*expected))?;
+                let actual = infer_expr(arg, vars, signatures, Some(expected.clone()))?;
                 if expected != &actual {
                     return Err(Diagnostic::new(format!(
                         "call '{}' expected {}, got {}",
@@ -191,12 +226,31 @@ fn infer_expr(
                     )));
                 }
             }
-            coerce_type(*ret, expected)
+            coerce_type(ret.clone(), expected)
+        }
+        Expr::ArrayLiteral { elements } => {
+            infer_array_literal(elements, vars, signatures, expected)
+        }
+        Expr::Index { base, index } => {
+            let base_ty = infer_expr(base, vars, signatures, None)?;
+            let element_ty = base_ty
+                .element_type()
+                .ok_or_else(|| Diagnostic::new("indexing requires an array operand"))?;
+            let index_ty = infer_expr(
+                index,
+                vars,
+                signatures,
+                Some(Type::Numeric(NumericType::I32)),
+            )?;
+            if index_ty != Type::Numeric(NumericType::I32) {
+                return Err(Diagnostic::new("array index must be i32"));
+            }
+            coerce_type(element_ty, expected)
         }
         Expr::Binary { op, left, right } => match op {
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
                 let operand_ty =
-                    infer_numeric_common_type(left, right, vars, signatures, expected)?;
+                    infer_numeric_common_type(left, right, vars, signatures, expected.clone())?;
                 coerce_type(operand_ty, expected)
             }
             BinaryOp::Less | BinaryOp::Greater => {
@@ -219,7 +273,7 @@ fn infer_expr(
                 } else if left_ty.is_numeric() {
                     let _ = infer_numeric_common_type(left, right, vars, signatures, None)?;
                 } else {
-                    let right_ty = infer_expr(right, vars, signatures, Some(left_ty))?;
+                    let right_ty = infer_expr(right, vars, signatures, Some(left_ty.clone()))?;
                     if left_ty != right_ty {
                         return Err(Diagnostic::new("== requires both sides to have same type"));
                     }
@@ -227,6 +281,44 @@ fn infer_expr(
                 Ok(Type::Bool)
             }
         },
+    }
+}
+
+fn infer_array_literal(
+    elements: &[Expr],
+    vars: &HashMap<String, Type>,
+    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    expected: Option<Type>,
+) -> Result<Type, Diagnostic> {
+    if elements.is_empty() {
+        return Err(Diagnostic::new(
+            "empty array literal requires explicit element type",
+        ));
+    }
+
+    let expected_element = expected.as_ref().and_then(Type::element_type);
+    let mut iter = elements.iter();
+    let first = iter.next().expect("non-empty array literal");
+    let mut element_ty = infer_expr(first, vars, signatures, expected_element.clone())?;
+    for element in iter {
+        let actual = infer_expr(element, vars, signatures, Some(element_ty.clone()))?;
+        element_ty = common_element_type(element_ty, actual)?;
+    }
+
+    let array_ty = Type::Array(Box::new(element_ty));
+    coerce_type(array_ty, expected)
+}
+
+fn common_element_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
+    match (left, right) {
+        (Type::Numeric(left), Type::Numeric(right)) => left
+            .common(right)
+            .map(Type::Numeric)
+            .ok_or_else(|| Diagnostic::new("array literal elements must share a common type")),
+        (left, right) if left == right => Ok(left),
+        _ => Err(Diagnostic::new(
+            "array literal elements must share a common type",
+        )),
     }
 }
 
@@ -250,17 +342,17 @@ fn infer_numeric_common_type(
             let ty = expected_numeric.unwrap_or(NumericType::F64);
             let left_ty = infer_expr(left, vars, signatures, Some(Type::Numeric(ty)))?;
             let right_ty = infer_expr(right, vars, signatures, Some(Type::Numeric(ty)))?;
-            require_same_numeric(left_ty, right_ty)?;
+            require_same_numeric(left_ty.clone(), right_ty)?;
             Ok(left_ty)
         }
         (true, false) => {
             let right_ty = infer_expr(right, vars, signatures, None)?;
-            let left_ty = infer_expr(left, vars, signatures, Some(right_ty))?;
+            let left_ty = infer_expr(left, vars, signatures, Some(right_ty.clone()))?;
             common_numeric_type(left_ty, right_ty)
         }
         (false, true) => {
             let left_ty = infer_expr(left, vars, signatures, None)?;
-            let right_ty = infer_expr(right, vars, signatures, Some(left_ty))?;
+            let right_ty = infer_expr(right, vars, signatures, Some(left_ty.clone()))?;
             common_numeric_type(left_ty, right_ty)
         }
         _ => {
@@ -309,9 +401,15 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Bool => Err(Diagnostic::new(format!(
                 "cannot implicitly convert bool to {expected_numeric}",
             ))),
+            Type::Array(_) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert array to {expected_numeric}",
+            ))),
         },
         Some(Type::Bool) => Err(Diagnostic::new(format!(
             "cannot implicitly convert {actual} to bool",
+        ))),
+        Some(expected) => Err(Diagnostic::new(format!(
+            "cannot implicitly convert {actual} to {expected}",
         ))),
     }
 }
@@ -343,6 +441,9 @@ fn resolve_number_literal(
             Ok(Type::Numeric(numeric))
         }
         Some(Type::Bool) => Err(Diagnostic::new("numeric literal is not assignable to bool")),
+        Some(Type::Array(_)) => Err(Diagnostic::new(
+            "numeric literal is not assignable to array",
+        )),
         None => Ok(Type::number()),
     }
 }
@@ -575,5 +676,86 @@ mod tests {
         let program = parse(source).expect("parse should succeed");
         let error = super::type_check(&program).expect_err("type check should fail");
         assert_eq!(error.to_string(), "expression statements must be calls");
+    }
+
+    #[test]
+    fn type_checks_array_literals_indexing_and_length() {
+        let source = r#"
+            function score_count(): i32
+                local scores: {number} = {100, 250, 300}
+                local first: number = scores[0]
+                scores[1] = first + 1
+                return #scores
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn rejects_heterogeneous_array_literals() {
+        let source = r#"
+            function entry(): i32
+                local xs: {i32} = {1, true}
+                return #xs
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "array literal elements must share a common type"
+        );
+    }
+
+    #[test]
+    fn rejects_empty_array_literals() {
+        let source = r#"
+            function entry(): i32
+                local xs: {i32} = {}
+                return #xs
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "empty array literal requires explicit element type"
+        );
+    }
+
+    #[test]
+    fn rejects_length_on_non_array() {
+        let source = r#"
+            function entry(x: i32): i32
+                return #x
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.to_string(), "# requires an array operand");
+    }
+
+    #[test]
+    fn rejects_incompatible_array_assignment() {
+        let source = r#"
+            function entry(): i32
+                local xs: {i32} = {1, 2, 3}
+                local ys: {i64} = {1, 2, 3}
+                xs = ys
+                return #xs
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "cannot implicitly convert {i64} to {i32}"
+        );
     }
 }

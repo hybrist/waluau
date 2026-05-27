@@ -21,7 +21,7 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
                 function.name.clone(),
                 FunctionSignature {
                     index: index as u32,
-                    result: function.return_type,
+                    result: function.return_type.clone(),
                 },
             )
         })
@@ -30,8 +30,12 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     let mut wasm = WasmModule::new();
     let mut types = TypeSection::new();
     for function in &module.functions {
-        let params = function.params.iter().map(|(_, ty)| wasm_type(*ty));
-        let results = [wasm_type(function.return_type)];
+        let params = function
+            .params
+            .iter()
+            .map(|(_, ty)| wasm_type(ty.clone()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let results = [wasm_type(function.return_type.clone())?];
         types.ty().function(params, results);
     }
 
@@ -72,8 +76,8 @@ fn emit_function(
         local_plan
             .extra_locals
             .iter()
-            .map(|(_, ty)| wasm_type(*ty))
-            .collect(),
+            .map(|(_, ty)| wasm_type(ty.clone()))
+            .collect::<Result<Vec<_>, _>>()?,
     );
     let mut out = Function::new(locals);
 
@@ -126,8 +130,9 @@ fn build_local_plan(
                 continue;
             }
 
-            let ty = *value_types
+            let ty = value_types
                 .get(value)
+                .cloned()
                 .ok_or_else(|| Diagnostic::new(format!("missing type for value {:?}", value)))?;
             slots.insert(*value, next_local);
             extra_locals.push((*value, ty));
@@ -153,21 +158,18 @@ fn infer_value_types(
     for block in function.blocks.values() {
         for (value, instruction) in &block.instructions {
             let ty = match instruction {
-                IrInstruction::Param(index) => function.params[*index].1,
+                IrInstruction::Param(index) => function.params[*index].1.clone(),
                 IrInstruction::Number { ty, .. } => Type::Numeric(*ty),
                 IrInstruction::Bool(_) => Type::Bool,
-                IrInstruction::Cast { to, .. } => *to,
-                IrInstruction::Binary { result_ty, .. } => *result_ty,
-                IrInstruction::Call { name, .. } => {
-                    signatures
-                        .get(name)
-                        .ok_or_else(|| {
-                            Diagnostic::new(format!(
-                                "unknown function '{name}' during wasm emission"
-                            ))
-                        })?
-                        .result
-                }
+                IrInstruction::Cast { to, .. } => to.clone(),
+                IrInstruction::Binary { result_ty, .. } => result_ty.clone(),
+                IrInstruction::Call { name, .. } => signatures
+                    .get(name)
+                    .ok_or_else(|| {
+                        Diagnostic::new(format!("unknown function '{name}' during wasm emission"))
+                    })?
+                    .result
+                    .clone(),
                 IrInstruction::Phi(_) => continue,
             };
             types.insert(*value, ty);
@@ -191,12 +193,12 @@ fn infer_value_types(
                         value
                     )));
                 };
-                let Some(first_ty) = types.get(first).copied() else {
+                let Some(first_ty) = types.get(first).cloned() else {
                     continue;
                 };
                 if incoming
                     .iter()
-                    .all(|(_, incoming)| types.get(incoming).copied() == Some(first_ty))
+                    .all(|(_, incoming)| types.get(incoming).cloned() == Some(first_ty.clone()))
                 {
                     types.insert(*value, first_ty);
                     progress = true;
@@ -248,7 +250,7 @@ fn emit_block(
                 to,
             } => {
                 out.instruction(&Instruction::LocalGet(local(local_plan, *source)?));
-                emit_cast(out, *from, *to)?;
+                emit_cast(out, from.clone(), to.clone())?;
                 out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
             }
             IrInstruction::Binary {
@@ -260,7 +262,7 @@ fn emit_block(
             } => {
                 out.instruction(&Instruction::LocalGet(local(local_plan, *left)?));
                 out.instruction(&Instruction::LocalGet(local(local_plan, *right)?));
-                emit_binary(out, *op, *operand_ty, *result_ty)?;
+                emit_binary(out, *op, operand_ty.clone(), result_ty.clone())?;
                 out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
             }
             IrInstruction::Call { name, args } => {
@@ -504,6 +506,12 @@ fn emit_binary(
     operand_ty: Type,
     _result_ty: Type,
 ) -> Result<(), Diagnostic> {
+    if matches!(operand_ty, Type::Array(_)) {
+        return Err(Diagnostic::new(
+            "arrays are not yet supported in code generation",
+        ));
+    }
+
     match op {
         BinaryOp::Add => match operand_ty {
             Type::Numeric(NumericType::U32 | NumericType::I32) => {
@@ -523,6 +531,7 @@ fn emit_binary(
                     "bool add is not supported during wasm emission",
                 ));
             }
+            Type::Array(_) => unreachable!(),
         },
         BinaryOp::Sub => match operand_ty {
             Type::Numeric(NumericType::U32 | NumericType::I32) => {
@@ -542,6 +551,7 @@ fn emit_binary(
                     "bool sub is not supported during wasm emission",
                 ));
             }
+            Type::Array(_) => unreachable!(),
         },
         BinaryOp::Mul => match operand_ty {
             Type::Numeric(NumericType::U32 | NumericType::I32) => {
@@ -561,6 +571,7 @@ fn emit_binary(
                     "bool mul is not supported during wasm emission",
                 ));
             }
+            Type::Array(_) => unreachable!(),
         },
         BinaryOp::Div => match operand_ty {
             Type::Numeric(NumericType::U32) => {
@@ -586,6 +597,7 @@ fn emit_binary(
                     "bool div is not supported during wasm emission",
                 ));
             }
+            Type::Array(_) => unreachable!(),
         },
         BinaryOp::Eq => match operand_ty {
             Type::Numeric(NumericType::U32 | NumericType::I32) | Type::Bool => {
@@ -600,6 +612,7 @@ fn emit_binary(
             Type::Numeric(NumericType::F64) => {
                 out.instruction(&Instruction::F64Eq);
             }
+            Type::Array(_) => unreachable!(),
         },
         BinaryOp::Less => match operand_ty {
             Type::Numeric(NumericType::U32) => {
@@ -625,6 +638,7 @@ fn emit_binary(
                     "bool comparison is not supported during wasm emission",
                 ));
             }
+            Type::Array(_) => unreachable!(),
         },
         BinaryOp::Greater => match operand_ty {
             Type::Numeric(NumericType::U32) => {
@@ -650,6 +664,7 @@ fn emit_binary(
                     "bool comparison is not supported during wasm emission",
                 ));
             }
+            Type::Array(_) => unreachable!(),
         },
         BinaryOp::And => {
             out.instruction(&Instruction::I32And);
@@ -669,12 +684,15 @@ fn local(local_plan: &LocalPlan, value: ValueId) -> Result<u32, Diagnostic> {
         .ok_or_else(|| Diagnostic::new(format!("missing local slot for value {:?}", value)))
 }
 
-fn wasm_type(ty: Type) -> ValType {
+fn wasm_type(ty: Type) -> Result<ValType, Diagnostic> {
     match ty {
-        Type::Bool | Type::Numeric(NumericType::U32 | NumericType::I32) => ValType::I32,
-        Type::Numeric(NumericType::U64 | NumericType::I64) => ValType::I64,
-        Type::Numeric(NumericType::F32) => ValType::F32,
-        Type::Numeric(NumericType::F64) => ValType::F64,
+        Type::Bool | Type::Numeric(NumericType::U32 | NumericType::I32) => Ok(ValType::I32),
+        Type::Numeric(NumericType::U64 | NumericType::I64) => Ok(ValType::I64),
+        Type::Numeric(NumericType::F32) => Ok(ValType::F32),
+        Type::Numeric(NumericType::F64) => Ok(ValType::F64),
+        Type::Array(_) => Err(Diagnostic::new(
+            "arrays are not yet supported in code generation",
+        )),
     }
 }
 
