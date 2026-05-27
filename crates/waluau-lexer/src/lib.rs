@@ -210,7 +210,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
 
 #[cfg(test)]
 mod tests {
-    use super::{lex, Token, TokenKind};
+    use super::{Token, TokenKind, lex};
     use waluau_diagnostics::Diagnostic;
     use waluau_span::Span;
 
