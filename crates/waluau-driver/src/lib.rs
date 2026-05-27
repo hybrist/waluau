@@ -266,6 +266,51 @@ mod tests {
     }
 
     #[test]
+    fn executes_floor_division_and_modulo_for_negative_operands() {
+        let source = r#"
+            function floor_div(): number
+                return -7 // 3
+            end
+
+            function modulo(): number
+                return -7 % 3
+            end
+
+            function precedence(): number
+                return 1 + 8 // 3 * 2 % 5
+            end
+        "#;
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+
+        let floor_div = instance
+            .get_typed_func::<(), f64>(&mut store, "floor_div")
+            .expect("floor_div export should exist");
+        assert_eq!(
+            floor_div.call(&mut store, ()).expect("call should succeed"),
+            -3.0
+        );
+
+        let modulo = instance
+            .get_typed_func::<(), f64>(&mut store, "modulo")
+            .expect("modulo export should exist");
+        assert_eq!(
+            modulo.call(&mut store, ()).expect("call should succeed"),
+            2.0
+        );
+
+        let precedence = instance
+            .get_typed_func::<(), f64>(&mut store, "precedence")
+            .expect("precedence export should exist");
+        assert_eq!(
+            precedence
+                .call(&mut store, ())
+                .expect("call should succeed"),
+            5.0
+        );
+    }
+
+    #[test]
     fn rejects_invalid_fixture_file() {
         let source = fixture_source("mismatch");
         let err = super::compile_source(source).expect_err("compile should fail");

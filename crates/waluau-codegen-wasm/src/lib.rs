@@ -378,9 +378,15 @@ fn emit_block(
                 operand_ty,
                 result_ty,
             } => {
-                out.instruction(&Instruction::LocalGet(local(local_plan, *left)?));
-                out.instruction(&Instruction::LocalGet(local(local_plan, *right)?));
-                emit_binary(out, *op, operand_ty.clone(), result_ty.clone())?;
+                let left_local = local(local_plan, *left)?;
+                let right_local = local(local_plan, *right)?;
+                if matches!(op, BinaryOp::FloorDiv | BinaryOp::Mod) {
+                    emit_floor_or_mod(out, *op, operand_ty.clone(), left_local, right_local)?;
+                } else {
+                    out.instruction(&Instruction::LocalGet(left_local));
+                    out.instruction(&Instruction::LocalGet(right_local));
+                    emit_binary(out, *op, operand_ty.clone(), result_ty.clone())?;
+                }
                 out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
             }
             IrInstruction::Call { name, args } => {
@@ -762,6 +768,7 @@ fn emit_binary(
             }
             Type::Array(_) => unreachable!(),
         },
+        BinaryOp::FloorDiv | BinaryOp::Mod => unreachable!("handled before stack binary emission"),
         BinaryOp::Eq => match operand_ty {
             Type::Numeric(NumericType::U32 | NumericType::I32) | Type::Bool => {
                 out.instruction(&Instruction::I32Eq);
@@ -837,6 +844,161 @@ fn emit_binary(
         }
     }
     Ok(())
+}
+
+fn emit_floor_or_mod(
+    out: &mut Function,
+    op: BinaryOp,
+    operand_ty: Type,
+    left_local: u32,
+    right_local: u32,
+) -> Result<(), Diagnostic> {
+    match (op, operand_ty) {
+        (BinaryOp::FloorDiv, Type::Numeric(NumericType::U32)) => {
+            emit_integer_div(out, left_local, right_local, false, 32)
+        }
+        (BinaryOp::FloorDiv, Type::Numeric(NumericType::U64)) => {
+            emit_integer_div(out, left_local, right_local, false, 64)
+        }
+        (BinaryOp::FloorDiv, Type::Numeric(NumericType::I32)) => {
+            emit_float_floor_div(out, left_local, right_local, NumericType::I32)
+        }
+        (BinaryOp::FloorDiv, Type::Numeric(NumericType::I64)) => {
+            emit_float_floor_div(out, left_local, right_local, NumericType::I64)
+        }
+        (BinaryOp::FloorDiv, Type::Numeric(NumericType::F32)) => {
+            emit_float_floor_div(out, left_local, right_local, NumericType::F32)
+        }
+        (BinaryOp::FloorDiv, Type::Numeric(NumericType::F64)) => {
+            emit_float_floor_div(out, left_local, right_local, NumericType::F64)
+        }
+        (BinaryOp::Mod, Type::Numeric(NumericType::U32)) => {
+            emit_integer_rem(out, left_local, right_local, false, 32)
+        }
+        (BinaryOp::Mod, Type::Numeric(NumericType::I32)) => {
+            emit_float_mod(out, left_local, right_local, NumericType::I32)
+        }
+        (BinaryOp::Mod, Type::Numeric(NumericType::U64)) => {
+            emit_integer_rem(out, left_local, right_local, false, 64)
+        }
+        (BinaryOp::Mod, Type::Numeric(NumericType::I64)) => {
+            emit_float_mod(out, left_local, right_local, NumericType::I64)
+        }
+        (BinaryOp::Mod, Type::Numeric(NumericType::F32)) => {
+            emit_float_mod(out, left_local, right_local, NumericType::F32)
+        }
+        (BinaryOp::Mod, Type::Numeric(NumericType::F64)) => {
+            emit_float_mod(out, left_local, right_local, NumericType::F64)
+        }
+        (_, Type::Bool) => {
+            return Err(Diagnostic::new(
+                "bool floor/mod is not supported during wasm emission",
+            ));
+        }
+        (_, Type::Array(_)) => unreachable!(),
+        _ => unreachable!(),
+    }
+    Ok(())
+}
+
+fn emit_integer_div(out: &mut Function, left_local: u32, right_local: u32, signed: bool, bits: u8) {
+    out.instruction(&Instruction::LocalGet(left_local));
+    out.instruction(&Instruction::LocalGet(right_local));
+    match (signed, bits) {
+        (false, 32) => out.instruction(&Instruction::I32DivU),
+        (true, 32) => out.instruction(&Instruction::I32DivS),
+        (false, 64) => out.instruction(&Instruction::I64DivU),
+        (true, 64) => out.instruction(&Instruction::I64DivS),
+        _ => unreachable!(),
+    };
+}
+
+fn emit_integer_rem(out: &mut Function, left_local: u32, right_local: u32, signed: bool, bits: u8) {
+    out.instruction(&Instruction::LocalGet(left_local));
+    out.instruction(&Instruction::LocalGet(right_local));
+    match (signed, bits) {
+        (false, 32) => out.instruction(&Instruction::I32RemU),
+        (true, 32) => out.instruction(&Instruction::I32RemS),
+        (false, 64) => out.instruction(&Instruction::I64RemU),
+        (true, 64) => out.instruction(&Instruction::I64RemS),
+        _ => unreachable!(),
+    };
+}
+
+fn emit_float_floor_div(out: &mut Function, left_local: u32, right_local: u32, ty: NumericType) {
+    emit_as_float(out, left_local, ty);
+    emit_as_float(out, right_local, ty);
+    match ty {
+        NumericType::F32 => {
+            out.instruction(&Instruction::F32Div);
+            out.instruction(&Instruction::F32Floor);
+        }
+        _ => {
+            out.instruction(&Instruction::F64Div);
+            out.instruction(&Instruction::F64Floor);
+        }
+    }
+    emit_from_float(out, ty);
+}
+
+fn emit_float_mod(out: &mut Function, left_local: u32, right_local: u32, ty: NumericType) {
+    emit_as_float(out, left_local, ty);
+    emit_as_float(out, left_local, ty);
+    emit_as_float(out, right_local, ty);
+    match ty {
+        NumericType::F32 => {
+            out.instruction(&Instruction::F32Div);
+            out.instruction(&Instruction::F32Floor);
+            emit_as_float(out, right_local, ty);
+            out.instruction(&Instruction::F32Mul);
+            out.instruction(&Instruction::F32Sub);
+        }
+        _ => {
+            out.instruction(&Instruction::F64Div);
+            out.instruction(&Instruction::F64Floor);
+            emit_as_float(out, right_local, ty);
+            out.instruction(&Instruction::F64Mul);
+            out.instruction(&Instruction::F64Sub);
+        }
+    }
+    emit_from_float(out, ty);
+}
+
+fn emit_as_float(out: &mut Function, local: u32, ty: NumericType) {
+    out.instruction(&Instruction::LocalGet(local));
+    match ty {
+        NumericType::U32 => {
+            out.instruction(&Instruction::F64ConvertI32U);
+        }
+        NumericType::I32 => {
+            out.instruction(&Instruction::F64ConvertI32S);
+        }
+        NumericType::U64 => {
+            out.instruction(&Instruction::F64ConvertI64U);
+        }
+        NumericType::I64 => {
+            out.instruction(&Instruction::F64ConvertI64S);
+        }
+        NumericType::F32 | NumericType::F64 => {}
+    }
+}
+
+fn emit_from_float(out: &mut Function, ty: NumericType) {
+    match ty {
+        NumericType::U32 => {
+            out.instruction(&Instruction::I32TruncF64U);
+        }
+        NumericType::I32 => {
+            out.instruction(&Instruction::I32TruncF64S);
+        }
+        NumericType::U64 => {
+            out.instruction(&Instruction::I64TruncF64U);
+        }
+        NumericType::I64 => {
+            out.instruction(&Instruction::I64TruncF64S);
+        }
+        NumericType::F32 | NumericType::F64 => {}
+    }
 }
 
 fn emit_bounds_check(out: &mut Function, array_local: u32, index_local: u32) {

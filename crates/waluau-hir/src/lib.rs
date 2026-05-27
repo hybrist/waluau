@@ -259,7 +259,12 @@ fn infer_expr(
             coerce_type(element_ty, expected)
         }
         Expr::Binary { op, left, right } => match op {
-            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+            BinaryOp::Add
+            | BinaryOp::Sub
+            | BinaryOp::Mul
+            | BinaryOp::Div
+            | BinaryOp::FloorDiv
+            | BinaryOp::Mod => {
                 let operand_ty =
                     infer_numeric_common_type(left, right, vars, signatures, expected.clone())?;
                 coerce_type(operand_ty, expected)
