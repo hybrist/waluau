@@ -877,6 +877,7 @@ mod tests {
         super::type_check(&program).expect("type check should succeed");
     }
 
+    #[test]
     fn type_checks_closure_capture() {
         let source = r#"
             function entry(x: i32): i32

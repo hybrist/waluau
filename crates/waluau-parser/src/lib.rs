@@ -865,6 +865,7 @@ mod tests {
         ));
     }
 
+    #[test]
     fn parses_function_type_and_literal_assignment() {
         let source = r#"
             function entry(): i32
