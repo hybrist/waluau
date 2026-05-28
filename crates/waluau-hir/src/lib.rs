@@ -512,7 +512,11 @@ fn infer_function_expr(
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
     let function_ty = Type::Function {
-        params: function.params.iter().map(|param| param.ty.clone()).collect(),
+        params: function
+            .params
+            .iter()
+            .map(|param| param.ty.clone())
+            .collect(),
         return_type: Box::new(function.return_type.clone()),
     };
     let mut local_scope = vars.clone();

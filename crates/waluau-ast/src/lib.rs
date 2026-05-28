@@ -189,7 +189,10 @@ pub enum Expr {
         left: Box<Expr>,
         right: Box<Expr>,
     },
-    Call { callee: Box<Expr>, args: Vec<Expr> },
+    Call {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+    },
     Function(FunctionExpr),
     ArrayLiteral {
         elements: Vec<Expr>,

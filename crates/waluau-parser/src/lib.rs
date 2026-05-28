@@ -49,7 +49,9 @@ impl Parser {
         let name = self.expect_identifier()?;
         let function_expr = self.parse_function_expr_tail(Some(name))?;
         Ok(Function {
-            name: function_expr.name.expect("top-level functions always have a name"),
+            name: function_expr
+                .name
+                .expect("top-level functions always have a name"),
             params: function_expr.params,
             return_type: function_expr.return_type,
             body: function_expr.body,

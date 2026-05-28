@@ -1341,7 +1341,11 @@ impl Builder<'_> {
                 }
             }
             Expr::Function(function) => Ok(Type::Function {
-                params: function.params.iter().map(|param| param.ty.clone()).collect(),
+                params: function
+                    .params
+                    .iter()
+                    .map(|param| param.ty.clone())
+                    .collect(),
                 return_type: Box::new(function.return_type.clone()),
             }),
             Expr::ArrayLiteral { elements } => {
