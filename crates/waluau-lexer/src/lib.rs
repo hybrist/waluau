@@ -281,7 +281,7 @@ mod tests {
     #[test]
     fn distinguishes_keywords_from_identifiers() {
         assert_eq!(
-            kinds("function local ifelse trueish not_a_keyword _foo Function"),
+            kinds("function local ifelse trueish not_a_keyword _foo Function const"),
             vec![
                 TokenKind::Function,
                 TokenKind::Local,
@@ -290,6 +290,7 @@ mod tests {
                 TokenKind::Identifier("not_a_keyword".into()),
                 TokenKind::Identifier("_foo".into()),
                 TokenKind::Identifier("Function".into()),
+                TokenKind::Identifier("const".into()),
             ]
         );
     }
@@ -297,7 +298,7 @@ mod tests {
     #[test]
     fn tokenizes_compound_punctuation() {
         assert_eq!(
-            kinds("== :: : = += ->"),
+            kinds("== :: : = += -> < >"),
             vec![
                 TokenKind::EqualEqual,
                 TokenKind::ColonColon,
@@ -305,6 +306,8 @@ mod tests {
                 TokenKind::Equal,
                 TokenKind::PlusEqual,
                 TokenKind::Arrow,
+                TokenKind::Less,
+                TokenKind::Greater,
             ]
         );
     }

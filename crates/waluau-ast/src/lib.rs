@@ -134,6 +134,7 @@ impl std::fmt::Display for Type {
 pub enum Stmt {
     Let {
         name: String,
+        rebindability: Rebindability,
         ty: Type,
         value: Expr,
     },
@@ -169,6 +170,12 @@ pub enum Stmt {
 pub enum AssignOp {
     Set,
     Add,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Rebindability {
+    Rebindable,
+    Const,
 }
 
 #[derive(Clone, Debug, PartialEq)]

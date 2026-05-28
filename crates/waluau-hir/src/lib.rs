@@ -1,10 +1,16 @@
 use std::collections::HashMap;
 
 use waluau_ast::{
-    AssignOp, BinaryOp, Expr, Function, FunctionExpr, NumberLiteral, NumericType, Program, Stmt,
-    Type, UnaryOp,
+    AssignOp, BinaryOp, Expr, Function, FunctionExpr, NumberLiteral, NumericType, Program,
+    Rebindability, Stmt, Type, UnaryOp,
 };
 use waluau_diagnostics::Diagnostic;
+
+#[derive(Clone)]
+struct Binding {
+    ty: Type,
+    rebindability: Rebindability,
+}
 
 pub fn type_check(program: &Program) -> Result<(), Diagnostic> {
     let signatures: HashMap<_, _> = program
@@ -35,9 +41,15 @@ fn check_function(
     function: &Function,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
 ) -> Result<(), Diagnostic> {
-    let mut vars: HashMap<String, Type> = HashMap::new();
+    let mut vars: HashMap<String, Binding> = HashMap::new();
     for param in &function.params {
-        vars.insert(param.name.clone(), param.ty.clone());
+        vars.insert(
+            param.name.clone(),
+            Binding {
+                ty: param.ty.clone(),
+                rebindability: Rebindability::Rebindable,
+            },
+        );
     }
 
     let mut saw_return = false;
@@ -57,12 +69,17 @@ fn check_function(
 
 fn check_stmt(
     stmt: &Stmt,
-    vars: &mut HashMap<String, Type>,
+    vars: &mut HashMap<String, Binding>,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
     expected_return: &Type,
 ) -> Result<bool, Diagnostic> {
     match stmt {
-        Stmt::Let { name, ty, value } => {
+        Stmt::Let {
+            name,
+            rebindability,
+            ty,
+            value,
+        } => {
             let value_ty = infer_expr(value, vars, signatures, Some(ty.clone()))?;
             if &value_ty != ty {
                 return Err(Diagnostic::new(format!(
@@ -70,24 +87,36 @@ fn check_stmt(
                     name, ty, value_ty
                 )));
             }
-            vars.insert(name.clone(), ty.clone());
+            vars.insert(
+                name.clone(),
+                Binding {
+                    ty: ty.clone(),
+                    rebindability: *rebindability,
+                },
+            );
             Ok(false)
         }
         Stmt::Assign { op, name, value } => {
             let existing = vars
                 .get(name)
                 .ok_or_else(|| Diagnostic::new(format!("unknown local '{name}'")))?;
-            if *op == AssignOp::Add && !existing.is_numeric() {
+            if *op == AssignOp::Add && !existing.ty.is_numeric() {
                 return Err(Diagnostic::new(format!(
                     "compound assignment to '{}' requires a numeric target",
                     name
                 )));
             }
-            let value_ty = infer_expr(value, vars, signatures, Some(existing.clone()))?;
-            if existing != &value_ty {
+            if existing.rebindability == Rebindability::Const {
+                return Err(Diagnostic::new(format!(
+                    "cannot rebind const local '{}'",
+                    name
+                )));
+            }
+            let value_ty = infer_expr(value, vars, signatures, Some(existing.ty.clone()))?;
+            if existing.ty != value_ty {
                 return Err(Diagnostic::new(format!(
                     "assignment to '{}' expects {}, got {}",
-                    name, existing, value_ty
+                    name, existing.ty, value_ty
                 )));
             }
             Ok(false)
@@ -190,7 +219,7 @@ fn check_stmt(
 
 fn infer_expr(
     expr: &Expr,
-    vars: &HashMap<String, Type>,
+    vars: &HashMap<String, Binding>,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
@@ -199,7 +228,7 @@ fn infer_expr(
         Expr::Bool(_) => Ok(Type::Bool),
         Expr::Name(name) => {
             let actual = if let Some(local) = vars.get(name) {
-                local.clone()
+                local.ty.clone()
             } else if let Some((params, return_type)) = signatures.get(name) {
                 Type::Function {
                     params: params.clone(),
@@ -337,7 +366,7 @@ fn infer_expr(
 
 fn infer_array_literal(
     elements: &[Expr],
-    vars: &HashMap<String, Type>,
+    vars: &HashMap<String, Binding>,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
@@ -376,7 +405,7 @@ fn common_element_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
 fn infer_numeric_common_type(
     left: &Expr,
     right: &Expr,
-    vars: &HashMap<String, Type>,
+    vars: &HashMap<String, Binding>,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
@@ -507,7 +536,7 @@ fn resolve_number_literal(
 
 fn infer_function_expr(
     function: &FunctionExpr,
-    vars: &HashMap<String, Type>,
+    vars: &HashMap<String, Binding>,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
@@ -521,10 +550,22 @@ fn infer_function_expr(
     };
     let mut local_scope = vars.clone();
     for param in &function.params {
-        local_scope.insert(param.name.clone(), param.ty.clone());
+        local_scope.insert(
+            param.name.clone(),
+            Binding {
+                ty: param.ty.clone(),
+                rebindability: Rebindability::Rebindable,
+            },
+        );
     }
     if let Some(name) = &function.name {
-        local_scope.insert(name.clone(), function_ty.clone());
+        local_scope.insert(
+            name.clone(),
+            Binding {
+                ty: function_ty.clone(),
+                rebindability: Rebindability::Rebindable,
+            },
+        );
     }
     let mut saw_return = false;
     for stmt in &function.body {
@@ -933,5 +974,65 @@ mod tests {
             error.to_string(),
             "compound assignment to 'flag' requires a numeric target"
         );
+    }
+
+    #[test]
+    fn rejects_rebinding_const_local() {
+        let source = r#"
+            function entry(x: i32): i32
+                const y: i32 = x
+                y = x + 1
+                return y
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.to_string(), "cannot rebind const local 'y'");
+    }
+
+    #[test]
+    fn allows_rebinding_plain_local_named_const() {
+        let source = r#"
+            function entry(): i32
+                local const: i32 = 1
+                const = const + 1
+                return const
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn allows_shadowing_const_with_inner_local() {
+        let source = r#"
+            function entry(flag: bool): i32
+                const x: i32 = 1
+                if flag then
+                    local x: i32 = 2
+                    return x
+                end
+                return x
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn allows_mutation_through_const_array_binding() {
+        let source = r#"
+            function entry(): i32
+                const xs: {i32} = {1, 2, 3}
+                xs[0] = 9
+                return xs[0]
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
     }
 }
