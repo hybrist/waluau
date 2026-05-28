@@ -1484,14 +1484,22 @@ impl Builder<'_> {
             let self_callee = nested.emit(Instruction::Closure {
                 name: lifted_name.clone(),
                 captures: capture_param_values,
-                params: function.params.iter().map(|param| param.ty.clone()).collect(),
+                params: function
+                    .params
+                    .iter()
+                    .map(|param| param.ty.clone())
+                    .collect(),
                 return_type: function.return_type.clone(),
             });
             nested_env.insert(name.clone(), self_callee);
             nested_types.insert(
                 name.clone(),
                 Type::Function {
-                    params: function.params.iter().map(|param| param.ty.clone()).collect(),
+                    params: function
+                        .params
+                        .iter()
+                        .map(|param| param.ty.clone())
+                        .collect(),
                     return_type: Box::new(function.return_type.clone()),
                 },
             );
@@ -1508,7 +1516,11 @@ impl Builder<'_> {
         Ok(self.emit(Instruction::Closure {
             name: lifted_name,
             captures: capture_values,
-            params: function.params.iter().map(|param| param.ty.clone()).collect(),
+            params: function
+                .params
+                .iter()
+                .map(|param| param.ty.clone())
+                .collect(),
             return_type: function.return_type.clone(),
         }))
     }
@@ -1875,7 +1887,11 @@ fn collect_captures(
     types: &HashMap<String, Type>,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
 ) -> Vec<(String, Type)> {
-    let mut bound: HashSet<String> = function.params.iter().map(|param| param.name.clone()).collect();
+    let mut bound: HashSet<String> = function
+        .params
+        .iter()
+        .map(|param| param.name.clone())
+        .collect();
     if let Some(name) = &function.name {
         bound.insert(name.clone());
     }
@@ -1905,7 +1921,9 @@ fn collect_expr_captures_from_stmt(
         Stmt::Assign { value, .. } => {
             collect_expr_captures(value, bound, env, signatures, captures)
         }
-        Stmt::IndexAssign { base, index, value, .. } => {
+        Stmt::IndexAssign {
+            base, index, value, ..
+        } => {
             collect_expr_captures(base, bound, env, signatures, captures);
             collect_expr_captures(index, bound, env, signatures, captures);
             collect_expr_captures(value, bound, env, signatures, captures);
@@ -2534,7 +2552,10 @@ mod tests {
         let program = parse(source).expect("parse should succeed");
         let module = build(&program).expect("ir build should succeed");
         assert!(
-            module.functions.iter().any(|function| function.name == "entry$lambda0"),
+            module
+                .functions
+                .iter()
+                .any(|function| function.name == "entry$lambda0"),
             "expected lifted lambda function in module"
         );
         let entry = module

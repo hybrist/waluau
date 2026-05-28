@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+run() {
+  printf '\n==> %s\n' "$1"
+  shift
+  "$@"
+}
+
+if command -v cargo >/dev/null 2>&1; then
+  run "Formatting Rust" cargo fmt --all
+  run "Applying clippy fixes" cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged -- -D warnings
+else
+  echo "Skipping Rust checks: cargo not found"
+fi
+
+if [ -f "apps/playground/package.json" ]; then
+  if [ ! -d "apps/playground/node_modules" ] && [ ! -d "node_modules" ]; then
+    run "Installing playground dependencies" pnpm install --dir apps/playground
+  fi
+  run "Applying ESLint fixes (playground)" pnpm --dir apps/playground lint --fix
+fi
+
+# Re-stage modified tracked files after autofix passes.
+git add -u
