@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use waluau_ast::{
-    BinaryOp, Expr, Function, NumberLiteral, NumericType, Program, Stmt, Type, UnaryOp,
+    AssignOp, BinaryOp, Expr, Function, NumberLiteral, NumericType, Program, Stmt, Type, UnaryOp,
 };
 use waluau_diagnostics::Diagnostic;
 
@@ -72,10 +72,16 @@ fn check_stmt(
             vars.insert(name.clone(), ty.clone());
             Ok(false)
         }
-        Stmt::Assign { name, value } => {
+        Stmt::Assign { op, name, value } => {
             let existing = vars
                 .get(name)
                 .ok_or_else(|| Diagnostic::new(format!("unknown local '{name}'")))?;
+            if *op == AssignOp::Add && !existing.is_numeric() {
+                return Err(Diagnostic::new(format!(
+                    "compound assignment to '{}' requires a numeric target",
+                    name
+                )));
+            }
             let value_ty = infer_expr(value, vars, signatures, Some(existing.clone()))?;
             if existing != &value_ty {
                 return Err(Diagnostic::new(format!(
@@ -85,11 +91,21 @@ fn check_stmt(
             }
             Ok(false)
         }
-        Stmt::IndexAssign { base, index, value } => {
+        Stmt::IndexAssign {
+            op,
+            base,
+            index,
+            value,
+        } => {
             let base_ty = infer_expr(base, vars, signatures, None)?;
             let element_ty = base_ty.element_type().ok_or_else(|| {
                 Diagnostic::new("array element assignment requires an array operand")
             })?;
+            if *op == AssignOp::Add && !element_ty.is_numeric() {
+                return Err(Diagnostic::new(
+                    "compound array assignment requires numeric elements",
+                ));
+            }
             let index_ty = infer_expr(
                 index,
                 vars,
@@ -805,5 +821,23 @@ mod tests {
 
         let program = parse(source).expect("parse should succeed");
         super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn rejects_compound_assignment_on_non_numeric_targets() {
+        let source = r#"
+            function entry(flag: bool, xs: {bool}): i32
+                flag += true
+                xs[0] += false
+                return 0
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "compound assignment to 'flag' requires a numeric target"
+        );
     }
 }

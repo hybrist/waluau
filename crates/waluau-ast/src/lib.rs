@@ -113,10 +113,12 @@ pub enum Stmt {
         value: Expr,
     },
     Assign {
+        op: AssignOp,
         name: String,
         value: Expr,
     },
     IndexAssign {
+        op: AssignOp,
         base: Box<Expr>,
         index: Box<Expr>,
         value: Expr,
@@ -136,6 +138,12 @@ pub enum Stmt {
     },
     Return(Expr),
     Expr(Expr),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AssignOp {
+    Set,
+    Add,
 }
 
 #[derive(Clone, Debug, PartialEq)]

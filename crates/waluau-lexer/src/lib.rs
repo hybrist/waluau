@@ -36,6 +36,7 @@ pub enum TokenKind {
     Identifier(String),
     Number(String),
     Plus,
+    PlusEqual,
     Minus,
     Star,
     Slash,
@@ -88,7 +89,13 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 }
             }
             ',' => (TokenKind::Comma, 1),
-            '+' => (TokenKind::Plus, 1),
+            '+' => {
+                if matches!(chars.get(i + 1), Some('=')) {
+                    (TokenKind::PlusEqual, 2)
+                } else {
+                    (TokenKind::Plus, 1)
+                }
+            }
             '*' => (TokenKind::Star, 1),
             '/' => {
                 if matches!(chars.get(i + 1), Some('/')) {
@@ -295,12 +302,13 @@ mod tests {
     #[test]
     fn tokenizes_compound_punctuation() {
         assert_eq!(
-            kinds("== :: : ="),
+            kinds("== :: : = +="),
             vec![
                 TokenKind::EqualEqual,
                 TokenKind::ColonColon,
                 TokenKind::Colon,
                 TokenKind::Equal,
+                TokenKind::PlusEqual,
             ]
         );
     }

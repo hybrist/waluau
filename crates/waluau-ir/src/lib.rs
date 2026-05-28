@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use waluau_ast::{
-    BinaryOp, Expr, Function as AstFunction, NumberLiteral, NumericType, Program, Stmt, Type,
-    UnaryOp,
+    AssignOp, BinaryOp, Expr, Function as AstFunction, NumberLiteral, NumericType, Program, Stmt,
+    Type, UnaryOp,
 };
 use waluau_diagnostics::Diagnostic;
 
@@ -770,14 +770,42 @@ impl Builder<'_> {
                 env.insert(name.clone(), value);
                 types.insert(name.clone(), ty.clone());
             }
-            Stmt::Assign { name, value } => {
+            Stmt::Assign { op, name, value } => {
                 let ty = types.get(name).cloned().ok_or_else(|| {
                     Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
                 })?;
-                let value = self.lower_expr(value, env, types, Some(ty))?;
+                let value = match op {
+                    AssignOp::Set => self.lower_expr(value, env, types, Some(ty))?,
+                    AssignOp::Add => {
+                        if !ty.is_numeric() {
+                            return Err(Diagnostic::new(format!(
+                                "compound assignment to '{}' requires a numeric target",
+                                name
+                            )));
+                        }
+                        let current = *env.get(name).ok_or_else(|| {
+                            Diagnostic::new(format!(
+                                "unknown local '{name}' during IR lowering"
+                            ))
+                        })?;
+                        let rhs = self.lower_expr(value, env, types, Some(ty.clone()))?;
+                        self.emit(Instruction::Binary {
+                            op: BinaryOp::Add,
+                            left: current,
+                            right: rhs,
+                            operand_ty: ty.clone(),
+                            result_ty: ty,
+                        })
+                    }
+                };
                 env.insert(name.clone(), value);
             }
-            Stmt::IndexAssign { base, index, value } => {
+            Stmt::IndexAssign {
+                op,
+                base,
+                index,
+                value,
+            } => {
                 let base_ty = self.infer_expr_type(base, types, None)?;
                 let element_ty = base_ty.element_type().ok_or_else(|| {
                     Diagnostic::new("array element assignment requires an array operand")
@@ -785,7 +813,31 @@ impl Builder<'_> {
                 let array = self.lower_expr(base, env, types, Some(base_ty))?;
                 let index =
                     self.lower_expr(index, env, types, Some(Type::Numeric(NumericType::I32)))?;
-                let value = self.lower_expr(value, env, types, Some(element_ty.clone()))?;
+                let value = match op {
+                    AssignOp::Set => {
+                        self.lower_expr(value, env, types, Some(element_ty.clone()))?
+                    }
+                    AssignOp::Add => {
+                        if !element_ty.is_numeric() {
+                            return Err(Diagnostic::new(
+                                "compound array assignment requires numeric elements",
+                            ));
+                        }
+                        let current = self.emit(Instruction::ArrayGet {
+                            array,
+                            index,
+                            element_ty: element_ty.clone(),
+                        });
+                        let rhs = self.lower_expr(value, env, types, Some(element_ty.clone()))?;
+                        self.emit(Instruction::Binary {
+                            op: BinaryOp::Add,
+                            left: current,
+                            right: rhs,
+                            operand_ty: element_ty.clone(),
+                            result_ty: element_ty.clone(),
+                        })
+                    }
+                };
                 self.emit(Instruction::ArraySet {
                     array,
                     index,
@@ -1797,6 +1849,40 @@ mod tests {
                 )
             })
         }));
+    }
+
+    #[test]
+    fn lowers_compound_index_assignment_with_single_target_evaluation() {
+        let source = r#"
+            function idx(): i32
+                return 0
+            end
+
+            function entry(xs: {i32}): i32
+                xs[idx()] += 5
+                return xs[0]
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let module = build(&program).expect("ir build should succeed");
+        let function = module
+            .functions
+            .iter()
+            .find(|function| function.name == "entry")
+            .expect("entry function should exist");
+        let call_count = function
+            .blocks
+            .values()
+            .flat_map(|block| block.instructions.iter().map(|(_, instruction)| instruction))
+            .filter(|instruction| {
+                matches!(
+                    instruction,
+                    Instruction::Call { name, .. } if name == "idx"
+                )
+            })
+            .count();
+        assert_eq!(call_count, 1, "expected idx() call to be evaluated once");
     }
 
     #[test]
