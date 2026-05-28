@@ -1,6 +1,6 @@
 use waluau_ast::{
     AssignOp, BinaryOp, Expr, Function, FunctionExpr, NumberLiteral, NumericType, Param, Program,
-    Stmt, Type, UnaryOp,
+    Rebindability, Stmt, Type, UnaryOp,
 };
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
@@ -117,13 +117,10 @@ impl Parser {
 
     fn parse_stmt(&mut self) -> Result<Stmt, Diagnostic> {
         if self.check_simple(&TokenKind::Local) {
-            self.advance();
-            let name = self.expect_identifier()?;
-            self.expect_simple(TokenKind::Colon, "expected ':' after local name")?;
-            let ty = self.parse_type()?;
-            self.expect_simple(TokenKind::Equal, "expected '=' in local declaration")?;
-            let value = self.parse_expr()?;
-            return Ok(Stmt::Let { name, ty, value });
+            return self.parse_local_decl();
+        }
+        if self.is_const_decl_start() {
+            return self.parse_const_decl();
         }
         if self.check_simple(&TokenKind::If) {
             return self.parse_if_stmt();
@@ -153,6 +150,68 @@ impl Parser {
         }
 
         Ok(Stmt::Expr(self.parse_expr()?))
+    }
+
+    fn parse_local_decl(&mut self) -> Result<Stmt, Diagnostic> {
+        self.expect_simple(TokenKind::Local, "expected 'local'")?;
+        let name = self.expect_identifier()?;
+        let rebindability = if self.check_simple(&TokenKind::Less) {
+            self.advance();
+            let attr_name = self.expect_identifier()?;
+            self.expect_simple(TokenKind::Greater, "expected '>' after local attribute")?;
+            if attr_name != "const" {
+                return Err(Diagnostic::new(format!(
+                    "unsupported local attribute '<{}>'",
+                    attr_name
+                )));
+            }
+            Rebindability::Const
+        } else {
+            Rebindability::Rebindable
+        };
+        self.expect_simple(TokenKind::Colon, "expected ':' after local name")?;
+        let ty = self.parse_type()?;
+        self.expect_simple(TokenKind::Equal, "expected '=' in local declaration")?;
+        let value = self.parse_expr()?;
+        Ok(Stmt::Let {
+            name,
+            rebindability,
+            ty,
+            value,
+        })
+    }
+
+    fn is_const_decl_start(&self) -> bool {
+        matches!(
+            (
+                self.peek().map(|token| &token.kind),
+                self.peek_n(1).map(|token| &token.kind),
+                self.peek_n(2).map(|token| &token.kind),
+            ),
+            (
+                Some(TokenKind::Identifier(keyword)),
+                Some(TokenKind::Identifier(_)),
+                Some(TokenKind::Colon)
+            ) if keyword == "const"
+        )
+    }
+
+    fn parse_const_decl(&mut self) -> Result<Stmt, Diagnostic> {
+        let keyword = self.expect_identifier()?;
+        if keyword != "const" {
+            return Err(Diagnostic::new("expected 'const'"));
+        }
+        let name = self.expect_identifier()?;
+        self.expect_simple(TokenKind::Colon, "expected ':' after const name")?;
+        let ty = self.parse_type()?;
+        self.expect_simple(TokenKind::Equal, "expected '=' in const declaration")?;
+        let value = self.parse_expr()?;
+        Ok(Stmt::Let {
+            name,
+            rebindability: Rebindability::Const,
+            ty,
+            value,
+        })
     }
 
     fn try_parse_assignment(&mut self) -> Result<Option<Stmt>, Diagnostic> {
@@ -600,7 +659,9 @@ fn same_variant(a: &TokenKind, b: &TokenKind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::parse;
-    use waluau_ast::{AssignOp, BinaryOp, NumberLiteral, NumericType, Type, UnaryOp};
+    use waluau_ast::{
+        AssignOp, BinaryOp, NumberLiteral, NumericType, Rebindability, Type, UnaryOp,
+    };
 
     #[test]
     fn parses_v0_function() {
@@ -868,6 +929,35 @@ mod tests {
     }
 
     #[test]
+    fn parses_const_declarations_in_both_forms() {
+        let source = r#"
+            function entry(v: i32): i32
+                local a <const>: i32 = v
+                const b: i32 = a
+                return b
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert!(matches!(
+            &function.body[0],
+            waluau_ast::Stmt::Let {
+                name,
+                rebindability: Rebindability::Const,
+                ..
+            } if name == "a"
+        ));
+        assert!(matches!(
+            &function.body[1],
+            waluau_ast::Stmt::Let {
+                name,
+                rebindability: Rebindability::Const,
+                ..
+            } if name == "b"
+        ));
+    }
+
+    #[test]
     fn parses_function_type_and_literal_assignment() {
         let source = r#"
             function entry(): i32
@@ -877,6 +967,7 @@ mod tests {
                 return add1(41)
             end
         "#;
+
         let program = parse(source).expect("parse should succeed");
         let function = &program.functions[0];
         assert!(matches!(
@@ -895,6 +986,26 @@ mod tests {
     }
 
     #[test]
+    fn const_is_contextual_not_reserved() {
+        let source = r#"
+            function entry(): i32
+                local const: i32 = 20
+                return const
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert!(matches!(
+            &function.body[0],
+            waluau_ast::Stmt::Let {
+                name,
+                rebindability: Rebindability::Rebindable,
+                ..
+            } if name == "const"
+        ));
+    }
+
+    #[test]
     fn parses_compound_assignments() {
         let source = r#"
             function entry(xs: {i32}, i: i32, x: i32): i32
@@ -903,6 +1014,7 @@ mod tests {
                 return x
             end
         "#;
+
         let program = parse(source).expect("parse should succeed");
         let function = &program.functions[0];
         assert!(matches!(

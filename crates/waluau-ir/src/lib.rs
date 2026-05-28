@@ -765,7 +765,12 @@ impl Builder<'_> {
         types: &mut HashMap<String, Type>,
     ) -> Result<(), Diagnostic> {
         match stmt {
-            Stmt::Let { name, ty, value } => {
+            Stmt::Let {
+                name,
+                rebindability: _,
+                ty,
+                value,
+            } => {
                 let value = self.lower_expr(value, env, types, Some(ty.clone()))?;
                 env.insert(name.clone(), value);
                 types.insert(name.clone(), ty.clone());
