@@ -14,6 +14,14 @@ pub struct Function {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct FunctionExpr {
+    pub name: Option<String>,
+    pub params: Vec<Param>,
+    pub return_type: Type,
+    pub body: Vec<Stmt>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Param {
     pub name: String,
     pub ty: Type,
@@ -34,6 +42,10 @@ pub enum Type {
     Numeric(NumericType),
     Bool,
     Array(Box<Type>),
+    Function {
+        params: Vec<Type>,
+        return_type: Box<Type>,
+    },
 }
 
 impl Type {
@@ -101,6 +113,19 @@ impl std::fmt::Display for Type {
             Self::Numeric(ty) => ty.fmt(f),
             Self::Bool => f.write_str("bool"),
             Self::Array(element) => write!(f, "{{{element}}}"),
+            Self::Function {
+                params,
+                return_type,
+            } => {
+                write!(f, "function(")?;
+                for (index, param) in params.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{param}")?;
+                }
+                write!(f, "):{return_type}")
+            }
         }
     }
 }
@@ -164,10 +189,8 @@ pub enum Expr {
         left: Box<Expr>,
         right: Box<Expr>,
     },
-    Call {
-        name: String,
-        args: Vec<Expr>,
-    },
+    Call { callee: Box<Expr>, args: Vec<Expr> },
+    Function(FunctionExpr),
     ArrayLiteral {
         elements: Vec<Expr>,
     },

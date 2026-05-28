@@ -166,6 +166,7 @@ fn array_storage_type(
                 heap_type: HeapType::Concrete(index),
             })))
         }
+        Type::Function { .. } => unreachable!(),
     }
 }
 
@@ -701,6 +702,7 @@ fn emit_binary(
                 ));
             }
             Type::Array(_) => unreachable!(),
+            Type::Function { .. } => unreachable!(),
         },
         BinaryOp::Sub => match operand_ty {
             Type::Numeric(NumericType::U32 | NumericType::I32) => {
@@ -721,6 +723,7 @@ fn emit_binary(
                 ));
             }
             Type::Array(_) => unreachable!(),
+            Type::Function { .. } => unreachable!(),
         },
         BinaryOp::Mul => match operand_ty {
             Type::Numeric(NumericType::U32 | NumericType::I32) => {
@@ -741,6 +744,7 @@ fn emit_binary(
                 ));
             }
             Type::Array(_) => unreachable!(),
+            Type::Function { .. } => unreachable!(),
         },
         BinaryOp::Div => match operand_ty {
             Type::Numeric(NumericType::U32) => {
@@ -767,6 +771,7 @@ fn emit_binary(
                 ));
             }
             Type::Array(_) => unreachable!(),
+            Type::Function { .. } => unreachable!(),
         },
         BinaryOp::FloorDiv | BinaryOp::Mod => unreachable!("handled before stack binary emission"),
         BinaryOp::Eq => match operand_ty {
@@ -783,6 +788,7 @@ fn emit_binary(
                 out.instruction(&Instruction::F64Eq);
             }
             Type::Array(_) => unreachable!(),
+            Type::Function { .. } => unreachable!(),
         },
         BinaryOp::Less => match operand_ty {
             Type::Numeric(NumericType::U32) => {
@@ -809,6 +815,7 @@ fn emit_binary(
                 ));
             }
             Type::Array(_) => unreachable!(),
+            Type::Function { .. } => unreachable!(),
         },
         BinaryOp::Greater => match operand_ty {
             Type::Numeric(NumericType::U32) => {
@@ -835,6 +842,7 @@ fn emit_binary(
                 ));
             }
             Type::Array(_) => unreachable!(),
+            Type::Function { .. } => unreachable!(),
         },
         BinaryOp::And => {
             out.instruction(&Instruction::I32And);
@@ -1040,6 +1048,7 @@ fn wasm_type(ty: &Type, array_registry: &ArrayTypeRegistry) -> Result<ValType, D
                 heap_type: HeapType::Concrete(index),
             }))
         }
+        Type::Function { .. } => unreachable!(),
     }
 }
 

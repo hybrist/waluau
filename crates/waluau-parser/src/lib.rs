@@ -1,6 +1,6 @@
 use waluau_ast::{
-    AssignOp, BinaryOp, Expr, Function, NumberLiteral, NumericType, Param, Program, Stmt, Type,
-    UnaryOp,
+    AssignOp, BinaryOp, Expr, Function, FunctionExpr, NumberLiteral, NumericType, Param, Program,
+    Stmt, Type, UnaryOp,
 };
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
@@ -47,6 +47,19 @@ impl Parser {
     fn parse_function(&mut self) -> Result<Function, Diagnostic> {
         self.expect_simple(TokenKind::Function, "expected 'function'")?;
         let name = self.expect_identifier()?;
+        let function_expr = self.parse_function_expr_tail(Some(name))?;
+        Ok(Function {
+            name: function_expr.name.expect("top-level functions always have a name"),
+            params: function_expr.params,
+            return_type: function_expr.return_type,
+            body: function_expr.body,
+        })
+    }
+
+    fn parse_function_expr_tail(
+        &mut self,
+        name: Option<String>,
+    ) -> Result<FunctionExpr, Diagnostic> {
         self.expect_simple(TokenKind::LParen, "expected '('")?;
         let mut params = Vec::new();
         if !self.check_simple(&TokenKind::RParen) {
@@ -70,7 +83,7 @@ impl Parser {
         let return_type = self.parse_type()?;
         let body = self.parse_block_until(&[TokenKind::End]);
         self.expect_simple(TokenKind::End, "expected 'end' after function body")?;
-        Ok(Function {
+        Ok(FunctionExpr {
             name,
             params,
             return_type,
@@ -302,27 +315,25 @@ impl Parser {
                 };
                 continue;
             }
-            if let Expr::Name(name) = &expr {
-                if self.check_simple(&TokenKind::LParen) {
-                    self.advance();
-                    let mut args = Vec::new();
-                    if !self.check_simple(&TokenKind::RParen) {
-                        loop {
-                            args.push(self.parse_expr()?);
-                            if self.check_simple(&TokenKind::Comma) {
-                                self.advance();
-                            } else {
-                                break;
-                            }
+            if self.check_simple(&TokenKind::LParen) {
+                self.advance();
+                let mut args = Vec::new();
+                if !self.check_simple(&TokenKind::RParen) {
+                    loop {
+                        args.push(self.parse_expr()?);
+                        if self.check_simple(&TokenKind::Comma) {
+                            self.advance();
+                        } else {
+                            break;
                         }
                     }
-                    self.expect_simple(TokenKind::RParen, "expected ')' after call arguments")?;
-                    expr = Expr::Call {
-                        name: name.clone(),
-                        args,
-                    };
-                    continue;
                 }
+                self.expect_simple(TokenKind::RParen, "expected ')' after call arguments")?;
+                expr = Expr::Call {
+                    callee: Box::new(expr),
+                    args,
+                };
+                continue;
             }
             break;
         }
@@ -368,6 +379,26 @@ impl Parser {
             TokenKind::True => Ok(Expr::Bool(true)),
             TokenKind::False => Ok(Expr::Bool(false)),
             TokenKind::Identifier(name) => Ok(Expr::Name(name)),
+            TokenKind::Function => {
+                let name = if let Some(Token {
+                    kind: TokenKind::Identifier(_),
+                    ..
+                }) = self.peek()
+                {
+                    if self
+                        .peek_n(1)
+                        .map(|token| same_variant(&token.kind, &TokenKind::LParen))
+                        .unwrap_or(false)
+                    {
+                        Some(self.expect_identifier()?)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                Ok(Expr::Function(self.parse_function_expr_tail(name)?))
+            }
             TokenKind::LBrace => self.parse_array_literal(),
             TokenKind::LParen => {
                 let inner = self.parse_expr()?;
@@ -414,6 +445,28 @@ impl Parser {
             let element = self.parse_type()?;
             self.expect_simple(TokenKind::RBrace, "expected '}' after array element type")?;
             return Ok(Type::Array(Box::new(element)));
+        }
+        if self.check_simple(&TokenKind::Function) {
+            self.advance();
+            self.expect_simple(TokenKind::LParen, "expected '(' after 'function' in type")?;
+            let mut params = Vec::new();
+            if !self.check_simple(&TokenKind::RParen) {
+                loop {
+                    params.push(self.parse_type()?);
+                    if self.check_simple(&TokenKind::Comma) {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            self.expect_simple(TokenKind::RParen, "expected ')' after function type params")?;
+            self.expect_simple(TokenKind::Colon, "expected ':' before function type return")?;
+            let return_type = self.parse_type()?;
+            return Ok(Type::Function {
+                params,
+                return_type: Box::new(return_type),
+            });
         }
 
         match self.advance().map(|token| token.kind) {
@@ -814,6 +867,32 @@ mod tests {
             &function.body[1],
             waluau_ast::Stmt::Repeat { body, condition } if body.len() == 1
                 && matches!(condition, waluau_ast::Expr::Binary { .. })
+        ));
+    }
+
+    fn parses_function_type_and_literal_assignment() {
+        let source = r#"
+            function entry(): i32
+                local add1: function(i32):i32 = function(x: i32): i32
+                    return x + 1
+                end
+                return add1(41)
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert!(matches!(
+            &function.body[0],
+            waluau_ast::Stmt::Let {
+                ty: Type::Function { params, return_type },
+                value: waluau_ast::Expr::Function(_),
+                ..
+            } if params == &vec![Type::Numeric(NumericType::I32)]
+                && **return_type == Type::Numeric(NumericType::I32)
+        ));
+        assert!(matches!(
+            &function.body[1],
+            waluau_ast::Stmt::Return(waluau_ast::Expr::Call { .. })
         ));
     }
 
