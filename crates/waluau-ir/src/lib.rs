@@ -1311,6 +1311,41 @@ impl Builder<'_> {
                 let cast = self.explicit_cast(value, actual, ty.clone())?;
                 self.coerce_value(cast, ty.clone(), expected)?
             }
+            Expr::If {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                let result_ty = self.infer_expr_type(expr, types, expected.clone())?;
+                let condition = self.lower_expr(condition, env, types, Some(Type::Bool))?;
+                let then_block = self.new_block();
+                let else_block = self.new_block();
+                let merge_block = self.new_block();
+                self.set_terminator(
+                    self.current_block,
+                    Terminator::Branch {
+                        condition,
+                        then_block,
+                        else_block,
+                    },
+                );
+
+                self.current_block = then_block;
+                let then_value = self.lower_expr(then_expr, env, types, Some(result_ty.clone()))?;
+                let then_exit = self.current_block;
+                self.set_terminator(then_exit, Terminator::Jump(merge_block));
+
+                self.current_block = else_block;
+                let else_value = self.lower_expr(else_expr, env, types, Some(result_ty.clone()))?;
+                let else_exit = self.current_block;
+                self.set_terminator(else_exit, Terminator::Jump(merge_block));
+
+                self.current_block = merge_block;
+                self.emit(Instruction::Phi(vec![
+                    (then_exit, then_value),
+                    (else_exit, else_value),
+                ]))
+            }
             Expr::Binary { op, left, right } => {
                 let operand_ty = self.infer_binary_operand_type(left, right, op, types, None)?;
                 let left = self.lower_expr(left, env, types, Some(operand_ty.clone()))?;
@@ -1600,6 +1635,25 @@ impl Builder<'_> {
                 let actual = self.infer_expr_type(expr, types, None)?;
                 require_numeric_cast(actual, ty.clone())?;
                 Ok(ty.clone())
+            }
+            Expr::If {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                let condition_ty = self.infer_expr_type(condition, types, Some(Type::Bool))?;
+                if condition_ty != Type::Bool {
+                    return Err(Diagnostic::new("if expression condition must be bool"));
+                }
+                let then_ty = self.infer_expr_type(then_expr, types, expected.clone())?;
+                let else_ty = self.infer_expr_type(else_expr, types, expected.clone())?;
+                if then_ty == else_ty {
+                    Ok(then_ty)
+                } else {
+                    Err(Diagnostic::new(
+                        "if expression branches must resolve to the same type",
+                    ))
+                }
             }
             Expr::Call { callee, .. } => {
                 let callee_ty = self.infer_expr_type(callee, types, None)?;
@@ -1984,6 +2038,15 @@ fn collect_expr_captures(
             collect_expr_captures(left, bound, env, signatures, captures);
             collect_expr_captures(right, bound, env, signatures, captures);
         }
+        Expr::If {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            collect_expr_captures(condition, bound, env, signatures, captures);
+            collect_expr_captures(then_expr, bound, env, signatures, captures);
+            collect_expr_captures(else_expr, bound, env, signatures, captures);
+        }
         Expr::Call { callee, args } => {
             collect_expr_captures(callee, bound, env, signatures, captures);
             for arg in args {
@@ -2097,6 +2160,29 @@ mod tests {
         assert!(
             has_merge_phi,
             "expected merge phi in function:\n{}",
+            function.dump()
+        );
+    }
+
+    #[test]
+    fn lowers_if_expression_with_phi_result() {
+        let source = r#"
+            function entry(flag: bool, x: i32, y: i32): i32
+                return if flag then x + 1 else y + 2
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let module = build(&program).expect("ir build should succeed");
+        let function = &module.functions[0];
+        let has_branch_phi = function.blocks.values().any(|block| {
+            block
+                .instructions
+                .iter()
+                .any(|(_, instruction)| matches!(instruction, Instruction::Phi(incoming) if incoming.len() == 2))
+        });
+        assert!(
+            has_branch_phi,
+            "expected branch phi in function:\n{}",
             function.dump()
         );
     }

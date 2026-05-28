@@ -196,6 +196,11 @@ pub enum Expr {
         left: Box<Expr>,
         right: Box<Expr>,
     },
+    If {
+        condition: Box<Expr>,
+        then_expr: Box<Expr>,
+        else_expr: Box<Expr>,
+    },
     Call {
         callee: Box<Expr>,
         args: Vec<Expr>,

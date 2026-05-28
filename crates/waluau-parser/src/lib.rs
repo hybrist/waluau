@@ -248,7 +248,24 @@ impl Parser {
     }
 
     fn parse_expr(&mut self) -> Result<Expr, Diagnostic> {
+        if self.check_simple(&TokenKind::If) {
+            return self.parse_if_expr();
+        }
         self.parse_or()
+    }
+
+    fn parse_if_expr(&mut self) -> Result<Expr, Diagnostic> {
+        self.expect_simple(TokenKind::If, "expected 'if'")?;
+        let condition = self.parse_expr()?;
+        self.expect_simple(TokenKind::Then, "expected 'then' after if condition")?;
+        let then_expr = self.parse_expr()?;
+        self.expect_simple(TokenKind::Else, "expected 'else' in if expression")?;
+        let else_expr = self.parse_expr()?;
+        Ok(Expr::If {
+            condition: Box::new(condition),
+            then_expr: Box::new(then_expr),
+            else_expr: Box::new(else_expr),
+        })
     }
 
     fn parse_if_stmt(&mut self) -> Result<Stmt, Diagnostic> {
@@ -1031,5 +1048,35 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn parses_if_expression_in_return() {
+        let source = r#"
+            function entry(flag: bool, x: i32, y: i32): i32
+                return if flag then x else y
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert!(matches!(
+            &function.body[0],
+            waluau_ast::Stmt::Return(waluau_ast::Expr::If { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_if_expression_without_else() {
+        let source = r#"
+            function entry(flag: bool, x: i32): i32
+                return if flag then x
+            end
+        "#;
+        let error = parse(source).expect_err("parse should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("expected 'else' in if expression")
+        );
     }
 }

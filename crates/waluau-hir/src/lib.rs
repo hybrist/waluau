@@ -271,6 +271,25 @@ fn infer_expr(
             require_numeric_cast(actual, ty.clone())?;
             coerce_type(ty.clone(), expected)
         }
+        Expr::If {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            let condition_ty = infer_expr(condition, vars, signatures, Some(Type::Bool))?;
+            if condition_ty != Type::Bool {
+                return Err(Diagnostic::new("if expression condition must be bool"));
+            }
+            let then_ty = infer_expr(then_expr, vars, signatures, expected.clone())?;
+            let else_ty = infer_expr(else_expr, vars, signatures, expected.clone())?;
+            if then_ty == else_ty {
+                Ok(then_ty)
+            } else {
+                Err(Diagnostic::new(
+                    "if expression branches must resolve to the same type",
+                ))
+            }
+        }
         Expr::Call { callee, args } => {
             let callee_ty = infer_expr(callee, vars, signatures, None)?;
             let (params, ret) = match callee_ty {
@@ -1034,5 +1053,31 @@ mod tests {
 
         let program = parse(source).expect("parse should succeed");
         super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn type_checks_if_expression() {
+        let source = r#"
+            function entry(flag: bool, x: i32, y: i32): i32
+                return if flag then x else y
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn rejects_if_expression_type_mismatch() {
+        let source = r#"
+            function entry(flag: bool, x: i32): i32
+                return if flag then x else true
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "if expression branches must resolve to the same type"
+        );
     }
 }
