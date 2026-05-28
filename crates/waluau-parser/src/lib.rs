@@ -1,5 +1,6 @@
 use waluau_ast::{
-    BinaryOp, Expr, Function, NumberLiteral, NumericType, Param, Program, Stmt, Type, UnaryOp,
+    AssignOp, BinaryOp, Expr, Function, NumberLiteral, NumericType, Param, Program, Stmt, Type,
+    UnaryOp,
 };
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
@@ -148,15 +149,24 @@ impl Parser {
                 return Err(error);
             }
         };
-        if !self.check_simple(&TokenKind::Equal) {
+        let op = if self.check_simple(&TokenKind::Equal) {
+            AssignOp::Set
+        } else if self.check_simple(&TokenKind::PlusEqual) {
+            AssignOp::Add
+        } else {
             self.index = checkpoint;
             return Ok(None);
-        }
+        };
         self.advance();
         let value = self.parse_expr()?;
         Ok(Some(match target {
-            Expr::Name(name) => Stmt::Assign { name, value },
-            Expr::Index { base, index } => Stmt::IndexAssign { base, index, value },
+            Expr::Name(name) => Stmt::Assign { op, name, value },
+            Expr::Index { base, index } => Stmt::IndexAssign {
+                op,
+                base,
+                index,
+                value,
+            },
             _ => {
                 return Err(Diagnostic::new("invalid assignment target"));
             }
@@ -536,7 +546,7 @@ fn same_variant(a: &TokenKind, b: &TokenKind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::parse;
-    use waluau_ast::{BinaryOp, NumberLiteral, NumericType, Type, UnaryOp};
+    use waluau_ast::{AssignOp, BinaryOp, NumberLiteral, NumericType, Type, UnaryOp};
 
     #[test]
     fn parses_v0_function() {
@@ -755,6 +765,7 @@ mod tests {
         assert!(matches!(
             &function.body[1],
             waluau_ast::Stmt::IndexAssign {
+                op: AssignOp::Set,
                 index,
                 ..
             } if matches!(index.as_ref(), waluau_ast::Expr::Number(NumberLiteral { raw }) if raw == "1")
@@ -803,6 +814,33 @@ mod tests {
             &function.body[1],
             waluau_ast::Stmt::Repeat { body, condition } if body.len() == 1
                 && matches!(condition, waluau_ast::Expr::Binary { .. })
+        ));
+    }
+
+    #[test]
+    fn parses_compound_assignments() {
+        let source = r#"
+            function entry(xs: {i32}, i: i32, x: i32): i32
+                x += 1
+                xs[i] += x
+                return x
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert!(matches!(
+            &function.body[0],
+            waluau_ast::Stmt::Assign {
+                op: AssignOp::Add,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &function.body[1],
+            waluau_ast::Stmt::IndexAssign {
+                op: AssignOp::Add,
+                ..
+            }
         ));
     }
 }
