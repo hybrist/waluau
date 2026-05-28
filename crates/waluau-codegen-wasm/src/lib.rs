@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use waluau_ast::{BinaryOp, NumberLiteral, NumericType, Type};
@@ -6,8 +7,9 @@ use waluau_ir::{
     BasicBlock, Function as IrFunction, Instruction as IrInstruction, Module, Terminator, ValueId,
 };
 use wasm_encoder::{
-    BlockType, CodeSection, ExportKind, ExportSection, Function, FunctionSection, HeapType,
-    Instruction, Module as WasmModule, RefType, StorageType, TypeSection, ValType,
+    BlockType, CodeSection, ConstExpr, ElementSection, Elements, ExportKind, ExportSection,
+    Function, FunctionSection, HeapType, Instruction, Module as WasmModule, RefType, StorageType,
+    TableSection, TableType, TypeSection, ValType,
 };
 use wasmparser::Validator;
 
@@ -26,6 +28,7 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
                 function.name.clone(),
                 FunctionSignature {
                     index: index as u32,
+                    params: function.params.iter().map(|(_, ty)| ty.clone()).collect(),
                     result: function.return_type.clone(),
                 },
             )
@@ -52,6 +55,8 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     }
 
     let mut functions = FunctionSection::new();
+    let mut tables = TableSection::new();
+    let mut elements = ElementSection::new();
     let mut exports = ExportSection::new();
     let mut codes = CodeSection::new();
     for (index, function) in module.functions.iter().enumerate() {
@@ -59,10 +64,25 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         exports.export(&function.name, ExportKind::Func, index as u32);
         codes.function(&emit_function(function, &signatures, &array_registry)?);
     }
+    tables.table(TableType {
+        element_type: RefType::FUNCREF,
+        table64: false,
+        minimum: module.functions.len() as u64,
+        maximum: Some(module.functions.len() as u64),
+        shared: false,
+    });
+    let table_inits = (0..module.functions.len() as u32).collect::<Vec<_>>();
+    elements.active(
+        Some(0),
+        &ConstExpr::i32_const(0),
+        Elements::Functions(Cow::Owned(table_inits)),
+    );
 
     wasm.section(&types);
     wasm.section(&functions);
+    wasm.section(&tables);
     wasm.section(&exports);
+    wasm.section(&elements);
     wasm.section(&codes);
 
     let bytes = wasm.finish();
@@ -173,6 +193,7 @@ fn array_storage_type(
 #[derive(Clone)]
 struct FunctionSignature {
     index: u32,
+    params: Vec<Type>,
     result: Type,
 }
 
@@ -409,10 +430,40 @@ fn emit_block(
                 out.instruction(&Instruction::Call(callee.index));
                 out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
             }
-            IrInstruction::CallValue { .. } | IrInstruction::Closure { .. } => {
-                return Err(Diagnostic::new(
-                    "wasm backend does not yet support closures or indirect calls",
-                ));
+            IrInstruction::CallValue {
+                callee,
+                args,
+                params,
+                return_type,
+            } => {
+                for arg in args {
+                    out.instruction(&Instruction::LocalGet(local(local_plan, *arg)?));
+                }
+                out.instruction(&Instruction::LocalGet(local(local_plan, *callee)?));
+                let type_index = find_function_type_index(signatures, params, return_type)?;
+                out.instruction(&Instruction::CallIndirect {
+                    type_index,
+                    table_index: 0,
+                });
+                out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
+            }
+            IrInstruction::Closure {
+                name,
+                captures,
+                params,
+                return_type,
+            } => {
+                if !captures.is_empty() {
+                    return Err(Diagnostic::new(
+                        "wasm backend does not yet support closures with captures",
+                    ));
+                }
+                let callee = signatures.get(name).ok_or_else(|| {
+                    Diagnostic::new(format!("unknown function '{name}' during wasm emission"))
+                })?;
+                let _ = find_function_type_index(signatures, params, return_type)?;
+                out.instruction(&Instruction::I32Const(callee.index as i32));
+                out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
             }
             IrInstruction::ArrayNew {
                 element_ty,
@@ -1062,8 +1113,30 @@ fn wasm_type(ty: &Type, array_registry: &ArrayTypeRegistry) -> Result<ValType, D
                 heap_type: HeapType::Concrete(index),
             }))
         }
-        Type::Function { .. } => unreachable!(),
+        Type::Function { .. } => Ok(ValType::I32),
     }
+}
+
+fn find_function_type_index(
+    signatures: &HashMap<String, FunctionSignature>,
+    params: &[Type],
+    return_type: &Type,
+) -> Result<u32, Diagnostic> {
+    signatures
+        .values()
+        .find(|signature| signature.params == params && signature.result == *return_type)
+        .map(|signature| signature.index)
+        .ok_or_else(|| {
+            Diagnostic::new(format!(
+                "no wasm function type found for indirect call signature ({}) -> {}",
+                params
+                    .iter()
+                    .map(|ty| ty.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                return_type
+            ))
+        })
 }
 
 fn compress_locals(locals: Vec<ValType>) -> Vec<(u32, ValType)> {
@@ -1116,5 +1189,42 @@ mod tests {
         Validator::new()
             .validate_all(&wasm)
             .expect("emitted module should validate");
+    }
+
+    #[test]
+    fn emits_valid_wasm_for_non_capturing_indirect_call() {
+        let source = r#"
+            function entry(x: i32): i32
+                local f: (i32) -> i32 = function(y: i32): i32
+                    return y + 1
+                end
+                return f(x)
+            end
+        "#;
+        let program = waluau_parser::parse(source).expect("parse should succeed");
+        let ir = waluau_ir::build(&program).expect("ir should succeed");
+        let wasm = super::emit(&ir).expect("emit should succeed");
+        Validator::new()
+            .validate_all(&wasm)
+            .expect("emitted module should validate");
+    }
+
+    #[test]
+    fn rejects_capturing_closure_values() {
+        let source = r#"
+            function entry(x: i32): i32
+                local f: (i32) -> i32 = function(y: i32): i32
+                    return x + y
+                end
+                return f(1)
+            end
+        "#;
+        let program = waluau_parser::parse(source).expect("parse should succeed");
+        let ir = waluau_ir::build(&program).expect("ir should succeed");
+        let err = super::emit(&ir).expect_err("capturing closures should be unsupported");
+        assert_eq!(
+            err.to_string(),
+            "wasm backend does not yet support closures with captures"
+        );
     }
 }
