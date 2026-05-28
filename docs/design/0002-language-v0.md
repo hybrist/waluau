@@ -14,7 +14,7 @@ The language is Lua-like in syntax, but not Lua-compatible in semantics.
 
 The compiler should reject unsupported dynamic behavior explicitly rather than partially inheriting Lua rules.
 
-V0 surface syntax follows Lua/Luau spellings: `function`, `local`, return type annotations with `:`, and logical operators `and` / `or`. Alternate spellings (`fn`, `let`, `->`, `&&`, `||`) are rejected with diagnostics.
+V0 surface syntax follows Lua/Luau spellings: `function`, `local`, return type annotations with `:`, and logical operators `and` / `or`. Alternate spellings (`fn`, `let`, `&&`, `||`) are rejected with diagnostics.
 
 ## Included in V0
 
@@ -23,6 +23,7 @@ V0 surface syntax follows Lua/Luau spellings: `function`, `local`, return type a
 - typed local declarations
 - typed function parameters
 - typed function returns
+- function types: `(T1, T2) -> R`
 - variable references
 - unary operators: numeric negation and boolean `not`
 - binary arithmetic and comparison operators
@@ -30,6 +31,7 @@ V0 surface syntax follows Lua/Luau spellings: `function`, `local`, return type a
 - `while`
 - assignment to locals
 - direct function calls
+- function expressions and lexical closures
 - `return`
 
 Example:
@@ -52,7 +54,6 @@ end
 - strings
 - arrays
 - tables
-- closures and upvalues
 - multiple returns
 - varargs
 - modules
@@ -71,6 +72,7 @@ V0 supports:
 - `f32`
 - `f64`
 - `bool`
+- first-class function values (`(T1, T2) -> R`)
 
 For source convenience, `number` is accepted as an alias for `f64`. It is not a separate semantic type.
 
@@ -79,6 +81,9 @@ For source convenience, `number` is accepted as an alias for `f64`. It is not a 
 - All locals require explicit type annotations.
 - All function parameters require explicit type annotations.
 - All functions require explicit return types.
+- Function literals use the same typed signature syntax as declarations:
+  - `function(x: i32): i32 ... end`
+  - optional local self-name for recursion: `function self(x: i32): i32 ... end`
 - Branch conditions must have type `bool`.
 - Assignment allows implicit numeric widening only when the destination can represent the full source range.
 - Return expressions follow the same implicit numeric widening rule.
@@ -105,6 +110,7 @@ Explicit numeric casts use postfix `expr :: Type` syntax. Casts are only valid b
 - `if` and `while` consume boolean conditions only.
 - Arithmetic is statically typed, not dynamically coerced.
 - Function names resolve statically.
+- Closures capture lexically scoped locals from outer scopes.
 - Expression statements are only valid for calls.
 - Unsupported Lua constructs should produce clear diagnostics.
 

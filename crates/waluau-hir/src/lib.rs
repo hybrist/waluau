@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use waluau_ast::{
-    AssignOp, BinaryOp, Expr, Function, NumberLiteral, NumericType, Program, Stmt, Type, UnaryOp,
+    AssignOp, BinaryOp, Expr, Function, FunctionExpr, NumberLiteral, NumericType, Program, Stmt,
+    Type, UnaryOp,
 };
 use waluau_diagnostics::Diagnostic;
 
@@ -197,10 +198,16 @@ fn infer_expr(
         Expr::Number(value) => resolve_number_literal(value, expected),
         Expr::Bool(_) => Ok(Type::Bool),
         Expr::Name(name) => {
-            let actual = vars
-                .get(name)
-                .cloned()
-                .ok_or_else(|| Diagnostic::new(format!("unknown name '{name}'")))?;
+            let actual = if let Some(local) = vars.get(name) {
+                local.clone()
+            } else if let Some((params, return_type)) = signatures.get(name) {
+                Type::Function {
+                    params: params.clone(),
+                    return_type: Box::new(return_type.clone()),
+                }
+            } else {
+                return Err(Diagnostic::new(format!("unknown name '{name}'")));
+            };
             coerce_type(actual, expected)
         }
         Expr::Unary { op, expr } => match op {
@@ -210,6 +217,9 @@ fn infer_expr(
                     Type::Numeric(_) => coerce_type(actual, expected),
                     Type::Bool => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Array(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                    Type::Function { .. } => {
+                        Err(Diagnostic::new("unary '-' requires a numeric operand"))
+                    }
                 }
             }
             UnaryOp::Not => {
@@ -232,14 +242,22 @@ fn infer_expr(
             require_numeric_cast(actual, ty.clone())?;
             coerce_type(ty.clone(), expected)
         }
-        Expr::Call { name, args } => {
-            let (params, ret) = signatures
-                .get(name)
-                .ok_or_else(|| Diagnostic::new(format!("unknown function '{name}'")))?;
+        Expr::Call { callee, args } => {
+            let callee_ty = infer_expr(callee, vars, signatures, None)?;
+            let (params, ret) = match callee_ty {
+                Type::Function {
+                    params,
+                    return_type,
+                } => (params, *return_type),
+                other => {
+                    return Err(Diagnostic::new(format!(
+                        "attempt to call non-function value of type {other}",
+                    )));
+                }
+            };
             if params.len() != args.len() {
                 return Err(Diagnostic::new(format!(
-                    "function '{}' expects {} arguments, got {}",
-                    name,
+                    "function expects {} arguments, got {}",
                     params.len(),
                     args.len()
                 )));
@@ -248,13 +266,14 @@ fn infer_expr(
                 let actual = infer_expr(arg, vars, signatures, Some(expected.clone()))?;
                 if expected != &actual {
                     return Err(Diagnostic::new(format!(
-                        "call '{}' expected {}, got {}",
-                        name, expected, actual
+                        "call expected {}, got {}",
+                        expected, actual
                     )));
                 }
             }
-            coerce_type(ret.clone(), expected)
+            coerce_type(ret, expected)
         }
+        Expr::Function(function) => infer_function_expr(function, vars, signatures, expected),
         Expr::ArrayLiteral { elements } => {
             infer_array_literal(elements, vars, signatures, expected)
         }
@@ -436,6 +455,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Array(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert array to {expected_numeric}",
             ))),
+            Type::Function { .. } => Err(Diagnostic::new(format!(
+                "cannot implicitly convert function to {expected_numeric}",
+            ))),
         },
         Some(Type::Bool) => Err(Diagnostic::new(format!(
             "cannot implicitly convert {actual} to bool",
@@ -476,8 +498,44 @@ fn resolve_number_literal(
         Some(Type::Array(_)) => Err(Diagnostic::new(
             "numeric literal is not assignable to array",
         )),
+        Some(Type::Function { .. }) => Err(Diagnostic::new(
+            "numeric literal is not assignable to function",
+        )),
         None => Ok(Type::number()),
     }
+}
+
+fn infer_function_expr(
+    function: &FunctionExpr,
+    vars: &HashMap<String, Type>,
+    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    expected: Option<Type>,
+) -> Result<Type, Diagnostic> {
+    let function_ty = Type::Function {
+        params: function
+            .params
+            .iter()
+            .map(|param| param.ty.clone())
+            .collect(),
+        return_type: Box::new(function.return_type.clone()),
+    };
+    let mut local_scope = vars.clone();
+    for param in &function.params {
+        local_scope.insert(param.name.clone(), param.ty.clone());
+    }
+    if let Some(name) = &function.name {
+        local_scope.insert(name.clone(), function_ty.clone());
+    }
+    let mut saw_return = false;
+    for stmt in &function.body {
+        if check_stmt(stmt, &mut local_scope, signatures, &function.return_type)? {
+            saw_return = true;
+        }
+    }
+    if !saw_return {
+        return Err(Diagnostic::new("function expression is missing a return"));
+    }
+    coerce_type(function_ty, expected)
 }
 
 fn validate_numeric_literal(
@@ -816,6 +874,42 @@ mod tests {
                     i = i + 1
                 until i > limit
                 return i
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn type_checks_closure_capture() {
+        let source = r#"
+            function entry(x: i32): i32
+                local make: (i32) -> (i32) -> i32 = function(offset: i32): (i32) -> i32
+                    return function(value: i32): i32
+                        return x + offset + value
+                    end
+                end
+                local add5: (i32) -> i32 = make(5)
+                return add5(7)
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn type_checks_named_function_expression_recursion() {
+        let source = r#"
+            function entry(): i32
+                local fact: (i32) -> i32 = function self(n: i32): i32
+                    if n == 0 then
+                        return 1
+                    end
+                    return n * self(n - 1)
+                end
+                return fact(5)
             end
         "#;
 

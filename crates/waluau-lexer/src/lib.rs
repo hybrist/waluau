@@ -48,6 +48,7 @@ pub enum TokenKind {
     Greater,
     And,
     Or,
+    Arrow,
     ColonColon,
     Colon,
     Comma,
@@ -116,9 +117,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
             }
             '-' => {
                 if matches!(chars.get(i + 1), Some('>')) {
-                    return Err(Diagnostic::new(
-                        "unsupported '->' return type annotation, use ':'",
-                    ));
+                    (TokenKind::Arrow, 2)
                 } else {
                     (TokenKind::Minus, 1)
                 }
@@ -267,10 +266,6 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_operators() {
-        assert_eq!(
-            err("->").to_string(),
-            "unsupported '->' return type annotation, use ':'"
-        );
         assert_eq!(err("&&").to_string(), "unsupported '&&', use 'and'");
         assert_eq!(err("||").to_string(), "unsupported '||', use 'or'");
         assert_eq!(err("&").to_string(), "unexpected '&', expected '&&'");
@@ -302,13 +297,14 @@ mod tests {
     #[test]
     fn tokenizes_compound_punctuation() {
         assert_eq!(
-            kinds("== :: : = +="),
+            kinds("== :: : = += ->"),
             vec![
                 TokenKind::EqualEqual,
                 TokenKind::ColonColon,
                 TokenKind::Colon,
                 TokenKind::Equal,
                 TokenKind::PlusEqual,
+                TokenKind::Arrow,
             ]
         );
     }

@@ -1097,6 +1097,11 @@ impl Builder<'_> {
                             "numeric literal is not assignable to array",
                         ));
                     }
+                    Type::Function { .. } => {
+                        return Err(Diagnostic::new(
+                            "numeric literal is not assignable to function",
+                        ));
+                    }
                 };
                 self.emit(Instruction::Number {
                     ty,
@@ -1125,6 +1130,11 @@ impl Builder<'_> {
                                 ));
                             }
                             Type::Array(_) => {
+                                return Err(Diagnostic::new(
+                                    "unary '-' requires a numeric operand",
+                                ));
+                            }
+                            Type::Function { .. } => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -1190,7 +1200,12 @@ impl Builder<'_> {
                 });
                 self.coerce_value(value, raw_result_ty, expected)?
             }
-            Expr::Call { name, args } => {
+            Expr::Call { callee, args } => {
+                let Expr::Name(name) = callee.as_ref() else {
+                    return Err(Diagnostic::new(
+                        "indirect function calls are not yet supported in IR lowering",
+                    ));
+                };
                 let (param_types, _) = self.signatures.get(name).ok_or_else(|| {
                     Diagnostic::new(format!("unknown function '{name}' during IR lowering"))
                 })?;
@@ -1205,6 +1220,11 @@ impl Builder<'_> {
                 });
                 let actual = self.infer_expr_type(expr, types, None)?;
                 self.coerce_value(value, actual, expected)?
+            }
+            Expr::Function(_) => {
+                return Err(Diagnostic::new(
+                    "function expressions are not yet supported in IR lowering",
+                ));
             }
             Expr::ArrayLiteral { elements } => {
                 let array_ty = self.infer_array_literal_type(elements, types, expected.clone())?;
@@ -1255,12 +1275,26 @@ impl Builder<'_> {
                 Some(Type::Array(_)) => Err(Diagnostic::new(
                     "numeric literal is not assignable to array",
                 )),
+                Some(Type::Function { .. }) => Err(Diagnostic::new(
+                    "numeric literal is not assignable to function",
+                )),
                 None => Ok(Type::number()),
             },
             Expr::Bool(_) => Ok(Type::Bool),
-            Expr::Name(name) => types.get(name).cloned().ok_or_else(|| {
-                Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
-            }),
+            Expr::Name(name) => {
+                if let Some(ty) = types.get(name) {
+                    Ok(ty.clone())
+                } else if let Some((params, ret)) = self.signatures.get(name) {
+                    Ok(Type::Function {
+                        params: params.clone(),
+                        return_type: Box::new(ret.clone()),
+                    })
+                } else {
+                    Err(Diagnostic::new(format!(
+                        "unknown local '{name}' during IR lowering"
+                    )))
+                }
+            }
             Expr::Unary { op, expr } => match op {
                 UnaryOp::Neg => {
                     let actual = self.infer_expr_type(expr, types, expected.clone())?;
@@ -1268,6 +1302,9 @@ impl Builder<'_> {
                         Type::Numeric(_) => coerce_type(actual, expected),
                         Type::Bool => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                         Type::Array(_) => {
+                            Err(Diagnostic::new("unary '-' requires a numeric operand"))
+                        }
+                        Type::Function { .. } => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                     }
@@ -1294,13 +1331,23 @@ impl Builder<'_> {
                 require_numeric_cast(actual, ty.clone())?;
                 Ok(ty.clone())
             }
-            Expr::Call { name, .. } => self
-                .signatures
-                .get(name)
-                .map(|(_, ret)| ret.clone())
-                .ok_or_else(|| {
-                    Diagnostic::new(format!("unknown function '{name}' during IR lowering"))
-                }),
+            Expr::Call { callee, .. } => {
+                let callee_ty = self.infer_expr_type(callee, types, None)?;
+                match callee_ty {
+                    Type::Function { return_type, .. } => Ok(*return_type),
+                    other => Err(Diagnostic::new(format!(
+                        "attempt to call non-function value of type {other}",
+                    ))),
+                }
+            }
+            Expr::Function(function) => Ok(Type::Function {
+                params: function
+                    .params
+                    .iter()
+                    .map(|param| param.ty.clone())
+                    .collect(),
+                return_type: Box::new(function.return_type.clone()),
+            }),
             Expr::ArrayLiteral { elements } => {
                 self.infer_array_literal_type(elements, types, expected)
             }
@@ -1533,6 +1580,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             ))),
             Type::Array(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert array to {expected_numeric}",
+            ))),
+            Type::Function { .. } => Err(Diagnostic::new(format!(
+                "cannot implicitly convert function to {expected_numeric}",
             ))),
         },
         Some(Type::Bool) => Err(Diagnostic::new(format!(
