@@ -282,6 +282,15 @@ fn infer_value_types(
                     })?
                     .result
                     .clone(),
+                IrInstruction::CallValue { return_type, .. } => return_type.clone(),
+                IrInstruction::Closure {
+                    params,
+                    return_type,
+                    ..
+                } => Type::Function {
+                    params: params.clone(),
+                    return_type: Box::new(return_type.clone()),
+                },
                 IrInstruction::ArrayNew { element_ty, .. } => {
                     Type::Array(Box::new(element_ty.clone()))
                 }
@@ -399,6 +408,11 @@ fn emit_block(
                 })?;
                 out.instruction(&Instruction::Call(callee.index));
                 out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
+            }
+            IrInstruction::CallValue { .. } | IrInstruction::Closure { .. } => {
+                return Err(Diagnostic::new(
+                    "wasm backend does not yet support closures or indirect calls",
+                ));
             }
             IrInstruction::ArrayNew {
                 element_ty,

@@ -58,6 +58,18 @@ pub enum Instruction {
         name: String,
         args: Vec<ValueId>,
     },
+    CallValue {
+        callee: ValueId,
+        args: Vec<ValueId>,
+        params: Vec<Type>,
+        return_type: Type,
+    },
+    Closure {
+        name: String,
+        captures: Vec<ValueId>,
+        params: Vec<Type>,
+        return_type: Type,
+    },
     ArrayNew {
         element_ty: Type,
         elements: Vec<ValueId>,
@@ -109,11 +121,12 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
             )
         })
         .collect();
-    let functions = program
-        .functions
-        .iter()
-        .map(|function| build_function(function, &signatures))
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut functions = Vec::new();
+    for function in &program.functions {
+        let mut lowered = build_function(function, &signatures)?;
+        functions.push(lowered.remove(0));
+        functions.extend(lowered);
+    }
     let module = Module { functions };
     verify(&module)?;
     Ok(module)
@@ -245,6 +258,98 @@ fn verify_function(
                                 block.id, arg_ty, param_ty
                             )));
                         }
+                    }
+                }
+                Instruction::CallValue {
+                    callee,
+                    args,
+                    params,
+                    return_type,
+                } => {
+                    let callee_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *callee,
+                    )?;
+                    let expected_callee_ty = Type::Function {
+                        params: params.clone(),
+                        return_type: Box::new(return_type.clone()),
+                    };
+                    if callee_ty != expected_callee_ty {
+                        return Err(Diagnostic::new(format!(
+                            "indirect call in block {:?} expects callee {}, got {}",
+                            block.id, expected_callee_ty, callee_ty
+                        )));
+                    }
+                    if args.len() != params.len() {
+                        return Err(Diagnostic::new(format!(
+                            "indirect call in block {:?} has {} args but expects {}",
+                            block.id,
+                            args.len(),
+                            params.len()
+                        )));
+                    }
+                    for (arg, param_ty) in args.iter().zip(params.iter()) {
+                        let arg_ty = require_dominating_definition(
+                            &definitions,
+                            &dominators,
+                            &seen_in_block,
+                            block.id,
+                            *arg,
+                        )?;
+                        if arg_ty != *param_ty {
+                            return Err(Diagnostic::new(format!(
+                                "indirect call argument in block {:?} has type {}, expected {}",
+                                block.id, arg_ty, param_ty
+                            )));
+                        }
+                    }
+                }
+                Instruction::Closure {
+                    name,
+                    captures,
+                    params,
+                    return_type,
+                } => {
+                    let (sig_params, sig_ret) = signatures
+                        .get(name)
+                        .ok_or_else(|| Diagnostic::new(format!("unknown function '{}'", name)))?;
+                    if sig_params.len() < captures.len() {
+                        return Err(Diagnostic::new(format!(
+                            "closure in block {:?} has too many captures for '{}'",
+                            block.id, name
+                        )));
+                    }
+                    for (capture, capture_ty) in captures.iter().zip(sig_params.iter()) {
+                        let actual = require_dominating_definition(
+                            &definitions,
+                            &dominators,
+                            &seen_in_block,
+                            block.id,
+                            *capture,
+                        )?;
+                        if actual != *capture_ty {
+                            return Err(Diagnostic::new(format!(
+                                "closure capture in block {:?} has type {}, expected {}",
+                                block.id, actual, capture_ty
+                            )));
+                        }
+                    }
+                    let expected_sig = Type::Function {
+                        params: params.clone(),
+                        return_type: Box::new(return_type.clone()),
+                    };
+                    let actual_sig = Type::Function {
+                        params: sig_params[captures.len()..].to_vec(),
+                        return_type: Box::new(sig_ret.clone()),
+                    };
+                    if expected_sig != actual_sig {
+                        return Err(Diagnostic::new(format!(
+                            "closure in block {:?} signature mismatch: expected {}, got {}",
+                            block.id, expected_sig, actual_sig
+                        )));
                     }
                 }
                 Instruction::ArrayNew {
@@ -508,6 +613,15 @@ fn infer_instruction_type(
             .get(name)
             .map(|(_, ret)| ret.clone())
             .ok_or_else(|| Diagnostic::new(format!("unknown function '{}'", name))),
+        Instruction::CallValue { return_type, .. } => Ok(return_type.clone()),
+        Instruction::Closure {
+            params,
+            return_type,
+            ..
+        } => Ok(Type::Function {
+            params: params.clone(),
+            return_type: Box::new(return_type.clone()),
+        }),
         Instruction::ArrayNew { element_ty, .. } => Ok(Type::Array(Box::new(element_ty.clone()))),
         Instruction::ArrayGet { element_ty, .. } => Ok(element_ty.clone()),
         Instruction::ArraySet { .. } => Ok(Type::Numeric(NumericType::I32)),
@@ -672,7 +786,7 @@ impl Function {
 fn build_function(
     function: &AstFunction,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
-) -> Result<Function, Diagnostic> {
+) -> Result<Vec<Function>, Diagnostic> {
     let mut out = Function {
         name: function.name.clone(),
         params: function
@@ -712,6 +826,8 @@ fn build_function(
         current_block: BlockId(0),
         next_block: 1,
         signatures,
+        lifted_functions: Vec::new(),
+        lambda_counter: 0,
     };
     for stmt in &function.body {
         if builder.current_block == DEAD_BLOCK {
@@ -719,7 +835,9 @@ fn build_function(
         }
         builder.lower_stmt(stmt, &mut env, &mut type_env)?;
     }
-    Ok(builder.function)
+    let mut functions = vec![builder.function];
+    functions.extend(builder.lifted_functions);
+    Ok(functions)
 }
 
 const DEAD_BLOCK: BlockId = BlockId(usize::MAX);
@@ -729,6 +847,8 @@ struct Builder<'a> {
     current_block: BlockId,
     next_block: usize,
     signatures: &'a HashMap<String, (Vec<Type>, Type)>,
+    lifted_functions: Vec<Function>,
+    lambda_counter: usize,
 }
 
 impl Builder<'_> {
@@ -1206,30 +1326,58 @@ impl Builder<'_> {
                 self.coerce_value(value, raw_result_ty, expected)?
             }
             Expr::Call { callee, args } => {
-                let Expr::Name(name) = callee.as_ref() else {
-                    return Err(Diagnostic::new(
-                        "indirect function calls are not yet supported in IR lowering",
-                    ));
+                if let Expr::Name(name) = callee.as_ref() {
+                    if let Some((param_types, _)) = self.signatures.get(name) {
+                        let args = args
+                            .iter()
+                            .zip(param_types.iter())
+                            .map(|(arg, param_ty)| {
+                                self.lower_expr(arg, env, types, Some(param_ty.clone()))
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let value = self.emit(Instruction::Call {
+                            name: name.clone(),
+                            args,
+                        });
+                        let actual = self.infer_expr_type(expr, types, None)?;
+                        return self.coerce_value(value, actual, expected);
+                    }
+                }
+                let callee_ty = self.infer_expr_type(callee, types, None)?;
+                let Type::Function {
+                    params: param_types,
+                    return_type,
+                } = callee_ty
+                else {
+                    return Err(Diagnostic::new("attempt to call non-function value"));
                 };
-                let (param_types, _) = self.signatures.get(name).ok_or_else(|| {
-                    Diagnostic::new(format!("unknown function '{name}' during IR lowering"))
-                })?;
+                let callee_value = self.lower_expr(
+                    callee,
+                    env,
+                    types,
+                    Some(Type::Function {
+                        params: param_types.clone(),
+                        return_type: return_type.clone(),
+                    }),
+                )?;
                 let args = args
                     .iter()
                     .zip(param_types.iter())
                     .map(|(arg, param_ty)| self.lower_expr(arg, env, types, Some(param_ty.clone())))
                     .collect::<Result<Vec<_>, _>>()?;
-                let value = self.emit(Instruction::Call {
-                    name: name.clone(),
+                let value = self.emit(Instruction::CallValue {
+                    callee: callee_value,
                     args,
+                    params: param_types.clone(),
+                    return_type: *return_type,
                 });
                 let actual = self.infer_expr_type(expr, types, None)?;
                 self.coerce_value(value, actual, expected)?
             }
-            Expr::Function(_) => {
-                return Err(Diagnostic::new(
-                    "function expressions are not yet supported in IR lowering",
-                ));
+            Expr::Function(function) => {
+                let value = self.lower_function_expr(function, env, types)?;
+                let actual = self.infer_expr_type(expr, types, None)?;
+                self.coerce_value(value, actual, expected)?
             }
             Expr::ArrayLiteral { elements } => {
                 let array_ty = self.infer_array_literal_type(elements, types, expected.clone())?;
@@ -1263,6 +1411,123 @@ impl Builder<'_> {
             }
         };
         Ok(value)
+    }
+
+    fn lower_function_expr(
+        &mut self,
+        function: &waluau_ast::FunctionExpr,
+        env: &HashMap<String, ValueId>,
+        types: &HashMap<String, Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        let captures = collect_captures(function, env, types, self.signatures);
+        let capture_values = captures
+            .iter()
+            .map(|(name, _)| {
+                env.get(name).copied().ok_or_else(|| {
+                    Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let lifted_name = format!("{}$lambda{}", self.function.name, self.lambda_counter);
+        self.lambda_counter += 1;
+
+        let mut lifted = Function {
+            name: lifted_name.clone(),
+            params: Vec::new(),
+            return_type: function.return_type.clone(),
+            entry: BlockId(0),
+            blocks: BTreeMap::new(),
+            next_value: 0,
+        };
+        lifted.blocks.insert(
+            lifted.entry,
+            BasicBlock {
+                id: lifted.entry,
+                instructions: Vec::new(),
+                terminator: Terminator::Unreachable,
+            },
+        );
+        for (name, ty) in &captures {
+            lifted.params.push((name.clone(), ty.clone()));
+        }
+        for param in &function.params {
+            lifted.params.push((param.name.clone(), param.ty.clone()));
+        }
+
+        let mut nested_env = HashMap::new();
+        let mut nested_types = HashMap::new();
+        let lifted_entry = lifted.entry;
+        for (index, (name, ty)) in lifted.params.clone().into_iter().enumerate() {
+            let value = lifted.next_value();
+            block_mut(&mut lifted, lifted_entry)
+                .instructions
+                .push((value, Instruction::Param(index)));
+            nested_env.insert(name.clone(), value);
+            nested_types.insert(name, ty);
+        }
+
+        let mut nested = Builder {
+            function: lifted,
+            current_block: BlockId(0),
+            next_block: 1,
+            signatures: self.signatures,
+            lifted_functions: Vec::new(),
+            lambda_counter: 0,
+        };
+        if let Some(name) = &function.name {
+            let capture_param_values = captures
+                .iter()
+                .map(|(capture_name, _)| {
+                    nested_env.get(capture_name).copied().ok_or_else(|| {
+                        Diagnostic::new(format!(
+                            "missing capture '{}' in nested function lowering",
+                            capture_name
+                        ))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let self_callee = nested.emit(Instruction::Closure {
+                name: lifted_name.clone(),
+                captures: capture_param_values,
+                params: function
+                    .params
+                    .iter()
+                    .map(|param| param.ty.clone())
+                    .collect(),
+                return_type: function.return_type.clone(),
+            });
+            nested_env.insert(name.clone(), self_callee);
+            nested_types.insert(
+                name.clone(),
+                Type::Function {
+                    params: function
+                        .params
+                        .iter()
+                        .map(|param| param.ty.clone())
+                        .collect(),
+                    return_type: Box::new(function.return_type.clone()),
+                },
+            );
+        }
+        for stmt in &function.body {
+            if nested.current_block == DEAD_BLOCK {
+                break;
+            }
+            nested.lower_stmt(stmt, &mut nested_env, &mut nested_types)?;
+        }
+        self.lifted_functions.push(nested.function);
+        self.lifted_functions.extend(nested.lifted_functions);
+
+        Ok(self.emit(Instruction::Closure {
+            name: lifted_name,
+            captures: capture_values,
+            params: function
+                .params
+                .iter()
+                .map(|param| param.ty.clone())
+                .collect(),
+            return_type: function.return_type.clone(),
+        }))
     }
 
     fn infer_expr_type(
@@ -1619,6 +1884,124 @@ fn collect_assigned_names(stmts: &[Stmt]) -> BTreeSet<String> {
     let mut assigned = BTreeSet::new();
     collect_assigned_into(stmts, &mut assigned);
     assigned
+}
+
+fn collect_captures(
+    function: &waluau_ast::FunctionExpr,
+    env: &HashMap<String, ValueId>,
+    types: &HashMap<String, Type>,
+    signatures: &HashMap<String, (Vec<Type>, Type)>,
+) -> Vec<(String, Type)> {
+    let mut bound: HashSet<String> = function
+        .params
+        .iter()
+        .map(|param| param.name.clone())
+        .collect();
+    if let Some(name) = &function.name {
+        bound.insert(name.clone());
+    }
+    let mut captures = BTreeSet::new();
+    for stmt in &function.body {
+        collect_expr_captures_from_stmt(stmt, &bound, env, signatures, &mut captures);
+    }
+    captures
+        .into_iter()
+        .filter_map(|name| {
+            env.get(&name)?;
+            let ty = types.get(&name)?.clone();
+            Some((name, ty))
+        })
+        .collect()
+}
+
+fn collect_expr_captures_from_stmt(
+    stmt: &Stmt,
+    bound: &HashSet<String>,
+    env: &HashMap<String, ValueId>,
+    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    captures: &mut BTreeSet<String>,
+) {
+    match stmt {
+        Stmt::Let { value, .. } => collect_expr_captures(value, bound, env, signatures, captures),
+        Stmt::Assign { value, .. } => {
+            collect_expr_captures(value, bound, env, signatures, captures)
+        }
+        Stmt::IndexAssign {
+            base, index, value, ..
+        } => {
+            collect_expr_captures(base, bound, env, signatures, captures);
+            collect_expr_captures(index, bound, env, signatures, captures);
+            collect_expr_captures(value, bound, env, signatures, captures);
+        }
+        Stmt::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
+            collect_expr_captures(condition, bound, env, signatures, captures);
+            for stmt in then_body {
+                collect_expr_captures_from_stmt(stmt, bound, env, signatures, captures);
+            }
+            for stmt in else_body {
+                collect_expr_captures_from_stmt(stmt, bound, env, signatures, captures);
+            }
+        }
+        Stmt::While { condition, body } => {
+            collect_expr_captures(condition, bound, env, signatures, captures);
+            for stmt in body {
+                collect_expr_captures_from_stmt(stmt, bound, env, signatures, captures);
+            }
+        }
+        Stmt::Repeat { body, condition } => {
+            for stmt in body {
+                collect_expr_captures_from_stmt(stmt, bound, env, signatures, captures);
+            }
+            collect_expr_captures(condition, bound, env, signatures, captures);
+        }
+        Stmt::Return(expr) | Stmt::Expr(expr) => {
+            collect_expr_captures(expr, bound, env, signatures, captures)
+        }
+    }
+}
+
+fn collect_expr_captures(
+    expr: &Expr,
+    bound: &HashSet<String>,
+    env: &HashMap<String, ValueId>,
+    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    captures: &mut BTreeSet<String>,
+) {
+    match expr {
+        Expr::Name(name) => {
+            if !bound.contains(name) && env.contains_key(name) && !signatures.contains_key(name) {
+                captures.insert(name.clone());
+            }
+        }
+        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => {
+            collect_expr_captures(expr, bound, env, signatures, captures)
+        }
+        Expr::Binary { left, right, .. } => {
+            collect_expr_captures(left, bound, env, signatures, captures);
+            collect_expr_captures(right, bound, env, signatures, captures);
+        }
+        Expr::Call { callee, args } => {
+            collect_expr_captures(callee, bound, env, signatures, captures);
+            for arg in args {
+                collect_expr_captures(arg, bound, env, signatures, captures);
+            }
+        }
+        Expr::Function(_) => {}
+        Expr::ArrayLiteral { elements } => {
+            for element in elements {
+                collect_expr_captures(element, bound, env, signatures, captures);
+            }
+        }
+        Expr::Index { base, index } => {
+            collect_expr_captures(base, bound, env, signatures, captures);
+            collect_expr_captures(index, bound, env, signatures, captures);
+        }
+        Expr::Number(_) | Expr::Bool(_) => {}
+    }
 }
 
 fn collect_assigned_into(stmts: &[Stmt], out: &mut BTreeSet<String>) {
@@ -2159,5 +2542,71 @@ mod tests {
         })
         .expect_err("expected verifier to reject phi predecessor ordering");
         assert!(err.to_string().contains("predecessor order mismatch"));
+    }
+
+    #[test]
+    fn lowers_function_expression_with_capture_and_indirect_call() {
+        let source = r#"
+            function entry(x: i32): i32
+                local addx: (i32) -> i32 = function(y: i32): i32
+                    return x + y
+                end
+                return addx(7)
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let module = build(&program).expect("ir build should succeed");
+        assert!(
+            module
+                .functions
+                .iter()
+                .any(|function| function.name == "entry$lambda0"),
+            "expected lifted lambda function in module"
+        );
+        let entry = module
+            .functions
+            .iter()
+            .find(|function| function.name == "entry")
+            .expect("entry function should exist");
+        assert!(entry.blocks.values().any(|block| {
+            block
+                .instructions
+                .iter()
+                .any(|(_, instruction)| matches!(instruction, Instruction::Closure { .. }))
+        }));
+        assert!(entry.blocks.values().any(|block| {
+            block
+                .instructions
+                .iter()
+                .any(|(_, instruction)| matches!(instruction, Instruction::CallValue { .. }))
+        }));
+    }
+
+    #[test]
+    fn lowers_named_function_expression_recursion() {
+        let source = r#"
+            function entry(): i32
+                local fact: (i32) -> i32 = function self(n: i32): i32
+                    if n == 0 then
+                        return 1
+                    end
+                    return n * self(n - 1)
+                end
+                return fact(5)
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let module = build(&program).expect("ir build should succeed");
+        let lifted = module
+            .functions
+            .iter()
+            .find(|function| function.name == "entry$lambda0")
+            .expect("expected lifted recursive function");
+        assert!(lifted.blocks.values().any(|block| {
+            block
+                .instructions
+                .iter()
+                .any(|(_, instruction)| matches!(instruction, Instruction::CallValue { .. }))
+        }));
     }
 }
