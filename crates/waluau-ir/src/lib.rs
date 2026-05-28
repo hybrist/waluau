@@ -784,9 +784,7 @@ impl Builder<'_> {
                             )));
                         }
                         let current = *env.get(name).ok_or_else(|| {
-                            Diagnostic::new(format!(
-                                "unknown local '{name}' during IR lowering"
-                            ))
+                            Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
                         })?;
                         let rhs = self.lower_expr(value, env, types, Some(ty.clone()))?;
                         self.emit(Instruction::Binary {
@@ -1874,7 +1872,12 @@ mod tests {
         let call_count = function
             .blocks
             .values()
-            .flat_map(|block| block.instructions.iter().map(|(_, instruction)| instruction))
+            .flat_map(|block| {
+                block
+                    .instructions
+                    .iter()
+                    .map(|(_, instruction)| instruction)
+            })
             .filter(|instruction| {
                 matches!(
                     instruction,

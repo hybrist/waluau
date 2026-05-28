@@ -830,11 +830,17 @@ mod tests {
         let function = &program.functions[0];
         assert!(matches!(
             &function.body[0],
-            waluau_ast::Stmt::Assign { op: AssignOp::Add, .. }
+            waluau_ast::Stmt::Assign {
+                op: AssignOp::Add,
+                ..
+            }
         ));
         assert!(matches!(
             &function.body[1],
-            waluau_ast::Stmt::IndexAssign { op: AssignOp::Add, .. }
+            waluau_ast::Stmt::IndexAssign {
+                op: AssignOp::Add,
+                ..
+            }
         ));
     }
 }
