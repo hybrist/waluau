@@ -880,12 +880,12 @@ mod tests {
     fn type_checks_closure_capture() {
         let source = r#"
             function entry(x: i32): i32
-                local make: function(i32):function(i32):i32 = function(offset: i32): function(i32):i32
+                local make: (i32) -> (i32) -> i32 = function(offset: i32): (i32) -> i32
                     return function(value: i32): i32
                         return x + offset + value
                     end
                 end
-                local add5: function(i32):i32 = make(5)
+                local add5: (i32) -> i32 = make(5)
                 return add5(7)
             end
         "#;
@@ -898,7 +898,7 @@ mod tests {
     fn type_checks_named_function_expression_recursion() {
         let source = r#"
             function entry(): i32
-                local fact: function(i32):i32 = function self(n: i32): i32
+                local fact: (i32) -> i32 = function self(n: i32): i32
                     if n == 0 then
                         return 1
                     end

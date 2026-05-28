@@ -446,9 +446,8 @@ impl Parser {
             self.expect_simple(TokenKind::RBrace, "expected '}' after array element type")?;
             return Ok(Type::Array(Box::new(element)));
         }
-        if self.check_simple(&TokenKind::Function) {
+        if self.check_simple(&TokenKind::LParen) {
             self.advance();
-            self.expect_simple(TokenKind::LParen, "expected '(' after 'function' in type")?;
             let mut params = Vec::new();
             if !self.check_simple(&TokenKind::RParen) {
                 loop {
@@ -461,7 +460,7 @@ impl Parser {
                 }
             }
             self.expect_simple(TokenKind::RParen, "expected ')' after function type params")?;
-            self.expect_simple(TokenKind::Colon, "expected ':' before function type return")?;
+            self.expect_simple(TokenKind::Arrow, "expected '->' in function type")?;
             let return_type = self.parse_type()?;
             return Ok(Type::Function {
                 params,
@@ -478,7 +477,7 @@ impl Parser {
             Some(TokenKind::F32Type) => Ok(Type::Numeric(NumericType::F32)),
             Some(TokenKind::BoolType) => Ok(Type::Bool),
             _ => Err(self.diagnostic_at_current(
-                "expected type (number, u32, u64, i32, i64, f32, f64, bool, or {T})",
+                "expected type (number, u32, u64, i32, i64, f32, f64, bool, {T}, or (T1, T2) -> R)",
             )),
         }
     }
@@ -773,11 +772,7 @@ mod tests {
 
         let error = parse(source).expect_err("parse should fail");
         let message = error.to_string();
-        assert!(
-            message.contains("unsupported 'fn'")
-                || message.contains("unsupported 'let'")
-                || message.contains("unsupported '->'")
-        );
+        assert!(message.contains("unsupported 'fn'") || message.contains("unsupported 'let'"));
     }
 
     #[test]
@@ -873,7 +868,7 @@ mod tests {
     fn parses_function_type_and_literal_assignment() {
         let source = r#"
             function entry(): i32
-                local add1: function(i32):i32 = function(x: i32): i32
+                local add1: (i32) -> i32 = function(x: i32): i32
                     return x + 1
                 end
                 return add1(41)

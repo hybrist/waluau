@@ -117,14 +117,14 @@ impl std::fmt::Display for Type {
                 params,
                 return_type,
             } => {
-                write!(f, "function(")?;
+                write!(f, "(")?;
                 for (index, param) in params.iter().enumerate() {
                     if index > 0 {
                         write!(f, ", ")?;
                     }
                     write!(f, "{param}")?;
                 }
-                write!(f, "):{return_type}")
+                write!(f, ") -> {return_type}")
             }
         }
     }
