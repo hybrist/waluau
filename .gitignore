@@ -9,3 +9,4 @@ node_modules/
 dist/
 .pnpm-debug.log
 .vercel
+apps/playground/public/*.wasm
