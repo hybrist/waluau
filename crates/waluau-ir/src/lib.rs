@@ -891,9 +891,14 @@ impl Builder<'_> {
                 ty,
                 value,
             } => {
-                let value = self.lower_expr(value, env, types, Some(ty.clone()))?;
+                let inferred_ty = if let Some(ty) = ty.clone() {
+                    ty
+                } else {
+                    self.infer_expr_type(value, types, None)?
+                };
+                let value = self.lower_expr(value, env, types, Some(inferred_ty.clone()))?;
                 env.insert(name.clone(), value);
-                types.insert(name.clone(), ty.clone());
+                types.insert(name.clone(), inferred_ty);
             }
             Stmt::Assign { op, name, value } => {
                 let ty = types.get(name).cloned().ok_or_else(|| {

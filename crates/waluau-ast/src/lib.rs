@@ -135,7 +135,7 @@ pub enum Stmt {
     Let {
         name: String,
         rebindability: Rebindability,
-        ty: Type,
+        ty: Option<Type>,
         value: Expr,
     },
     Assign {

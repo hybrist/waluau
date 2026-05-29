@@ -169,8 +169,12 @@ impl Parser {
         } else {
             Rebindability::Rebindable
         };
-        self.expect_simple(TokenKind::Colon, "expected ':' after local name")?;
-        let ty = self.parse_type()?;
+        let ty = if self.check_simple(&TokenKind::Colon) {
+            self.advance();
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
         self.expect_simple(TokenKind::Equal, "expected '=' in local declaration")?;
         let value = self.parse_expr()?;
         Ok(Stmt::Let {
@@ -209,7 +213,7 @@ impl Parser {
         Ok(Stmt::Let {
             name,
             rebindability: Rebindability::Const,
-            ty,
+            ty: Some(ty),
             value,
         })
     }
@@ -884,7 +888,7 @@ mod tests {
         assert!(matches!(
             &function.body[0],
             waluau_ast::Stmt::Let {
-                ty: Type::Array(element),
+                ty: Some(Type::Array(element)),
                 value: waluau_ast::Expr::ArrayLiteral { elements },
                 ..
             } if elements.len() == 3
@@ -990,7 +994,7 @@ mod tests {
         assert!(matches!(
             &function.body[0],
             waluau_ast::Stmt::Let {
-                ty: Type::Function { params, return_type },
+                ty: Some(Type::Function { params, return_type }),
                 value: waluau_ast::Expr::Function(_),
                 ..
             } if params == &vec![Type::Numeric(NumericType::I32)]
@@ -1019,6 +1023,22 @@ mod tests {
                 rebindability: Rebindability::Rebindable,
                 ..
             } if name == "const"
+        ));
+    }
+
+    #[test]
+    fn parses_local_without_annotation() {
+        let source = r#"
+            function entry(): i32
+                local x = 20
+                return x
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert!(matches!(
+            &function.body[0],
+            waluau_ast::Stmt::Let { name, ty: None, .. } if name == "x"
         ));
     }
 

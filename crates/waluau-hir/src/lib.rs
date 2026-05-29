@@ -80,17 +80,22 @@ fn check_stmt(
             ty,
             value,
         } => {
-            let value_ty = infer_expr(value, vars, signatures, Some(ty.clone()))?;
-            if &value_ty != ty {
-                return Err(Diagnostic::new(format!(
-                    "let '{}' expects {}, got {}",
-                    name, ty, value_ty
-                )));
-            }
+            let inferred_ty = if let Some(expected_ty) = ty {
+                let value_ty = infer_expr(value, vars, signatures, Some(expected_ty.clone()))?;
+                if &value_ty != expected_ty {
+                    return Err(Diagnostic::new(format!(
+                        "let '{}' expects {}, got {}",
+                        name, expected_ty, value_ty
+                    )));
+                }
+                expected_ty.clone()
+            } else {
+                infer_expr(value, vars, signatures, None)?
+            };
             vars.insert(
                 name.clone(),
                 Binding {
-                    ty: ty.clone(),
+                    ty: inferred_ty,
                     rebindability: *rebindability,
                 },
             );
@@ -715,6 +720,38 @@ mod tests {
             error.to_string(),
             "operation requires compatible numeric operands"
         );
+    }
+
+    #[test]
+    fn infers_local_types_from_literals() {
+        let source = r#"
+            function entry(flag: bool): f64
+                local x = 41
+                local y = x + 1
+                if flag then
+                    y = y + 1
+                end
+                return y
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn rejects_incompatible_reassignment_of_inferred_local() {
+        let source = r#"
+            function entry(): i32
+                local x = 1
+                x = true
+                return x
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.to_string(), "assignment to 'x' expects f64, got bool");
     }
 
     #[test]
