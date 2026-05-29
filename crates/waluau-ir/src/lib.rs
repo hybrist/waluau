@@ -852,6 +852,14 @@ struct Builder<'a> {
 }
 
 impl Builder<'_> {
+    fn function_expr_return_type(function: &waluau_ast::FunctionExpr) -> Result<Type, Diagnostic> {
+        function.return_type.clone().ok_or_else(|| {
+            Diagnostic::new(
+                "function return inference is only supported for named functions in this MVP",
+            )
+        })
+    }
+
     fn new_block(&mut self) -> BlockId {
         let id = BlockId(self.next_block);
         self.next_block += 1;
@@ -1459,6 +1467,7 @@ impl Builder<'_> {
         env: &HashMap<String, ValueId>,
         types: &HashMap<String, Type>,
     ) -> Result<ValueId, Diagnostic> {
+        let return_ty = Self::function_expr_return_type(function)?;
         let captures = collect_captures(function, env, types, self.signatures);
         let capture_values = captures
             .iter()
@@ -1474,7 +1483,7 @@ impl Builder<'_> {
         let mut lifted = Function {
             name: lifted_name.clone(),
             params: Vec::new(),
-            return_type: function.return_type.clone(),
+            return_type: return_ty.clone(),
             entry: BlockId(0),
             blocks: BTreeMap::new(),
             next_value: 0,
@@ -1534,7 +1543,7 @@ impl Builder<'_> {
                     .iter()
                     .map(|param| param.ty.clone())
                     .collect(),
-                return_type: function.return_type.clone(),
+                return_type: return_ty.clone(),
             });
             nested_env.insert(name.clone(), self_callee);
             nested_types.insert(
@@ -1545,7 +1554,7 @@ impl Builder<'_> {
                         .iter()
                         .map(|param| param.ty.clone())
                         .collect(),
-                    return_type: Box::new(function.return_type.clone()),
+                    return_type: Box::new(return_ty.clone()),
                 },
             );
         }
@@ -1566,7 +1575,7 @@ impl Builder<'_> {
                 .iter()
                 .map(|param| param.ty.clone())
                 .collect(),
-            return_type: function.return_type.clone(),
+            return_type: return_ty,
         }))
     }
 
@@ -1670,12 +1679,12 @@ impl Builder<'_> {
                 }
             }
             Expr::Function(function) => Ok(Type::Function {
+                return_type: Box::new(Self::function_expr_return_type(function)?),
                 params: function
                     .params
                     .iter()
                     .map(|param| param.ty.clone())
                     .collect(),
-                return_type: Box::new(function.return_type.clone()),
             }),
             Expr::ArrayLiteral { elements } => {
                 self.infer_array_literal_type(elements, types, expected)

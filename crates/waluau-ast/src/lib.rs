@@ -17,7 +17,7 @@ pub struct Function {
 pub struct FunctionExpr {
     pub name: Option<String>,
     pub params: Vec<Param>,
-    pub return_type: Type,
+    pub return_type: Option<Type>,
     pub body: Vec<Stmt>,
 }
 

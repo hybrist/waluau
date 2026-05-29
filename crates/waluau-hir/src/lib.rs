@@ -564,13 +564,18 @@ fn infer_function_expr(
     signatures: &HashMap<String, (Vec<Type>, Type)>,
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
+    let return_ty = function.return_type.clone().ok_or_else(|| {
+        Diagnostic::new(
+            "function return inference is only supported for named functions in this MVP",
+        )
+    })?;
     let function_ty = Type::Function {
         params: function
             .params
             .iter()
             .map(|param| param.ty.clone())
             .collect(),
-        return_type: Box::new(function.return_type.clone()),
+        return_type: Box::new(return_ty.clone()),
     };
     let mut local_scope = vars.clone();
     for param in &function.params {
@@ -593,7 +598,7 @@ fn infer_function_expr(
     }
     let mut saw_return = false;
     for stmt in &function.body {
-        if check_stmt(stmt, &mut local_scope, signatures, &function.return_type)? {
+        if check_stmt(stmt, &mut local_scope, signatures, &return_ty)? {
             saw_return = true;
         }
     }
@@ -1115,6 +1120,24 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "if expression branches must resolve to the same type"
+        );
+    }
+
+    #[test]
+    fn rejects_unannotated_function_expression_returns_for_now() {
+        let source = r#"
+            function entry(): i32
+                local add1 = function(x: i32)
+                    return x + 1
+                end
+                return add1(1)
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "function return inference is only supported for named functions in this MVP"
         );
     }
 }
