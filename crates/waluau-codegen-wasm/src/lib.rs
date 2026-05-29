@@ -212,6 +212,17 @@ fn emit_function(
             .collect::<Result<Vec<_>, _>>()?,
     );
     let mut out = Function::new(locals);
+    if try_emit_structured_fast_path(
+        &mut out,
+        function,
+        signatures,
+        &value_types,
+        &local_plan,
+        array_registry,
+    )? {
+        out.instruction(&Instruction::End);
+        return Ok(out);
+    }
 
     let pc_local = local_plan.pc_local;
     out.instruction(&Instruction::I32Const(function.entry.0 as i32));
@@ -240,6 +251,165 @@ fn emit_function(
     out.instruction(&Instruction::Unreachable);
     out.instruction(&Instruction::End);
     Ok(out)
+}
+
+fn try_emit_structured_fast_path(
+    out: &mut Function,
+    function: &IrFunction,
+    signatures: &HashMap<String, FunctionSignature>,
+    value_types: &BTreeMap<ValueId, Type>,
+    local_plan: &LocalPlan,
+    array_registry: &ArrayTypeRegistry,
+) -> Result<bool, Diagnostic> {
+    if function.blocks.len() == 3 {
+        let entry = function
+            .blocks
+            .get(&function.entry)
+            .ok_or_else(|| Diagnostic::new("missing entry block"))?;
+        let Terminator::Branch {
+            condition,
+            then_block,
+            else_block,
+        } = entry.terminator
+        else {
+            return Ok(false);
+        };
+        let then_bb = function.blocks.get(&then_block);
+        let else_bb = function.blocks.get(&else_block);
+        if then_bb.is_some_and(|b| matches!(b.terminator, Terminator::Return(_)))
+            && else_bb.is_some_and(|b| matches!(b.terminator, Terminator::Return(_)))
+        {
+            emit_block_instructions(out, entry, signatures, local_plan, array_registry)?;
+            out.instruction(&Instruction::LocalGet(local(local_plan, condition)?));
+            out.instruction(&Instruction::If(BlockType::Empty));
+            emit_phi_copies(out, function, entry.id, then_block, local_plan)?;
+            emit_block(
+                out,
+                function,
+                then_bb.unwrap(),
+                signatures,
+                value_types,
+                local_plan,
+                array_registry,
+            )?;
+            out.instruction(&Instruction::Else);
+            emit_phi_copies(out, function, entry.id, else_block, local_plan)?;
+            emit_block(
+                out,
+                function,
+                else_bb.unwrap(),
+                signatures,
+                value_types,
+                local_plan,
+                array_registry,
+            )?;
+            out.instruction(&Instruction::End);
+            return Ok(true);
+        }
+    }
+
+    if function.blocks.len() == 4 {
+        let entry = function
+            .blocks
+            .get(&function.entry)
+            .ok_or_else(|| Diagnostic::new("missing entry block"))?;
+        let Terminator::Jump(first_target) = entry.terminator else {
+            return Ok(false);
+        };
+        let second = function
+            .blocks
+            .get(&first_target)
+            .ok_or_else(|| Diagnostic::new("missing loop header/check block"))?;
+        if let Terminator::Branch {
+            condition,
+            then_block,
+            else_block,
+        } = second.terminator
+        {
+            let then_bb = function.blocks.get(&then_block);
+            let else_bb = function.blocks.get(&else_block);
+            // while: header -> body/exit with body jumping back to header.
+            if then_bb
+                .is_some_and(|b| matches!(b.terminator, Terminator::Jump(t) if t == second.id))
+                && else_bb.is_some_and(|b| matches!(b.terminator, Terminator::Return(_)))
+            {
+                emit_block_instructions(out, entry, signatures, local_plan, array_registry)?;
+                emit_phi_copies(out, function, entry.id, second.id, local_plan)?;
+                out.instruction(&Instruction::Block(BlockType::Empty));
+                out.instruction(&Instruction::Loop(BlockType::Empty));
+                emit_block_instructions(out, second, signatures, local_plan, array_registry)?;
+                out.instruction(&Instruction::LocalGet(local(local_plan, condition)?));
+                out.instruction(&Instruction::I32Eqz);
+                out.instruction(&Instruction::BrIf(1));
+                emit_phi_copies(out, function, second.id, then_block, local_plan)?;
+                emit_block_instructions(
+                    out,
+                    then_bb.expect("checked above"),
+                    signatures,
+                    local_plan,
+                    array_registry,
+                )?;
+                emit_phi_copies(out, function, then_block, second.id, local_plan)?;
+                out.instruction(&Instruction::Br(0));
+                out.instruction(&Instruction::End);
+                out.instruction(&Instruction::End);
+                emit_phi_copies(out, function, second.id, else_block, local_plan)?;
+                emit_block(
+                    out,
+                    function,
+                    else_bb.expect("checked above"),
+                    signatures,
+                    value_types,
+                    local_plan,
+                    array_registry,
+                )?;
+                return Ok(true);
+            }
+            // repeat-until: check -> exit/body with body eventually jumping to check.
+            if then_bb.is_some_and(|b| matches!(b.terminator, Terminator::Return(_)))
+                && else_bb
+                    .is_some_and(|b| matches!(b.terminator, Terminator::Jump(t) if t == second.id))
+            {
+                let body = function
+                    .blocks
+                    .values()
+                    .find(|b| {
+                        matches!(b.terminator, Terminator::Jump(t) if t == second.id)
+                            && b.id != second.id
+                    })
+                    .ok_or_else(|| {
+                        Diagnostic::new(
+                            "unsupported repeat-until CFG shape for structured wasm emission",
+                        )
+                    })?;
+                emit_block_instructions(out, entry, signatures, local_plan, array_registry)?;
+                emit_phi_copies(out, function, entry.id, body.id, local_plan)?;
+                out.instruction(&Instruction::Block(BlockType::Empty));
+                out.instruction(&Instruction::Loop(BlockType::Empty));
+                emit_block_instructions(out, body, signatures, local_plan, array_registry)?;
+                emit_phi_copies(out, function, body.id, second.id, local_plan)?;
+                emit_block_instructions(out, second, signatures, local_plan, array_registry)?;
+                out.instruction(&Instruction::LocalGet(local(local_plan, condition)?));
+                out.instruction(&Instruction::BrIf(1));
+                emit_phi_copies(out, function, second.id, body.id, local_plan)?;
+                out.instruction(&Instruction::Br(0));
+                out.instruction(&Instruction::End);
+                out.instruction(&Instruction::End);
+                emit_phi_copies(out, function, second.id, then_block, local_plan)?;
+                emit_block(
+                    out,
+                    function,
+                    then_bb.expect("checked above"),
+                    signatures,
+                    value_types,
+                    local_plan,
+                    array_registry,
+                )?;
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 struct LocalPlan {
@@ -382,6 +552,52 @@ fn emit_block(
     local_plan: &LocalPlan,
     array_registry: &ArrayTypeRegistry,
 ) -> Result<(), Diagnostic> {
+    emit_block_instructions(out, block, signatures, local_plan, array_registry)?;
+    match &block.terminator {
+        Terminator::Jump(target) => {
+            emit_phi_copies(out, function, block.id, *target, local_plan)?;
+            out.instruction(&Instruction::I32Const(target.0 as i32));
+            out.instruction(&Instruction::LocalSet(local_plan.pc_local));
+            out.instruction(&Instruction::Br(1));
+        }
+        Terminator::Branch {
+            condition,
+            then_block,
+            else_block,
+        } => {
+            out.instruction(&Instruction::LocalGet(local(local_plan, *condition)?));
+            out.instruction(&Instruction::If(BlockType::Empty));
+            emit_phi_copies(out, function, block.id, *then_block, local_plan)?;
+            out.instruction(&Instruction::I32Const(then_block.0 as i32));
+            out.instruction(&Instruction::LocalSet(local_plan.pc_local));
+            out.instruction(&Instruction::Else);
+            emit_phi_copies(out, function, block.id, *else_block, local_plan)?;
+            out.instruction(&Instruction::I32Const(else_block.0 as i32));
+            out.instruction(&Instruction::LocalSet(local_plan.pc_local));
+            out.instruction(&Instruction::End);
+            out.instruction(&Instruction::Br(1));
+        }
+        Terminator::Return(value) => {
+            let _ = value_types.get(value).ok_or_else(|| {
+                Diagnostic::new(format!("missing type for return value {:?}", value))
+            })?;
+            out.instruction(&Instruction::LocalGet(local(local_plan, *value)?));
+            out.instruction(&Instruction::Return);
+        }
+        Terminator::Unreachable => {
+            out.instruction(&Instruction::Unreachable);
+        }
+    }
+    Ok(())
+}
+
+fn emit_block_instructions(
+    out: &mut Function,
+    block: &BasicBlock,
+    signatures: &HashMap<String, FunctionSignature>,
+    local_plan: &LocalPlan,
+    array_registry: &ArrayTypeRegistry,
+) -> Result<(), Diagnostic> {
     for (value, instruction) in &block.instructions {
         match instruction {
             IrInstruction::Param(_) | IrInstruction::Phi(_) => {}
@@ -516,42 +732,6 @@ fn emit_block(
                 out.instruction(&Instruction::ArrayLen);
                 out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
             }
-        }
-    }
-
-    match &block.terminator {
-        Terminator::Jump(target) => {
-            emit_phi_copies(out, function, block.id, *target, local_plan)?;
-            out.instruction(&Instruction::I32Const(target.0 as i32));
-            out.instruction(&Instruction::LocalSet(local_plan.pc_local));
-            out.instruction(&Instruction::Br(1));
-        }
-        Terminator::Branch {
-            condition,
-            then_block,
-            else_block,
-        } => {
-            out.instruction(&Instruction::LocalGet(local(local_plan, *condition)?));
-            out.instruction(&Instruction::If(BlockType::Empty));
-            emit_phi_copies(out, function, block.id, *then_block, local_plan)?;
-            out.instruction(&Instruction::I32Const(then_block.0 as i32));
-            out.instruction(&Instruction::LocalSet(local_plan.pc_local));
-            out.instruction(&Instruction::Else);
-            emit_phi_copies(out, function, block.id, *else_block, local_plan)?;
-            out.instruction(&Instruction::I32Const(else_block.0 as i32));
-            out.instruction(&Instruction::LocalSet(local_plan.pc_local));
-            out.instruction(&Instruction::End);
-            out.instruction(&Instruction::Br(1));
-        }
-        Terminator::Return(value) => {
-            let _ = value_types.get(value).ok_or_else(|| {
-                Diagnostic::new(format!("missing type for return value {:?}", value))
-            })?;
-            out.instruction(&Instruction::LocalGet(local(local_plan, *value)?));
-            out.instruction(&Instruction::Return);
-        }
-        Terminator::Unreachable => {
-            out.instruction(&Instruction::Unreachable);
         }
     }
 
@@ -1157,6 +1337,7 @@ fn compress_locals(locals: Vec<ValType>) -> Vec<(u32, ValType)> {
 #[cfg(test)]
 mod tests {
     use wasmparser::Validator;
+    use wasmprinter::print_bytes;
 
     #[test]
     fn emits_valid_wasm_for_scalar_program() {
@@ -1226,5 +1407,45 @@ mod tests {
             err.to_string(),
             "wasm backend does not yet support closures with captures"
         );
+    }
+
+    #[test]
+    fn emits_structured_if_for_simple_branch() {
+        let source = r#"
+            function choose(x: i32, y: i32): i32
+                if x > y then
+                    return x
+                else
+                    return y
+                end
+            end
+        "#;
+        let program = waluau_parser::parse(source).expect("parse should succeed");
+        let ir = waluau_ir::build(&program).expect("ir should succeed");
+        let wasm = super::emit(&ir).expect("emit should succeed");
+        let wat = print_bytes(&wasm).expect("wat should print");
+        assert!(wat.contains(" if"));
+        assert!(!wat.contains("i32.eq\n    if"));
+    }
+
+    #[test]
+    fn emits_structured_loop_for_simple_while() {
+        let source = r#"
+            function sum_to(n: i32): i32
+                local acc: i32 = 0
+                local i: i32 = n
+                while i > 0 do
+                    acc = acc + i
+                    i = i - 1
+                end
+                return acc
+            end
+        "#;
+        let program = waluau_parser::parse(source).expect("parse should succeed");
+        let ir = waluau_ir::build(&program).expect("ir should succeed");
+        let wasm = super::emit(&ir).expect("emit should succeed");
+        let wat = print_bytes(&wasm).expect("wat should print");
+        assert!(wat.contains(" loop"));
+        assert!(!wat.contains("i32.eq\n    if"));
     }
 }
