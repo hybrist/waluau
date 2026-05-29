@@ -1,0 +1,10 @@
+function nested_result(): i32
+    local make: () -> () -> i32 = function(): () -> i32
+        return function(): i32
+            return 7
+        end
+    end
+
+    local inner: () -> i32 = make()
+    return inner()
+end

@@ -103,6 +103,15 @@ mod tests {
             "literals_i64_u64" => include_str!("../../../fixtures/literals_i64_u64.walu"),
             "loop_sum_to_i32" => include_str!("../../../fixtures/loop_sum_to_i32.walu"),
             "repeat_until_sum" => include_str!("../../../fixtures/repeat_until_sum.walu"),
+            "closure_named_recursion" => {
+                include_str!("../../../fixtures/closure_named_recursion.walu")
+            }
+            "nested_closure_noncapturing" => {
+                include_str!("../../../fixtures/nested_closure_noncapturing.walu")
+            }
+            "closure_capture_unsupported" => {
+                include_str!("../../../fixtures/closure_capture_unsupported.walu")
+            }
             "mismatch" => include_str!("../../../fixtures/mismatch.walu"),
             other => panic!("unknown fixture: {other}"),
         }
@@ -307,6 +316,46 @@ mod tests {
                 .call(&mut store, ())
                 .expect("call should succeed"),
             5.0
+        );
+    }
+
+    #[test]
+    fn executes_named_function_expression_recursion() {
+        let source = fixture_source("closure_named_recursion");
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let fact_entry = instance
+            .get_typed_func::<i32, i32>(&mut store, "fact_entry")
+            .expect("fact_entry export should exist");
+        assert_eq!(
+            fact_entry.call(&mut store, 5).expect("call should succeed"),
+            120
+        );
+    }
+
+    #[test]
+    fn executes_nested_non_capturing_closures() {
+        let source = fixture_source("nested_closure_noncapturing");
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let nested_result = instance
+            .get_typed_func::<(), i32>(&mut store, "nested_result")
+            .expect("nested_result export should exist");
+        assert_eq!(
+            nested_result
+                .call(&mut store, ())
+                .expect("call should succeed"),
+            7
+        );
+    }
+
+    #[test]
+    fn rejects_closure_capture_fixture_with_explicit_diagnostic() {
+        let source = fixture_source("closure_capture_unsupported");
+        let error = super::compile_source(source).expect_err("compile should fail");
+        assert_eq!(
+            error.to_string(),
+            "wasm backend does not yet support closures with captures"
         );
     }
 
