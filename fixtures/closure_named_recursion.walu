@@ -1,0 +1,9 @@
+function fact_entry(n: i32): i32
+    local fact: (i32) -> i32 = function self(value: i32): i32
+        if value == 0 then
+            return 1
+        end
+        return value * self(value - 1)
+    end
+    return fact(n)
+end
