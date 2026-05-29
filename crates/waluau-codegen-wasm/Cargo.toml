@@ -13,4 +13,5 @@ waluau-diagnostics.workspace = true
 waluau-ir.workspace = true
 
 [dev-dependencies]
+wasmprinter = "0.217.1"
 waluau-parser.workspace = true
