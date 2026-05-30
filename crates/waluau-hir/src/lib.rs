@@ -19,6 +19,20 @@ pub fn type_check(program: &Program) -> Result<(), Diagnostic> {
 
 pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
     let mut typed = program.clone();
+    if !typed.top_level.is_empty() {
+        typed.functions.push(Function {
+            name: "__waluau_top_level_init".to_string(),
+            params: Vec::new(),
+            return_type: Some(Type::number()),
+            body: {
+                let mut body = typed.top_level.clone();
+                body.push(Stmt::Return(Expr::Number(NumberLiteral {
+                    raw: "0".into(),
+                })));
+                body
+            },
+        });
+    }
     let mut signatures: HashMap<String, (Vec<Type>, Type)> = HashMap::new();
     for function in &typed.functions {
         if let Some(ret) = &function.return_type {

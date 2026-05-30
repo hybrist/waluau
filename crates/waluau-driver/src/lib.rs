@@ -112,6 +112,7 @@ mod tests {
             "closure_capture_unsupported" => {
                 include_str!("../../../fixtures/closure_capture_unsupported.walu")
             }
+            "top_level_statements" => include_str!("../../../fixtures/top_level_statements.walu"),
             "mismatch" => include_str!("../../../fixtures/mismatch.walu"),
             other => panic!("unknown fixture: {other}"),
         }
@@ -357,6 +358,36 @@ mod tests {
             error.to_string(),
             "wasm backend does not yet support closures with captures"
         );
+    }
+
+    #[test]
+    fn compiles_fixture_with_top_level_statements() {
+        let source = fixture_source("top_level_statements");
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let answer = instance
+            .get_typed_func::<(), i32>(&mut store, "answer")
+            .expect("answer export should exist");
+        assert_eq!(
+            answer.call(&mut store, ()).expect("call should succeed"),
+            42
+        );
+    }
+
+    #[test]
+    fn executes_top_level_code_during_instantiation() {
+        let source = r#"
+            local boom: i32 = (1 :: i32) / (0 :: i32)
+
+            function answer(): i32
+                return 42
+            end
+        "#;
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let engine = Engine::default();
+        let module = Module::new(&engine, wasm).expect("module should compile");
+        let mut store = Store::new(&engine, ());
+        Instance::new(&mut store, &module, &[]).expect_err("instantiation should trap");
     }
 
     #[test]
