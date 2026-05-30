@@ -4,6 +4,7 @@
   "packageManager": "pnpm@10.20.0",
   "scripts": {
     "build:playground": "pnpm --filter playground build",
-    "dev": "pnpm --filter playground dev"
+    "dev": "pnpm --filter playground dev",
+    "test:playground": "pnpm --filter playground test"
   }
 }
