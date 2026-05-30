@@ -18,3 +18,6 @@ assert((1 > 2) or (2 < 3))
 assert(not ((1 > 2) or (3 < 2)))
 
 assert(not not true)
+
+assert(not (false and (1 / 0 == 0)))
+assert(true or (1 / 0 == 0))
