@@ -1836,6 +1836,24 @@ mod tests {
             "function return inference is only supported for named functions in this MVP"
         );
     }
+
+    #[test]
+    fn rejects_typed_local_function_value_with_mismatched_annotation() {
+        let source = r#"
+            function entry(): i32
+                local job: (i32) -> i32 = function(x: i32): bool
+                    return x > 0
+                end
+                return job(1)
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "cannot implicitly convert (i32) -> bool to (i32) -> i32"
+        );
+    }
     #[test]
     fn infers_top_level_function_return_type_from_single_return() {
         let source = r#"
