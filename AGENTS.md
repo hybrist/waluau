@@ -2,11 +2,30 @@
 
 This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
 
+## Installing bd
+
+In remote Claude Code sessions, `bd` is installed automatically by the session-start hook (`.claude/hooks/session-start.sh`). No manual setup is needed.
+
+For local development, install the binary directly:
+
+```bash
+BD_VERSION="1.0.4"
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+curl -fsSL "https://github.com/gastownhall/beads/releases/download/v${BD_VERSION}/beads_${BD_VERSION}_${OS}_${ARCH}.tar.gz" \
+  | tar -xz -C /usr/local/bin/ bd
+```
+
+Then bootstrap the Dolt database from the git remote on first use:
+
+```bash
+git config beads.role maintainer   # or contributor
+bd bootstrap --yes
+```
+
 ## Quick Reference
 
 ```bash
-git config beads.role maintainer                      # First-time local role setup
-bd bootstrap --yes                                   # First-time local bootstrap from the Dolt upstream
 bd ready              # Find available work
 bd show <id>          # View issue details
 bd update <id> --claim  # Claim work atomically
@@ -56,7 +75,7 @@ cp -rf source dest          # NOT: cp -r source dest
 
 ```bash
 git config beads.role maintainer   # or contributor
-bd bootstrap --yes
+bd bootstrap --yes                 # clones Dolt database from git remote
 ```
 
 **Check for ready work:**
