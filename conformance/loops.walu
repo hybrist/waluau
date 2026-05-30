@@ -1,0 +1,34 @@
+function sum_to_while(n: i32): i32
+    local acc: i32 = 0
+    local i: i32 = n
+    while i > 0 do
+        acc = acc + i
+        i = i - 1
+    end
+    return acc
+end
+
+function sum_to_repeat(n: i32): i32
+    local acc: i32 = 0
+    local i: i32 = 0
+    repeat
+        acc = acc + i
+        i = i + 1
+    until i > n
+    return acc
+end
+
+function count_down(start: i32): i32
+    local steps: i32 = 0
+    local i: i32 = start
+    while i > 0 do
+        i = i - 1
+        steps = steps + 1
+    end
+    return steps
+end
+
+assert(sum_to_while(5) == 15)
+assert(sum_to_while(0) == 0)
+assert(sum_to_repeat(5) == 15)
+assert(count_down(4) == 4)

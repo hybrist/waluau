@@ -1,0 +1,36 @@
+function classify(v: number): bool
+    if v > 10 then
+        return true
+    else
+        return false
+    end
+end
+
+function sign(v: number): number
+    if v > 0 then
+        return 1
+    end
+    if v < 0 then
+        return -1
+    end
+    return 0
+end
+
+function max(a: number, b: number): number
+    if a > b then
+        return a
+    else
+        return b
+    end
+end
+
+assert(classify(20))
+assert(not classify(5))
+
+assert(sign(42) == 1)
+assert(sign(-42) == -1)
+assert(sign(0) == 0)
+
+assert(max(7, 3) == 7)
+assert(max(3, 7) == 7)
+assert(max(-1, -5) == -1)

@@ -1,0 +1,37 @@
+function fib(n: number): number
+    if n < 2 then
+        return n
+    end
+    return fib(n - 1) + fib(n - 2)
+end
+
+function factorial(n: i32): i32
+    if n < 2 then
+        return 1
+    end
+    return n * factorial(n - 1)
+end
+
+function is_even(n: i32): bool
+    if n == 0 then
+        return true
+    end
+    return is_odd(n - 1)
+end
+
+function is_odd(n: i32): bool
+    if n == 0 then
+        return false
+    end
+    return is_even(n - 1)
+end
+
+assert(fib(0) == 0)
+assert(fib(1) == 1)
+assert(fib(10) == 55)
+
+assert(factorial(5) == 120)
+
+assert(is_even(8))
+assert(is_odd(7))
+assert(not is_even(3))
