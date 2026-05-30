@@ -1426,13 +1426,31 @@ impl Builder<'_> {
             }
             Expr::Bool(value) => self.emit(Instruction::Bool(*value)),
             Expr::Name(name) => {
-                let value = *env.get(name).ok_or_else(|| {
-                    Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
-                })?;
-                let actual = types.get(name).cloned().ok_or_else(|| {
-                    Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
-                })?;
-                self.coerce_value(value, actual, expected)?
+                if let Some(value) = env.get(name).copied() {
+                    let actual = types.get(name).cloned().ok_or_else(|| {
+                        Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
+                    })?;
+                    self.coerce_value(value, actual, expected)?
+                } else if let Some((params, return_type)) = self.signatures.get(name).cloned() {
+                    // A bare top-level function name used as a value becomes a
+                    // capture-free function reference (funcref), enabling it to
+                    // be stored, returned, and called indirectly.
+                    let value = self.emit(Instruction::Closure {
+                        name: name.clone(),
+                        captures: Vec::new(),
+                        params: params.clone(),
+                        return_type: return_type.clone(),
+                    });
+                    let actual = Type::Function {
+                        params,
+                        return_type: Box::new(return_type),
+                    };
+                    self.coerce_value(value, actual, expected)?
+                } else {
+                    return Err(Diagnostic::new(format!(
+                        "unknown local '{name}' during IR lowering"
+                    )));
+                }
             }
             Expr::Unary { op, expr } => {
                 let actual = self.infer_expr_type(expr, types, None)?;
@@ -1616,6 +1634,11 @@ impl Builder<'_> {
                 let value = self.lower_function_expr(function, env, types)?;
                 let actual = self.infer_expr_type(expr, types, None)?;
                 self.coerce_value(value, actual, expected)?
+            }
+            Expr::Require(path) => {
+                return Err(Diagnostic::new(format!(
+                    "unresolved require(\"{path}\") reached IR lowering"
+                )));
             }
             Expr::ArrayLiteral { elements } => {
                 let array_ty = self.infer_array_literal_type(elements, types, expected.clone())?;
@@ -1841,6 +1864,9 @@ impl Builder<'_> {
                 None => Ok(Type::number()),
             },
             Expr::Bool(_) => Ok(Type::Bool),
+            Expr::Require(path) => Err(Diagnostic::new(format!(
+                "unresolved require(\"{path}\") reached IR lowering"
+            ))),
             Expr::Name(name) => {
                 if let Some(ty) = types.get(name) {
                     Ok(ty.clone())
@@ -2473,7 +2499,7 @@ fn collect_expr_captures(
             collect_expr_captures(base, bound, env, signatures, captures);
             collect_expr_captures(index, bound, env, signatures, captures);
         }
-        Expr::Number(_) | Expr::Bool(_) => {}
+        Expr::Number(_) | Expr::Bool(_) | Expr::Require(_) => {}
     }
 }
 

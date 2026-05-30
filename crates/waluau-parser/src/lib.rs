@@ -28,6 +28,7 @@ impl Parser {
     fn parse_program(&mut self) -> Result<Program, Diagnostic> {
         let mut functions = Vec::new();
         let mut top_level = Vec::new();
+        let mut export = None;
         while self.peek().is_some() {
             if self.check_simple(&TokenKind::Function) {
                 match self.parse_function() {
@@ -39,9 +40,26 @@ impl Parser {
                 }
             } else {
                 match self.parse_stmt() {
-                    Ok(Stmt::Return(_) | Stmt::ReturnMulti(_)) => {
-                        self.record_error(Diagnostic::new("top-level return is not allowed"))
+                    // A trailing top-level `return <expr>` declares the value a
+                    // module exports through `require`. It must be the final
+                    // item in the file.
+                    Ok(Stmt::Return(value)) => {
+                        if export.is_some() {
+                            self.record_error(Diagnostic::new(
+                                "a module may only have one top-level return",
+                            ));
+                        } else {
+                            export = Some(value);
+                        }
+                        if self.peek().is_some() {
+                            self.record_error(Diagnostic::new(
+                                "top-level return must be the final statement in a module",
+                            ));
+                        }
                     }
+                    Ok(Stmt::ReturnMulti(_)) => self.record_error(Diagnostic::new(
+                        "a module return must export a single value",
+                    )),
                     Ok(stmt) => top_level.push(stmt),
                     Err(error) => {
                         self.record_error(error);
@@ -55,6 +73,7 @@ impl Parser {
             Ok(Program {
                 functions,
                 top_level,
+                export,
             })
         } else {
             Err(Diagnostic::new(self.diagnostics.join("\n")))
@@ -601,7 +620,22 @@ impl Parser {
             TokenKind::Number(value) => Ok(Expr::Number(NumberLiteral { raw: value })),
             TokenKind::True => Ok(Expr::Bool(true)),
             TokenKind::False => Ok(Expr::Bool(false)),
-            TokenKind::Identifier(name) => Ok(Expr::Name(name)),
+            TokenKind::Identifier(name) => {
+                // `require("...")` is parsed as a dedicated node rather than a
+                // generic call so that string literals never escape into the
+                // wider expression grammar (the language has no string type).
+                if name == "require"
+                    && self
+                        .peek()
+                        .is_some_and(|token| same_variant(&token.kind, &TokenKind::LParen))
+                {
+                    return self.parse_require();
+                }
+                Ok(Expr::Name(name))
+            }
+            TokenKind::Str(_) => Err(self.diagnostic_at_current(
+                "string literals are only allowed as the path in require(\"...\")",
+            )),
             TokenKind::Function => {
                 let name = if let Some(Token {
                     kind: TokenKind::Identifier(_),
@@ -630,6 +664,23 @@ impl Parser {
             }
             _ => Err(self.diagnostic_at_current("expected expression")),
         }
+    }
+
+    fn parse_require(&mut self) -> Result<Expr, Diagnostic> {
+        self.expect_simple(TokenKind::LParen, "expected '(' after require")?;
+        let path = match self.advance() {
+            Some(Token {
+                kind: TokenKind::Str(path),
+                ..
+            }) => path,
+            _ => {
+                return Err(Diagnostic::new(
+                    "require expects a string literal path, e.g. require(\"./module\")",
+                ));
+            }
+        };
+        self.expect_simple(TokenKind::RParen, "expected ')' after require path")?;
+        Ok(Expr::Require(path))
     }
 
     fn parse_array_literal(&mut self) -> Result<Expr, Diagnostic> {
@@ -1335,13 +1386,51 @@ mod tests {
     }
 
     #[test]
-    fn rejects_top_level_return_statement() {
-        let source = "return 1";
+    fn captures_trailing_top_level_return_as_module_export() {
+        let source = r#"
+            function helper(): i32
+                return 1
+            end
+            return helper
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        assert!(matches!(program.export, Some(waluau_ast::Expr::Name(name)) if name == "helper"));
+    }
+
+    #[test]
+    fn rejects_top_level_return_that_is_not_last() {
+        let source = r#"
+            return 1
+            local x: i32 = 2
+        "#;
         let error = parse(source).expect_err("parse should fail");
         assert!(
             error
                 .to_string()
-                .contains("top-level return is not allowed")
+                .contains("top-level return must be the final statement")
+        );
+    }
+
+    #[test]
+    fn parses_require_as_a_dedicated_node() {
+        let source = r#"
+            local add: (i32, i32) -> i32 = require("./add")
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let waluau_ast::Stmt::Let { value, .. } = &program.top_level[0] else {
+            panic!("expected a let binding");
+        };
+        assert!(matches!(value, waluau_ast::Expr::Require(path) if path == "./add"));
+    }
+
+    #[test]
+    fn rejects_string_literals_outside_require() {
+        let source = r#"local x: i32 = "nope""#;
+        let error = parse(source).expect_err("parse should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("string literals are only allowed as the path in require")
         );
     }
 }

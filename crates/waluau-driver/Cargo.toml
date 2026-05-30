@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+waluau-ast.workspace = true
 waluau-codegen-wasm.workspace = true
 waluau-diagnostics.workspace = true
 waluau-hir.workspace = true

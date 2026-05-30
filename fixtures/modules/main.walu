@@ -1,0 +1,9 @@
+function helper(): i32
+    return 100
+end
+
+function compute(n: i32): i32
+    local double: (i32) -> i32 = require("./double")
+    local add: (i32, i32) -> i32 = require("./add")
+    return add(double(n), helper())
+end

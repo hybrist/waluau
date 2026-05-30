@@ -228,7 +228,7 @@ fn stmt_calls_name(stmt: &Stmt, callee: &str) -> bool {
 
 fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
     match expr {
-        Expr::Name(_) | Expr::Number(_) | Expr::Bool(_) => false,
+        Expr::Name(_) | Expr::Number(_) | Expr::Bool(_) | Expr::Require(_) => false,
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => expr_calls_name(expr, callee),
         Expr::Binary { left, right, .. } => {
             expr_calls_name(left, callee) || expr_calls_name(right, callee)
@@ -685,6 +685,10 @@ fn infer_expr(
     match expr {
         Expr::Number(value) => resolve_number_literal(value, expected),
         Expr::Bool(_) => Ok(Type::Bool),
+        Expr::Require(path) => Err(Diagnostic::new(format!(
+            "require(\"{path}\") can only be resolved when compiling from a file; \
+             relative imports are unavailable when compiling a single source string"
+        ))),
         Expr::Name(name) => {
             let actual = if let Some(local) = vars.get(name) {
                 local.ty.clone()
