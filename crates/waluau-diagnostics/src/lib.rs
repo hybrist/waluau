@@ -21,6 +21,7 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
+    /// Create a diagnostic with only a human message (backwards compatible).
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -31,6 +32,19 @@ impl Diagnostic {
         }
     }
 
+    /// Create a diagnostic with a machine-stable code and a human message.
+    /// Code must be a `'static` string literal.
+    pub fn new_with_code(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            code: Some(code),
+            category: None,
+            span: None,
+            action: None,
+        }
+    }
+
+    /// Builder-style setter for code.
     pub fn with_code(mut self, code: &'static str) -> Self {
         self.code = Some(code);
         self
@@ -51,6 +65,7 @@ impl Diagnostic {
         self
     }
 
+    /// Read-only accessor for the optional diagnostic code.
     pub fn code(&self) -> Option<&'static str> {
         self.code
     }
@@ -70,6 +85,7 @@ impl Diagnostic {
 
 impl fmt::Display for Diagnostic {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Preserve the original display behavior (message only) for backwards compatibility.
         formatter.write_str(&self.message)
     }
 }
