@@ -179,6 +179,8 @@ pub enum Stmt {
         body: Vec<Stmt>,
         condition: Expr,
     },
+    Break,
+    Continue,
     Return(Expr),
     ReturnMulti(Vec<Expr>),
     LetMulti {

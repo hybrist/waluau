@@ -22,6 +22,8 @@ pub enum TokenKind {
     Until,
     Do,
     Return,
+    Break,
+    Continue,
     Not,
     NumberType,
     U32Type,
@@ -233,6 +235,8 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                     "until" => TokenKind::Until,
                     "do" => TokenKind::Do,
                     "return" => TokenKind::Return,
+                    "break" => TokenKind::Break,
+                    "continue" => TokenKind::Continue,
                     "not" => TokenKind::Not,
                     "and" => TokenKind::And,
                     "or" => TokenKind::Or,
@@ -434,5 +438,13 @@ mod tests {
     fn rejects_unexpected_characters() {
         assert_eq!(err("@").to_string(), "unexpected character '@'");
         assert_eq!(err("local $").to_string(), "unexpected character '$'");
+    }
+
+    #[test]
+    fn tokenizes_break_and_continue_keywords() {
+        assert_eq!(
+            kinds("break continue"),
+            vec![TokenKind::Break, TokenKind::Continue]
+        );
     }
 }

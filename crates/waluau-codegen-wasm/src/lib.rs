@@ -576,20 +576,27 @@ fn infer_value_types(
                 let IrInstruction::Phi(incoming) = instruction else {
                     continue;
                 };
-                let Some((_, first)) = incoming.first() else {
-                    return Err(Diagnostic::new(format!(
-                        "phi {:?} has no incoming values",
-                        value
-                    )));
-                };
-                let Some(first_ty) = types.get(first).cloned() else {
-                    continue;
-                };
-                if incoming
-                    .iter()
-                    .all(|(_, incoming)| types.get(incoming).cloned() == Some(first_ty.clone()))
-                {
-                    types.insert(*value, first_ty);
+                let mut candidate: Option<Type> = None;
+                for (_, incoming) in incoming {
+                    if incoming == value {
+                        continue;
+                    }
+                    let Some(ty) = types.get(incoming).cloned() else {
+                        continue;
+                    };
+                    if let Some(ref expected) = candidate {
+                        if expected != &ty {
+                            return Err(Diagnostic::new(format!(
+                                "phi {:?} has inconsistent incoming types during wasm emission",
+                                value
+                            )));
+                        }
+                    } else {
+                        candidate = Some(ty);
+                    }
+                }
+                if let Some(ty) = candidate {
+                    types.insert(*value, ty);
                     progress = true;
                 }
             }
