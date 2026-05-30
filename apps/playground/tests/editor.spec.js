@@ -39,6 +39,6 @@ test.describe('editor', () => {
   test('line numbers reflect the current line count', async ({ page }) => {
     const threeLineProgram = 'function f(): i32\n    return 1\nend';
     await page.locator('.code-textarea').fill(threeLineProgram);
-    await expect(page.locator('.line-num')).toHaveCount(3);
+    await expect(page.locator('.monaco-editor .line-numbers')).toHaveCount(3);
   });
 });
