@@ -88,9 +88,10 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
         }
         if !progressed {
             let name = &typed.functions[next_unresolved[0]].name;
-            return Err(Diagnostic::new(format!(
-                "cannot infer return type for recursive or cyclic function '{name}'"
-            )));
+            return Err(Diagnostic::new_with_code(
+                "inference/unsupported",
+                format!("cannot infer return type for recursive or cyclic function '{name}'"),
+            ));
         }
         unresolved = next_unresolved;
     }
@@ -107,10 +108,13 @@ fn check_function(
     signatures: &HashMap<String, (Vec<Type>, Type)>,
 ) -> Result<(), Diagnostic> {
     let expected_return = function.return_type.clone().ok_or_else(|| {
-        Diagnostic::new(format!(
-            "cannot infer return type for recursive or cyclic function '{}'",
-            function.name
-        ))
+        Diagnostic::new_with_code(
+            "inference/unsupported",
+            format!(
+                "cannot infer return type for recursive or cyclic function '{}'",
+                function.name
+            ),
+        )
     })?;
     let mut vars: HashMap<String, Binding> = HashMap::new();
     for param in &function.params {
@@ -437,7 +441,8 @@ fn common_return_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
         (Type::Numeric(a), Type::Numeric(b)) => a.common(b).map(Type::Numeric).ok_or_else(|| {
             Diagnostic::new("function return branches must resolve to the same type")
         }),
-        _ => Err(Diagnostic::new(
+        _ => Err(Diagnostic::new_with_code(
+            "inference/conflict",
             "function return branches must resolve to the same type",
         )),
     }
@@ -1036,7 +1041,8 @@ fn infer_array_literal(
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
     if elements.is_empty() {
-        return Err(Diagnostic::new(
+        return Err(Diagnostic::new_with_code(
+            "inference/missing-context",
             "empty array literal requires explicit element type",
         ));
     }
