@@ -513,6 +513,8 @@ fn infer_value_types(
                 IrInstruction::ArrayGet { element_ty, .. } => element_ty.clone(),
                 IrInstruction::ArraySet { .. } => Type::Numeric(NumericType::I32),
                 IrInstruction::ArrayLen { .. } => Type::Numeric(NumericType::I32),
+                IrInstruction::PackMulti { types, .. } => Type::Multi(types.clone()),
+                IrInstruction::MultiGet { ty, .. } => ty.clone(),
                 IrInstruction::Phi(_) => continue,
             };
             types.insert(*value, ty);
@@ -756,6 +758,11 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::LocalGet(local(local_plan, *array)?));
                 out.instruction(&Instruction::ArrayLen);
                 out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
+            }
+            IrInstruction::PackMulti { .. } | IrInstruction::MultiGet { .. } => {
+                return Err(Diagnostic::new(
+                    "wasm backend does not yet support lowering multi-value tuple instructions",
+                ));
             }
         }
     }

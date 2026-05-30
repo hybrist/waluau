@@ -93,6 +93,15 @@ pub enum Instruction {
     ArrayLen {
         array: ValueId,
     },
+    PackMulti {
+        values: Vec<ValueId>,
+        types: Vec<Type>,
+    },
+    MultiGet {
+        value: ValueId,
+        index: usize,
+        ty: Type,
+    },
     Phi(Vec<(BlockId, ValueId)>),
 }
 
@@ -481,6 +490,56 @@ fn verify_function(
                         )));
                     }
                 }
+                Instruction::PackMulti { values, types } => {
+                    if values.len() != types.len() {
+                        return Err(Diagnostic::new(format!(
+                            "pack multi in block {:?} must have equal value/type arity",
+                            block.id
+                        )));
+                    }
+                    for (value, ty) in values.iter().zip(types.iter()) {
+                        let actual = require_dominating_definition(
+                            &definitions,
+                            &dominators,
+                            &seen_in_block,
+                            block.id,
+                            *value,
+                        )?;
+                        if actual != *ty {
+                            return Err(Diagnostic::new(format!(
+                                "pack multi in block {:?} value type {}, expected {}",
+                                block.id, actual, ty
+                            )));
+                        }
+                    }
+                }
+                Instruction::MultiGet { value, index, ty } => {
+                    let actual = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *value,
+                    )?;
+                    let Type::Multi(types) = actual else {
+                        return Err(Diagnostic::new(format!(
+                            "multi-get in block {:?} requires multi-value operand",
+                            block.id
+                        )));
+                    };
+                    let expected = types.get(*index).ok_or_else(|| {
+                        Diagnostic::new(format!(
+                            "multi-get in block {:?} index {} is out of range",
+                            block.id, index
+                        ))
+                    })?;
+                    if expected != ty {
+                        return Err(Diagnostic::new(format!(
+                            "multi-get in block {:?} expects {}, got {}",
+                            block.id, expected, ty
+                        )));
+                    }
+                }
                 Instruction::Phi(incoming) => {
                     let expected_preds = predecessors.get(&block.id).cloned().unwrap_or_default();
                     if incoming.len() != expected_preds.len() {
@@ -640,6 +699,8 @@ fn infer_instruction_type(
         Instruction::ArrayGet { element_ty, .. } => Ok(element_ty.clone()),
         Instruction::ArraySet { .. } => Ok(Type::Numeric(NumericType::I32)),
         Instruction::ArrayLen { .. } => Ok(Type::Numeric(NumericType::I32)),
+        Instruction::PackMulti { types, .. } => Ok(Type::Multi(types.clone())),
+        Instruction::MultiGet { ty, .. } => Ok(ty.clone()),
         Instruction::Phi(_) => Err(Diagnostic::new(
             "phi type must be resolved before infer_instruction_type",
         )),
@@ -1018,18 +1079,61 @@ impl Builder<'_> {
                 self.set_terminator(self.current_block, Terminator::Return(value));
                 self.current_block = DEAD_BLOCK;
             }
-            Stmt::ReturnMulti(_) => {
-                return Err(Diagnostic::new(
-                    "multiple return values are not lowered to IR yet",
-                ));
+            Stmt::ReturnMulti(values) => {
+                let expected = match &self.function.return_type {
+                    Type::Multi(types) => types.clone(),
+                    other => vec![other.clone()],
+                };
+                let lowered = self.lower_expr_list(values, env, types, Some(&expected))?;
+                if lowered.len() != expected.len() {
+                    return Err(Diagnostic::new(format!(
+                        "return expects {} values, got {}",
+                        expected.len(),
+                        lowered.len()
+                    )));
+                }
+                let packed = self.emit(Instruction::PackMulti {
+                    values: lowered,
+                    types: expected,
+                });
+                self.set_terminator(self.current_block, Terminator::Return(packed));
+                self.current_block = DEAD_BLOCK;
             }
-            Stmt::LetMulti { .. } => {
-                return Err(Diagnostic::new(
-                    "multi-binding local declarations are not lowered to IR yet",
-                ));
+            Stmt::LetMulti { bindings, values } => {
+                let expected: Vec<Type> =
+                    bindings.iter().map(|binding| binding.ty.clone()).collect();
+                let lowered = self.lower_expr_list(values, env, types, Some(&expected))?;
+                if lowered.len() != expected.len() {
+                    return Err(Diagnostic::new(format!(
+                        "multi-binding declaration expects {} values, got {}",
+                        expected.len(),
+                        lowered.len()
+                    )));
+                }
+                for ((binding, value), expected_ty) in bindings.iter().zip(lowered).zip(expected) {
+                    env.insert(binding.name.clone(), value);
+                    types.insert(binding.name.clone(), expected_ty);
+                }
             }
-            Stmt::AssignMulti { .. } => {
-                return Err(Diagnostic::new("multi-assignment is not lowered to IR yet"));
+            Stmt::AssignMulti { targets, values } => {
+                let mut expected = Vec::new();
+                for target in targets {
+                    let ty = types.get(target).cloned().ok_or_else(|| {
+                        Diagnostic::new(format!("unknown local '{target}' during IR lowering"))
+                    })?;
+                    expected.push(ty);
+                }
+                let lowered = self.lower_expr_list(values, env, types, Some(&expected))?;
+                if lowered.len() != expected.len() {
+                    return Err(Diagnostic::new(format!(
+                        "multi-assignment expects {} values, got {}",
+                        expected.len(),
+                        lowered.len()
+                    )));
+                }
+                for (target, value) in targets.iter().zip(lowered) {
+                    env.insert(target.clone(), value);
+                }
             }
             Stmt::If {
                 condition,
@@ -1545,6 +1649,54 @@ impl Builder<'_> {
             }
         };
         Ok(value)
+    }
+
+    fn lower_expr_list(
+        &mut self,
+        exprs: &[Expr],
+        env: &HashMap<String, ValueId>,
+        types: &HashMap<String, Type>,
+        expected: Option<&[Type]>,
+    ) -> Result<Vec<ValueId>, Diagnostic> {
+        let mut out = Vec::new();
+        for expr in exprs {
+            let slot_expected = expected.and_then(|types| types.get(out.len()).cloned());
+            let ty = if matches!(expr, Expr::Call { .. }) {
+                self.infer_expr_type(expr, types, None)?
+            } else {
+                self.infer_expr_type(expr, types, slot_expected.clone())?
+            };
+            match ty {
+                Type::Multi(multi_types) => {
+                    let tuple = self.lower_expr(expr, env, types, None)?;
+                    for (index, part) in multi_types.into_iter().enumerate() {
+                        let coerced =
+                            if let Some(exp) = expected.and_then(|types| types.get(out.len())) {
+                                coerce_type(part, Some(exp.clone()))?
+                            } else {
+                                part
+                            };
+                        let value = self.emit(Instruction::MultiGet {
+                            value: tuple,
+                            index,
+                            ty: coerced,
+                        });
+                        out.push(value);
+                    }
+                }
+                scalar => {
+                    let coerced = if let Some(exp) = expected.and_then(|types| types.get(out.len()))
+                    {
+                        coerce_type(scalar, Some(exp.clone()))?
+                    } else {
+                        scalar
+                    };
+                    let value = self.lower_expr(expr, env, types, Some(coerced))?;
+                    out.push(value);
+                }
+            }
+        }
+        Ok(out)
     }
 
     fn lower_function_expr(
