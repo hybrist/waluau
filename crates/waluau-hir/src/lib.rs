@@ -1856,6 +1856,82 @@ mod tests {
     }
 
     #[test]
+    fn rejects_multi_binding_arity_mismatch() {
+        let source = r#"
+            function entry(x: i32): i32
+                local a: i32, b: i32 = x
+                return a
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "multi-binding declaration expects 2 values, got 1"
+        );
+    }
+
+    #[test]
+    fn rejects_multi_value_call_arity_mismatch() {
+        let source = r#"
+            function pair(x: i32): i32, i32
+                return x, x + 1
+            end
+
+            function sum3(a: i32, b: i32, c: i32): i32
+                return a + b + c
+            end
+
+            function entry(x: i32): i32
+                return sum3(pair(x))
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.to_string(), "function expects 3 arguments, got 2");
+    }
+
+    #[test]
+    fn rejects_multi_value_call_type_mismatch() {
+        let source = r#"
+            function pair(x: i32): i32, bool
+                return x, x > 0
+            end
+
+            function sum2(a: i32, b: i32): i32
+                return a + b
+            end
+
+            function entry(x: i32): i32
+                return sum2(pair(x))
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.to_string(), "cannot implicitly convert bool to i32");
+    }
+
+    #[test]
+    fn rejects_multi_value_in_scalar_context() {
+        let source = r#"
+            function pair(x: i32, y: i32): i32, i32
+                return x, y
+            end
+
+            function entry(x: i32, y: i32): number
+                local t: number = pair(x, y)
+                return t
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "cannot implicitly convert multiple values to f64"
+        );
+    }
+
+    #[test]
     fn type_checks_coroutine_create_and_resume_for_zero_arg_functions() {
         let source = r#"
             function run_job(): i32
