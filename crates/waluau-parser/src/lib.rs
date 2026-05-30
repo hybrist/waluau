@@ -47,13 +47,16 @@ impl Parser {
     fn parse_function(&mut self) -> Result<Function, Diagnostic> {
         self.expect_simple(TokenKind::Function, "expected 'function'")?;
         let name = self.expect_identifier()?;
-        let function_expr = self.parse_function_expr_tail(Some(name))?;
+        let function_expr = self.parse_function_expr_tail(Some(name), true)?;
+        let return_type = function_expr
+            .return_type
+            .ok_or_else(|| Diagnostic::new("top-level functions require explicit return type"))?;
         Ok(Function {
             name: function_expr
                 .name
                 .expect("top-level functions always have a name"),
             params: function_expr.params,
-            return_type: function_expr.return_type,
+            return_type,
             body: function_expr.body,
         })
     }
@@ -61,6 +64,7 @@ impl Parser {
     fn parse_function_expr_tail(
         &mut self,
         name: Option<String>,
+        require_return_type: bool,
     ) -> Result<FunctionExpr, Diagnostic> {
         self.expect_simple(TokenKind::LParen, "expected '('")?;
         let mut params = Vec::new();
@@ -81,8 +85,14 @@ impl Parser {
             }
         }
         self.expect_simple(TokenKind::RParen, "expected ')'")?;
-        self.expect_simple(TokenKind::Colon, "expected ':' before return type")?;
-        let return_type = self.parse_type()?;
+        let return_type = if self.check_simple(&TokenKind::Colon) {
+            self.advance();
+            Some(self.parse_type()?)
+        } else if require_return_type {
+            return Err(Diagnostic::new("expected ':' before return type"));
+        } else {
+            None
+        };
         let body = self.parse_block_until(&[TokenKind::End]);
         self.expect_simple(TokenKind::End, "expected 'end' after function body")?;
         Ok(FunctionExpr {
@@ -169,8 +179,12 @@ impl Parser {
         } else {
             Rebindability::Rebindable
         };
-        self.expect_simple(TokenKind::Colon, "expected ':' after local name")?;
-        let ty = self.parse_type()?;
+        let ty = if self.check_simple(&TokenKind::Colon) {
+            self.advance();
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
         self.expect_simple(TokenKind::Equal, "expected '=' in local declaration")?;
         let value = self.parse_expr()?;
         Ok(Stmt::Let {
@@ -209,7 +223,7 @@ impl Parser {
         Ok(Stmt::Let {
             name,
             rebindability: Rebindability::Const,
-            ty,
+            ty: Some(ty),
             value,
         })
     }
@@ -475,7 +489,7 @@ impl Parser {
                 } else {
                     None
                 };
-                Ok(Expr::Function(self.parse_function_expr_tail(name)?))
+                Ok(Expr::Function(self.parse_function_expr_tail(name, false)?))
             }
             TokenKind::LBrace => self.parse_array_literal(),
             TokenKind::LParen => {
@@ -884,7 +898,7 @@ mod tests {
         assert!(matches!(
             &function.body[0],
             waluau_ast::Stmt::Let {
-                ty: Type::Array(element),
+                ty: Some(Type::Array(element)),
                 value: waluau_ast::Expr::ArrayLiteral { elements },
                 ..
             } if elements.len() == 3
@@ -990,7 +1004,7 @@ mod tests {
         assert!(matches!(
             &function.body[0],
             waluau_ast::Stmt::Let {
-                ty: Type::Function { params, return_type },
+                ty: Some(Type::Function { params, return_type }),
                 value: waluau_ast::Expr::Function(_),
                 ..
             } if params == &vec![Type::Numeric(NumericType::I32)]
@@ -999,6 +1013,32 @@ mod tests {
         assert!(matches!(
             &function.body[1],
             waluau_ast::Stmt::Return(waluau_ast::Expr::Call { .. })
+        ));
+    }
+
+    #[test]
+    fn parses_function_literal_without_return_annotation() {
+        let source = r#"
+            function entry(): i32
+                local add1 = function(x: i32)
+                    return x + 1
+                end
+                return add1(41)
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert!(matches!(
+            &function.body[0],
+            waluau_ast::Stmt::Let {
+                ty: None,
+                value: waluau_ast::Expr::Function(waluau_ast::FunctionExpr {
+                    return_type: None,
+                    ..
+                }),
+                ..
+            }
         ));
     }
 
@@ -1019,6 +1059,22 @@ mod tests {
                 rebindability: Rebindability::Rebindable,
                 ..
             } if name == "const"
+        ));
+    }
+
+    #[test]
+    fn parses_local_without_annotation() {
+        let source = r#"
+            function entry(): i32
+                local x = 20
+                return x
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert!(matches!(
+            &function.body[0],
+            waluau_ast::Stmt::Let { name, ty: None, .. } if name == "x"
         ));
     }
 

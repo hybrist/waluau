@@ -6,17 +6,8 @@ fn reports_multiple_errors_for_missing_local_type_fixture() {
     let error = parse(source).expect_err("parse should fail");
     let message = error.to_string();
     let lines: Vec<_> = message.lines().collect();
-    assert_eq!(lines.len(), 2);
-    assert!(
-        lines
-            .iter()
-            .any(|line| line.contains("expected ':' after local name"))
-    );
-    assert!(
-        lines
-            .iter()
-            .any(|line| line.contains("expected expression"))
-    );
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].contains("expected expression"));
 }
 
 #[test]

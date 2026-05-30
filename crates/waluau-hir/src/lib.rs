@@ -80,17 +80,22 @@ fn check_stmt(
             ty,
             value,
         } => {
-            let value_ty = infer_expr(value, vars, signatures, Some(ty.clone()))?;
-            if &value_ty != ty {
-                return Err(Diagnostic::new(format!(
-                    "let '{}' expects {}, got {}",
-                    name, ty, value_ty
-                )));
-            }
+            let inferred_ty = if let Some(expected_ty) = ty {
+                let value_ty = infer_expr(value, vars, signatures, Some(expected_ty.clone()))?;
+                if &value_ty != expected_ty {
+                    return Err(Diagnostic::new(format!(
+                        "let '{}' expects {}, got {}",
+                        name, expected_ty, value_ty
+                    )));
+                }
+                expected_ty.clone()
+            } else {
+                infer_expr(value, vars, signatures, None)?
+            };
             vars.insert(
                 name.clone(),
                 Binding {
-                    ty: ty.clone(),
+                    ty: inferred_ty,
                     rebindability: *rebindability,
                 },
             );
@@ -559,13 +564,18 @@ fn infer_function_expr(
     signatures: &HashMap<String, (Vec<Type>, Type)>,
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
+    let return_ty = function.return_type.clone().ok_or_else(|| {
+        Diagnostic::new(
+            "function return inference is only supported for named functions in this MVP",
+        )
+    })?;
     let function_ty = Type::Function {
         params: function
             .params
             .iter()
             .map(|param| param.ty.clone())
             .collect(),
-        return_type: Box::new(function.return_type.clone()),
+        return_type: Box::new(return_ty.clone()),
     };
     let mut local_scope = vars.clone();
     for param in &function.params {
@@ -588,7 +598,7 @@ fn infer_function_expr(
     }
     let mut saw_return = false;
     for stmt in &function.body {
-        if check_stmt(stmt, &mut local_scope, signatures, &function.return_type)? {
+        if check_stmt(stmt, &mut local_scope, signatures, &return_ty)? {
             saw_return = true;
         }
     }
@@ -715,6 +725,38 @@ mod tests {
             error.to_string(),
             "operation requires compatible numeric operands"
         );
+    }
+
+    #[test]
+    fn infers_local_types_from_literals() {
+        let source = r#"
+            function entry(flag: bool): f64
+                local x = 41
+                local y = x + 1
+                if flag then
+                    y = y + 1
+                end
+                return y
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn rejects_incompatible_reassignment_of_inferred_local() {
+        let source = r#"
+            function entry(): i32
+                local x = 1
+                x = true
+                return x
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.to_string(), "assignment to 'x' expects f64, got bool");
     }
 
     #[test]
@@ -1078,6 +1120,24 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "if expression branches must resolve to the same type"
+        );
+    }
+
+    #[test]
+    fn rejects_unannotated_function_expression_returns_for_now() {
+        let source = r#"
+            function entry(): i32
+                local add1 = function(x: i32)
+                    return x + 1
+                end
+                return add1(1)
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "function return inference is only supported for named functions in this MVP"
         );
     }
 }
