@@ -1086,8 +1086,6 @@ mod tests {
         let function = &program.functions[0];
         assert_eq!(function.return_type, None);
     }
-
-    #[test]
     fn parses_compound_assignments() {
         let source = r#"
             function entry(xs: {i32}, i: i32, x: i32): i32

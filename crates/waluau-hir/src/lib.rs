@@ -1413,7 +1413,6 @@ mod tests {
             "function return inference is only supported for named functions in this MVP"
         );
     }
-
     #[test]
     fn infers_top_level_function_return_type_from_single_return() {
         let source = r#"
