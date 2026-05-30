@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import Editor from '@monaco-editor/react';
 
 const fixtureModules = import.meta.glob('../../../fixtures/*.walu', {
@@ -223,6 +224,19 @@ export default function App() {
   const [manualResults, setManualResults] = useState({});
   const [editorInstance, setEditorInstance] = useState(null);
   const [monacoInstance, setMonacoInstance] = useState(null);
+  const [activeRunners, setActiveRunners] = useState([]);
+
+  const exportsListRef = useRef(exportsList);
+  const activeRunnersRef = useRef(activeRunners);
+  const toggleInlineRunnerRef = useRef(null);
+
+  useEffect(() => {
+    exportsListRef.current = exportsList;
+  }, [exportsList]);
+
+  useEffect(() => {
+    activeRunnersRef.current = activeRunners;
+  }, [activeRunners]);
 
   const handleEditorBeforeMount = (monaco) => {
     if (!monaco.languages.getLanguages().some((lang) => lang.id === 'waluau')) {
@@ -445,6 +459,142 @@ export default function App() {
     setEntryFile(filename);
   };
 
+  const toggleInlineRunner = (funcName, lineNumber) => {
+    const existingIndex = activeRunnersRef.current.findIndex(
+      (r) => r.funcName === funcName && r.lineNumber === lineNumber
+    );
+
+    if (existingIndex !== -1) {
+      const runner = activeRunnersRef.current[existingIndex];
+      removeRunnerZone(runner);
+    } else {
+      addRunnerZone(funcName, lineNumber);
+    }
+  };
+
+  const addRunnerZone = (funcName, lineNumber) => {
+    if (!editorInstance) return;
+
+    const domNode = document.createElement('div');
+    domNode.className = 'inline-runner-zone';
+    
+    // Stop propagation of events to prevent Monaco from stealing focus/interaction
+    const stopProp = (e) => e.stopPropagation();
+    domNode.addEventListener('mousedown', stopProp);
+    domNode.addEventListener('mouseup', stopProp);
+    domNode.addEventListener('click', stopProp);
+    domNode.addEventListener('keydown', stopProp);
+    domNode.addEventListener('keyup', stopProp);
+
+    const funcMeta = exportsListRef.current.find(e => e.name === funcName);
+    const paramCount = funcMeta ? funcMeta.params.length : 0;
+    // Height formula: base 5 lines, + 1.5 lines per parameter
+    const heightInLines = Math.max(5, 4 + Math.ceil(paramCount * 1.5));
+
+    let zoneId = null;
+    editorInstance.changeViewZones((changeAccessor) => {
+      zoneId = changeAccessor.addZone({
+        afterLineNumber: lineNumber,
+        heightInLines: heightInLines,
+        domNode: domNode,
+        suppressMouseDown: true
+      });
+    });
+
+    const newRunner = {
+      id: `${funcName}-${lineNumber}-${Date.now()}`,
+      funcName,
+      lineNumber,
+      domNode,
+      zoneId,
+      heightInLines
+    };
+
+    setActiveRunners(prev => [...prev, newRunner]);
+  };
+
+  const removeRunnerZone = (runner) => {
+    if (editorInstance && runner.zoneId) {
+      editorInstance.changeViewZones((changeAccessor) => {
+        changeAccessor.removeZone(runner.zoneId);
+      });
+    }
+    setActiveRunners(prev => prev.filter(r => r.id !== runner.id));
+  };
+
+  useEffect(() => {
+    toggleInlineRunnerRef.current = toggleInlineRunner;
+  }); // Keep toggle runner ref up-to-date
+
+  // Register CodeLens and Monaco Command
+  useEffect(() => {
+    if (!monacoInstance || !editorInstance) return;
+
+    // Register command to be called when user clicks the CodeLens
+    const commandId = editorInstance.addCommand(0, (ctx, funcName, lineNumber) => {
+      if (toggleInlineRunnerRef.current) {
+        toggleInlineRunnerRef.current(funcName, lineNumber);
+      }
+    });
+
+    const lensProvider = monacoInstance.languages.registerCodeLensProvider('waluau', {
+      provideCodeLenses: (model) => {
+        const text = model.getValue();
+        const lines = text.split('\n');
+        const lenses = [];
+        const funcRegex = /^\s*(?:local\s+)?function\s+([a-zA-Z_]\w*)\s*\(/;
+
+        for (let i = 0; i < lines.length; i++) {
+          const match = lines[i].match(funcRegex);
+          if (match) {
+            const funcName = match[1];
+            const isExported = exportsListRef.current.some(exp => exp.name === funcName);
+            if (isExported) {
+              const lineNum = i + 1;
+              lenses.push({
+                range: {
+                  startLineNumber: lineNum,
+                  startColumn: 1,
+                  endLineNumber: lineNum,
+                  endColumn: 1
+                },
+                id: `run-${funcName}-${lineNum}`,
+                command: {
+                  id: commandId,
+                  title: `▶ Run ${funcName}`,
+                  arguments: [funcName, lineNum]
+                }
+              });
+            }
+          }
+        }
+        return {
+          lenses,
+          dispose: () => {}
+        };
+      },
+      resolveCodeLens: (model, codeLens) => codeLens
+    });
+
+    return () => {
+      lensProvider.dispose();
+    };
+  }, [monacoInstance, editorInstance]);
+
+  // Clean up all view zones on unmount
+  useEffect(() => {
+    return () => {
+      if (editorInstance && activeRunnersRef.current.length > 0) {
+        editorInstance.changeViewZones((changeAccessor) => {
+          for (const runner of activeRunnersRef.current) {
+            if (runner.zoneId) {
+              changeAccessor.removeZone(runner.zoneId);
+            }
+          }
+        });
+      }
+    };
+  }, [editorInstance]);
   // Load wasm-bindgen compiler module on mount.
   useEffect(() => {
     let cancelled = false;
@@ -510,6 +660,22 @@ export default function App() {
         ? 'success'
         : 'ready'
     : status;
+
+  // Clean up all active runners when compilation or WASM outputs change
+  useEffect(() => {
+    if (editorInstance && activeRunnersRef.current.length > 0) {
+      editorInstance.changeViewZones((changeAccessor) => {
+        for (const runner of activeRunnersRef.current) {
+          if (runner.zoneId) {
+            changeAccessor.removeZone(runner.zoneId);
+          }
+        }
+      });
+      setTimeout(() => {
+        setActiveRunners([]);
+      }, 0);
+    }
+  }, [outputWasmBytes, editorInstance]);
 
   // Set compiler diagnostics markers in Monaco Editor
   useEffect(() => {
@@ -1084,6 +1250,104 @@ export default function App() {
           </div>
         </section>
       </main>
+
+      {/* Render inline runners in their respective view zones via React Portals */}
+      {activeRunners.map((runner) =>
+        createPortal(
+          <InlineRunner
+            key={runner.id}
+            funcName={runner.funcName}
+            exportsList={exportsList}
+            funcInputs={funcInputs}
+            handleInputChange={handleInputChange}
+            handleManualRun={handleManualRun}
+            getResult={getResult}
+            autoRun={autoRun}
+            onClose={() => removeRunnerZone(runner)}
+          />,
+          runner.domNode
+        )
+      )}
+    </div>
+  );
+}
+
+function InlineRunner({
+  funcName,
+  exportsList,
+  funcInputs,
+  handleInputChange,
+  handleManualRun,
+  getResult,
+  autoRun,
+  onClose,
+}) {
+  const func = exportsList.find((e) => e.name === funcName);
+  if (!func) return null;
+
+  const inputs = funcInputs[funcName] || func.params.map(() => '0');
+  const res = getResult(funcName, func.params);
+
+  return (
+    <div className="inline-runner-widget">
+      <div className="inline-runner-header">
+        <div className="inline-runner-signature">
+          <span className="inline-runner-name">{func.name}</span>
+          <span>(</span>
+          {func.params.map((type, idx) => (
+            <span key={idx}>
+              param{idx}: <span className="inline-runner-type">{type}</span>
+              {idx < func.params.length - 1 ? ', ' : ''}
+            </span>
+          ))}
+          <span>)</span>
+          <span className="inline-runner-arrow"> -&gt; </span>
+          <span className="inline-runner-type">
+            {func.returns.length > 0 ? func.returns.join(', ') : 'void'}
+          </span>
+        </div>
+        <button className="inline-runner-close" onClick={onClose} title="Close inline runner">
+          &times;
+        </button>
+      </div>
+
+      {func.params.length > 0 && (
+        <div className="inline-runner-inputs">
+          {func.params.map((type, idx) => (
+            <div key={idx} className="inline-runner-input-row">
+              <label className="inline-runner-label">param{idx} ({type}):</label>
+              <input
+                type="text"
+                className="inline-runner-field"
+                value={inputs[idx] ?? '0'}
+                onChange={(e) => handleInputChange(func.name, idx, e.target.value)}
+                placeholder={`Enter ${type} value`}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="inline-runner-actions">
+        {!autoRun && (
+          <button
+            className="inline-runner-run-btn"
+            onClick={() => handleManualRun(func.name, func.params)}
+          >
+            Run
+          </button>
+        )}
+        <div className={`inline-runner-result ${res.error ? 'error' : res.isIdle ? '' : 'success'}`}>
+          <span className="result-label">Result:</span>
+          {res.isIdle ? (
+            <span className="result-value idle">Click Run</span>
+          ) : res.error ? (
+            <span className="result-value error">{res.error}</span>
+          ) : (
+            <span className="result-value success">{res.value}</span>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
