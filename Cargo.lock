@@ -1176,6 +1176,7 @@ name = "waluau-driver"
 version = "0.1.0"
 dependencies = [
  "tempfile",
+ "waluau-ast",
  "waluau-codegen-wasm",
  "waluau-diagnostics",
  "waluau-hir",
