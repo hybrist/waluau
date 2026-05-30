@@ -11,14 +11,17 @@ use wasm_encoder::{
     Function, FunctionSection, HeapType, Instruction, Module as WasmModule, RefType, StartSection,
     StorageType, TableSection, TableType, TypeSection, ValType,
 };
-use wasmparser::Validator;
+use wasmparser::{Validator, WasmFeatures};
 
 pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     let array_types = collect_array_types(module);
     let start_thunk = module.start;
-    let function_type_count = module.functions.len() as u32 + u32::from(start_thunk.is_some());
-    let array_registry =
-        ArrayTypeRegistry::with_function_type_offset(&array_types, function_type_count);
+    // We'll emit array types first in the type section so their indices begin at 0.
+    let array_registry = ArrayTypeRegistry::with_function_type_offset(&array_types, 0);
+    eprintln!(
+        "debug: array_registry.indices = {:?}",
+        array_registry.indices
+    );
 
     let signatures = module
         .functions
@@ -38,6 +41,16 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
 
     let mut wasm = WasmModule::new();
     let mut types = TypeSection::new();
+    eprintln!("debug: array_types_count={}", array_types.len());
+    // Emit array types first so function types can reference them.
+    for array_ty in &array_types {
+        let element_ty = array_ty
+            .element_type()
+            .expect("array type must have element type");
+        let storage = array_storage_type(&element_ty, &array_registry)?;
+        types.ty().array(&storage, true);
+    }
+    // Now emit function types.
     for function in &module.functions {
         let params = function
             .params
@@ -58,21 +71,16 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
             .ty()
             .function(Vec::<ValType>::new(), Vec::<ValType>::new());
     }
-    for array_ty in &array_types {
-        let element_ty = array_ty
-            .element_type()
-            .expect("array type must have element type");
-        let storage = array_storage_type(&element_ty, &array_registry)?;
-        types.ty().array(&storage, true);
-    }
 
     let mut functions = FunctionSection::new();
     let mut tables = TableSection::new();
     let mut elements = ElementSection::new();
     let mut exports = ExportSection::new();
     let mut codes = CodeSection::new();
+    let array_type_count = array_types.len() as u32;
     for (index, function) in module.functions.iter().enumerate() {
-        functions.function(index as u32);
+        // Function type indices come after the array types in the type section.
+        functions.function(array_type_count + index as u32);
         if function.name != "__waluau_top_level_init" {
             exports.export(&function.name, ExportKind::Func, index as u32);
         }
@@ -80,7 +88,7 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     }
     if let Some(start) = start_thunk {
         let thunk_index = module.functions.len() as u32;
-        functions.function(thunk_index);
+        functions.function(array_type_count + thunk_index);
         let mut thunk = Function::new(Vec::new());
         thunk.instruction(&Instruction::Call(start as u32));
         let n_returns = match &module.functions[start].return_type {
@@ -120,7 +128,8 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     wasm.section(&codes);
 
     let bytes = wasm.finish();
-    Validator::new()
+    let features = WasmFeatures::all();
+    Validator::new_with_features(features)
         .validate_all(&bytes)
         .map_err(|err| Diagnostic::new(format!("emitted invalid wasm: {err}")))?;
     Ok(bytes)
@@ -213,8 +222,12 @@ fn array_storage_type(
         Type::Numeric(NumericType::F32) => Ok(StorageType::Val(ValType::F32)),
         Type::Numeric(NumericType::F64) => Ok(StorageType::Val(ValType::F64)),
         Type::Bool => Ok(StorageType::Val(ValType::I32)),
-        Type::Array(_) => {
-            let index = registry.index(element_ty)?;
+        Type::Array(element) => {
+            // The registry maps full array types to type indices (after function types),
+            // so look up the concrete array type for this element.
+            // element is a &Box<Type>; clone the Box<Type> to form the full array Type
+            let array_ty = Type::Array(element.clone());
+            let index = registry.index(&array_ty)?;
             Ok(StorageType::Val(ValType::Ref(RefType {
                 nullable: true,
                 heap_type: HeapType::Concrete(index),
@@ -818,8 +831,30 @@ fn emit_block_instructions(
                             "unknown closure target function '{name}' during wasm emission"
                         ))
                     })?;
-                    for capture in captures {
-                        emit_value_operand(out, local_plan, *capture)?;
+                    for (i, capture) in captures.iter().enumerate() {
+                        // Determine what the callee expects for this capture slot.
+                        let expected = target
+                            .params
+                            .get(i)
+                            .ok_or_else(|| Diagnostic::new("closure target param missing"))?
+                            .clone();
+                        if let Type::Array(_) = expected {
+                            // Callee expects an array/ref - pass the capture by reference.
+                            emit_value_operand(out, local_plan, *capture)?;
+                        } else {
+                            // Callee expects the element value. If the capture is a cell
+                            // (ArrayNew), pass its stored element instead.
+                            if let Some(IrInstruction::ArrayNew { elements, .. }) =
+                                value_defs.get(capture)
+                            {
+                                let elem = elements.first().copied().ok_or_else(|| {
+                                    Diagnostic::new("empty array capture during wasm emission")
+                                })?;
+                                emit_value_operand(out, local_plan, elem)?;
+                            } else {
+                                emit_value_operand(out, local_plan, *capture)?;
+                            }
+                        }
                     }
                     for arg in args {
                         emit_value_operand(out, local_plan, *arg)?;
