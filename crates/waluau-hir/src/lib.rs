@@ -827,7 +827,8 @@ fn infer_expr(
             if then_ty == else_ty {
                 Ok(then_ty)
             } else {
-                Err(Diagnostic::new(
+                Err(Diagnostic::new_with_code(
+                    "inference/conflict",
                     "if expression branches must resolve to the same type",
                 ))
             }
@@ -1062,12 +1063,17 @@ fn infer_array_literal(
 
 fn common_element_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
     match (left, right) {
-        (Type::Numeric(left), Type::Numeric(right)) => left
-            .common(right)
-            .map(Type::Numeric)
-            .ok_or_else(|| Diagnostic::new("array literal elements must share a common type")),
+        (Type::Numeric(left), Type::Numeric(right)) => {
+            left.common(right).map(Type::Numeric).ok_or_else(|| {
+                Diagnostic::new_with_code(
+                    "inference/conflict",
+                    "array literal elements must share a common type",
+                )
+            })
+        }
         (left, right) if left == right => Ok(left),
-        _ => Err(Diagnostic::new(
+        _ => Err(Diagnostic::new_with_code(
+            "inference/conflict",
             "array literal elements must share a common type",
         )),
     }
@@ -1116,11 +1122,16 @@ fn infer_numeric_common_type(
 
 fn common_numeric_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
     match (left, right) {
-        (Type::Numeric(left), Type::Numeric(right)) => left
-            .common(right)
-            .map(Type::Numeric)
-            .ok_or_else(|| Diagnostic::new("operation requires compatible numeric operands")),
-        _ => Err(Diagnostic::new(
+        (Type::Numeric(left), Type::Numeric(right)) => {
+            left.common(right).map(Type::Numeric).ok_or_else(|| {
+                Diagnostic::new_with_code(
+                    "inference/conflict",
+                    "operation requires compatible numeric operands",
+                )
+            })
+        }
+        _ => Err(Diagnostic::new_with_code(
+            "inference/conflict",
             "operation requires compatible numeric operands",
         )),
     }
@@ -1130,7 +1141,8 @@ fn require_same_numeric(left: Type, right: Type) -> Result<(), Diagnostic> {
     if left.is_numeric() && right.is_numeric() && left == right {
         Ok(())
     } else {
-        Err(Diagnostic::new(
+        Err(Diagnostic::new_with_code(
+            "inference/conflict",
             "operation requires matching numeric operands",
         ))
     }
@@ -1184,7 +1196,10 @@ fn require_bool_pair(left: Type, right: Type) -> Result<(), Diagnostic> {
     if left == Type::Bool && right == Type::Bool {
         Ok(())
     } else {
-        Err(Diagnostic::new("operation requires bool operands"))
+        Err(Diagnostic::new_with_code(
+            "inference/conflict",
+            "operation requires bool operands",
+        ))
     }
 }
 
@@ -1218,7 +1233,8 @@ fn infer_function_expr(
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
     let return_ty = function.return_type.clone().ok_or_else(|| {
-        Diagnostic::new(
+        Diagnostic::new_with_code(
+            "inference/unsupported",
             "function return inference is only supported for named functions in this MVP",
         )
     })?;
