@@ -177,6 +177,10 @@ fn stmt_calls_name(stmt: &Stmt, callee: &str) -> bool {
         | Stmt::Assign { value, .. }
         | Stmt::Expr(value)
         | Stmt::Return(value) => expr_calls_name(value, callee),
+        Stmt::ReturnMulti(values) => values.iter().any(|value| expr_calls_name(value, callee)),
+        Stmt::LetMulti { values, .. } | Stmt::AssignMulti { values, .. } => {
+            values.iter().any(|value| expr_calls_name(value, callee))
+        }
         Stmt::IndexAssign {
             base, index, value, ..
         } => {
@@ -316,6 +320,19 @@ fn collect_return_types(
             }
             Stmt::Return(expr) => {
                 returns.push(infer_expr(expr, &scope, signatures, None)?);
+            }
+            Stmt::ReturnMulti(_) => {
+                return Err(Diagnostic::new(
+                    "multiple return values are not type-checked yet",
+                ));
+            }
+            Stmt::LetMulti { .. } => {
+                return Err(Diagnostic::new(
+                    "multi-binding local declarations are not type-checked yet",
+                ));
+            }
+            Stmt::AssignMulti { .. } => {
+                return Err(Diagnostic::new("multi-assignment is not type-checked yet"));
             }
             Stmt::Expr(expr) => {
                 let _ = infer_expr(expr, &scope, signatures, None)?;
@@ -484,6 +501,15 @@ fn check_stmt(
             }
             Ok(true)
         }
+        Stmt::ReturnMulti(_) => Err(Diagnostic::new(
+            "multiple return values are not type-checked yet",
+        )),
+        Stmt::LetMulti { .. } => Err(Diagnostic::new(
+            "multi-binding local declarations are not type-checked yet",
+        )),
+        Stmt::AssignMulti { .. } => {
+            Err(Diagnostic::new("multi-assignment is not type-checked yet"))
+        }
         Stmt::Expr(expr) => {
             if !matches!(expr, Expr::Call { .. }) {
                 return Err(Diagnostic::new("expression statements must be calls"));
@@ -523,6 +549,7 @@ fn infer_expr(
                     Type::Numeric(_) => coerce_type(actual, expected),
                     Type::Bool => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Array(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                    Type::Multi(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Function { .. } => {
                         Err(Diagnostic::new("unary '-' requires a numeric operand"))
                     }
@@ -780,6 +807,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Array(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert array to {expected_numeric}",
             ))),
+            Type::Multi(_) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert multiple values to {expected_numeric}",
+            ))),
             Type::Function { .. } => Err(Diagnostic::new(format!(
                 "cannot implicitly convert function to {expected_numeric}",
             ))),
@@ -825,6 +855,9 @@ fn resolve_number_literal(
         )),
         Some(Type::Function { .. }) => Err(Diagnostic::new(
             "numeric literal is not assignable to function",
+        )),
+        Some(Type::Multi(_)) => Err(Diagnostic::new(
+            "numeric literal is not assignable to multiple values",
         )),
         None => Ok(Type::number()),
     }

@@ -186,6 +186,9 @@ fn array_storage_type(
                 heap_type: HeapType::Concrete(index),
             })))
         }
+        Type::Multi(_) => Err(Diagnostic::new(
+            "multi-value types are not supported in array storage yet",
+        )),
         Type::Function { .. } => unreachable!(),
     }
 }
@@ -947,6 +950,11 @@ fn emit_binary(
                 ));
             }
             Type::Array(_) => unreachable!(),
+            Type::Multi(_) => {
+                return Err(Diagnostic::new(
+                    "multi-value add is not supported during wasm emission",
+                ));
+            }
             Type::Function { .. } => unreachable!(),
         },
         BinaryOp::Sub => match operand_ty {
@@ -968,6 +976,11 @@ fn emit_binary(
                 ));
             }
             Type::Array(_) => unreachable!(),
+            Type::Multi(_) => {
+                return Err(Diagnostic::new(
+                    "multi-value sub is not supported during wasm emission",
+                ));
+            }
             Type::Function { .. } => unreachable!(),
         },
         BinaryOp::Mul => match operand_ty {
@@ -989,6 +1002,11 @@ fn emit_binary(
                 ));
             }
             Type::Array(_) => unreachable!(),
+            Type::Multi(_) => {
+                return Err(Diagnostic::new(
+                    "multi-value mul is not supported during wasm emission",
+                ));
+            }
             Type::Function { .. } => unreachable!(),
         },
         BinaryOp::Div => match operand_ty {
@@ -1016,6 +1034,11 @@ fn emit_binary(
                 ));
             }
             Type::Array(_) => unreachable!(),
+            Type::Multi(_) => {
+                return Err(Diagnostic::new(
+                    "multi-value div is not supported during wasm emission",
+                ));
+            }
             Type::Function { .. } => unreachable!(),
         },
         BinaryOp::FloorDiv | BinaryOp::Mod => unreachable!("handled before stack binary emission"),
@@ -1033,6 +1056,11 @@ fn emit_binary(
                 out.instruction(&Instruction::F64Eq);
             }
             Type::Array(_) => unreachable!(),
+            Type::Multi(_) => {
+                return Err(Diagnostic::new(
+                    "multi-value equality is not supported during wasm emission",
+                ));
+            }
             Type::Function { .. } => unreachable!(),
         },
         BinaryOp::Less => match operand_ty {
@@ -1060,6 +1088,11 @@ fn emit_binary(
                 ));
             }
             Type::Array(_) => unreachable!(),
+            Type::Multi(_) => {
+                return Err(Diagnostic::new(
+                    "multi-value comparison is not supported during wasm emission",
+                ));
+            }
             Type::Function { .. } => unreachable!(),
         },
         BinaryOp::Greater => match operand_ty {
@@ -1087,6 +1120,11 @@ fn emit_binary(
                 ));
             }
             Type::Array(_) => unreachable!(),
+            Type::Multi(_) => {
+                return Err(Diagnostic::new(
+                    "multi-value comparison is not supported during wasm emission",
+                ));
+            }
             Type::Function { .. } => unreachable!(),
         },
         BinaryOp::And => {
@@ -1293,6 +1331,9 @@ fn wasm_type(ty: &Type, array_registry: &ArrayTypeRegistry) -> Result<ValType, D
                 heap_type: HeapType::Concrete(index),
             }))
         }
+        Type::Multi(_) => Err(Diagnostic::new(
+            "multi-value types are not supported in Wasm signatures yet",
+        )),
         Type::Function { .. } => Ok(ValType::I32),
     }
 }
