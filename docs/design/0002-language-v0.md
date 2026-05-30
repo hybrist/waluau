@@ -91,6 +91,9 @@ For source convenience, `number` is accepted as an alias for `f64`. It is not a 
 - Function literals use the same typed signature syntax as declarations:
   - `function(x: i32): i32 ... end`
   - optional local self-name for recursion: `function self(x: i32): i32 ... end`
+- Generic functions use explicit type parameters and explicit call-site type
+  arguments as specified in the later
+  [0009](0009-generic-functions-mvp.md) extension.
 - Branch conditions must have type `bool`.
 - Assignment allows implicit numeric widening only when the destination can represent the full source range.
 - Return expressions follow the same implicit numeric widening rule.
