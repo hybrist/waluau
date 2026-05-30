@@ -25,9 +25,15 @@ Use this skill when the user asks to:
 2. Monitor merge readiness in a loop until merged:
 - Poll PR state, mergeability, review status, and check status.
 - If checks are failing, inspect failed jobs/logs, fix root cause locally, commit, push, and re-check.
-- If PR is behind or conflicted, rebase/merge main into branch, resolve conflicts, run tests, commit, push, and re-check.
+- If PR is behind or conflicted, `git fetch origin main` and merge `origin/main` into the branch (never rebase), resolve conflicts, run tests, commit, push, and re-check.
 - If approvals or required reviewers are missing and the agent cannot self-resolve, surface exactly what is missing.
 - Keep iterating until PR state is `MERGED`.
+
+Conflict-resolution policy for this repo:
+- Resolve PR conflicts by fetching from remote and merging `origin/main` into the PR branch; do not rebase.
+- Do not rely on local `main` for conflict resolution. Always fetch and use the latest remote `main`.
+- All PRs are merged via squash merge, so PR branch commit history is not important.
+- Merge commits on PR branches are acceptable.
 
 3. Favor non-interactive, automatable commands:
 - Use JSON/parsable output flags where available.
