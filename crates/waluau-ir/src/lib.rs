@@ -4,12 +4,24 @@ use waluau_ast::{
     AssignOp, BinaryOp, Expr, Function as AstFunction, NumberLiteral, NumericType, Program, Stmt,
     Type, UnaryOp,
 };
-use waluau_diagnostics::Diagnostic;
+use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
 const COROUTINE_CREATE: &str = "coroutine_create";
 const COROUTINE_RESUME: &str = "coroutine_resume";
 const COROUTINE_STATUS: &str = "coroutine_status";
 const ASSERT: &str = "assert";
+
+fn inference_diagnostic(
+    code: &'static str,
+    category: DiagnosticCategory,
+    message: impl Into<String>,
+    action: impl Into<String>,
+) -> Diagnostic {
+    Diagnostic::new(message)
+        .with_code(code)
+        .with_category(category)
+        .with_action(action)
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct BlockId(pub usize);
@@ -860,10 +872,15 @@ fn build_function(
     signatures: &HashMap<String, (Vec<Type>, Type)>,
 ) -> Result<Vec<Function>, Diagnostic> {
     let return_type = function.return_type.clone().ok_or_else(|| {
-        Diagnostic::new(format!(
-            "function '{}' must have a concrete return type before IR lowering",
-            function.name
-        ))
+        inference_diagnostic(
+            "inference/unsupported",
+            DiagnosticCategory::Unsupported,
+            format!(
+                "function '{}' must have a concrete return type before IR lowering",
+                function.name
+            ),
+            "ensure type inference runs before IR lowering or add an explicit return type",
+        )
     })?;
     let mut out = Function {
         name: function.name.clone(),
@@ -2257,8 +2274,11 @@ impl Builder<'_> {
         expected: Option<Type>,
     ) -> Result<Type, Diagnostic> {
         if elements.is_empty() {
-            return Err(Diagnostic::new(
+            return Err(inference_diagnostic(
+                "inference/missing-context",
+                DiagnosticCategory::MissingContext,
                 "empty array literal requires explicit element type",
+                "add an explicit element type annotation, e.g. local xs: {i32} = {}",
             ));
         }
 
@@ -2449,13 +2469,22 @@ impl Builder<'_> {
 
 fn common_element_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
     match (left, right) {
-        (Type::Numeric(left), Type::Numeric(right)) => left
-            .common(right)
-            .map(Type::Numeric)
-            .ok_or_else(|| Diagnostic::new("array literal elements must share a common type")),
+        (Type::Numeric(left), Type::Numeric(right)) => {
+            left.common(right).map(Type::Numeric).ok_or_else(|| {
+                inference_diagnostic(
+                    "inference/conflict",
+                    DiagnosticCategory::Conflict,
+                    "array literal elements must share a common type",
+                    "cast elements to a common numeric type or annotate the array type",
+                )
+            })
+        }
         (left, right) if left == right => Ok(left),
-        _ => Err(Diagnostic::new(
+        _ => Err(inference_diagnostic(
+            "inference/conflict",
+            DiagnosticCategory::Conflict,
             "array literal elements must share a common type",
+            "cast elements to a common type or split values into separate arrays",
         )),
     }
 }
@@ -2478,8 +2507,11 @@ fn infer_numeric_common_type(
             if left_ty == right_ty {
                 Ok(left_ty)
             } else {
-                Err(Diagnostic::new(
+                Err(inference_diagnostic(
+                    "inference/ambiguous",
+                    DiagnosticCategory::Ambiguous,
                     "could not resolve operand type during IR lowering",
+                    "add an explicit cast to disambiguate numeric operand types",
                 ))
             }
         }
@@ -2503,12 +2535,21 @@ fn infer_numeric_common_type(
 
 fn common_numeric_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
     match (left, right) {
-        (Type::Numeric(left), Type::Numeric(right)) => left
-            .common(right)
-            .map(Type::Numeric)
-            .ok_or_else(|| Diagnostic::new("could not resolve operand type during IR lowering")),
-        _ => Err(Diagnostic::new(
+        (Type::Numeric(left), Type::Numeric(right)) => {
+            left.common(right).map(Type::Numeric).ok_or_else(|| {
+                inference_diagnostic(
+                    "inference/ambiguous",
+                    DiagnosticCategory::Ambiguous,
+                    "could not resolve operand type during IR lowering",
+                    "add an explicit cast to disambiguate numeric operand types",
+                )
+            })
+        }
+        _ => Err(inference_diagnostic(
+            "inference/conflict",
+            DiagnosticCategory::Conflict,
             "could not resolve operand type during IR lowering",
+            "change one operand type or cast explicitly",
         )),
     }
 }
@@ -2788,6 +2829,7 @@ mod tests {
         BasicBlock, BlockId, Function, Instruction, Module, Terminator, ValueId, build, verify,
     };
     use waluau_ast::{BinaryOp, NumberLiteral, NumericType, Type};
+    use waluau_diagnostics::DiagnosticCategory;
     use waluau_parser::parse;
 
     #[test]
@@ -3525,5 +3567,24 @@ mod tests {
         if let Err(err) = super::verify(&module) {
             panic!("verify failed: {err}\n{}", function.dump());
         }
+    }
+
+    #[test]
+    fn tags_ir_inference_failures_with_structured_diagnostics() {
+        let source = r#"
+            function entry(): i32
+                local xs = {}
+                return 0
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = build(&program).expect_err("ir build should fail");
+        assert_eq!(error.code(), Some("inference/missing-context"));
+        assert_eq!(error.category(), Some(DiagnosticCategory::MissingContext));
+        assert_eq!(
+            error.action(),
+            Some("add an explicit element type annotation, e.g. local xs: {i32} = {}")
+        );
+        assert_eq!(error.span(), None);
     }
 }

@@ -1170,6 +1170,9 @@ dependencies = [
 [[package]]
 name = "waluau-diagnostics"
 version = "0.1.0"
+dependencies = [
+ "waluau-span",
+]
 
 [[package]]
 name = "waluau-driver"
