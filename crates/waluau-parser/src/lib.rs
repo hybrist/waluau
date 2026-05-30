@@ -105,7 +105,13 @@ impl Parser {
             loop {
                 let param_name = self.expect_identifier()?;
                 self.expect_simple(TokenKind::Colon, "expected ':' after parameter name")?;
-                let param_type = self.parse_type()?;
+                let param_type = match self.parse_type() {
+                    Ok(ty) => ty,
+                    Err(error) => {
+                        self.record_error(error);
+                        Type::number()
+                    }
+                };
                 params.push(Param {
                     name: param_name,
                     ty: param_type,
@@ -120,7 +126,13 @@ impl Parser {
         self.expect_simple(TokenKind::RParen, "expected ')'")?;
         let return_type = if self.check_simple(&TokenKind::Colon) {
             self.advance();
-            Some(self.parse_return_type_list()?)
+            Some(match self.parse_return_type_list() {
+                Ok(ty) => ty,
+                Err(error) => {
+                    self.record_error(error);
+                    Type::number()
+                }
+            })
         } else if require_return_type {
             return Err(Diagnostic::new("expected ':' before return type"));
         } else {
@@ -1066,6 +1078,20 @@ mod tests {
         let error = parse(source).expect_err("parse should fail");
         let message = error.to_string();
         assert!(message.contains("unsupported '&&'") || message.contains("unsupported '||'"));
+    }
+
+    #[test]
+    fn reports_multiple_invalid_type_annotations_in_one_function() {
+        let source = r#"
+            function add(x: f3, y: f4): f1
+                local z: f2 = x + y
+                return z
+            end
+        "#;
+
+        let error = parse(source).expect_err("parse should fail");
+        let message = error.to_string();
+        assert_eq!(message.matches("expected type").count(), 4);
     }
 
     #[test]
