@@ -272,6 +272,7 @@ impl Rewriter<'_> {
                 }
             }
             Stmt::Expr(expr) => self.rewrite_expr(expr, bound),
+            Stmt::Break | Stmt::Continue => {}
         }
     }
 
@@ -370,6 +371,7 @@ fn collect_block(stmts: &[Stmt], out: &mut Vec<String>) {
                     collect_expr(value, out);
                 }
             }
+            Stmt::Break | Stmt::Continue => {}
         }
     }
 }

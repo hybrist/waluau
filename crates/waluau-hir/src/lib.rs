@@ -125,7 +125,7 @@ fn check_function(
 
     let mut saw_return = false;
     for stmt in &function.body {
-        if check_stmt(stmt, &mut vars, signatures, &expected_return)? {
+        if check_stmt(stmt, &mut vars, signatures, &expected_return, false)? {
             saw_return = true;
         }
     }
@@ -224,6 +224,7 @@ fn stmt_calls_name(stmt: &Stmt, callee: &str) -> bool {
             body.iter().any(|stmt| stmt_calls_name(stmt, callee))
                 || expr_calls_name(condition, callee)
         }
+        Stmt::Break | Stmt::Continue => false,
     }
 }
 
@@ -337,6 +338,7 @@ fn collect_return_types(
                     return Err(Diagnostic::new("repeat-until condition must be bool"));
                 }
             }
+            Stmt::Break | Stmt::Continue => {}
             Stmt::Return(expr) => {
                 returns.push(infer_expr(expr, &scope, signatures, None)?);
             }
@@ -418,6 +420,7 @@ fn check_stmt(
     vars: &mut HashMap<String, Binding>,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
     expected_return: &Type,
+    in_loop: bool,
 ) -> Result<bool, Diagnostic> {
     match stmt {
         Stmt::Let {
@@ -519,10 +522,12 @@ fn check_stmt(
             let mut then_returns = false;
             let mut else_returns = false;
             for stmt in then_body {
-                then_returns |= check_stmt(stmt, &mut then_scope, signatures, expected_return)?;
+                then_returns |=
+                    check_stmt(stmt, &mut then_scope, signatures, expected_return, in_loop)?;
             }
             for stmt in else_body {
-                else_returns |= check_stmt(stmt, &mut else_scope, signatures, expected_return)?;
+                else_returns |=
+                    check_stmt(stmt, &mut else_scope, signatures, expected_return, in_loop)?;
             }
             Ok(then_returns && else_returns)
         }
@@ -533,18 +538,30 @@ fn check_stmt(
             }
             let mut loop_scope = vars.clone();
             for stmt in body {
-                let _ = check_stmt(stmt, &mut loop_scope, signatures, expected_return)?;
+                let _ = check_stmt(stmt, &mut loop_scope, signatures, expected_return, true)?;
             }
             Ok(false)
         }
         Stmt::Repeat { body, condition } => {
             let mut loop_scope = vars.clone();
             for stmt in body {
-                let _ = check_stmt(stmt, &mut loop_scope, signatures, expected_return)?;
+                let _ = check_stmt(stmt, &mut loop_scope, signatures, expected_return, true)?;
             }
             let condition_ty = infer_expr(condition, &loop_scope, signatures, None)?;
             if condition_ty != Type::Bool {
                 return Err(Diagnostic::new("repeat-until condition must be bool"));
+            }
+            Ok(false)
+        }
+        Stmt::Break => {
+            if !in_loop {
+                return Err(Diagnostic::new("break is only allowed inside loops"));
+            }
+            Ok(false)
+        }
+        Stmt::Continue => {
+            if !in_loop {
+                return Err(Diagnostic::new("continue is only allowed inside loops"));
             }
             Ok(false)
         }
@@ -1173,7 +1190,7 @@ fn infer_function_expr(
     }
     let mut saw_return = false;
     for stmt in &function.body {
-        if check_stmt(stmt, &mut local_scope, signatures, &return_ty)? {
+        if check_stmt(stmt, &mut local_scope, signatures, &return_ty, false)? {
             saw_return = true;
         }
     }
@@ -1541,6 +1558,54 @@ mod tests {
         let program = parse(source).expect("parse should succeed");
         let error = super::type_check(&program).expect_err("type check should fail");
         assert_eq!(error.to_string(), "repeat-until condition must be bool");
+    }
+
+    #[test]
+    fn rejects_break_and_continue_outside_loops() {
+        let source = r#"
+            function entry(x: i32): i32
+                break
+                continue
+                return x
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        let message = error.to_string();
+        assert!(
+            message.contains("break is only allowed inside loops")
+                || message.contains("continue is only allowed inside loops")
+        );
+    }
+
+    #[test]
+    fn type_checks_break_and_continue_in_loops() {
+        let source = r#"
+            function entry(xs: {i32}, len: i32): i32
+                local i: i32 = 0
+                local acc: i32 = 0
+                while i < len do
+                    local x: i32 = xs[i]
+                    if x < 0 then
+                        i += 1
+                        continue
+                    end
+                    acc += x
+                    break
+                end
+                repeat
+                    i += 1
+                    if i > len then
+                        break
+                    end
+                until false
+                return acc
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
     }
 
     #[test]

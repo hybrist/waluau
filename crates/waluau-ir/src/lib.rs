@@ -782,15 +782,17 @@ fn resolve_phi_types(
                 {
                     continue;
                 }
-                let mut incoming_ty = None;
-                let mut complete = true;
+                let mut incoming_ty: Option<Type> = None;
                 for (_, incoming_value) in incoming {
-                    let ty = definitions
+                    if incoming_value == value {
+                        continue;
+                    }
+                    let ty = match definitions
                         .get(incoming_value)
-                        .and_then(|def| def.ty.as_ref());
-                    let Some(ty) = ty else {
-                        complete = false;
-                        break;
+                        .and_then(|def| def.ty.as_ref())
+                    {
+                        Some(ty) => ty,
+                        None => continue,
                     };
                     if let Some(ref expected) = incoming_ty {
                         if expected != ty {
@@ -803,13 +805,7 @@ fn resolve_phi_types(
                         incoming_ty = Some(ty.clone());
                     }
                 }
-                if complete {
-                    let resolved = incoming_ty.ok_or_else(|| {
-                        Diagnostic::new(format!(
-                            "phi in block {:?} has no typed incoming values",
-                            block.id
-                        ))
-                    })?;
+                if let Some(resolved) = incoming_ty {
                     definitions
                         .get_mut(value)
                         .expect("phi definition must exist")
@@ -910,6 +906,7 @@ fn build_function(
         signatures,
         lifted_functions: Vec::new(),
         lambda_counter: 0,
+        loop_stack: Vec::new(),
     };
     for stmt in &function.body {
         if builder.current_block == DEAD_BLOCK {
@@ -931,6 +928,15 @@ struct Builder<'a> {
     signatures: &'a HashMap<String, (Vec<Type>, Type)>,
     lifted_functions: Vec<Function>,
     lambda_counter: usize,
+    loop_stack: Vec<LoopContext>,
+}
+
+#[derive(Clone)]
+struct LoopContext {
+    header: BlockId,
+    continue_target: BlockId,
+    break_target: BlockId,
+    phis: HashMap<String, ValueId>,
 }
 
 impl Builder<'_> {
@@ -966,6 +972,37 @@ impl Builder<'_> {
 
     fn set_terminator(&mut self, block: BlockId, terminator: Terminator) {
         block_mut(&mut self.function, block).terminator = terminator;
+    }
+
+    fn lower_break(&mut self, _env: &HashMap<String, ValueId>) -> Result<(), Diagnostic> {
+        let Some(loop_ctx) = self.loop_stack.last() else {
+            return Err(Diagnostic::new("break is only allowed inside loops"));
+        };
+        if self.current_block == DEAD_BLOCK {
+            return Ok(());
+        }
+        let current = self.current_block;
+        self.set_terminator(current, Terminator::Jump(loop_ctx.break_target));
+        self.current_block = DEAD_BLOCK;
+        Ok(())
+    }
+
+    fn lower_continue(&mut self, env: &HashMap<String, ValueId>) -> Result<(), Diagnostic> {
+        let Some(loop_ctx) = self.loop_stack.last() else {
+            return Err(Diagnostic::new("continue is only allowed inside loops"));
+        };
+        if self.current_block == DEAD_BLOCK {
+            return Ok(());
+        }
+        let current = self.current_block;
+        for (name, phi) in &loop_ctx.phis {
+            if let Some(value) = env.get(name).copied() {
+                add_phi_incoming(&mut self.function, loop_ctx.header, *phi, (current, value));
+            }
+        }
+        self.set_terminator(current, Terminator::Jump(loop_ctx.continue_target));
+        self.current_block = DEAD_BLOCK;
+        Ok(())
     }
 
     fn lower_stmt(
@@ -1073,6 +1110,12 @@ impl Builder<'_> {
                     }
                 }
                 let _ = self.lower_expr(expr, env, types, None)?;
+            }
+            Stmt::Break => {
+                self.lower_break(env)?;
+            }
+            Stmt::Continue => {
+                self.lower_continue(env)?;
             }
             Stmt::Return(expr) => {
                 let value =
@@ -1288,6 +1331,13 @@ impl Builder<'_> {
             }
         }
 
+        self.loop_stack.push(LoopContext {
+            header,
+            continue_target: header,
+            break_target: exit,
+            phis: phis.clone(),
+        });
+
         let cond_value = self.lower_expr(condition, &loop_env, &loop_types, Some(Type::Bool))?;
         self.set_terminator(
             header,
@@ -1307,6 +1357,11 @@ impl Builder<'_> {
             }
             self.lower_stmt(stmt, &mut body_env, &mut body_types)?;
         }
+        let loop_ctx = self
+            .loop_stack
+            .pop()
+            .expect("loop stack must contain entry for while loop");
+        let phis = loop_ctx.phis;
         let body_exit = self.current_block;
         if body_exit != DEAD_BLOCK {
             self.set_terminator(body_exit, Terminator::Jump(header));
@@ -1350,6 +1405,13 @@ impl Builder<'_> {
             }
         }
 
+        self.loop_stack.push(LoopContext {
+            header: loop_body,
+            continue_target: check,
+            break_target: exit,
+            phis: phis.clone(),
+        });
+
         let mut body_env = loop_env.clone();
         let mut body_types = loop_types.clone();
         for stmt in body {
@@ -1358,6 +1420,11 @@ impl Builder<'_> {
             }
             self.lower_stmt(stmt, &mut body_env, &mut body_types)?;
         }
+        let loop_ctx = self
+            .loop_stack
+            .pop()
+            .expect("loop stack must contain entry for repeat-until loop");
+        let phis = loop_ctx.phis;
         let body_exit = self.current_block;
         if body_exit == DEAD_BLOCK {
             for (name, phi) in phis {
@@ -1836,6 +1903,7 @@ impl Builder<'_> {
             signatures: self.signatures,
             lifted_functions: Vec::new(),
             lambda_counter: 0,
+            loop_stack: Vec::new(),
         };
         if let Some(name) = &function.name {
             let capture_param_values = captures
@@ -2543,6 +2611,7 @@ fn collect_expr_captures_from_stmt(
                 collect_expr_captures(value, bound, env, signatures, captures);
             }
         }
+        Stmt::Break | Stmt::Continue => {}
     }
 }
 
@@ -2622,7 +2691,11 @@ fn collect_assigned_into(stmts: &[Stmt], out: &mut BTreeSet<String>) {
             }
             Stmt::While { body, .. } => collect_assigned_into(body, out),
             Stmt::Repeat { body, .. } => collect_assigned_into(body, out),
-            Stmt::Return(_) | Stmt::ReturnMulti(_) | Stmt::Expr(_) => {}
+            Stmt::Return(_)
+            | Stmt::ReturnMulti(_)
+            | Stmt::Expr(_)
+            | Stmt::Break
+            | Stmt::Continue => {}
         }
     }
 }
@@ -3343,5 +3416,70 @@ mod tests {
                 .iter()
                 .any(|(_, instruction)| matches!(instruction, Instruction::CallValue { .. }))
         }));
+    }
+
+    #[test]
+    fn verifies_loop_with_break_and_continue() {
+        let source = r#"
+            function entry(xs: {i32}, len: i32): i32
+                local i: i32 = 0
+                local acc: i32 = 0
+                while i < len do
+                    local x: i32 = xs[i]
+                    if x < 0 then
+                        i += 1
+                        continue
+                    end
+                    acc += x
+                    if acc > 1000 then
+                        break
+                    end
+                    i += 1
+                end
+                return acc
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+
+        let signatures: std::collections::HashMap<_, (Vec<waluau_ast::Type>, waluau_ast::Type)> =
+            program
+                .functions
+                .iter()
+                .map(|function| {
+                    let return_type = function.return_type.clone().ok_or_else(|| {
+                        waluau_diagnostics::Diagnostic::new(format!(
+                            "function '{}' must have a concrete return type before IR lowering",
+                            function.name
+                        ))
+                    })?;
+                    Ok((
+                        function.name.clone(),
+                        (
+                            function
+                                .params
+                                .iter()
+                                .map(|param| param.ty.clone())
+                                .collect(),
+                            return_type,
+                        ),
+                    ))
+                })
+                .collect::<Result<_, waluau_diagnostics::Diagnostic>>()
+                .expect("signatures should build");
+
+        let mut lowered = super::build_function(&program.functions[0], &signatures)
+            .expect("ir lowering should succeed");
+        let mut functions = Vec::new();
+        functions.push(lowered.remove(0));
+        functions.extend(lowered);
+        let module = super::Module {
+            functions,
+            start: None,
+        };
+
+        let function = &module.functions[0];
+        if let Err(err) = super::verify(&module) {
+            panic!("verify failed: {err}\n{}", function.dump());
+        }
     }
 }

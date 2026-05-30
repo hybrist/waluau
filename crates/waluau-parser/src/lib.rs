@@ -183,6 +183,14 @@ impl Parser {
             let condition = self.parse_expr()?;
             return Ok(Stmt::Repeat { body, condition });
         }
+        if self.check_simple(&TokenKind::Break) {
+            self.advance();
+            return Ok(Stmt::Break);
+        }
+        if self.check_simple(&TokenKind::Continue) {
+            self.advance();
+            return Ok(Stmt::Continue);
+        }
         if self.check_simple(&TokenKind::Return) {
             self.advance();
             let values = self.parse_expr_list()?;
@@ -866,6 +874,8 @@ fn is_statement_start(kind: &TokenKind) -> bool {
             | TokenKind::While
             | TokenKind::Repeat
             | TokenKind::Return
+            | TokenKind::Break
+            | TokenKind::Continue
             | TokenKind::Identifier(_)
     )
 }
@@ -878,7 +888,7 @@ fn same_variant(a: &TokenKind, b: &TokenKind) -> bool {
 mod tests {
     use super::parse;
     use waluau_ast::{
-        AssignOp, BinaryOp, NumberLiteral, NumericType, Rebindability, Type, UnaryOp,
+        AssignOp, BinaryOp, NumberLiteral, NumericType, Rebindability, Stmt, Type, UnaryOp,
     };
 
     #[test]
@@ -1445,6 +1455,41 @@ mod tests {
             error
                 .to_string()
                 .contains("string literals are only allowed as the path in require")
+        );
+    }
+
+    #[test]
+    fn parses_break_and_continue_in_loops() {
+        let source = r#"
+            function entry(): i32
+                while true do
+                    break
+                end
+                repeat
+                    continue
+                until true
+                return 0
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        let mut saw_break = false;
+        let mut saw_continue = false;
+        for stmt in &function.body {
+            match stmt {
+                Stmt::While { body, .. } if matches!(body.first(), Some(Stmt::Break)) => {
+                    saw_break = true;
+                }
+                Stmt::Repeat { body, .. } if matches!(body.first(), Some(Stmt::Continue)) => {
+                    saw_continue = true;
+                }
+                _ => {}
+            }
+        }
+        assert!(saw_break, "expected a while loop containing a break");
+        assert!(
+            saw_continue,
+            "expected a repeat-until loop containing a continue"
         );
     }
 }
