@@ -50,4 +50,18 @@ test.describe('preset selector', () => {
       timeout: COMPILER_READY_TIMEOUT,
     });
   });
+
+  test('Require Flow Example preset loads and compiles multiple files successfully', async ({ page }) => {
+    await page.getByRole('button', { name: 'Require Flow Example' }).click();
+    
+    await expect(page.locator('.file-item').getByText('main.walu')).toBeVisible();
+    await expect(page.locator('.file-item').getByText('double.walu')).toBeVisible();
+    await expect(page.locator('.file-item').getByText('add.walu')).toBeVisible();
+
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    await expect(page.locator('.ir-output')).toContainText('compute');
+  });
 });
