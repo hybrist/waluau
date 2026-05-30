@@ -8,6 +8,7 @@ use waluau_diagnostics::Diagnostic;
 
 const COROUTINE_CREATE: &str = "coroutine_create";
 const COROUTINE_RESUME: &str = "coroutine_resume";
+const COROUTINE_STATUS: &str = "coroutine_status";
 const ASSERT: &str = "assert";
 
 #[derive(Clone)]
@@ -900,6 +901,26 @@ fn infer_coroutine_builtin_call(
                 } if params.is_empty() => Some(coerce_type(*return_type, expected)),
                 _ => Some(Err(Diagnostic::new(
                     "coroutine_resume expects a coroutine created from a zero-argument function",
+                ))),
+            }
+        }
+        COROUTINE_STATUS => {
+            if args.len() != 1 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{COROUTINE_STATUS} expects 1 argument, got {}",
+                    args.len()
+                ))));
+            }
+            let coroutine_ty = match infer_expr(&args[0], vars, signatures, None) {
+                Ok(ty) => ty,
+                Err(error) => return Some(Err(error)),
+            };
+            match coroutine_ty {
+                Type::Function { params, .. } if params.is_empty() => {
+                    Some(coerce_type(Type::Bool, expected))
+                }
+                _ => Some(Err(Diagnostic::new(
+                    "coroutine_status expects a coroutine created from a zero-argument function",
                 ))),
             }
         }
@@ -1866,6 +1887,21 @@ mod tests {
             error.to_string(),
             "coroutine_create expects a zero-argument function"
         );
+    }
+
+    #[test]
+    fn type_checks_coroutine_status_for_zero_arg_coroutines() {
+        let source = r#"
+            function run_job(): bool
+                local job: () -> i32 = function(): i32
+                    return 7
+                end
+                local co: () -> i32 = coroutine_create(job)
+                return coroutine_status(co)
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
     }
 
     #[test]

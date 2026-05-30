@@ -8,6 +8,7 @@ use waluau_diagnostics::Diagnostic;
 
 const COROUTINE_CREATE: &str = "coroutine_create";
 const COROUTINE_RESUME: &str = "coroutine_resume";
+const COROUTINE_STATUS: &str = "coroutine_status";
 const ASSERT: &str = "assert";
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -2185,6 +2186,27 @@ impl Builder<'_> {
                     ))),
                 }
             }
+            COROUTINE_STATUS => {
+                if args.len() != 1 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{COROUTINE_STATUS} expects 1 argument, got {}",
+                        args.len()
+                    ))));
+                }
+                let coroutine_ty = match self.infer_expr_type(&args[0], types, None) {
+                    Ok(ty) => ty,
+                    Err(error) => return Some(Err(error)),
+                };
+                match coroutine_ty {
+                    Type::Function { params, .. } if params.is_empty() => {
+                        let value = self.emit(Instruction::Bool(true));
+                        Some(self.coerce_value(value, Type::Bool, expected))
+                    }
+                    _ => Some(Err(Diagnostic::new(
+                        "coroutine_status expects a coroutine created from a zero-argument function",
+                    ))),
+                }
+            }
             _ => None,
         }
     }
@@ -2235,6 +2257,24 @@ impl Builder<'_> {
                     } if params.is_empty() => Some(Ok(*return_type)),
                     _ => Some(Err(Diagnostic::new(
                         "coroutine_resume expects a coroutine created from a zero-argument function",
+                    ))),
+                }
+            }
+            COROUTINE_STATUS => {
+                if args.len() != 1 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{COROUTINE_STATUS} expects 1 argument, got {}",
+                        args.len()
+                    ))));
+                }
+                let coroutine_ty = match self.infer_expr_type(&args[0], types, None) {
+                    Ok(ty) => ty,
+                    Err(error) => return Some(Err(error)),
+                };
+                match coroutine_ty {
+                    Type::Function { params, .. } if params.is_empty() => Some(Ok(Type::Bool)),
+                    _ => Some(Err(Diagnostic::new(
+                        "coroutine_status expects a coroutine created from a zero-argument function",
                     ))),
                 }
             }
