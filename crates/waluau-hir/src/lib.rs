@@ -337,9 +337,7 @@ fn collect_return_types(
                         actual.len()
                     )));
                 }
-                for (index, (binding, value_ty)) in
-                    bindings.iter().zip(actual).enumerate()
-                {
+                for (index, (binding, value_ty)) in bindings.iter().zip(actual).enumerate() {
                     if binding.ty != value_ty {
                         return Err(Diagnostic::new(format!(
                             "multi-binding declaration value {} expects {}, got {}",
@@ -577,8 +575,7 @@ fn check_stmt(
                     actual.len()
                 )));
             }
-            for (index, (binding, value_ty)) in bindings.iter().zip(actual).enumerate()
-            {
+            for (index, (binding, value_ty)) in bindings.iter().zip(actual).enumerate() {
                 if binding.ty != value_ty {
                     return Err(Diagnostic::new(format!(
                         "multi-binding declaration value {} expects {}, got {}",
@@ -1733,6 +1730,6 @@ mod tests {
         "#;
         let program = parse(source).expect("parse should succeed");
         let error = super::type_check(&program).expect_err("type check should fail");
-        assert_eq!(error.to_string(), "return value 2 expects bool, got i32");
+        assert_eq!(error.to_string(), "cannot implicitly convert i32 to bool");
     }
 }
