@@ -196,7 +196,7 @@ pub enum Stmt {
 pub struct Binding {
     pub name: String,
     pub rebindability: Rebindability,
-    pub ty: Type,
+    pub ty: Option<Type>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

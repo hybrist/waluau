@@ -1101,19 +1101,67 @@ impl Builder<'_> {
                 self.current_block = DEAD_BLOCK;
             }
             Stmt::LetMulti { bindings, values } => {
-                let expected: Vec<Type> =
-                    bindings.iter().map(|binding| binding.ty.clone()).collect();
-                let lowered = self.lower_expr_list(values, env, types, Some(&expected))?;
-                if lowered.len() != expected.len() {
-                    return Err(Diagnostic::new(format!(
-                        "multi-binding declaration expects {} values, got {}",
-                        expected.len(),
-                        lowered.len()
-                    )));
+                let all_typed = bindings.iter().all(|binding| binding.ty.is_some());
+                let any_typed = bindings.iter().any(|binding| binding.ty.is_some());
+                if any_typed && !all_typed {
+                    return Err(Diagnostic::new(
+                        "multi-binding declaration must either annotate all bindings or none",
+                    ));
                 }
-                for ((binding, value), expected_ty) in bindings.iter().zip(lowered).zip(expected) {
-                    env.insert(binding.name.clone(), value);
-                    types.insert(binding.name.clone(), expected_ty);
+                if all_typed {
+                    let expected: Vec<Type> = bindings
+                        .iter()
+                        .map(|binding| binding.ty.clone().expect("checked above"))
+                        .collect();
+                    let lowered = self.lower_expr_list(values, env, types, Some(&expected))?;
+                    if lowered.len() != expected.len() {
+                        return Err(Diagnostic::new(format!(
+                            "multi-binding declaration expects {} values, got {}",
+                            expected.len(),
+                            lowered.len()
+                        )));
+                    }
+                    for ((binding, value), expected_ty) in
+                        bindings.iter().zip(lowered).zip(expected)
+                    {
+                        env.insert(binding.name.clone(), value);
+                        types.insert(binding.name.clone(), expected_ty);
+                    }
+                } else {
+                    // No explicit type annotations: infer types from the RHS expressions.
+                    let mut inferred_types = Vec::new();
+                    for expr in values {
+                        let ty = self.infer_expr_type(expr, types, None)?;
+                        match ty {
+                            Type::Multi(types_for_expr) => {
+                                inferred_types.extend(types_for_expr);
+                            }
+                            other => inferred_types.push(other),
+                        }
+                    }
+                    if inferred_types.len() != bindings.len() {
+                        return Err(Diagnostic::new(format!(
+                            "multi-binding declaration expects {} values, got {}",
+                            bindings.len(),
+                            inferred_types.len()
+                        )));
+                    }
+                    let lowered = self.lower_expr_list(values, env, types, None)?;
+                    if lowered.len() != inferred_types.len() {
+                        return Err(Diagnostic::new(format!(
+                            "multi-binding declaration expects {} values, got {}",
+                            inferred_types.len(),
+                            lowered.len()
+                        )));
+                    }
+                    for ((binding, value), ty) in bindings
+                        .iter()
+                        .zip(lowered)
+                        .zip(inferred_types)
+                    {
+                        env.insert(binding.name.clone(), value);
+                        types.insert(binding.name.clone(), ty);
+                    }
                 }
             }
             Stmt::AssignMulti { targets, values } => {

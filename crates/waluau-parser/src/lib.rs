@@ -225,15 +225,10 @@ impl Parser {
             None
         };
         if self.check_simple(&TokenKind::Comma) {
-            if ty.is_none() {
-                return Err(Diagnostic::new(
-                    "multi-binding local declarations require explicit type annotations",
-                ));
-            }
             let mut bindings = vec![Binding {
                 name,
                 rebindability,
-                ty: ty.expect("checked above"),
+                ty,
             }];
             self.advance();
             bindings.extend(self.parse_binding_list()?);
@@ -288,7 +283,7 @@ impl Parser {
                 bindings: vec![Binding {
                     name,
                     rebindability: Rebindability::Const,
-                    ty,
+                    ty: Some(ty),
                 }],
                 values,
             }
@@ -374,8 +369,12 @@ impl Parser {
             } else {
                 Rebindability::Rebindable
             };
-            self.expect_simple(TokenKind::Colon, "expected ':' after local name")?;
-            let ty = self.parse_type()?;
+            let ty = if self.check_simple(&TokenKind::Colon) {
+                self.advance();
+                Some(self.parse_type()?)
+            } else {
+                None
+            };
             bindings.push(Binding {
                 name,
                 rebindability,
@@ -1357,6 +1356,25 @@ mod tests {
         assert!(matches!(
             &function.body[1],
             waluau_ast::Stmt::AssignMulti { targets, values } if targets.len() == 2 && values.len() == 2
+        ));
+    }
+
+    #[test]
+    fn parses_untyped_multi_local() {
+        let source = r#"
+            function entry(x: i32, y: i32): i32
+                local a, b = x, y
+                return a
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert!(matches!(
+            &function.body[0],
+            waluau_ast::Stmt::LetMulti { bindings, values }
+                if bindings.len() == 2
+                    && values.len() == 2
+                    && bindings.iter().all(|binding| binding.ty.is_none())
         ));
     }
 
