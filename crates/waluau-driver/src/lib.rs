@@ -112,6 +112,7 @@ mod tests {
             "closure_capture_unsupported" => {
                 include_str!("../../../fixtures/closure_capture_unsupported.walu")
             }
+            "assert_pass" => include_str!("../../../fixtures/assert_pass.walu"),
             "top_level_statements" => include_str!("../../../fixtures/top_level_statements.walu"),
             "mismatch" => include_str!("../../../fixtures/mismatch.walu"),
             other => panic!("unknown fixture: {other}"),
@@ -410,6 +411,35 @@ mod tests {
         let module = Module::new(&engine, wasm).expect("module should compile");
         let mut store = Store::new(&engine, ());
         Instance::new(&mut store, &module, &[]).expect_err("instantiation should trap");
+    }
+
+    #[test]
+    fn executes_assertion_fixture() {
+        let source = fixture_source("assert_pass");
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let check = instance
+            .get_typed_func::<i32, i32>(&mut store, "check")
+            .expect("check export should exist");
+        assert_eq!(check.call(&mut store, 41).expect("call should succeed"), 42);
+    }
+
+    #[test]
+    fn traps_on_failed_assertion() {
+        let source = r#"
+            function check(): i32
+                assert(false)
+                return 1
+            end
+        "#;
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let check = instance
+            .get_typed_func::<(), i32>(&mut store, "check")
+            .expect("check export should exist");
+        check
+            .call(&mut store, ())
+            .expect_err("assert(false) should trap");
     }
 
     #[test]
