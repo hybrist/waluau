@@ -346,29 +346,57 @@ fn collect_return_types(
                 )?));
             }
             Stmt::LetMulti { bindings, values } => {
-                let expected: Vec<Type> =
-                    bindings.iter().map(|binding| binding.ty.clone()).collect();
-                let actual = infer_expr_list(values, &scope, signatures, Some(&expected))?;
-                if actual.len() != expected.len() {
-                    return Err(Diagnostic::new(format!(
-                        "multi-binding declaration expects {} values, got {}",
-                        expected.len(),
-                        actual.len()
-                    )));
+                let all_typed = bindings.iter().all(|binding| binding.ty.is_some());
+                let any_typed = bindings.iter().any(|binding| binding.ty.is_some());
+                if any_typed && !all_typed {
+                    return Err(Diagnostic::new(
+                        "multi-binding declaration must either annotate all bindings or none",
+                    ));
                 }
-                for (index, (binding, value_ty)) in bindings.iter().zip(actual).enumerate() {
-                    if binding.ty != value_ty {
+                let actual = if all_typed {
+                    let expected: Vec<Type> = bindings
+                        .iter()
+                        .map(|binding| binding.ty.clone().expect("checked above"))
+                        .collect();
+                    let actual = infer_expr_list(values, &scope, signatures, Some(&expected))?;
+                    if actual.len() != expected.len() {
                         return Err(Diagnostic::new(format!(
-                            "multi-binding declaration value {} expects {}, got {}",
-                            index + 1,
-                            binding.ty,
-                            value_ty
+                            "multi-binding declaration expects {} values, got {}",
+                            expected.len(),
+                            actual.len()
                         )));
                     }
+                    for (index, (binding, value_ty)) in
+                        bindings.iter().zip(actual.iter()).enumerate()
+                    {
+                        let expected_ty = binding.ty.as_ref().expect("checked above");
+                        if expected_ty != value_ty {
+                            return Err(Diagnostic::new(format!(
+                                "multi-binding declaration value {} expects {}, got {}",
+                                index + 1,
+                                expected_ty,
+                                value_ty
+                            )));
+                        }
+                    }
+                    actual
+                } else {
+                    let actual = infer_expr_list(values, &scope, signatures, None)?;
+                    if actual.len() != bindings.len() {
+                        return Err(Diagnostic::new(format!(
+                            "multi-binding declaration expects {} values, got {}",
+                            bindings.len(),
+                            actual.len()
+                        )));
+                    }
+                    actual
+                };
+                for (binding, value_ty) in bindings.iter().zip(actual) {
+                    let ty = binding.ty.clone().unwrap_or(value_ty);
                     scope.insert(
                         binding.name.clone(),
                         Binding {
-                            ty: binding.ty.clone(),
+                            ty,
                             rebindability: binding.rebindability,
                         },
                     );
@@ -585,28 +613,55 @@ fn check_stmt(
             Ok(true)
         }
         Stmt::LetMulti { bindings, values } => {
-            let expected: Vec<Type> = bindings.iter().map(|binding| binding.ty.clone()).collect();
-            let actual = infer_expr_list(values, vars, signatures, Some(&expected))?;
-            if actual.len() != expected.len() {
-                return Err(Diagnostic::new(format!(
-                    "multi-binding declaration expects {} values, got {}",
-                    expected.len(),
-                    actual.len()
-                )));
+            let all_typed = bindings.iter().all(|binding| binding.ty.is_some());
+            let any_typed = bindings.iter().any(|binding| binding.ty.is_some());
+            if any_typed && !all_typed {
+                return Err(Diagnostic::new(
+                    "multi-binding declaration must either annotate all bindings or none",
+                ));
             }
-            for (index, (binding, value_ty)) in bindings.iter().zip(actual).enumerate() {
-                if binding.ty != value_ty {
+            let actual = if all_typed {
+                let expected: Vec<Type> = bindings
+                    .iter()
+                    .map(|binding| binding.ty.clone().expect("checked above"))
+                    .collect();
+                let actual = infer_expr_list(values, vars, signatures, Some(&expected))?;
+                if actual.len() != expected.len() {
                     return Err(Diagnostic::new(format!(
-                        "multi-binding declaration value {} expects {}, got {}",
-                        index + 1,
-                        binding.ty,
-                        value_ty
+                        "multi-binding declaration expects {} values, got {}",
+                        expected.len(),
+                        actual.len()
                     )));
                 }
+                for (index, (binding, value_ty)) in bindings.iter().zip(actual.iter()).enumerate() {
+                    let expected_ty = binding.ty.as_ref().expect("checked above");
+                    if expected_ty != value_ty {
+                        return Err(Diagnostic::new(format!(
+                            "multi-binding declaration value {} expects {}, got {}",
+                            index + 1,
+                            expected_ty,
+                            value_ty
+                        )));
+                    }
+                }
+                actual
+            } else {
+                let actual = infer_expr_list(values, vars, signatures, None)?;
+                if actual.len() != bindings.len() {
+                    return Err(Diagnostic::new(format!(
+                        "multi-binding declaration expects {} values, got {}",
+                        bindings.len(),
+                        actual.len()
+                    )));
+                }
+                actual
+            };
+            for (binding, value_ty) in bindings.iter().zip(actual) {
+                let ty = binding.ty.clone().unwrap_or(value_ty);
                 vars.insert(
                     binding.name.clone(),
                     Binding {
-                        ty: binding.ty.clone(),
+                        ty,
                         rebindability: binding.rebindability,
                     },
                 );
