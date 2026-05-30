@@ -123,13 +123,25 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                     if matches!(chars.get(i + 2), Some('['))
                         && matches!(chars.get(i + 3), Some('['))
                     {
-                        return Err(Diagnostic::new(
-                            "unsupported block comment '--[[...]]'; comments are not supported in V0",
-                        ));
+                        let mut end = i + 4;
+                        while end + 1 < chars.len() {
+                            if chars[end] == ']' && chars[end + 1] == ']' {
+                                break;
+                            }
+                            end += 1;
+                        }
+                        if end + 1 >= chars.len() {
+                            return Err(Diagnostic::new("unterminated block comment '--[[...]]'"));
+                        }
+                        i = end + 2;
+                        continue;
                     }
-                    return Err(Diagnostic::new(
-                        "unsupported line comment '--'; comments are not supported in V0",
-                    ));
+                    let mut end = i + 2;
+                    while end < chars.len() && chars[end] != '\n' {
+                        end += 1;
+                    }
+                    i = end;
+                    continue;
                 }
                 if matches!(chars.get(i + 1), Some('>')) {
                     (TokenKind::Arrow, 2)
@@ -453,14 +465,20 @@ mod tests {
     }
 
     #[test]
-    fn rejects_lua_comment_syntax() {
+    fn skips_lua_comment_syntax() {
         assert_eq!(
-            err("-- comment").to_string(),
-            "unsupported line comment '--'; comments are not supported in V0"
-        );
-        assert_eq!(
-            err("--[[ comment ]]").to_string(),
-            "unsupported block comment '--[[...]]'; comments are not supported in V0"
+            kinds("local x = 1 -- comment\n-- whole line\nx = x + 1"),
+            vec![
+                TokenKind::Local,
+                TokenKind::Identifier("x".into()),
+                TokenKind::Equal,
+                TokenKind::Number("1".into()),
+                TokenKind::Identifier("x".into()),
+                TokenKind::Equal,
+                TokenKind::Identifier("x".into()),
+                TokenKind::Plus,
+                TokenKind::Number("1".into()),
+            ]
         );
     }
 
@@ -469,6 +487,32 @@ mod tests {
         assert_eq!(
             kinds("break continue"),
             vec![TokenKind::Break, TokenKind::Continue]
+        );
+    }
+
+    #[test]
+    fn skips_block_comments() {
+        assert_eq!(
+            kinds("local x = 1 --[[ block\ncomment ]] x = x + 1"),
+            vec![
+                TokenKind::Local,
+                TokenKind::Identifier("x".into()),
+                TokenKind::Equal,
+                TokenKind::Number("1".into()),
+                TokenKind::Identifier("x".into()),
+                TokenKind::Equal,
+                TokenKind::Identifier("x".into()),
+                TokenKind::Plus,
+                TokenKind::Number("1".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn reports_unterminated_block_comments() {
+        assert_eq!(
+            err("local x = 1 --[[ never ends").to_string(),
+            "unterminated block comment '--[[...]]'"
         );
     }
 }

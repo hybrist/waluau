@@ -50,7 +50,6 @@ end
 
 ## Excluded from V0
 
-- comments (`--` line comments and `--[[...]]` block comments)
 - `nil`
 - strings
 - arrays
@@ -74,6 +73,13 @@ V0 supports:
 - `f64`
 - `bool`
 - first-class function values (`(T1, T2) -> R`)
+
+Comments are supported and ignored by the lexer:
+
+- line comments: `-- ...` until end-of-line
+- block comments: `--[[ ... ]]`
+
+An unterminated `--[[ ...` block comment is a lexing error.
 
 For source convenience, `number` is accepted as an alias for `f64`. It is not a separate semantic type.
 
