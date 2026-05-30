@@ -1,6 +1,6 @@
 use waluau_ast::{
-    AssignOp, BinaryOp, Expr, Function, FunctionExpr, NumberLiteral, NumericType, Param, Program,
-    Rebindability, Stmt, Type, UnaryOp,
+    AssignOp, BinaryOp, Binding, Expr, Function, FunctionExpr, NumberLiteral, NumericType, Param,
+    Program, Rebindability, Stmt, Type, UnaryOp,
 };
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
@@ -84,7 +84,7 @@ impl Parser {
         self.expect_simple(TokenKind::RParen, "expected ')'")?;
         let return_type = if self.check_simple(&TokenKind::Colon) {
             self.advance();
-            Some(self.parse_type()?)
+            Some(self.parse_return_type_list()?)
         } else if require_return_type {
             return Err(Diagnostic::new("expected ':' before return type"));
         } else {
@@ -149,7 +149,12 @@ impl Parser {
         }
         if self.check_simple(&TokenKind::Return) {
             self.advance();
-            return Ok(Stmt::Return(self.parse_expr()?));
+            let values = self.parse_expr_list()?;
+            return Ok(if values.len() == 1 {
+                Stmt::Return(values.into_iter().next().expect("len checked"))
+            } else {
+                Stmt::ReturnMulti(values)
+            });
         }
 
         if let Some(assignment) = self.try_parse_assignment()? {
@@ -176,12 +181,30 @@ impl Parser {
         } else {
             Rebindability::Rebindable
         };
-        let ty = if self.check_simple(&TokenKind::Colon) {
+        let has_explicit_type = self.check_simple(&TokenKind::Colon);
+        let ty = if has_explicit_type {
             self.advance();
             Some(self.parse_type()?)
         } else {
             None
         };
+        if self.check_simple(&TokenKind::Comma) {
+            if ty.is_none() {
+                return Err(Diagnostic::new(
+                    "multi-binding local declarations require explicit type annotations",
+                ));
+            }
+            let mut bindings = vec![Binding {
+                name,
+                rebindability,
+                ty: ty.expect("checked above"),
+            }];
+            self.advance();
+            bindings.extend(self.parse_binding_list()?);
+            self.expect_simple(TokenKind::Equal, "expected '=' in local declaration")?;
+            let values = self.parse_expr_list()?;
+            return Ok(Stmt::LetMulti { bindings, values });
+        }
         self.expect_simple(TokenKind::Equal, "expected '=' in local declaration")?;
         let value = self.parse_expr()?;
         Ok(Stmt::Let {
@@ -216,12 +239,23 @@ impl Parser {
         self.expect_simple(TokenKind::Colon, "expected ':' after const name")?;
         let ty = self.parse_type()?;
         self.expect_simple(TokenKind::Equal, "expected '=' in const declaration")?;
-        let value = self.parse_expr()?;
-        Ok(Stmt::Let {
-            name,
-            rebindability: Rebindability::Const,
-            ty: Some(ty),
-            value,
+        let values = self.parse_expr_list()?;
+        Ok(if values.len() == 1 {
+            Stmt::Let {
+                name,
+                rebindability: Rebindability::Const,
+                ty: Some(ty),
+                value: values.into_iter().next().expect("len checked"),
+            }
+        } else {
+            Stmt::LetMulti {
+                bindings: vec![Binding {
+                    name,
+                    rebindability: Rebindability::Const,
+                    ty,
+                }],
+                values,
+            }
         })
     }
 
@@ -234,6 +268,11 @@ impl Parser {
                 return Err(error);
             }
         };
+        let mut targets = vec![target];
+        while self.check_simple(&TokenKind::Comma) {
+            self.advance();
+            targets.push(self.parse_postfix_expr()?);
+        }
         let op = if self.check_simple(&TokenKind::Equal) {
             AssignOp::Set
         } else if self.check_simple(&TokenKind::PlusEqual) {
@@ -243,19 +282,97 @@ impl Parser {
             return Ok(None);
         };
         self.advance();
-        let value = self.parse_expr()?;
-        Ok(Some(match target {
-            Expr::Name(name) => Stmt::Assign { op, name, value },
-            Expr::Index { base, index } => Stmt::IndexAssign {
-                op,
-                base,
-                index,
-                value,
-            },
-            _ => {
-                return Err(Diagnostic::new("invalid assignment target"));
+        let values = self.parse_expr_list()?;
+        if targets.len() > 1 && op != AssignOp::Set {
+            return Err(Diagnostic::new(
+                "compound assignment does not support multiple targets",
+            ));
+        }
+        Ok(Some(if targets.len() == 1 && values.len() == 1 {
+            match targets.into_iter().next().expect("len checked") {
+                Expr::Name(name) => Stmt::Assign {
+                    op,
+                    name,
+                    value: values.into_iter().next().expect("len checked"),
+                },
+                Expr::Index { base, index } => Stmt::IndexAssign {
+                    op,
+                    base,
+                    index,
+                    value: values.into_iter().next().expect("len checked"),
+                },
+                _ => {
+                    return Err(Diagnostic::new("invalid assignment target"));
+                }
+            }
+        } else {
+            let mut names = Vec::new();
+            for target in targets {
+                match target {
+                    Expr::Name(name) => names.push(name),
+                    _ => return Err(Diagnostic::new("multi-assignment targets must be names")),
+                }
+            }
+            Stmt::AssignMulti {
+                targets: names,
+                values,
             }
         }))
+    }
+
+    fn parse_binding_list(&mut self) -> Result<Vec<Binding>, Diagnostic> {
+        let mut bindings = Vec::new();
+        loop {
+            let name = self.expect_identifier()?;
+            let rebindability = if self.check_simple(&TokenKind::Less) {
+                self.advance();
+                let attr_name = self.expect_identifier()?;
+                self.expect_simple(TokenKind::Greater, "expected '>' after local attribute")?;
+                if attr_name != "const" {
+                    return Err(Diagnostic::new(format!(
+                        "unsupported local attribute '<{}>'",
+                        attr_name
+                    )));
+                }
+                Rebindability::Const
+            } else {
+                Rebindability::Rebindable
+            };
+            self.expect_simple(TokenKind::Colon, "expected ':' after local name")?;
+            let ty = self.parse_type()?;
+            bindings.push(Binding {
+                name,
+                rebindability,
+                ty,
+            });
+            if !self.check_simple(&TokenKind::Comma) {
+                break;
+            }
+            self.advance();
+        }
+        Ok(bindings)
+    }
+
+    fn parse_expr_list(&mut self) -> Result<Vec<Expr>, Diagnostic> {
+        let mut values = vec![self.parse_expr()?];
+        while self.check_simple(&TokenKind::Comma) {
+            self.advance();
+            values.push(self.parse_expr()?);
+        }
+        Ok(values)
+    }
+
+    fn parse_return_type_list(&mut self) -> Result<Type, Diagnostic> {
+        let first = self.parse_type()?;
+        if !self.check_simple(&TokenKind::Comma) {
+            return Ok(first);
+        }
+        let mut types = vec![first];
+        while self.check_simple(&TokenKind::Comma) {
+            self.advance();
+            types.push(self.parse_type()?);
+        }
+        Ok(Type::Multi(types))
     }
 
     fn parse_expr(&mut self) -> Result<Expr, Diagnostic> {
@@ -1127,6 +1244,46 @@ mod tests {
         assert!(matches!(
             &function.body[0],
             waluau_ast::Stmt::Return(waluau_ast::Expr::If { .. })
+        ));
+    }
+
+    #[test]
+    fn parses_multi_return_signature_and_statement() {
+        let source = r#"
+            function pair(x: i32, y: bool): i32, bool
+                return x, y
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert!(matches!(
+            function.return_type,
+            Type::Multi(ref tys) if tys == &vec![Type::Numeric(NumericType::I32), Type::Bool]
+        ));
+        assert!(matches!(
+            &function.body[0],
+            waluau_ast::Stmt::ReturnMulti(values) if values.len() == 2
+        ));
+    }
+
+    #[test]
+    fn parses_multi_local_and_multi_assignment() {
+        let source = r#"
+            function entry(x: i32, y: i32): i32
+                local a: i32, b: i32 = x, y
+                a, b = b, a
+                return a
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert!(matches!(
+            &function.body[0],
+            waluau_ast::Stmt::LetMulti { bindings, values } if bindings.len() == 2 && values.len() == 2
+        ));
+        assert!(matches!(
+            &function.body[1],
+            waluau_ast::Stmt::AssignMulti { targets, values } if targets.len() == 2 && values.len() == 2
         ));
     }
 

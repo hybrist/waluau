@@ -1002,6 +1002,19 @@ impl Builder<'_> {
                 self.set_terminator(self.current_block, Terminator::Return(value));
                 self.current_block = DEAD_BLOCK;
             }
+            Stmt::ReturnMulti(_) => {
+                return Err(Diagnostic::new(
+                    "multiple return values are not lowered to IR yet",
+                ));
+            }
+            Stmt::LetMulti { .. } => {
+                return Err(Diagnostic::new(
+                    "multi-binding local declarations are not lowered to IR yet",
+                ));
+            }
+            Stmt::AssignMulti { .. } => {
+                return Err(Diagnostic::new("multi-assignment is not lowered to IR yet"));
+            }
             Stmt::If {
                 condition,
                 then_body,
@@ -1252,6 +1265,11 @@ impl Builder<'_> {
                             "numeric literal is not assignable to function",
                         ));
                     }
+                    Type::Multi(_) => {
+                        return Err(Diagnostic::new(
+                            "numeric literal is not assignable to multiple values",
+                        ));
+                    }
                 };
                 self.emit(Instruction::Number {
                     ty,
@@ -1285,6 +1303,11 @@ impl Builder<'_> {
                                 ));
                             }
                             Type::Function { .. } => {
+                                return Err(Diagnostic::new(
+                                    "unary '-' requires a numeric operand",
+                                ));
+                            }
+                            Type::Multi(_) => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -1609,6 +1632,9 @@ impl Builder<'_> {
                 Some(Type::Function { .. }) => Err(Diagnostic::new(
                     "numeric literal is not assignable to function",
                 )),
+                Some(Type::Multi(_)) => Err(Diagnostic::new(
+                    "numeric literal is not assignable to multiple values",
+                )),
                 None => Ok(Type::number()),
             },
             Expr::Bool(_) => Ok(Type::Bool),
@@ -1636,6 +1662,9 @@ impl Builder<'_> {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                         Type::Function { .. } => {
+                            Err(Diagnostic::new("unary '-' requires a numeric operand"))
+                        }
+                        Type::Multi(_) => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                     }
@@ -1931,6 +1960,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Array(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert array to {expected_numeric}",
             ))),
+            Type::Multi(_) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert multiple values to {expected_numeric}",
+            ))),
             Type::Function { .. } => Err(Diagnostic::new(format!(
                 "cannot implicitly convert function to {expected_numeric}",
             ))),
@@ -2041,6 +2073,16 @@ fn collect_expr_captures_from_stmt(
         Stmt::Return(expr) | Stmt::Expr(expr) => {
             collect_expr_captures(expr, bound, env, signatures, captures)
         }
+        Stmt::ReturnMulti(values) => {
+            for value in values {
+                collect_expr_captures(value, bound, env, signatures, captures);
+            }
+        }
+        Stmt::LetMulti { values, .. } | Stmt::AssignMulti { values, .. } => {
+            for value in values {
+                collect_expr_captures(value, bound, env, signatures, captures);
+            }
+        }
     }
 }
 
@@ -2099,6 +2141,16 @@ fn collect_assigned_into(stmts: &[Stmt], out: &mut BTreeSet<String>) {
             Stmt::Let { name, .. } | Stmt::Assign { name, .. } => {
                 out.insert(name.clone());
             }
+            Stmt::LetMulti { bindings, .. } => {
+                for binding in bindings {
+                    out.insert(binding.name.clone());
+                }
+            }
+            Stmt::AssignMulti { targets, .. } => {
+                for target in targets {
+                    out.insert(target.clone());
+                }
+            }
             Stmt::IndexAssign { .. } => {}
             Stmt::If {
                 then_body,
@@ -2110,7 +2162,7 @@ fn collect_assigned_into(stmts: &[Stmt], out: &mut BTreeSet<String>) {
             }
             Stmt::While { body, .. } => collect_assigned_into(body, out),
             Stmt::Repeat { body, .. } => collect_assigned_into(body, out),
-            Stmt::Return(_) | Stmt::Expr(_) => {}
+            Stmt::Return(_) | Stmt::ReturnMulti(_) | Stmt::Expr(_) => {}
         }
     }
 }

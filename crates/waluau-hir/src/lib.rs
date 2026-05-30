@@ -484,6 +484,15 @@ fn check_stmt(
             }
             Ok(true)
         }
+        Stmt::ReturnMulti(_) => Err(Diagnostic::new(
+            "multiple return values are not type-checked yet",
+        )),
+        Stmt::LetMulti { .. } => Err(Diagnostic::new(
+            "multi-binding local declarations are not type-checked yet",
+        )),
+        Stmt::AssignMulti { .. } => {
+            Err(Diagnostic::new("multi-assignment is not type-checked yet"))
+        }
         Stmt::Expr(expr) => {
             if !matches!(expr, Expr::Call { .. }) {
                 return Err(Diagnostic::new("expression statements must be calls"));
@@ -523,6 +532,7 @@ fn infer_expr(
                     Type::Numeric(_) => coerce_type(actual, expected),
                     Type::Bool => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Array(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                    Type::Multi(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Function { .. } => {
                         Err(Diagnostic::new("unary '-' requires a numeric operand"))
                     }
@@ -780,6 +790,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Array(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert array to {expected_numeric}",
             ))),
+            Type::Multi(_) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert multiple values to {expected_numeric}",
+            ))),
             Type::Function { .. } => Err(Diagnostic::new(format!(
                 "cannot implicitly convert function to {expected_numeric}",
             ))),
@@ -825,6 +838,9 @@ fn resolve_number_literal(
         )),
         Some(Type::Function { .. }) => Err(Diagnostic::new(
             "numeric literal is not assignable to function",
+        )),
+        Some(Type::Multi(_)) => Err(Diagnostic::new(
+            "numeric literal is not assignable to multiple values",
         )),
         None => Ok(Type::number()),
     }

@@ -42,6 +42,7 @@ pub enum Type {
     Numeric(NumericType),
     Bool,
     Array(Box<Type>),
+    Multi(Vec<Type>),
     Function {
         params: Vec<Type>,
         return_type: Box<Type>,
@@ -113,6 +114,15 @@ impl std::fmt::Display for Type {
             Self::Numeric(ty) => ty.fmt(f),
             Self::Bool => f.write_str("bool"),
             Self::Array(element) => write!(f, "{{{element}}}"),
+            Self::Multi(types) => {
+                for (index, ty) in types.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{ty}")?;
+                }
+                Ok(())
+            }
             Self::Function {
                 params,
                 return_type,
@@ -163,7 +173,23 @@ pub enum Stmt {
         condition: Expr,
     },
     Return(Expr),
+    ReturnMulti(Vec<Expr>),
+    LetMulti {
+        bindings: Vec<Binding>,
+        values: Vec<Expr>,
+    },
+    AssignMulti {
+        targets: Vec<String>,
+        values: Vec<Expr>,
+    },
     Expr(Expr),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Binding {
+    pub name: String,
+    pub rebindability: Rebindability,
+    pub ty: Type,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
