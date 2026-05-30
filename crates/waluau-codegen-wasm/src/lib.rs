@@ -15,7 +15,8 @@ use wasmparser::Validator;
 
 pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     let array_types = collect_array_types(module);
-    let function_type_count = module.functions.len() as u32;
+    let start_thunk = module.start;
+    let function_type_count = module.functions.len() as u32 + u32::from(start_thunk.is_some());
     let array_registry =
         ArrayTypeRegistry::with_function_type_offset(&array_types, function_type_count);
 
@@ -46,6 +47,11 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         let results = [wasm_type(&function.return_type, &array_registry)?];
         types.ty().function(params, results);
     }
+    if start_thunk.is_some() {
+        types
+            .ty()
+            .function(Vec::<ValType>::new(), Vec::<ValType>::new());
+    }
     for array_ty in &array_types {
         let element_ty = array_ty
             .element_type()
@@ -66,6 +72,15 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         }
         codes.function(&emit_function(function, &signatures, &array_registry)?);
     }
+    if let Some(start) = start_thunk {
+        let thunk_index = module.functions.len() as u32;
+        functions.function(thunk_index);
+        let mut thunk = Function::new(Vec::new());
+        thunk.instruction(&Instruction::Call(start as u32));
+        thunk.instruction(&Instruction::Drop);
+        thunk.instruction(&Instruction::End);
+        codes.function(&thunk);
+    }
     tables.table(TableType {
         element_type: RefType::FUNCREF,
         table64: false,
@@ -84,9 +99,9 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     wasm.section(&functions);
     wasm.section(&tables);
     wasm.section(&exports);
-    if let Some(start) = module.start {
+    if start_thunk.is_some() {
         wasm.section(&StartSection {
-            function_index: start as u32,
+            function_index: module.functions.len() as u32,
         });
     }
     wasm.section(&elements);
