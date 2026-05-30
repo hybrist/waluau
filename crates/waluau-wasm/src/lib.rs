@@ -1,7 +1,7 @@
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct CompileResult {
     ir: String,
     wat: String,
@@ -94,5 +94,48 @@ mod tests {
         let source = include_str!("../../../fixtures/array_ops.walu");
         let result = compile_source(source).expect("compile should succeed");
         assert!(result.requires_wasm_gc);
+    }
+
+    #[test]
+    fn compile_success_ir_contains_function_name() {
+        let source = "function greet(x: i32): i32\n    return x\nend";
+        let result = compile_source(source).expect("compile should succeed");
+        assert!(result.ir.contains("greet"));
+    }
+
+    #[test]
+    fn compile_success_wat_is_wasm_module() {
+        let source = "function greet(x: i32): i32\n    return x\nend";
+        let result = compile_source(source).expect("compile should succeed");
+        assert!(result.wat.contains("(module"));
+    }
+
+    #[test]
+    fn compile_success_wasm_has_magic_bytes() {
+        let source = "function greet(x: i32): i32\n    return x\nend";
+        let result = compile_source(source).expect("compile should succeed");
+        assert!(
+            result.wasm.starts_with(b"\0asm"),
+            "wasm output should begin with the WebAssembly magic bytes"
+        );
+    }
+
+    #[test]
+    fn compile_parse_error_propagated() {
+        let err = compile_source("function").expect_err("truncated input should fail to parse");
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn compile_type_check_error_propagated() {
+        let source = include_str!("../../../fixtures/mismatch.walu");
+        let err = compile_source(source).expect_err("type mismatch should fail type check");
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn compile_closure_capture_error_propagated() {
+        let source = include_str!("../../../fixtures/closure_capture_unsupported.walu");
+        compile_source(source).expect_err("closure variable capture should not compile");
     }
 }
