@@ -6,6 +6,9 @@ use waluau_ast::{
 };
 use waluau_diagnostics::Diagnostic;
 
+const COROUTINE_CREATE: &str = "coroutine_create";
+const COROUTINE_RESUME: &str = "coroutine_resume";
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct BlockId(pub usize);
 
@@ -1410,6 +1413,13 @@ impl Builder<'_> {
             }
             Expr::Call { callee, args } => {
                 if let Expr::Name(name) = callee.as_ref() {
+                    if let Some(result) =
+                        self.lower_coroutine_builtin_call(name, args, env, types, expected.clone())
+                    {
+                        return result;
+                    }
+                }
+                if let Expr::Name(name) = callee.as_ref() {
                     if let Some((param_types, _)) = self.signatures.get(name) {
                         let args = args
                             .iter()
@@ -1711,6 +1721,12 @@ impl Builder<'_> {
                 }
             }
             Expr::Call { callee, .. } => {
+                if let Expr::Name(name) = callee.as_ref() {
+                    if let Some(result) = self.infer_coroutine_builtin_call_type(name, expr, types)
+                    {
+                        return result;
+                    }
+                }
                 let callee_ty = self.infer_expr_type(callee, types, None)?;
                 match callee_ty {
                     Type::Function { return_type, .. } => Ok(*return_type),
@@ -1872,6 +1888,139 @@ impl Builder<'_> {
         }
 
         coerce_type(Type::Array(Box::new(element_ty)), expected)
+    }
+
+    fn lower_coroutine_builtin_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        env: &HashMap<String, ValueId>,
+        types: &HashMap<String, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<ValueId, Diagnostic>> {
+        match name {
+            COROUTINE_CREATE => {
+                if args.len() != 1 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{COROUTINE_CREATE} expects 1 argument, got {}",
+                        args.len()
+                    ))));
+                }
+                let coroutine_ty = match self.infer_expr_type(&args[0], types, None) {
+                    Ok(ty) => ty,
+                    Err(error) => return Some(Err(error)),
+                };
+                match &coroutine_ty {
+                    Type::Function { params, .. } if params.is_empty() => {}
+                    _ => {
+                        return Some(Err(Diagnostic::new(
+                            "coroutine_create expects a zero-argument function",
+                        )));
+                    }
+                }
+                let coroutine =
+                    match self.lower_expr(&args[0], env, types, Some(coroutine_ty.clone())) {
+                        Ok(value) => value,
+                        Err(error) => return Some(Err(error)),
+                    };
+                Some(self.coerce_value(coroutine, coroutine_ty, expected))
+            }
+            COROUTINE_RESUME => {
+                if args.len() != 1 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{COROUTINE_RESUME} expects 1 argument, got {}",
+                        args.len()
+                    ))));
+                }
+                let coroutine_ty = match self.infer_expr_type(&args[0], types, None) {
+                    Ok(ty) => ty,
+                    Err(error) => return Some(Err(error)),
+                };
+                match coroutine_ty {
+                    Type::Function {
+                        params,
+                        return_type,
+                    } if params.is_empty() => {
+                        let coroutine = match self.lower_expr(
+                            &args[0],
+                            env,
+                            types,
+                            Some(Type::Function {
+                                params: Vec::new(),
+                                return_type: return_type.clone(),
+                            }),
+                        ) {
+                            Ok(value) => value,
+                            Err(error) => return Some(Err(error)),
+                        };
+                        let value = self.emit(Instruction::CallValue {
+                            callee: coroutine,
+                            args: Vec::new(),
+                            params: Vec::new(),
+                            return_type: (*return_type).clone(),
+                        });
+                        Some(self.coerce_value(value, *return_type, expected))
+                    }
+                    _ => Some(Err(Diagnostic::new(
+                        "coroutine_resume expects a coroutine created from a zero-argument function",
+                    ))),
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn infer_coroutine_builtin_call_type(
+        &self,
+        name: &str,
+        call: &Expr,
+        types: &HashMap<String, Type>,
+    ) -> Option<Result<Type, Diagnostic>> {
+        let Expr::Call { args, .. } = call else {
+            return None;
+        };
+        match name {
+            COROUTINE_CREATE => {
+                if args.len() != 1 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{COROUTINE_CREATE} expects 1 argument, got {}",
+                        args.len()
+                    ))));
+                }
+                let coroutine_ty = match self.infer_expr_type(&args[0], types, None) {
+                    Ok(ty) => ty,
+                    Err(error) => return Some(Err(error)),
+                };
+                match &coroutine_ty {
+                    Type::Function { params, .. } if params.is_empty() => Some(Ok(coroutine_ty)),
+                    _ => Some(Err(Diagnostic::new(
+                        "coroutine_create expects a zero-argument function",
+                    ))),
+                }
+            }
+            COROUTINE_RESUME => {
+                if args.len() != 1 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{COROUTINE_RESUME} expects 1 argument, got {}",
+                        args.len()
+                    ))));
+                }
+                let coroutine_ty = match self.infer_expr_type(&args[0], types, None) {
+                    Ok(ty) => ty,
+                    Err(error) => return Some(Err(error)),
+                };
+                match coroutine_ty {
+                    Type::Function {
+                        params,
+                        return_type,
+                    } if params.is_empty() => Some(Ok(*return_type)),
+                    _ => Some(Err(Diagnostic::new(
+                        "coroutine_resume expects a coroutine created from a zero-argument function",
+                    ))),
+                }
+            }
+            _ => None,
+        }
     }
 }
 

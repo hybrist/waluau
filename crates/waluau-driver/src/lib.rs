@@ -350,6 +350,28 @@ mod tests {
     }
 
     #[test]
+    fn executes_coroutine_create_and_resume() {
+        let source = r#"
+            function run_job(): i32
+                local job: () -> i32 = function(): i32
+                    return 7
+                end
+                local co: () -> i32 = coroutine_create(job)
+                return coroutine_resume(co)
+            end
+        "#;
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let run_job = instance
+            .get_typed_func::<(), i32>(&mut store, "run_job")
+            .expect("run_job export should exist");
+        assert_eq!(
+            run_job.call(&mut store, ()).expect("call should succeed"),
+            7
+        );
+    }
+
+    #[test]
     fn rejects_closure_capture_fixture_with_explicit_diagnostic() {
         let source = fixture_source("closure_capture_unsupported");
         let error = super::compile_source(source).expect_err("compile should fail");

@@ -6,6 +6,9 @@ use waluau_ast::{
 };
 use waluau_diagnostics::Diagnostic;
 
+const COROUTINE_CREATE: &str = "coroutine_create";
+const COROUTINE_RESUME: &str = "coroutine_resume";
+
 #[derive(Clone)]
 struct Binding {
     ty: Type,
@@ -595,6 +598,13 @@ fn infer_expr(
             }
         }
         Expr::Call { callee, args } => {
+            if let Expr::Name(name) = callee.as_ref() {
+                if let Some(result) =
+                    infer_coroutine_builtin_call(name, args, vars, signatures, expected.clone())
+                {
+                    return result;
+                }
+            }
             let callee_ty = infer_expr(callee, vars, signatures, None)?;
             let (params, ret) = match callee_ty {
                 Type::Function {
@@ -684,6 +694,59 @@ fn infer_expr(
                 Ok(Type::Bool)
             }
         },
+    }
+}
+
+fn infer_coroutine_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    match name {
+        COROUTINE_CREATE => {
+            if args.len() != 1 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{COROUTINE_CREATE} expects 1 argument, got {}",
+                    args.len()
+                ))));
+            }
+            let coroutine_ty = match infer_expr(&args[0], vars, signatures, None) {
+                Ok(ty) => ty,
+                Err(error) => return Some(Err(error)),
+            };
+            match &coroutine_ty {
+                Type::Function { params, .. } if params.is_empty() => {
+                    Some(coerce_type(coroutine_ty, expected))
+                }
+                _ => Some(Err(Diagnostic::new(
+                    "coroutine_create expects a zero-argument function",
+                ))),
+            }
+        }
+        COROUTINE_RESUME => {
+            if args.len() != 1 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{COROUTINE_RESUME} expects 1 argument, got {}",
+                    args.len()
+                ))));
+            }
+            let coroutine_ty = match infer_expr(&args[0], vars, signatures, None) {
+                Ok(ty) => ty,
+                Err(error) => return Some(Err(error)),
+            };
+            match coroutine_ty {
+                Type::Function {
+                    params,
+                    return_type,
+                } if params.is_empty() => Some(coerce_type(*return_type, expected)),
+                _ => Some(Err(Diagnostic::new(
+                    "coroutine_resume expects a coroutine created from a zero-argument function",
+                ))),
+            }
+        }
+        _ => None,
     }
 }
 
@@ -1513,6 +1576,40 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "cannot infer return type for recursive or cyclic function 'fact'"
+        );
+    }
+
+    #[test]
+    fn type_checks_coroutine_create_and_resume_for_zero_arg_functions() {
+        let source = r#"
+            function run_job(): i32
+                local job: () -> i32 = function(): i32
+                    return 7
+                end
+                local co: () -> i32 = coroutine_create(job)
+                return coroutine_resume(co)
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn rejects_coroutine_create_for_non_zero_arg_functions() {
+        let source = r#"
+            function run_job(): i32
+                local job: (i32) -> i32 = function(x: i32): i32
+                    return x
+                end
+                local co: (i32) -> i32 = coroutine_create(job)
+                return 0
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "coroutine_create expects a zero-argument function"
         );
     }
 }
