@@ -108,7 +108,13 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
         .functions
         .iter()
         .map(|function| {
-            (
+            let return_type = function.return_type.clone().ok_or_else(|| {
+                Diagnostic::new(format!(
+                    "function '{}' must have a concrete return type before IR lowering",
+                    function.name
+                ))
+            })?;
+            Ok((
                 function.name.clone(),
                 (
                     function
@@ -116,11 +122,11 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
                         .iter()
                         .map(|param| param.ty.clone())
                         .collect(),
-                    function.return_type.clone(),
+                    return_type,
                 ),
-            )
+            ))
         })
-        .collect();
+        .collect::<Result<HashMap<_, _>, _>>()?;
     let mut functions = Vec::new();
     for function in &program.functions {
         let mut lowered = build_function(function, &signatures)?;
@@ -787,6 +793,12 @@ fn build_function(
     function: &AstFunction,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
 ) -> Result<Vec<Function>, Diagnostic> {
+    let return_type = function.return_type.clone().ok_or_else(|| {
+        Diagnostic::new(format!(
+            "function '{}' must have a concrete return type before IR lowering",
+            function.name
+        ))
+    })?;
     let mut out = Function {
         name: function.name.clone(),
         params: function
@@ -794,7 +806,7 @@ fn build_function(
             .iter()
             .map(|param| (param.name.clone(), param.ty.clone()))
             .collect(),
-        return_type: function.return_type.clone(),
+        return_type,
         entry: BlockId(0),
         blocks: BTreeMap::new(),
         next_value: 0,

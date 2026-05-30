@@ -26,8 +26,8 @@ pub fn compile(source: &str) -> Result<JsValue, JsValue> {
 
 fn compile_source(source: &str) -> Result<CompileResult, String> {
     let program = waluau_parser::parse(source).map_err(|e| e.to_string())?;
-    waluau_hir::type_check(&program).map_err(|e| e.to_string())?;
-    let module = waluau_ir::build(&program).map_err(|e| e.to_string())?;
+    let typed_program = waluau_hir::type_check_and_infer(&program).map_err(|e| e.to_string())?;
+    let module = waluau_ir::build(&typed_program).map_err(|e| e.to_string())?;
     let requires_wasm_gc = module_requires_wasm_gc(&module);
 
     let mut ir_dump = String::new();

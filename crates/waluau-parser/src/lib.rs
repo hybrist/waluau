@@ -47,16 +47,13 @@ impl Parser {
     fn parse_function(&mut self) -> Result<Function, Diagnostic> {
         self.expect_simple(TokenKind::Function, "expected 'function'")?;
         let name = self.expect_identifier()?;
-        let function_expr = self.parse_function_expr_tail(Some(name), true)?;
-        let return_type = function_expr
-            .return_type
-            .ok_or_else(|| Diagnostic::new("top-level functions require explicit return type"))?;
+        let function_expr = self.parse_function_expr_tail(Some(name), false)?;
         Ok(Function {
             name: function_expr
                 .name
                 .expect("top-level functions always have a name"),
             params: function_expr.params,
-            return_type,
+            return_type: function_expr.return_type,
             body: function_expr.body,
         })
     }
@@ -727,7 +724,7 @@ mod tests {
         assert_eq!(function.params[1].ty, Type::Numeric(NumericType::F32));
         assert_eq!(function.params[2].ty, Type::Numeric(NumericType::U64));
         assert_eq!(function.params[3].ty, Type::Numeric(NumericType::I64));
-        assert_eq!(function.return_type, Type::Numeric(NumericType::F64));
+        assert_eq!(function.return_type, Some(Type::Numeric(NumericType::F64)));
     }
 
     #[test]
@@ -894,7 +891,7 @@ mod tests {
 
         let program = parse(source).expect("parse should succeed");
         let function = &program.functions[0];
-        assert_eq!(function.return_type, Type::Numeric(NumericType::I32));
+        assert_eq!(function.return_type, Some(Type::Numeric(NumericType::I32)));
         assert!(matches!(
             &function.body[0],
             waluau_ast::Stmt::Let {
@@ -1076,6 +1073,18 @@ mod tests {
             &function.body[0],
             waluau_ast::Stmt::Let { name, ty: None, .. } if name == "x"
         ));
+    }
+
+    #[test]
+    fn parses_top_level_function_without_return_annotation() {
+        let source = r#"
+            function entry(x: i32)
+                return x + 1
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert_eq!(function.return_type, None);
     }
 
     #[test]

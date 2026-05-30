@@ -6,8 +6,8 @@ use waluau_diagnostics::Diagnostic;
 
 pub fn compile_source(source: &str) -> Result<Vec<u8>, Diagnostic> {
     let program = waluau_parser::parse(source)?;
-    waluau_hir::type_check(&program)?;
-    let ir = waluau_ir::build(&program)?;
+    let typed_program = waluau_hir::type_check_and_infer(&program)?;
+    let ir = waluau_ir::build(&typed_program)?;
     waluau_codegen_wasm::emit(&ir)
 }
 

@@ -13,11 +13,16 @@ struct Binding {
 }
 
 pub fn type_check(program: &Program) -> Result<(), Diagnostic> {
-    let signatures: HashMap<_, _> = program
-        .functions
-        .iter()
-        .map(|function| {
-            (
+    let _ = type_check_and_infer(program)?;
+    Ok(())
+}
+
+pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
+    let mut typed = program.clone();
+    let mut signatures: HashMap<String, (Vec<Type>, Type)> = HashMap::new();
+    for function in &typed.functions {
+        if let Some(ret) = &function.return_type {
+            signatures.insert(
                 function.name.clone(),
                 (
                     function
@@ -25,22 +30,69 @@ pub fn type_check(program: &Program) -> Result<(), Diagnostic> {
                         .iter()
                         .map(|param| param.ty.clone())
                         .collect(),
-                    function.return_type.clone(),
+                    ret.clone(),
                 ),
-            )
-        })
+            );
+        }
+    }
+
+    let mut unresolved: Vec<usize> = typed
+        .functions
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, function)| function.return_type.is_none().then_some(idx))
         .collect();
 
-    for function in &program.functions {
+    while !unresolved.is_empty() {
+        let mut progressed = false;
+        let mut next_unresolved = Vec::new();
+        let unresolved_names: Vec<String> = unresolved
+            .iter()
+            .map(|idx| typed.functions[*idx].name.clone())
+            .collect();
+        for idx in unresolved {
+            let function = &typed.functions[idx];
+            let function_name = function.name.clone();
+            let function_params: Vec<Type> = function
+                .params
+                .iter()
+                .map(|param| param.ty.clone())
+                .collect();
+            match infer_top_level_function_return_type(function, &signatures, &unresolved_names)? {
+                Some(ret) => {
+                    typed.functions[idx].return_type = Some(ret.clone());
+                    signatures.insert(function_name, (function_params, ret));
+                    progressed = true;
+                }
+                None => next_unresolved.push(idx),
+            }
+        }
+        if !progressed {
+            let name = &typed.functions[next_unresolved[0]].name;
+            return Err(Diagnostic::new(format!(
+                "cannot infer return type for recursive or cyclic function '{name}'"
+            )));
+        }
+        unresolved = next_unresolved;
+    }
+
+    for function in &typed.functions {
         check_function(function, &signatures)?;
     }
-    Ok(())
+
+    Ok(typed)
 }
 
 fn check_function(
     function: &Function,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
 ) -> Result<(), Diagnostic> {
+    let expected_return = function.return_type.clone().ok_or_else(|| {
+        Diagnostic::new(format!(
+            "cannot infer return type for recursive or cyclic function '{}'",
+            function.name
+        ))
+    })?;
     let mut vars: HashMap<String, Binding> = HashMap::new();
     for param in &function.params {
         vars.insert(
@@ -54,7 +106,7 @@ fn check_function(
 
     let mut saw_return = false;
     for stmt in &function.body {
-        if check_stmt(stmt, &mut vars, signatures, &function.return_type)? {
+        if check_stmt(stmt, &mut vars, signatures, &expected_return)? {
             saw_return = true;
         }
     }
@@ -65,6 +117,226 @@ fn check_function(
         )));
     }
     Ok(())
+}
+
+fn infer_top_level_function_return_type(
+    function: &Function,
+    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    unresolved_names: &[String],
+) -> Result<Option<Type>, Diagnostic> {
+    let mut vars: HashMap<String, Binding> = HashMap::new();
+    for param in &function.params {
+        vars.insert(
+            param.name.clone(),
+            Binding {
+                ty: param.ty.clone(),
+                rebindability: Rebindability::Rebindable,
+            },
+        );
+    }
+
+    let mut returns = Vec::new();
+    if unresolved_names.iter().any(|name| name == &function.name)
+        && function_calls(function, &function.name)
+    {
+        return Ok(None);
+    }
+    if let Err(error) = collect_return_types(&function.body, &vars, signatures, &mut returns) {
+        let message = error.to_string();
+        if unresolved_names
+            .iter()
+            .any(|name| message.contains(&format!("unknown name '{name}'")))
+        {
+            return Ok(None);
+        }
+        return Err(error);
+    }
+    if returns.is_empty() {
+        return Err(Diagnostic::new(format!(
+            "function '{}' is missing a return",
+            function.name
+        )));
+    }
+    let mut merged = returns[0].clone();
+    for ty in returns.into_iter().skip(1) {
+        merged = common_return_type(merged, ty)?;
+    }
+    Ok(Some(merged))
+}
+
+fn function_calls(function: &Function, callee: &str) -> bool {
+    function
+        .body
+        .iter()
+        .any(|stmt| stmt_calls_name(stmt, callee))
+}
+
+fn stmt_calls_name(stmt: &Stmt, callee: &str) -> bool {
+    match stmt {
+        Stmt::Let { value, .. }
+        | Stmt::Assign { value, .. }
+        | Stmt::Expr(value)
+        | Stmt::Return(value) => expr_calls_name(value, callee),
+        Stmt::IndexAssign {
+            base, index, value, ..
+        } => {
+            expr_calls_name(base, callee)
+                || expr_calls_name(index, callee)
+                || expr_calls_name(value, callee)
+        }
+        Stmt::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
+            expr_calls_name(condition, callee)
+                || then_body.iter().any(|stmt| stmt_calls_name(stmt, callee))
+                || else_body.iter().any(|stmt| stmt_calls_name(stmt, callee))
+        }
+        Stmt::While { condition, body } => {
+            expr_calls_name(condition, callee)
+                || body.iter().any(|stmt| stmt_calls_name(stmt, callee))
+        }
+        Stmt::Repeat { body, condition } => {
+            body.iter().any(|stmt| stmt_calls_name(stmt, callee))
+                || expr_calls_name(condition, callee)
+        }
+    }
+}
+
+fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
+    match expr {
+        Expr::Name(_) | Expr::Number(_) | Expr::Bool(_) => false,
+        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => expr_calls_name(expr, callee),
+        Expr::Binary { left, right, .. } => {
+            expr_calls_name(left, callee) || expr_calls_name(right, callee)
+        }
+        Expr::If {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            expr_calls_name(condition, callee)
+                || expr_calls_name(then_expr, callee)
+                || expr_calls_name(else_expr, callee)
+        }
+        Expr::Call {
+            callee: called,
+            args,
+        } => {
+            matches!(called.as_ref(), Expr::Name(name) if name == callee)
+                || expr_calls_name(called, callee)
+                || args.iter().any(|arg| expr_calls_name(arg, callee))
+        }
+        Expr::Function(function) => function
+            .body
+            .iter()
+            .any(|stmt| stmt_calls_name(stmt, callee)),
+        Expr::ArrayLiteral { elements } => elements.iter().any(|el| expr_calls_name(el, callee)),
+        Expr::Index { base, index } => {
+            expr_calls_name(base, callee) || expr_calls_name(index, callee)
+        }
+    }
+}
+
+fn collect_return_types(
+    body: &[Stmt],
+    vars: &HashMap<String, Binding>,
+    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    returns: &mut Vec<Type>,
+) -> Result<(), Diagnostic> {
+    let mut scope = vars.clone();
+    for stmt in body {
+        match stmt {
+            Stmt::Let {
+                name,
+                rebindability,
+                ty,
+                value,
+            } => {
+                let inferred_ty = if let Some(expected_ty) = ty {
+                    infer_expr(value, &scope, signatures, Some(expected_ty.clone()))?
+                } else {
+                    infer_expr(value, &scope, signatures, None)?
+                };
+                scope.insert(
+                    name.clone(),
+                    Binding {
+                        ty: inferred_ty,
+                        rebindability: *rebindability,
+                    },
+                );
+            }
+            Stmt::Assign { name, value, .. } => {
+                let existing = scope
+                    .get(name)
+                    .ok_or_else(|| Diagnostic::new(format!("unknown local '{name}'")))?;
+                let _ = infer_expr(value, &scope, signatures, Some(existing.ty.clone()))?;
+            }
+            Stmt::IndexAssign {
+                base, index, value, ..
+            } => {
+                let base_ty = infer_expr(base, &scope, signatures, None)?;
+                let element_ty = base_ty.element_type().ok_or_else(|| {
+                    Diagnostic::new("array element assignment requires an array operand")
+                })?;
+                let _ = infer_expr(
+                    index,
+                    &scope,
+                    signatures,
+                    Some(Type::Numeric(NumericType::I32)),
+                )?;
+                let _ = infer_expr(value, &scope, signatures, Some(element_ty))?;
+            }
+            Stmt::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                let condition_ty = infer_expr(condition, &scope, signatures, None)?;
+                if condition_ty != Type::Bool {
+                    return Err(Diagnostic::new("if condition must be bool"));
+                }
+                collect_return_types(then_body, &scope, signatures, returns)?;
+                collect_return_types(else_body, &scope, signatures, returns)?;
+            }
+            Stmt::While { condition, body } => {
+                let condition_ty = infer_expr(condition, &scope, signatures, None)?;
+                if condition_ty != Type::Bool {
+                    return Err(Diagnostic::new("while condition must be bool"));
+                }
+                collect_return_types(body, &scope, signatures, returns)?;
+            }
+            Stmt::Repeat { body, condition } => {
+                collect_return_types(body, &scope, signatures, returns)?;
+                let condition_ty = infer_expr(condition, &scope, signatures, None)?;
+                if condition_ty != Type::Bool {
+                    return Err(Diagnostic::new("repeat-until condition must be bool"));
+                }
+            }
+            Stmt::Return(expr) => {
+                returns.push(infer_expr(expr, &scope, signatures, None)?);
+            }
+            Stmt::Expr(expr) => {
+                let _ = infer_expr(expr, &scope, signatures, None)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn common_return_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
+    if left == right {
+        return Ok(left);
+    }
+    match (left, right) {
+        (Type::Numeric(a), Type::Numeric(b)) => a.common(b).map(Type::Numeric).ok_or_else(|| {
+            Diagnostic::new("function return branches must resolve to the same type")
+        }),
+        _ => Err(Diagnostic::new(
+            "function return branches must resolve to the same type",
+        )),
+    }
 }
 
 fn check_stmt(
@@ -654,6 +926,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use waluau_ast::{NumericType, Type};
     use waluau_parser::parse;
 
     #[test]
@@ -1138,6 +1411,76 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "function return inference is only supported for named functions in this MVP"
+        );
+    }
+
+    #[test]
+    fn infers_top_level_function_return_type_from_single_return() {
+        let source = r#"
+            function inc(x: i32)
+                return x + 1
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let typed = super::type_check_and_infer(&program).expect("inference should succeed");
+        assert_eq!(
+            typed.functions[0].return_type,
+            Some(Type::Numeric(NumericType::I32))
+        );
+    }
+
+    #[test]
+    fn infers_top_level_function_return_type_from_branches() {
+        let source = r#"
+            function choose(flag: bool)
+                if flag then
+                    return 1 :: i32
+                else
+                    return 2 :: i64
+                end
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let typed = super::type_check_and_infer(&program).expect("inference should succeed");
+        assert_eq!(
+            typed.functions[0].return_type,
+            Some(Type::Numeric(NumericType::I64))
+        );
+    }
+
+    #[test]
+    fn rejects_incompatible_inferred_return_branches() {
+        let source = r#"
+            function bad(flag: bool)
+                if flag then
+                    return 1
+                end
+                return true
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check_and_infer(&program).expect_err("inference should fail");
+        assert_eq!(
+            error.to_string(),
+            "function return branches must resolve to the same type"
+        );
+    }
+
+    #[test]
+    fn rejects_recursive_return_inference() {
+        let source = r#"
+            function fact(n: i32)
+                if n == 0 then
+                    return 1
+                end
+                return n * fact(n - 1)
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check_and_infer(&program).expect_err("inference should fail");
+        assert_eq!(
+            error.to_string(),
+            "cannot infer return type for recursive or cyclic function 'fact'"
         );
     }
 }
