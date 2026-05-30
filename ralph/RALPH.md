@@ -7,7 +7,7 @@ Your job is to complete ONE task and then stop.
 ## On Start
 
 1. Read `./ralph/progress.txt` to see what the previous engineer accomplished
-2. If `.beads/embeddeddolt/` is missing, run `bd bootstrap --yes`
+2. If `.beads/embeddeddolt/` is missing, run `git config beads.role maintainer && bd bootstrap --yes`
 3. Run `bd ready` to see available tasks
 4. Run `bd list --status in_progress` to check for any work left mid-flight
 5. Run `./check` to ensure the codebase is green before starting

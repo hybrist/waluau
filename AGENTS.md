@@ -19,6 +19,7 @@ curl -fsSL "https://github.com/gastownhall/beads/releases/download/v${BD_VERSION
 Then bootstrap the Dolt database from the git remote on first use:
 
 ```bash
+git config beads.role maintainer   # or contributor
 bd bootstrap --yes
 ```
 
@@ -73,7 +74,8 @@ cp -rf source dest          # NOT: cp -r source dest
 **Bootstrap a fresh clone or worktree once:**
 
 ```bash
-bd bootstrap --yes   # clones Dolt database from git remote
+git config beads.role maintainer   # or contributor
+bd bootstrap --yes                 # clones Dolt database from git remote
 ```
 
 **Check for ready work:**

@@ -20,6 +20,9 @@ if ! command -v bd >/dev/null 2>&1; then
     | tar -xz -C /usr/local/bin/ bd
 fi
 
+# Set role so bd allows write operations
+git config beads.role maintainer
+
 # Bootstrap beads Dolt database from git remote if not already present
 if ! bd ready >/dev/null 2>&1; then
   bd bootstrap --yes

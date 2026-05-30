@@ -5,7 +5,8 @@ Each checkout keeps its own embedded Dolt database and local export files under 
 Bootstrap a fresh clone or worktree with:
 
 ```sh
-bd bootstrap --yes   # clones Dolt database from git remote
+git config beads.role maintainer   # or contributor
+bd bootstrap --yes                 # clones Dolt database from git remote
 bd ready --json
 ```
 

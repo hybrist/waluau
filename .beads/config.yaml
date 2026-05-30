@@ -59,5 +59,3 @@ export:
 
 # sync.remote is intentionally omitted: bd auto-detects from git origin.
 # Set explicitly only if your origin differs from the beads Dolt remote.
-
-sync.remote: "git+http://local_proxy@127.0.0.1:44125/git/hybrist/waluau"
