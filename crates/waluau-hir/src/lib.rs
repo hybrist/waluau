@@ -321,18 +321,58 @@ fn collect_return_types(
             Stmt::Return(expr) => {
                 returns.push(infer_expr(expr, &scope, signatures, None)?);
             }
-            Stmt::ReturnMulti(_) => {
-                return Err(Diagnostic::new(
-                    "multiple return values are not type-checked yet",
-                ));
+            Stmt::ReturnMulti(values) => {
+                returns.push(Type::Multi(infer_expr_list(
+                    values, &scope, signatures, None,
+                )?));
             }
-            Stmt::LetMulti { .. } => {
-                return Err(Diagnostic::new(
-                    "multi-binding local declarations are not type-checked yet",
-                ));
+            Stmt::LetMulti { bindings, values } => {
+                let expected: Vec<Type> =
+                    bindings.iter().map(|binding| binding.ty.clone()).collect();
+                let actual = infer_expr_list(values, &scope, signatures, Some(&expected))?;
+                if actual.len() != expected.len() {
+                    return Err(Diagnostic::new(format!(
+                        "multi-binding declaration expects {} values, got {}",
+                        expected.len(),
+                        actual.len()
+                    )));
+                }
+                for (index, (binding, value_ty)) in
+                    bindings.iter().zip(actual).enumerate()
+                {
+                    if binding.ty != value_ty {
+                        return Err(Diagnostic::new(format!(
+                            "multi-binding declaration value {} expects {}, got {}",
+                            index + 1,
+                            binding.ty,
+                            value_ty
+                        )));
+                    }
+                    scope.insert(
+                        binding.name.clone(),
+                        Binding {
+                            ty: binding.ty.clone(),
+                            rebindability: binding.rebindability,
+                        },
+                    );
+                }
             }
-            Stmt::AssignMulti { .. } => {
-                return Err(Diagnostic::new("multi-assignment is not type-checked yet"));
+            Stmt::AssignMulti { targets, values } => {
+                let mut expected = Vec::new();
+                for target in targets {
+                    let binding = scope
+                        .get(target)
+                        .ok_or_else(|| Diagnostic::new(format!("unknown local '{target}'")))?;
+                    expected.push(binding.ty.clone());
+                }
+                let actual = infer_expr_list(values, &scope, signatures, Some(&expected))?;
+                if actual.len() != expected.len() {
+                    return Err(Diagnostic::new(format!(
+                        "multi-assignment expects {} values, got {}",
+                        expected.len(),
+                        actual.len()
+                    )));
+                }
             }
             Stmt::Expr(expr) => {
                 let _ = infer_expr(expr, &scope, signatures, None)?;
@@ -501,14 +541,96 @@ fn check_stmt(
             }
             Ok(true)
         }
-        Stmt::ReturnMulti(_) => Err(Diagnostic::new(
-            "multiple return values are not type-checked yet",
-        )),
-        Stmt::LetMulti { .. } => Err(Diagnostic::new(
-            "multi-binding local declarations are not type-checked yet",
-        )),
-        Stmt::AssignMulti { .. } => {
-            Err(Diagnostic::new("multi-assignment is not type-checked yet"))
+        Stmt::ReturnMulti(values) => {
+            let expected = match expected_return {
+                Type::Multi(types) => types.clone(),
+                _ => vec![expected_return.clone()],
+            };
+            let actual = infer_expr_list(values, vars, signatures, Some(&expected))?;
+            if actual.len() != expected.len() {
+                return Err(Diagnostic::new(format!(
+                    "return expects {} values, got {}",
+                    expected.len(),
+                    actual.len()
+                )));
+            }
+            for (index, (expected_ty, actual_ty)) in expected.iter().zip(actual.iter()).enumerate()
+            {
+                if expected_ty != actual_ty {
+                    return Err(Diagnostic::new(format!(
+                        "return value {} expects {}, got {}",
+                        index + 1,
+                        expected_ty,
+                        actual_ty
+                    )));
+                }
+            }
+            Ok(true)
+        }
+        Stmt::LetMulti { bindings, values } => {
+            let expected: Vec<Type> = bindings.iter().map(|binding| binding.ty.clone()).collect();
+            let actual = infer_expr_list(values, vars, signatures, Some(&expected))?;
+            if actual.len() != expected.len() {
+                return Err(Diagnostic::new(format!(
+                    "multi-binding declaration expects {} values, got {}",
+                    expected.len(),
+                    actual.len()
+                )));
+            }
+            for (index, (binding, value_ty)) in bindings.iter().zip(actual).enumerate()
+            {
+                if binding.ty != value_ty {
+                    return Err(Diagnostic::new(format!(
+                        "multi-binding declaration value {} expects {}, got {}",
+                        index + 1,
+                        binding.ty,
+                        value_ty
+                    )));
+                }
+                vars.insert(
+                    binding.name.clone(),
+                    Binding {
+                        ty: binding.ty.clone(),
+                        rebindability: binding.rebindability,
+                    },
+                );
+            }
+            Ok(false)
+        }
+        Stmt::AssignMulti { targets, values } => {
+            let mut expected = Vec::new();
+            for target in targets {
+                let binding = vars
+                    .get(target)
+                    .ok_or_else(|| Diagnostic::new(format!("unknown local '{target}'")))?;
+                if binding.rebindability == Rebindability::Const {
+                    return Err(Diagnostic::new(format!(
+                        "cannot rebind const local '{}'",
+                        target
+                    )));
+                }
+                expected.push(binding.ty.clone());
+            }
+            let actual = infer_expr_list(values, vars, signatures, Some(&expected))?;
+            if actual.len() != expected.len() {
+                return Err(Diagnostic::new(format!(
+                    "multi-assignment expects {} values, got {}",
+                    expected.len(),
+                    actual.len()
+                )));
+            }
+            for (index, (expected_ty, actual_ty)) in expected.iter().zip(actual.iter()).enumerate()
+            {
+                if expected_ty != actual_ty {
+                    return Err(Diagnostic::new(format!(
+                        "multi-assignment value {} expects {}, got {}",
+                        index + 1,
+                        expected_ty,
+                        actual_ty
+                    )));
+                }
+            }
+            Ok(false)
         }
         Stmt::Expr(expr) => {
             if !matches!(expr, Expr::Call { .. }) {
@@ -607,16 +729,16 @@ fn infer_expr(
                     )));
                 }
             };
-            if params.len() != args.len() {
+            let actual_args = infer_expr_list(args, vars, signatures, Some(&params))?;
+            if params.len() != actual_args.len() {
                 return Err(Diagnostic::new(format!(
                     "function expects {} arguments, got {}",
                     params.len(),
-                    args.len()
+                    actual_args.len()
                 )));
             }
-            for (expected, arg) in params.iter().zip(args) {
-                let actual = infer_expr(arg, vars, signatures, Some(expected.clone()))?;
-                if expected != &actual {
+            for (expected, actual) in params.iter().zip(actual_args.iter()) {
+                if expected != actual {
                     return Err(Diagnostic::new(format!(
                         "call expected {}, got {}",
                         expected, actual
@@ -685,6 +807,35 @@ fn infer_expr(
             }
         },
     }
+}
+
+fn infer_expr_list(
+    exprs: &[Expr],
+    vars: &HashMap<String, Binding>,
+    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    expected: Option<&[Type]>,
+) -> Result<Vec<Type>, Diagnostic> {
+    let mut out = Vec::new();
+    for expr in exprs {
+        let next_expected = expected.and_then(|types| types.get(out.len()).cloned());
+        let ty = if matches!(expr, Expr::Call { .. }) {
+            infer_expr(expr, vars, signatures, None)?
+        } else {
+            infer_expr(expr, vars, signatures, next_expected)?
+        };
+        match ty {
+            Type::Multi(types) => out.extend(types),
+            other => out.push(other),
+        }
+    }
+    if let Some(expected_types) = expected {
+        for (index, ty) in out.clone().into_iter().enumerate() {
+            if let Some(expected_ty) = expected_types.get(index) {
+                out[index] = coerce_type(ty, Some(expected_ty.clone()))?;
+            }
+        }
+    }
+    Ok(out)
 }
 
 fn infer_array_literal(
@@ -1514,5 +1665,74 @@ mod tests {
             error.to_string(),
             "cannot infer return type for recursive or cyclic function 'fact'"
         );
+    }
+
+    #[test]
+    fn type_checks_multi_return_and_multi_assignment() {
+        let source = r#"
+            function pair(x: i32, y: bool): i32, bool
+                return x, y
+            end
+
+            function entry(x: i32, y: bool): i32
+                local a: i32, b: bool = pair(x, y)
+                a, b = pair(a + 1, b)
+                return a
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn type_checks_multi_value_call_argument_expansion() {
+        let source = r#"
+            function pair(x: i32, y: i32): i32, i32
+                return x, y
+            end
+
+            function sum2(a: i32, b: i32): i32
+                return a + b
+            end
+
+            function entry(x: i32, y: i32): i32
+                return sum2(pair(x, y))
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn rejects_multi_assignment_arity_mismatch() {
+        let source = r#"
+            function pair(x: i32): i32, i32
+                return x, x + 1
+            end
+
+            function entry(x: i32): i32
+                local a: i32, b: i32 = pair(x)
+                a, b = x
+                return a
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "multi-assignment expects 2 values, got 1"
+        );
+    }
+
+    #[test]
+    fn rejects_multi_return_type_mismatch() {
+        let source = r#"
+            function pair(x: i32): i32, bool
+                return x, x + 1
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.to_string(), "return value 2 expects bool, got i32");
     }
 }
