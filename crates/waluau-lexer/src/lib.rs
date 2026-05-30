@@ -119,6 +119,18 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 }
             }
             '-' => {
+                if matches!(chars.get(i + 1), Some('-')) {
+                    if matches!(chars.get(i + 2), Some('['))
+                        && matches!(chars.get(i + 3), Some('['))
+                    {
+                        return Err(Diagnostic::new(
+                            "unsupported block comment '--[[...]]'; comments are not supported in V0",
+                        ));
+                    }
+                    return Err(Diagnostic::new(
+                        "unsupported line comment '--'; comments are not supported in V0",
+                    ));
+                }
                 if matches!(chars.get(i + 1), Some('>')) {
                     (TokenKind::Arrow, 2)
                 } else {
@@ -438,6 +450,18 @@ mod tests {
     fn rejects_unexpected_characters() {
         assert_eq!(err("@").to_string(), "unexpected character '@'");
         assert_eq!(err("local $").to_string(), "unexpected character '$'");
+    }
+
+    #[test]
+    fn rejects_lua_comment_syntax() {
+        assert_eq!(
+            err("-- comment").to_string(),
+            "unsupported line comment '--'; comments are not supported in V0"
+        );
+        assert_eq!(
+            err("--[[ comment ]]").to_string(),
+            "unsupported block comment '--[[...]]'; comments are not supported in V0"
+        );
     }
 
     #[test]

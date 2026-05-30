@@ -50,6 +50,7 @@ end
 
 ## Excluded from V0
 
+- comments (`--` line comments and `--[[...]]` block comments)
 - `nil`
 - strings
 - arrays
