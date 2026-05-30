@@ -4,12 +4,33 @@ use waluau_ast::{
     AssignOp, BinaryOp, Expr, Function, FunctionExpr, NumberLiteral, NumericType, Program,
     Rebindability, Stmt, Type, UnaryOp,
 };
-use waluau_diagnostics::Diagnostic;
+use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
 const COROUTINE_CREATE: &str = "coroutine_create";
 const COROUTINE_RESUME: &str = "coroutine_resume";
 const COROUTINE_STATUS: &str = "coroutine_status";
+const MATH_ABS: &str = "math_abs";
+const MATH_MIN: &str = "math_min";
+const MATH_MAX: &str = "math_max";
+const MATH_SQRT: &str = "math_sqrt";
+const MATH_FLOOR: &str = "math_floor";
+const MATH_CEIL: &str = "math_ceil";
+const MATH_TRUNC: &str = "math_trunc";
+const MATH_NEAREST: &str = "math_nearest";
+const MATH_COPYSIGN: &str = "math_copysign";
 const ASSERT: &str = "assert";
+
+fn inference_diagnostic(
+    code: &'static str,
+    category: DiagnosticCategory,
+    message: impl Into<String>,
+    action: impl Into<String>,
+) -> Diagnostic {
+    Diagnostic::new(message)
+        .with_code(code)
+        .with_category(category)
+        .with_action(action)
+}
 
 #[derive(Clone)]
 struct Binding {
@@ -88,9 +109,12 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
         }
         if !progressed {
             let name = &typed.functions[next_unresolved[0]].name;
-            return Err(Diagnostic::new(format!(
-                "cannot infer return type for recursive or cyclic function '{name}'"
-            )));
+            return Err(inference_diagnostic(
+                "inference/unsupported",
+                DiagnosticCategory::Unsupported,
+                format!("cannot infer return type for recursive or cyclic function '{name}'"),
+                "add an explicit return type annotation to break the cycle",
+            ));
         }
         unresolved = next_unresolved;
     }
@@ -230,7 +254,9 @@ fn stmt_calls_name(stmt: &Stmt, callee: &str) -> bool {
 
 fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
     match expr {
-        Expr::Name(_) | Expr::Number(_) | Expr::Bool(_) | Expr::Require(_) => false,
+        Expr::Name(_) | Expr::Number(_) | Expr::Bool(_) | Expr::String(_) | Expr::Require(_) => {
+            false
+        }
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => expr_calls_name(expr, callee),
         Expr::Binary { left, right, .. } => {
             expr_calls_name(left, callee) || expr_calls_name(right, callee)
@@ -434,11 +460,22 @@ fn common_return_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
         return Ok(left);
     }
     match (left, right) {
-        (Type::Numeric(a), Type::Numeric(b)) => a.common(b).map(Type::Numeric).ok_or_else(|| {
-            Diagnostic::new("function return branches must resolve to the same type")
-        }),
-        _ => Err(Diagnostic::new(
+        (Type::Numeric(a), Type::Numeric(b)) => a
+            .common(b)
+            .map(Type::Numeric)
+            .ok_or_else(|| {
+                inference_diagnostic(
+                    "inference/conflict",
+                    DiagnosticCategory::Conflict,
+                    "function return branches must resolve to the same type",
+                    "ensure all return branches produce the same type or add an explicit return annotation",
+                )
+            }),
+        _ => Err(inference_diagnostic(
+            "inference/conflict",
+            DiagnosticCategory::Conflict,
             "function return branches must resolve to the same type",
+            "ensure all return branches produce the same type or add an explicit return annotation",
         )),
     }
 }
@@ -758,6 +795,7 @@ fn infer_expr(
     match expr {
         Expr::Number(value) => resolve_number_literal(value, expected),
         Expr::Bool(_) => Ok(Type::Bool),
+        Expr::String(_) => coerce_type(Type::String, expected),
         Expr::Require(path) => Err(Diagnostic::new(format!(
             "require(\"{path}\") can only be resolved when compiling from a file; \
              relative imports are unavailable when compiling a single source string"
@@ -781,6 +819,7 @@ fn infer_expr(
                 match actual {
                     Type::Numeric(_) => coerce_type(actual, expected),
                     Type::Bool => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                    Type::String => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Array(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Multi(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Function { .. } => {
@@ -828,6 +867,13 @@ fn infer_expr(
             }
         }
         Expr::Call { callee, args } => {
+            if let Expr::Name(name) = callee.as_ref() {
+                if let Some(result) =
+                    infer_math_builtin_call(name, args, vars, signatures, expected.clone())
+                {
+                    return result;
+                }
+            }
             if let Expr::Name(name) = callee.as_ref() {
                 if let Some(result) =
                     infer_coroutine_builtin_call(name, args, vars, signatures, expected.clone())
@@ -1000,6 +1046,65 @@ fn infer_coroutine_builtin_call(
     }
 }
 
+fn infer_math_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    let arity = match name {
+        MATH_ABS | MATH_SQRT | MATH_FLOOR | MATH_CEIL | MATH_TRUNC | MATH_NEAREST => 1,
+        MATH_MIN | MATH_MAX | MATH_COPYSIGN => 2,
+        _ => return None,
+    };
+    if args.len() != arity {
+        return Some(Err(Diagnostic::new(format!(
+            "{name} expects {arity} argument{}, got {}",
+            if arity == 1 { "" } else { "s" },
+            args.len()
+        ))));
+    }
+    let first = match infer_expr(&args[0], vars, signatures, None) {
+        Ok(ty) => ty,
+        Err(error) => return Some(Err(error)),
+    };
+    let Type::Numeric(first_numeric) = first else {
+        return Some(Err(Diagnostic::new(format!(
+            "{name} expects numeric arguments"
+        ))));
+    };
+    if arity == 2 {
+        let second = match infer_expr(
+            &args[1],
+            vars,
+            signatures,
+            Some(Type::Numeric(first_numeric)),
+        ) {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        if second != Type::Numeric(first_numeric) {
+            return Some(Err(Diagnostic::new(format!(
+                "{name} requires both arguments to have the same numeric type"
+            ))));
+        }
+    }
+    let supports = match name {
+        MATH_MIN | MATH_MAX => matches!(first_numeric, NumericType::F32 | NumericType::F64),
+        MATH_ABS | MATH_SQRT | MATH_FLOOR | MATH_CEIL | MATH_TRUNC | MATH_NEAREST
+        | MATH_COPYSIGN => matches!(first_numeric, NumericType::F32 | NumericType::F64),
+        _ => false,
+    };
+    if !supports {
+        return Some(Err(Diagnostic::new(format!(
+            "{name} does not support {}",
+            Type::Numeric(first_numeric)
+        ))));
+    }
+    Some(coerce_type(Type::Numeric(first_numeric), expected))
+}
+
 fn infer_expr_list(
     exprs: &[Expr],
     vars: &HashMap<String, Binding>,
@@ -1036,8 +1141,11 @@ fn infer_array_literal(
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
     if elements.is_empty() {
-        return Err(Diagnostic::new(
+        return Err(inference_diagnostic(
+            "inference/missing-context",
+            DiagnosticCategory::MissingContext,
             "empty array literal requires explicit element type",
+            "add an explicit element type annotation, e.g. local xs: {i32} = {}",
         ));
     }
 
@@ -1056,13 +1164,22 @@ fn infer_array_literal(
 
 fn common_element_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
     match (left, right) {
-        (Type::Numeric(left), Type::Numeric(right)) => left
-            .common(right)
-            .map(Type::Numeric)
-            .ok_or_else(|| Diagnostic::new("array literal elements must share a common type")),
+        (Type::Numeric(left), Type::Numeric(right)) => {
+            left.common(right).map(Type::Numeric).ok_or_else(|| {
+                inference_diagnostic(
+                    "inference/conflict",
+                    DiagnosticCategory::Conflict,
+                    "array literal elements must share a common type",
+                    "cast elements to a common numeric type or annotate the array type",
+                )
+            })
+        }
         (left, right) if left == right => Ok(left),
-        _ => Err(Diagnostic::new(
+        _ => Err(inference_diagnostic(
+            "inference/conflict",
+            DiagnosticCategory::Conflict,
             "array literal elements must share a common type",
+            "cast elements to a common type or split values into separate arrays",
         )),
     }
 }
@@ -1110,12 +1227,21 @@ fn infer_numeric_common_type(
 
 fn common_numeric_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
     match (left, right) {
-        (Type::Numeric(left), Type::Numeric(right)) => left
-            .common(right)
-            .map(Type::Numeric)
-            .ok_or_else(|| Diagnostic::new("operation requires compatible numeric operands")),
-        _ => Err(Diagnostic::new(
+        (Type::Numeric(left), Type::Numeric(right)) => {
+            left.common(right).map(Type::Numeric).ok_or_else(|| {
+                inference_diagnostic(
+                    "inference/ambiguous",
+                    DiagnosticCategory::Ambiguous,
+                    "operation requires compatible numeric operands",
+                    "add an explicit cast to pick the intended numeric type",
+                )
+            })
+        }
+        _ => Err(inference_diagnostic(
+            "inference/conflict",
+            DiagnosticCategory::Conflict,
             "operation requires compatible numeric operands",
+            "change one operand type or cast explicitly",
         )),
     }
 }
@@ -1124,8 +1250,11 @@ fn require_same_numeric(left: Type, right: Type) -> Result<(), Diagnostic> {
     if left.is_numeric() && right.is_numeric() && left == right {
         Ok(())
     } else {
-        Err(Diagnostic::new(
+        Err(inference_diagnostic(
+            "inference/conflict",
+            DiagnosticCategory::Conflict,
             "operation requires matching numeric operands",
+            "cast one operand so both sides use the same numeric type",
         ))
     }
 }
@@ -1145,6 +1274,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             ))),
             Type::Bool => Err(Diagnostic::new(format!(
                 "cannot implicitly convert bool to {expected_numeric}",
+            ))),
+            Type::String => Err(Diagnostic::new(format!(
+                "cannot implicitly convert string to {expected_numeric}",
             ))),
             Type::Array(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert array to {expected_numeric}",
@@ -1192,6 +1324,9 @@ fn resolve_number_literal(
             Ok(Type::Numeric(numeric))
         }
         Some(Type::Bool) => Err(Diagnostic::new("numeric literal is not assignable to bool")),
+        Some(Type::String) => Err(Diagnostic::new(
+            "numeric literal is not assignable to string",
+        )),
         Some(Type::Array(_)) => Err(Diagnostic::new(
             "numeric literal is not assignable to array",
         )),
@@ -1212,8 +1347,11 @@ fn infer_function_expr(
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
     let return_ty = function.return_type.clone().ok_or_else(|| {
-        Diagnostic::new(
+        inference_diagnostic(
+            "inference/unsupported",
+            DiagnosticCategory::Unsupported,
             "function return inference is only supported for named functions in this MVP",
+            "add an explicit return type annotation to the function expression",
         )
     })?;
     let function_ty = Type::Function {
@@ -1302,6 +1440,7 @@ where
 #[cfg(test)]
 mod tests {
     use waluau_ast::{NumericType, Type};
+    use waluau_diagnostics::DiagnosticCategory;
     use waluau_parser::parse;
 
     #[test]
@@ -1853,6 +1992,24 @@ mod tests {
             "function return inference is only supported for named functions in this MVP"
         );
     }
+
+    #[test]
+    fn rejects_typed_local_function_value_with_mismatched_annotation() {
+        let source = r#"
+            function entry(): i32
+                local job: (i32) -> i32 = function(x: i32): bool
+                    return x > 0
+                end
+                return job(1)
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "cannot implicitly convert (i32) -> bool to (i32) -> i32"
+        );
+    }
     #[test]
     fn infers_top_level_function_return_type_from_single_return() {
         let source = r#"
@@ -2158,5 +2315,55 @@ mod tests {
         let program = parse(source).expect("parse should succeed");
         let error = super::type_check(&program).expect_err("type check should fail");
         assert_eq!(error.to_string(), "cannot implicitly convert i32 to bool");
+    }
+
+    #[test]
+    fn type_checks_string_literals_and_annotations() {
+        let source = r#"
+            function entry(): string
+                local x: string = "hello"
+                return x
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn tags_empty_array_inference_failure_with_missing_context_diagnostic() {
+        let source = r#"
+            function entry(): i32
+                local xs = {}
+                return 0
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.code(), Some("inference/missing-context"));
+        assert_eq!(error.category(), Some(DiagnosticCategory::MissingContext));
+        assert_eq!(
+            error.action(),
+            Some("add an explicit element type annotation, e.g. local xs: {i32} = {}")
+        );
+    }
+
+    #[test]
+    fn tags_recursive_return_inference_failure_as_unsupported() {
+        let source = r#"
+            function fact(n: i32)
+                if n == 0 then
+                    return 1
+                end
+                return n * fact(n - 1)
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.code(), Some("inference/unsupported"));
+        assert_eq!(error.category(), Some(DiagnosticCategory::Unsupported));
+        assert_eq!(
+            error.action(),
+            Some("add an explicit return type annotation to break the cycle")
+        );
     }
 }

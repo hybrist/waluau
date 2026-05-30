@@ -640,9 +640,8 @@ impl Parser {
             TokenKind::True => Ok(Expr::Bool(true)),
             TokenKind::False => Ok(Expr::Bool(false)),
             TokenKind::Identifier(name) => {
-                // `require("...")` is parsed as a dedicated node rather than a
-                // generic call so that string literals never escape into the
-                // wider expression grammar (the language has no string type).
+                // `require("...")` is parsed as a dedicated node so the
+                // linker can resolve module ids before IR lowering.
                 if name == "require"
                     && self
                         .peek()
@@ -652,9 +651,7 @@ impl Parser {
                 }
                 Ok(Expr::Name(name))
             }
-            TokenKind::Str(_) => Err(self.diagnostic_at_current(
-                "string literals are only allowed as the path in require(\"...\")",
-            )),
+            TokenKind::Str(value) => Ok(Expr::String(value)),
             TokenKind::Function => {
                 let name = if let Some(Token {
                     kind: TokenKind::Identifier(_),
@@ -769,8 +766,9 @@ impl Parser {
             Some(TokenKind::I64Type) => Ok(Type::Numeric(NumericType::I64)),
             Some(TokenKind::F32Type) => Ok(Type::Numeric(NumericType::F32)),
             Some(TokenKind::BoolType) => Ok(Type::Bool),
+            Some(TokenKind::StringType) => Ok(Type::String),
             _ => Err(self.diagnostic_at_current(
-                "expected type (number, u32, u64, i32, i64, f32, f64, bool, {T}, or (T1, T2) -> R)",
+                "expected type (number, u32, u64, i32, i64, f32, f64, bool, string, {T}, or (T1, T2) -> R)",
             )),
         }
     }
@@ -1492,14 +1490,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_string_literals_outside_require() {
-        let source = r#"local x: i32 = "nope""#;
-        let error = parse(source).expect_err("parse should fail");
-        assert!(
-            error
-                .to_string()
-                .contains("string literals are only allowed as the path in require")
-        );
+    fn parses_string_literals_as_values() {
+        let source = r#"local x: string = "ok""#;
+        let program = parse(source).expect("parse should succeed");
+        let waluau_ast::Stmt::Let { value, .. } = &program.top_level[0] else {
+            panic!("expected a let binding");
+        };
+        assert!(matches!(value, waluau_ast::Expr::String(value) if value == "ok"));
     }
 
     #[test]

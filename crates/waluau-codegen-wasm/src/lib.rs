@@ -4,7 +4,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use waluau_ast::{BinaryOp, NumberLiteral, NumericType, Type};
 use waluau_diagnostics::Diagnostic;
 use waluau_ir::{
-    BasicBlock, Function as IrFunction, Instruction as IrInstruction, Module, Terminator, ValueId,
+    BasicBlock, Function as IrFunction, Instruction as IrInstruction, MathIntrinsic, Module,
+    Terminator, ValueId,
 };
 use wasm_encoder::{
     BlockType, CodeSection, ConstExpr, ElementSection, Elements, ExportKind, ExportSection,
@@ -222,9 +223,10 @@ fn array_storage_type(
         Type::Numeric(NumericType::F32) => Ok(StorageType::Val(ValType::F32)),
         Type::Numeric(NumericType::F64) => Ok(StorageType::Val(ValType::F64)),
         Type::Bool => Ok(StorageType::Val(ValType::I32)),
+        Type::String => Err(Diagnostic::new(
+            "string values are not yet supported in array storage",
+        )),
         Type::Array(element) => {
-            // The registry maps full array types to type indices (after function types),
-            // so look up the concrete array type for this element.
             // element is a &Box<Type>; clone the Box<Type> to form the full array Type
             let array_ty = Type::Array(element.clone());
             let index = registry.index(&array_ty)?;
@@ -609,6 +611,7 @@ fn infer_value_types(
                 IrInstruction::Bool(_) => Type::Bool,
                 IrInstruction::Cast { to, .. } => to.clone(),
                 IrInstruction::Binary { result_ty, .. } => result_ty.clone(),
+                IrInstruction::MathIntrinsic { result_ty, .. } => result_ty.clone(),
                 IrInstruction::Call { name, .. } => signatures
                     .get(name)
                     .ok_or_else(|| {
@@ -796,6 +799,18 @@ fn emit_block_instructions(
                     emit_value_operand(out, local_plan, *right)?;
                     emit_binary(out, *op, operand_ty.clone(), result_ty.clone())?;
                 }
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::MathIntrinsic {
+                intrinsic,
+                args,
+                operand_ty,
+                ..
+            } => {
+                for arg in args {
+                    emit_value_operand(out, local_plan, *arg)?;
+                }
+                emit_math_intrinsic(out, *intrinsic, operand_ty.clone())?;
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::Call { name, args } => {
@@ -1251,6 +1266,7 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
         }
         IrInstruction::Cast { value, .. } => vec![*value],
         IrInstruction::Binary { left, right, .. } => vec![*left, *right],
+        IrInstruction::MathIntrinsic { args, .. } => args.clone(),
         IrInstruction::Call { args, .. } => args.clone(),
         IrInstruction::CallValue { callee, args, .. } => {
             let mut out = Vec::with_capacity(args.len() + 1);
@@ -1298,6 +1314,7 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         IrInstruction::Param(_) | IrInstruction::Number { .. } | IrInstruction::Bool(_) => false,
         IrInstruction::Cast { value: source, .. } => *source == value,
         IrInstruction::Binary { left, .. } => *left == value,
+        IrInstruction::MathIntrinsic { args, .. } => args.first().copied() == Some(value),
         IrInstruction::Call { args, .. } => args.first().copied() == Some(value),
         IrInstruction::CallValue { args, callee, .. } => {
             args.first().copied() == Some(value) || (args.is_empty() && *callee == value)
@@ -1515,6 +1532,11 @@ fn emit_binary(
                     "bool add is not supported during wasm emission",
                 ));
             }
+            Type::String => {
+                return Err(Diagnostic::new(
+                    "string add is not supported during wasm emission",
+                ));
+            }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -1541,6 +1563,11 @@ fn emit_binary(
                     "bool sub is not supported during wasm emission",
                 ));
             }
+            Type::String => {
+                return Err(Diagnostic::new(
+                    "string sub is not supported during wasm emission",
+                ));
+            }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -1565,6 +1592,11 @@ fn emit_binary(
             Type::Bool => {
                 return Err(Diagnostic::new(
                     "bool mul is not supported during wasm emission",
+                ));
+            }
+            Type::String => {
+                return Err(Diagnostic::new(
+                    "string mul is not supported during wasm emission",
                 ));
             }
             Type::Array(_) => unreachable!(),
@@ -1599,6 +1631,11 @@ fn emit_binary(
                     "bool div is not supported during wasm emission",
                 ));
             }
+            Type::String => {
+                return Err(Diagnostic::new(
+                    "string div is not supported during wasm emission",
+                ));
+            }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -1620,6 +1657,11 @@ fn emit_binary(
             }
             Type::Numeric(NumericType::F64) => {
                 out.instruction(&Instruction::F64Eq);
+            }
+            Type::String => {
+                return Err(Diagnostic::new(
+                    "string equality is not supported during wasm emission",
+                ));
             }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
@@ -1653,6 +1695,11 @@ fn emit_binary(
                     "bool comparison is not supported during wasm emission",
                 ));
             }
+            Type::String => {
+                return Err(Diagnostic::new(
+                    "string comparison is not supported during wasm emission",
+                ));
+            }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -1683,6 +1730,11 @@ fn emit_binary(
             Type::Bool => {
                 return Err(Diagnostic::new(
                     "bool comparison is not supported during wasm emission",
+                ));
+            }
+            Type::String => {
+                return Err(Diagnostic::new(
+                    "string comparison is not supported during wasm emission",
                 ));
             }
             Type::Array(_) => unreachable!(),
@@ -1754,6 +1806,75 @@ fn emit_floor_or_mod(
         }
         (_, Type::Array(_)) => unreachable!(),
         _ => unreachable!(),
+    }
+    Ok(())
+}
+
+fn emit_math_intrinsic(
+    out: &mut Function,
+    intrinsic: MathIntrinsic,
+    operand_ty: Type,
+) -> Result<(), Diagnostic> {
+    match (intrinsic, operand_ty) {
+        (MathIntrinsic::Abs, Type::Numeric(NumericType::F32)) => {
+            out.instruction(&Instruction::F32Abs);
+        }
+        (MathIntrinsic::Abs, Type::Numeric(NumericType::F64)) => {
+            out.instruction(&Instruction::F64Abs);
+        }
+        (MathIntrinsic::Min, Type::Numeric(NumericType::F32)) => {
+            out.instruction(&Instruction::F32Min);
+        }
+        (MathIntrinsic::Min, Type::Numeric(NumericType::F64)) => {
+            out.instruction(&Instruction::F64Min);
+        }
+        (MathIntrinsic::Max, Type::Numeric(NumericType::F32)) => {
+            out.instruction(&Instruction::F32Max);
+        }
+        (MathIntrinsic::Max, Type::Numeric(NumericType::F64)) => {
+            out.instruction(&Instruction::F64Max);
+        }
+        (MathIntrinsic::Sqrt, Type::Numeric(NumericType::F32)) => {
+            out.instruction(&Instruction::F32Sqrt);
+        }
+        (MathIntrinsic::Sqrt, Type::Numeric(NumericType::F64)) => {
+            out.instruction(&Instruction::F64Sqrt);
+        }
+        (MathIntrinsic::Floor, Type::Numeric(NumericType::F32)) => {
+            out.instruction(&Instruction::F32Floor);
+        }
+        (MathIntrinsic::Floor, Type::Numeric(NumericType::F64)) => {
+            out.instruction(&Instruction::F64Floor);
+        }
+        (MathIntrinsic::Ceil, Type::Numeric(NumericType::F32)) => {
+            out.instruction(&Instruction::F32Ceil);
+        }
+        (MathIntrinsic::Ceil, Type::Numeric(NumericType::F64)) => {
+            out.instruction(&Instruction::F64Ceil);
+        }
+        (MathIntrinsic::Trunc, Type::Numeric(NumericType::F32)) => {
+            out.instruction(&Instruction::F32Trunc);
+        }
+        (MathIntrinsic::Trunc, Type::Numeric(NumericType::F64)) => {
+            out.instruction(&Instruction::F64Trunc);
+        }
+        (MathIntrinsic::Nearest, Type::Numeric(NumericType::F32)) => {
+            out.instruction(&Instruction::F32Nearest);
+        }
+        (MathIntrinsic::Nearest, Type::Numeric(NumericType::F64)) => {
+            out.instruction(&Instruction::F64Nearest);
+        }
+        (MathIntrinsic::Copysign, Type::Numeric(NumericType::F32)) => {
+            out.instruction(&Instruction::F32Copysign);
+        }
+        (MathIntrinsic::Copysign, Type::Numeric(NumericType::F64)) => {
+            out.instruction(&Instruction::F64Copysign);
+        }
+        (intrinsic, ty) => {
+            return Err(Diagnostic::new(format!(
+                "math intrinsic {intrinsic:?} does not support {ty} during wasm emission"
+            )));
+        }
     }
     Ok(())
 }
@@ -1897,6 +2018,9 @@ fn wasm_type(ty: &Type, array_registry: &ArrayTypeRegistry) -> Result<ValType, D
                 heap_type: HeapType::Concrete(index),
             }))
         }
+        Type::String => Err(Diagnostic::new(
+            "string values are not yet supported in Wasm signatures",
+        )),
         Type::Multi(_) => Err(Diagnostic::new(
             "multi-value types are not supported in Wasm signatures yet",
         )),

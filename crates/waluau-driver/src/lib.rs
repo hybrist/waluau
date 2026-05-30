@@ -417,6 +417,46 @@ mod tests {
     }
 
     #[test]
+    fn executes_math_intrinsics_mvp() {
+        let source = r#"
+            function math_ops(a: f64, b: f64): f64
+                local m1: f64 = math_min(a, b)
+                local m2: f64 = math_max(a, b)
+                local abs_a: f64 = math_abs(a)
+                local root: f64 = math_sqrt(9.0)
+                local floored: f64 = math_floor(2.8)
+                local ceiled: f64 = math_ceil(2.2)
+                local truncated: f64 = math_trunc(-2.8)
+                local rounded: f64 = math_nearest(2.5)
+                local sign: f64 = math_copysign(3.0, -1.0)
+                return m1 + m2 + abs_a + root + floored + ceiled + truncated + rounded + sign
+            end
+        "#;
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let math_ops = instance
+            .get_typed_func::<(f64, f64), f64>(&mut store, "math_ops")
+            .expect("math_ops export should exist");
+        assert_eq!(
+            math_ops
+                .call(&mut store, (-4.0, 2.0))
+                .expect("call should succeed"),
+            7.0
+        );
+    }
+
+    #[test]
+    fn rejects_math_abs_for_integer_types() {
+        let source = r#"
+            function bad(x: i32): i32
+                return math_abs(x)
+            end
+        "#;
+        let err = super::compile_source(source).expect_err("compile should fail");
+        assert!(err.to_string().contains("math_abs does not support i32"));
+    }
+
+    #[test]
     fn executes_closure_capture_fixture() {
         let source = fixture_source("closure_capture_unsupported");
         let wasm = super::compile_source(source).expect("compile should succeed");

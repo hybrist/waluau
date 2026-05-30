@@ -1,52 +1,79 @@
-//! Module linking: resolves a graph of `require`-connected `.walu` files into a
-//! single [`Program`] that the rest of the pipeline can compile unchanged.
-//!
-//! The strategy keeps the later compiler stages module-unaware:
-//!
-//! 1. Starting from an entry file, every `require("./path")` is resolved
-//!    relative to the requiring file and loaded recursively, with cycle
-//!    detection.
-//! 2. Each non-entry module's top-level functions are renamed with a unique,
-//!    per-module prefix so names from different files cannot collide. The entry
-//!    module keeps its original names so its Wasm exports stay stable.
-//! 3. Every `require(...)` node is replaced with a reference to the imported
-//!    module's exported function. References are rewritten with lexical-scope
-//!    awareness so a local that shadows a function name is left untouched.
-
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
-
 use waluau_ast::{Expr, Program, Stmt};
-use waluau_diagnostics::Diagnostic;
 
-/// Resolve the module graph rooted at `entry` and merge it into one program.
-pub fn link_program(entry: &Path) -> Result<Program, Diagnostic> {
-    let entry = entry.canonicalize().map_err(|error| {
-        Diagnostic::new(format!(
-            "cannot open input file `{}`: {error}",
-            entry.display()
-        ))
-    })?;
-    let mut loader = Loader::default();
-    let entry_id = loader.load(&entry)?;
+pub struct LoadedModule {
+    pub program: Program,
+    pub requires: HashMap<String, usize>,
+}
+
+pub fn clean_path(path: &str) -> String {
+    let mut parts = Vec::new();
+    for part in path.split('/') {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            parts.pop();
+        } else {
+            parts.push(part);
+        }
+    }
+    format!("/{}", parts.join("/"))
+}
+
+pub fn resolve_path(base_file: &str, relative_path: &str) -> Result<String, String> {
+    if !(relative_path.starts_with("./") || relative_path.starts_with("../")) {
+        return Err(format!(
+            "require path must be relative and start with './' or '../', got \"{}\"",
+            relative_path
+        ));
+    }
+    let base_dir = if let Some(idx) = base_file.rfind('/') {
+        &base_file[..idx]
+    } else {
+        ""
+    };
+
+    let combined = format!("{}/{}", base_dir, relative_path);
+    let cleaned = clean_path(&combined);
+    Ok(cleaned)
+}
+
+pub fn link_programs(files: &HashMap<String, String>, entry_path: &str) -> Result<Program, String> {
+    let mut normalized_files = HashMap::new();
+    for (path, source) in files {
+        let mut norm = clean_path(path);
+        if !norm.ends_with(".walu") && std::path::Path::new(&norm).extension().is_none() {
+            norm.push_str(".walu");
+        }
+        normalized_files.insert(norm, source.clone());
+    }
+
+    let mut entry_norm = clean_path(entry_path);
+    if !entry_norm.ends_with(".walu") && std::path::Path::new(&entry_norm).extension().is_none() {
+        entry_norm.push_str(".walu");
+    }
+
+    let mut loader = Loader {
+        files: &normalized_files,
+        modules: Vec::new(),
+        by_path: HashMap::new(),
+        stack: Vec::new(),
+    };
+
+    let entry_id = loader.load(&entry_norm)?;
     merge(&loader.modules, entry_id)
 }
 
-struct LoadedModule {
-    program: Program,
-    /// Raw `require` path strings to the module id they resolve to.
-    requires: HashMap<String, usize>,
-}
-
-#[derive(Default)]
-struct Loader {
+struct Loader<'a> {
+    files: &'a HashMap<String, String>,
     modules: Vec<LoadedModule>,
-    by_path: HashMap<PathBuf, usize>,
-    stack: Vec<PathBuf>,
+    by_path: HashMap<String, usize>,
+    stack: Vec<String>,
 }
 
-impl Loader {
-    fn load(&mut self, path: &Path) -> Result<usize, Diagnostic> {
+impl<'a> Loader<'a> {
+    fn load(&mut self, path: &str) -> Result<usize, String> {
         if let Some(&id) = self.by_path.get(path) {
             return Ok(id);
         }
@@ -54,32 +81,35 @@ impl Loader {
             let chain = self
                 .stack
                 .iter()
-                .chain(std::iter::once(&path.to_path_buf()))
-                .map(|entry| entry.display().to_string())
+                .chain(std::iter::once(&path.to_string()))
+                .cloned()
                 .collect::<Vec<_>>()
                 .join(" -> ");
-            return Err(Diagnostic::new(format!("circular module import: {chain}")));
+            return Err(format!("circular module import: {chain}"));
         }
 
-        let source = std::fs::read_to_string(path).map_err(|error| {
-            Diagnostic::new(format!("read module `{}`: {error}", path.display()))
-        })?;
-        let program = waluau_parser::parse(&source)?;
-        let dir = path
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("."));
+        let source = self
+            .files
+            .get(path)
+            .ok_or_else(|| format!("cannot find module \"{}\"", path))?;
+        let program =
+            waluau_parser::parse(source).map_err(|e| format!("in module \"{}\": {}", path, e))?;
 
         let mut raw_paths = Vec::new();
         collect_require_paths(&program, &mut raw_paths);
 
-        self.stack.push(path.to_path_buf());
+        self.stack.push(path.to_string());
         let mut requires = HashMap::new();
         for raw in raw_paths {
             if requires.contains_key(&raw) {
                 continue;
             }
-            let resolved = resolve_module_path(&dir, &raw)?;
+            let resolved = resolve_path(path, &raw)?;
+            let resolved = if self.files.contains_key(&resolved) {
+                resolved
+            } else {
+                format!("{}.walu", resolved)
+            };
             let target = self.load(&resolved)?;
             requires.insert(raw, target);
         }
@@ -87,24 +117,9 @@ impl Loader {
 
         let id = self.modules.len();
         self.modules.push(LoadedModule { program, requires });
-        self.by_path.insert(path.to_path_buf(), id);
+        self.by_path.insert(path.to_string(), id);
         Ok(id)
     }
-}
-
-fn resolve_module_path(dir: &Path, raw: &str) -> Result<PathBuf, Diagnostic> {
-    if !(raw.starts_with("./") || raw.starts_with("../")) {
-        return Err(Diagnostic::new(format!(
-            "require path must be relative and start with './' or '../', got \"{raw}\""
-        )));
-    }
-    let mut candidate = dir.join(raw);
-    if candidate.extension().is_none() {
-        candidate.set_extension("walu");
-    }
-    candidate
-        .canonicalize()
-        .map_err(|error| Diagnostic::new(format!("cannot resolve module \"{raw}\": {error}")))
 }
 
 fn module_prefix(id: usize, entry_id: usize) -> String {
@@ -115,15 +130,16 @@ fn module_prefix(id: usize, entry_id: usize) -> String {
     }
 }
 
-fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, Diagnostic> {
+fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, String> {
     let mut functions = Vec::new();
     let mut top_level = Vec::new();
 
     for (id, module) in modules.iter().enumerate() {
         if id != entry_id && !module.program.top_level.is_empty() {
-            return Err(Diagnostic::new(
-                "imported modules may only contain functions and a trailing `return <function>`",
-            ));
+            return Err(
+                "imported modules may only contain functions and a trailing `return <function>`"
+                    .to_string(),
+            );
         }
 
         let prefix = module_prefix(id, entry_id);
@@ -174,12 +190,11 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, Diagnosti
     })
 }
 
-/// Validate and return the name of the function a module exports.
 fn exported_function(
     modules: &[LoadedModule],
     target_id: usize,
     raw: &str,
-) -> Result<String, Diagnostic> {
+) -> Result<String, String> {
     match &modules[target_id].program.export {
         Some(Expr::Name(name)) => {
             if modules[target_id]
@@ -190,22 +205,20 @@ fn exported_function(
             {
                 Ok(name.clone())
             } else {
-                Err(Diagnostic::new(format!(
+                Err(format!(
                     "module imported via \"{raw}\" exports unknown function '{name}'"
-                )))
+                ))
             }
         }
-        Some(_) => Err(Diagnostic::new(format!(
+        Some(_) => Err(format!(
             "module imported via \"{raw}\" must export a function name, e.g. `return myFunction`"
-        ))),
-        None => Err(Diagnostic::new(format!(
+        )),
+        None => Err(format!(
             "module imported via \"{raw}\" has no export; add `return <function>`"
-        ))),
+        )),
     }
 }
 
-/// Rewrites a single module's bodies: mangles references to its own top-level
-/// functions and replaces `require(...)` with the resolved import name.
 struct Rewriter<'a> {
     prefix: &'a str,
     func_names: &'a HashSet<String>,
@@ -247,7 +260,6 @@ impl Rewriter<'_> {
                 self.rewrite_block(body, &mut bound.clone());
             }
             Stmt::Repeat { body, condition } => {
-                // `until` can observe locals declared inside the loop body.
                 let mut inner = bound.clone();
                 self.rewrite_block(body, &mut inner);
                 self.rewrite_expr(condition, &inner);

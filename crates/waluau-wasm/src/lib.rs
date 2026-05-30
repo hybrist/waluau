@@ -1,3 +1,5 @@
+mod link;
+
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -22,6 +24,45 @@ pub fn compile(source: &str) -> Result<JsValue, JsValue> {
         }
         Err(err) => Err(JsValue::from_str(&err)),
     }
+}
+
+#[wasm_bindgen]
+pub fn compile_multi(files: JsValue, entry_path: &str) -> Result<JsValue, JsValue> {
+    let files: std::collections::HashMap<String, String> = serde_wasm_bindgen::from_value(files)
+        .map_err(|err| JsValue::from_str(&format!("failed to parse files map: {}", err)))?;
+
+    match compile_sources(&files, entry_path) {
+        Ok(result) => {
+            serde_wasm_bindgen::to_value(&result).map_err(|err| JsValue::from_str(&err.to_string()))
+        }
+        Err(err) => Err(JsValue::from_str(&err)),
+    }
+}
+
+fn compile_sources(
+    files: &std::collections::HashMap<String, String>,
+    entry_path: &str,
+) -> Result<CompileResult, String> {
+    let program = link::link_programs(files, entry_path)?;
+    let typed_program = waluau_hir::type_check_and_infer(&program).map_err(|e| e.to_string())?;
+    let module = waluau_ir::build(&typed_program).map_err(|e| e.to_string())?;
+    let requires_wasm_gc = module_requires_wasm_gc(&module);
+
+    let mut ir_dump = String::new();
+    for function in &module.functions {
+        ir_dump.push_str(&function.dump());
+        ir_dump.push('\n');
+    }
+
+    let wasm_bytes = waluau_codegen_wasm::emit(&module).map_err(|e| e.to_string())?;
+    let wat = wasmprinter::print_bytes(&wasm_bytes).map_err(|e| e.to_string())?;
+
+    Ok(CompileResult {
+        ir: ir_dump,
+        wat,
+        wasm: wasm_bytes,
+        requires_wasm_gc,
+    })
 }
 
 fn compile_source(source: &str) -> Result<CompileResult, String> {
@@ -142,5 +183,21 @@ mod tests {
             result.wasm.starts_with(b"\0asm"),
             "wasm output should begin with the WebAssembly magic bytes"
         );
+    }
+
+    #[test]
+    fn compile_multi_resolves_imports() {
+        let mut files = std::collections::HashMap::new();
+        files.insert(
+            "main.walu".to_string(),
+            "function compute(n: i32): i32\n    local double: (i32) -> i32 = require(\"./double\")\n    return double(n)\nend\n".to_string(),
+        );
+        files.insert(
+            "double.walu".to_string(),
+            "function double(x: i32): i32\n    return x * 2\nend\nreturn double\n".to_string(),
+        );
+        let result = super::compile_sources(&files, "main.walu").expect("compile should succeed");
+        assert!(result.wat.contains("(module"));
+        assert!(result.ir.contains("compute"));
     }
 }

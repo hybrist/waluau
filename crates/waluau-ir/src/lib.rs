@@ -4,12 +4,33 @@ use waluau_ast::{
     AssignOp, BinaryOp, Expr, Function as AstFunction, NumberLiteral, NumericType, Program, Stmt,
     Type, UnaryOp,
 };
-use waluau_diagnostics::Diagnostic;
+use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
 const COROUTINE_CREATE: &str = "coroutine_create";
 const COROUTINE_RESUME: &str = "coroutine_resume";
 const COROUTINE_STATUS: &str = "coroutine_status";
+const MATH_ABS: &str = "math_abs";
+const MATH_MIN: &str = "math_min";
+const MATH_MAX: &str = "math_max";
+const MATH_SQRT: &str = "math_sqrt";
+const MATH_FLOOR: &str = "math_floor";
+const MATH_CEIL: &str = "math_ceil";
+const MATH_TRUNC: &str = "math_trunc";
+const MATH_NEAREST: &str = "math_nearest";
+const MATH_COPYSIGN: &str = "math_copysign";
 const ASSERT: &str = "assert";
+
+fn inference_diagnostic(
+    code: &'static str,
+    category: DiagnosticCategory,
+    message: impl Into<String>,
+    action: impl Into<String>,
+) -> Diagnostic {
+    Diagnostic::new(message)
+        .with_code(code)
+        .with_category(category)
+        .with_action(action)
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct BlockId(pub usize);
@@ -60,6 +81,12 @@ pub enum Instruction {
         operand_ty: Type,
         result_ty: Type,
     },
+    MathIntrinsic {
+        intrinsic: MathIntrinsic,
+        args: Vec<ValueId>,
+        operand_ty: Type,
+        result_ty: Type,
+    },
     Call {
         name: String,
         args: Vec<ValueId>,
@@ -104,6 +131,19 @@ pub enum Instruction {
         ty: Type,
     },
     Phi(Vec<(BlockId, ValueId)>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MathIntrinsic {
+    Abs,
+    Min,
+    Max,
+    Sqrt,
+    Floor,
+    Ceil,
+    Trunc,
+    Nearest,
+    Copysign,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -237,6 +277,37 @@ fn verify_function(
                         return Err(Diagnostic::new(format!(
                             "binary operands in block {:?} must both have type {}",
                             block.id, operand_ty
+                        )));
+                    }
+                }
+                Instruction::MathIntrinsic {
+                    args,
+                    operand_ty,
+                    result_ty,
+                    ..
+                } => {
+                    for arg in args {
+                        let arg_ty = require_dominating_definition(
+                            &definitions,
+                            &dominators,
+                            &seen_in_block,
+                            block.id,
+                            *arg,
+                        )?;
+                        if arg_ty != *operand_ty {
+                            return Err(Diagnostic::new(format!(
+                                "math intrinsic argument in block {:?} has type {}, expected {}",
+                                block.id, arg_ty, operand_ty
+                            )));
+                        }
+                    }
+                    if !matches!(
+                        (operand_ty, result_ty),
+                        (Type::Numeric(_), Type::Numeric(_))
+                    ) {
+                        return Err(Diagnostic::new(format!(
+                            "math intrinsic in block {:?} must have numeric operand/result types",
+                            block.id
                         )));
                     }
                 }
@@ -695,6 +766,7 @@ fn infer_instruction_type(
         Instruction::Bool(_) => Ok(Type::Bool),
         Instruction::Cast { to, .. } => Ok(to.clone()),
         Instruction::Binary { result_ty, .. } => Ok(result_ty.clone()),
+        Instruction::MathIntrinsic { result_ty, .. } => Ok(result_ty.clone()),
         Instruction::Call { name, .. } => signatures
             .get(name)
             .map(|(_, ret)| ret.clone())
@@ -872,10 +944,15 @@ fn build_function(
     signatures: &HashMap<String, (Vec<Type>, Type)>,
 ) -> Result<Vec<Function>, Diagnostic> {
     let return_type = function.return_type.clone().ok_or_else(|| {
-        Diagnostic::new(format!(
-            "function '{}' must have a concrete return type before IR lowering",
-            function.name
-        ))
+        inference_diagnostic(
+            "inference/unsupported",
+            DiagnosticCategory::Unsupported,
+            format!(
+                "function '{}' must have a concrete return type before IR lowering",
+                function.name
+            ),
+            "ensure type inference runs before IR lowering or add an explicit return type",
+        )
     })?;
     let mut out = Function {
         name: function.name.clone(),
@@ -1615,6 +1692,11 @@ impl Builder<'_> {
                 let ty = match self.infer_expr_type(expr, types, expected)? {
                     Type::Numeric(ty) => ty,
                     Type::Bool => unreachable!("number literal cannot lower as bool"),
+                    Type::String => {
+                        return Err(Diagnostic::new(
+                            "numeric literal is not assignable to string",
+                        ));
+                    }
                     Type::Array(_) => {
                         return Err(Diagnostic::new(
                             "numeric literal is not assignable to array",
@@ -1637,6 +1719,11 @@ impl Builder<'_> {
                 })
             }
             Expr::Bool(value) => self.emit(Instruction::Bool(*value)),
+            Expr::String(_) => {
+                return Err(Diagnostic::new(
+                    "string values are not yet supported in IR lowering",
+                ));
+            }
             Expr::Name(name) => {
                 if let Some(value) = env.get(name).copied() {
                     let actual = types.get(name).cloned().ok_or_else(|| {
@@ -1686,6 +1773,11 @@ impl Builder<'_> {
                         let operand_ty = match actual {
                             Type::Numeric(ty) => ty,
                             Type::Bool => {
+                                return Err(Diagnostic::new(
+                                    "unary '-' requires a numeric operand",
+                                ));
+                            }
+                            Type::String => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -1854,6 +1946,13 @@ impl Builder<'_> {
                 }
             },
             Expr::Call { callee, args } => {
+                if let Expr::Name(name) = callee.as_ref() {
+                    if let Some(result) =
+                        self.lower_math_builtin_call(name, args, env, types, expected.clone())
+                    {
+                        return result;
+                    }
+                }
                 if let Expr::Name(name) = callee.as_ref() {
                     if let Some(result) =
                         self.lower_coroutine_builtin_call(name, args, env, types, expected.clone())
@@ -2157,6 +2256,9 @@ impl Builder<'_> {
                 Some(Type::Bool) => {
                     Err(Diagnostic::new("numeric literal is not assignable to bool"))
                 }
+                Some(Type::String) => Err(Diagnostic::new(
+                    "numeric literal is not assignable to string",
+                )),
                 Some(Type::Array(_)) => Err(Diagnostic::new(
                     "numeric literal is not assignable to array",
                 )),
@@ -2169,6 +2271,7 @@ impl Builder<'_> {
                 None => Ok(Type::number()),
             },
             Expr::Bool(_) => Ok(Type::Bool),
+            Expr::String(_) => Ok(Type::String),
             Expr::Require(path) => Err(Diagnostic::new(format!(
                 "unresolved require(\"{path}\") reached IR lowering"
             ))),
@@ -2192,6 +2295,9 @@ impl Builder<'_> {
                     match actual {
                         Type::Numeric(_) => coerce_type(actual, expected),
                         Type::Bool => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                        Type::String => {
+                            Err(Diagnostic::new("unary '-' requires a numeric operand"))
+                        }
                         Type::Array(_) => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
@@ -2245,6 +2351,11 @@ impl Builder<'_> {
                 }
             }
             Expr::Call { callee, .. } => {
+                if let Expr::Name(name) = callee.as_ref() {
+                    if let Some(result) = self.infer_math_builtin_call_type(name, expr, types) {
+                        return result;
+                    }
+                }
                 if let Expr::Name(name) = callee.as_ref() {
                     if let Some(result) = self.infer_coroutine_builtin_call_type(name, expr, types)
                     {
@@ -2397,8 +2508,11 @@ impl Builder<'_> {
         expected: Option<Type>,
     ) -> Result<Type, Diagnostic> {
         if elements.is_empty() {
-            return Err(Diagnostic::new(
+            return Err(inference_diagnostic(
+                "inference/missing-context",
+                DiagnosticCategory::MissingContext,
                 "empty array literal requires explicit element type",
+                "add an explicit element type annotation, e.g. local xs: {i32} = {}",
             ));
         }
 
@@ -2585,17 +2699,157 @@ impl Builder<'_> {
             _ => None,
         }
     }
+
+    fn lower_math_builtin_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        env: &HashMap<String, ValueId>,
+        types: &HashMap<String, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<ValueId, Diagnostic>> {
+        let (intrinsic, arity) = match name {
+            MATH_ABS => (MathIntrinsic::Abs, 1),
+            MATH_MIN => (MathIntrinsic::Min, 2),
+            MATH_MAX => (MathIntrinsic::Max, 2),
+            MATH_SQRT => (MathIntrinsic::Sqrt, 1),
+            MATH_FLOOR => (MathIntrinsic::Floor, 1),
+            MATH_CEIL => (MathIntrinsic::Ceil, 1),
+            MATH_TRUNC => (MathIntrinsic::Trunc, 1),
+            MATH_NEAREST => (MathIntrinsic::Nearest, 1),
+            MATH_COPYSIGN => (MathIntrinsic::Copysign, 2),
+            _ => return None,
+        };
+        if args.len() != arity {
+            return Some(Err(Diagnostic::new(format!(
+                "{name} expects {arity} argument{}, got {}",
+                if arity == 1 { "" } else { "s" },
+                args.len()
+            ))));
+        }
+        let operand_ty = match self.infer_math_builtin_call_type(
+            name,
+            &Expr::Call {
+                callee: Box::new(Expr::Name(name.to_string())),
+                args: args.to_vec(),
+            },
+            types,
+        ) {
+            Some(Ok(Type::Numeric(ty))) => Type::Numeric(ty),
+            Some(Ok(_)) => unreachable!(),
+            Some(Err(error)) => return Some(Err(error)),
+            None => return None,
+        };
+        let mut lowered = Vec::with_capacity(args.len());
+        for arg in args {
+            match self.lower_expr(arg, env, types, Some(operand_ty.clone())) {
+                Ok(value) => lowered.push(value),
+                Err(error) => return Some(Err(error)),
+            }
+        }
+        let value = self.emit(Instruction::MathIntrinsic {
+            intrinsic,
+            args: lowered,
+            operand_ty: operand_ty.clone(),
+            result_ty: operand_ty.clone(),
+        });
+        Some(self.coerce_value(value, operand_ty, expected))
+    }
+
+    fn infer_math_builtin_call_type(
+        &self,
+        name: &str,
+        call: &Expr,
+        types: &HashMap<String, Type>,
+    ) -> Option<Result<Type, Diagnostic>> {
+        let Expr::Call { args, .. } = call else {
+            return None;
+        };
+        let (intrinsic, arity) = match name {
+            MATH_ABS => (MathIntrinsic::Abs, 1),
+            MATH_MIN => (MathIntrinsic::Min, 2),
+            MATH_MAX => (MathIntrinsic::Max, 2),
+            MATH_SQRT => (MathIntrinsic::Sqrt, 1),
+            MATH_FLOOR => (MathIntrinsic::Floor, 1),
+            MATH_CEIL => (MathIntrinsic::Ceil, 1),
+            MATH_TRUNC => (MathIntrinsic::Trunc, 1),
+            MATH_NEAREST => (MathIntrinsic::Nearest, 1),
+            MATH_COPYSIGN => (MathIntrinsic::Copysign, 2),
+            _ => return None,
+        };
+        if args.len() != arity {
+            return Some(Err(Diagnostic::new(format!(
+                "{name} expects {arity} argument{}, got {}",
+                if arity == 1 { "" } else { "s" },
+                args.len()
+            ))));
+        }
+
+        let first_ty = match self.infer_expr_type(&args[0], types, None) {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        let Type::Numeric(first_numeric) = first_ty else {
+            return Some(Err(Diagnostic::new(format!(
+                "{name} expects numeric arguments"
+            ))));
+        };
+        if arity == 2 {
+            let second =
+                match self.infer_expr_type(&args[1], types, Some(Type::Numeric(first_numeric))) {
+                    Ok(ty) => ty,
+                    Err(error) => return Some(Err(error)),
+                };
+            if second != Type::Numeric(first_numeric) {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} requires both arguments to have the same numeric type"
+                ))));
+            }
+        }
+
+        let supports = match intrinsic {
+            MathIntrinsic::Min | MathIntrinsic::Max => {
+                matches!(first_numeric, NumericType::F32 | NumericType::F64)
+            }
+            MathIntrinsic::Abs
+            | MathIntrinsic::Sqrt
+            | MathIntrinsic::Floor
+            | MathIntrinsic::Ceil
+            | MathIntrinsic::Trunc
+            | MathIntrinsic::Nearest
+            | MathIntrinsic::Copysign => {
+                matches!(first_numeric, NumericType::F32 | NumericType::F64)
+            }
+        };
+        if !supports {
+            return Some(Err(Diagnostic::new(format!(
+                "{name} does not support {}",
+                Type::Numeric(first_numeric)
+            ))));
+        }
+
+        Some(Ok(Type::Numeric(first_numeric)))
+    }
 }
 
 fn common_element_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
     match (left, right) {
-        (Type::Numeric(left), Type::Numeric(right)) => left
-            .common(right)
-            .map(Type::Numeric)
-            .ok_or_else(|| Diagnostic::new("array literal elements must share a common type")),
+        (Type::Numeric(left), Type::Numeric(right)) => {
+            left.common(right).map(Type::Numeric).ok_or_else(|| {
+                inference_diagnostic(
+                    "inference/conflict",
+                    DiagnosticCategory::Conflict,
+                    "array literal elements must share a common type",
+                    "cast elements to a common numeric type or annotate the array type",
+                )
+            })
+        }
         (left, right) if left == right => Ok(left),
-        _ => Err(Diagnostic::new(
+        _ => Err(inference_diagnostic(
+            "inference/conflict",
+            DiagnosticCategory::Conflict,
             "array literal elements must share a common type",
+            "cast elements to a common type or split values into separate arrays",
         )),
     }
 }
@@ -2618,8 +2872,11 @@ fn infer_numeric_common_type(
             if left_ty == right_ty {
                 Ok(left_ty)
             } else {
-                Err(Diagnostic::new(
+                Err(inference_diagnostic(
+                    "inference/ambiguous",
+                    DiagnosticCategory::Ambiguous,
                     "could not resolve operand type during IR lowering",
+                    "add an explicit cast to disambiguate numeric operand types",
                 ))
             }
         }
@@ -2643,12 +2900,21 @@ fn infer_numeric_common_type(
 
 fn common_numeric_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
     match (left, right) {
-        (Type::Numeric(left), Type::Numeric(right)) => left
-            .common(right)
-            .map(Type::Numeric)
-            .ok_or_else(|| Diagnostic::new("could not resolve operand type during IR lowering")),
-        _ => Err(Diagnostic::new(
+        (Type::Numeric(left), Type::Numeric(right)) => {
+            left.common(right).map(Type::Numeric).ok_or_else(|| {
+                inference_diagnostic(
+                    "inference/ambiguous",
+                    DiagnosticCategory::Ambiguous,
+                    "could not resolve operand type during IR lowering",
+                    "add an explicit cast to disambiguate numeric operand types",
+                )
+            })
+        }
+        _ => Err(inference_diagnostic(
+            "inference/conflict",
+            DiagnosticCategory::Conflict,
             "could not resolve operand type during IR lowering",
+            "change one operand type or cast explicitly",
         )),
     }
 }
@@ -2668,6 +2934,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             ))),
             Type::Bool => Err(Diagnostic::new(format!(
                 "cannot implicitly convert bool to {expected_numeric}",
+            ))),
+            Type::String => Err(Diagnostic::new(format!(
+                "cannot implicitly convert string to {expected_numeric}",
             ))),
             Type::Array(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert array to {expected_numeric}",
@@ -2844,7 +3113,7 @@ fn collect_expr_captures(
             collect_expr_captures(base, bound, env, signatures, captures);
             collect_expr_captures(index, bound, env, signatures, captures);
         }
-        Expr::Number(_) | Expr::Bool(_) | Expr::Require(_) => {}
+        Expr::Number(_) | Expr::Bool(_) | Expr::String(_) | Expr::Require(_) => {}
     }
 }
 
@@ -2988,7 +3257,7 @@ fn collect_nested_from_expr(expr: &Expr, out: &mut HashSet<String>) {
             collect_nested_from_expr(base, out);
             collect_nested_from_expr(index, out);
         }
-        Expr::Name(_) | Expr::Number(_) | Expr::Bool(_) | Expr::Require(_) => {}
+        Expr::Name(_) | Expr::Number(_) | Expr::Bool(_) | Expr::Require(_) | Expr::String(_) => {}
     }
 }
 
@@ -3101,7 +3370,7 @@ fn collect_free_names_in_expr(expr: &Expr, bound: &HashSet<String>, out: &mut Ha
             collect_free_names_in_expr(base, bound, out);
             collect_free_names_in_expr(index, bound, out);
         }
-        Expr::Number(_) | Expr::Bool(_) | Expr::Require(_) => {}
+        Expr::Number(_) | Expr::Bool(_) | Expr::Require(_) | Expr::String(_) => {}
     }
 }
 
@@ -3149,6 +3418,7 @@ mod tests {
         BasicBlock, BlockId, Function, Instruction, Module, Terminator, ValueId, build, verify,
     };
     use waluau_ast::{BinaryOp, NumberLiteral, NumericType, Type};
+    use waluau_diagnostics::DiagnosticCategory;
     use waluau_parser::parse;
 
     #[test]
@@ -3886,5 +4156,39 @@ mod tests {
         if let Err(err) = super::verify(&module) {
             panic!("verify failed: {err}\n{}", function.dump());
         }
+    }
+
+    #[test]
+    fn rejects_string_value_lowering_for_now() {
+        let source = r#"
+            function entry(): string
+                return "hello"
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let err = build(&program).expect_err("ir build should fail for string values");
+        assert!(
+            err.to_string()
+                .contains("string values are not yet supported in IR lowering")
+        );
+    }
+
+    #[test]
+    fn tags_ir_inference_failures_with_structured_diagnostics() {
+        let source = r#"
+            function entry(): i32
+                local xs = {}
+                return 0
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = build(&program).expect_err("ir build should fail");
+        assert_eq!(error.code(), Some("inference/missing-context"));
+        assert_eq!(error.category(), Some(DiagnosticCategory::MissingContext));
+        assert_eq!(
+            error.action(),
+            Some("add an explicit element type annotation, e.g. local xs: {i32} = {}")
+        );
+        assert_eq!(error.span(), None);
     }
 }
