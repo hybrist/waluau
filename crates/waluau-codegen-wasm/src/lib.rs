@@ -44,7 +44,13 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
             .iter()
             .map(|(_, ty)| wasm_type(ty, &array_registry))
             .collect::<Result<Vec<_>, _>>()?;
-        let results = [wasm_type(&function.return_type, &array_registry)?];
+        let results = match &function.return_type {
+            Type::Multi(multi_types) => multi_types
+                .iter()
+                .map(|ty| wasm_type(ty, &array_registry))
+                .collect::<Result<Vec<_>, _>>()?,
+            other => vec![wasm_type(other, &array_registry)?],
+        };
         types.ty().function(params, results);
     }
     if start_thunk.is_some() {
@@ -77,7 +83,13 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         functions.function(thunk_index);
         let mut thunk = Function::new(Vec::new());
         thunk.instruction(&Instruction::Call(start as u32));
-        thunk.instruction(&Instruction::Drop);
+        let n_returns = match &module.functions[start].return_type {
+            Type::Multi(types) => types.len(),
+            _ => 1,
+        };
+        for _ in 0..n_returns {
+            thunk.instruction(&Instruction::Drop);
+        }
         thunk.instruction(&Instruction::End);
         codes.function(&thunk);
     }
@@ -433,6 +445,7 @@ fn try_emit_structured_fast_path(
 
 struct LocalPlan {
     slots: BTreeMap<ValueId, u32>,
+    multi_slots: BTreeMap<ValueId, Vec<u32>>,
     extra_locals: Vec<ValType>,
     stack_values: BTreeSet<ValueId>,
     pc_local: u32,
@@ -462,6 +475,7 @@ fn build_local_plan(
         );
         stack_values.extend(block_stack_values);
     }
+    stack_values.retain(|v| !matches!(value_types.get(v), Some(Type::Multi(_))));
 
     let intervals = compute_live_intervals(function, value_types, &stack_values)?;
     let (local_slots, mut extra_locals) =
@@ -479,10 +493,28 @@ fn build_local_plan(
         }
     }
 
+    let mut multi_slots = BTreeMap::new();
+    for block in function.blocks.values() {
+        for (value, _) in &block.instructions {
+            let Some(Type::Multi(types)) = value_types.get(value) else {
+                continue;
+            };
+            let mut value_slots = Vec::new();
+            for ty in types {
+                let val_type = wasm_type(ty, array_registry)?;
+                let slot = function.params.len() as u32 + extra_locals.len() as u32;
+                extra_locals.push(val_type);
+                value_slots.push(slot);
+            }
+            multi_slots.insert(*value, value_slots);
+        }
+    }
+
     let pc_local = function.params.len() as u32 + extra_locals.len() as u32;
     extra_locals.push(ValType::I32);
     Ok(LocalPlan {
         slots,
+        multi_slots,
         extra_locals,
         stack_values,
         pc_local,
@@ -771,10 +803,32 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::ArrayLen);
                 emit_value_store(out, local_plan, *value)?;
             }
-            IrInstruction::PackMulti { .. } | IrInstruction::MultiGet { .. } => {
-                return Err(Diagnostic::new(
-                    "wasm backend does not yet support lowering multi-value tuple instructions",
-                ));
+            IrInstruction::PackMulti { values, .. } => {
+                for v in values {
+                    emit_value_operand(out, local_plan, *v)?;
+                }
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::MultiGet {
+                value: source,
+                index,
+                ..
+            } => {
+                let slots = local_plan.multi_slots.get(source).ok_or_else(|| {
+                    Diagnostic::new(format!(
+                        "multi-get source {:?} has no multi-value slots",
+                        source
+                    ))
+                })?;
+                let slot = slots.get(*index).copied().ok_or_else(|| {
+                    Diagnostic::new(format!(
+                        "multi-get index {} out of range (multi has {} slots)",
+                        index,
+                        slots.len()
+                    ))
+                })?;
+                out.instruction(&Instruction::LocalGet(slot));
+                emit_value_store(out, local_plan, *value)?;
             }
         }
     }
@@ -974,6 +1028,9 @@ fn compute_live_intervals(
             .get(&value)
             .cloned()
             .ok_or_else(|| Diagnostic::new(format!("missing type for value {:?}", value)))?;
+        if matches!(ty, Type::Multi(_)) {
+            continue;
+        }
         let end = last_use_positions.get(&value).copied().unwrap_or(start);
         intervals.push(LiveInterval {
             value,
@@ -1128,6 +1185,12 @@ fn emit_value_operand(
     if local_plan.stack_values.contains(&value) {
         return Ok(());
     }
+    if let Some(slots) = local_plan.multi_slots.get(&value) {
+        for &slot in slots {
+            out.instruction(&Instruction::LocalGet(slot));
+        }
+        return Ok(());
+    }
     out.instruction(&Instruction::LocalGet(local(local_plan, value)?));
     Ok(())
 }
@@ -1138,6 +1201,12 @@ fn emit_value_store(
     value: ValueId,
 ) -> Result<(), Diagnostic> {
     if local_plan.stack_values.contains(&value) {
+        return Ok(());
+    }
+    if let Some(slots) = local_plan.multi_slots.get(&value) {
+        for &slot in slots.iter().rev() {
+            out.instruction(&Instruction::LocalSet(slot));
+        }
         return Ok(());
     }
     out.instruction(&Instruction::LocalSet(local(local_plan, value)?));
@@ -1885,6 +1954,60 @@ mod tests {
             }
         }
         assert!(saw_add_then_return);
+    }
+
+    #[test]
+    fn emits_valid_wasm_for_multi_return() {
+        let source = r#"
+            function pair(x: i32, y: i32): i32, i32
+                return x, y
+            end
+        "#;
+        let program = waluau_parser::parse(source).expect("parse should succeed");
+        let ir = waluau_ir::build(&program).expect("ir should succeed");
+        let wasm = super::emit(&ir).expect("emit should succeed");
+        Validator::new()
+            .validate_all(&wasm)
+            .expect("emitted module should validate");
+    }
+
+    #[test]
+    fn emits_valid_wasm_for_multi_let_binding() {
+        let source = r#"
+            function swap(x: i32, y: i32): i32, i32
+                return y, x
+            end
+            function entry(a: i32, b: i32): i32
+                local x: i32, y: i32 = swap(a, b)
+                return x + y
+            end
+        "#;
+        let program = waluau_parser::parse(source).expect("parse should succeed");
+        let ir = waluau_ir::build(&program).expect("ir should succeed");
+        let wasm = super::emit(&ir).expect("emit should succeed");
+        Validator::new()
+            .validate_all(&wasm)
+            .expect("emitted module should validate");
+    }
+
+    #[test]
+    fn emits_valid_wasm_for_multi_assign() {
+        let source = r#"
+            function swap(x: i32, y: i32): i32, i32
+                return y, x
+            end
+            function entry(a: i32, b: i32): i32
+                local x: i32, y: i32 = a, b
+                x, y = swap(x, y)
+                return x + y
+            end
+        "#;
+        let program = waluau_parser::parse(source).expect("parse should succeed");
+        let ir = waluau_ir::build(&program).expect("ir should succeed");
+        let wasm = super::emit(&ir).expect("emit should succeed");
+        Validator::new()
+            .validate_all(&wasm)
+            .expect("emitted module should validate");
     }
 
     #[test]

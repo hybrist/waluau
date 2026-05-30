@@ -115,6 +115,7 @@ mod tests {
             "assert_pass" => include_str!("../../../fixtures/assert_pass.walu"),
             "top_level_statements" => include_str!("../../../fixtures/top_level_statements.walu"),
             "mismatch" => include_str!("../../../fixtures/mismatch.walu"),
+            "multi_value" => include_str!("../../../fixtures/multi_value.walu"),
             other => panic!("unknown fixture: {other}"),
         }
     }
@@ -411,6 +412,29 @@ mod tests {
         let module = Module::new(&engine, wasm).expect("module should compile");
         let mut store = Store::new(&engine, ());
         Instance::new(&mut store, &module, &[]).expect_err("instantiation should trap");
+    }
+
+    #[test]
+    fn executes_multi_value_fixture() {
+        let source = fixture_source("multi_value");
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let swap = instance
+            .get_typed_func::<(i32, i32), (i32, i32)>(&mut store, "swap")
+            .expect("swap export should exist");
+        assert_eq!(
+            swap.call(&mut store, (3, 7)).expect("call should succeed"),
+            (7, 3)
+        );
+        let sum_of_swap = instance
+            .get_typed_func::<(i32, i32), i32>(&mut store, "sum_of_swap")
+            .expect("sum_of_swap export should exist");
+        assert_eq!(
+            sum_of_swap
+                .call(&mut store, (10, 20))
+                .expect("call should succeed"),
+            30
+        );
     }
 
     #[test]
