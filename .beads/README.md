@@ -5,13 +5,13 @@ Each checkout keeps its own embedded Dolt database and local export files under 
 Bootstrap a fresh clone or worktree with:
 
 ```sh
-git config beads.role maintainer
-bd bootstrap --yes
-bd ready --json
+pnpm install                    # installs the @beads/bd binary
+pnpm exec bd bootstrap --yes   # clones Dolt database from git remote
+pnpm exec bd ready --json
 ```
 
 After mutations, sync the upstream state with:
 
 ```sh
-bd dolt push
+pnpm exec bd dolt push
 ```

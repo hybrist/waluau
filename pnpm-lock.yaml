@@ -6,7 +6,11 @@ settings:
 
 importers:
 
-  .: {}
+  .:
+    devDependencies:
+      '@beads/bd':
+        specifier: ^1.0.4
+        version: 1.0.4
 
   apps/playground:
     dependencies:
@@ -113,6 +117,13 @@ packages:
   '@babel/types@7.29.7':
     resolution: {integrity: sha512-4zBIxpPzowiZpusoFkyGVwakdRJUyuH5PxQ/PrqghfdFWWasvnCdPfQXHrenDai+gyLARulZjZowCOj6fjT4pA==}
     engines: {node: '>=6.9.0'}
+
+  '@beads/bd@1.0.4':
+    resolution: {integrity: sha512-MbLARdvt3xLliSqZMUAbWkRUpnfeOIviTE8HcVn7w7NlSCSj7r2VdwV2rUIQy9DyW5AjKYPPZfR2yxDA4Zf5ww==}
+    engines: {node: '>=14.0.0'}
+    cpu: [x64, arm64]
+    os: [darwin, linux, win32, android]
+    hasBin: true
 
   '@emnapi/core@1.10.0':
     resolution: {integrity: sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==}
@@ -917,6 +928,8 @@ snapshots:
     dependencies:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
+
+  '@beads/bd@1.0.4': {}
 
   '@emnapi/core@1.10.0':
     dependencies:

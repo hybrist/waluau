@@ -1,17 +1,40 @@
 # Agent Instructions
 
-This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
+This project uses **bd** (beads) for issue tracking. Run `pnpm exec bd prime` for full workflow context.
+
+## Installing bd
+
+`bd` is installed as an npm devDependency (`@beads/bd`). On a fresh clone:
+
+```bash
+pnpm install          # installs bd and downloads the binary via postinstall
+```
+
+If the binary download fails (e.g. network restrictions), download it manually:
+
+```bash
+# Auto-selects the right platform/arch binary
+V=$(node -e "console.log(require('./node_modules/@beads/bd/package.json').version)")
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+curl -fsSL "https://github.com/gastownhall/beads/releases/download/v${V}/beads_${V}_${OS}_${ARCH}.tar.gz" \
+  | tar -xz -C "$(pnpm exec node -e "console.log(require.resolve('@beads/bd/package.json').replace('/package.json','/bin/'))")" bd
+```
+
+Then bootstrap the Dolt database from the git remote on first use:
+
+```bash
+pnpm exec bd bootstrap --yes
+```
 
 ## Quick Reference
 
 ```bash
-git config beads.role maintainer                      # First-time local role setup
-bd bootstrap --yes                                   # First-time local bootstrap from the Dolt upstream
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work atomically
-bd close <id>         # Complete work
-bd dolt push          # Push beads data to remote
+pnpm exec bd ready              # Find available work
+pnpm exec bd show <id>          # View issue details
+pnpm exec bd update <id> --claim  # Claim work atomically
+pnpm exec bd close <id>         # Complete work
+pnpm exec bd dolt push          # Push beads data to remote
 ```
 
 ## Non-Interactive Shell Commands
@@ -55,34 +78,34 @@ cp -rf source dest          # NOT: cp -r source dest
 **Bootstrap a fresh clone or worktree once:**
 
 ```bash
-git config beads.role maintainer   # or contributor
-bd bootstrap --yes
+pnpm install                    # installs bd binary via postinstall
+pnpm exec bd bootstrap --yes   # clones Dolt database from git remote
 ```
 
 **Check for ready work:**
 
 ```bash
-bd ready --json
+pnpm exec bd ready --json
 ```
 
 **Create new issues:**
 
 ```bash
-bd create "Issue title" --description="Detailed context" -t bug|feature|task -p 0-4 --json
-bd create "Issue title" --description="What this issue is about" -p 1 --deps discovered-from:bd-123 --json
+pnpm exec bd create "Issue title" --description="Detailed context" -t bug|feature|task -p 0-4 --json
+pnpm exec bd create "Issue title" --description="What this issue is about" -p 1 --deps discovered-from:bd-123 --json
 ```
 
 **Claim and update:**
 
 ```bash
-bd update <id> --claim --json
-bd update bd-42 --priority 1 --json
+pnpm exec bd update <id> --claim --json
+pnpm exec bd update bd-42 --priority 1 --json
 ```
 
 **Complete work:**
 
 ```bash
-bd close bd-42 --reason "Completed" --json
+pnpm exec bd close bd-42 --reason "Completed" --json
 ```
 
 ### Issue Types
@@ -103,22 +126,22 @@ bd close bd-42 --reason "Completed" --json
 
 ### Workflow for AI Agents
 
-1. **Check ready work**: `bd ready` shows unblocked issues
-2. **Claim your task atomically**: `bd update <id> --claim`
+1. **Check ready work**: `pnpm exec bd ready` shows unblocked issues
+2. **Claim your task atomically**: `pnpm exec bd update <id> --claim`
 3. **Work on it**: Implement, test, document
 4. **Discover new work?** Create linked issue:
-   - `bd create "Found bug" --description="Details about what was found" -p 1 --deps discovered-from:<parent-id>`
-5. **Complete**: `bd close <id> --reason "Done"`
+   - `pnpm exec bd create "Found bug" --description="Details about what was found" -p 1 --deps discovered-from:<parent-id>`
+5. **Complete**: `pnpm exec bd close <id> --reason "Done"`
 
 ### Quality
 - Use `--acceptance` and `--design` fields when creating issues
 - Use `--validate` to check description completeness
 
 ### Lifecycle
-- `bd defer <id>` / `bd supersede <id>` for issue management
-- `bd stale` / `bd orphans` / `bd lint` for hygiene
-- `bd human <id>` to flag for human decisions
-- `bd formula list` / `bd mol pour <name>` for structured workflows
+- `pnpm exec bd defer <id>` / `pnpm exec bd supersede <id>` for issue management
+- `pnpm exec bd stale` / `pnpm exec bd orphans` / `pnpm exec bd lint` for hygiene
+- `pnpm exec bd human <id>` to flag for human decisions
+- `pnpm exec bd formula list` / `pnpm exec bd mol pour <name>` for structured workflows
 
 ### Auto-Sync
 
@@ -127,7 +150,7 @@ bd automatically syncs via Dolt:
 - Each write auto-commits to Dolt history
 - The Dolt upstream is the source of truth for the shared queue
 - Each checkout keeps its own untracked `.beads/embeddeddolt/` database and local exports
-- Use `bd dolt push`/`bd dolt pull` for shared-state sync
+- Use `pnpm exec bd dolt push`/`pnpm exec bd dolt pull` for shared-state sync
 - No manual export/import needed!
 
 ### Important Rules
@@ -135,7 +158,7 @@ bd automatically syncs via Dolt:
 - ✅ Use bd for ALL task tracking
 - ✅ Always use `--json` flag for programmatic use
 - ✅ Link discovered work with `discovered-from` dependencies
-- ✅ Check `bd ready` before asking "what should I work on?"
+- ✅ Check `pnpm exec bd ready` before asking "what should I work on?"
 - ❌ Do NOT create markdown TODO lists
 - ❌ Do NOT use external issue trackers
 - ❌ Do NOT duplicate tracking systems
@@ -154,7 +177,7 @@ For more details, see README.md and docs/QUICKSTART.md.
 4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
    git pull --rebase
-   bd dolt push
+   pnpm exec bd dolt push
    git push
    git status  # MUST show "up to date with origin"
    ```

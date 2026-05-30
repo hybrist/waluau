@@ -57,4 +57,7 @@ export:
 # - linear.api_key  → use LINEAR_API_KEY env var instead
 # - github.token    → use GITHUB_TOKEN env var instead
 
-sync.remote: "git+ssh://git@github.com/hybrist/waluau.git"
+# sync.remote is intentionally omitted: bd auto-detects from git origin.
+# Set explicitly only if your origin differs from the beads Dolt remote.
+
+sync.remote: "git+http://local_proxy@127.0.0.1:44125/git/hybrist/waluau"
