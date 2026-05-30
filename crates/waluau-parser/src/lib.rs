@@ -834,6 +834,10 @@ impl Parser {
                         .iter()
                         .any(|marker| same_variant(&token.kind, marker)))
             {
+                if self.index == start_index {
+                    self.advance();
+                    continue;
+                }
                 return;
             }
 
@@ -1368,6 +1372,16 @@ mod tests {
             error
                 .to_string()
                 .contains("expected 'else' in if expression")
+        );
+    }
+
+    #[test]
+    fn rejects_incomplete_call_expression_without_hanging() {
+        let error = parse("a(").expect_err("parse should fail");
+        let message = error.to_string();
+        assert!(
+            message.contains("unexpected end of input")
+                || message.contains("expected ')' after call arguments")
         );
     }
 
