@@ -214,6 +214,9 @@ fn array_storage_type(
         Type::Numeric(NumericType::F32) => Ok(StorageType::Val(ValType::F32)),
         Type::Numeric(NumericType::F64) => Ok(StorageType::Val(ValType::F64)),
         Type::Bool => Ok(StorageType::Val(ValType::I32)),
+        Type::String => Err(Diagnostic::new(
+            "string values are not yet supported in array storage",
+        )),
         Type::Array(_) => {
             let index = registry.index(element_ty)?;
             Ok(StorageType::Val(ValType::Ref(RefType {
@@ -1496,6 +1499,11 @@ fn emit_binary(
                     "bool add is not supported during wasm emission",
                 ));
             }
+            Type::String => {
+                return Err(Diagnostic::new(
+                    "string add is not supported during wasm emission",
+                ));
+            }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -1522,6 +1530,11 @@ fn emit_binary(
                     "bool sub is not supported during wasm emission",
                 ));
             }
+            Type::String => {
+                return Err(Diagnostic::new(
+                    "string sub is not supported during wasm emission",
+                ));
+            }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -1546,6 +1559,11 @@ fn emit_binary(
             Type::Bool => {
                 return Err(Diagnostic::new(
                     "bool mul is not supported during wasm emission",
+                ));
+            }
+            Type::String => {
+                return Err(Diagnostic::new(
+                    "string mul is not supported during wasm emission",
                 ));
             }
             Type::Array(_) => unreachable!(),
@@ -1580,6 +1598,11 @@ fn emit_binary(
                     "bool div is not supported during wasm emission",
                 ));
             }
+            Type::String => {
+                return Err(Diagnostic::new(
+                    "string div is not supported during wasm emission",
+                ));
+            }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -1601,6 +1624,11 @@ fn emit_binary(
             }
             Type::Numeric(NumericType::F64) => {
                 out.instruction(&Instruction::F64Eq);
+            }
+            Type::String => {
+                return Err(Diagnostic::new(
+                    "string equality is not supported during wasm emission",
+                ));
             }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
@@ -1634,6 +1662,11 @@ fn emit_binary(
                     "bool comparison is not supported during wasm emission",
                 ));
             }
+            Type::String => {
+                return Err(Diagnostic::new(
+                    "string comparison is not supported during wasm emission",
+                ));
+            }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -1664,6 +1697,11 @@ fn emit_binary(
             Type::Bool => {
                 return Err(Diagnostic::new(
                     "bool comparison is not supported during wasm emission",
+                ));
+            }
+            Type::String => {
+                return Err(Diagnostic::new(
+                    "string comparison is not supported during wasm emission",
                 ));
             }
             Type::Array(_) => unreachable!(),
@@ -1947,6 +1985,9 @@ fn wasm_type(ty: &Type, array_registry: &ArrayTypeRegistry) -> Result<ValType, D
                 heap_type: HeapType::Concrete(index),
             }))
         }
+        Type::String => Err(Diagnostic::new(
+            "string values are not yet supported in Wasm signatures",
+        )),
         Type::Multi(_) => Err(Diagnostic::new(
             "multi-value types are not supported in Wasm signatures yet",
         )),

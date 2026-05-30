@@ -288,7 +288,7 @@ impl Rewriter<'_> {
                     *name = format!("{}{name}", self.prefix);
                 }
             }
-            Expr::Number(_) | Expr::Bool(_) => {}
+            Expr::Number(_) | Expr::Bool(_) | Expr::String(_) => {}
             Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => self.rewrite_expr(expr, bound),
             Expr::Binary { left, right, .. } => {
                 self.rewrite_expr(left, bound);
@@ -379,7 +379,7 @@ fn collect_block(stmts: &[Stmt], out: &mut Vec<String>) {
 fn collect_expr(expr: &Expr, out: &mut Vec<String>) {
     match expr {
         Expr::Require(path) => out.push(path.clone()),
-        Expr::Name(_) | Expr::Number(_) | Expr::Bool(_) => {}
+        Expr::Name(_) | Expr::Number(_) | Expr::Bool(_) | Expr::String(_) => {}
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => collect_expr(expr, out),
         Expr::Binary { left, right, .. } => {
             collect_expr(left, out);

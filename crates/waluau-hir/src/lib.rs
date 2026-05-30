@@ -254,7 +254,9 @@ fn stmt_calls_name(stmt: &Stmt, callee: &str) -> bool {
 
 fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
     match expr {
-        Expr::Name(_) | Expr::Number(_) | Expr::Bool(_) | Expr::Require(_) => false,
+        Expr::Name(_) | Expr::Number(_) | Expr::Bool(_) | Expr::String(_) | Expr::Require(_) => {
+            false
+        }
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => expr_calls_name(expr, callee),
         Expr::Binary { left, right, .. } => {
             expr_calls_name(left, callee) || expr_calls_name(right, callee)
@@ -782,6 +784,7 @@ fn infer_expr(
     match expr {
         Expr::Number(value) => resolve_number_literal(value, expected),
         Expr::Bool(_) => Ok(Type::Bool),
+        Expr::String(_) => coerce_type(Type::String, expected),
         Expr::Require(path) => Err(Diagnostic::new(format!(
             "require(\"{path}\") can only be resolved when compiling from a file; \
              relative imports are unavailable when compiling a single source string"
@@ -805,6 +808,7 @@ fn infer_expr(
                 match actual {
                     Type::Numeric(_) => coerce_type(actual, expected),
                     Type::Bool => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                    Type::String => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Array(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Multi(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Function { .. } => {
@@ -1260,6 +1264,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Bool => Err(Diagnostic::new(format!(
                 "cannot implicitly convert bool to {expected_numeric}",
             ))),
+            Type::String => Err(Diagnostic::new(format!(
+                "cannot implicitly convert string to {expected_numeric}",
+            ))),
             Type::Array(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert array to {expected_numeric}",
             ))),
@@ -1306,6 +1313,9 @@ fn resolve_number_literal(
             Ok(Type::Numeric(numeric))
         }
         Some(Type::Bool) => Err(Diagnostic::new("numeric literal is not assignable to bool")),
+        Some(Type::String) => Err(Diagnostic::new(
+            "numeric literal is not assignable to string",
+        )),
         Some(Type::Array(_)) => Err(Diagnostic::new(
             "numeric literal is not assignable to array",
         )),
@@ -2294,6 +2304,18 @@ mod tests {
         let program = parse(source).expect("parse should succeed");
         let error = super::type_check(&program).expect_err("type check should fail");
         assert_eq!(error.to_string(), "cannot implicitly convert i32 to bool");
+    }
+
+    #[test]
+    fn type_checks_string_literals_and_annotations() {
+        let source = r#"
+            function entry(): string
+                local x: string = "hello"
+                return x
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
     }
 
     #[test]
