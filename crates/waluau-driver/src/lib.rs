@@ -124,8 +124,8 @@ mod tests {
             "nested_closure_noncapturing" => {
                 include_str!("../../../fixtures/nested_closure_noncapturing.walu")
             }
-            "closure_capture_unsupported" => {
-                include_str!("../../../fixtures/closure_capture_unsupported.walu")
+            "closure_capture" => {
+                include_str!("../../../fixtures/closure_capture.walu")
             }
             "assert_pass" => include_str!("../../../fixtures/assert_pass.walu"),
             "top_level_statements" => include_str!("../../../fixtures/top_level_statements.walu"),
@@ -458,7 +458,7 @@ mod tests {
 
     #[test]
     fn executes_closure_capture_fixture() {
-        let source = fixture_source("closure_capture_unsupported");
+        let source = fixture_source("closure_capture");
         let wasm = super::compile_source(source).expect("compile should succeed");
         let (mut store, instance) = instantiate(&wasm);
         let capture_entry = instance
