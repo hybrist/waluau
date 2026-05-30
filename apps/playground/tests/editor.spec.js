@@ -41,4 +41,12 @@ test.describe('editor', () => {
     await page.locator('.code-textarea').fill(threeLineProgram);
     await expect(page.locator('.monaco-editor .line-numbers')).toHaveCount(3);
   });
+
+  test('Monaco Editor uses the custom waluau language mode', async ({ page }) => {
+    await page.waitForSelector('.monaco-editor');
+    const languageId = await page.evaluate(() => {
+      return window.monaco?.editor?.getModels()?.[0]?.getLanguageId();
+    });
+    expect(languageId).toBe('waluau');
+  });
 });

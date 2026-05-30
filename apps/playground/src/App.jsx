@@ -185,8 +185,136 @@ export default function App() {
   const [funcInputs, setFuncInputs] = useState({});
   const [autoRun, setAutoRun] = useState(true);
   const [manualResults, setManualResults] = useState({});
-  
+  const [editorInstance, setEditorInstance] = useState(null);
+  const [monacoInstance, setMonacoInstance] = useState(null);
 
+  const handleEditorBeforeMount = (monaco) => {
+    if (!monaco.languages.getLanguages().some((lang) => lang.id === 'waluau')) {
+      monaco.languages.register({ id: 'waluau' });
+
+      monaco.languages.setMonarchTokensProvider('waluau', {
+        defaultToken: '',
+        tokenPostfix: '.waluau',
+
+        keywords: [
+          'and',
+          'const',
+          'do',
+          'else',
+          'elseif',
+          'end',
+          'false',
+          'function',
+          'if',
+          'local',
+          'not',
+          'or',
+          'repeat',
+          'return',
+          'then',
+          'true',
+          'until',
+          'while',
+        ],
+
+        typeKeywords: ['number', 'u32', 'u64', 'i32', 'i64', 'f32', 'f64', 'bool'],
+
+        brackets: [
+          { token: 'delimiter.bracket', open: '{', close: '}' },
+          { token: 'delimiter.array', open: '[', close: ']' },
+          { token: 'delimiter.parenthesis', open: '(', close: ')' },
+        ],
+
+        operators: ['=', '==', '+=', '+', '-', '*', '/', '//', '%', '<', '>', '->', '::', '#'],
+
+        symbols: /[=-><!~?:&|+*/^%#]+/,
+
+        tokenizer: {
+          root: [
+            // identifiers and keywords
+            [
+              /[a-zA-Z_]\w*/,
+              {
+                cases: {
+                  '@keywords': 'keyword',
+                  '@typeKeywords': 'type',
+                  '@default': 'identifier',
+                },
+              },
+            ],
+
+            // whitespace and comments
+            { include: '@whitespace' },
+
+            // delimiters and operators
+            [/[{}()[\]]/, '@brackets'],
+
+            [
+              /@symbols/,
+              {
+                cases: {
+                  '@operators': 'operator',
+                  '@default': '',
+                },
+              },
+            ],
+
+            // numbers
+            [/\d*\.\d+([eE][-+]?\d+)?/, 'number.float'],
+            [/\d+/, 'number'],
+
+            // delimiter: colon for type annotation, comma
+            [/:/, 'delimiter'],
+            [/,/, 'delimiter'],
+
+            // strings
+            [/"([^"\\]|\\.)*"/, 'string'],
+          ],
+
+          whitespace: [
+            [/[ \t\r\n]+/, 'white'],
+            [/--\[\[/, 'comment', '@comment'],
+            [/--.*$/, 'comment'],
+          ],
+
+          comment: [
+            [/[^\]]+/, 'comment'],
+            [/\]\]/, 'comment', '@pop'],
+            [/./, 'comment'],
+          ],
+        },
+      });
+
+      monaco.languages.setLanguageConfiguration('waluau', {
+        comments: {
+          lineComment: '--',
+          blockComment: ['--[[', ']]'],
+        },
+        brackets: [
+          ['{', '}'],
+          ['[', ']'],
+          ['(', ')'],
+        ],
+        autoClosingPairs: [
+          { open: '{', close: '}' },
+          { open: '[', close: ']' },
+          { open: '(', close: ')' },
+          { open: '"', close: '"' },
+        ],
+        surroundingPairs: [
+          { open: '{', close: '}' },
+          { open: '[', close: ']' },
+          { open: '(', close: ')' },
+          { open: '"', close: '"' },
+        ],
+      });
+    }
+  };
+
+  const handleEditorDidMount = (editor, monaco) => {
+    setEditorInstance(editor);
+    setMonacoInstance(monaco);
+  };
   // Load wasm-bindgen compiler module on mount.
   useEffect(() => {
     let cancelled = false;
@@ -253,7 +381,48 @@ export default function App() {
         : 'ready'
     : status;
 
+  // Set compiler diagnostics markers in Monaco Editor
+  useEffect(() => {
+    if (!monacoInstance || !editorInstance) return;
+    const model = editorInstance.getModel();
+    if (!model) return;
 
+    if (errorMsg) {
+      const match = errorMsg.match(/at (\d+)\.\.(\d+)$/);
+      if (match) {
+        const start = parseInt(match[1], 10);
+        const end = parseInt(match[2], 10);
+        const startPos = model.getPositionAt(start);
+        const endPos = model.getPositionAt(end);
+        const cleanMessage = errorMsg.substring(0, match.index).trim();
+
+        monacoInstance.editor.setModelMarkers(model, 'waluau', [
+          {
+            startLineNumber: startPos.lineNumber,
+            startColumn: startPos.column,
+            endLineNumber: endPos.lineNumber,
+            endColumn: endPos.column,
+            message: cleanMessage,
+            severity: monacoInstance.MarkerSeverity.Error,
+          },
+        ]);
+      } else {
+        // Fallback for errors without a specific span (set on line 1)
+        monacoInstance.editor.setModelMarkers(model, 'waluau', [
+          {
+            startLineNumber: 1,
+            startColumn: 1,
+            endLineNumber: 1,
+            endColumn: model.getLineLength(1) + 1,
+            message: errorMsg,
+            severity: monacoInstance.MarkerSeverity.Error,
+          },
+        ]);
+      }
+    } else {
+      monacoInstance.editor.setModelMarkers(model, 'waluau', []);
+    }
+  }, [errorMsg, monacoInstance, editorInstance, code]);
 
   const selectPreset = (source) => {
     setCode(source);
@@ -388,9 +557,11 @@ export default function App() {
               <Editor
                 height="100%"
                 theme="vs-dark"
-                language="lua"
+                language="waluau"
                 value={code}
                 onChange={(value) => setCode(value ?? '')}
+                beforeMount={handleEditorBeforeMount}
+                onMount={handleEditorDidMount}
                 options={{
                   minimap: { enabled: false },
                   fontSize: 14,
