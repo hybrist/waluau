@@ -3290,21 +3290,21 @@ fn collect_free_names_in_stmts(stmts: &[Stmt], bound: &HashSet<String>, out: &mu
             } => {
                 collect_free_names_in_expr(condition, bound, out);
                 for s in then_body {
-                    collect_free_names_in_stmts(&[s.clone()], bound, out);
+                    collect_free_names_in_stmts(std::slice::from_ref(s), bound, out);
                 }
                 for s in else_body {
-                    collect_free_names_in_stmts(&[s.clone()], bound, out);
+                    collect_free_names_in_stmts(std::slice::from_ref(s), bound, out);
                 }
             }
             Stmt::While { condition, body } => {
                 collect_free_names_in_expr(condition, bound, out);
                 for s in body {
-                    collect_free_names_in_stmts(&[s.clone()], bound, out);
+                    collect_free_names_in_stmts(std::slice::from_ref(s), bound, out);
                 }
             }
             Stmt::Repeat { body, condition } => {
                 for s in body {
-                    collect_free_names_in_stmts(&[s.clone()], bound, out);
+                    collect_free_names_in_stmts(std::slice::from_ref(s), bound, out);
                 }
                 collect_free_names_in_expr(condition, bound, out);
             }
