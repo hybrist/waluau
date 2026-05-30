@@ -48,6 +48,7 @@ pub enum NumericType {
 pub enum Type {
     Numeric(NumericType),
     Bool,
+    String,
     Array(Box<Type>),
     Multi(Vec<Type>),
     Function {
@@ -120,6 +121,7 @@ impl std::fmt::Display for Type {
         match self {
             Self::Numeric(ty) => ty.fmt(f),
             Self::Bool => f.write_str("bool"),
+            Self::String => f.write_str("string"),
             Self::Array(element) => write!(f, "{{{element}}}"),
             Self::Multi(types) => {
                 for (index, ty) in types.iter().enumerate() {
@@ -217,6 +219,7 @@ pub enum Rebindability {
 pub enum Expr {
     Number(NumberLiteral),
     Bool(bool),
+    String(String),
     Name(String),
     Unary {
         op: UnaryOp,

@@ -1515,6 +1515,11 @@ impl Builder<'_> {
                 let ty = match self.infer_expr_type(expr, types, expected)? {
                     Type::Numeric(ty) => ty,
                     Type::Bool => unreachable!("number literal cannot lower as bool"),
+                    Type::String => {
+                        return Err(Diagnostic::new(
+                            "numeric literal is not assignable to string",
+                        ));
+                    }
                     Type::Array(_) => {
                         return Err(Diagnostic::new(
                             "numeric literal is not assignable to array",
@@ -1537,6 +1542,11 @@ impl Builder<'_> {
                 })
             }
             Expr::Bool(value) => self.emit(Instruction::Bool(*value)),
+            Expr::String(_) => {
+                return Err(Diagnostic::new(
+                    "string values are not yet supported in IR lowering",
+                ));
+            }
             Expr::Name(name) => {
                 if let Some(value) = env.get(name).copied() {
                     let actual = types.get(name).cloned().ok_or_else(|| {
@@ -1571,6 +1581,11 @@ impl Builder<'_> {
                         let operand_ty = match actual {
                             Type::Numeric(ty) => ty,
                             Type::Bool => {
+                                return Err(Diagnostic::new(
+                                    "unary '-' requires a numeric operand",
+                                ));
+                            }
+                            Type::String => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -2017,6 +2032,9 @@ impl Builder<'_> {
                 Some(Type::Bool) => {
                     Err(Diagnostic::new("numeric literal is not assignable to bool"))
                 }
+                Some(Type::String) => Err(Diagnostic::new(
+                    "numeric literal is not assignable to string",
+                )),
                 Some(Type::Array(_)) => Err(Diagnostic::new(
                     "numeric literal is not assignable to array",
                 )),
@@ -2029,6 +2047,7 @@ impl Builder<'_> {
                 None => Ok(Type::number()),
             },
             Expr::Bool(_) => Ok(Type::Bool),
+            Expr::String(_) => Ok(Type::String),
             Expr::Require(path) => Err(Diagnostic::new(format!(
                 "unresolved require(\"{path}\") reached IR lowering"
             ))),
@@ -2052,6 +2071,9 @@ impl Builder<'_> {
                     match actual {
                         Type::Numeric(_) => coerce_type(actual, expected),
                         Type::Bool => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                        Type::String => {
+                            Err(Diagnostic::new("unary '-' requires a numeric operand"))
+                        }
                         Type::Array(_) => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
@@ -2529,6 +2551,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Bool => Err(Diagnostic::new(format!(
                 "cannot implicitly convert bool to {expected_numeric}",
             ))),
+            Type::String => Err(Diagnostic::new(format!(
+                "cannot implicitly convert string to {expected_numeric}",
+            ))),
             Type::Array(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert array to {expected_numeric}",
             ))),
@@ -2704,7 +2729,7 @@ fn collect_expr_captures(
             collect_expr_captures(base, bound, env, signatures, captures);
             collect_expr_captures(index, bound, env, signatures, captures);
         }
-        Expr::Number(_) | Expr::Bool(_) | Expr::Require(_) => {}
+        Expr::Number(_) | Expr::Bool(_) | Expr::String(_) | Expr::Require(_) => {}
     }
 }
 
@@ -3525,5 +3550,20 @@ mod tests {
         if let Err(err) = super::verify(&module) {
             panic!("verify failed: {err}\n{}", function.dump());
         }
+    }
+
+    #[test]
+    fn rejects_string_value_lowering_for_now() {
+        let source = r#"
+            function entry(): string
+                return "hello"
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let err = build(&program).expect_err("ir build should fail for string values");
+        assert!(
+            err.to_string()
+                .contains("string values are not yet supported in IR lowering")
+        );
     }
 }
