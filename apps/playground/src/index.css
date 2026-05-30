@@ -942,3 +942,150 @@ body,
   color: var(--text-dark);
   font-style: italic;
 }
+
+/* Editor layout with file explorer sidebar */
+.editor-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.file-explorer {
+  width: 200px;
+  background: rgba(0, 0, 0, 0.15);
+  border-right: 1px solid var(--border-light);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  user-select: none;
+}
+
+.explorer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.explorer-btn-add {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 4px;
+  transition: var(--transition-smooth);
+}
+
+.explorer-btn-add:hover {
+  color: var(--accent-cyan);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.file-list {
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  gap: 2px;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: var(--transition-smooth);
+  position: relative;
+  min-width: 0;
+}
+
+.file-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-main);
+}
+
+.file-item.active {
+  background: rgba(0, 242, 254, 0.08);
+  color: var(--accent-cyan);
+  font-weight: 600;
+}
+
+.file-item.entry .file-name-text::before {
+  content: '★';
+  display: inline-block;
+  margin-right: 6px;
+  font-size: 10px;
+  color: var(--status-loading);
+}
+
+.file-name-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-actions {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  padding-left: 6px;
+}
+
+.file-item:hover .file-actions {
+  display: flex;
+}
+
+.file-action-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dark);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  border-radius: 4px;
+  transition: var(--transition-smooth);
+}
+
+.file-action-btn:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.file-action-btn.entry:hover {
+  color: var(--accent-indigo);
+}
+
+.file-action-btn.delete:hover {
+  color: var(--status-error);
+}
+
+.file-edit-input {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--accent-cyan);
+  border-radius: 4px;
+  color: var(--text-main);
+  padding: 3px 6px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  width: 100%;
+  outline: none;
+}

@@ -7,20 +7,52 @@ const fixtureModules = import.meta.glob('../../../fixtures/*.walu', {
   import: 'default'
 });
 
-const PRESETS = Object.entries(fixtureModules)
-  .map(([path, source]) => ({
-    key: path.split('/').pop().replace(/\.walu$/, ''),
-    label: path
-      .split('/').pop()
-      .replace(/\.walu$/, '')
+const moduleFixtures = import.meta.glob('../../../fixtures/modules/*.walu', {
+  eager: true,
+  query: '?raw',
+  import: 'default'
+});
+
+const SINGLE_PRESETS = Object.entries(fixtureModules)
+  .map(([path, source]) => {
+    const filename = path.split('/').pop();
+    const key = filename.replace(/\.walu$/, '');
+    const label = key
       .split('-')
       .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(' '),
-    source
-  }))
-  .sort((left, right) => left.label.localeCompare(right.label));
+      .join(' ');
+    
+    return {
+      key,
+      label,
+      files: {
+        [`/${filename}`]: source
+      },
+      entryFile: `/${filename}`
+    };
+  });
 
-const DEFAULT_PRESET = PRESETS[0]?.source ?? '';
+const MULTI_PRESET = {
+  key: 'require-flow',
+  label: 'Require Flow Example',
+  files: Object.entries(moduleFixtures).reduce((acc, [path, source]) => {
+    const filename = path.split('/').pop();
+    acc[`/${filename}`] = source;
+    return acc;
+  }, {}),
+  entryFile: '/main.walu'
+};
+
+const PRESETS = [...SINGLE_PRESETS, MULTI_PRESET].sort((left, right) =>
+  left.label.localeCompare(right.label)
+);
+
+const DEFAULT_PRESET = PRESETS[0] || {
+  key: 'default',
+  label: 'Default',
+  files: { '/main.walu': '' },
+  entryFile: '/main.walu'
+};
 
 // Parse WebAssembly binary to extract exports and signatures
 function getWasmExports(buffer) {
@@ -173,7 +205,11 @@ function classifyWasmInstantiationError(err, requiresWasmGc) {
 }
 
 export default function App() {
-  const [code, setCode] = useState(DEFAULT_PRESET);
+  const [files, setFiles] = useState(DEFAULT_PRESET.files);
+  const [activeFile, setActiveFile] = useState(DEFAULT_PRESET.entryFile);
+  const [entryFile, setEntryFile] = useState(DEFAULT_PRESET.entryFile);
+  const [editingFile, setEditingFile] = useState(null);
+  const [editingValue, setEditingValue] = useState('');
   const [status, setStatus] = useState('loading'); // 'loading', 'ready', 'success', 'error'
   const [loadErrorMsg, setLoadErrorMsg] = useState('');
   const [compilerReady, setCompilerReady] = useState(false);
@@ -315,6 +351,100 @@ export default function App() {
     setEditorInstance(editor);
     setMonacoInstance(monaco);
   };
+
+  const disposeModel = (filename) => {
+    if (!monacoInstance) return;
+    const models = monacoInstance.editor.getModels();
+    const model = models.find(m => m.uri.path === filename || m.uri.toString().endsWith(filename));
+    if (model) {
+      model.dispose();
+    }
+  };
+
+  const handleAddFile = (name) => {
+    let filename = name.trim();
+    if (!filename) return;
+    if (!filename.startsWith('/')) {
+      filename = '/' + filename;
+    }
+    if (!filename.endsWith('.walu')) {
+      filename = filename + '.walu';
+    }
+    if (files[filename] !== undefined) {
+      alert('File already exists');
+      return;
+    }
+    setFiles(prev => ({
+      ...prev,
+      [filename]: ''
+    }));
+    setActiveFile(filename);
+  };
+
+  const handleDeleteFile = (filename) => {
+    const fileKeys = Object.keys(files);
+    if (fileKeys.length <= 1) {
+      alert('Cannot delete the last remaining file');
+      return;
+    }
+    if (confirm(`Are you sure you want to delete ${filename}?`)) {
+      disposeModel(filename);
+      setFiles(prev => {
+        const next = { ...prev };
+        delete next[filename];
+        return next;
+      });
+      if (activeFile === filename) {
+        const remaining = fileKeys.filter(f => f !== filename);
+        setActiveFile(remaining[0]);
+      }
+      if (entryFile === filename) {
+        const remaining = fileKeys.filter(f => f !== filename);
+        setEntryFile(remaining[0]);
+      }
+    }
+  };
+
+  const handleRenameFile = (oldName, newName) => {
+    let filename = newName.trim();
+    if (!filename) return;
+    if (!filename.startsWith('/')) {
+      filename = '/' + filename;
+    }
+    if (!filename.endsWith('.walu')) {
+      filename = filename + '.walu';
+    }
+    if (filename === oldName) return;
+    if (files[filename] !== undefined) {
+      alert('File already exists');
+      return;
+    }
+    disposeModel(oldName);
+    setFiles(prev => {
+      const next = { ...prev };
+      next[filename] = next[oldName];
+      delete next[oldName];
+      return next;
+    });
+    if (activeFile === oldName) {
+      setActiveFile(filename);
+    }
+    if (entryFile === oldName) {
+      setEntryFile(filename);
+    }
+  };
+
+  const handleFileChange = (filename, value) => {
+    setFiles(prev => ({
+      ...prev,
+      [filename]: value
+    }));
+  };
+
+  const handleSetEntryFile = (filename) => {
+    setEntryFile(filename);
+  };
+
   // Load wasm-bindgen compiler module on mount.
   useEffect(() => {
     let cancelled = false;
@@ -325,7 +455,7 @@ export default function App() {
         if (cancelled) {
           return;
         }
-        setCompileSource(() => module.compile);
+        setCompileSource(() => module.compile_multi);
         setCompilerReady(true);
         setStatus('ready');
         setLoadErrorMsg('');
@@ -353,7 +483,7 @@ export default function App() {
     }
 
     try {
-      const parsed = compileSource(code);
+      const parsed = compileSource(files, entryFile);
       return {
         output: parsed,
         errorMsg: '',
@@ -365,7 +495,7 @@ export default function App() {
         errorMsg: message,
       };
     }
-  }, [code, compileSource, compilerReady, loadErrorMsg, status]);
+  }, [files, entryFile, compileSource, compilerReady, loadErrorMsg, status]);
 
   const output = compilation.output;
   const errorMsg = compilation.errorMsg;
@@ -384,48 +514,80 @@ export default function App() {
   // Set compiler diagnostics markers in Monaco Editor
   useEffect(() => {
     if (!monacoInstance || !editorInstance) return;
-    const model = editorInstance.getModel();
-    if (!model) return;
+    const models = monacoInstance.editor.getModels();
+    for (const m of models) {
+      monacoInstance.editor.setModelMarkers(m, 'waluau', []);
+    }
 
     if (errorMsg) {
-      const match = errorMsg.match(/at (\d+)\.\.(\d+)$/);
-      if (match) {
-        const start = parseInt(match[1], 10);
-        const end = parseInt(match[2], 10);
-        const startPos = model.getPositionAt(start);
-        const endPos = model.getPositionAt(end);
-        const cleanMessage = errorMsg.substring(0, match.index).trim();
+      const multiMatch = errorMsg.match(/^in module "([^"]+)": (.*) at (\d+)\.\.(\d+)$/);
+      if (multiMatch) {
+        const file = multiMatch[1];
+        const cleanMessage = multiMatch[2].trim();
+        const start = parseInt(multiMatch[3], 10);
+        const end = parseInt(multiMatch[4], 10);
 
-        monacoInstance.editor.setModelMarkers(model, 'waluau', [
-          {
-            startLineNumber: startPos.lineNumber,
-            startColumn: startPos.column,
-            endLineNumber: endPos.lineNumber,
-            endColumn: endPos.column,
-            message: cleanMessage,
-            severity: monacoInstance.MarkerSeverity.Error,
-          },
-        ]);
+        const targetModel = models.find(m => {
+          const path = m.uri.path;
+          return path === file || path === '/' + file || m.uri.toString().endsWith(file);
+        });
+
+        if (targetModel) {
+          const startPos = targetModel.getPositionAt(start);
+          const endPos = targetModel.getPositionAt(end);
+          monacoInstance.editor.setModelMarkers(targetModel, 'waluau', [
+            {
+              startLineNumber: startPos.lineNumber,
+              startColumn: startPos.column,
+              endLineNumber: endPos.lineNumber,
+              endColumn: endPos.column,
+              message: cleanMessage,
+              severity: monacoInstance.MarkerSeverity.Error,
+            },
+          ]);
+        }
       } else {
-        // Fallback for errors without a specific span (set on line 1)
-        monacoInstance.editor.setModelMarkers(model, 'waluau', [
-          {
-            startLineNumber: 1,
-            startColumn: 1,
-            endLineNumber: 1,
-            endColumn: model.getLineLength(1) + 1,
-            message: errorMsg,
-            severity: monacoInstance.MarkerSeverity.Error,
-          },
-        ]);
+        const singleMatch = errorMsg.match(/(.*) at (\d+)\.\.(\d+)$/);
+        const activeModel = editorInstance.getModel();
+        if (activeModel) {
+          if (singleMatch) {
+            const cleanMessage = singleMatch[1].trim();
+            const start = parseInt(singleMatch[2], 10);
+            const end = parseInt(singleMatch[3], 10);
+            const startPos = activeModel.getPositionAt(start);
+            const endPos = activeModel.getPositionAt(end);
+            monacoInstance.editor.setModelMarkers(activeModel, 'waluau', [
+              {
+                startLineNumber: startPos.lineNumber,
+                startColumn: startPos.column,
+                endLineNumber: endPos.lineNumber,
+                endColumn: endPos.column,
+                message: cleanMessage,
+                severity: monacoInstance.MarkerSeverity.Error,
+              },
+            ]);
+          } else {
+            const entryModel = models.find(m => m.uri.path === entryFile || m.uri.toString().endsWith(entryFile)) || activeModel;
+            monacoInstance.editor.setModelMarkers(entryModel, 'waluau', [
+              {
+                startLineNumber: 1,
+                startColumn: 1,
+                endLineNumber: 1,
+                endColumn: entryModel.getLineLength(1) + 1,
+                message: errorMsg,
+                severity: monacoInstance.MarkerSeverity.Error,
+              },
+            ]);
+          }
+        }
       }
-    } else {
-      monacoInstance.editor.setModelMarkers(model, 'waluau', []);
     }
-  }, [errorMsg, monacoInstance, editorInstance, code]);
+  }, [errorMsg, monacoInstance, editorInstance, files, entryFile]);
 
-  const selectPreset = (source) => {
-    setCode(source);
+  const selectPreset = (preset) => {
+    setFiles(preset.files);
+    setActiveFile(preset.entryFile);
+    setEntryFile(preset.entryFile);
   };
 
   // Sync runInstance, exportsList, inputs and results when wasm changes
@@ -539,7 +701,7 @@ export default function App() {
       <div className="presets-bar">
         <span className="presets-label">Examples:</span>
         {PRESETS.map((preset) => (
-          <button key={preset.key} className="preset-btn" onClick={() => selectPreset(preset.source)}>
+          <button key={preset.key} className="preset-btn" onClick={() => selectPreset(preset)}>
             {preset.label}
           </button>
         ))}
@@ -552,40 +714,157 @@ export default function App() {
             <h3>Source Code</h3>
             <span className="file-extension">.walu</span>
           </div>
-          <div className="editor-container">
-            <div style={{ flex: 1, height: '100%' }}>
-              <Editor
-                height="100%"
-                theme="vs-dark"
-                language="waluau"
-                value={code}
-                onChange={(value) => setCode(value ?? '')}
-                beforeMount={handleEditorBeforeMount}
-                onMount={handleEditorDidMount}
-                options={{
-                  minimap: { enabled: false },
-                  fontSize: 14,
-                  fontFamily: 'var(--font-mono)',
-                  lineHeight: 1.6,
-                  padding: { top: 16, bottom: 16 },
-                  scrollBeyondLastLine: false,
-                  automaticLayout: true,
+          <div className="editor-layout">
+            {/* File Explorer Sidebar */}
+            <div className="file-explorer">
+              <div className="explorer-header">
+                <span>Files</span>
+                <button
+                  className="explorer-btn-add"
+                  title="New File"
+                  onClick={() => {
+                    const name = prompt("Enter file name (e.g. math.walu):");
+                    if (name) handleAddFile(name);
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                  </svg>
+                </button>
+              </div>
+              <div className="file-list">
+                {Object.keys(files).map((filename) => {
+                  const isActive = filename === activeFile;
+                  const isEntry = filename === entryFile;
+                  const displayName = filename.startsWith('/') ? filename.slice(1) : filename;
+
+                  return (
+                    <div
+                      key={filename}
+                      className={`file-item ${isActive ? 'active' : ''} ${isEntry ? 'entry' : ''}`}
+                      onClick={() => {
+                        setActiveFile(filename);
+                      }}
+                    >
+                      {editingFile === filename ? (
+                        <input
+                          type="text"
+                          className="file-edit-input"
+                          value={editingValue}
+                          autoFocus
+                          onChange={(e) => setEditingValue(e.target.value)}
+                          onBlur={() => {
+                            if (editingValue.trim()) {
+                              handleRenameFile(filename, editingValue);
+                            }
+                            setEditingFile(null);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              if (editingValue.trim()) {
+                                handleRenameFile(filename, editingValue);
+                              }
+                              setEditingFile(null);
+                            } else if (e.key === 'Escape') {
+                              setEditingFile(null);
+                            }
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      ) : (
+                        <>
+                          <span className="file-name-text" title={displayName}>
+                            {displayName}
+                          </span>
+                          <div className="file-actions">
+                            {!isEntry && (
+                              <button
+                                className="file-action-btn entry"
+                                title="Set as Entry Point"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleSetEntryFile(filename);
+                                }}
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                                </svg>
+                              </button>
+                            )}
+                            <button
+                              className="file-action-btn rename"
+                              title="Rename File"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingFile(filename);
+                                setEditingValue(displayName);
+                              }}
+                            >
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M12 20h9"></path>
+                                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                              </svg>
+                            </button>
+                            <button
+                              className="file-action-btn delete"
+                              title="Delete File"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteFile(filename);
+                              }}
+                            >
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                              </svg>
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Monaco Editor Container */}
+            <div className="editor-container">
+              <div style={{ flex: 1, height: '100%' }}>
+                <Editor
+                  height="100%"
+                  theme="vs-dark"
+                  language="waluau"
+                  path={activeFile}
+                  value={files[activeFile] ?? ''}
+                  onChange={(value) => handleFileChange(activeFile, value ?? '')}
+                  beforeMount={handleEditorBeforeMount}
+                  onMount={handleEditorDidMount}
+                  options={{
+                    minimap: { enabled: false },
+                    fontSize: 14,
+                    fontFamily: 'var(--font-mono)',
+                    lineHeight: 1.6,
+                    padding: { top: 16, bottom: 16 },
+                    scrollBeyondLastLine: false,
+                    automaticLayout: true,
+                  }}
+                />
+              </div>
+              {/* Visually hidden but active textarea for Playwright test compatibility */}
+              <textarea
+                className="code-textarea"
+                value={files[activeFile] ?? ''}
+                onChange={(e) => handleFileChange(activeFile, e.target.value)}
+                style={{
+                  position: 'absolute',
+                  left: '-9999px',
+                  top: '-9999px',
+                  width: '100px',
+                  height: '100px',
                 }}
               />
             </div>
-            {/* Visually hidden but active textarea for Playwright test compatibility */}
-            <textarea
-              className="code-textarea"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              style={{
-                position: 'absolute',
-                left: '-9999px',
-                top: '-9999px',
-                width: '100px',
-                height: '100px',
-              }}
-            />
           </div>
         </section>
 
