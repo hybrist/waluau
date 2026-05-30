@@ -1076,6 +1076,8 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
             ..
         } => vec![*array, *index, *value],
         IrInstruction::ArrayLen { array } => vec![*array],
+        IrInstruction::PackMulti { values, .. } => values.clone(),
+        IrInstruction::MultiGet { value, .. } => vec![*value],
         IrInstruction::Phi(_) => Vec::new(),
     }
 }
@@ -1112,6 +1114,8 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         IrInstruction::ArrayNew { elements, .. } => elements.first().copied() == Some(value),
         IrInstruction::ArrayGet { .. } | IrInstruction::ArraySet { .. } => false,
         IrInstruction::ArrayLen { array } => *array == value,
+        IrInstruction::PackMulti { values, .. } => values.first().copied() == Some(value),
+        IrInstruction::MultiGet { value: source, .. } => *source == value,
         IrInstruction::Phi(_) => false,
     }
 }
