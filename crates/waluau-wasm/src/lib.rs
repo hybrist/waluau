@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn compile_closure_capture_succeeds() {
-        let source = include_str!("../../../fixtures/closure_capture_unsupported.walu");
+        let source = include_str!("../../../fixtures/closure_capture.walu");
         let result = compile_source(source).expect("closure variable capture should compile");
         assert!(result.wat.contains("(module"));
         assert!(

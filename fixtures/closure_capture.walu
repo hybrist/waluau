@@ -4,3 +4,4 @@ function capture_entry(x: i32): i32
     end
     return addx(7)
 end
+
