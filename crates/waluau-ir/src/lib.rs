@@ -8,6 +8,7 @@ use waluau_diagnostics::Diagnostic;
 
 const COROUTINE_CREATE: &str = "coroutine_create";
 const COROUTINE_RESUME: &str = "coroutine_resume";
+const ASSERT: &str = "assert";
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct BlockId(pub usize);
@@ -1001,6 +1002,14 @@ impl Builder<'_> {
                 });
             }
             Stmt::Expr(expr) => {
+                if let Expr::Call { callee, args } = expr {
+                    if let Expr::Name(name) = callee.as_ref() {
+                        if name == ASSERT {
+                            self.lower_assert_call(args, env, types)?;
+                            return Ok(());
+                        }
+                    }
+                }
                 let _ = self.lower_expr(expr, env, types, None)?;
             }
             Stmt::Return(expr) => {
@@ -1036,6 +1045,34 @@ impl Builder<'_> {
                 self.lower_repeat(body, condition, env, types)?;
             }
         }
+        Ok(())
+    }
+
+    fn lower_assert_call(
+        &mut self,
+        args: &[Expr],
+        env: &mut HashMap<String, ValueId>,
+        types: &mut HashMap<String, Type>,
+    ) -> Result<(), Diagnostic> {
+        if args.len() != 1 {
+            return Err(Diagnostic::new(format!(
+                "{ASSERT} expects 1 argument, got {}",
+                args.len()
+            )));
+        }
+        let condition = self.lower_expr(&args[0], env, types, Some(Type::Bool))?;
+        let continue_block = self.new_block();
+        let trap_block = self.new_block();
+        self.set_terminator(
+            self.current_block,
+            Terminator::Branch {
+                condition,
+                then_block: continue_block,
+                else_block: trap_block,
+            },
+        );
+        self.set_terminator(trap_block, Terminator::Unreachable);
+        self.current_block = continue_block;
         Ok(())
     }
 

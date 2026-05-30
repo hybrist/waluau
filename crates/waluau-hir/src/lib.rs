@@ -8,6 +8,7 @@ use waluau_diagnostics::Diagnostic;
 
 const COROUTINE_CREATE: &str = "coroutine_create";
 const COROUTINE_RESUME: &str = "coroutine_resume";
+const ASSERT: &str = "assert";
 
 #[derive(Clone)]
 struct Binding {
@@ -649,6 +650,25 @@ fn check_stmt(
         Stmt::Expr(expr) => {
             if !matches!(expr, Expr::Call { .. }) {
                 return Err(Diagnostic::new("expression statements must be calls"));
+            }
+            if let Expr::Call { callee, args } = expr {
+                if let Expr::Name(name) = callee.as_ref() {
+                    if name == ASSERT {
+                        if args.len() != 1 {
+                            return Err(Diagnostic::new(format!(
+                                "{ASSERT} expects 1 argument, got {}",
+                                args.len()
+                            )));
+                        }
+                        let actual = infer_expr(&args[0], vars, signatures, Some(Type::Bool))?;
+                        if actual != Type::Bool {
+                            return Err(Diagnostic::new(format!(
+                                "{ASSERT} expects bool, got {actual}"
+                            )));
+                        }
+                        return Ok(false);
+                    }
+                }
             }
             let _ = infer_expr(expr, vars, signatures, None)?;
             Ok(false)
@@ -1842,5 +1862,30 @@ mod tests {
             error.to_string(),
             "coroutine_create expects a zero-argument function"
         );
+    }
+
+    #[test]
+    fn type_checks_assert_statement() {
+        let source = r#"
+            function check(x: i32): i32
+                assert(x > 0)
+                return x
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn rejects_assert_with_non_bool_argument() {
+        let source = r#"
+            function check(x: i32): i32
+                assert(x)
+                return x
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.to_string(), "cannot implicitly convert i32 to bool");
     }
 }
