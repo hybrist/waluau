@@ -27,18 +27,35 @@ impl Parser {
 
     fn parse_program(&mut self) -> Result<Program, Diagnostic> {
         let mut functions = Vec::new();
+        let mut top_level = Vec::new();
         while self.peek().is_some() {
-            match self.parse_function() {
-                Ok(function) => functions.push(function),
-                Err(error) => {
-                    self.record_error(error);
-                    self.sync_to_next_function();
+            if self.check_simple(&TokenKind::Function) {
+                match self.parse_function() {
+                    Ok(function) => functions.push(function),
+                    Err(error) => {
+                        self.record_error(error);
+                        self.sync_to_next_function();
+                    }
+                }
+            } else {
+                match self.parse_stmt() {
+                    Ok(Stmt::Return(_) | Stmt::ReturnMulti(_)) => {
+                        self.record_error(Diagnostic::new("top-level return is not allowed"))
+                    }
+                    Ok(stmt) => top_level.push(stmt),
+                    Err(error) => {
+                        self.record_error(error);
+                        self.synchronize_statement(&[], self.index);
+                    }
                 }
             }
         }
 
         if self.diagnostics.is_empty() {
-            Ok(Program { functions })
+            Ok(Program {
+                functions,
+                top_level,
+            })
         } else {
             Err(Diagnostic::new(self.diagnostics.join("\n")))
         }
@@ -789,6 +806,7 @@ fn is_statement_start(kind: &TokenKind) -> bool {
     matches!(
         kind,
         TokenKind::Local
+            | TokenKind::Function
             | TokenKind::If
             | TokenKind::While
             | TokenKind::Repeat
@@ -1299,6 +1317,31 @@ mod tests {
             error
                 .to_string()
                 .contains("expected 'else' in if expression")
+        );
+    }
+
+    #[test]
+    fn parses_top_level_statements_with_functions() {
+        let source = r#"
+            local x: i32 = 41
+            function add1(v: i32): i32
+                return v + 1
+            end
+            x += 1
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        assert_eq!(program.functions.len(), 1);
+        assert_eq!(program.top_level.len(), 2);
+    }
+
+    #[test]
+    fn rejects_top_level_return_statement() {
+        let source = "return 1";
+        let error = parse(source).expect_err("parse should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("top-level return is not allowed")
         );
     }
 }

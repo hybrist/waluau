@@ -3,6 +3,7 @@ pub use waluau_span::Span;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Program {
     pub functions: Vec<Function>,
+    pub top_level: Vec<Stmt>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

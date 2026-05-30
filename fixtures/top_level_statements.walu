@@ -1,0 +1,6 @@
+function answer(): i32
+    return 42
+end
+
+local seed: i32 = answer()
+seed += 1

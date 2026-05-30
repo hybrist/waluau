@@ -8,8 +8,8 @@ use waluau_ir::{
 };
 use wasm_encoder::{
     BlockType, CodeSection, ConstExpr, ElementSection, Elements, ExportKind, ExportSection,
-    Function, FunctionSection, HeapType, Instruction, Module as WasmModule, RefType, StorageType,
-    TableSection, TableType, TypeSection, ValType,
+    Function, FunctionSection, HeapType, Instruction, Module as WasmModule, RefType, StartSection,
+    StorageType, TableSection, TableType, TypeSection, ValType,
 };
 use wasmparser::Validator;
 
@@ -61,7 +61,9 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     let mut codes = CodeSection::new();
     for (index, function) in module.functions.iter().enumerate() {
         functions.function(index as u32);
-        exports.export(&function.name, ExportKind::Func, index as u32);
+        if function.name != "__waluau_top_level_init" {
+            exports.export(&function.name, ExportKind::Func, index as u32);
+        }
         codes.function(&emit_function(function, &signatures, &array_registry)?);
     }
     tables.table(TableType {
@@ -82,6 +84,11 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     wasm.section(&functions);
     wasm.section(&tables);
     wasm.section(&exports);
+    if let Some(start) = module.start {
+        wasm.section(&StartSection {
+            function_index: start as u32,
+        });
+    }
     wasm.section(&elements);
     wasm.section(&codes);
 

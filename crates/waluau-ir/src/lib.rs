@@ -15,6 +15,7 @@ pub struct ValueId(pub usize);
 #[derive(Clone, Debug, PartialEq)]
 pub struct Module {
     pub functions: Vec<Function>,
+    pub start: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -133,7 +134,10 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
         functions.push(lowered.remove(0));
         functions.extend(lowered);
     }
-    let module = Module { functions };
+    let start = functions
+        .iter()
+        .position(|function| function.name == "__waluau_top_level_init");
+    let module = Module { functions, start };
     verify(&module)?;
     Ok(module)
 }
@@ -2562,6 +2566,7 @@ mod tests {
         };
         let err = verify(&Module {
             functions: vec![function],
+            start: None,
         })
         .expect_err("expected verifier to reject non-bool branch");
         assert!(err.to_string().contains("branch condition"));
@@ -2592,6 +2597,7 @@ mod tests {
         };
         let err = verify(&Module {
             functions: vec![function],
+            start: None,
         })
         .expect_err("expected verifier to reject return type mismatch");
         assert!(err.to_string().contains("return in block"));
@@ -2703,6 +2709,7 @@ mod tests {
         };
         let err = verify(&Module {
             functions: vec![function],
+            start: None,
         })
         .expect_err("expected verifier to reject phi predecessor ordering");
         assert!(err.to_string().contains("predecessor order mismatch"));
