@@ -134,8 +134,13 @@ mod tests {
     }
 
     #[test]
-    fn compile_closure_capture_error_propagated() {
+    fn compile_closure_capture_succeeds() {
         let source = include_str!("../../../fixtures/closure_capture_unsupported.walu");
-        compile_source(source).expect_err("closure variable capture should not compile");
+        let result = compile_source(source).expect("closure variable capture should compile");
+        assert!(result.wat.contains("(module"));
+        assert!(
+            result.wasm.starts_with(b"\0asm"),
+            "wasm output should begin with the WebAssembly magic bytes"
+        );
     }
 }

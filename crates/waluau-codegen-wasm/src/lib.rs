@@ -675,6 +675,7 @@ fn infer_value_types(
     Ok(types)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_block(
     out: &mut Function,
     function: &IrFunction,
