@@ -1154,11 +1154,7 @@ impl Builder<'_> {
                             lowered.len()
                         )));
                     }
-                    for ((binding, value), ty) in bindings
-                        .iter()
-                        .zip(lowered)
-                        .zip(inferred_types)
-                    {
+                    for ((binding, value), ty) in bindings.iter().zip(lowered).zip(inferred_types) {
                         env.insert(binding.name.clone(), value);
                         types.insert(binding.name.clone(), ty);
                     }
