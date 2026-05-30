@@ -1568,6 +1568,23 @@ mod tests {
     }
 
     #[test]
+    fn rejects_ambiguous_empty_array_local_inference() {
+        let source = r#"
+            function entry(): i32
+                local xs = {}
+                return #xs
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check_and_infer(&program).expect_err("inference should fail");
+        assert_eq!(
+            error.to_string(),
+            "empty array literal requires explicit element type"
+        );
+    }
+
+    #[test]
     fn rejects_length_on_non_array() {
         let source = r#"
             function entry(x: i32): i32
@@ -1904,6 +1921,24 @@ mod tests {
             error.to_string(),
             "cannot infer return type for recursive or cyclic function 'fact'"
         );
+    }
+
+    #[test]
+    fn inference_is_deterministic_for_identical_ast_input() {
+        let source = r#"
+            function pick(flag: bool)
+                local value = if flag then 1 else 2
+                return value + 1
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+
+        let inferred_once =
+            super::type_check_and_infer(&program).expect("first inference succeeds");
+        let inferred_twice =
+            super::type_check_and_infer(&program).expect("second inference succeeds");
+
+        assert_eq!(inferred_once, inferred_twice);
     }
 
     #[test]
