@@ -241,6 +241,7 @@ fn emit_function(
 ) -> Result<Function, Diagnostic> {
     let value_types = infer_value_types(function, signatures)?;
     let local_plan = build_local_plan(function, &value_types, array_registry)?;
+    let value_defs = build_value_definition_map(function);
     let locals = compress_locals(local_plan.extra_locals.clone());
     let mut out = Function::new(locals);
     if try_emit_structured_fast_path(
@@ -249,6 +250,7 @@ fn emit_function(
         signatures,
         &value_types,
         &local_plan,
+        &value_defs,
         array_registry,
     )? {
         out.instruction(&Instruction::End);
@@ -272,6 +274,7 @@ fn emit_function(
             signatures,
             &value_types,
             &local_plan,
+            &value_defs,
             array_registry,
         )?;
         out.instruction(&Instruction::End);
@@ -290,6 +293,7 @@ fn try_emit_structured_fast_path(
     signatures: &HashMap<String, FunctionSignature>,
     value_types: &BTreeMap<ValueId, Type>,
     local_plan: &LocalPlan,
+    value_defs: &HashMap<ValueId, IrInstruction>,
     array_registry: &ArrayTypeRegistry,
 ) -> Result<bool, Diagnostic> {
     if function.blocks.len() == 3 {
@@ -310,7 +314,14 @@ fn try_emit_structured_fast_path(
         if then_bb.is_some_and(|b| matches!(b.terminator, Terminator::Return(_)))
             && else_bb.is_some_and(|b| matches!(b.terminator, Terminator::Return(_)))
         {
-            emit_block_instructions(out, entry, signatures, local_plan, array_registry)?;
+            emit_block_instructions(
+                out,
+                entry,
+                signatures,
+                local_plan,
+                value_defs,
+                array_registry,
+            )?;
             emit_value_operand(out, local_plan, condition)?;
             out.instruction(&Instruction::If(BlockType::Empty));
             emit_phi_copies(out, function, entry.id, then_block, local_plan)?;
@@ -321,6 +332,7 @@ fn try_emit_structured_fast_path(
                 signatures,
                 value_types,
                 local_plan,
+                value_defs,
                 array_registry,
             )?;
             out.instruction(&Instruction::Else);
@@ -332,6 +344,7 @@ fn try_emit_structured_fast_path(
                 signatures,
                 value_types,
                 local_plan,
+                value_defs,
                 array_registry,
             )?;
             out.instruction(&Instruction::End);
@@ -364,11 +377,25 @@ fn try_emit_structured_fast_path(
                 .is_some_and(|b| matches!(b.terminator, Terminator::Jump(t) if t == second.id))
                 && else_bb.is_some_and(|b| matches!(b.terminator, Terminator::Return(_)))
             {
-                emit_block_instructions(out, entry, signatures, local_plan, array_registry)?;
+                emit_block_instructions(
+                    out,
+                    entry,
+                    signatures,
+                    local_plan,
+                    value_defs,
+                    array_registry,
+                )?;
                 emit_phi_copies(out, function, entry.id, second.id, local_plan)?;
                 out.instruction(&Instruction::Block(BlockType::Empty));
                 out.instruction(&Instruction::Loop(BlockType::Empty));
-                emit_block_instructions(out, second, signatures, local_plan, array_registry)?;
+                emit_block_instructions(
+                    out,
+                    second,
+                    signatures,
+                    local_plan,
+                    value_defs,
+                    array_registry,
+                )?;
                 emit_value_operand(out, local_plan, condition)?;
                 out.instruction(&Instruction::I32Eqz);
                 out.instruction(&Instruction::BrIf(1));
@@ -378,6 +405,7 @@ fn try_emit_structured_fast_path(
                     then_bb.expect("checked above"),
                     signatures,
                     local_plan,
+                    value_defs,
                     array_registry,
                 )?;
                 emit_phi_copies(out, function, then_block, second.id, local_plan)?;
@@ -392,6 +420,7 @@ fn try_emit_structured_fast_path(
                     signatures,
                     value_types,
                     local_plan,
+                    value_defs,
                     array_registry,
                 )?;
                 return Ok(true);
@@ -413,13 +442,34 @@ fn try_emit_structured_fast_path(
                             "unsupported repeat-until CFG shape for structured wasm emission",
                         )
                     })?;
-                emit_block_instructions(out, entry, signatures, local_plan, array_registry)?;
+                emit_block_instructions(
+                    out,
+                    entry,
+                    signatures,
+                    local_plan,
+                    value_defs,
+                    array_registry,
+                )?;
                 emit_phi_copies(out, function, entry.id, body.id, local_plan)?;
                 out.instruction(&Instruction::Block(BlockType::Empty));
                 out.instruction(&Instruction::Loop(BlockType::Empty));
-                emit_block_instructions(out, body, signatures, local_plan, array_registry)?;
+                emit_block_instructions(
+                    out,
+                    body,
+                    signatures,
+                    local_plan,
+                    value_defs,
+                    array_registry,
+                )?;
                 emit_phi_copies(out, function, body.id, second.id, local_plan)?;
-                emit_block_instructions(out, second, signatures, local_plan, array_registry)?;
+                emit_block_instructions(
+                    out,
+                    second,
+                    signatures,
+                    local_plan,
+                    value_defs,
+                    array_registry,
+                )?;
                 emit_value_operand(out, local_plan, condition)?;
                 out.instruction(&Instruction::BrIf(1));
                 emit_phi_copies(out, function, second.id, body.id, local_plan)?;
@@ -434,6 +484,7 @@ fn try_emit_structured_fast_path(
                     signatures,
                     value_types,
                     local_plan,
+                    value_defs,
                     array_registry,
                 )?;
                 return Ok(true);
@@ -519,6 +570,16 @@ fn build_local_plan(
         stack_values,
         pc_local,
     })
+}
+
+fn build_value_definition_map(function: &IrFunction) -> HashMap<ValueId, IrInstruction> {
+    let mut defs = HashMap::new();
+    for block in function.blocks.values() {
+        for (value, instruction) in &block.instructions {
+            defs.insert(*value, instruction.clone());
+        }
+    }
+    defs
 }
 
 fn infer_value_types(
@@ -621,9 +682,17 @@ fn emit_block(
     signatures: &HashMap<String, FunctionSignature>,
     value_types: &BTreeMap<ValueId, Type>,
     local_plan: &LocalPlan,
+    value_defs: &HashMap<ValueId, IrInstruction>,
     array_registry: &ArrayTypeRegistry,
 ) -> Result<(), Diagnostic> {
-    emit_block_instructions(out, block, signatures, local_plan, array_registry)?;
+    emit_block_instructions(
+        out,
+        block,
+        signatures,
+        local_plan,
+        value_defs,
+        array_registry,
+    )?;
     match &block.terminator {
         Terminator::Jump(target) => {
             emit_phi_copies(out, function, block.id, *target, local_plan)?;
@@ -667,6 +736,7 @@ fn emit_block_instructions(
     block: &BasicBlock,
     signatures: &HashMap<String, FunctionSignature>,
     local_plan: &LocalPlan,
+    value_defs: &HashMap<ValueId, IrInstruction>,
     array_registry: &ArrayTypeRegistry,
 ) -> Result<(), Diagnostic> {
     for (value, instruction) in &block.instructions {
@@ -723,6 +793,33 @@ fn emit_block_instructions(
                 params,
                 return_type,
             } => {
+                if let Some(IrInstruction::Closure {
+                    name,
+                    captures,
+                    params: closure_params,
+                    return_type: closure_return_type,
+                }) = value_defs.get(callee)
+                {
+                    if params != closure_params || return_type != closure_return_type {
+                        return Err(Diagnostic::new(
+                            "indirect-call signature mismatch for closure value",
+                        ));
+                    }
+                    let target = signatures.get(name).ok_or_else(|| {
+                        Diagnostic::new(format!(
+                            "unknown closure target function '{name}' during wasm emission"
+                        ))
+                    })?;
+                    for capture in captures {
+                        emit_value_operand(out, local_plan, *capture)?;
+                    }
+                    for arg in args {
+                        emit_value_operand(out, local_plan, *arg)?;
+                    }
+                    out.instruction(&Instruction::Call(target.index));
+                    emit_value_store(out, local_plan, *value)?;
+                    continue;
+                }
                 for arg in args {
                     emit_value_operand(out, local_plan, *arg)?;
                 }
@@ -736,15 +833,10 @@ fn emit_block_instructions(
             }
             IrInstruction::Closure {
                 name,
-                captures,
+                captures: _,
                 params,
                 return_type,
             } => {
-                if !captures.is_empty() {
-                    return Err(Diagnostic::new(
-                        "wasm backend does not yet support closures with captures",
-                    ));
-                }
                 let callee = signatures.get(name).ok_or_else(|| {
                     Diagnostic::new(format!("unknown function '{name}' during wasm emission"))
                 })?;
@@ -1865,7 +1957,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_capturing_closure_values() {
+    fn emits_valid_wasm_for_capturing_closure_values() {
         let source = r#"
             function entry(x: i32): i32
                 local f: (i32) -> i32 = function(y: i32): i32
@@ -1876,11 +1968,10 @@ mod tests {
         "#;
         let program = waluau_parser::parse(source).expect("parse should succeed");
         let ir = waluau_ir::build(&program).expect("ir should succeed");
-        let err = super::emit(&ir).expect_err("capturing closures should be unsupported");
-        assert_eq!(
-            err.to_string(),
-            "wasm backend does not yet support closures with captures"
-        );
+        let wasm = super::emit(&ir).expect("capturing closures should compile");
+        Validator::new()
+            .validate_all(&wasm)
+            .expect("emitted module should validate");
     }
 
     #[test]
