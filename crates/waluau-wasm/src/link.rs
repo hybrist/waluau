@@ -108,12 +108,7 @@ impl<'a> Loader<'a> {
             let resolved = if self.files.contains_key(&resolved) {
                 resolved
             } else {
-                let with_ext = format!("{}.walu", resolved);
-                if self.files.contains_key(&with_ext) {
-                    with_ext
-                } else {
-                    with_ext
-                }
+                format!("{}.walu", resolved)
             };
             let target = self.load(&resolved)?;
             requires.insert(raw, target);
