@@ -177,6 +177,10 @@ fn stmt_calls_name(stmt: &Stmt, callee: &str) -> bool {
         | Stmt::Assign { value, .. }
         | Stmt::Expr(value)
         | Stmt::Return(value) => expr_calls_name(value, callee),
+        Stmt::ReturnMulti(values) => values.iter().any(|value| expr_calls_name(value, callee)),
+        Stmt::LetMulti { values, .. } | Stmt::AssignMulti { values, .. } => {
+            values.iter().any(|value| expr_calls_name(value, callee))
+        }
         Stmt::IndexAssign {
             base, index, value, ..
         } => {
@@ -316,6 +320,19 @@ fn collect_return_types(
             }
             Stmt::Return(expr) => {
                 returns.push(infer_expr(expr, &scope, signatures, None)?);
+            }
+            Stmt::ReturnMulti(_) => {
+                return Err(Diagnostic::new(
+                    "multiple return values are not type-checked yet",
+                ));
+            }
+            Stmt::LetMulti { .. } => {
+                return Err(Diagnostic::new(
+                    "multi-binding local declarations are not type-checked yet",
+                ));
+            }
+            Stmt::AssignMulti { .. } => {
+                return Err(Diagnostic::new("multi-assignment is not type-checked yet"));
             }
             Stmt::Expr(expr) => {
                 let _ = infer_expr(expr, &scope, signatures, None)?;

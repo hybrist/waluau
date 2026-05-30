@@ -1258,7 +1258,7 @@ mod tests {
         let function = &program.functions[0];
         assert!(matches!(
             function.return_type,
-            Type::Multi(ref tys) if tys == &vec![Type::Numeric(NumericType::I32), Type::Bool]
+            Some(Type::Multi(ref tys)) if tys == &vec![Type::Numeric(NumericType::I32), Type::Bool]
         ));
         assert!(matches!(
             &function.body[0],
