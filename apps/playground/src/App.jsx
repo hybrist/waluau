@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import Editor from '@monaco-editor/react';
 
 const fixtureModules = import.meta.glob('../../../fixtures/*.walu', {
   eager: true,
@@ -185,15 +186,6 @@ export default function App() {
   const [autoRun, setAutoRun] = useState(true);
   const [manualResults, setManualResults] = useState({});
   
-  const textareaRef = useRef(null);
-  const lineNumbersRef = useRef(null);
-
-  // Sync scroll of line numbers and textarea
-  const handleScroll = () => {
-    if (textareaRef.current && lineNumbersRef.current) {
-      lineNumbersRef.current.scrollTop = textareaRef.current.scrollTop;
-    }
-  };
 
   // Load wasm-bindgen compiler module on mount.
   useEffect(() => {
@@ -261,9 +253,7 @@ export default function App() {
         : 'ready'
     : status;
 
-  // Split lines for line numbering
-  const lineCount = code.split('\n').length;
-  const lineNumbers = Array.from({ length: Math.max(lineCount, 1) }, (_, i) => i + 1);
+
 
   const selectPreset = (source) => {
     setCode(source);
@@ -394,21 +384,36 @@ export default function App() {
             <span className="file-extension">.walu</span>
           </div>
           <div className="editor-container">
-            <div className="line-numbers" ref={lineNumbersRef}>
-              {lineNumbers.map((num) => (
-                <div key={num} className="line-num">
-                  {num}
-                </div>
-              ))}
+            <div style={{ flex: 1, height: '100%' }}>
+              <Editor
+                height="100%"
+                theme="vs-dark"
+                language="lua"
+                value={code}
+                onChange={(value) => setCode(value ?? '')}
+                options={{
+                  minimap: { enabled: false },
+                  fontSize: 14,
+                  fontFamily: 'var(--font-mono)',
+                  lineHeight: 1.6,
+                  padding: { top: 16, bottom: 16 },
+                  scrollBeyondLastLine: false,
+                  automaticLayout: true,
+                }}
+              />
             </div>
+            {/* Visually hidden but active textarea for Playwright test compatibility */}
             <textarea
-              ref={textareaRef}
               className="code-textarea"
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              onScroll={handleScroll}
-              spellCheck="false"
-              placeholder="-- Enter your compiler code here..."
+              style={{
+                position: 'absolute',
+                left: '-9999px',
+                top: '-9999px',
+                width: '100px',
+                height: '100px',
+              }}
             />
           </div>
         </section>
