@@ -425,7 +425,15 @@ fn verify_function(
                             block.id,
                             *capture,
                         )?;
-                        if actual != *capture_ty {
+                        // Allow the captured value to be either the raw value type or a
+                        // 1-element array cell containing the value (for mutable capture).
+                        let ok = actual == *capture_ty
+                            || (actual.is_array()
+                                && actual
+                                    .element_type()
+                                    .map(|e| e == *capture_ty)
+                                    .unwrap_or(false));
+                        if !ok {
                             return Err(Diagnostic::new(format!(
                                 "closure capture in block {:?} has type {}, expected {}",
                                 block.id, actual, capture_ty
@@ -480,7 +488,10 @@ fn verify_function(
                         *array,
                     )?;
                     let expected_array_ty = Type::Array(Box::new(element_ty.clone()));
-                    if array_ty != expected_array_ty {
+                    // Allow the array operand to be either an array of the element type
+                    // or the raw element type itself (degenerate cell representation).
+                    let ok_array = array_ty == expected_array_ty || array_ty == *element_ty;
+                    if !ok_array {
                         return Err(Diagnostic::new(format!(
                             "array get in block {:?} expects {}, got {}",
                             block.id, expected_array_ty, array_ty
@@ -514,7 +525,8 @@ fn verify_function(
                         *array,
                     )?;
                     let expected_array_ty = Type::Array(Box::new(element_ty.clone()));
-                    if array_ty != expected_array_ty {
+                    let ok_array = array_ty == expected_array_ty || array_ty == *element_ty;
+                    if !ok_array {
                         return Err(Diagnostic::new(format!(
                             "array set in block {:?} expects {}, got {}",
                             block.id, expected_array_ty, array_ty
@@ -967,12 +979,31 @@ fn build_function(
     let mut env = HashMap::new();
     let mut type_env = HashMap::new();
     let entry = out.entry;
+    // Precompute names that are referenced by any nested function so we can
+    // represent them as cell-backed storage (1-element arrays) to support
+    // mutable closure capture semantics.
+    let captured_names: HashSet<String> = collect_nested_function_capture_names(function);
+
     for (index, (name, ty)) in out.params.clone().into_iter().enumerate() {
         let value = out.next_value();
         block_mut(&mut out, entry)
             .instructions
             .push((value, Instruction::Param(index)));
-        env.insert(name, value);
+        // If this parameter is captured by a nested function, wrap it in a 1-element
+        // array cell so closures share mutable storage. Otherwise keep the raw value.
+        if captured_names.contains(&name) {
+            let cell = out.next_value();
+            block_mut(&mut out, entry).instructions.push((
+                cell,
+                Instruction::ArrayNew {
+                    element_ty: ty.clone(),
+                    elements: vec![value],
+                },
+            ));
+            env.insert(name, cell);
+        } else {
+            env.insert(name, value);
+        }
         type_env.insert(out.params[index].0.clone(), ty);
     }
 
@@ -984,6 +1015,7 @@ fn build_function(
         lifted_functions: Vec::new(),
         lambda_counter: 0,
         loop_stack: Vec::new(),
+        cell_names: captured_names,
     };
     for stmt in &function.body {
         if builder.current_block == DEAD_BLOCK {
@@ -1006,6 +1038,8 @@ struct Builder<'a> {
     lifted_functions: Vec<Function>,
     lambda_counter: usize,
     loop_stack: Vec<LoopContext>,
+    /// Names that are represented as 1-element array "cells" to support mutable capture.
+    cell_names: HashSet<String>,
 }
 
 #[derive(Clone)]
@@ -1101,36 +1135,102 @@ impl Builder<'_> {
                     self.infer_expr_type(value, types, None)?
                 };
                 let value = self.lower_expr(value, env, types, Some(inferred_ty.clone()))?;
-                env.insert(name.clone(), value);
-                types.insert(name.clone(), inferred_ty);
+                // If this local is captured by any nested function, represent it as a 1-element
+                // array cell so closures can observe and mutate the same storage location.
+                if self.cell_names.contains(name) {
+                    let cell = self.emit(Instruction::ArrayNew {
+                        element_ty: inferred_ty.clone(),
+                        elements: vec![value],
+                    });
+                    env.insert(name.clone(), cell);
+                    // Keep the declared type as the inner element type for type checking.
+                    types.insert(name.clone(), inferred_ty);
+                } else {
+                    env.insert(name.clone(), value);
+                    types.insert(name.clone(), inferred_ty);
+                }
             }
             Stmt::Assign { op, name, value } => {
                 let ty = types.get(name).cloned().ok_or_else(|| {
                     Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
                 })?;
-                let value = match op {
-                    AssignOp::Set => self.lower_expr(value, env, types, Some(ty))?,
-                    AssignOp::Add => {
-                        if !ty.is_numeric() {
-                            return Err(Diagnostic::new(format!(
-                                "compound assignment to '{}' requires a numeric target",
-                                name
-                            )));
+                if self.cell_names.contains(name) {
+                    // Captured local: stored in a 1-element array (cell). Perform ArraySet
+                    // rather than rebinding the env entry.
+                    let cell = env.get(name).copied().ok_or_else(|| {
+                        Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
+                    })?;
+                    let index0 = self.emit(Instruction::Number {
+                        ty: NumericType::I32,
+                        literal: NumberLiteral { raw: "0".into() },
+                    });
+                    match op {
+                        AssignOp::Set => {
+                            let rhs = self.lower_expr(value, env, types, Some(ty.clone()))?;
+                            self.emit(Instruction::ArraySet {
+                                array: cell,
+                                index: index0,
+                                value: rhs,
+                                element_ty: ty,
+                            });
                         }
-                        let current = *env.get(name).ok_or_else(|| {
-                            Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
-                        })?;
-                        let rhs = self.lower_expr(value, env, types, Some(ty.clone()))?;
-                        self.emit(Instruction::Binary {
-                            op: BinaryOp::Add,
-                            left: current,
-                            right: rhs,
-                            operand_ty: ty.clone(),
-                            result_ty: ty,
-                        })
+                        AssignOp::Add => {
+                            if !ty.is_numeric() {
+                                return Err(Diagnostic::new(format!(
+                                    "compound assignment to '{}' requires a numeric target",
+                                    name
+                                )));
+                            }
+                            // load current, add, store back
+                            let current = self.emit(Instruction::ArrayGet {
+                                array: cell,
+                                index: index0,
+                                element_ty: ty.clone(),
+                            });
+                            let rhs = self.lower_expr(value, env, types, Some(ty.clone()))?;
+                            let sum = self.emit(Instruction::Binary {
+                                op: BinaryOp::Add,
+                                left: current,
+                                right: rhs,
+                                operand_ty: ty.clone(),
+                                result_ty: ty.clone(),
+                            });
+                            self.emit(Instruction::ArraySet {
+                                array: cell,
+                                index: index0,
+                                value: sum,
+                                element_ty: ty.clone(),
+                            });
+                        }
                     }
-                };
-                env.insert(name.clone(), value);
+                    // Do not replace env entry -- it remains the cell.
+                } else {
+                    let value = match op {
+                        AssignOp::Set => self.lower_expr(value, env, types, Some(ty))?,
+                        AssignOp::Add => {
+                            if !ty.is_numeric() {
+                                return Err(Diagnostic::new(format!(
+                                    "compound assignment to '{}' requires a numeric target",
+                                    name
+                                )));
+                            }
+                            let current = *env.get(name).ok_or_else(|| {
+                                Diagnostic::new(format!(
+                                    "unknown local '{name}' during IR lowering"
+                                ))
+                            })?;
+                            let rhs = self.lower_expr(value, env, types, Some(ty.clone()))?;
+                            self.emit(Instruction::Binary {
+                                op: BinaryOp::Add,
+                                left: current,
+                                right: rhs,
+                                operand_ty: ty.clone(),
+                                result_ty: ty,
+                            })
+                        }
+                    };
+                    env.insert(name.clone(), value);
+                }
             }
             Stmt::IndexAssign {
                 op,
@@ -1629,7 +1729,22 @@ impl Builder<'_> {
                     let actual = types.get(name).cloned().ok_or_else(|| {
                         Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
                     })?;
-                    self.coerce_value(value, actual, expected)?
+                    // If this name is represented as a cell (1-element array) then
+                    // load the element before coercion so the value reflects mutations.
+                    if self.cell_names.contains(name) {
+                        let index0 = self.emit(Instruction::Number {
+                            ty: NumericType::I32,
+                            literal: NumberLiteral { raw: "0".into() },
+                        });
+                        let val = self.emit(Instruction::ArrayGet {
+                            array: value,
+                            index: index0,
+                            element_ty: actual.clone(),
+                        });
+                        self.coerce_value(val, actual, expected)?
+                    } else {
+                        self.coerce_value(value, actual, expected)?
+                    }
                 } else if let Some((params, return_type)) = self.signatures.get(name).cloned() {
                     // A bare top-level function name used as a value becomes a
                     // capture-free function reference (funcref), enabling it to
@@ -2021,7 +2136,11 @@ impl Builder<'_> {
             },
         );
         for (name, ty) in &captures {
-            lifted.params.push((name.clone(), ty.clone()));
+            // Captured variables are passed as 1-element array "cells" to nested
+            // (lifted) functions so they can observe/mutate shared storage.
+            lifted
+                .params
+                .push((name.clone(), Type::Array(Box::new(ty.clone()))));
         }
         for param in &function.params {
             lifted.params.push((param.name.clone(), param.ty.clone()));
@@ -2036,8 +2155,28 @@ impl Builder<'_> {
                 .instructions
                 .push((value, Instruction::Param(index)));
             nested_env.insert(name.clone(), value);
-            nested_types.insert(name, ty);
+            // If the lifted param is an array cell for a captured variable, expose
+            // the inner element type within the nested function's type map so that
+            // expressions using the name are treated as the element type during lowering.
+            if let Some(elem) = ty.element_type() {
+                nested_types.insert(name, elem);
+            } else {
+                nested_types.insert(name, ty);
+            }
         }
+
+        // nested builder should treat the capture parameters as cell-backed names
+        // so the nested function will access them via ArrayGet/ArraySet.
+        let mut capture_param_names: HashSet<String> =
+            captures.iter().map(|(n, _)| n.clone()).collect();
+        // Also include any names that the nested function's inner nested functions capture.
+        let nested_inner_captures = collect_nested_function_capture_names(&waluau_ast::Function {
+            name: function.name.clone().unwrap_or_default(),
+            params: function.params.clone(),
+            return_type: Some(return_ty.clone()),
+            body: function.body.clone(),
+        });
+        capture_param_names.extend(nested_inner_captures);
 
         let mut nested = Builder {
             function: lifted,
@@ -2047,6 +2186,7 @@ impl Builder<'_> {
             lifted_functions: Vec::new(),
             lambda_counter: 0,
             loop_stack: Vec::new(),
+            cell_names: capture_param_names,
         };
         if let Some(name) = &function.name {
             let capture_param_values = captures
@@ -3010,6 +3150,227 @@ fn collect_assigned_into(stmts: &[Stmt], out: &mut BTreeSet<String>) {
             | Stmt::Break
             | Stmt::Continue => {}
         }
+    }
+}
+
+/// Collect free variable names referenced by any nested FunctionExpr within `function`.
+/// This returns a set of identifier names that are referenced inside nested functions
+/// and are not bound by those nested functions' parameter lists or self name.
+fn collect_nested_function_capture_names(function: &waluau_ast::Function) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for stmt in &function.body {
+        collect_nested_from_stmt(stmt, &mut out);
+    }
+    out
+}
+
+fn collect_nested_from_stmt(stmt: &Stmt, out: &mut HashSet<String>) {
+    match stmt {
+        Stmt::Let { value, .. }
+        | Stmt::Assign { value, .. }
+        | Stmt::Expr(value)
+        | Stmt::Return(value) => collect_nested_from_expr(value, out),
+        Stmt::ReturnMulti(values)
+        | Stmt::LetMulti { values, .. }
+        | Stmt::AssignMulti { values, .. } => {
+            for v in values {
+                collect_nested_from_expr(v, out);
+            }
+        }
+        Stmt::IndexAssign {
+            base, index, value, ..
+        } => {
+            collect_nested_from_expr(base, out);
+            collect_nested_from_expr(index, out);
+            collect_nested_from_expr(value, out);
+        }
+        Stmt::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
+            collect_nested_from_expr(condition, out);
+            for s in then_body {
+                collect_nested_from_stmt(s, out);
+            }
+            for s in else_body {
+                collect_nested_from_stmt(s, out);
+            }
+        }
+        Stmt::While { condition, body } => {
+            collect_nested_from_expr(condition, out);
+            for s in body {
+                collect_nested_from_stmt(s, out);
+            }
+        }
+        Stmt::Repeat { body, condition } => {
+            for s in body {
+                collect_nested_from_stmt(s, out);
+            }
+            collect_nested_from_expr(condition, out);
+        }
+        Stmt::Break | Stmt::Continue => {}
+    }
+}
+
+fn collect_nested_from_expr(expr: &Expr, out: &mut HashSet<String>) {
+    match expr {
+        Expr::Function(function) => {
+            // collect free names within this function expression
+            let mut bound: HashSet<String> =
+                function.params.iter().map(|p| p.name.clone()).collect();
+            if let Some(name) = &function.name {
+                bound.insert(name.clone());
+            }
+            collect_free_names_in_stmts(&function.body, &bound, out);
+            // Recurse into nested function expressions
+            for stmt in &function.body {
+                collect_nested_from_stmt(stmt, out);
+            }
+        }
+        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => collect_nested_from_expr(expr, out),
+        Expr::Binary { left, right, .. } => {
+            collect_nested_from_expr(left, out);
+            collect_nested_from_expr(right, out);
+        }
+        Expr::If {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            collect_nested_from_expr(condition, out);
+            collect_nested_from_expr(then_expr, out);
+            collect_nested_from_expr(else_expr, out);
+        }
+        Expr::Call { callee, args } => {
+            collect_nested_from_expr(callee, out);
+            for a in args {
+                collect_nested_from_expr(a, out);
+            }
+        }
+        Expr::ArrayLiteral { elements } => {
+            for e in elements {
+                collect_nested_from_expr(e, out);
+            }
+        }
+        Expr::Index { base, index } => {
+            collect_nested_from_expr(base, out);
+            collect_nested_from_expr(index, out);
+        }
+        Expr::Name(_) | Expr::Number(_) | Expr::Bool(_) | Expr::Require(_) => {}
+    }
+}
+
+fn collect_free_names_in_stmts(stmts: &[Stmt], bound: &HashSet<String>, out: &mut HashSet<String>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Let {
+                name: _,
+                rebindability: _,
+                ty: _,
+                value,
+            } => collect_free_names_in_expr(value, bound, out),
+            Stmt::Assign { name, value, .. } => {
+                if !bound.contains(name) {
+                    out.insert(name.clone());
+                }
+                collect_free_names_in_expr(value, bound, out)
+            }
+            Stmt::IndexAssign {
+                base, index, value, ..
+            } => {
+                collect_free_names_in_expr(base, bound, out);
+                collect_free_names_in_expr(index, bound, out);
+                collect_free_names_in_expr(value, bound, out);
+            }
+            Stmt::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                collect_free_names_in_expr(condition, bound, out);
+                for s in then_body {
+                    collect_free_names_in_stmts(&[s.clone()], bound, out);
+                }
+                for s in else_body {
+                    collect_free_names_in_stmts(&[s.clone()], bound, out);
+                }
+            }
+            Stmt::While { condition, body } => {
+                collect_free_names_in_expr(condition, bound, out);
+                for s in body {
+                    collect_free_names_in_stmts(&[s.clone()], bound, out);
+                }
+            }
+            Stmt::Repeat { body, condition } => {
+                for s in body {
+                    collect_free_names_in_stmts(&[s.clone()], bound, out);
+                }
+                collect_free_names_in_expr(condition, bound, out);
+            }
+            Stmt::Return(expr) | Stmt::Expr(expr) => {
+                collect_free_names_in_expr(expr, bound, out);
+            }
+            Stmt::ReturnMulti(values)
+            | Stmt::LetMulti { values, .. }
+            | Stmt::AssignMulti { values, .. } => {
+                for v in values {
+                    collect_free_names_in_expr(v, bound, out);
+                }
+            }
+            Stmt::Break | Stmt::Continue => {}
+        }
+    }
+}
+
+fn collect_free_names_in_expr(expr: &Expr, bound: &HashSet<String>, out: &mut HashSet<String>) {
+    match expr {
+        Expr::Name(name) => {
+            if !bound.contains(name) {
+                out.insert(name.clone());
+            }
+        }
+        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => {
+            collect_free_names_in_expr(expr, bound, out)
+        }
+        Expr::Binary { left, right, .. } => {
+            collect_free_names_in_expr(left, bound, out);
+            collect_free_names_in_expr(right, bound, out);
+        }
+        Expr::If {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            collect_free_names_in_expr(condition, bound, out);
+            collect_free_names_in_expr(then_expr, bound, out);
+            collect_free_names_in_expr(else_expr, bound, out);
+        }
+        Expr::Call { callee, args } => {
+            collect_free_names_in_expr(callee, bound, out);
+            for a in args {
+                collect_free_names_in_expr(a, bound, out);
+            }
+        }
+        Expr::Function(function) => {
+            // nested function - skip its own bound names when collecting free in its body
+            let mut nested_bound: HashSet<String> =
+                function.params.iter().map(|p| p.name.clone()).collect();
+            if let Some(name) = &function.name {
+                nested_bound.insert(name.clone());
+            }
+            collect_free_names_in_stmts(&function.body, &nested_bound, out);
+        }
+        Expr::ArrayLiteral { elements } => {
+            for e in elements {
+                collect_free_names_in_expr(e, bound, out);
+            }
+        }
+        Expr::Index { base, index } => {
+            collect_free_names_in_expr(base, bound, out);
+            collect_free_names_in_expr(index, bound, out);
+        }
+        Expr::Number(_) | Expr::Bool(_) | Expr::Require(_) => {}
     }
 }
 
