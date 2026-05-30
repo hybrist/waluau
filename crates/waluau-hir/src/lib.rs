@@ -9,6 +9,15 @@ use waluau_diagnostics::Diagnostic;
 const COROUTINE_CREATE: &str = "coroutine_create";
 const COROUTINE_RESUME: &str = "coroutine_resume";
 const COROUTINE_STATUS: &str = "coroutine_status";
+const MATH_ABS: &str = "math_abs";
+const MATH_MIN: &str = "math_min";
+const MATH_MAX: &str = "math_max";
+const MATH_SQRT: &str = "math_sqrt";
+const MATH_FLOOR: &str = "math_floor";
+const MATH_CEIL: &str = "math_ceil";
+const MATH_TRUNC: &str = "math_trunc";
+const MATH_NEAREST: &str = "math_nearest";
+const MATH_COPYSIGN: &str = "math_copysign";
 const ASSERT: &str = "assert";
 
 #[derive(Clone)]
@@ -830,6 +839,13 @@ fn infer_expr(
         Expr::Call { callee, args } => {
             if let Expr::Name(name) = callee.as_ref() {
                 if let Some(result) =
+                    infer_math_builtin_call(name, args, vars, signatures, expected.clone())
+                {
+                    return result;
+                }
+            }
+            if let Expr::Name(name) = callee.as_ref() {
+                if let Some(result) =
                     infer_coroutine_builtin_call(name, args, vars, signatures, expected.clone())
                 {
                     return result;
@@ -998,6 +1014,65 @@ fn infer_coroutine_builtin_call(
         }
         _ => None,
     }
+}
+
+fn infer_math_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    let arity = match name {
+        MATH_ABS | MATH_SQRT | MATH_FLOOR | MATH_CEIL | MATH_TRUNC | MATH_NEAREST => 1,
+        MATH_MIN | MATH_MAX | MATH_COPYSIGN => 2,
+        _ => return None,
+    };
+    if args.len() != arity {
+        return Some(Err(Diagnostic::new(format!(
+            "{name} expects {arity} argument{}, got {}",
+            if arity == 1 { "" } else { "s" },
+            args.len()
+        ))));
+    }
+    let first = match infer_expr(&args[0], vars, signatures, None) {
+        Ok(ty) => ty,
+        Err(error) => return Some(Err(error)),
+    };
+    let Type::Numeric(first_numeric) = first else {
+        return Some(Err(Diagnostic::new(format!(
+            "{name} expects numeric arguments"
+        ))));
+    };
+    if arity == 2 {
+        let second = match infer_expr(
+            &args[1],
+            vars,
+            signatures,
+            Some(Type::Numeric(first_numeric)),
+        ) {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        if second != Type::Numeric(first_numeric) {
+            return Some(Err(Diagnostic::new(format!(
+                "{name} requires both arguments to have the same numeric type"
+            ))));
+        }
+    }
+    let supports = match name {
+        MATH_MIN | MATH_MAX => matches!(first_numeric, NumericType::F32 | NumericType::F64),
+        MATH_ABS | MATH_SQRT | MATH_FLOOR | MATH_CEIL | MATH_TRUNC | MATH_NEAREST
+        | MATH_COPYSIGN => matches!(first_numeric, NumericType::F32 | NumericType::F64),
+        _ => false,
+    };
+    if !supports {
+        return Some(Err(Diagnostic::new(format!(
+            "{name} does not support {}",
+            Type::Numeric(first_numeric)
+        ))));
+    }
+    Some(coerce_type(Type::Numeric(first_numeric), expected))
 }
 
 fn infer_expr_list(

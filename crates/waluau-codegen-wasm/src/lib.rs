@@ -4,7 +4,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use waluau_ast::{BinaryOp, NumberLiteral, NumericType, Type};
 use waluau_diagnostics::Diagnostic;
 use waluau_ir::{
-    BasicBlock, Function as IrFunction, Instruction as IrInstruction, Module, Terminator, ValueId,
+    BasicBlock, Function as IrFunction, Instruction as IrInstruction, MathIntrinsic, Module,
+    Terminator, ValueId,
 };
 use wasm_encoder::{
     BlockType, CodeSection, ConstExpr, ElementSection, Elements, ExportKind, ExportSection,
@@ -596,6 +597,7 @@ fn infer_value_types(
                 IrInstruction::Bool(_) => Type::Bool,
                 IrInstruction::Cast { to, .. } => to.clone(),
                 IrInstruction::Binary { result_ty, .. } => result_ty.clone(),
+                IrInstruction::MathIntrinsic { result_ty, .. } => result_ty.clone(),
                 IrInstruction::Call { name, .. } => signatures
                     .get(name)
                     .ok_or_else(|| {
@@ -783,6 +785,18 @@ fn emit_block_instructions(
                     emit_value_operand(out, local_plan, *right)?;
                     emit_binary(out, *op, operand_ty.clone(), result_ty.clone())?;
                 }
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::MathIntrinsic {
+                intrinsic,
+                args,
+                operand_ty,
+                ..
+            } => {
+                for arg in args {
+                    emit_value_operand(out, local_plan, *arg)?;
+                }
+                emit_math_intrinsic(out, *intrinsic, operand_ty.clone())?;
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::Call { name, args } => {
@@ -1216,6 +1230,7 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
         }
         IrInstruction::Cast { value, .. } => vec![*value],
         IrInstruction::Binary { left, right, .. } => vec![*left, *right],
+        IrInstruction::MathIntrinsic { args, .. } => args.clone(),
         IrInstruction::Call { args, .. } => args.clone(),
         IrInstruction::CallValue { callee, args, .. } => {
             let mut out = Vec::with_capacity(args.len() + 1);
@@ -1263,6 +1278,7 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         IrInstruction::Param(_) | IrInstruction::Number { .. } | IrInstruction::Bool(_) => false,
         IrInstruction::Cast { value: source, .. } => *source == value,
         IrInstruction::Binary { left, .. } => *left == value,
+        IrInstruction::MathIntrinsic { args, .. } => args.first().copied() == Some(value),
         IrInstruction::Call { args, .. } => args.first().copied() == Some(value),
         IrInstruction::CallValue { args, callee, .. } => {
             args.first().copied() == Some(value) || (args.is_empty() && *callee == value)
@@ -1719,6 +1735,75 @@ fn emit_floor_or_mod(
         }
         (_, Type::Array(_)) => unreachable!(),
         _ => unreachable!(),
+    }
+    Ok(())
+}
+
+fn emit_math_intrinsic(
+    out: &mut Function,
+    intrinsic: MathIntrinsic,
+    operand_ty: Type,
+) -> Result<(), Diagnostic> {
+    match (intrinsic, operand_ty) {
+        (MathIntrinsic::Abs, Type::Numeric(NumericType::F32)) => {
+            out.instruction(&Instruction::F32Abs);
+        }
+        (MathIntrinsic::Abs, Type::Numeric(NumericType::F64)) => {
+            out.instruction(&Instruction::F64Abs);
+        }
+        (MathIntrinsic::Min, Type::Numeric(NumericType::F32)) => {
+            out.instruction(&Instruction::F32Min);
+        }
+        (MathIntrinsic::Min, Type::Numeric(NumericType::F64)) => {
+            out.instruction(&Instruction::F64Min);
+        }
+        (MathIntrinsic::Max, Type::Numeric(NumericType::F32)) => {
+            out.instruction(&Instruction::F32Max);
+        }
+        (MathIntrinsic::Max, Type::Numeric(NumericType::F64)) => {
+            out.instruction(&Instruction::F64Max);
+        }
+        (MathIntrinsic::Sqrt, Type::Numeric(NumericType::F32)) => {
+            out.instruction(&Instruction::F32Sqrt);
+        }
+        (MathIntrinsic::Sqrt, Type::Numeric(NumericType::F64)) => {
+            out.instruction(&Instruction::F64Sqrt);
+        }
+        (MathIntrinsic::Floor, Type::Numeric(NumericType::F32)) => {
+            out.instruction(&Instruction::F32Floor);
+        }
+        (MathIntrinsic::Floor, Type::Numeric(NumericType::F64)) => {
+            out.instruction(&Instruction::F64Floor);
+        }
+        (MathIntrinsic::Ceil, Type::Numeric(NumericType::F32)) => {
+            out.instruction(&Instruction::F32Ceil);
+        }
+        (MathIntrinsic::Ceil, Type::Numeric(NumericType::F64)) => {
+            out.instruction(&Instruction::F64Ceil);
+        }
+        (MathIntrinsic::Trunc, Type::Numeric(NumericType::F32)) => {
+            out.instruction(&Instruction::F32Trunc);
+        }
+        (MathIntrinsic::Trunc, Type::Numeric(NumericType::F64)) => {
+            out.instruction(&Instruction::F64Trunc);
+        }
+        (MathIntrinsic::Nearest, Type::Numeric(NumericType::F32)) => {
+            out.instruction(&Instruction::F32Nearest);
+        }
+        (MathIntrinsic::Nearest, Type::Numeric(NumericType::F64)) => {
+            out.instruction(&Instruction::F64Nearest);
+        }
+        (MathIntrinsic::Copysign, Type::Numeric(NumericType::F32)) => {
+            out.instruction(&Instruction::F32Copysign);
+        }
+        (MathIntrinsic::Copysign, Type::Numeric(NumericType::F64)) => {
+            out.instruction(&Instruction::F64Copysign);
+        }
+        (intrinsic, ty) => {
+            return Err(Diagnostic::new(format!(
+                "math intrinsic {intrinsic:?} does not support {ty} during wasm emission"
+            )));
+        }
     }
     Ok(())
 }
