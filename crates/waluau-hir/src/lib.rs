@@ -961,11 +961,15 @@ fn infer_expr(
                     }
                 } else if left_ty.is_numeric() {
                     let _ = infer_numeric_common_type(left, right, vars, signatures, None)?;
-                } else {
-                    let right_ty = infer_expr(right, vars, signatures, Some(left_ty.clone()))?;
-                    if left_ty != right_ty {
+                } else if left_ty == Type::String {
+                    let right_ty = infer_expr(right, vars, signatures, Some(Type::String))?;
+                    if right_ty != Type::String {
                         return Err(Diagnostic::new("== requires both sides to have same type"));
                     }
+                } else {
+                    return Err(Diagnostic::new(
+                        "== supports only numeric, bool, and string operands in MVP",
+                    ));
                 }
                 Ok(Type::Bool)
             }
@@ -2327,6 +2331,71 @@ mod tests {
         "#;
         let program = parse(source).expect("parse should succeed");
         super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn type_checks_string_equality_in_control_flow() {
+        let source = r#"
+            function entry(a: string, b: string): i32
+                if a == b then
+                    return 1
+                end
+                return 0
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn rejects_string_equality_with_non_string() {
+        let source = r#"
+            function entry(a: string): bool
+                return a == 1
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "numeric literal is not assignable to string"
+        );
+    }
+
+    #[test]
+    fn rejects_array_equality_in_mvp() {
+        let source = r#"
+            function entry(a: {i32}, b: {i32}): bool
+                return a == b
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "== supports only numeric, bool, and string operands in MVP"
+        );
+    }
+
+    #[test]
+    fn rejects_function_equality_in_mvp() {
+        let source = r#"
+            function entry(): bool
+                local a: () -> i32 = function(): i32
+                    return 1
+                end
+                local b: () -> i32 = function(): i32
+                    return 2
+                end
+                return a == b
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "== supports only numeric, bool, and string operands in MVP"
+        );
     }
 
     #[test]

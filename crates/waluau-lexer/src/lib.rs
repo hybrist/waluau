@@ -110,6 +110,14 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 }
             }
             '%' => (TokenKind::Percent, 1),
+            '.' => {
+                if matches!(chars.get(i + 1), Some('.')) {
+                    return Err(Diagnostic::new(
+                        "string concatenation '..' is not supported in MVP",
+                    ));
+                }
+                return Err(Diagnostic::new("unexpected character '.'"));
+            }
             '<' => (TokenKind::Less, 1),
             '>' => (TokenKind::Greater, 1),
             '=' => {
@@ -326,6 +334,14 @@ mod tests {
     fn rejects_malformed_number_literals() {
         assert_eq!(err("1..2").to_string(), "invalid number literal");
         assert_eq!(err("12.34.56").to_string(), "invalid number literal");
+    }
+
+    #[test]
+    fn rejects_concat_operator_in_mvp() {
+        assert_eq!(
+            err(r#""a" .. "b""#).to_string(),
+            "string concatenation '..' is not supported in MVP"
+        );
     }
 
     #[test]
