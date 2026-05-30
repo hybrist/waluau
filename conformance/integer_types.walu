@@ -1,0 +1,29 @@
+function add_i32(a: i32, b: i32): i32
+    return a + b
+end
+
+function add_i64(a: i64, b: i64): i64
+    return a + b
+end
+
+function add_u64(a: u64, b: u64): u64
+    return a + b
+end
+
+function i64_max(): i64
+    local x: i64 = 9223372036854775807
+    return x
+end
+
+function u64_max(): u64
+    local x: u64 = 18446744073709551615
+    return x
+end
+
+assert(add_i32(40, 2) == 42)
+assert(add_i32(7, 3) == 10)
+assert(add_i64(40, 2) == 42)
+assert(add_u64(40, 2) == 42)
+
+assert(i64_max() == 9223372036854775807)
+assert(u64_max() == 18446744073709551615)
