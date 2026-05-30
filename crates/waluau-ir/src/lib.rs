@@ -1561,20 +1561,72 @@ impl Builder<'_> {
                     (else_exit, else_value),
                 ]))
             }
-            Expr::Binary { op, left, right } => {
-                let operand_ty = self.infer_binary_operand_type(left, right, op, types, None)?;
-                let left = self.lower_expr(left, env, types, Some(operand_ty.clone()))?;
-                let right = self.lower_expr(right, env, types, Some(operand_ty.clone()))?;
-                let raw_result_ty = self.infer_expr_type(expr, types, None)?;
-                let value = self.emit(Instruction::Binary {
-                    op: *op,
-                    left,
-                    right,
-                    operand_ty,
-                    result_ty: raw_result_ty.clone(),
-                });
-                self.coerce_value(value, raw_result_ty, expected)?
-            }
+            Expr::Binary { op, left, right } => match op {
+                BinaryOp::And | BinaryOp::Or => {
+                    let result_ty = self.infer_expr_type(expr, types, expected.clone())?;
+                    let left_value = self.lower_expr(left, env, types, Some(Type::Bool))?;
+                    let rhs_block = self.new_block();
+                    let short_block = self.new_block();
+                    let merge_block = self.new_block();
+
+                    match op {
+                        BinaryOp::And => {
+                            self.set_terminator(
+                                self.current_block,
+                                Terminator::Branch {
+                                    condition: left_value,
+                                    then_block: rhs_block,
+                                    else_block: short_block,
+                                },
+                            );
+                        }
+                        BinaryOp::Or => {
+                            self.set_terminator(
+                                self.current_block,
+                                Terminator::Branch {
+                                    condition: left_value,
+                                    then_block: short_block,
+                                    else_block: rhs_block,
+                                },
+                            );
+                        }
+                        _ => unreachable!(),
+                    }
+
+                    self.current_block = short_block;
+                    let short_circuit_value =
+                        self.emit(Instruction::Bool(matches!(op, BinaryOp::Or)));
+                    let short_exit = self.current_block;
+                    self.set_terminator(short_exit, Terminator::Jump(merge_block));
+
+                    self.current_block = rhs_block;
+                    let rhs_value = self.lower_expr(right, env, types, Some(Type::Bool))?;
+                    let rhs_exit = self.current_block;
+                    self.set_terminator(rhs_exit, Terminator::Jump(merge_block));
+
+                    self.current_block = merge_block;
+                    let mut incoming =
+                        vec![(short_exit, short_circuit_value), (rhs_exit, rhs_value)];
+                    incoming.sort_by_key(|(pred, _)| *pred);
+                    let value = self.emit(Instruction::Phi(incoming));
+                    self.coerce_value(value, result_ty, expected)?
+                }
+                _ => {
+                    let operand_ty =
+                        self.infer_binary_operand_type(left, right, op, types, None)?;
+                    let left = self.lower_expr(left, env, types, Some(operand_ty.clone()))?;
+                    let right = self.lower_expr(right, env, types, Some(operand_ty.clone()))?;
+                    let raw_result_ty = self.infer_expr_type(expr, types, None)?;
+                    let value = self.emit(Instruction::Binary {
+                        op: *op,
+                        left,
+                        right,
+                        operand_ty,
+                        result_ty: raw_result_ty.clone(),
+                    });
+                    self.coerce_value(value, raw_result_ty, expected)?
+                }
+            },
             Expr::Call { callee, args } => {
                 if let Expr::Name(name) = callee.as_ref() {
                     if let Some(result) =
@@ -2618,7 +2670,7 @@ mod tests {
     use super::{
         BasicBlock, BlockId, Function, Instruction, Module, Terminator, ValueId, build, verify,
     };
-    use waluau_ast::{NumberLiteral, NumericType, Type};
+    use waluau_ast::{BinaryOp, NumberLiteral, NumericType, Type};
     use waluau_parser::parse;
 
     #[test]
@@ -2896,6 +2948,114 @@ mod tests {
             })
             .count();
         assert_eq!(call_count, 1, "expected idx() call to be evaluated once");
+    }
+
+    #[test]
+    fn lowers_and_expression_with_short_circuit_cfg() {
+        let source = r#"
+            function entry(a: bool, b: bool): bool
+                return a and b
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let module = build(&program).expect("ir build should succeed");
+        let function = &module.functions[0];
+
+        assert!(
+            !function.blocks.values().any(|block| {
+                block.instructions.iter().any(|(_, instruction)| {
+                    matches!(
+                        instruction,
+                        Instruction::Binary {
+                            op: BinaryOp::And,
+                            ..
+                        }
+                    )
+                })
+            }),
+            "expected 'and' to lower to control-flow, not a binary instruction:\n{}",
+            function.dump()
+        );
+
+        let branch_count = function
+            .blocks
+            .values()
+            .filter(|block| matches!(block.terminator, Terminator::Branch { .. }))
+            .count();
+        assert!(
+            branch_count >= 1,
+            "expected at least one branch for short-circuit 'and', got {} in function:\n{}",
+            branch_count,
+            function.dump()
+        );
+
+        let phi_count = function
+            .blocks
+            .values()
+            .flat_map(|block| block.instructions.iter())
+            .filter(|(_, instruction)| matches!(instruction, Instruction::Phi(incoming) if incoming.len() == 2))
+            .count();
+        assert!(
+            phi_count >= 1,
+            "expected a phi node merging 'and' results, got {} in function:\n{}",
+            phi_count,
+            function.dump()
+        );
+    }
+
+    #[test]
+    fn lowers_or_expression_with_short_circuit_cfg() {
+        let source = r#"
+            function entry(a: bool, b: bool): bool
+                return a or b
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let module = build(&program).expect("ir build should succeed");
+        let function = &module.functions[0];
+
+        assert!(
+            !function.blocks.values().any(|block| {
+                block.instructions.iter().any(|(_, instruction)| {
+                    matches!(
+                        instruction,
+                        Instruction::Binary {
+                            op: BinaryOp::Or,
+                            ..
+                        }
+                    )
+                })
+            }),
+            "expected 'or' to lower to control-flow, not a binary instruction:\n{}",
+            function.dump()
+        );
+
+        let branch_count = function
+            .blocks
+            .values()
+            .filter(|block| matches!(block.terminator, Terminator::Branch { .. }))
+            .count();
+        assert!(
+            branch_count >= 1,
+            "expected at least one branch for short-circuit 'or', got {} in function:\n{}",
+            branch_count,
+            function.dump()
+        );
+
+        let phi_count = function
+            .blocks
+            .values()
+            .flat_map(|block| block.instructions.iter())
+            .filter(|(_, instruction)| matches!(instruction, Instruction::Phi(incoming) if incoming.len() == 2))
+            .count();
+        assert!(
+            phi_count >= 1,
+            "expected a phi node merging 'or' results, got {} in function:\n{}",
+            phi_count,
+            function.dump()
+        );
     }
 
     #[test]
