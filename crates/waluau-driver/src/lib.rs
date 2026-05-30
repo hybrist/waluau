@@ -373,6 +373,33 @@ mod tests {
     }
 
     #[test]
+    fn executes_coroutine_status_for_created_coroutine() {
+        let source = r#"
+            function status_flag(): i32
+                local job: () -> i32 = function(): i32
+                    return 1
+                end
+                local co: () -> i32 = coroutine_create(job)
+                if coroutine_status(co) then
+                    return 1
+                end
+                return 0
+            end
+        "#;
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let status_flag = instance
+            .get_typed_func::<(), i32>(&mut store, "status_flag")
+            .expect("status_flag export should exist");
+        assert_eq!(
+            status_flag
+                .call(&mut store, ())
+                .expect("call should succeed"),
+            1
+        );
+    }
+
+    #[test]
     fn rejects_closure_capture_fixture_with_explicit_diagnostic() {
         let source = fixture_source("closure_capture_unsupported");
         let error = super::compile_source(source).expect_err("compile should fail");
