@@ -35,6 +35,7 @@ pub enum TokenKind {
     False,
     Identifier(String),
     Number(String),
+    Str(String),
     Plus,
     PlusEqual,
     Minus,
@@ -135,6 +136,52 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 } else {
                     return Err(Diagnostic::new("unexpected '|', expected '||'"));
                 }
+            }
+            '"' => {
+                let mut end = i + 1;
+                let mut value = String::new();
+                loop {
+                    match chars.get(end) {
+                        None | Some('\n') => {
+                            return Err(Diagnostic::new("unterminated string literal"));
+                        }
+                        Some('"') => {
+                            end += 1;
+                            break;
+                        }
+                        Some('\\') => {
+                            end += 1;
+                            match chars.get(end) {
+                                Some('"') => value.push('"'),
+                                Some('\\') => value.push('\\'),
+                                Some('n') => value.push('\n'),
+                                Some('t') => value.push('\t'),
+                                Some(other) => {
+                                    return Err(Diagnostic::new(format!(
+                                        "unsupported string escape '\\{other}'"
+                                    )));
+                                }
+                                None => {
+                                    return Err(Diagnostic::new("unterminated string literal"));
+                                }
+                            }
+                            end += 1;
+                        }
+                        Some(other) => {
+                            value.push(*other);
+                            end += 1;
+                        }
+                    }
+                }
+                tokens.push(Token {
+                    kind: TokenKind::Str(value),
+                    span: Span {
+                        start,
+                        end: end as u32,
+                    },
+                });
+                i = end;
+                continue;
             }
             d if d.is_ascii_digit() => {
                 let mut end = i + 1;
@@ -355,6 +402,31 @@ mod tests {
                     span: Span { start: 9, end: 10 },
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn tokenizes_string_literals_with_escapes() {
+        assert_eq!(
+            kinds(r#""./math" "a\tb\n" "quote\"end""#),
+            vec![
+                TokenKind::Str("./math".into()),
+                TokenKind::Str("a\tb\n".into()),
+                TokenKind::Str("quote\"end".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_unterminated_and_invalid_strings() {
+        assert_eq!(err("\"open").to_string(), "unterminated string literal");
+        assert_eq!(
+            err("\"line\nbreak\"").to_string(),
+            "unterminated string literal"
+        );
+        assert_eq!(
+            err("\"\\q\"").to_string(),
+            "unsupported string escape '\\q'"
         );
     }
 

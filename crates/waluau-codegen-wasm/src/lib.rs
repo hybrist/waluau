@@ -44,7 +44,13 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
             .iter()
             .map(|(_, ty)| wasm_type(ty, &array_registry))
             .collect::<Result<Vec<_>, _>>()?;
-        let results = [wasm_type(&function.return_type, &array_registry)?];
+        let results = match &function.return_type {
+            Type::Multi(multi_types) => multi_types
+                .iter()
+                .map(|ty| wasm_type(ty, &array_registry))
+                .collect::<Result<Vec<_>, _>>()?,
+            other => vec![wasm_type(other, &array_registry)?],
+        };
         types.ty().function(params, results);
     }
     if start_thunk.is_some() {
@@ -77,7 +83,13 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         functions.function(thunk_index);
         let mut thunk = Function::new(Vec::new());
         thunk.instruction(&Instruction::Call(start as u32));
-        thunk.instruction(&Instruction::Drop);
+        let n_returns = match &module.functions[start].return_type {
+            Type::Multi(types) => types.len(),
+            _ => 1,
+        };
+        for _ in 0..n_returns {
+            thunk.instruction(&Instruction::Drop);
+        }
         thunk.instruction(&Instruction::End);
         codes.function(&thunk);
     }
@@ -228,14 +240,8 @@ fn emit_function(
     array_registry: &ArrayTypeRegistry,
 ) -> Result<Function, Diagnostic> {
     let value_types = infer_value_types(function, signatures)?;
-    let local_plan = build_local_plan(function, &value_types)?;
-    let locals = compress_locals(
-        local_plan
-            .extra_locals
-            .iter()
-            .map(|(_, ty)| wasm_type(ty, array_registry))
-            .collect::<Result<Vec<_>, _>>()?,
-    );
+    let local_plan = build_local_plan(function, &value_types, array_registry)?;
+    let locals = compress_locals(local_plan.extra_locals.clone());
     let mut out = Function::new(locals);
     if try_emit_structured_fast_path(
         &mut out,
@@ -305,7 +311,7 @@ fn try_emit_structured_fast_path(
             && else_bb.is_some_and(|b| matches!(b.terminator, Terminator::Return(_)))
         {
             emit_block_instructions(out, entry, signatures, local_plan, array_registry)?;
-            out.instruction(&Instruction::LocalGet(local(local_plan, condition)?));
+            emit_value_operand(out, local_plan, condition)?;
             out.instruction(&Instruction::If(BlockType::Empty));
             emit_phi_copies(out, function, entry.id, then_block, local_plan)?;
             emit_block(
@@ -363,7 +369,7 @@ fn try_emit_structured_fast_path(
                 out.instruction(&Instruction::Block(BlockType::Empty));
                 out.instruction(&Instruction::Loop(BlockType::Empty));
                 emit_block_instructions(out, second, signatures, local_plan, array_registry)?;
-                out.instruction(&Instruction::LocalGet(local(local_plan, condition)?));
+                emit_value_operand(out, local_plan, condition)?;
                 out.instruction(&Instruction::I32Eqz);
                 out.instruction(&Instruction::BrIf(1));
                 emit_phi_copies(out, function, second.id, then_block, local_plan)?;
@@ -414,7 +420,7 @@ fn try_emit_structured_fast_path(
                 emit_block_instructions(out, body, signatures, local_plan, array_registry)?;
                 emit_phi_copies(out, function, body.id, second.id, local_plan)?;
                 emit_block_instructions(out, second, signatures, local_plan, array_registry)?;
-                out.instruction(&Instruction::LocalGet(local(local_plan, condition)?));
+                emit_value_operand(out, local_plan, condition)?;
                 out.instruction(&Instruction::BrIf(1));
                 emit_phi_copies(out, function, second.id, body.id, local_plan)?;
                 out.instruction(&Instruction::Br(0));
@@ -439,40 +445,78 @@ fn try_emit_structured_fast_path(
 
 struct LocalPlan {
     slots: BTreeMap<ValueId, u32>,
-    extra_locals: Vec<(ValueId, Type)>,
+    multi_slots: BTreeMap<ValueId, Vec<u32>>,
+    extra_locals: Vec<ValType>,
+    stack_values: BTreeSet<ValueId>,
     pc_local: u32,
+}
+
+#[derive(Clone)]
+struct LiveInterval {
+    value: ValueId,
+    start: usize,
+    end: usize,
+    ty: Type,
 }
 
 fn build_local_plan(
     function: &IrFunction,
     value_types: &BTreeMap<ValueId, Type>,
+    array_registry: &ArrayTypeRegistry,
 ) -> Result<LocalPlan, Diagnostic> {
     let mut slots = BTreeMap::new();
-    let mut extra_locals = Vec::new();
-    let mut next_local = function.params.len() as u32;
+    let phi_copy_sources = collect_phi_copy_sources(function);
+    let mut stack_values = BTreeSet::new();
+
+    for block in function.blocks.values() {
+        let block_stack_values = compute_stack_values(
+            block,
+            phi_copy_sources.get(&block.id).cloned().unwrap_or_default(),
+        );
+        stack_values.extend(block_stack_values);
+    }
+    stack_values.retain(|v| !matches!(value_types.get(v), Some(Type::Multi(_))));
+
+    let intervals = compute_live_intervals(function, value_types, &stack_values)?;
+    let (local_slots, mut extra_locals) =
+        assign_locals_by_live_range(&intervals, function.params.len() as u32, array_registry)?;
+    slots.extend(local_slots);
 
     for block in function.blocks.values() {
         for (value, instruction) in &block.instructions {
-            if let IrInstruction::Param(index) = instruction {
+            if matches!(instruction, IrInstruction::Param(_)) {
+                let IrInstruction::Param(index) = instruction else {
+                    unreachable!()
+                };
                 slots.insert(*value, *index as u32);
-                continue;
             }
-
-            let ty = value_types
-                .get(value)
-                .cloned()
-                .ok_or_else(|| Diagnostic::new(format!("missing type for value {:?}", value)))?;
-            slots.insert(*value, next_local);
-            extra_locals.push((*value, ty));
-            next_local += 1;
         }
     }
 
-    let pc_local = next_local;
-    extra_locals.push((ValueId(usize::MAX), Type::Numeric(NumericType::I32)));
+    let mut multi_slots = BTreeMap::new();
+    for block in function.blocks.values() {
+        for (value, _) in &block.instructions {
+            let Some(Type::Multi(types)) = value_types.get(value) else {
+                continue;
+            };
+            let mut value_slots = Vec::new();
+            for ty in types {
+                let val_type = wasm_type(ty, array_registry)?;
+                let slot = function.params.len() as u32 + extra_locals.len() as u32;
+                extra_locals.push(val_type);
+                value_slots.push(slot);
+            }
+            multi_slots.insert(*value, value_slots);
+        }
+    }
+
+    let pc_local = function.params.len() as u32 + extra_locals.len() as u32;
+    extra_locals.push(ValType::I32);
     Ok(LocalPlan {
         slots,
+        multi_slots,
         extra_locals,
+        stack_values,
         pc_local,
     })
 }
@@ -513,6 +557,8 @@ fn infer_value_types(
                 IrInstruction::ArrayGet { element_ty, .. } => element_ty.clone(),
                 IrInstruction::ArraySet { .. } => Type::Numeric(NumericType::I32),
                 IrInstruction::ArrayLen { .. } => Type::Numeric(NumericType::I32),
+                IrInstruction::PackMulti { types, .. } => Type::Multi(types.clone()),
+                IrInstruction::MultiGet { ty, .. } => ty.clone(),
                 IrInstruction::Phi(_) => continue,
             };
             types.insert(*value, ty);
@@ -590,7 +636,7 @@ fn emit_block(
             then_block,
             else_block,
         } => {
-            out.instruction(&Instruction::LocalGet(local(local_plan, *condition)?));
+            emit_value_operand(out, local_plan, *condition)?;
             out.instruction(&Instruction::If(BlockType::Empty));
             emit_phi_copies(out, function, block.id, *then_block, local_plan)?;
             out.instruction(&Instruction::I32Const(then_block.0 as i32));
@@ -606,7 +652,7 @@ fn emit_block(
             let _ = value_types.get(value).ok_or_else(|| {
                 Diagnostic::new(format!("missing type for return value {:?}", value))
             })?;
-            out.instruction(&Instruction::LocalGet(local(local_plan, *value)?));
+            emit_value_operand(out, local_plan, *value)?;
             out.instruction(&Instruction::Return);
         }
         Terminator::Unreachable => {
@@ -628,20 +674,20 @@ fn emit_block_instructions(
             IrInstruction::Param(_) | IrInstruction::Phi(_) => {}
             IrInstruction::Number { ty, literal } => {
                 emit_numeric_const(out, *ty, literal)?;
-                out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
+                emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::Bool(flag) => {
                 out.instruction(&Instruction::I32Const(i32::from(*flag)));
-                out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
+                emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::Cast {
                 value: source,
                 from,
                 to,
             } => {
-                out.instruction(&Instruction::LocalGet(local(local_plan, *source)?));
+                emit_value_operand(out, local_plan, *source)?;
                 emit_cast(out, from.clone(), to.clone())?;
-                out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
+                emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::Binary {
                 op,
@@ -650,26 +696,26 @@ fn emit_block_instructions(
                 operand_ty,
                 result_ty,
             } => {
-                let left_local = local(local_plan, *left)?;
-                let right_local = local(local_plan, *right)?;
                 if matches!(op, BinaryOp::FloorDiv | BinaryOp::Mod) {
+                    let left_local = local(local_plan, *left)?;
+                    let right_local = local(local_plan, *right)?;
                     emit_floor_or_mod(out, *op, operand_ty.clone(), left_local, right_local)?;
                 } else {
-                    out.instruction(&Instruction::LocalGet(left_local));
-                    out.instruction(&Instruction::LocalGet(right_local));
+                    emit_value_operand(out, local_plan, *left)?;
+                    emit_value_operand(out, local_plan, *right)?;
                     emit_binary(out, *op, operand_ty.clone(), result_ty.clone())?;
                 }
-                out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
+                emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::Call { name, args } => {
                 for arg in args {
-                    out.instruction(&Instruction::LocalGet(local(local_plan, *arg)?));
+                    emit_value_operand(out, local_plan, *arg)?;
                 }
                 let callee = signatures.get(name).ok_or_else(|| {
                     Diagnostic::new(format!("unknown function '{name}' during wasm emission"))
                 })?;
                 out.instruction(&Instruction::Call(callee.index));
-                out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
+                emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::CallValue {
                 callee,
@@ -678,15 +724,15 @@ fn emit_block_instructions(
                 return_type,
             } => {
                 for arg in args {
-                    out.instruction(&Instruction::LocalGet(local(local_plan, *arg)?));
+                    emit_value_operand(out, local_plan, *arg)?;
                 }
-                out.instruction(&Instruction::LocalGet(local(local_plan, *callee)?));
+                emit_value_operand(out, local_plan, *callee)?;
                 let type_index = find_function_type_index(signatures, params, return_type)?;
                 out.instruction(&Instruction::CallIndirect {
                     type_index,
                     table_index: 0,
                 });
-                out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
+                emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::Closure {
                 name,
@@ -704,14 +750,14 @@ fn emit_block_instructions(
                 })?;
                 let _ = find_function_type_index(signatures, params, return_type)?;
                 out.instruction(&Instruction::I32Const(callee.index as i32));
-                out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
+                emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::ArrayNew {
                 element_ty,
                 elements,
             } => {
                 for element in elements {
-                    out.instruction(&Instruction::LocalGet(local(local_plan, *element)?));
+                    emit_value_operand(out, local_plan, *element)?;
                 }
                 let array_ty = Type::Array(Box::new(element_ty.clone()));
                 let array_type_index = array_registry.index(&array_ty)?;
@@ -719,7 +765,7 @@ fn emit_block_instructions(
                     array_type_index,
                     array_size: elements.len() as u32,
                 });
-                out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
+                emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::ArrayGet {
                 array,
@@ -734,7 +780,7 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::LocalGet(array_local));
                 out.instruction(&Instruction::LocalGet(index_local));
                 out.instruction(&Instruction::ArrayGet(array_type_index));
-                out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
+                emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::ArraySet {
                 array,
@@ -753,9 +799,36 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::ArraySet(array_type_index));
             }
             IrInstruction::ArrayLen { array } => {
-                out.instruction(&Instruction::LocalGet(local(local_plan, *array)?));
+                emit_value_operand(out, local_plan, *array)?;
                 out.instruction(&Instruction::ArrayLen);
-                out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::PackMulti { values, .. } => {
+                for v in values {
+                    emit_value_operand(out, local_plan, *v)?;
+                }
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::MultiGet {
+                value: source,
+                index,
+                ..
+            } => {
+                let slots = local_plan.multi_slots.get(source).ok_or_else(|| {
+                    Diagnostic::new(format!(
+                        "multi-get source {:?} has no multi-value slots",
+                        source
+                    ))
+                })?;
+                let slot = slots.get(*index).copied().ok_or_else(|| {
+                    Diagnostic::new(format!(
+                        "multi-get index {} out of range (multi has {} slots)",
+                        index,
+                        slots.len()
+                    ))
+                })?;
+                out.instruction(&Instruction::LocalGet(slot));
+                emit_value_store(out, local_plan, *value)?;
             }
         }
     }
@@ -801,6 +874,342 @@ fn emit_phi_copies(
     for (dst, _) in copies.iter().rev() {
         out.instruction(&Instruction::LocalSet(*dst));
     }
+    Ok(())
+}
+
+fn collect_phi_copy_sources(
+    function: &IrFunction,
+) -> BTreeMap<waluau_ir::BlockId, BTreeSet<ValueId>> {
+    let mut phi_copy_sources = BTreeMap::new();
+    for block in function.blocks.values() {
+        for (_, instruction) in &block.instructions {
+            let IrInstruction::Phi(incoming) = instruction else {
+                continue;
+            };
+            for (source, value) in incoming {
+                phi_copy_sources
+                    .entry(*source)
+                    .or_insert_with(BTreeSet::new)
+                    .insert(*value);
+            }
+        }
+    }
+    phi_copy_sources
+}
+
+fn compute_stack_values(
+    block: &BasicBlock,
+    phi_copy_sources: BTreeSet<ValueId>,
+) -> BTreeSet<ValueId> {
+    let mut uses = BTreeMap::<ValueId, Vec<usize>>::new();
+    for (index, (_, instruction)) in block.instructions.iter().enumerate() {
+        for operand in instruction_operands(instruction) {
+            uses.entry(operand).or_default().push(index);
+        }
+    }
+    let terminator_use_index = block.instructions.len();
+    for operand in terminator_operands(&block.terminator) {
+        uses.entry(operand).or_default().push(terminator_use_index);
+    }
+
+    let mut stack_values = BTreeSet::new();
+    for (index, (value, instruction)) in block.instructions.iter().enumerate() {
+        if matches!(instruction, IrInstruction::Param(_) | IrInstruction::Phi(_)) {
+            continue;
+        }
+        if phi_copy_sources.contains(value) {
+            continue;
+        }
+        let Some(use_sites) = uses.get(value) else {
+            continue;
+        };
+        if use_sites.len() != 1 {
+            continue;
+        }
+        let use_index = use_sites[0];
+        if use_index != index + 1 {
+            continue;
+        }
+        if use_index < block.instructions.len() {
+            let consumer = &block.instructions[use_index].1;
+            if instruction_use_requires_local(consumer)
+                || !instruction_can_consume_stack_value(consumer, *value)
+            {
+                continue;
+            }
+        }
+        stack_values.insert(*value);
+    }
+
+    stack_values
+}
+
+fn compute_live_intervals(
+    function: &IrFunction,
+    value_types: &BTreeMap<ValueId, Type>,
+    stack_values: &BTreeSet<ValueId>,
+) -> Result<Vec<LiveInterval>, Diagnostic> {
+    let mut block_bases = BTreeMap::new();
+    let mut block_end_positions = BTreeMap::new();
+    let mut cursor = 0usize;
+    for block in function.blocks.values() {
+        block_bases.insert(block.id, cursor);
+        let end = cursor + block.instructions.len();
+        block_end_positions.insert(block.id, end);
+        cursor = end + 1;
+    }
+
+    let mut def_positions = BTreeMap::<ValueId, usize>::new();
+    let mut last_use_positions = BTreeMap::<ValueId, usize>::new();
+    for block in function.blocks.values() {
+        let base = block_bases[&block.id];
+        for (index, (value, instruction)) in block.instructions.iter().enumerate() {
+            if stack_values.contains(value) {
+                continue;
+            }
+            match instruction {
+                IrInstruction::Param(_) => {}
+                IrInstruction::Phi(_) => {
+                    def_positions.insert(*value, base);
+                    last_use_positions.entry(*value).or_insert(base);
+                }
+                _ => {
+                    let pos = base + index;
+                    def_positions.insert(*value, pos);
+                    last_use_positions.entry(*value).or_insert(pos);
+                }
+            }
+        }
+    }
+
+    for block in function.blocks.values() {
+        let base = block_bases[&block.id];
+        for (index, (_, instruction)) in block.instructions.iter().enumerate() {
+            let pos = base + index;
+            for operand in instruction_operands(instruction) {
+                if stack_values.contains(&operand) {
+                    continue;
+                }
+                if let Some(last_use) = last_use_positions.get_mut(&operand) {
+                    *last_use = (*last_use).max(pos);
+                }
+            }
+        }
+        let term_pos = block_end_positions[&block.id];
+        for operand in terminator_operands(&block.terminator) {
+            if stack_values.contains(&operand) {
+                continue;
+            }
+            if let Some(last_use) = last_use_positions.get_mut(&operand) {
+                *last_use = (*last_use).max(term_pos);
+            }
+        }
+    }
+
+    for block in function.blocks.values() {
+        for (_, instruction) in &block.instructions {
+            let IrInstruction::Phi(incoming) = instruction else {
+                continue;
+            };
+            for (source, incoming_value) in incoming {
+                if stack_values.contains(incoming_value) {
+                    continue;
+                }
+                if let Some(last_use) = last_use_positions.get_mut(incoming_value) {
+                    *last_use = (*last_use).max(block_end_positions[source]);
+                }
+            }
+        }
+    }
+
+    let mut intervals = Vec::new();
+    for (value, start) in def_positions {
+        let ty = value_types
+            .get(&value)
+            .cloned()
+            .ok_or_else(|| Diagnostic::new(format!("missing type for value {:?}", value)))?;
+        if matches!(ty, Type::Multi(_)) {
+            continue;
+        }
+        let end = last_use_positions.get(&value).copied().unwrap_or(start);
+        intervals.push(LiveInterval {
+            value,
+            start,
+            end,
+            ty,
+        });
+    }
+    intervals.sort_by_key(|interval| (interval.start, interval.end, interval.value));
+    Ok(intervals)
+}
+
+fn assign_locals_by_live_range(
+    intervals: &[LiveInterval],
+    first_local: u32,
+    array_registry: &ArrayTypeRegistry,
+) -> Result<(BTreeMap<ValueId, u32>, Vec<ValType>), Diagnostic> {
+    #[derive(Clone)]
+    struct ActiveInterval {
+        end: usize,
+        slot: u32,
+        val_type: ValType,
+    }
+
+    let mut slots = BTreeMap::new();
+    let mut declared_locals = Vec::new();
+    let mut free_slots: Vec<(ValType, Vec<u32>)> = Vec::new();
+    let mut active: Vec<ActiveInterval> = Vec::new();
+    let mut next_local = first_local;
+
+    for interval in intervals {
+        let val_type = wasm_type(&interval.ty, array_registry)?;
+        let mut next_active = Vec::new();
+        for live in active {
+            if live.end < interval.start {
+                let mut found = false;
+                for (bucket_ty, bucket) in &mut free_slots {
+                    if *bucket_ty == live.val_type {
+                        bucket.push(live.slot);
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    free_slots.push((live.val_type, vec![live.slot]));
+                }
+            } else {
+                next_active.push(live);
+            }
+        }
+        active = next_active;
+
+        let mut reused_slot = None;
+        for (bucket_ty, bucket) in &mut free_slots {
+            if *bucket_ty == val_type {
+                reused_slot = bucket.pop();
+                break;
+            }
+        }
+        let slot = if let Some(slot) = reused_slot {
+            slot
+        } else {
+            let slot = next_local;
+            next_local += 1;
+            declared_locals.push(val_type);
+            slot
+        };
+        slots.insert(interval.value, slot);
+        active.push(ActiveInterval {
+            end: interval.end,
+            slot,
+            val_type,
+        });
+    }
+
+    Ok((slots, declared_locals))
+}
+
+fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
+    match instruction {
+        IrInstruction::Param(_) | IrInstruction::Number { .. } | IrInstruction::Bool(_) => {
+            Vec::new()
+        }
+        IrInstruction::Cast { value, .. } => vec![*value],
+        IrInstruction::Binary { left, right, .. } => vec![*left, *right],
+        IrInstruction::Call { args, .. } => args.clone(),
+        IrInstruction::CallValue { callee, args, .. } => {
+            let mut out = Vec::with_capacity(args.len() + 1);
+            out.extend(args.iter().copied());
+            out.push(*callee);
+            out
+        }
+        IrInstruction::Closure { captures, .. } => captures.clone(),
+        IrInstruction::ArrayNew { elements, .. } => elements.clone(),
+        IrInstruction::ArrayGet { array, index, .. } => vec![*array, *index],
+        IrInstruction::ArraySet {
+            array,
+            index,
+            value,
+            ..
+        } => vec![*array, *index, *value],
+        IrInstruction::ArrayLen { array } => vec![*array],
+        IrInstruction::PackMulti { values, .. } => values.clone(),
+        IrInstruction::MultiGet { value, .. } => vec![*value],
+        IrInstruction::Phi(_) => Vec::new(),
+    }
+}
+
+fn terminator_operands(terminator: &Terminator) -> Vec<ValueId> {
+    match terminator {
+        Terminator::Jump(_) | Terminator::Unreachable => Vec::new(),
+        Terminator::Branch { condition, .. } => vec![*condition],
+        Terminator::Return(value) => vec![*value],
+    }
+}
+
+fn instruction_use_requires_local(instruction: &IrInstruction) -> bool {
+    matches!(
+        instruction,
+        IrInstruction::Binary {
+            op: BinaryOp::FloorDiv | BinaryOp::Mod,
+            ..
+        } | IrInstruction::ArrayGet { .. }
+            | IrInstruction::ArraySet { .. }
+    )
+}
+
+fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: ValueId) -> bool {
+    match instruction {
+        IrInstruction::Param(_) | IrInstruction::Number { .. } | IrInstruction::Bool(_) => false,
+        IrInstruction::Cast { value: source, .. } => *source == value,
+        IrInstruction::Binary { left, .. } => *left == value,
+        IrInstruction::Call { args, .. } => args.first().copied() == Some(value),
+        IrInstruction::CallValue { args, callee, .. } => {
+            args.first().copied() == Some(value) || (args.is_empty() && *callee == value)
+        }
+        IrInstruction::Closure { captures, .. } => captures.first().copied() == Some(value),
+        IrInstruction::ArrayNew { elements, .. } => elements.first().copied() == Some(value),
+        IrInstruction::ArrayGet { .. } | IrInstruction::ArraySet { .. } => false,
+        IrInstruction::ArrayLen { array } => *array == value,
+        IrInstruction::PackMulti { values, .. } => values.first().copied() == Some(value),
+        IrInstruction::MultiGet { value: source, .. } => *source == value,
+        IrInstruction::Phi(_) => false,
+    }
+}
+
+fn emit_value_operand(
+    out: &mut Function,
+    local_plan: &LocalPlan,
+    value: ValueId,
+) -> Result<(), Diagnostic> {
+    if local_plan.stack_values.contains(&value) {
+        return Ok(());
+    }
+    if let Some(slots) = local_plan.multi_slots.get(&value) {
+        for &slot in slots {
+            out.instruction(&Instruction::LocalGet(slot));
+        }
+        return Ok(());
+    }
+    out.instruction(&Instruction::LocalGet(local(local_plan, value)?));
+    Ok(())
+}
+
+fn emit_value_store(
+    out: &mut Function,
+    local_plan: &LocalPlan,
+    value: ValueId,
+) -> Result<(), Diagnostic> {
+    if local_plan.stack_values.contains(&value) {
+        return Ok(());
+    }
+    if let Some(slots) = local_plan.multi_slots.get(&value) {
+        for &slot in slots.iter().rev() {
+            out.instruction(&Instruction::LocalSet(slot));
+        }
+        return Ok(());
+    }
+    out.instruction(&Instruction::LocalSet(local(local_plan, value)?));
     Ok(())
 }
 
@@ -1399,7 +1808,9 @@ fn compress_locals(locals: Vec<ValType>) -> Vec<(u32, ValType)> {
 
 #[cfg(test)]
 mod tests {
-    use wasmparser::Validator;
+    use waluau_ast::BinaryOp;
+    use waluau_ir::Instruction as IrInstruction;
+    use wasmparser::{Operator, Parser, Payload, Validator};
     use wasmprinter::print_bytes;
 
     #[test]
@@ -1510,5 +1921,167 @@ mod tests {
         let wat = print_bytes(&wasm).expect("wat should print");
         assert!(wat.contains(" loop"));
         assert!(!wat.contains("i32.eq\n    if"));
+    }
+
+    #[test]
+    fn keeps_immediate_return_value_on_stack() {
+        let source = r#"
+            function entry(x: i32): i32
+                return x + 1
+            end
+        "#;
+        let program = waluau_parser::parse(source).expect("parse should succeed");
+        let ir = waluau_ir::build(&program).expect("ir should succeed");
+        let wasm = super::emit(&ir).expect("emit should succeed");
+        let mut saw_add_then_return = false;
+        for payload in Parser::new(0).parse_all(&wasm) {
+            let payload = payload.expect("wasm should parse");
+            if let Payload::CodeSectionEntry(body) = payload {
+                let mut reader = body.get_operators_reader().expect("ops should decode");
+                let mut prev_was_add = false;
+                while !reader.eof() {
+                    let op = reader.read().expect("op should decode");
+                    match op {
+                        Operator::I32Add => prev_was_add = true,
+                        Operator::Return if prev_was_add => {
+                            saw_add_then_return = true;
+                            break;
+                        }
+                        _ => prev_was_add = false,
+                    }
+                }
+                break;
+            }
+        }
+        assert!(saw_add_then_return);
+    }
+
+    #[test]
+    fn emits_valid_wasm_for_multi_return() {
+        let source = r#"
+            function pair(x: i32, y: i32): i32, i32
+                return x, y
+            end
+        "#;
+        let program = waluau_parser::parse(source).expect("parse should succeed");
+        let ir = waluau_ir::build(&program).expect("ir should succeed");
+        let wasm = super::emit(&ir).expect("emit should succeed");
+        Validator::new()
+            .validate_all(&wasm)
+            .expect("emitted module should validate");
+    }
+
+    #[test]
+    fn emits_valid_wasm_for_multi_let_binding() {
+        let source = r#"
+            function swap(x: i32, y: i32): i32, i32
+                return y, x
+            end
+            function entry(a: i32, b: i32): i32
+                local x: i32, y: i32 = swap(a, b)
+                return x + y
+            end
+        "#;
+        let program = waluau_parser::parse(source).expect("parse should succeed");
+        let ir = waluau_ir::build(&program).expect("ir should succeed");
+        let wasm = super::emit(&ir).expect("emit should succeed");
+        Validator::new()
+            .validate_all(&wasm)
+            .expect("emitted module should validate");
+    }
+
+    #[test]
+    fn emits_valid_wasm_for_multi_assign() {
+        let source = r#"
+            function swap(x: i32, y: i32): i32, i32
+                return y, x
+            end
+            function entry(a: i32, b: i32): i32
+                local x: i32, y: i32 = a, b
+                x, y = swap(x, y)
+                return x + y
+            end
+        "#;
+        let program = waluau_parser::parse(source).expect("parse should succeed");
+        let ir = waluau_ir::build(&program).expect("ir should succeed");
+        let wasm = super::emit(&ir).expect("emit should succeed");
+        Validator::new()
+            .validate_all(&wasm)
+            .expect("emitted module should validate");
+    }
+
+    #[test]
+    fn reuses_i32_local_slots_for_disjoint_live_ranges() {
+        let source = r#"
+            function reuse(x: i32): i32
+                local a: i32 = x + x
+                local b: i32 = a + a
+                local c: i32 = x - x
+                local d: i32 = c + c
+                return b + d
+            end
+        "#;
+        let program = waluau_parser::parse(source).expect("parse should succeed");
+        let ir = waluau_ir::build(&program).expect("ir should succeed");
+        let function = &ir.functions[0];
+        let signatures = std::iter::once((
+            function.name.clone(),
+            super::FunctionSignature {
+                index: 0,
+                params: function.params.iter().map(|(_, ty)| ty.clone()).collect(),
+                result: function.return_type.clone(),
+            },
+        ))
+        .collect::<std::collections::HashMap<_, _>>();
+        let value_types =
+            super::infer_value_types(function, &signatures).expect("types should infer");
+        let array_types = super::collect_array_types(&ir);
+        let array_registry = super::ArrayTypeRegistry::with_function_type_offset(
+            &array_types,
+            ir.functions.len() as u32 + u32::from(ir.start.is_some()),
+        );
+        let local_plan = super::build_local_plan(function, &value_types, &array_registry)
+            .expect("plan should build");
+
+        let block = function
+            .blocks
+            .get(&function.entry)
+            .expect("entry block should exist");
+        let param = block
+            .instructions
+            .iter()
+            .find_map(|(value, instruction)| match instruction {
+                IrInstruction::Param(_) => Some(*value),
+                _ => None,
+            })
+            .expect("param should exist");
+        let a = block
+            .instructions
+            .iter()
+            .find_map(|(value, instruction)| match instruction {
+                IrInstruction::Binary {
+                    op: BinaryOp::Add,
+                    left,
+                    right,
+                    ..
+                } if *left == param && *right == param => Some(*value),
+                _ => None,
+            })
+            .expect("a should exist");
+        let c = block
+            .instructions
+            .iter()
+            .find_map(|(value, instruction)| match instruction {
+                IrInstruction::Binary {
+                    op: BinaryOp::Sub,
+                    left,
+                    right,
+                    ..
+                } if *left == param && *right == param => Some(*value),
+                _ => None,
+            })
+            .expect("c should exist");
+
+        assert_eq!(local_plan.slots.get(&a), local_plan.slots.get(&c));
     }
 }

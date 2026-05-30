@@ -4,6 +4,12 @@ pub use waluau_span::Span;
 pub struct Program {
     pub functions: Vec<Function>,
     pub top_level: Vec<Stmt>,
+    /// The value a module exports through a trailing top-level `return`.
+    ///
+    /// For the MVP this is always a single top-level function name. It is
+    /// consumed by the module linker in `waluau-driver` and is ignored when a
+    /// program is compiled as a standalone entry point.
+    pub export: Option<Expr>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -233,6 +239,13 @@ pub enum Expr {
         args: Vec<Expr>,
     },
     Function(FunctionExpr),
+    /// A relative module import, e.g. `require("./math")`.
+    ///
+    /// The string is the raw path as written in source. The module linker in
+    /// `waluau-driver` resolves it and replaces this node with a reference to
+    /// the imported module's exported function, so later compiler stages never
+    /// observe a `Require` node.
+    Require(String),
     ArrayLiteral {
         elements: Vec<Expr>,
     },

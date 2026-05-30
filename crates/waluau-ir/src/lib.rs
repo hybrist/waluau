@@ -9,6 +9,7 @@ use waluau_diagnostics::Diagnostic;
 const COROUTINE_CREATE: &str = "coroutine_create";
 const COROUTINE_RESUME: &str = "coroutine_resume";
 const COROUTINE_STATUS: &str = "coroutine_status";
+const ASSERT: &str = "assert";
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct BlockId(pub usize);
@@ -92,6 +93,15 @@ pub enum Instruction {
     },
     ArrayLen {
         array: ValueId,
+    },
+    PackMulti {
+        values: Vec<ValueId>,
+        types: Vec<Type>,
+    },
+    MultiGet {
+        value: ValueId,
+        index: usize,
+        ty: Type,
     },
     Phi(Vec<(BlockId, ValueId)>),
 }
@@ -481,6 +491,56 @@ fn verify_function(
                         )));
                     }
                 }
+                Instruction::PackMulti { values, types } => {
+                    if values.len() != types.len() {
+                        return Err(Diagnostic::new(format!(
+                            "pack multi in block {:?} must have equal value/type arity",
+                            block.id
+                        )));
+                    }
+                    for (value, ty) in values.iter().zip(types.iter()) {
+                        let actual = require_dominating_definition(
+                            &definitions,
+                            &dominators,
+                            &seen_in_block,
+                            block.id,
+                            *value,
+                        )?;
+                        if actual != *ty {
+                            return Err(Diagnostic::new(format!(
+                                "pack multi in block {:?} value type {}, expected {}",
+                                block.id, actual, ty
+                            )));
+                        }
+                    }
+                }
+                Instruction::MultiGet { value, index, ty } => {
+                    let actual = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *value,
+                    )?;
+                    let Type::Multi(types) = actual else {
+                        return Err(Diagnostic::new(format!(
+                            "multi-get in block {:?} requires multi-value operand",
+                            block.id
+                        )));
+                    };
+                    let expected = types.get(*index).ok_or_else(|| {
+                        Diagnostic::new(format!(
+                            "multi-get in block {:?} index {} is out of range",
+                            block.id, index
+                        ))
+                    })?;
+                    if expected != ty {
+                        return Err(Diagnostic::new(format!(
+                            "multi-get in block {:?} expects {}, got {}",
+                            block.id, expected, ty
+                        )));
+                    }
+                }
                 Instruction::Phi(incoming) => {
                     let expected_preds = predecessors.get(&block.id).cloned().unwrap_or_default();
                     if incoming.len() != expected_preds.len() {
@@ -640,6 +700,8 @@ fn infer_instruction_type(
         Instruction::ArrayGet { element_ty, .. } => Ok(element_ty.clone()),
         Instruction::ArraySet { .. } => Ok(Type::Numeric(NumericType::I32)),
         Instruction::ArrayLen { .. } => Ok(Type::Numeric(NumericType::I32)),
+        Instruction::PackMulti { types, .. } => Ok(Type::Multi(types.clone())),
+        Instruction::MultiGet { ty, .. } => Ok(ty.clone()),
         Instruction::Phi(_) => Err(Diagnostic::new(
             "phi type must be resolved before infer_instruction_type",
         )),
@@ -1002,6 +1064,14 @@ impl Builder<'_> {
                 });
             }
             Stmt::Expr(expr) => {
+                if let Expr::Call { callee, args } = expr {
+                    if let Expr::Name(name) = callee.as_ref() {
+                        if name == ASSERT {
+                            self.lower_assert_call(args, env, types)?;
+                            return Ok(());
+                        }
+                    }
+                }
                 let _ = self.lower_expr(expr, env, types, None)?;
             }
             Stmt::Return(expr) => {
@@ -1010,18 +1080,61 @@ impl Builder<'_> {
                 self.set_terminator(self.current_block, Terminator::Return(value));
                 self.current_block = DEAD_BLOCK;
             }
-            Stmt::ReturnMulti(_) => {
-                return Err(Diagnostic::new(
-                    "multiple return values are not lowered to IR yet",
-                ));
+            Stmt::ReturnMulti(values) => {
+                let expected = match &self.function.return_type {
+                    Type::Multi(types) => types.clone(),
+                    other => vec![other.clone()],
+                };
+                let lowered = self.lower_expr_list(values, env, types, Some(&expected))?;
+                if lowered.len() != expected.len() {
+                    return Err(Diagnostic::new(format!(
+                        "return expects {} values, got {}",
+                        expected.len(),
+                        lowered.len()
+                    )));
+                }
+                let packed = self.emit(Instruction::PackMulti {
+                    values: lowered,
+                    types: expected,
+                });
+                self.set_terminator(self.current_block, Terminator::Return(packed));
+                self.current_block = DEAD_BLOCK;
             }
-            Stmt::LetMulti { .. } => {
-                return Err(Diagnostic::new(
-                    "multi-binding local declarations are not lowered to IR yet",
-                ));
+            Stmt::LetMulti { bindings, values } => {
+                let expected: Vec<Type> =
+                    bindings.iter().map(|binding| binding.ty.clone()).collect();
+                let lowered = self.lower_expr_list(values, env, types, Some(&expected))?;
+                if lowered.len() != expected.len() {
+                    return Err(Diagnostic::new(format!(
+                        "multi-binding declaration expects {} values, got {}",
+                        expected.len(),
+                        lowered.len()
+                    )));
+                }
+                for ((binding, value), expected_ty) in bindings.iter().zip(lowered).zip(expected) {
+                    env.insert(binding.name.clone(), value);
+                    types.insert(binding.name.clone(), expected_ty);
+                }
             }
-            Stmt::AssignMulti { .. } => {
-                return Err(Diagnostic::new("multi-assignment is not lowered to IR yet"));
+            Stmt::AssignMulti { targets, values } => {
+                let mut expected = Vec::new();
+                for target in targets {
+                    let ty = types.get(target).cloned().ok_or_else(|| {
+                        Diagnostic::new(format!("unknown local '{target}' during IR lowering"))
+                    })?;
+                    expected.push(ty);
+                }
+                let lowered = self.lower_expr_list(values, env, types, Some(&expected))?;
+                if lowered.len() != expected.len() {
+                    return Err(Diagnostic::new(format!(
+                        "multi-assignment expects {} values, got {}",
+                        expected.len(),
+                        lowered.len()
+                    )));
+                }
+                for (target, value) in targets.iter().zip(lowered) {
+                    env.insert(target.clone(), value);
+                }
             }
             Stmt::If {
                 condition,
@@ -1037,6 +1150,34 @@ impl Builder<'_> {
                 self.lower_repeat(body, condition, env, types)?;
             }
         }
+        Ok(())
+    }
+
+    fn lower_assert_call(
+        &mut self,
+        args: &[Expr],
+        env: &mut HashMap<String, ValueId>,
+        types: &mut HashMap<String, Type>,
+    ) -> Result<(), Diagnostic> {
+        if args.len() != 1 {
+            return Err(Diagnostic::new(format!(
+                "{ASSERT} expects 1 argument, got {}",
+                args.len()
+            )));
+        }
+        let condition = self.lower_expr(&args[0], env, types, Some(Type::Bool))?;
+        let continue_block = self.new_block();
+        let trap_block = self.new_block();
+        self.set_terminator(
+            self.current_block,
+            Terminator::Branch {
+                condition,
+                then_block: continue_block,
+                else_block: trap_block,
+            },
+        );
+        self.set_terminator(trap_block, Terminator::Unreachable);
+        self.current_block = continue_block;
         Ok(())
     }
 
@@ -1286,13 +1427,31 @@ impl Builder<'_> {
             }
             Expr::Bool(value) => self.emit(Instruction::Bool(*value)),
             Expr::Name(name) => {
-                let value = *env.get(name).ok_or_else(|| {
-                    Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
-                })?;
-                let actual = types.get(name).cloned().ok_or_else(|| {
-                    Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
-                })?;
-                self.coerce_value(value, actual, expected)?
+                if let Some(value) = env.get(name).copied() {
+                    let actual = types.get(name).cloned().ok_or_else(|| {
+                        Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
+                    })?;
+                    self.coerce_value(value, actual, expected)?
+                } else if let Some((params, return_type)) = self.signatures.get(name).cloned() {
+                    // A bare top-level function name used as a value becomes a
+                    // capture-free function reference (funcref), enabling it to
+                    // be stored, returned, and called indirectly.
+                    let value = self.emit(Instruction::Closure {
+                        name: name.clone(),
+                        captures: Vec::new(),
+                        params: params.clone(),
+                        return_type: return_type.clone(),
+                    });
+                    let actual = Type::Function {
+                        params,
+                        return_type: Box::new(return_type),
+                    };
+                    self.coerce_value(value, actual, expected)?
+                } else {
+                    return Err(Diagnostic::new(format!(
+                        "unknown local '{name}' during IR lowering"
+                    )));
+                }
             }
             Expr::Unary { op, expr } => {
                 let actual = self.infer_expr_type(expr, types, None)?;
@@ -1477,6 +1636,11 @@ impl Builder<'_> {
                 let actual = self.infer_expr_type(expr, types, None)?;
                 self.coerce_value(value, actual, expected)?
             }
+            Expr::Require(path) => {
+                return Err(Diagnostic::new(format!(
+                    "unresolved require(\"{path}\") reached IR lowering"
+                )));
+            }
             Expr::ArrayLiteral { elements } => {
                 let array_ty = self.infer_array_literal_type(elements, types, expected.clone())?;
                 let element_ty = array_ty
@@ -1509,6 +1673,54 @@ impl Builder<'_> {
             }
         };
         Ok(value)
+    }
+
+    fn lower_expr_list(
+        &mut self,
+        exprs: &[Expr],
+        env: &HashMap<String, ValueId>,
+        types: &HashMap<String, Type>,
+        expected: Option<&[Type]>,
+    ) -> Result<Vec<ValueId>, Diagnostic> {
+        let mut out = Vec::new();
+        for expr in exprs {
+            let slot_expected = expected.and_then(|types| types.get(out.len()).cloned());
+            let ty = if matches!(expr, Expr::Call { .. }) {
+                self.infer_expr_type(expr, types, None)?
+            } else {
+                self.infer_expr_type(expr, types, slot_expected.clone())?
+            };
+            match ty {
+                Type::Multi(multi_types) => {
+                    let tuple = self.lower_expr(expr, env, types, None)?;
+                    for (index, part) in multi_types.into_iter().enumerate() {
+                        let coerced =
+                            if let Some(exp) = expected.and_then(|types| types.get(out.len())) {
+                                coerce_type(part, Some(exp.clone()))?
+                            } else {
+                                part
+                            };
+                        let value = self.emit(Instruction::MultiGet {
+                            value: tuple,
+                            index,
+                            ty: coerced,
+                        });
+                        out.push(value);
+                    }
+                }
+                scalar => {
+                    let coerced = if let Some(exp) = expected.and_then(|types| types.get(out.len()))
+                    {
+                        coerce_type(scalar, Some(exp.clone()))?
+                    } else {
+                        scalar
+                    };
+                    let value = self.lower_expr(expr, env, types, Some(coerced))?;
+                    out.push(value);
+                }
+            }
+        }
+        Ok(out)
     }
 
     fn lower_function_expr(
@@ -1653,6 +1865,9 @@ impl Builder<'_> {
                 None => Ok(Type::number()),
             },
             Expr::Bool(_) => Ok(Type::Bool),
+            Expr::Require(path) => Err(Diagnostic::new(format!(
+                "unresolved require(\"{path}\") reached IR lowering"
+            ))),
             Expr::Name(name) => {
                 if let Some(ty) = types.get(name) {
                     Ok(ty.clone())
@@ -2324,7 +2539,7 @@ fn collect_expr_captures(
             collect_expr_captures(base, bound, env, signatures, captures);
             collect_expr_captures(index, bound, env, signatures, captures);
         }
-        Expr::Number(_) | Expr::Bool(_) => {}
+        Expr::Number(_) | Expr::Bool(_) | Expr::Require(_) => {}
     }
 }
 

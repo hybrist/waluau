@@ -4,8 +4,25 @@ use std::path::{Path, PathBuf};
 
 use waluau_diagnostics::Diagnostic;
 
+mod link;
+
+/// Compile a single source string with no module resolution.
+///
+/// Any `require(...)` in the source is rejected, since relative imports can only
+/// be resolved against a file path. Use [`compile_file`] for programs that use
+/// `require`.
 pub fn compile_source(source: &str) -> Result<Vec<u8>, Diagnostic> {
     let program = waluau_parser::parse(source)?;
+    compile_program(program)
+}
+
+/// Compile `path`, resolving and linking any modules it imports with `require`.
+pub fn compile_file(path: &Path) -> Result<Vec<u8>, Diagnostic> {
+    let program = link::link_program(path)?;
+    compile_program(program)
+}
+
+fn compile_program(program: waluau_ast::Program) -> Result<Vec<u8>, Diagnostic> {
     let typed_program = waluau_hir::type_check_and_infer(&program)?;
     let ir = waluau_ir::build(&typed_program)?;
     waluau_codegen_wasm::emit(&ir)
@@ -20,9 +37,7 @@ where
     I: IntoIterator<Item = OsString>,
 {
     let options = parse_args(args)?;
-    let source = fs::read_to_string(&options.input)
-        .map_err(|error| io_error("read input file", &options.input, error))?;
-    let wasm = compile_source(&source)?;
+    let wasm = compile_file(&options.input)?;
     fs::write(&options.output, wasm)
         .map_err(|error| io_error("write output file", &options.output, error))?;
     Ok(())
@@ -112,8 +127,10 @@ mod tests {
             "closure_capture_unsupported" => {
                 include_str!("../../../fixtures/closure_capture_unsupported.walu")
             }
+            "assert_pass" => include_str!("../../../fixtures/assert_pass.walu"),
             "top_level_statements" => include_str!("../../../fixtures/top_level_statements.walu"),
             "mismatch" => include_str!("../../../fixtures/mismatch.walu"),
+            "multi_value" => include_str!("../../../fixtures/multi_value.walu"),
             other => panic!("unknown fixture: {other}"),
         }
     }
@@ -440,6 +457,58 @@ mod tests {
     }
 
     #[test]
+    fn executes_multi_value_fixture() {
+        let source = fixture_source("multi_value");
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let swap = instance
+            .get_typed_func::<(i32, i32), (i32, i32)>(&mut store, "swap")
+            .expect("swap export should exist");
+        assert_eq!(
+            swap.call(&mut store, (3, 7)).expect("call should succeed"),
+            (7, 3)
+        );
+        let sum_of_swap = instance
+            .get_typed_func::<(i32, i32), i32>(&mut store, "sum_of_swap")
+            .expect("sum_of_swap export should exist");
+        assert_eq!(
+            sum_of_swap
+                .call(&mut store, (10, 20))
+                .expect("call should succeed"),
+            30
+        );
+    }
+
+    #[test]
+    fn executes_assertion_fixture() {
+        let source = fixture_source("assert_pass");
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let check = instance
+            .get_typed_func::<i32, i32>(&mut store, "check")
+            .expect("check export should exist");
+        assert_eq!(check.call(&mut store, 41).expect("call should succeed"), 42);
+    }
+
+    #[test]
+    fn traps_on_failed_assertion() {
+        let source = r#"
+            function check(): i32
+                assert(false)
+                return 1
+            end
+        "#;
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let check = instance
+            .get_typed_func::<(), i32>(&mut store, "check")
+            .expect("check export should exist");
+        check
+            .call(&mut store, ())
+            .expect_err("assert(false) should trap");
+    }
+
+    #[test]
     fn rejects_invalid_fixture_file() {
         let source = fixture_source("mismatch");
         let err = super::compile_source(source).expect_err("compile should fail");
@@ -457,6 +526,90 @@ mod tests {
 
         let wasm = fs::read(&output_path).expect("default output should exist");
         Module::new(&Engine::default(), wasm).expect("output should be valid wasm");
+    }
+
+    fn fixture_path(relative: &str) -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures")
+            .join(relative)
+    }
+
+    #[test]
+    fn compiles_and_executes_relative_imports() {
+        let wasm = super::compile_file(&fixture_path("modules/main.walu"))
+            .expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let compute = instance
+            .get_typed_func::<i32, i32>(&mut store, "compute")
+            .expect("compute export should exist");
+        // double(5) = add(helper(5), 5) = add(5, 5) = 10
+        // compute(5) = add(double(5), helper()) = add(10, 100) = 110
+        assert_eq!(
+            compute.call(&mut store, 5).expect("call should succeed"),
+            110
+        );
+    }
+
+    #[test]
+    fn mangling_keeps_same_named_functions_from_different_modules() {
+        // `helper` is defined in both the entry module and the imported
+        // `double` module; linking must keep both as distinct exports.
+        let wasm = super::compile_file(&fixture_path("modules/main.walu"))
+            .expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let entry_helper = instance
+            .get_typed_func::<(), i32>(&mut store, "helper")
+            .expect("entry helper export should exist");
+        assert_eq!(
+            entry_helper
+                .call(&mut store, ())
+                .expect("call should succeed"),
+            100
+        );
+    }
+
+    #[test]
+    fn detects_circular_imports() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("a.walu"),
+            "function a(): i32\n    local b: () -> i32 = require(\"./b\")\n    return b()\nend\nreturn a\n",
+        )
+        .expect("a should write");
+        fs::write(
+            tempdir.path().join("b.walu"),
+            "function b(): i32\n    local a: () -> i32 = require(\"./a\")\n    return a()\nend\nreturn b\n",
+        )
+        .expect("b should write");
+
+        let error = super::compile_file(&tempdir.path().join("a.walu"))
+            .expect_err("circular import should fail");
+        assert!(
+            error.to_string().contains("circular module import"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn reports_missing_module_export() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("lib.walu"),
+            "function noop(): i32\n    return 0\nend\n",
+        )
+        .expect("lib should write");
+        fs::write(
+            tempdir.path().join("app.walu"),
+            "function main(): i32\n    local f: () -> i32 = require(\"./lib\")\n    return f()\nend\n",
+        )
+        .expect("app should write");
+
+        let error = super::compile_file(&tempdir.path().join("app.walu"))
+            .expect_err("missing export should fail");
+        assert!(
+            error.to_string().contains("has no export"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]

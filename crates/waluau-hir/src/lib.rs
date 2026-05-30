@@ -9,6 +9,7 @@ use waluau_diagnostics::Diagnostic;
 const COROUTINE_CREATE: &str = "coroutine_create";
 const COROUTINE_RESUME: &str = "coroutine_resume";
 const COROUTINE_STATUS: &str = "coroutine_status";
+const ASSERT: &str = "assert";
 
 #[derive(Clone)]
 struct Binding {
@@ -228,7 +229,7 @@ fn stmt_calls_name(stmt: &Stmt, callee: &str) -> bool {
 
 fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
     match expr {
-        Expr::Name(_) | Expr::Number(_) | Expr::Bool(_) => false,
+        Expr::Name(_) | Expr::Number(_) | Expr::Bool(_) | Expr::Require(_) => false,
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => expr_calls_name(expr, callee),
         Expr::Binary { left, right, .. } => {
             expr_calls_name(left, callee) || expr_calls_name(right, callee)
@@ -651,6 +652,25 @@ fn check_stmt(
             if !matches!(expr, Expr::Call { .. }) {
                 return Err(Diagnostic::new("expression statements must be calls"));
             }
+            if let Expr::Call { callee, args } = expr {
+                if let Expr::Name(name) = callee.as_ref() {
+                    if name == ASSERT {
+                        if args.len() != 1 {
+                            return Err(Diagnostic::new(format!(
+                                "{ASSERT} expects 1 argument, got {}",
+                                args.len()
+                            )));
+                        }
+                        let actual = infer_expr(&args[0], vars, signatures, Some(Type::Bool))?;
+                        if actual != Type::Bool {
+                            return Err(Diagnostic::new(format!(
+                                "{ASSERT} expects bool, got {actual}"
+                            )));
+                        }
+                        return Ok(false);
+                    }
+                }
+            }
             let _ = infer_expr(expr, vars, signatures, None)?;
             Ok(false)
         }
@@ -666,6 +686,10 @@ fn infer_expr(
     match expr {
         Expr::Number(value) => resolve_number_literal(value, expected),
         Expr::Bool(_) => Ok(Type::Bool),
+        Expr::Require(path) => Err(Diagnostic::new(format!(
+            "require(\"{path}\") can only be resolved when compiling from a file; \
+             relative imports are unavailable when compiling a single source string"
+        ))),
         Expr::Name(name) => {
             let actual = if let Some(local) = vars.get(name) {
                 local.ty.clone()
@@ -1878,5 +1902,30 @@ mod tests {
         "#;
         let program = parse(source).expect("parse should succeed");
         super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn type_checks_assert_statement() {
+        let source = r#"
+            function check(x: i32): i32
+                assert(x > 0)
+                return x
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn rejects_assert_with_non_bool_argument() {
+        let source = r#"
+            function check(x: i32): i32
+                assert(x)
+                return x
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.to_string(), "cannot implicitly convert i32 to bool");
     }
 }
