@@ -458,11 +458,22 @@ fn common_return_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
         return Ok(left);
     }
     match (left, right) {
-        (Type::Numeric(a), Type::Numeric(b)) => a.common(b).map(Type::Numeric).ok_or_else(|| {
-            Diagnostic::new("function return branches must resolve to the same type")
-        }),
-        _ => Err(Diagnostic::new(
+        (Type::Numeric(a), Type::Numeric(b)) => a
+            .common(b)
+            .map(Type::Numeric)
+            .ok_or_else(|| {
+                inference_diagnostic(
+                    "inference/conflict",
+                    DiagnosticCategory::Conflict,
+                    "function return branches must resolve to the same type",
+                    "ensure all return branches produce the same type or add an explicit return annotation",
+                )
+            }),
+        _ => Err(inference_diagnostic(
+            "inference/conflict",
+            DiagnosticCategory::Conflict,
             "function return branches must resolve to the same type",
+            "ensure all return branches produce the same type or add an explicit return annotation",
         )),
     }
 }
