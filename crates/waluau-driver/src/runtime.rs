@@ -17,8 +17,8 @@ impl HostState {
     }
 }
 
-pub fn parse_string_table(wasm: &[u8]) -> Result<Vec<String>, Diagnostic> {
-    host::parse_string_section_from_wasm(wasm)
+pub fn parse_string_constants(wasm: &[u8]) -> Result<Vec<String>, Diagnostic> {
+    host::parse_string_constants_from_wasm(wasm)
 }
 
 /// Create a store configured for Waluau modules (GC + reference types).
@@ -36,44 +36,47 @@ pub fn instantiate(
     let mut linker = Linker::new(engine);
     linker.func_wrap(
         host::IMPORT_MODULE,
-        host::IMPORT_STRING_LIT,
+        host::IMPORT_JS_STRING_CONST,
         |mut caller: Caller<'_, HostState>, index: i32| -> wasmtime::Result<Rooted<ExternRef>> {
             let value = caller
                 .data()
                 .strings
                 .get(index as usize)
-                .ok_or_else(|| wasmtime::Error::msg("string_lit index out of bounds"))?
+                .ok_or_else(|| wasmtime::Error::msg("js_string_const index out of bounds"))?
                 .clone();
             ExternRef::new(&mut caller, value)
         },
     )?;
     linker.func_wrap(
         host::IMPORT_MODULE,
-        host::IMPORT_STRING_EQ,
+        host::IMPORT_JS_STRING_EQ,
         |mut caller: Caller<'_, HostState>, left: Rooted<ExternRef>, right: Rooted<ExternRef>| {
-            let left =
-                externref_string(&mut caller, left, "string_eq left operand is not a string")?;
+            let left = externref_string(
+                &mut caller,
+                left,
+                "js_string_eq left operand is not a string",
+            )?;
             let right = externref_string(
                 &mut caller,
                 right,
-                "string_eq right operand is not a string",
+                "js_string_eq right operand is not a string",
             )?;
             Ok(i32::from(left == right))
         },
     )?;
     linker.func_wrap(
         host::IMPORT_MODULE,
-        host::IMPORT_STRING_CONCAT,
+        host::IMPORT_JS_STRING_CONCAT,
         |mut caller: Caller<'_, HostState>, left: Rooted<ExternRef>, right: Rooted<ExternRef>| {
             let left = externref_string(
                 &mut caller,
                 left,
-                "string_concat left operand is not a string",
+                "js_string_concat left operand is not a string",
             )?;
             let right = externref_string(
                 &mut caller,
                 right,
-                "string_concat right operand is not a string",
+                "js_string_concat right operand is not a string",
             )?;
             ExternRef::new(&mut caller, left + &right)
         },
