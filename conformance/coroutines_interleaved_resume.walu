@@ -1,6 +1,5 @@
--- Pending conformance case for independent per-instance coroutine state.
--- Rename to `.walu` once interleaved coroutine resume preserves each
--- coroutine instance's own suspension point.
+-- Independent coroutine instances created from the same function keep their
+-- own suspension points when resumed in interleaved order.
 
 function helper(): ()
     coroutine_yield(1)

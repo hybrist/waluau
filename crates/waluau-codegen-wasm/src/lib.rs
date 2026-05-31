@@ -10,8 +10,8 @@ use waluau_ir::{
 use wasm_encoder::{
     AbstractHeapType, BlockType, CodeSection, ConstExpr, CustomSection, ElementSection, Elements,
     EntityType, ExportKind, ExportSection, Function, FunctionSection, GlobalSection, GlobalType,
-    HeapType, ImportSection, Instruction, Module as WasmModule, RefType, StartSection, StorageType,
-    TableSection, TableType, TypeSection, ValType,
+    HeapType, ImportSection, Instruction, MemArg, MemorySection, MemoryType, Module as WasmModule,
+    RefType, StartSection, StorageType, TableSection, TableType, TypeSection, ValType,
 };
 use wasmparser::{Validator, WasmFeatures};
 
@@ -164,6 +164,8 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     let mut functions = FunctionSection::new();
     let mut tables = TableSection::new();
     let mut elements = ElementSection::new();
+    let mut memories = MemorySection::new();
+    coroutine_plan.emit_memories(&mut memories);
     let mut globals = GlobalSection::new();
     coroutine_plan.emit_globals(&mut globals);
     let mut exports = ExportSection::new();
@@ -225,6 +227,9 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     wasm.section(&imports);
     wasm.section(&functions);
     wasm.section(&tables);
+    if coroutine_plan.has_state() {
+        wasm.section(&memories);
+    }
     if coroutine_plan.has_globals() {
         wasm.section(&globals);
     }
@@ -363,7 +368,9 @@ struct FunctionSignature {
 struct CoroutinePlan {
     yielded_flag_global: Option<u32>,
     yielded_i32_global: Option<u32>,
-    pc_globals: HashMap<String, u32>,
+    active_handle_global: Option<u32>,
+    next_handle_global: Option<u32>,
+    pc_slots: HashMap<String, u32>,
     yielding_functions: BTreeSet<String>,
 }
 
@@ -401,11 +408,26 @@ impl CoroutinePlan {
             }
         }
 
-        if yielding_functions.is_empty() {
+        let has_coroutine_ops = module.functions.iter().any(|function| {
+            function.blocks.values().any(|block| {
+                block.instructions.iter().any(|(_, instruction)| {
+                    matches!(
+                        instruction,
+                        IrInstruction::CoroutineCreate { .. }
+                            | IrInstruction::CoroutineResume { .. }
+                    )
+                })
+            })
+        });
+
+        let has_state = has_coroutine_ops || !yielding_functions.is_empty();
+        if !has_state {
             return Self {
                 yielded_flag_global: None,
                 yielded_i32_global: None,
-                pc_globals: HashMap::new(),
+                active_handle_global: None,
+                next_handle_global: None,
+                pc_slots: HashMap::new(),
                 yielding_functions,
             };
         }
@@ -415,22 +437,43 @@ impl CoroutinePlan {
         next_global += 1;
         let yielded_i32_global = Some(next_global);
         next_global += 1;
-        let mut pc_globals = HashMap::new();
-        for name in directly_yielding {
-            pc_globals.insert(name, next_global);
-            next_global += 1;
+        let active_handle_global = Some(next_global);
+        next_global += 1;
+        let next_handle_global = Some(next_global);
+        let mut pc_slots = HashMap::new();
+        for (index, name) in directly_yielding.into_iter().enumerate() {
+            pc_slots.insert(name, index as u32 + 1);
         }
 
         Self {
             yielded_flag_global,
             yielded_i32_global,
-            pc_globals,
+            active_handle_global,
+            next_handle_global,
+            pc_slots,
             yielding_functions,
         }
     }
 
+    fn has_state(&self) -> bool {
+        self.active_handle_global.is_some()
+    }
+
     fn has_globals(&self) -> bool {
         self.yielded_flag_global.is_some()
+    }
+
+    fn emit_memories(&self, memories: &mut MemorySection) {
+        if !self.has_state() {
+            return;
+        }
+        memories.memory(MemoryType {
+            minimum: 1,
+            maximum: None,
+            memory64: false,
+            shared: false,
+            page_size_log2: None,
+        });
     }
 
     fn emit_globals(&self, globals: &mut GlobalSection) {
@@ -444,9 +487,8 @@ impl CoroutinePlan {
         };
         globals.global(i32_global, &ConstExpr::i32_const(0));
         globals.global(i32_global, &ConstExpr::i32_const(0));
-        for _ in &self.pc_globals {
-            globals.global(i32_global, &ConstExpr::i32_const(0));
-        }
+        globals.global(i32_global, &ConstExpr::i32_const(0));
+        globals.global(i32_global, &ConstExpr::i32_const(1));
     }
 
     fn yielded_flag(&self) -> Result<u32, Diagnostic> {
@@ -457,6 +499,20 @@ impl CoroutinePlan {
     fn yielded_i32(&self) -> Result<u32, Diagnostic> {
         self.yielded_i32_global
             .ok_or_else(|| Diagnostic::new("missing coroutine i32 yield value global"))
+    }
+
+    fn active_handle(&self) -> Result<u32, Diagnostic> {
+        self.active_handle_global
+            .ok_or_else(|| Diagnostic::new("missing coroutine active handle global"))
+    }
+
+    fn next_handle(&self) -> Result<u32, Diagnostic> {
+        self.next_handle_global
+            .ok_or_else(|| Diagnostic::new("missing coroutine next handle global"))
+    }
+
+    fn state_stride_bytes(&self) -> i32 {
+        ((self.pc_slots.len() + 1) * 4) as i32
     }
 }
 
@@ -507,8 +563,8 @@ fn emit_function(
     }
 
     let pc_local = local_plan.pc_local;
-    if let Some(pc_global) = ctx.coroutine_plan.pc_globals.get(&function.name) {
-        out.instruction(&Instruction::GlobalGet(*pc_global));
+    if let Some(pc_slot) = ctx.coroutine_plan.pc_slots.get(&function.name) {
+        emit_active_coroutine_state_load(&mut out, &ctx, *pc_slot)?;
     } else {
         out.instruction(&Instruction::I32Const(function.entry.0 as i32));
     }
@@ -537,6 +593,60 @@ fn emit_function(
     out.instruction(&Instruction::Unreachable);
     out.instruction(&Instruction::End);
     Ok(out)
+}
+
+fn memory_arg() -> MemArg {
+    MemArg {
+        offset: 0,
+        align: 2,
+        memory_index: 0,
+    }
+}
+
+fn emit_coroutine_state_address_for_handle(
+    out: &mut Function,
+    ctx: &EmissionContext<'_>,
+    handle: ValueId,
+    field_slot: u32,
+    local_plan: &LocalPlan,
+) -> Result<(), Diagnostic> {
+    emit_value_operand(out, local_plan, handle)?;
+    out.instruction(&Instruction::I32Const(
+        ctx.coroutine_plan.state_stride_bytes(),
+    ));
+    out.instruction(&Instruction::I32Mul);
+    if field_slot != 0 {
+        out.instruction(&Instruction::I32Const((field_slot * 4) as i32));
+        out.instruction(&Instruction::I32Add);
+    }
+    Ok(())
+}
+
+fn emit_active_coroutine_state_address(
+    out: &mut Function,
+    ctx: &EmissionContext<'_>,
+    field_slot: u32,
+) -> Result<(), Diagnostic> {
+    out.instruction(&Instruction::GlobalGet(ctx.coroutine_plan.active_handle()?));
+    out.instruction(&Instruction::I32Const(
+        ctx.coroutine_plan.state_stride_bytes(),
+    ));
+    out.instruction(&Instruction::I32Mul);
+    if field_slot != 0 {
+        out.instruction(&Instruction::I32Const((field_slot * 4) as i32));
+        out.instruction(&Instruction::I32Add);
+    }
+    Ok(())
+}
+
+fn emit_active_coroutine_state_load(
+    out: &mut Function,
+    ctx: &EmissionContext<'_>,
+    field_slot: u32,
+) -> Result<(), Diagnostic> {
+    emit_active_coroutine_state_address(out, ctx, field_slot)?;
+    out.instruction(&Instruction::I32Load(memory_arg()));
+    Ok(())
 }
 
 fn try_emit_structured_fast_path(
@@ -828,6 +938,15 @@ fn infer_value_types(
                     .result
                     .clone(),
                 IrInstruction::CallValue { return_type, .. } => return_type.clone(),
+                IrInstruction::CoroutineCreate {
+                    params,
+                    return_type,
+                    ..
+                } => Type::Function {
+                    params: params.clone(),
+                    return_type: Box::new(return_type.clone()),
+                },
+                IrInstruction::CoroutineResume { return_type, .. } => return_type.clone(),
                 IrInstruction::Closure {
                     params,
                     return_type,
@@ -956,19 +1075,20 @@ fn emit_block(
                     value_ty
                 )));
             }
-            let pc_global = ctx
+            let pc_slot = ctx
                 .coroutine_plan
-                .pc_globals
+                .pc_slots
                 .get(&function.name)
                 .copied()
                 .ok_or_else(|| {
                     Diagnostic::new(format!(
-                        "missing coroutine pc global for yielding function '{}'",
+                        "missing coroutine pc slot for yielding function '{}'",
                         function.name
                     ))
                 })?;
+            emit_active_coroutine_state_address(out, ctx, pc_slot)?;
             out.instruction(&Instruction::I32Const(resume_block.0 as i32));
-            out.instruction(&Instruction::GlobalSet(pc_global));
+            out.instruction(&Instruction::I32Store(memory_arg()));
             emit_value_operand(out, local_plan, *value)?;
             out.instruction(&Instruction::GlobalSet(ctx.coroutine_plan.yielded_i32()?));
             out.instruction(&Instruction::I32Const(1));
@@ -990,9 +1110,10 @@ fn emit_block(
                 out.instruction(&Instruction::I32Const(0));
                 out.instruction(&Instruction::GlobalSet(ctx.coroutine_plan.yielded_flag()?));
             }
-            if let Some(pc_global) = ctx.coroutine_plan.pc_globals.get(&function.name) {
+            if let Some(pc_slot) = ctx.coroutine_plan.pc_slots.get(&function.name) {
+                emit_active_coroutine_state_address(out, ctx, *pc_slot)?;
                 out.instruction(&Instruction::I32Const(0));
-                out.instruction(&Instruction::GlobalSet(*pc_global));
+                out.instruction(&Instruction::I32Store(memory_arg()));
             }
             if !matches!(return_ty, Type::Unit) {
                 emit_value_operand(out, local_plan, *value)?;
@@ -1198,6 +1319,50 @@ fn emit_block_instructions(
                 });
                 emit_value_store(out, local_plan, *value)?;
             }
+            IrInstruction::CoroutineCreate {
+                callee,
+                params,
+                return_type,
+            } => {
+                if !params.is_empty() {
+                    return Err(Diagnostic::new(
+                        "coroutine_create expects a zero-argument function during wasm emission",
+                    ));
+                }
+                let _ = find_function_type_index(
+                    ctx.signatures,
+                    ctx.user_type_base,
+                    params,
+                    return_type,
+                )?;
+
+                out.instruction(&Instruction::GlobalGet(ctx.coroutine_plan.next_handle()?));
+                emit_value_store(out, local_plan, *value)?;
+
+                out.instruction(&Instruction::GlobalGet(ctx.coroutine_plan.next_handle()?));
+                out.instruction(&Instruction::I32Const(1));
+                out.instruction(&Instruction::I32Add);
+                out.instruction(&Instruction::GlobalSet(ctx.coroutine_plan.next_handle()?));
+
+                emit_coroutine_state_address_for_handle(out, ctx, *value, 0, local_plan)?;
+                emit_value_operand(out, local_plan, *callee)?;
+                out.instruction(&Instruction::I32Store(memory_arg()));
+            }
+            IrInstruction::CoroutineResume {
+                coroutine,
+                return_type,
+            } => {
+                emit_value_operand(out, local_plan, *coroutine)?;
+                out.instruction(&Instruction::GlobalSet(ctx.coroutine_plan.active_handle()?));
+                emit_active_coroutine_state_load(out, ctx, 0)?;
+                let type_index =
+                    find_function_type_index(ctx.signatures, ctx.user_type_base, &[], return_type)?;
+                out.instruction(&Instruction::CallIndirect {
+                    type_index,
+                    table_index: 0,
+                });
+                emit_value_store(out, local_plan, *value)?;
+            }
             IrInstruction::Closure {
                 name,
                 captures: _,
@@ -1214,10 +1379,6 @@ fn emit_block_instructions(
                     return_type,
                 )?;
                 // Indirect calls use table slot indices, not module function indices.
-                if let Some(pc_global) = ctx.coroutine_plan.pc_globals.get(name) {
-                    out.instruction(&Instruction::I32Const(0));
-                    out.instruction(&Instruction::GlobalSet(*pc_global));
-                }
                 out.instruction(&Instruction::I32Const(callee.index as i32));
                 emit_value_store(out, local_plan, *value)?;
             }
@@ -1406,6 +1567,9 @@ fn compute_stack_values(
     let mut stack_values = BTreeSet::new();
     for (index, (value, instruction)) in block.instructions.iter().enumerate() {
         if matches!(instruction, IrInstruction::Param(_) | IrInstruction::Phi(_)) {
+            continue;
+        }
+        if matches!(instruction, IrInstruction::CoroutineCreate { .. }) {
             continue;
         }
         if phi_copy_sources.contains(value) {
@@ -1619,6 +1783,8 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
             out.push(*callee);
             out
         }
+        IrInstruction::CoroutineCreate { callee, .. } => vec![*callee],
+        IrInstruction::CoroutineResume { coroutine, .. } => vec![*coroutine],
         IrInstruction::Closure { captures, .. } => captures.clone(),
         IrInstruction::ArrayNew { elements, .. } => elements.clone(),
         IrInstruction::ArrayGet { array, index, .. } => vec![*array, *index],
@@ -1669,6 +1835,8 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         IrInstruction::Print { value: printed } => *printed == value,
         IrInstruction::Call { args, .. } => args.first().copied() == Some(value),
         IrInstruction::CallValue { .. } => false,
+        IrInstruction::CoroutineCreate { .. } => false,
+        IrInstruction::CoroutineResume { coroutine, .. } => *coroutine == value,
         IrInstruction::Closure { captures, .. } => captures.first().copied() == Some(value),
         IrInstruction::ArrayNew { elements, .. } => elements.first().copied() == Some(value),
         IrInstruction::ArrayGet { .. } | IrInstruction::ArraySet { .. } => false,

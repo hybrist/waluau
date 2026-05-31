@@ -666,6 +666,15 @@ pub enum Instruction {
         params: Vec<Type>,
         return_type: Type,
     },
+    CoroutineCreate {
+        callee: ValueId,
+        params: Vec<Type>,
+        return_type: Type,
+    },
+    CoroutineResume {
+        coroutine: ValueId,
+        return_type: Type,
+    },
     Closure {
         name: String,
         captures: Vec<ValueId>,
@@ -991,6 +1000,57 @@ fn verify_function(
                                 block.id, arg_ty, param_ty
                             )));
                         }
+                    }
+                }
+                Instruction::CoroutineCreate {
+                    callee,
+                    params,
+                    return_type,
+                } => {
+                    let callee_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *callee,
+                    )?;
+                    let expected_callee_ty = Type::Function {
+                        params: params.clone(),
+                        return_type: Box::new(return_type.clone()),
+                    };
+                    if callee_ty != expected_callee_ty {
+                        return Err(Diagnostic::new(format!(
+                            "coroutine create in block {:?} expects callee {}, got {}",
+                            block.id, expected_callee_ty, callee_ty
+                        )));
+                    }
+                    if !params.is_empty() {
+                        return Err(Diagnostic::new(format!(
+                            "coroutine create in block {:?} expects zero-argument callee",
+                            block.id
+                        )));
+                    }
+                }
+                Instruction::CoroutineResume {
+                    coroutine,
+                    return_type,
+                } => {
+                    let coroutine_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *coroutine,
+                    )?;
+                    let expected_coroutine_ty = Type::Function {
+                        params: Vec::new(),
+                        return_type: Box::new(return_type.clone()),
+                    };
+                    if coroutine_ty != expected_coroutine_ty {
+                        return Err(Diagnostic::new(format!(
+                            "coroutine resume in block {:?} expects {}, got {}",
+                            block.id, expected_coroutine_ty, coroutine_ty
+                        )));
                     }
                 }
                 Instruction::Closure {
@@ -1405,6 +1465,15 @@ fn infer_instruction_type(
             .map(|(_, ret)| ret.clone())
             .ok_or_else(|| Diagnostic::new(format!("unknown function '{}'", name))),
         Instruction::CallValue { return_type, .. } => Ok(return_type.clone()),
+        Instruction::CoroutineCreate {
+            params,
+            return_type,
+            ..
+        } => Ok(Type::Function {
+            params: params.clone(),
+            return_type: Box::new(return_type.clone()),
+        }),
+        Instruction::CoroutineResume { return_type, .. } => Ok(return_type.clone()),
         Instruction::Closure {
             params,
             return_type,
@@ -3329,7 +3398,20 @@ impl Builder<'_> {
                         Ok(value) => value,
                         Err(error) => return Some(Err(error)),
                     };
-                Some(self.coerce_value(coroutine, coroutine_ty, expected))
+                match &coroutine_ty {
+                    Type::Function {
+                        params,
+                        return_type,
+                    } if params.is_empty() => {
+                        let value = self.emit(Instruction::CoroutineCreate {
+                            callee: coroutine,
+                            params: params.clone(),
+                            return_type: (**return_type).clone(),
+                        });
+                        Some(self.coerce_value(value, coroutine_ty, expected))
+                    }
+                    _ => unreachable!(),
+                }
             }
             COROUTINE_RESUME => {
                 if args.len() != 1 {
@@ -3359,10 +3441,8 @@ impl Builder<'_> {
                             Ok(value) => value,
                             Err(error) => return Some(Err(error)),
                         };
-                        let value = self.emit(Instruction::CallValue {
-                            callee: coroutine,
-                            args: Vec::new(),
-                            params: Vec::new(),
+                        let value = self.emit(Instruction::CoroutineResume {
+                            coroutine,
                             return_type: (*return_type).clone(),
                         });
                         Some(self.coerce_value(value, *return_type, expected))
