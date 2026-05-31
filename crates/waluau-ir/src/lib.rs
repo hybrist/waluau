@@ -8,7 +8,7 @@ use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
 const COROUTINE_CREATE: &str = "coroutine_create";
 const COROUTINE_RESUME: &str = "coroutine_resume";
-const COROUTINE_STATUS: &str = "coroutine_status";
+const COROUTINE_CLOSE: &str = "coroutine_close";
 const COROUTINE_YIELD: &str = "coroutine_yield";
 const MATH_ABS: &str = "math_abs";
 const MATH_MIN: &str = "math_min";
@@ -703,14 +703,20 @@ pub enum Instruction {
         params: Vec<Type>,
         return_type: Type,
     },
+    /// Create a coroutine from a zero-argument, i32-returning function value.
+    /// Result type: Thread.
     CoroutineCreate {
         callee: ValueId,
-        params: Vec<Type>,
-        return_type: Type,
     },
+    /// Advance the coroutine to its next yield or return.
+    /// Result type: Multi([Bool, I32]) — `(ok, value)`; `(false, 0)` when dead/errored.
     CoroutineResume {
         coroutine: ValueId,
-        return_type: Type,
+    },
+    /// Transition a suspended or dead coroutine to the dead state.
+    /// Result type: Bool — true if closed cleanly or already dead, false if errored.
+    CoroutineClose {
+        coroutine: ValueId,
     },
     Closure {
         name: String,
@@ -1039,11 +1045,7 @@ fn verify_function(
                         }
                     }
                 }
-                Instruction::CoroutineCreate {
-                    callee,
-                    params,
-                    return_type,
-                } => {
+                Instruction::CoroutineCreate { callee } => {
                     let callee_ty = require_dominating_definition(
                         &definitions,
                         &dominators,
@@ -1052,8 +1054,8 @@ fn verify_function(
                         *callee,
                     )?;
                     let expected_callee_ty = Type::Function {
-                        params: params.clone(),
-                        return_type: Box::new(return_type.clone()),
+                        params: Vec::new(),
+                        return_type: Box::new(Type::Numeric(NumericType::I32)),
                     };
                     if callee_ty != expected_callee_ty {
                         return Err(Diagnostic::new(format!(
@@ -1061,17 +1063,9 @@ fn verify_function(
                             block.id, expected_callee_ty, callee_ty
                         )));
                     }
-                    if !params.is_empty() {
-                        return Err(Diagnostic::new(format!(
-                            "coroutine create in block {:?} expects zero-argument callee",
-                            block.id
-                        )));
-                    }
                 }
-                Instruction::CoroutineResume {
-                    coroutine,
-                    return_type,
-                } => {
+                Instruction::CoroutineResume { coroutine }
+                | Instruction::CoroutineClose { coroutine } => {
                     let coroutine_ty = require_dominating_definition(
                         &definitions,
                         &dominators,
@@ -1079,14 +1073,10 @@ fn verify_function(
                         block.id,
                         *coroutine,
                     )?;
-                    let expected_coroutine_ty = Type::Function {
-                        params: Vec::new(),
-                        return_type: Box::new(return_type.clone()),
-                    };
-                    if coroutine_ty != expected_coroutine_ty {
+                    if coroutine_ty != Type::Thread {
                         return Err(Diagnostic::new(format!(
-                            "coroutine resume in block {:?} expects {}, got {}",
-                            block.id, expected_coroutine_ty, coroutine_ty
+                            "coroutine resume/close in block {:?} expects thread, got {}",
+                            block.id, coroutine_ty
                         )));
                     }
                 }
@@ -1400,13 +1390,21 @@ fn verify_function(
                 value,
                 resume_block,
             } => {
-                let _value_ty = require_dominating_definition(
+                // The yield value must be `i32`. Whether a coroutine is on the call stack is
+                // a runtime check (see design 0007), so there is no static context rule here.
+                let value_ty = require_dominating_definition(
                     &definitions,
                     &dominators,
                     &seen_in_block,
                     block.id,
                     *value,
                 )?;
+                if value_ty != Type::Numeric(NumericType::I32) {
+                    return Err(Diagnostic::new(format!(
+                        "coroutine yield in block {:?} expects an i32 value, got {}",
+                        block.id, value_ty
+                    )));
+                }
                 require_block(function, *resume_block)?;
             }
             Terminator::Return(value) => {
@@ -1502,15 +1500,12 @@ fn infer_instruction_type(
             .map(|(_, ret)| ret.clone())
             .ok_or_else(|| Diagnostic::new(format!("unknown function '{}'", name))),
         Instruction::CallValue { return_type, .. } => Ok(return_type.clone()),
-        Instruction::CoroutineCreate {
-            params,
-            return_type,
-            ..
-        } => Ok(Type::Function {
-            params: params.clone(),
-            return_type: Box::new(return_type.clone()),
-        }),
-        Instruction::CoroutineResume { return_type, .. } => Ok(return_type.clone()),
+        Instruction::CoroutineCreate { .. } => Ok(Type::Thread),
+        Instruction::CoroutineResume { .. } => Ok(Type::Multi(vec![
+            Type::Bool,
+            Type::Numeric(NumericType::I32),
+        ])),
+        Instruction::CoroutineClose { .. } => Ok(Type::Bool),
         Instruction::Closure {
             params,
             return_type,
@@ -2721,6 +2716,11 @@ impl Builder<'_> {
                             "generic type parameters must be specialized before IR lowering",
                         ));
                     }
+                    Type::Thread => {
+                        return Err(Diagnostic::new(
+                            "numeric literal is not assignable to thread",
+                        ));
+                    }
                 };
                 self.emit(Instruction::Number {
                     ty,
@@ -2808,6 +2808,11 @@ impl Builder<'_> {
                                 ));
                             }
                             Type::TypeParam(_) => {
+                                return Err(Diagnostic::new(
+                                    "unary '-' requires a numeric operand",
+                                ));
+                            }
+                            Type::Thread => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -3328,6 +3333,9 @@ impl Builder<'_> {
                 Some(Type::TypeParam(_)) => Err(Diagnostic::new(
                     "numeric literal is not assignable to generic type parameter",
                 )),
+                Some(Type::Thread) => Err(Diagnostic::new(
+                    "numeric literal is not assignable to thread",
+                )),
                 None => Ok(Type::number()),
             },
             Expr::Bool(..) => Ok(Type::Bool),
@@ -3369,6 +3377,9 @@ impl Builder<'_> {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                         Type::TypeParam(_) => {
+                            Err(Diagnostic::new("unary '-' requires a numeric operand"))
+                        }
+                        Type::Thread => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                     }
@@ -3661,6 +3672,7 @@ impl Builder<'_> {
         types: &HashMap<String, Type>,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
+        let i32_ty = Type::Numeric(NumericType::I32);
         match name {
             COROUTINE_CREATE => {
                 if args.len() != 1 {
@@ -3669,37 +3681,25 @@ impl Builder<'_> {
                         args.len()
                     ))));
                 }
+                let callee_ty = Type::Function {
+                    params: Vec::new(),
+                    return_type: Box::new(i32_ty.clone()),
+                };
                 let coroutine_ty = match self.infer_expr_type(&args[0], types, None) {
                     Ok(ty) => ty,
                     Err(error) => return Some(Err(error)),
                 };
-                match &coroutine_ty {
-                    Type::Function { params, .. } if params.is_empty() => {}
-                    _ => {
-                        return Some(Err(Diagnostic::new(
-                            "coroutine_create expects a zero-argument function",
-                        )));
-                    }
+                if coroutine_ty != callee_ty {
+                    return Some(Err(Diagnostic::new(
+                        "coroutine_create expects a zero-argument i32-returning function",
+                    )));
                 }
-                let coroutine =
-                    match self.lower_expr(&args[0], env, types, Some(coroutine_ty.clone())) {
-                        Ok(value) => value,
-                        Err(error) => return Some(Err(error)),
-                    };
-                match &coroutine_ty {
-                    Type::Function {
-                        params,
-                        return_type,
-                    } if params.is_empty() => {
-                        let value = self.emit(Instruction::CoroutineCreate {
-                            callee: coroutine,
-                            params: params.clone(),
-                            return_type: (**return_type).clone(),
-                        });
-                        Some(self.coerce_value(value, coroutine_ty, expected))
-                    }
-                    _ => unreachable!(),
-                }
+                let callee = match self.lower_expr(&args[0], env, types, Some(callee_ty)) {
+                    Ok(value) => value,
+                    Err(error) => return Some(Err(error)),
+                };
+                let value = self.emit(Instruction::CoroutineCreate { callee });
+                Some(self.coerce_value(value, Type::Thread, expected))
             }
             COROUTINE_RESUME => {
                 if args.len() != 1 {
@@ -3708,58 +3708,26 @@ impl Builder<'_> {
                         args.len()
                     ))));
                 }
-                let coroutine_ty = match self.infer_expr_type(&args[0], types, None) {
-                    Ok(ty) => ty,
+                let coroutine = match self.lower_expr(&args[0], env, types, Some(Type::Thread)) {
+                    Ok(value) => value,
                     Err(error) => return Some(Err(error)),
                 };
-                match coroutine_ty {
-                    Type::Function {
-                        params,
-                        return_type,
-                    } if params.is_empty() => {
-                        let coroutine = match self.lower_expr(
-                            &args[0],
-                            env,
-                            types,
-                            Some(Type::Function {
-                                params: Vec::new(),
-                                return_type: return_type.clone(),
-                            }),
-                        ) {
-                            Ok(value) => value,
-                            Err(error) => return Some(Err(error)),
-                        };
-                        let value = self.emit(Instruction::CoroutineResume {
-                            coroutine,
-                            return_type: (*return_type).clone(),
-                        });
-                        Some(self.coerce_value(value, *return_type, expected))
-                    }
-                    _ => Some(Err(Diagnostic::new(
-                        "coroutine_resume expects a coroutine created from a zero-argument function",
-                    ))),
-                }
+                let value = self.emit(Instruction::CoroutineResume { coroutine });
+                Some(self.coerce_value(value, Type::Multi(vec![Type::Bool, i32_ty]), expected))
             }
-            COROUTINE_STATUS => {
+            COROUTINE_CLOSE => {
                 if args.len() != 1 {
                     return Some(Err(Diagnostic::new(format!(
-                        "{COROUTINE_STATUS} expects 1 argument, got {}",
+                        "{COROUTINE_CLOSE} expects 1 argument, got {}",
                         args.len()
                     ))));
                 }
-                let coroutine_ty = match self.infer_expr_type(&args[0], types, None) {
-                    Ok(ty) => ty,
+                let coroutine = match self.lower_expr(&args[0], env, types, Some(Type::Thread)) {
+                    Ok(value) => value,
                     Err(error) => return Some(Err(error)),
                 };
-                match coroutine_ty {
-                    Type::Function { params, .. } if params.is_empty() => {
-                        let value = self.emit(Instruction::Bool(true));
-                        Some(self.coerce_value(value, Type::Bool, expected))
-                    }
-                    _ => Some(Err(Diagnostic::new(
-                        "coroutine_status expects a coroutine created from a zero-argument function",
-                    ))),
-                }
+                let value = self.emit(Instruction::CoroutineClose { coroutine });
+                Some(self.coerce_value(value, Type::Bool, expected))
             }
             COROUTINE_YIELD => {
                 if args.len() != 1 {
@@ -3768,12 +3736,7 @@ impl Builder<'_> {
                         args.len()
                     ))));
                 }
-                let expected_yield_type = if self.function.return_type == Type::Unit {
-                    Some(Type::Numeric(NumericType::I32))
-                } else {
-                    Some(self.function.return_type.clone())
-                };
-                let yield_value = match self.lower_expr(&args[0], env, types, expected_yield_type) {
+                let yield_value = match self.lower_expr(&args[0], env, types, Some(i32_ty)) {
                     Ok(value) => value,
                     Err(error) => return Some(Err(error)),
                 };
@@ -3815,9 +3778,14 @@ impl Builder<'_> {
                     Err(error) => return Some(Err(error)),
                 };
                 match &coroutine_ty {
-                    Type::Function { params, .. } if params.is_empty() => Some(Ok(coroutine_ty)),
+                    Type::Function {
+                        params,
+                        return_type,
+                    } if params.is_empty() && **return_type == Type::Numeric(NumericType::I32) => {
+                        Some(Ok(Type::Thread))
+                    }
                     _ => Some(Err(Diagnostic::new(
-                        "coroutine_create expects a zero-argument function",
+                        "coroutine_create expects a zero-argument i32-returning function",
                     ))),
                 }
             }
@@ -3833,19 +3801,17 @@ impl Builder<'_> {
                     Err(error) => return Some(Err(error)),
                 };
                 match coroutine_ty {
-                    Type::Function {
-                        params,
-                        return_type,
-                    } if params.is_empty() => Some(Ok(*return_type)),
-                    _ => Some(Err(Diagnostic::new(
-                        "coroutine_resume expects a coroutine created from a zero-argument function",
-                    ))),
+                    Type::Thread => Some(Ok(Type::Multi(vec![
+                        Type::Bool,
+                        Type::Numeric(NumericType::I32),
+                    ]))),
+                    _ => Some(Err(Diagnostic::new("coroutine_resume expects a thread"))),
                 }
             }
-            COROUTINE_STATUS => {
+            COROUTINE_CLOSE => {
                 if args.len() != 1 {
                     return Some(Err(Diagnostic::new(format!(
-                        "{COROUTINE_STATUS} expects 1 argument, got {}",
+                        "{COROUTINE_CLOSE} expects 1 argument, got {}",
                         args.len()
                     ))));
                 }
@@ -3854,10 +3820,8 @@ impl Builder<'_> {
                     Err(error) => return Some(Err(error)),
                 };
                 match coroutine_ty {
-                    Type::Function { params, .. } if params.is_empty() => Some(Ok(Type::Bool)),
-                    _ => Some(Err(Diagnostic::new(
-                        "coroutine_status expects a coroutine created from a zero-argument function",
-                    ))),
+                    Type::Thread => Some(Ok(Type::Bool)),
+                    _ => Some(Err(Diagnostic::new("coroutine_close expects a thread"))),
                 }
             }
             COROUTINE_YIELD => {
@@ -4258,6 +4222,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             ))),
             Type::TypeParam(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert generic type parameter to {expected_numeric}",
+            ))),
+            Type::Thread => Err(Diagnostic::new(format!(
+                "cannot implicitly convert thread to {expected_numeric}",
             ))),
         },
         Some(Type::Bool) => Err(Diagnostic::new(format!(
@@ -5794,5 +5761,65 @@ mod tests {
             Some("add an explicit element type annotation, e.g. local xs: {i32} = {}")
         );
         assert_eq!(error.span(), None);
+    }
+
+    #[test]
+    fn lowers_coroutine_builtins_to_typed_instructions() {
+        let source = r#"
+            function run(): i32
+                local co: thread = coroutine_create(function(): i32
+                    coroutine_yield(1)
+                    return 2
+                end)
+                local ok: bool, value: i32 = coroutine_resume(co)
+                local closed: bool = coroutine_close(co)
+                return value
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let module = build(&program).expect("ir build should succeed");
+        verify(&module).expect("ir should verify");
+
+        let mut saw_create = false;
+        let mut saw_resume = false;
+        let mut saw_close = false;
+        let mut saw_yield = false;
+        for function in &module.functions {
+            for block in function.blocks.values() {
+                for (_, instruction) in &block.instructions {
+                    match instruction {
+                        Instruction::CoroutineCreate { .. } => saw_create = true,
+                        Instruction::CoroutineResume { .. } => saw_resume = true,
+                        Instruction::CoroutineClose { .. } => saw_close = true,
+                        _ => {}
+                    }
+                }
+                if matches!(block.terminator, Terminator::CoroutineYield { .. }) {
+                    saw_yield = true;
+                }
+            }
+        }
+        assert!(saw_create, "expected a CoroutineCreate instruction");
+        assert!(saw_resume, "expected a CoroutineResume instruction");
+        assert!(saw_close, "expected a CoroutineClose instruction");
+        assert!(saw_yield, "expected a CoroutineYield terminator");
+    }
+
+    #[test]
+    fn rejects_coroutine_create_for_non_i32_function() {
+        let source = r#"
+            function run(): i32
+                local co: thread = coroutine_create(function(): f64
+                    return 1.0
+                end)
+                return 0
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = build(&program).expect_err("ir build should fail");
+        assert_eq!(
+            error.to_string(),
+            "coroutine_create expects a zero-argument i32-returning function"
+        );
     }
 }

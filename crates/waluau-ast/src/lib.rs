@@ -75,6 +75,8 @@ pub enum Type {
     Record(BTreeMap<String, Type>),
     /// Reference to an in-scope generic type parameter (e.g. `T` in `function f<T>(x: T)`).
     TypeParam(String),
+    /// A coroutine handle. Yield/resume values are always `i32` (see design 0007).
+    Thread,
 }
 
 impl Type {
@@ -188,6 +190,7 @@ impl std::fmt::Display for Type {
                 write!(f, "}}")
             }
             Self::TypeParam(name) => f.write_str(name),
+            Self::Thread => f.write_str("thread"),
         }
     }
 }

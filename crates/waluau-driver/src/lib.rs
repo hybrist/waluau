@@ -460,53 +460,159 @@ mod tests {
         );
     }
 
-    #[test]
-    fn executes_coroutine_create_and_resume() {
-        let source = r#"
-            function run_job(): i32
-                local job: () -> i32 = function(): i32
-                    return 7
-                end
-                local co: () -> i32 = coroutine_create(job)
-                return coroutine_resume(co)
-            end
-        "#;
+    fn run_coroutine_i32(source: &str) -> i32 {
         let wasm = super::compile_source(source).expect("compile should succeed");
         let (mut store, instance) = instantiate(&wasm);
-        let run_job = instance
-            .get_typed_func::<(), i32>(&mut store, "run_job")
-            .expect("run_job export should exist");
-        assert_eq!(
-            run_job.call(&mut store, ()).expect("call should succeed"),
-            7
-        );
+        let run = instance
+            .get_typed_func::<(), i32>(&mut store, "run")
+            .expect("run export should exist");
+        run.call(&mut store, ()).expect("call should succeed")
     }
 
     #[test]
-    fn executes_coroutine_status_for_created_coroutine() {
+    fn executes_coroutine_single_yield_then_return() {
         let source = r#"
-            function status_flag(): i32
-                local job: () -> i32 = function(): i32
-                    return 1
-                end
-                local co: () -> i32 = coroutine_create(job)
-                if coroutine_status(co) then
-                    return 1
-                end
-                return 0
+            function run(): i32
+                local co: thread = coroutine_create(function(): i32
+                    coroutine_yield(1)
+                    return 3
+                end)
+                local ok1: bool, a: i32 = coroutine_resume(co)
+                local ok2: bool, b: i32 = coroutine_resume(co)
+                return a * 10 + b
             end
         "#;
-        let wasm = super::compile_source(source).expect("compile should succeed");
-        let (mut store, instance) = instantiate(&wasm);
-        let status_flag = instance
-            .get_typed_func::<(), i32>(&mut store, "status_flag")
-            .expect("status_flag export should exist");
-        assert_eq!(
-            status_flag
-                .call(&mut store, ())
-                .expect("call should succeed"),
-            1
-        );
+        assert_eq!(run_coroutine_i32(source), 13);
+    }
+
+    #[test]
+    fn executes_coroutine_multiple_sequential_yields() {
+        let source = r#"
+            function run(): i32
+                local co: thread = coroutine_create(function(): i32
+                    coroutine_yield(1)
+                    coroutine_yield(2)
+                    return 3
+                end)
+                local o1: bool, a: i32 = coroutine_resume(co)
+                local o2: bool, b: i32 = coroutine_resume(co)
+                local o3: bool, c: i32 = coroutine_resume(co)
+                return a + b + c
+            end
+        "#;
+        assert_eq!(run_coroutine_i32(source), 6);
+    }
+
+    #[test]
+    fn executes_coroutine_resume_after_completion_returns_false_zero() {
+        let source = r#"
+            function run(): i32
+                local co: thread = coroutine_create(function(): i32
+                    return 5
+                end)
+                local o1: bool, a: i32 = coroutine_resume(co)
+                local o2: bool, b: i32 = coroutine_resume(co)
+                local r: i32 = a * 10 + b
+                if o1 then
+                    r += 1000
+                end
+                if o2 then
+                    r += 100
+                end
+                return r
+            end
+        "#;
+        // o1 = true (+1000), a = 5 (*10 = 50), o2 = false, b = 0 => 1050.
+        assert_eq!(run_coroutine_i32(source), 1050);
+    }
+
+    #[test]
+    fn executes_coroutine_passed_between_functions() {
+        let source = r#"
+            function step(co: thread): i32
+                local ok: bool, v: i32 = coroutine_resume(co)
+                return v
+            end
+
+            function run(): i32
+                local co: thread = coroutine_create(function(): i32
+                    coroutine_yield(4)
+                    coroutine_yield(5)
+                    return 6
+                end)
+                local a: i32 = step(co)
+                local b: i32 = step(co)
+                return a * 10 + b
+            end
+        "#;
+        assert_eq!(run_coroutine_i32(source), 45);
+    }
+
+    #[test]
+    fn executes_nested_coroutines() {
+        let source = r#"
+            function run(): i32
+                local outer: thread = coroutine_create(function(): i32
+                    local inner: thread = coroutine_create(function(): i32
+                        coroutine_yield(2)
+                        return 3
+                    end)
+                    local io: bool, iv: i32 = coroutine_resume(inner)
+                    coroutine_yield(iv)
+                    return 9
+                end)
+                local o1: bool, a: i32 = coroutine_resume(outer)
+                local o2: bool, b: i32 = coroutine_resume(outer)
+                return a * 10 + b
+            end
+        "#;
+        // outer resumes inner (iv = 2), yields 2 (a = 2), then returns 9 (b = 9) => 29.
+        assert_eq!(run_coroutine_i32(source), 29);
+    }
+
+    #[test]
+    fn executes_coroutine_close_on_suspended_then_resume() {
+        let source = r#"
+            function run(): i32
+                local co: thread = coroutine_create(function(): i32
+                    coroutine_yield(1)
+                    return 2
+                end)
+                local o1: bool, a: i32 = coroutine_resume(co)
+                local closed: bool = coroutine_close(co)
+                local o2: bool, b: i32 = coroutine_resume(co)
+                local r: i32 = a
+                if closed then
+                    r += 100
+                end
+                if o2 then
+                    r += 1000
+                end
+                return r
+            end
+        "#;
+        // a = 1, close on suspended => true (+100), resume after close => (false, 0) => 101.
+        assert_eq!(run_coroutine_i32(source), 101);
+    }
+
+    #[test]
+    fn executes_coroutine_close_on_dead() {
+        let source = r#"
+            function run(): i32
+                local co: thread = coroutine_create(function(): i32
+                    return 7
+                end)
+                local o1: bool, a: i32 = coroutine_resume(co)
+                local closed: bool = coroutine_close(co)
+                local r: i32 = a
+                if closed then
+                    r += 100
+                end
+                return r
+            end
+        "#;
+        // a = 7 (finished), close on already-dead => true (+100) => 107.
+        assert_eq!(run_coroutine_i32(source), 107);
     }
 
     #[test]

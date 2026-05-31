@@ -6,10 +6,20 @@ function job_two(): i32
     return 11
 end
 
-local first_co = coroutine_create(job_one)
-assert(coroutine_status(first_co))
-assert(coroutine_resume(first_co) == 7)
+local first_co: thread = coroutine_create(job_one)
+local ok1: bool, v1: i32 = coroutine_resume(first_co)
+assert(ok1)
+assert(v1 == 7)
 
-local second_co = coroutine_create(job_two)
-assert(coroutine_status(second_co))
-assert(coroutine_resume(second_co) == 11)
+local second_co: thread = coroutine_create(job_two)
+local ok2: bool, v2: i32 = coroutine_resume(second_co)
+assert(ok2)
+assert(v2 == 11)
+
+-- Resuming a finished coroutine reports (false, 0) instead of trapping.
+local ok3: bool, v3: i32 = coroutine_resume(first_co)
+assert(not ok3)
+assert(v3 == 0)
+
+-- Closing a finished coroutine is a no-op that reports success.
+assert(coroutine_close(first_co))
