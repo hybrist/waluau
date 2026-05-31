@@ -19,7 +19,7 @@ pub mod host;
 
 pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     let array_types = collect_array_types(module);
-    let string_literals = host::collect_string_literals(module);
+    let string_constants = host::collect_string_constants(module);
     let start_thunk = module.start;
     let host_type_base = array_types.len() as u32;
     let user_type_base = host_type_base + host::HOST_TYPE_COUNT;
@@ -89,17 +89,17 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     let mut imports = ImportSection::new();
     imports.import(
         host::IMPORT_MODULE,
-        host::IMPORT_STRING_LIT,
+        host::IMPORT_JS_STRING_CONST,
         EntityType::Function(host_type_base),
     );
     imports.import(
         host::IMPORT_MODULE,
-        host::IMPORT_STRING_EQ,
+        host::IMPORT_JS_STRING_EQ,
         EntityType::Function(host_type_base + 1),
     );
     imports.import(
         host::IMPORT_MODULE,
-        host::IMPORT_STRING_CONCAT,
+        host::IMPORT_JS_STRING_CONCAT,
         EntityType::Function(host_type_base + 2),
     );
 
@@ -122,7 +122,7 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
             function,
             &signatures,
             &array_registry,
-            &string_literals,
+            &string_constants,
             user_type_base,
         )?);
     }
@@ -173,7 +173,7 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     wasm.section(&codes);
     wasm.section(&CustomSection {
         name: host::CUSTOM_SECTION_NAME.into(),
-        data: Cow::Owned(host::encode_string_section(&string_literals)),
+        data: Cow::Owned(host::encode_string_constants_section(&string_constants)),
     });
 
     let bytes = wasm.finish();
@@ -296,7 +296,7 @@ struct FunctionSignature {
 struct EmissionContext<'a> {
     signatures: &'a HashMap<String, FunctionSignature>,
     array_registry: &'a ArrayTypeRegistry,
-    string_literals: &'a [String],
+    string_constants: &'a [String],
     user_type_base: u32,
 }
 
@@ -310,13 +310,13 @@ fn emit_function(
     function: &IrFunction,
     signatures: &HashMap<String, FunctionSignature>,
     array_registry: &ArrayTypeRegistry,
-    string_literals: &[String],
+    string_constants: &[String],
     user_type_base: u32,
 ) -> Result<Function, Diagnostic> {
     let ctx = EmissionContext {
         signatures,
         array_registry,
-        string_literals,
+        string_constants,
         user_type_base,
     };
     let value_types = infer_value_types(function, signatures)?;
@@ -781,9 +781,9 @@ fn emit_block_instructions(
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::String(literal) => {
-                let index = host::string_literal_index(ctx.string_literals, literal)?;
+                let index = host::string_constant_index(ctx.string_constants, literal)?;
                 out.instruction(&Instruction::I32Const(index as i32));
-                out.instruction(&Instruction::Call(host::IMPORT_STRING_LIT_FUNC));
+                out.instruction(&Instruction::Call(host::IMPORT_JS_STRING_CONST_FUNC));
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::Cast {
@@ -1573,7 +1573,7 @@ fn emit_binary(
         },
         BinaryOp::Concat => match operand_ty {
             Type::String => {
-                out.instruction(&Instruction::Call(host::IMPORT_STRING_CONCAT_FUNC));
+                out.instruction(&Instruction::Call(host::IMPORT_JS_STRING_CONCAT_FUNC));
             }
             _ => {
                 return Err(Diagnostic::new(
@@ -1695,7 +1695,7 @@ fn emit_binary(
                 out.instruction(&Instruction::F64Eq);
             }
             Type::String => {
-                out.instruction(&Instruction::Call(host::IMPORT_STRING_EQ_FUNC));
+                out.instruction(&Instruction::Call(host::IMPORT_JS_STRING_EQ_FUNC));
             }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {

@@ -150,8 +150,9 @@ mod tests {
 
     fn instantiate(wasm: &[u8]) -> (wasmtime::Store<super::runtime::HostState>, Instance) {
         let engine = engine();
-        let strings =
-            Arc::from(super::runtime::parse_string_table(wasm).expect("string table should parse"));
+        let strings = Arc::from(
+            super::runtime::parse_string_constants(wasm).expect("string constants should parse"),
+        );
         let module = Module::new(&engine, wasm).expect("module should compile");
         super::runtime::instantiate(&engine, &module, strings).expect("instance should create")
     }
@@ -531,7 +532,7 @@ mod tests {
         let wasm = super::compile_source(source).expect("compile should succeed");
         let engine = engine();
         let strings = Arc::from(
-            super::runtime::parse_string_table(&wasm).expect("string table should parse"),
+            super::runtime::parse_string_constants(&wasm).expect("string constants should parse"),
         );
         let module = Module::new(&engine, wasm).expect("module should compile");
         super::runtime::instantiate(&engine, &module, strings)
