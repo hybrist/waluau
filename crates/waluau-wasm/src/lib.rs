@@ -200,4 +200,29 @@ mod tests {
         assert!(result.wat.contains("(module"));
         assert!(result.ir.contains("compute"));
     }
+
+    #[test]
+    fn compile_reexported_bindings() {
+        let mut files = std::collections::HashMap::new();
+        files.insert(
+            "main.walu".to_string(),
+            "function main(): f64\n    local bundle = require(\"./reexport\")\n    return bundle.add(bundle.double(2) :: f64, 1.0)\nend\n".to_string(),
+        );
+        files.insert(
+            "reexport.walu".to_string(),
+            "local double: (i32) -> i32 = require(\"./double\")\nlocal ns = require(\"./ops\")\n\nreturn { double = double, add = ns.add }\n".to_string(),
+        );
+        files.insert(
+            "double.walu".to_string(),
+            "function double(x: i32): i32\n    return x * 2\nend\nreturn double\n".to_string(),
+        );
+        files.insert(
+            "ops.walu".to_string(),
+            "return {\n    add = function (a: f64, b: f64): f64\n        return a + b\n    end,\n}\n".to_string(),
+        );
+        let result =
+            super::compile_sources(&files, "main.walu").expect("re-export compile should succeed");
+        assert!(result.wat.contains("(module"));
+        assert!(result.ir.contains("main"));
+    }
 }

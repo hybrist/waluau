@@ -644,6 +644,18 @@ mod tests {
     }
 
     #[test]
+    fn compiles_reexported_bindings() {
+        let wasm = super::compile_file(&fixture_path("modules/reexport_main.walu"))
+            .expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let main = instance
+            .get_typed_func::<(), f64>(&mut store, "main")
+            .expect("main export should exist");
+        // double(2) = add(helper(2), 2) = 4, then add(4.0, 1.0) = 5.0
+        assert_eq!(main.call(&mut store, ()).expect("call should succeed"), 5.0);
+    }
+
+    #[test]
     fn mangling_keeps_same_named_functions_from_different_modules() {
         // `helper` is defined in both the entry module and the imported
         // `double` module; linking must keep both as distinct exports.

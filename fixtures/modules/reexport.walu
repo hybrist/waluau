@@ -1,0 +1,4 @@
+local double: (i32) -> i32 = require("./double")
+local ns = require("./ops")
+
+return { double = double, add = ns.add }
