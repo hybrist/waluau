@@ -473,6 +473,31 @@ mod tests {
     }
 
     #[test]
+    fn compiles_closure_mutation_without_capture_read() {
+        let source = r#"
+            function capture_entry(x: i32): i32
+                local acc = x
+                local addx: (i32) -> i32 = function(y: i32): i32
+                    acc += 2
+                    return x + y
+                end
+                return addx(7)
+            end
+        "#;
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate_with_gc(&wasm);
+        let capture_entry = instance
+            .get_typed_func::<i32, i32>(&mut store, "capture_entry")
+            .expect("capture_entry export should exist");
+        assert_eq!(
+            capture_entry
+                .call(&mut store, 5)
+                .expect("call should succeed"),
+            12
+        );
+    }
+
+    #[test]
     fn compiles_fixture_with_top_level_statements() {
         let source = fixture_source("top_level_statements");
         let wasm = super::compile_source(source).expect("compile should succeed");

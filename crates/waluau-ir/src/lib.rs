@@ -3016,7 +3016,10 @@ fn collect_expr_captures_from_stmt(
 ) {
     match stmt {
         Stmt::Let { value, .. } => collect_expr_captures(value, bound, env, signatures, captures),
-        Stmt::Assign { value, .. } => {
+        Stmt::Assign { name, value, .. } => {
+            if !bound.contains(name) && env.contains_key(name) && !signatures.contains_key(name) {
+                captures.insert(name.clone());
+            }
             collect_expr_captures(value, bound, env, signatures, captures)
         }
         Stmt::IndexAssign {
@@ -3059,7 +3062,20 @@ fn collect_expr_captures_from_stmt(
                 collect_expr_captures(value, bound, env, signatures, captures);
             }
         }
-        Stmt::LetMulti { values, .. } | Stmt::AssignMulti { values, .. } => {
+        Stmt::LetMulti { values, .. } => {
+            for value in values {
+                collect_expr_captures(value, bound, env, signatures, captures);
+            }
+        }
+        Stmt::AssignMulti { targets, values } => {
+            for target in targets {
+                if !bound.contains(target)
+                    && env.contains_key(target)
+                    && !signatures.contains_key(target)
+                {
+                    captures.insert(target.clone());
+                }
+            }
             for value in values {
                 collect_expr_captures(value, bound, env, signatures, captures);
             }
