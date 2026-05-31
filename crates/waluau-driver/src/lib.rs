@@ -455,6 +455,24 @@ mod tests {
     }
 
     #[test]
+    fn executes_tostring_for_primitive_values() {
+        let source = r#"
+            function check(): i32
+                if tostring(42) == "42" and tostring(true) == "true" and tostring("ok") == "ok" then
+                    return 1
+                end
+                return 0
+            end
+        "#;
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let check = instance
+            .get_typed_func::<(), i32>(&mut store, "check")
+            .expect("check export should exist");
+        assert_eq!(check.call(&mut store, ()).expect("call should succeed"), 1);
+    }
+
+    #[test]
     fn rejects_math_abs_for_integer_types() {
         let source = r#"
             function bad(x: i32): i32

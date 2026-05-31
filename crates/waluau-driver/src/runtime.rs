@@ -83,6 +83,55 @@ pub fn instantiate(
     )?;
     linker.func_wrap(
         host::IMPORT_MODULE,
+        host::IMPORT_JS_TOSTRING_I32,
+        |mut caller: Caller<'_, HostState>, value: i32| {
+            ExternRef::new(&mut caller, value.to_string())
+        },
+    )?;
+    linker.func_wrap(
+        host::IMPORT_MODULE,
+        host::IMPORT_JS_TOSTRING_U32,
+        |mut caller: Caller<'_, HostState>, value: i32| {
+            ExternRef::new(&mut caller, (value as u32).to_string())
+        },
+    )?;
+    linker.func_wrap(
+        host::IMPORT_MODULE,
+        host::IMPORT_JS_TOSTRING_I64,
+        |mut caller: Caller<'_, HostState>, value: i64| {
+            ExternRef::new(&mut caller, value.to_string())
+        },
+    )?;
+    linker.func_wrap(
+        host::IMPORT_MODULE,
+        host::IMPORT_JS_TOSTRING_U64,
+        |mut caller: Caller<'_, HostState>, value: i64| {
+            ExternRef::new(&mut caller, (value as u64).to_string())
+        },
+    )?;
+    linker.func_wrap(
+        host::IMPORT_MODULE,
+        host::IMPORT_JS_TOSTRING_F32,
+        |mut caller: Caller<'_, HostState>, value: f32| {
+            ExternRef::new(&mut caller, value.to_string())
+        },
+    )?;
+    linker.func_wrap(
+        host::IMPORT_MODULE,
+        host::IMPORT_JS_TOSTRING_F64,
+        |mut caller: Caller<'_, HostState>, value: f64| {
+            ExternRef::new(&mut caller, value.to_string())
+        },
+    )?;
+    linker.func_wrap(
+        host::IMPORT_MODULE,
+        host::IMPORT_JS_TOSTRING_BOOL,
+        |mut caller: Caller<'_, HostState>, value: i32| {
+            ExternRef::new(&mut caller, (value != 0).to_string())
+        },
+    )?;
+    linker.func_wrap(
+        host::IMPORT_MODULE,
         host::IMPORT_PRINT,
         |mut caller: Caller<'_, HostState>, value: Rooted<ExternRef>| -> wasmtime::Result<()> {
             let value = externref_string(&mut caller, value, "print argument is not a string")?;
