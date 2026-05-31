@@ -143,6 +143,36 @@ function getWasmExports(buffer) {
     return result;
   }
 
+  function readValTypeCode() {
+    const byte = bytes[pos++];
+    if (byte === 0x63 || byte === 0x64) {
+      pos += 1; // heap type (e.g. extern)
+      return byte === 0x63 ? 0x6f : 0x64;
+    }
+    return byte;
+  }
+
+  function skipTypeDefinition(form) {
+    if (form === 0x60) {
+      const numParams = readVaruint();
+      for (let p = 0; p < numParams; p++) {
+        readValTypeCode();
+      }
+      const numReturns = readVaruint();
+      for (let r = 0; r < numReturns; r++) {
+        readValTypeCode();
+      }
+      return;
+    }
+    if (form === 0x5e) {
+      readValTypeCode(); // storage type
+      pos += 1; // mutable flag
+      return;
+    }
+    // Unknown composite type: bail out to end of section by caller.
+    throw new Error(`unsupported wasm type form: 0x${form.toString(16)}`);
+  }
+
   const types = [];
   const funcTypeIndices = [];
   const exports = [];
@@ -177,19 +207,26 @@ function getWasmExports(buffer) {
     } else if (sectionId === 1) { // Type section
       const numTypes = readVaruint();
       for (let i = 0; i < numTypes; i++) {
-        const form = bytes[pos++]; // 0x60 for function
+        const form = bytes[pos++];
         if (form === 0x60) {
           const numParams = readVaruint();
           const params = [];
           for (let p = 0; p < numParams; p++) {
-            params.push(bytes[pos++]);
+            params.push(readValTypeCode());
           }
           const numReturns = readVaruint();
           const returns = [];
           for (let r = 0; r < numReturns; r++) {
-            returns.push(bytes[pos++]);
+            returns.push(readValTypeCode());
           }
           types.push({ params, returns });
+        } else {
+          try {
+            skipTypeDefinition(form);
+          } catch {
+            pos = sectionEnd;
+            break;
+          }
         }
       }
     } else if (sectionId === 3) { // Function section
@@ -860,36 +897,36 @@ export default function App() {
         }
         return;
       }
+      const wasmBuffer = new Uint8Array(outputWasmBytes);
+      const list = getWasmExports(wasmBuffer);
+      if (active) {
+        setExportsList(list);
+        setFuncInputs(prev => {
+          const next = { ...prev };
+          let changed = false;
+          for (const func of list) {
+            if (!next[func.name] || next[func.name].length !== func.params.length) {
+              next[func.name] = func.params.map(() => '0');
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+      }
       try {
-        const wasmBuffer = new Uint8Array(outputWasmBytes);
-        const list = getWasmExports(wasmBuffer);
         const strings = parseWaluauStringSection(wasmBuffer);
         const imports = buildWaluauImports(strings);
         const obj = await WebAssembly.instantiate(wasmBuffer, imports);
-        
+
         if (active) {
           setRunInstance(obj.instance);
-          setExportsList(list);
           setRunError(null);
           setManualResults({});
-          
-          setFuncInputs(prev => {
-            const next = { ...prev };
-            let changed = false;
-            for (const func of list) {
-              if (!next[func.name] || next[func.name].length !== func.params.length) {
-                next[func.name] = func.params.map(() => '0');
-                changed = true;
-              }
-            }
-            return changed ? next : prev;
-          });
         }
       } catch (err) {
         if (active) {
           console.error("Instantiation failed:", err);
           setRunInstance(null);
-          setExportsList([]);
           setRunError(classifyWasmInstantiationError(err, requiresWasmGc));
           setManualResults({});
         }
