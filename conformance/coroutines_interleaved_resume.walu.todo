@@ -1,0 +1,29 @@
+-- Pending conformance case for independent per-instance coroutine state.
+-- Rename to `.walu` once interleaved coroutine resume preserves each
+-- coroutine instance's own suspension point.
+
+function helper(): ()
+    coroutine_yield(1)
+    coroutine_yield(2)
+end
+
+function counter_job(): i32
+    helper()
+    return 3
+end
+
+local co1 = coroutine_create(counter_job)
+local co2 = coroutine_create(counter_job)
+
+assert(coroutine_status(co1))
+assert(coroutine_status(co2))
+assert(coroutine_resume(co1) == 1)
+assert(coroutine_resume(co2) == 1)
+assert(coroutine_status(co1))
+assert(coroutine_status(co2))
+assert(coroutine_resume(co1) == 2)
+assert(coroutine_resume(co2) == 2)
+assert(coroutine_status(co1))
+assert(coroutine_status(co2))
+assert(coroutine_resume(co1) == 3)
+assert(coroutine_resume(co2) == 3)

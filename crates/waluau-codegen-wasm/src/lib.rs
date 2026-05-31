@@ -9,9 +9,9 @@ use waluau_ir::{
 };
 use wasm_encoder::{
     AbstractHeapType, BlockType, CodeSection, ConstExpr, CustomSection, ElementSection, Elements,
-    EntityType, ExportKind, ExportSection, Function, FunctionSection, HeapType, ImportSection,
-    Instruction, Module as WasmModule, RefType, StartSection, StorageType, TableSection, TableType,
-    TypeSection, ValType,
+    EntityType, ExportKind, ExportSection, Function, FunctionSection, GlobalSection, GlobalType,
+    HeapType, ImportSection, Instruction, Module as WasmModule, RefType, StartSection, StorageType,
+    TableSection, TableType, TypeSection, ValType,
 };
 use wasmparser::{Validator, WasmFeatures};
 
@@ -20,6 +20,7 @@ pub mod host;
 pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     let array_types = collect_array_types(module);
     let string_constants = host::collect_string_constants(module);
+    let coroutine_plan = CoroutinePlan::new(module, string_constants.len() as u32);
     let start_thunk = module.start;
     let host_type_base = array_types.len() as u32;
     let user_type_base = host_type_base + host::HOST_TYPE_COUNT;
@@ -163,6 +164,8 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     let mut functions = FunctionSection::new();
     let mut tables = TableSection::new();
     let mut elements = ElementSection::new();
+    let mut globals = GlobalSection::new();
+    coroutine_plan.emit_globals(&mut globals);
     let mut exports = ExportSection::new();
     let mut codes = CodeSection::new();
     for (index, function) in module.functions.iter().enumerate() {
@@ -181,6 +184,7 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
             &array_registry,
             &string_constants,
             user_type_base,
+            &coroutine_plan,
         )?);
     }
     if let Some(start) = start_thunk {
@@ -221,6 +225,9 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     wasm.section(&imports);
     wasm.section(&functions);
     wasm.section(&tables);
+    if coroutine_plan.has_globals() {
+        wasm.section(&globals);
+    }
     wasm.section(&exports);
     if start_thunk.is_some() {
         wasm.section(&StartSection {
@@ -352,11 +359,113 @@ struct FunctionSignature {
     result: Type,
 }
 
+#[derive(Clone, Debug)]
+struct CoroutinePlan {
+    yielded_flag_global: Option<u32>,
+    yielded_i32_global: Option<u32>,
+    pc_globals: HashMap<String, u32>,
+    yielding_functions: BTreeSet<String>,
+}
+
+impl CoroutinePlan {
+    fn new(module: &Module, imported_global_count: u32) -> Self {
+        let mut directly_yielding = BTreeSet::new();
+        for function in &module.functions {
+            if function
+                .blocks
+                .values()
+                .any(|block| matches!(block.terminator, Terminator::CoroutineYield { .. }))
+            {
+                directly_yielding.insert(function.name.clone());
+            }
+        }
+
+        let mut yielding_functions = directly_yielding.clone();
+        loop {
+            let mut changed = false;
+            for function in &module.functions {
+                if yielding_functions.contains(&function.name) {
+                    continue;
+                }
+                let calls_yielding = function.blocks.values().any(|block| {
+                    block.instructions.iter().any(|(_, instruction)| {
+                        matches!(instruction, IrInstruction::Call { name, .. } if yielding_functions.contains(name))
+                    })
+                });
+                if calls_yielding {
+                    changed |= yielding_functions.insert(function.name.clone());
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        if yielding_functions.is_empty() {
+            return Self {
+                yielded_flag_global: None,
+                yielded_i32_global: None,
+                pc_globals: HashMap::new(),
+                yielding_functions,
+            };
+        }
+
+        let mut next_global = imported_global_count;
+        let yielded_flag_global = Some(next_global);
+        next_global += 1;
+        let yielded_i32_global = Some(next_global);
+        next_global += 1;
+        let mut pc_globals = HashMap::new();
+        for name in directly_yielding {
+            pc_globals.insert(name, next_global);
+            next_global += 1;
+        }
+
+        Self {
+            yielded_flag_global,
+            yielded_i32_global,
+            pc_globals,
+            yielding_functions,
+        }
+    }
+
+    fn has_globals(&self) -> bool {
+        self.yielded_flag_global.is_some()
+    }
+
+    fn emit_globals(&self, globals: &mut GlobalSection) {
+        if !self.has_globals() {
+            return;
+        }
+        let i32_global = GlobalType {
+            val_type: ValType::I32,
+            mutable: true,
+            shared: false,
+        };
+        globals.global(i32_global, &ConstExpr::i32_const(0));
+        globals.global(i32_global, &ConstExpr::i32_const(0));
+        for _ in &self.pc_globals {
+            globals.global(i32_global, &ConstExpr::i32_const(0));
+        }
+    }
+
+    fn yielded_flag(&self) -> Result<u32, Diagnostic> {
+        self.yielded_flag_global
+            .ok_or_else(|| Diagnostic::new("missing coroutine yielded flag global"))
+    }
+
+    fn yielded_i32(&self) -> Result<u32, Diagnostic> {
+        self.yielded_i32_global
+            .ok_or_else(|| Diagnostic::new("missing coroutine i32 yield value global"))
+    }
+}
+
 struct EmissionContext<'a> {
     signatures: &'a HashMap<String, FunctionSignature>,
     array_registry: &'a ArrayTypeRegistry,
     string_constants: &'a [String],
     user_type_base: u32,
+    coroutine_plan: &'a CoroutinePlan,
 }
 
 impl EmissionContext<'_> {
@@ -371,12 +480,14 @@ fn emit_function(
     array_registry: &ArrayTypeRegistry,
     string_constants: &[String],
     user_type_base: u32,
+    coroutine_plan: &CoroutinePlan,
 ) -> Result<Function, Diagnostic> {
     let ctx = EmissionContext {
         signatures,
         array_registry,
         string_constants,
         user_type_base,
+        coroutine_plan,
     };
     let value_types = infer_value_types(function, signatures)?;
     let local_plan = build_local_plan(function, &value_types, array_registry)?;
@@ -396,7 +507,11 @@ fn emit_function(
     }
 
     let pc_local = local_plan.pc_local;
-    out.instruction(&Instruction::I32Const(function.entry.0 as i32));
+    if let Some(pc_global) = ctx.coroutine_plan.pc_globals.get(&function.name) {
+        out.instruction(&Instruction::GlobalGet(*pc_global));
+    } else {
+        out.instruction(&Instruction::I32Const(function.entry.0 as i32));
+    }
     out.instruction(&Instruction::LocalSet(pc_local));
     out.instruction(&Instruction::Loop(BlockType::Empty));
 
@@ -432,6 +547,14 @@ fn try_emit_structured_fast_path(
     local_plan: &LocalPlan,
     value_defs: &HashMap<ValueId, IrInstruction>,
 ) -> Result<bool, Diagnostic> {
+    if ctx
+        .coroutine_plan
+        .yielding_functions
+        .contains(&function.name)
+    {
+        return Ok(false);
+    }
+
     if function.blocks.len() == 3 {
         let entry = function
             .blocks
@@ -450,7 +573,7 @@ fn try_emit_structured_fast_path(
         if then_bb.is_some_and(|b| matches!(b.terminator, Terminator::Return(_)))
             && else_bb.is_some_and(|b| matches!(b.terminator, Terminator::Return(_)))
         {
-            emit_block_instructions(out, entry, ctx, local_plan, value_defs)?;
+            emit_block_instructions(out, function, entry, ctx, local_plan, value_defs)?;
             emit_value_operand(out, local_plan, condition)?;
             out.instruction(&Instruction::If(BlockType::Empty));
             emit_phi_copies(out, function, entry.id, then_block, local_plan)?;
@@ -504,17 +627,18 @@ fn try_emit_structured_fast_path(
                 .is_some_and(|b| matches!(b.terminator, Terminator::Jump(t) if t == second.id))
                 && else_bb.is_some_and(|b| matches!(b.terminator, Terminator::Return(_)))
             {
-                emit_block_instructions(out, entry, ctx, local_plan, value_defs)?;
+                emit_block_instructions(out, function, entry, ctx, local_plan, value_defs)?;
                 emit_phi_copies(out, function, entry.id, second.id, local_plan)?;
                 out.instruction(&Instruction::Block(BlockType::Empty));
                 out.instruction(&Instruction::Loop(BlockType::Empty));
-                emit_block_instructions(out, second, ctx, local_plan, value_defs)?;
+                emit_block_instructions(out, function, second, ctx, local_plan, value_defs)?;
                 emit_value_operand(out, local_plan, condition)?;
                 out.instruction(&Instruction::I32Eqz);
                 out.instruction(&Instruction::BrIf(1));
                 emit_phi_copies(out, function, second.id, then_block, local_plan)?;
                 emit_block_instructions(
                     out,
+                    function,
                     then_bb.expect("checked above"),
                     ctx,
                     local_plan,
@@ -553,13 +677,13 @@ fn try_emit_structured_fast_path(
                             "unsupported repeat-until CFG shape for structured wasm emission",
                         )
                     })?;
-                emit_block_instructions(out, entry, ctx, local_plan, value_defs)?;
+                emit_block_instructions(out, function, entry, ctx, local_plan, value_defs)?;
                 emit_phi_copies(out, function, entry.id, body.id, local_plan)?;
                 out.instruction(&Instruction::Block(BlockType::Empty));
                 out.instruction(&Instruction::Loop(BlockType::Empty));
-                emit_block_instructions(out, body, ctx, local_plan, value_defs)?;
+                emit_block_instructions(out, function, body, ctx, local_plan, value_defs)?;
                 emit_phi_copies(out, function, body.id, second.id, local_plan)?;
-                emit_block_instructions(out, second, ctx, local_plan, value_defs)?;
+                emit_block_instructions(out, function, second, ctx, local_plan, value_defs)?;
                 emit_value_operand(out, local_plan, condition)?;
                 out.instruction(&Instruction::BrIf(1));
                 emit_phi_copies(out, function, second.id, body.id, local_plan)?;
@@ -791,7 +915,7 @@ fn emit_block(
     local_plan: &LocalPlan,
     value_defs: &HashMap<ValueId, IrInstruction>,
 ) -> Result<(), Diagnostic> {
-    emit_block_instructions(out, block, ctx, local_plan, value_defs)?;
+    emit_block_instructions(out, function, block, ctx, local_plan, value_defs)?;
     match &block.terminator {
         Terminator::Jump(target) => {
             emit_phi_copies(out, function, block.id, *target, local_plan)?;
@@ -816,10 +940,60 @@ fn emit_block(
             out.instruction(&Instruction::End);
             out.instruction(&Instruction::Br(1));
         }
+        Terminator::CoroutineYield {
+            value,
+            resume_block,
+        } => {
+            let value_ty = value_types.get(value).ok_or_else(|| {
+                Diagnostic::new(format!(
+                    "missing type for coroutine yield value {:?}",
+                    value
+                ))
+            })?;
+            if !matches!(value_ty, Type::Numeric(NumericType::I32)) {
+                return Err(Diagnostic::new(format!(
+                    "coroutine_yield currently supports i32 values during wasm emission, got {}",
+                    value_ty
+                )));
+            }
+            let pc_global = ctx
+                .coroutine_plan
+                .pc_globals
+                .get(&function.name)
+                .copied()
+                .ok_or_else(|| {
+                    Diagnostic::new(format!(
+                        "missing coroutine pc global for yielding function '{}'",
+                        function.name
+                    ))
+                })?;
+            out.instruction(&Instruction::I32Const(resume_block.0 as i32));
+            out.instruction(&Instruction::GlobalSet(pc_global));
+            emit_value_operand(out, local_plan, *value)?;
+            out.instruction(&Instruction::GlobalSet(ctx.coroutine_plan.yielded_i32()?));
+            out.instruction(&Instruction::I32Const(1));
+            out.instruction(&Instruction::GlobalSet(ctx.coroutine_plan.yielded_flag()?));
+            if !matches!(function.return_type, Type::Unit) {
+                out.instruction(&Instruction::GlobalGet(ctx.coroutine_plan.yielded_i32()?));
+            }
+            out.instruction(&Instruction::Return);
+        }
         Terminator::Return(value) => {
             let return_ty = value_types.get(value).ok_or_else(|| {
                 Diagnostic::new(format!("missing type for return value {:?}", value))
             })?;
+            if ctx
+                .coroutine_plan
+                .yielding_functions
+                .contains(&function.name)
+            {
+                out.instruction(&Instruction::I32Const(0));
+                out.instruction(&Instruction::GlobalSet(ctx.coroutine_plan.yielded_flag()?));
+            }
+            if let Some(pc_global) = ctx.coroutine_plan.pc_globals.get(&function.name) {
+                out.instruction(&Instruction::I32Const(0));
+                out.instruction(&Instruction::GlobalSet(*pc_global));
+            }
             if !matches!(return_ty, Type::Unit) {
                 emit_value_operand(out, local_plan, *value)?;
             }
@@ -834,6 +1008,7 @@ fn emit_block(
 
 fn emit_block_instructions(
     out: &mut Function,
+    function: &IrFunction,
     block: &BasicBlock,
     ctx: &EmissionContext<'_>,
     local_plan: &LocalPlan,
@@ -948,6 +1123,9 @@ fn emit_block_instructions(
                 })?;
                 out.instruction(&Instruction::Call(ctx.wasm_func_index(callee.index)));
                 emit_value_store(out, local_plan, *value)?;
+                if ctx.coroutine_plan.yielding_functions.contains(name) {
+                    emit_return_if_coroutine_yielded(out, function, ctx)?;
+                }
             }
             IrInstruction::CallValue {
                 callee,
@@ -1036,6 +1214,10 @@ fn emit_block_instructions(
                     return_type,
                 )?;
                 // Indirect calls use table slot indices, not module function indices.
+                if let Some(pc_global) = ctx.coroutine_plan.pc_globals.get(name) {
+                    out.instruction(&Instruction::I32Const(0));
+                    out.instruction(&Instruction::GlobalSet(*pc_global));
+                }
                 out.instruction(&Instruction::I32Const(callee.index as i32));
                 emit_value_store(out, local_plan, *value)?;
             }
@@ -1120,6 +1302,28 @@ fn emit_block_instructions(
         }
     }
 
+    Ok(())
+}
+
+fn emit_return_if_coroutine_yielded(
+    out: &mut Function,
+    function: &IrFunction,
+    ctx: &EmissionContext<'_>,
+) -> Result<(), Diagnostic> {
+    if matches!(function.return_type, Type::Unit) {
+        return Ok(());
+    }
+    if !matches!(function.return_type, Type::Numeric(NumericType::I32)) {
+        return Err(Diagnostic::new(format!(
+            "delegated coroutine_yield currently supports i32 coroutine returns, got {}",
+            function.return_type
+        )));
+    }
+    out.instruction(&Instruction::GlobalGet(ctx.coroutine_plan.yielded_flag()?));
+    out.instruction(&Instruction::If(BlockType::Empty));
+    out.instruction(&Instruction::GlobalGet(ctx.coroutine_plan.yielded_i32()?));
+    out.instruction(&Instruction::Return);
+    out.instruction(&Instruction::End);
     Ok(())
 }
 
@@ -1435,6 +1639,7 @@ fn terminator_operands(terminator: &Terminator) -> Vec<ValueId> {
     match terminator {
         Terminator::Jump(_) | Terminator::Unreachable { .. } => Vec::new(),
         Terminator::Branch { condition, .. } => vec![*condition],
+        Terminator::CoroutineYield { value, .. } => vec![*value],
         Terminator::Return(value) => vec![*value],
     }
 }
