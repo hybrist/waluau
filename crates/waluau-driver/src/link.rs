@@ -505,6 +505,18 @@ impl Rewriter<'_> {
                 inner.insert(name.clone());
                 self.rewrite_block(body, &mut inner);
             }
+            Stmt::ForIn {
+                names,
+                iterator,
+                body,
+            } => {
+                self.rewrite_expr(iterator, bound);
+                let mut inner = bound.clone();
+                for name in names {
+                    inner.insert(name.clone());
+                }
+                self.rewrite_block(body, &mut inner);
+            }
             Stmt::Return(expr) => self.rewrite_expr(expr, bound),
             Stmt::ReturnMulti(values) => {
                 for value in values {
@@ -692,6 +704,9 @@ fn stmt_mentions_name_in_stmt(name: &str, stmt: &Stmt) -> bool {
                     .is_some_and(|step_expr| expr_mentions_name(name, step_expr))
                 || stmt_mentions_name(name, body)
         }
+        Stmt::ForIn { iterator, body, .. } => {
+            expr_mentions_name(name, iterator) || stmt_mentions_name(name, body)
+        }
         Stmt::ReturnMulti(values)
         | Stmt::LetMulti { values, .. }
         | Stmt::AssignMulti { values, .. } => {
@@ -784,6 +799,10 @@ fn collect_block(stmts: &[Stmt], out: &mut Vec<String>) {
                 if let Some(step_expr) = step {
                     collect_expr(step_expr, out);
                 }
+                collect_block(body, out);
+            }
+            Stmt::ForIn { iterator, body, .. } => {
+                collect_expr(iterator, out);
                 collect_block(body, out);
             }
             Stmt::Return(expr) | Stmt::Expr(expr) => collect_expr(expr, out),

@@ -232,6 +232,11 @@ pub enum Stmt {
         step: Option<Expr>,
         body: Vec<Stmt>,
     },
+    ForIn {
+        names: Vec<String>,
+        iterator: Expr,
+        body: Vec<Stmt>,
+    },
     Break,
     Continue,
     Return(Expr),

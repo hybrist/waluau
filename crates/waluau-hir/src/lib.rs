@@ -548,6 +548,10 @@ fn stmt_calls_name(stmt: &Stmt, callee: &str) -> bool {
                     .is_some_and(|step_expr| expr_calls_name(step_expr, callee))
                 || body.iter().any(|stmt| stmt_calls_name(stmt, callee))
         }
+        Stmt::ForIn { iterator, body, .. } => {
+            expr_calls_name(iterator, callee)
+                || body.iter().any(|stmt| stmt_calls_name(stmt, callee))
+        }
         Stmt::Break | Stmt::Continue => false,
     }
 }
@@ -736,6 +740,60 @@ fn collect_return_types(
                         rebindability: Rebindability::Const,
                     },
                 );
+                collect_return_types(
+                    body,
+                    &loop_scope,
+                    fn_signatures,
+                    active_type_params,
+                    returns,
+                )?;
+            }
+            Stmt::ForIn {
+                names,
+                iterator,
+                body,
+            } => {
+                let iterator_ty =
+                    infer_expr(iterator, &scope, fn_signatures, active_type_params, None)?;
+                let Type::Function {
+                    params,
+                    return_type,
+                } = iterator_ty
+                else {
+                    return Err(Diagnostic::new("for-in iterator must be a function"));
+                };
+                if !params.is_empty() {
+                    return Err(Diagnostic::new(
+                        "for-in iterator function must not require parameters",
+                    ));
+                }
+                let return_values = match *return_type {
+                    Type::Multi(values) => values,
+                    other => vec![other],
+                };
+                if return_values.len() != names.len() + 1 {
+                    return Err(Diagnostic::new(format!(
+                        "for-in iterator expects {} return values (bool + {} loop values), got {}",
+                        names.len() + 1,
+                        names.len(),
+                        return_values.len()
+                    )));
+                }
+                if return_values[0] != Type::Bool {
+                    return Err(Diagnostic::new(
+                        "for-in iterator first return value must be bool",
+                    ));
+                }
+                let mut loop_scope = scope.clone();
+                for (name, ty) in names.iter().zip(return_values.into_iter().skip(1)) {
+                    loop_scope.insert(
+                        name.clone(),
+                        Binding {
+                            ty,
+                            rebindability: Rebindability::Const,
+                        },
+                    );
+                }
                 collect_return_types(
                     body,
                     &loop_scope,
@@ -1100,6 +1158,63 @@ fn check_stmt(
                     rebindability: Rebindability::Const,
                 },
             );
+            for stmt in body {
+                let _ = check_stmt(
+                    stmt,
+                    &mut loop_scope,
+                    fn_signatures,
+                    active_type_params,
+                    expected_return,
+                    true,
+                )?;
+            }
+            Ok(false)
+        }
+        Stmt::ForIn {
+            names,
+            iterator,
+            body,
+        } => {
+            let iterator_ty = infer_expr(iterator, vars, fn_signatures, active_type_params, None)?;
+            let Type::Function {
+                params,
+                return_type,
+            } = iterator_ty
+            else {
+                return Err(Diagnostic::new("for-in iterator must be a function"));
+            };
+            if !params.is_empty() {
+                return Err(Diagnostic::new(
+                    "for-in iterator function must not require parameters",
+                ));
+            }
+            let return_values = match *return_type {
+                Type::Multi(values) => values,
+                other => vec![other],
+            };
+            if return_values.len() != names.len() + 1 {
+                return Err(Diagnostic::new(format!(
+                    "for-in iterator expects {} return values (bool + {} loop values), got {}",
+                    names.len() + 1,
+                    names.len(),
+                    return_values.len()
+                )));
+            }
+            if return_values[0] != Type::Bool {
+                return Err(Diagnostic::new(
+                    "for-in iterator first return value must be bool",
+                ));
+            }
+            let mut loop_scope = vars.clone();
+            for (name, ty) in names.iter().zip(return_values.into_iter().skip(1)) {
+                loop_scope.insert(
+                    name.clone(),
+                    Binding {
+                        ty,
+                        rebindability: Rebindability::Const,
+                    },
+                );
+            }
             for stmt in body {
                 let _ = check_stmt(
                     stmt,
@@ -3420,6 +3535,71 @@ mod tests {
         assert_eq!(
             error.action(),
             Some("add an explicit return type annotation to break the cycle")
+        );
+    }
+
+    #[test]
+    fn accepts_for_in_with_bool_termination_and_two_bindings() {
+        let source = r#"
+            function entry(): i32
+                local i: i32 = 0
+                local iter = function(): bool, i32, i32
+                    i = i + 1
+                    if i > 3 then
+                        return false, 0, 0
+                    end
+                    return true, i, i + 10
+                end
+                local acc: i32 = 0
+                for a, b in iter do
+                    acc = acc + a + b
+                end
+                return acc
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn rejects_for_in_arity_mismatch() {
+        let source = r#"
+            function entry(): i32
+                local iter = function(): bool, i32
+                    return true, 1
+                end
+                for a, b in iter do
+                    return a + b
+                end
+                return 0
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "for-in iterator expects 3 return values (bool + 2 loop values), got 2"
+        );
+    }
+
+    #[test]
+    fn rejects_for_in_without_bool_first_value() {
+        let source = r#"
+            function entry(): i32
+                local iter = function(): i32
+                    return 1
+                end
+                for a in iter do
+                    return a
+                end
+                return 0
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "for-in iterator expects 2 return values (bool + 1 loop values), got 1"
         );
     }
 }
