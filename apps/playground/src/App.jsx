@@ -62,7 +62,7 @@ const WALUAU_HOST_IMPORT_COUNT = 10;
 
 let printCaptureCallback = null;
 
-function buildWaluauImports() {
+function buildWaluauImports(initLogger) {
   const waluauImports = new Proxy({}, {
     get(_target, prop) {
       const name = String(prop);
@@ -73,6 +73,8 @@ function buildWaluauImports() {
         return (value) => {
           if (printCaptureCallback) {
             printCaptureCallback(String(value));
+          } else if (initLogger) {
+            initLogger(String(value));
           } else {
             console.log(value);
           }
@@ -631,8 +633,8 @@ export default function App() {
 
     const funcMeta = exportsListRef.current.find(e => e.name === funcName);
     const paramCount = funcMeta ? funcMeta.params.length : 0;
-    // Height formula: base 7 lines (including space for print logs), + 1.5 lines per parameter
-    const heightInLines = Math.max(7, 5 + Math.ceil(paramCount * 1.5));
+    // Height formula: base 5 lines, + 1.5 lines per parameter
+    const heightInLines = Math.max(5, 4 + Math.ceil(paramCount * 1.5));
 
     let zoneId = null;
     editorInstance.changeViewZones((changeAccessor) => {
@@ -932,10 +934,9 @@ export default function App() {
       }
       const capturedInitLogs = [];
       try {
-        printCaptureCallback = (msg) => {
+        const imports = buildWaluauImports((msg) => {
           capturedInitLogs.push(msg);
-        };
-        const imports = buildWaluauImports();
+        });
         const obj = await WebAssembly.instantiate(wasmBuffer, imports, {
           builtins: ["js-string"],
           importedStringConstants: WALUAU_STRING_CONSTANTS_MODULE,
@@ -955,8 +956,6 @@ export default function App() {
           setManualResults({});
           setInitLogs(capturedInitLogs);
         }
-      } finally {
-        printCaptureCallback = null;
       }
     }
 
@@ -1518,13 +1517,6 @@ function InlineRunner({
           )}
         </div>
       </div>
-
-      {res.logs && res.logs.length > 0 && (
-        <div className="inline-runner-logs">
-          <div className="inline-runner-logs-label">Print Output</div>
-          <pre className="inline-runner-logs-value">{res.logs.join('\n')}</pre>
-        </div>
-      )}
     </div>
   );
 }

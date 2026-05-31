@@ -64,7 +64,7 @@ test.describe('inline function calling', () => {
     await expect(widget).toBeHidden({ timeout: 10_000 });
   });
 
-  test('shows print output inside inline runner', async ({ page }) => {
+  test('executes function inside inline runner for top level statements preset', async ({ page }) => {
     await page.getByRole('button', { name: 'Top_level_statements' }).click();
     await expect(page.locator('.status-text')).toHaveText(
       'Compilation Succeeded',
@@ -81,9 +81,9 @@ test.describe('inline function calling', () => {
     await expect(widget).toBeVisible();
     await expect(widget.locator('.inline-runner-name')).toHaveText('answer');
 
-    // The inline runner should auto-run by default, displaying 42 and the print log
+    // The inline runner should auto-run by default, displaying 42
     await expect(widget.locator('.result-value.success')).toHaveText('42');
-    await expect(widget.locator('.inline-runner-logs')).toBeVisible();
-    await expect(widget.locator('.inline-runner-logs-value')).toHaveText('Function called');
+    // Verify there are no logs printed in the inline widget (as requested by user)
+    await expect(widget.locator('.inline-runner-logs')).not.toBeVisible();
   });
 });
