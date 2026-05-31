@@ -229,7 +229,7 @@ fn array_storage_type(
         Type::Multi(_) => Err(Diagnostic::new(
             "multi-value types are not supported in array storage yet",
         )),
-        Type::Function { .. } | Type::Record(_) => unreachable!(),
+        Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) => unreachable!(),
     }
 }
 
@@ -1544,7 +1544,7 @@ fn emit_binary(
                     "multi-value add is not supported during wasm emission",
                 ));
             }
-            Type::Function { .. } | Type::Record(_) => unreachable!(),
+            Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) => unreachable!(),
         },
         BinaryOp::Sub => match operand_ty {
             Type::Numeric(NumericType::U32 | NumericType::I32) => {
@@ -1575,7 +1575,7 @@ fn emit_binary(
                     "multi-value sub is not supported during wasm emission",
                 ));
             }
-            Type::Function { .. } | Type::Record(_) => unreachable!(),
+            Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) => unreachable!(),
         },
         BinaryOp::Mul => match operand_ty {
             Type::Numeric(NumericType::U32 | NumericType::I32) => {
@@ -1606,7 +1606,7 @@ fn emit_binary(
                     "multi-value mul is not supported during wasm emission",
                 ));
             }
-            Type::Function { .. } | Type::Record(_) => unreachable!(),
+            Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) => unreachable!(),
         },
         BinaryOp::Div => match operand_ty {
             Type::Numeric(NumericType::U32) => {
@@ -1643,7 +1643,7 @@ fn emit_binary(
                     "multi-value div is not supported during wasm emission",
                 ));
             }
-            Type::Function { .. } | Type::Record(_) => unreachable!(),
+            Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) => unreachable!(),
         },
         BinaryOp::FloorDiv | BinaryOp::Mod => unreachable!("handled before stack binary emission"),
         BinaryOp::Eq => match operand_ty {
@@ -1670,7 +1670,7 @@ fn emit_binary(
                     "multi-value equality is not supported during wasm emission",
                 ));
             }
-            Type::Function { .. } | Type::Record(_) => unreachable!(),
+            Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) => unreachable!(),
         },
         BinaryOp::Less => match operand_ty {
             Type::Numeric(NumericType::U32) => {
@@ -1707,7 +1707,7 @@ fn emit_binary(
                     "multi-value comparison is not supported during wasm emission",
                 ));
             }
-            Type::Function { .. } | Type::Record(_) => unreachable!(),
+            Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) => unreachable!(),
         },
         BinaryOp::Greater => match operand_ty {
             Type::Numeric(NumericType::U32) => {
@@ -1744,7 +1744,7 @@ fn emit_binary(
                     "multi-value comparison is not supported during wasm emission",
                 ));
             }
-            Type::Function { .. } | Type::Record(_) => unreachable!(),
+            Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) => unreachable!(),
         },
         BinaryOp::And => {
             out.instruction(&Instruction::I32And);
@@ -2025,6 +2025,9 @@ fn wasm_type(ty: &Type, array_registry: &ArrayTypeRegistry) -> Result<ValType, D
         )),
         Type::Function { .. } => Ok(ValType::I32),
         Type::Record(_) => unreachable!("namespace types are not stored in wasm locals"),
+        Type::TypeParam(_) => {
+            unreachable!("generic type parameters must be specialized before codegen")
+        }
     }
 }
 

@@ -204,6 +204,7 @@ fn hoist_table_export_functions(
 fn function_expr_to_function(name: &str, function: &FunctionExpr) -> Function {
     Function {
         name: name.to_string(),
+        type_params: function.type_params.clone(),
         params: function.params.clone(),
         return_type: function.return_type.clone(),
         body: function.body.clone(),
@@ -421,7 +422,11 @@ impl Rewriter<'_> {
                 self.rewrite_expr(then_expr, bound);
                 self.rewrite_expr(else_expr, bound);
             }
-            Expr::Call { callee, args } => {
+            Expr::Call {
+                callee,
+                type_args: _,
+                args,
+            } => {
                 self.rewrite_expr(callee, bound);
                 for arg in args {
                     self.rewrite_expr(arg, bound);
@@ -536,7 +541,11 @@ fn expr_mentions_name(name: &str, expr: &Expr) -> bool {
                 || expr_mentions_name(name, then_expr)
                 || expr_mentions_name(name, else_expr)
         }
-        Expr::Call { callee, args } => {
+        Expr::Call {
+            callee,
+            args,
+            type_args: _,
+        } => {
             expr_mentions_name(name, callee) || args.iter().any(|arg| expr_mentions_name(name, arg))
         }
         Expr::Function(function) => stmt_mentions_name(name, &function.body),
@@ -614,7 +623,11 @@ fn collect_expr(expr: &Expr, out: &mut Vec<String>) {
             collect_expr(then_expr, out);
             collect_expr(else_expr, out);
         }
-        Expr::Call { callee, args } => {
+        Expr::Call {
+            callee,
+            type_args: _,
+            args,
+        } => {
             collect_expr(callee, out);
             for arg in args {
                 collect_expr(arg, out);
