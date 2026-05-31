@@ -147,6 +147,8 @@ impl<'a> Monomorphizer<'a> {
             functions,
             top_level: program.top_level.clone(),
             export: program.export.clone(),
+            sources: program.sources.clone(),
+            entry_file_path: program.entry_file_path.clone(),
         })
     }
 
@@ -182,6 +184,7 @@ impl<'a> Monomorphizer<'a> {
                 .as_ref()
                 .map(|ty| substitute_type(ty, subst)),
             body: self.rewrite_stmts(&function.body, subst, active)?,
+            file_path: function.file_path.clone(),
         })
     }
 
@@ -289,32 +292,42 @@ impl<'a> Monomorphizer<'a> {
         active: Option<&ActiveSpecialization>,
     ) -> Result<Expr, Diagnostic> {
         Ok(match expr {
-            Expr::Number(_)
-            | Expr::Bool(_)
-            | Expr::String(_)
-            | Expr::Name(_)
-            | Expr::Require(_) => expr.clone(),
-            Expr::Unary { op, expr } => Expr::Unary {
+            Expr::Number(..)
+            | Expr::Bool(..)
+            | Expr::String(..)
+            | Expr::Name(..)
+            | Expr::Require(..) => expr.clone(),
+            Expr::Unary { op, expr, span } => Expr::Unary {
                 op: *op,
                 expr: Box::new(self.rewrite_expr(expr, subst, active)?),
+                span: *span,
             },
-            Expr::Cast { expr, ty } => Expr::Cast {
+            Expr::Cast { expr, ty, span } => Expr::Cast {
                 expr: Box::new(self.rewrite_expr(expr, subst, active)?),
                 ty: substitute_type(ty, subst),
+                span: *span,
             },
-            Expr::Binary { op, left, right } => Expr::Binary {
+            Expr::Binary {
+                op,
+                left,
+                right,
+                span,
+            } => Expr::Binary {
                 op: *op,
                 left: Box::new(self.rewrite_expr(left, subst, active)?),
                 right: Box::new(self.rewrite_expr(right, subst, active)?),
+                span: *span,
             },
             Expr::If {
                 condition,
                 then_expr,
                 else_expr,
+                span,
             } => Expr::If {
                 condition: Box::new(self.rewrite_expr(condition, subst, active)?),
                 then_expr: Box::new(self.rewrite_expr(then_expr, subst, active)?),
                 else_expr: Box::new(self.rewrite_expr(else_expr, subst, active)?),
+                span: *span,
             },
             Expr::Call {
                 callee,
@@ -325,13 +338,14 @@ impl<'a> Monomorphizer<'a> {
             Expr::Function(function) => {
                 Expr::Function(self.rewrite_function_expr(function, subst, active)?)
             }
-            Expr::ArrayLiteral { elements } => Expr::ArrayLiteral {
+            Expr::ArrayLiteral { elements, span } => Expr::ArrayLiteral {
                 elements: elements
                     .iter()
                     .map(|expr| self.rewrite_expr(expr, subst, active))
                     .collect::<Result<Vec<_>, _>>()?,
+                span: *span,
             },
-            Expr::TableLiteral { fields } => Expr::TableLiteral {
+            Expr::TableLiteral { fields, span } => Expr::TableLiteral {
                 fields: fields
                     .iter()
                     .map(|field| {
@@ -341,14 +355,17 @@ impl<'a> Monomorphizer<'a> {
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?,
+                span: *span,
             },
-            Expr::Field { base, name } => Expr::Field {
+            Expr::Field { base, name, span } => Expr::Field {
                 base: Box::new(self.rewrite_expr(base, subst, active)?),
                 name: name.clone(),
+                span: *span,
             },
-            Expr::Index { base, index } => Expr::Index {
+            Expr::Index { base, index, span } => Expr::Index {
                 base: Box::new(self.rewrite_expr(base, subst, active)?),
                 index: Box::new(self.rewrite_expr(index, subst, active)?),
+                span: *span,
             },
         })
     }
@@ -367,7 +384,7 @@ impl<'a> Monomorphizer<'a> {
             .map(|expr| self.rewrite_expr(expr, subst, active))
             .collect::<Result<Vec<_>, _>>()?;
 
-        if let Expr::Name(name) = callee {
+        if let Expr::Name(name, callee_span) = callee {
             if self.generic_functions.contains_key(name) {
                 let concrete_type_args = type_args
                     .iter()
@@ -377,7 +394,7 @@ impl<'a> Monomorphizer<'a> {
                 let specialized_name =
                     self.ensure_specialization(name, concrete_type_args.clone())?;
                 return Ok(Expr::Call {
-                    callee: Box::new(Expr::Name(specialized_name)),
+                    callee: Box::new(Expr::Name(specialized_name, *callee_span)),
                     type_args: Vec::new(),
                     args,
                     span,
@@ -437,6 +454,8 @@ impl<'a> Monomorphizer<'a> {
                 .as_ref()
                 .map(|ty| substitute_type(ty, subst)),
             body: self.rewrite_stmts(&function.body, subst, active)?,
+            file_path: function.file_path.clone(),
+            span: function.span,
         })
     }
 
@@ -485,6 +504,8 @@ impl<'a> Monomorphizer<'a> {
                 .as_ref()
                 .map(|ty| substitute_type(ty, &local_subst)),
             body: self.rewrite_stmts(&function.body, &local_subst, active)?,
+            file_path: function.file_path.clone(),
+            span: function.span,
         })
     }
 
@@ -769,7 +790,7 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
         .collect::<Result<HashMap<_, _>, _>>()?;
     let mut functions = Vec::new();
     for function in &monomorphic.functions {
-        let mut lowered = build_function(function, &signatures)?;
+        let mut lowered = build_function(function, &signatures, &monomorphic.sources)?;
         functions.push(lowered.remove(0));
         functions.extend(lowered);
     }
@@ -1644,6 +1665,7 @@ impl Function {
 fn build_function(
     function: &AstFunction,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
+    sources: &BTreeMap<String, String>,
 ) -> Result<Vec<Function>, Diagnostic> {
     let return_type = function.return_type.clone().ok_or_else(|| {
         inference_diagnostic(
@@ -1718,6 +1740,8 @@ fn build_function(
         lambda_counter: 0,
         loop_stack: Vec::new(),
         cell_names: captured_names,
+        sources,
+        file_path: function.file_path.clone(),
     };
     for stmt in &function.body {
         if builder.current_block == DEAD_BLOCK {
@@ -1747,6 +1771,8 @@ struct Builder<'a> {
     loop_stack: Vec<LoopContext>,
     /// Names that are represented as 1-element array "cells" to support mutable capture.
     cell_names: HashSet<String>,
+    sources: &'a BTreeMap<String, String>,
+    file_path: String,
 }
 
 #[derive(Clone)]
@@ -1992,7 +2018,7 @@ impl Builder<'_> {
                     span,
                 } = expr
                 {
-                    if let Expr::Name(name) = callee.as_ref() {
+                    if let Expr::Name(name, _) = callee.as_ref() {
                         if name == ASSERT {
                             self.lower_assert_call(args, *span, env, types)?;
                             return Ok(());
@@ -2155,7 +2181,23 @@ impl Builder<'_> {
             },
         );
         self.current_block = trap_block;
-        let message = self.emit(Instruction::String("Assertion failed".to_string()));
+
+        let assert_span = args[0].span().or(span);
+        let msg_str = if let Some(sp) = assert_span {
+            if let Some(source) = self.sources.get(&self.file_path) {
+                let (line, expr_text) = resolve_span_to_line_and_text(source, sp);
+                format!(
+                    "Assertion failed: {} at {}:{}",
+                    expr_text, self.file_path, line
+                )
+            } else {
+                format!("Assertion failed at {}:0", self.file_path)
+            }
+        } else {
+            "Assertion failed".to_string()
+        };
+
+        let message = self.emit(Instruction::String(msg_str));
         self.emit(Instruction::Print { value: message });
         self.set_terminator(trap_block, Terminator::Unreachable { span });
         self.current_block = continue_block;
@@ -2405,7 +2447,7 @@ impl Builder<'_> {
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
         let value = match expr {
-            Expr::Number(number) => {
+            Expr::Number(number, _) => {
                 let ty = match self.infer_expr_type(expr, types, expected)? {
                     Type::Numeric(ty) => ty,
                     Type::Bool => unreachable!("number literal cannot lower as bool"),
@@ -2448,9 +2490,9 @@ impl Builder<'_> {
                     literal: number.clone(),
                 })
             }
-            Expr::Bool(value) => self.emit(Instruction::Bool(*value)),
-            Expr::String(value) => self.emit(Instruction::String(value.clone())),
-            Expr::Name(name) => {
+            Expr::Bool(value, _) => self.emit(Instruction::Bool(*value)),
+            Expr::String(value, _) => self.emit(Instruction::String(value.clone())),
+            Expr::Name(name, _) => {
                 if let Some(value) = env.get(name).copied() {
                     let actual = types.get(name).cloned().ok_or_else(|| {
                         Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
@@ -2492,7 +2534,7 @@ impl Builder<'_> {
                     )));
                 }
             }
-            Expr::Unary { op, expr } => {
+            Expr::Unary { op, expr, .. } => {
                 let actual = self.infer_expr_type(expr, types, None)?;
                 match op {
                     UnaryOp::Neg => {
@@ -2574,7 +2616,7 @@ impl Builder<'_> {
                     }
                 }
             }
-            Expr::Cast { expr, ty } => {
+            Expr::Cast { expr, ty, .. } => {
                 let value = self.lower_expr(expr, env, types, None)?;
                 let actual = self.infer_expr_type(expr, types, None)?;
                 let cast = self.explicit_cast(value, actual, ty.clone())?;
@@ -2584,6 +2626,7 @@ impl Builder<'_> {
                 condition,
                 then_expr,
                 else_expr,
+                ..
             } => {
                 let result_ty = self.infer_expr_type(expr, types, expected.clone())?;
                 let condition = self.lower_expr(condition, env, types, Some(Type::Bool))?;
@@ -2615,7 +2658,9 @@ impl Builder<'_> {
                     (else_exit, else_value),
                 ]))
             }
-            Expr::Binary { op, left, right } => match op {
+            Expr::Binary {
+                op, left, right, ..
+            } => match op {
                 BinaryOp::And | BinaryOp::Or => {
                     let result_ty = self.infer_expr_type(expr, types, expected.clone())?;
                     let left_value = self.lower_expr(left, env, types, Some(Type::Bool))?;
@@ -2687,35 +2732,35 @@ impl Builder<'_> {
                 args,
                 ..
             } => {
-                if let Expr::Name(name) = callee.as_ref() {
+                if let Expr::Name(name, _) = callee.as_ref() {
                     if let Some(result) =
                         self.lower_math_builtin_call(name, args, env, types, expected.clone())
                     {
                         return result;
                     }
                 }
-                if let Expr::Name(name) = callee.as_ref() {
+                if let Expr::Name(name, _) = callee.as_ref() {
                     if let Some(result) =
                         self.lower_coroutine_builtin_call(name, args, env, types, expected.clone())
                     {
                         return result;
                     }
                 }
-                if let Expr::Name(name) = callee.as_ref() {
+                if let Expr::Name(name, _) = callee.as_ref() {
                     if let Some(result) =
                         self.lower_tostring_builtin_call(name, args, env, types, expected.clone())
                     {
                         return result;
                     }
                 }
-                if let Expr::Name(name) = callee.as_ref() {
+                if let Expr::Name(name, _) = callee.as_ref() {
                     if let Some(result) =
                         self.lower_print_builtin_call(name, args, env, types, expected.clone())
                     {
                         return result;
                     }
                 }
-                if let Expr::Name(name) = callee.as_ref() {
+                if let Expr::Name(name, _) = callee.as_ref() {
                     if let Some((param_types, _)) = self.signatures.get(name) {
                         let args = args
                             .iter()
@@ -2768,12 +2813,12 @@ impl Builder<'_> {
                 let actual = self.infer_expr_type(expr, types, None)?;
                 self.coerce_value(value, actual, expected)?
             }
-            Expr::Require(path) => {
+            Expr::Require(path, _) => {
                 return Err(Diagnostic::new(format!(
                     "unresolved require(\"{path}\") reached IR lowering"
                 )));
             }
-            Expr::ArrayLiteral { elements } => {
+            Expr::ArrayLiteral { elements, .. } => {
                 let array_ty = self.infer_array_literal_type(elements, types, expected.clone())?;
                 let element_ty = array_ty
                     .element_type()
@@ -2788,7 +2833,7 @@ impl Builder<'_> {
                 });
                 self.coerce_value(value, array_ty, expected)?
             }
-            Expr::Index { base, index } => {
+            Expr::Index { base, index, .. } => {
                 let base_ty = self.infer_expr_type(base, types, None)?;
                 let element_ty = base_ty
                     .element_type()
@@ -2941,6 +2986,7 @@ impl Builder<'_> {
             params: function.params.clone(),
             return_type: Some(return_ty.clone()),
             body: function.body.clone(),
+            file_path: function.file_path.clone(),
         });
         capture_param_names.extend(nested_inner_captures);
 
@@ -2953,6 +2999,8 @@ impl Builder<'_> {
             lambda_counter: 0,
             loop_stack: Vec::new(),
             cell_names: capture_param_names,
+            sources: self.sources,
+            file_path: function.file_path.clone(),
         };
         if let Some(name) = &function.name {
             let capture_param_values = captures
@@ -3017,7 +3065,7 @@ impl Builder<'_> {
         expected: Option<Type>,
     ) -> Result<Type, Diagnostic> {
         match expr {
-            Expr::Number(_) => match expected {
+            Expr::Number(..) => match expected {
                 Some(Type::Numeric(ty)) => Ok(Type::Numeric(ty)),
                 Some(Type::Bool) => {
                     Err(Diagnostic::new("numeric literal is not assignable to bool"))
@@ -3045,12 +3093,12 @@ impl Builder<'_> {
                 )),
                 None => Ok(Type::number()),
             },
-            Expr::Bool(_) => Ok(Type::Bool),
-            Expr::String(_) => Ok(Type::String),
-            Expr::Require(path) => Err(Diagnostic::new(format!(
+            Expr::Bool(..) => Ok(Type::Bool),
+            Expr::String(..) => Ok(Type::String),
+            Expr::Require(path, _) => Err(Diagnostic::new(format!(
                 "unresolved require(\"{path}\") reached IR lowering"
             ))),
-            Expr::Name(name) => {
+            Expr::Name(name, _) => {
                 if let Some(ty) = types.get(name) {
                     Ok(ty.clone())
                 } else if let Some((params, ret)) = self.signatures.get(name) {
@@ -3064,7 +3112,7 @@ impl Builder<'_> {
                     )))
                 }
             }
-            Expr::Unary { op, expr } => match op {
+            Expr::Unary { op, expr, .. } => match op {
                 UnaryOp::Neg => {
                     let actual = self.infer_expr_type(expr, types, expected.clone())?;
                     match actual {
@@ -3105,7 +3153,7 @@ impl Builder<'_> {
                     }
                 }
             },
-            Expr::Cast { expr, ty } => {
+            Expr::Cast { expr, ty, .. } => {
                 let actual = self.infer_expr_type(expr, types, None)?;
                 require_numeric_cast(actual, ty.clone())?;
                 Ok(ty.clone())
@@ -3114,6 +3162,7 @@ impl Builder<'_> {
                 condition,
                 then_expr,
                 else_expr,
+                ..
             } => {
                 let condition_ty = self.infer_expr_type(condition, types, Some(Type::Bool))?;
                 if condition_ty != Type::Bool {
@@ -3130,23 +3179,23 @@ impl Builder<'_> {
                 }
             }
             Expr::Call { callee, .. } => {
-                if let Expr::Name(name) = callee.as_ref() {
+                if let Expr::Name(name, _) = callee.as_ref() {
                     if let Some(result) = self.infer_math_builtin_call_type(name, expr, types) {
                         return result;
                     }
                 }
-                if let Expr::Name(name) = callee.as_ref() {
+                if let Expr::Name(name, _) = callee.as_ref() {
                     if let Some(result) = self.infer_coroutine_builtin_call_type(name, expr, types)
                     {
                         return result;
                     }
                 }
-                if let Expr::Name(name) = callee.as_ref() {
+                if let Expr::Name(name, _) = callee.as_ref() {
                     if let Some(result) = self.infer_tostring_builtin_call_type(name, expr, types) {
                         return result;
                     }
                 }
-                if let Expr::Name(name) = callee.as_ref() {
+                if let Expr::Name(name, _) = callee.as_ref() {
                     if let Some(result) = self.infer_print_builtin_call_type(name, expr, types) {
                         return result;
                     }
@@ -3167,7 +3216,7 @@ impl Builder<'_> {
                     .map(|param| param.ty.clone())
                     .collect(),
             }),
-            Expr::ArrayLiteral { elements } => {
+            Expr::ArrayLiteral { elements, .. } => {
                 self.infer_array_literal_type(elements, types, expected)
             }
             Expr::TableLiteral { .. } => Err(Diagnostic::new(
@@ -3176,7 +3225,7 @@ impl Builder<'_> {
             Expr::Field { .. } => Err(Diagnostic::new(
                 "namespace member access must be resolved before IR lowering",
             )),
-            Expr::Index { base, index } => {
+            Expr::Index { base, index, .. } => {
                 let base_ty = self.infer_expr_type(base, types, None)?;
                 let element_ty = base_ty
                     .element_type()
@@ -3188,7 +3237,9 @@ impl Builder<'_> {
                 }
                 coerce_type(element_ty, expected)
             }
-            Expr::Binary { op, left, right } => match op {
+            Expr::Binary {
+                op, left, right, ..
+            } => match op {
                 BinaryOp::Add
                 | BinaryOp::Sub
                 | BinaryOp::Mul
@@ -3619,7 +3670,7 @@ impl Builder<'_> {
         let operand_ty = match self.infer_math_builtin_call_type(
             name,
             &Expr::Call {
-                callee: Box::new(Expr::Name(name.to_string())),
+                callee: Box::new(Expr::Name(name.to_string(), None)),
                 type_args: Vec::new(),
                 args: args.to_vec(),
                 span: None,
@@ -3877,8 +3928,8 @@ fn infer_numeric_common_type(
     infer: impl Fn(&Expr, Option<Type>) -> Result<Type, Diagnostic>,
 ) -> Result<Type, Diagnostic> {
     match (
-        matches!(left, Expr::Number(_)),
-        matches!(right, Expr::Number(_)),
+        matches!(left, Expr::Number(..)),
+        matches!(right, Expr::Number(..)),
     ) {
         (true, true) => {
             let ty = Type::Numeric(expected.unwrap_or(NumericType::F64));
@@ -4119,7 +4170,7 @@ fn collect_expr_captures(
     captures: &mut BTreeSet<String>,
 ) {
     match expr {
-        Expr::Name(name) => {
+        Expr::Name(name, _) => {
             if !bound.contains(name) && env.contains_key(name) && !signatures.contains_key(name) {
                 captures.insert(name.clone());
             }
@@ -4135,6 +4186,7 @@ fn collect_expr_captures(
             condition,
             then_expr,
             else_expr,
+            ..
         } => {
             collect_expr_captures(condition, bound, env, signatures, captures);
             collect_expr_captures(then_expr, bound, env, signatures, captures);
@@ -4152,12 +4204,12 @@ fn collect_expr_captures(
             }
         }
         Expr::Function(_) => {}
-        Expr::ArrayLiteral { elements } => {
+        Expr::ArrayLiteral { elements, .. } => {
             for element in elements {
                 collect_expr_captures(element, bound, env, signatures, captures);
             }
         }
-        Expr::TableLiteral { fields } => {
+        Expr::TableLiteral { fields, .. } => {
             for field in fields {
                 collect_expr_captures(&field.value, bound, env, signatures, captures);
             }
@@ -4165,11 +4217,11 @@ fn collect_expr_captures(
         Expr::Field { base, .. } => {
             collect_expr_captures(base, bound, env, signatures, captures);
         }
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             collect_expr_captures(base, bound, env, signatures, captures);
             collect_expr_captures(index, bound, env, signatures, captures);
         }
-        Expr::Number(_) | Expr::Bool(_) | Expr::String(_) | Expr::Require(_) => {}
+        Expr::Number(..) | Expr::Bool(..) | Expr::String(..) | Expr::Require(..) => {}
     }
 }
 
@@ -4293,6 +4345,7 @@ fn collect_nested_from_expr(expr: &Expr, out: &mut HashSet<String>) {
             condition,
             then_expr,
             else_expr,
+            ..
         } => {
             collect_nested_from_expr(condition, out);
             collect_nested_from_expr(then_expr, out);
@@ -4309,22 +4362,26 @@ fn collect_nested_from_expr(expr: &Expr, out: &mut HashSet<String>) {
                 collect_nested_from_expr(a, out);
             }
         }
-        Expr::ArrayLiteral { elements } => {
+        Expr::ArrayLiteral { elements, .. } => {
             for e in elements {
                 collect_nested_from_expr(e, out);
             }
         }
-        Expr::TableLiteral { fields } => {
+        Expr::TableLiteral { fields, .. } => {
             for field in fields {
                 collect_nested_from_expr(&field.value, out);
             }
         }
         Expr::Field { base, .. } => collect_nested_from_expr(base, out),
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             collect_nested_from_expr(base, out);
             collect_nested_from_expr(index, out);
         }
-        Expr::Name(_) | Expr::Number(_) | Expr::Bool(_) | Expr::String(_) | Expr::Require(_) => {}
+        Expr::Name(..)
+        | Expr::Number(..)
+        | Expr::Bool(..)
+        | Expr::String(..)
+        | Expr::Require(..) => {}
     }
 }
 
@@ -4392,7 +4449,7 @@ fn collect_free_names_in_stmts(stmts: &[Stmt], bound: &HashSet<String>, out: &mu
 
 fn collect_free_names_in_expr(expr: &Expr, bound: &HashSet<String>, out: &mut HashSet<String>) {
     match expr {
-        Expr::Name(name) => {
+        Expr::Name(name, _) => {
             if !bound.contains(name) {
                 out.insert(name.clone());
             }
@@ -4408,6 +4465,7 @@ fn collect_free_names_in_expr(expr: &Expr, bound: &HashSet<String>, out: &mut Ha
             condition,
             then_expr,
             else_expr,
+            ..
         } => {
             collect_free_names_in_expr(condition, bound, out);
             collect_free_names_in_expr(then_expr, bound, out);
@@ -4433,22 +4491,22 @@ fn collect_free_names_in_expr(expr: &Expr, bound: &HashSet<String>, out: &mut Ha
             }
             collect_free_names_in_stmts(&function.body, &nested_bound, out);
         }
-        Expr::ArrayLiteral { elements } => {
+        Expr::ArrayLiteral { elements, .. } => {
             for e in elements {
                 collect_free_names_in_expr(e, bound, out);
             }
         }
-        Expr::TableLiteral { fields } => {
+        Expr::TableLiteral { fields, .. } => {
             for field in fields {
                 collect_free_names_in_expr(&field.value, bound, out);
             }
         }
         Expr::Field { base, .. } => collect_free_names_in_expr(base, bound, out),
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             collect_free_names_in_expr(base, bound, out);
             collect_free_names_in_expr(index, bound, out);
         }
-        Expr::Number(_) | Expr::Bool(_) | Expr::String(_) | Expr::Require(_) => {}
+        Expr::Number(..) | Expr::Bool(..) | Expr::String(..) | Expr::Require(..) => {}
     }
 }
 
@@ -4489,6 +4547,26 @@ fn predecessors(function: &Function) -> HashMap<BlockId, Vec<BlockId>> {
         }
     }
     out
+}
+
+fn resolve_span_to_line_and_text(source: &str, span: waluau_ast::Span) -> (usize, String) {
+    let chars: Vec<char> = source.chars().collect();
+    let start = span.start as usize;
+    let end = span.end as usize;
+
+    let line_number = chars[..start.min(chars.len())]
+        .iter()
+        .filter(|&&c| c == '\n')
+        .count()
+        + 1;
+
+    let text: String = if start < chars.len() && end <= chars.len() && start <= end {
+        chars[start..end].iter().collect()
+    } else {
+        String::new()
+    };
+
+    (line_number, text)
 }
 
 #[cfg(test)]
@@ -5245,8 +5323,9 @@ mod tests {
                 .collect::<Result<_, waluau_diagnostics::Diagnostic>>()
                 .expect("signatures should build");
 
-        let mut lowered = super::build_function(&program.functions[0], &signatures)
-            .expect("ir lowering should succeed");
+        let mut lowered =
+            super::build_function(&program.functions[0], &signatures, &program.sources)
+                .expect("ir lowering should succeed");
         let mut functions = Vec::new();
         functions.push(lowered.remove(0));
         functions.extend(lowered);
@@ -5304,7 +5383,7 @@ mod tests {
         assert!(trap_block.instructions.iter().any(|(_, instruction)| {
             matches!(
                 instruction,
-                Instruction::String(message) if message == "Assertion failed"
+                Instruction::String(message) if message == "Assertion failed: 0 == 1 at source:3"
             )
         }));
         assert!(
