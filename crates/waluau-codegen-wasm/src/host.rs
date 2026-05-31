@@ -6,11 +6,11 @@ use waluau_diagnostics::Diagnostic;
 use waluau_ir::{Function as IrFunction, Instruction as IrInstruction, Module};
 
 pub const IMPORT_MODULE: &str = "waluau";
-pub const CUSTOM_SECTION_NAME: &str = "waluau.str";
+pub const CUSTOM_SECTION_NAME: &str = "waluau.strc";
 
-pub const IMPORT_STRING_LIT: &str = "string_lit";
-pub const IMPORT_STRING_EQ: &str = "string_eq";
-pub const IMPORT_STRING_CONCAT: &str = "string_concat";
+pub const IMPORT_JS_STRING_CONST: &str = "js_string_const";
+pub const IMPORT_JS_STRING_EQ: &str = "js_string_eq";
+pub const IMPORT_JS_STRING_CONCAT: &str = "js_string_concat";
 
 /// Number of imported host functions emitted before user-defined functions.
 pub const HOST_IMPORT_COUNT: u32 = 3;
@@ -20,17 +20,17 @@ pub const fn defined_func_index(user_index: u32) -> u32 {
     HOST_IMPORT_COUNT + user_index
 }
 
-/// Index of `IMPORT_STRING_LIT` in the combined function index space.
-pub const IMPORT_STRING_LIT_FUNC: u32 = 0;
-/// Index of `IMPORT_STRING_EQ` in the combined function index space.
-pub const IMPORT_STRING_EQ_FUNC: u32 = 1;
-/// Index of `IMPORT_STRING_CONCAT` in the combined function index space.
-pub const IMPORT_STRING_CONCAT_FUNC: u32 = 2;
+/// Index of `IMPORT_JS_STRING_CONST` in the combined function index space.
+pub const IMPORT_JS_STRING_CONST_FUNC: u32 = 0;
+/// Index of `IMPORT_JS_STRING_EQ` in the combined function index space.
+pub const IMPORT_JS_STRING_EQ_FUNC: u32 = 1;
+/// Index of `IMPORT_JS_STRING_CONCAT` in the combined function index space.
+pub const IMPORT_JS_STRING_CONCAT_FUNC: u32 = 2;
 
 /// Number of host function types emitted after array types in the type section.
 pub const HOST_TYPE_COUNT: u32 = 3;
 
-pub fn encode_string_section(strings: &[String]) -> Vec<u8> {
+pub fn encode_string_constants_section(strings: &[String]) -> Vec<u8> {
     let mut out = Vec::new();
     push_u32(&mut out, strings.len() as u32);
     for string in strings {
@@ -41,7 +41,7 @@ pub fn encode_string_section(strings: &[String]) -> Vec<u8> {
     out
 }
 
-pub fn decode_string_section(data: &[u8]) -> Result<Vec<String>, Diagnostic> {
+pub fn decode_string_constants_section(data: &[u8]) -> Result<Vec<String>, Diagnostic> {
     let mut offset = 0usize;
     let count = read_u32(data, &mut offset)?;
     let mut strings = Vec::with_capacity(count as usize);
@@ -49,24 +49,24 @@ pub fn decode_string_section(data: &[u8]) -> Result<Vec<String>, Diagnostic> {
         let len = read_u32(data, &mut offset)? as usize;
         let end = offset
             .checked_add(len)
-            .ok_or_else(|| Diagnostic::new("waluau.str section length overflow"))?;
+            .ok_or_else(|| Diagnostic::new("waluau.strc section length overflow"))?;
         if end > data.len() {
-            return Err(Diagnostic::new("waluau.str section truncated"));
+            return Err(Diagnostic::new("waluau.strc section truncated"));
         }
         let value = std::str::from_utf8(&data[offset..end])
-            .map_err(|_| Diagnostic::new("waluau.str section contains invalid UTF-8"))?
+            .map_err(|_| Diagnostic::new("waluau.strc section contains invalid UTF-8"))?
             .to_string();
         offset = end;
         strings.push(value);
     }
     if offset != data.len() {
-        return Err(Diagnostic::new("waluau.str section has trailing bytes"));
+        return Err(Diagnostic::new("waluau.strc section has trailing bytes"));
     }
     Ok(strings)
 }
 
 /// Collect every string literal in `module`, deduplicated in first-seen order.
-pub fn collect_string_literals(module: &Module) -> Vec<String> {
+pub fn collect_string_constants(module: &Module) -> Vec<String> {
     let mut strings = Vec::new();
     let mut indices = HashMap::<&str, u32>::new();
     for function in &module.functions {
@@ -93,20 +93,20 @@ fn collect_from_function<'a>(
     }
 }
 
-pub fn string_literal_index(strings: &[String], literal: &str) -> Result<u32, Diagnostic> {
+pub fn string_constant_index(strings: &[String], literal: &str) -> Result<u32, Diagnostic> {
     strings
         .iter()
         .position(|value| value == literal)
         .map(|index| index as u32)
         .ok_or_else(|| {
             Diagnostic::new(format!(
-                "missing string literal '{literal}' in wasm string table"
+                "missing string literal '{literal}' in wasm string constants"
             ))
         })
 }
 
-/// Parse the `waluau.str` custom section from a compiled Wasm module.
-pub fn parse_string_section_from_wasm(wasm: &[u8]) -> Result<Vec<String>, Diagnostic> {
+/// Parse the `waluau.strc` custom section from a compiled Wasm module.
+pub fn parse_string_constants_from_wasm(wasm: &[u8]) -> Result<Vec<String>, Diagnostic> {
     let mut offset = 8usize;
     if wasm.len() < 8 || &wasm[0..4] != b"\0asm" {
         return Err(Diagnostic::new("input is not a wasm module"));
@@ -133,7 +133,7 @@ pub fn parse_string_section_from_wasm(wasm: &[u8]) -> Result<Vec<String>, Diagno
             let name = std::str::from_utf8(&wasm[section_offset..name_end])
                 .map_err(|_| Diagnostic::new("wasm custom section name is not UTF-8"))?;
             if name == CUSTOM_SECTION_NAME {
-                return decode_string_section(&wasm[name_end..section_end]);
+                return decode_string_constants_section(&wasm[name_end..section_end]);
             }
         }
         offset = section_end;
@@ -147,7 +147,7 @@ fn push_u32(out: &mut Vec<u8>, value: u32) {
 
 fn read_u32(data: &[u8], offset: &mut usize) -> Result<u32, Diagnostic> {
     if *offset + 4 > data.len() {
-        return Err(Diagnostic::new("waluau.str section truncated"));
+        return Err(Diagnostic::new("waluau.strc section truncated"));
     }
     let bytes: [u8; 4] = data[*offset..*offset + 4]
         .try_into()
@@ -181,10 +181,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn round_trips_string_section() {
+    fn round_trips_string_constants_section() {
         let strings = vec!["hello".to_string(), "world".to_string(), "".to_string()];
-        let encoded = encode_string_section(&strings);
-        let decoded = decode_string_section(&encoded).expect("decode should succeed");
+        let encoded = encode_string_constants_section(&strings);
+        let decoded = decode_string_constants_section(&encoded).expect("decode should succeed");
         assert_eq!(decoded, strings);
     }
 }

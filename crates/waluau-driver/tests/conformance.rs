@@ -70,8 +70,8 @@ fn engine() -> Engine {
 fn run_case(engine: &Engine, source: &str) -> Result<(), String> {
     let wasm = compile_source(source).map_err(|error| format!("compile error: {error}"))?;
     let strings = Arc::from(
-        runtime::parse_string_table(&wasm)
-            .map_err(|error| format!("string table error: {error}"))?,
+        runtime::parse_string_constants(&wasm)
+            .map_err(|error| format!("string constants error: {error}"))?,
     );
     let module = Module::new(engine, &wasm).map_err(|error| format!("invalid module: {error}"))?;
     runtime::instantiate(engine, &module, strings)
