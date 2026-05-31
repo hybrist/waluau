@@ -23,7 +23,8 @@ Inference is not introduced for:
 
 - function parameter types (still required)
 - recursive function return types
-- polymorphism/generics
+- inferred generic type arguments; explicit generic function syntax and typing
+  are specified in [0009](0009-generic-functions-mvp.md)
 - union/intersection types
 - table shape inference
 - implicit `nil`-based flow typing
@@ -165,7 +166,8 @@ Deferred beyond MVP:
 
 - recursive return inference via fixed-point solving
 - parameter type inference
-- generic inference
+- generic inference; the generic functions MVP requires explicit type arguments
+  at call sites
 - richer flow-sensitive refinement
 - cross-function whole-program inference
 
