@@ -723,6 +723,10 @@ pub enum Terminator {
         then_block: BlockId,
         else_block: BlockId,
     },
+    CoroutineYield {
+        value: ValueId,
+        resume_block: BlockId,
+    },
     Return(ValueId),
     Unreachable {
         span: Option<waluau_ast::Span>,
@@ -1294,6 +1298,19 @@ fn verify_function(
                 }
                 require_block(function, *then_block)?;
                 require_block(function, *else_block)?;
+            }
+            Terminator::CoroutineYield {
+                value,
+                resume_block,
+            } => {
+                let _value_ty = require_dominating_definition(
+                    &definitions,
+                    &dominators,
+                    &seen_in_block,
+                    block.id,
+                    *value,
+                )?;
+                require_block(function, *resume_block)?;
             }
             Terminator::Return(value) => {
                 let value_ty = require_dominating_definition(
@@ -3383,10 +3400,24 @@ impl Builder<'_> {
                         args.len()
                     ))));
                 }
-                let _yield_value = match self.lower_expr(&args[0], env, types, None) {
+                let expected_yield_type = if self.function.return_type == Type::Unit {
+                    Some(Type::Numeric(NumericType::I32))
+                } else {
+                    Some(self.function.return_type.clone())
+                };
+                let yield_value = match self.lower_expr(&args[0], env, types, expected_yield_type) {
                     Ok(value) => value,
                     Err(error) => return Some(Err(error)),
                 };
+                let resume_block = self.new_block();
+                self.set_terminator(
+                    self.current_block,
+                    Terminator::CoroutineYield {
+                        value: yield_value,
+                        resume_block,
+                    },
+                );
+                self.current_block = resume_block;
                 let value = self.emit(Instruction::Unit);
                 Some(self.coerce_value(value, Type::Unit, expected))
             }
@@ -4370,6 +4401,9 @@ fn predecessors(function: &Function) -> HashMap<BlockId, Vec<BlockId>> {
             } => {
                 out.entry(*then_block).or_default().push(*id);
                 out.entry(*else_block).or_default().push(*id);
+            }
+            Terminator::CoroutineYield { resume_block, .. } => {
+                out.entry(*resume_block).or_default().push(*id);
             }
             Terminator::Return(_) | Terminator::Unreachable { .. } => {}
         }
