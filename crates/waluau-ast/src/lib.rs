@@ -15,6 +15,7 @@ pub struct Program {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Function {
     pub name: String,
+    pub type_params: Vec<String>,
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
     pub body: Vec<Stmt>,
@@ -23,6 +24,7 @@ pub struct Function {
 #[derive(Clone, Debug, PartialEq)]
 pub struct FunctionExpr {
     pub name: Option<String>,
+    pub type_params: Vec<String>,
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
     pub body: Vec<Stmt>,
@@ -55,6 +57,8 @@ pub enum Type {
         params: Vec<Type>,
         return_type: Box<Type>,
     },
+    /// Reference to an in-scope generic type parameter (e.g. `T` in `function f<T>(x: T)`).
+    TypeParam(String),
 }
 
 impl Type {
@@ -145,6 +149,7 @@ impl std::fmt::Display for Type {
                 }
                 write!(f, ") -> {return_type}")
             }
+            Self::TypeParam(name) => f.write_str(name),
         }
     }
 }
@@ -241,6 +246,7 @@ pub enum Expr {
     },
     Call {
         callee: Box<Expr>,
+        type_args: Vec<Type>,
         args: Vec<Expr>,
     },
     Function(FunctionExpr),

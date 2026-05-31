@@ -303,7 +303,11 @@ impl Rewriter<'_> {
                 self.rewrite_expr(then_expr, bound);
                 self.rewrite_expr(else_expr, bound);
             }
-            Expr::Call { callee, args } => {
+            Expr::Call {
+                callee,
+                type_args: _,
+                args,
+            } => {
                 self.rewrite_expr(callee, bound);
                 for arg in args {
                     self.rewrite_expr(arg, bound);
@@ -394,7 +398,11 @@ fn collect_expr(expr: &Expr, out: &mut Vec<String>) {
             collect_expr(then_expr, out);
             collect_expr(else_expr, out);
         }
-        Expr::Call { callee, args } => {
+        Expr::Call {
+            callee,
+            type_args: _,
+            args,
+        } => {
             collect_expr(callee, out);
             for arg in args {
                 collect_expr(arg, out);
