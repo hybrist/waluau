@@ -2144,9 +2144,9 @@ fn local(local_plan: &LocalPlan, value: ValueId) -> Result<u32, Diagnostic> {
 }
 
 fn externref_val_type() -> ValType {
-    // Long-form `(ref null extern)` (0x63 0x6f) so Wasmtime host imports type-check.
+    // Long-form `(ref null extern)` (0x63 0x6f).
     ValType::Ref(RefType {
-        nullable: false,
+        nullable: true,
         heap_type: HeapType::Abstract {
             shared: false,
             ty: AbstractHeapType::Extern,
