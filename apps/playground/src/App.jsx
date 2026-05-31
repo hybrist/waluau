@@ -263,6 +263,7 @@ function getWasmExports(buffer) {
         if (typeCode === 0x7e) return 'i64';
         if (typeCode === 0x7d) return 'f32';
         if (typeCode === 0x7c) return 'f64';
+        if (typeCode === 0x6f || typeCode === 0x64) return 'string';
         return 'unknown';
       }),
       returns: signature.returns.map(typeCode => {
@@ -270,10 +271,46 @@ function getWasmExports(buffer) {
         if (typeCode === 0x7e) return 'i64';
         if (typeCode === 0x7d) return 'f32';
         if (typeCode === 0x7c) return 'f64';
+        if (typeCode === 0x6f || typeCode === 0x64) return 'string';
         return 'unknown';
       })
     };
   });
+}
+
+function parseStringInput(valStr) {
+  const trimmed = valStr.trim();
+  if (
+    trimmed.length >= 2 &&
+    ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+     (trimmed.startsWith("'") && trimmed.endsWith("'")))
+  ) {
+    const inner = trimmed.slice(1, -1);
+    let result = '';
+    let i = 0;
+    while (i < inner.length) {
+      if (inner[i] === '\\' && i + 1 < inner.length) {
+        const nextChar = inner[i + 1];
+        if (nextChar === 'n') result += '\n';
+        else if (nextChar === 't') result += '\t';
+        else if (nextChar === 'r') result += '\r';
+        else if (nextChar === '\\') result += '\\';
+        else if (nextChar === '"') result += '"';
+        else if (nextChar === "'") result += "'";
+        else result += '\\' + nextChar;
+        i += 2;
+      } else {
+        result += inner[i];
+        i += 1;
+      }
+    }
+    return result;
+  }
+  return valStr;
+}
+
+function getDefaultParamValue(type) {
+  return type === 'string' ? '""' : '0';
 }
 
 function executeCall(instance, funcName, paramsInfo, inputValues) {
@@ -305,6 +342,8 @@ function executeCall(instance, funcName, paramsInfo, inputValues) {
           return { error: `Parameter ${i} must be a valid number` };
         }
         parsedArgs.push(val);
+      } else if (type === 'string') {
+        parsedArgs.push(parseStringInput(valStr));
       } else {
         parsedArgs.push(Number(valStr));
       }
@@ -313,6 +352,8 @@ function executeCall(instance, funcName, paramsInfo, inputValues) {
     const result = func(...parsedArgs);
     if (typeof result === 'bigint') {
       return { value: result.toString() + 'n' };
+    } else if (typeof result === 'string') {
+      return { value: JSON.stringify(result) };
     } else {
       return { value: String(result) };
     }
@@ -394,7 +435,7 @@ export default function App() {
           'while',
         ],
 
-        typeKeywords: ['number', 'u32', 'u64', 'i32', 'i64', 'f32', 'f64', 'bool'],
+        typeKeywords: ['number', 'u32', 'u64', 'i32', 'i64', 'f32', 'f64', 'bool', 'string'],
 
         brackets: [
           { token: 'delimiter.bracket', open: '{', close: '}' },
@@ -906,7 +947,7 @@ export default function App() {
           let changed = false;
           for (const func of list) {
             if (!next[func.name] || next[func.name].length !== func.params.length) {
-              next[func.name] = func.params.map(() => '0');
+              next[func.name] = func.params.map(getDefaultParamValue);
               changed = true;
             }
           }
@@ -949,14 +990,14 @@ export default function App() {
   };
 
   const handleManualRun = (funcName, params) => {
-    const inputs = funcInputs[funcName] || params.map(() => '0');
+    const inputs = funcInputs[funcName] || params.map(getDefaultParamValue);
     const res = executeCall(runInstance, funcName, params, inputs);
     setManualResults(prev => ({ ...prev, [funcName]: res }));
   };
 
   const getResult = (funcName, params) => {
     if (autoRun) {
-      const inputs = funcInputs[funcName] || params.map(() => '0');
+      const inputs = funcInputs[funcName] || params.map(getDefaultParamValue);
       return executeCall(runInstance, funcName, params, inputs);
     } else {
       return manualResults[funcName] || { isIdle: true };
@@ -1312,7 +1353,7 @@ export default function App() {
                 ) : (
                   <div className="func-list">
                     {exportsList.map((func) => {
-                      const inputs = funcInputs[func.name] || func.params.map(() => '0');
+                      const inputs = funcInputs[func.name] || func.params.map(getDefaultParamValue);
                       const res = getResult(func.name, func.params);
 
                       return (
@@ -1414,7 +1455,7 @@ function InlineRunner({
   const func = exportsList.find((e) => e.name === funcName);
   if (!func) return null;
 
-  const inputs = funcInputs[funcName] || func.params.map(() => '0');
+  const inputs = funcInputs[funcName] || func.params.map(getDefaultParamValue);
   const res = getResult(funcName, func.params);
 
   return (
