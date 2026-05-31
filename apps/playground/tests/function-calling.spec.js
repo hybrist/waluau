@@ -48,4 +48,23 @@ test.describe('function calling tab', () => {
     // The result box should switch to the error state.
     await expect(page.locator('.func-result-value.error')).toBeVisible();
   });
+
+  test('shows print output during initialization and function execution', async ({ page }) => {
+    await page.getByRole('button', { name: 'Top_level_statements' }).click();
+    await expect(page.locator('.status-text')).toHaveText(
+      'Compilation Succeeded',
+      { timeout: COMPILER_READY_TIMEOUT },
+    );
+    await page.getByRole('button', { name: 'Function Calling' }).click();
+
+    // Verify module initialization print output is outside of individual function cards
+    await expect(page.locator('.init-logs-box')).toBeVisible();
+    await expect(page.locator('.init-logs-value')).toHaveText('Init statement run\nFunction called');
+
+    // Verify the answer function card shows print output from its own execution
+    const funcCard = page.locator('.func-card').filter({ hasText: 'answer' });
+    await expect(funcCard).toBeVisible();
+    await expect(funcCard.locator('.func-logs-box')).toBeVisible();
+    await expect(funcCard.locator('.func-logs-value')).toHaveText('Function called');
+  });
 });

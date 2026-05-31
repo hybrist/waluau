@@ -60,7 +60,9 @@ const WALUAU_IMPORT_MODULE = 'waluau';
 // Must match waluau_codegen_wasm::host::HOST_IMPORT_COUNT
 const WALUAU_HOST_IMPORT_COUNT = 10;
 
-function buildWaluauImports() {
+let printCaptureCallback = null;
+
+function buildWaluauImports(initLogger) {
   const waluauImports = new Proxy({}, {
     get(_target, prop) {
       const name = String(prop);
@@ -69,7 +71,13 @@ function buildWaluauImports() {
       }
       if (name === 'print' || name === 'js_log') {
         return (value) => {
-          console.log(value);
+          if (printCaptureCallback) {
+            printCaptureCallback(String(value));
+          } else if (initLogger) {
+            initLogger(String(value));
+          } else {
+            console.log(value);
+          }
         };
       }
       return () => {
@@ -277,6 +285,11 @@ function executeCall(instance, funcName, paramsInfo, inputValues) {
   const func = instance.exports[funcName];
   if (!func) return { error: `Exported function "${funcName}" not found` };
 
+  const logs = [];
+  printCaptureCallback = (msg) => {
+    logs.push(msg);
+  };
+
   try {
     const parsedArgs = [];
     for (let i = 0; i < paramsInfo.length; i++) {
@@ -287,18 +300,18 @@ function executeCall(instance, funcName, paramsInfo, inputValues) {
         try {
           parsedArgs.push(BigInt(valStr.trim().replace(/n$/, '')));
         } catch {
-          return { error: `Parameter ${i} must be a valid 64-bit integer` };
+          return { error: `Parameter ${i} must be a valid 64-bit integer`, logs };
         }
       } else if (type === 'i32') {
         const val = Number(valStr);
         if (isNaN(val) || !Number.isInteger(val)) {
-          return { error: `Parameter ${i} must be a valid 32-bit integer` };
+          return { error: `Parameter ${i} must be a valid 32-bit integer`, logs };
         }
         parsedArgs.push(val);
       } else if (type === 'f32' || type === 'f64') {
         const val = Number(valStr);
         if (isNaN(val)) {
-          return { error: `Parameter ${i} must be a valid number` };
+          return { error: `Parameter ${i} must be a valid number`, logs };
         }
         parsedArgs.push(val);
       } else if (type === 'string') {
@@ -309,15 +322,19 @@ function executeCall(instance, funcName, paramsInfo, inputValues) {
     }
 
     const result = func(...parsedArgs);
+    let valStr = '';
     if (typeof result === 'bigint') {
-      return { value: result.toString() + 'n' };
+      valStr = result.toString() + 'n';
     } else if (typeof result === 'string') {
-      return { value: JSON.stringify(result) };
+      valStr = JSON.stringify(result);
     } else {
-      return { value: String(result) };
+      valStr = String(result);
     }
+    return { value: valStr, logs };
   } catch (err) {
-    return { error: `Execution crashed: ${err.message}` };
+    return { error: `Execution crashed: ${err.message}`, logs };
+  } finally {
+    printCaptureCallback = null;
   }
 }
 
@@ -346,6 +363,7 @@ export default function App() {
   const [runInstance, setRunInstance] = useState(null);
   const [runError, setRunError] = useState(null);
   const [exportsList, setExportsList] = useState([]);
+  const [initLogs, setInitLogs] = useState([]);
   const [funcInputs, setFuncInputs] = useState({});
   const [autoRun, setAutoRun] = useState(true);
   const [manualResults, setManualResults] = useState({});
@@ -894,6 +912,7 @@ export default function App() {
           setRunError(null);
           setExportsList([]);
           setManualResults({});
+          setInitLogs([]);
         }
         return;
       }
@@ -913,8 +932,11 @@ export default function App() {
           return changed ? next : prev;
         });
       }
+      const capturedInitLogs = [];
       try {
-        const imports = buildWaluauImports();
+        const imports = buildWaluauImports((msg) => {
+          capturedInitLogs.push(msg);
+        });
         const obj = await WebAssembly.instantiate(wasmBuffer, imports, {
           builtins: ["js-string"],
           importedStringConstants: WALUAU_STRING_CONSTANTS_MODULE,
@@ -924,6 +946,7 @@ export default function App() {
           setRunInstance(obj.instance);
           setRunError(null);
           setManualResults({});
+          setInitLogs(capturedInitLogs);
         }
       } catch (err) {
         if (active) {
@@ -931,6 +954,7 @@ export default function App() {
           setRunInstance(null);
           setRunError(classifyWasmInstantiationError(err, requiresWasmGc));
           setManualResults({});
+          setInitLogs(capturedInitLogs);
         }
       }
     }
@@ -1292,6 +1316,13 @@ export default function App() {
                   </label>
                 </div>
 
+                {initLogs.length > 0 && (
+                  <div className="init-logs-box">
+                    <div className="init-logs-label">Module Initialization Print Output</div>
+                    <pre className="init-logs-value">{initLogs.join('\n')}</pre>
+                  </div>
+                )}
+
                 {status === 'loading' ? (
                   <div className="loading-state">
                     <div className="spinner"></div>
@@ -1371,6 +1402,13 @@ export default function App() {
                               <div className="func-result-value success">{res.value}</div>
                             )}
                           </div>
+
+                          {res.logs && res.logs.length > 0 && (
+                            <div className="func-logs-box">
+                              <div className="func-logs-label">Print Output</div>
+                              <pre className="func-logs-value">{res.logs.join('\n')}</pre>
+                            </div>
+                          )}
                         </div>
                       );
                     })}

@@ -1,6 +1,10 @@
+print("Init statement run")
+
 function answer(): i32
+    print("Function called")
     return 42
 end
 
 local seed: i32 = answer()
 seed += 1
+

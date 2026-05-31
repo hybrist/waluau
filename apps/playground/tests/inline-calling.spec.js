@@ -63,4 +63,27 @@ test.describe('inline function calling', () => {
     // Verify the widget is removed
     await expect(widget).toBeHidden({ timeout: 10_000 });
   });
+
+  test('executes function inside inline runner for top level statements preset', async ({ page }) => {
+    await page.getByRole('button', { name: 'Top_level_statements' }).click();
+    await expect(page.locator('.status-text')).toHaveText(
+      'Compilation Succeeded',
+      { timeout: COMPILER_READY_TIMEOUT },
+    );
+
+    // Wait for the Monaco CodeLens to be rendered and visible
+    const codeLens = page.locator('.codelens-decoration:has-text("▶ Run answer")');
+    await expect(codeLens).toBeVisible({ timeout: 10_000 });
+    await codeLens.click();
+
+    // Verify the inline runner widget is displayed
+    const widget = page.locator('.inline-runner-widget');
+    await expect(widget).toBeVisible();
+    await expect(widget.locator('.inline-runner-name')).toHaveText('answer');
+
+    // The inline runner should auto-run by default, displaying 42
+    await expect(widget.locator('.result-value.success')).toHaveText('42');
+    // Verify there are no logs printed in the inline widget (as requested by user)
+    await expect(widget.locator('.inline-runner-logs')).not.toBeVisible();
+  });
 });
