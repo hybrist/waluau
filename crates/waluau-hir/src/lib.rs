@@ -433,7 +433,7 @@ fn check_function(
             saw_return = true;
         }
     }
-    if !saw_return {
+    if !saw_return && expected_return != Type::Unit {
         return Err(Diagnostic::new(format!(
             "function '{}' is missing a return",
             function.name
@@ -481,10 +481,7 @@ fn infer_top_level_function_return_type(
         return Err(error);
     }
     if returns.is_empty() {
-        return Err(Diagnostic::new(format!(
-            "function '{}' is missing a return",
-            function.name
-        )));
+        return Ok(Some(Type::Unit));
     }
     let mut merged = returns[0].clone();
     for ty in returns.into_iter().skip(1) {
@@ -1218,27 +1215,6 @@ fn check_stmt(
                         }
                         return Ok(false);
                     }
-                    if name == PRINT {
-                        if args.len() != 1 {
-                            return Err(Diagnostic::new(format!(
-                                "{PRINT} expects 1 argument, got {}",
-                                args.len()
-                            )));
-                        }
-                        let actual = infer_expr(
-                            &args[0],
-                            vars,
-                            fn_signatures,
-                            active_type_params,
-                            Some(Type::String),
-                        )?;
-                        if actual != Type::String {
-                            return Err(Diagnostic::new(format!(
-                                "{PRINT} expects string, got {actual}"
-                            )));
-                        }
-                        return Ok(false);
-                    }
                 }
             }
             let _ = infer_expr(expr, vars, fn_signatures, active_type_params, None)?;
@@ -1300,6 +1276,7 @@ fn infer_expr(
                 match actual {
                     Type::Numeric(_) => coerce_type(actual, expected),
                     Type::Bool => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                    Type::Unit => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::String => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Array(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Multi(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
@@ -1402,6 +1379,18 @@ fn infer_expr(
             }
             if let Expr::Name(name) = callee.as_ref() {
                 if let Some(result) = infer_tostring_builtin_call(
+                    name,
+                    args,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    expected.clone(),
+                ) {
+                    return result;
+                }
+            }
+            if let Expr::Name(name) = callee.as_ref() {
+                if let Some(result) = infer_print_builtin_call(
                     name,
                     args,
                     vars,
@@ -1790,6 +1779,41 @@ fn infer_tostring_builtin_call(
     }
 }
 
+fn infer_print_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    if name != PRINT {
+        return None;
+    }
+    if args.len() != 1 {
+        return Some(Err(Diagnostic::new(format!(
+            "{PRINT} expects 1 argument, got {}",
+            args.len()
+        ))));
+    }
+    let arg_ty = match infer_expr(
+        &args[0],
+        vars,
+        fn_signatures,
+        active_type_params,
+        Some(Type::String),
+    ) {
+        Ok(ty) => ty,
+        Err(error) => return Some(Err(error)),
+    };
+    if arg_ty != Type::String {
+        return Some(Err(Diagnostic::new(format!(
+            "{PRINT} expects string, got {arg_ty}",
+        ))));
+    }
+    Some(coerce_type(Type::Unit, expected))
+}
+
 fn infer_expr_list(
     exprs: &[Expr],
     vars: &HashMap<String, Binding>,
@@ -1999,6 +2023,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Bool => Err(Diagnostic::new(format!(
                 "cannot implicitly convert bool to {expected_numeric}",
             ))),
+            Type::Unit => Err(Diagnostic::new(format!(
+                "cannot implicitly convert unit to {expected_numeric}",
+            ))),
             Type::String => Err(Diagnostic::new(format!(
                 "cannot implicitly convert string to {expected_numeric}",
             ))),
@@ -2020,6 +2047,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
         },
         Some(Type::Bool) => Err(Diagnostic::new(format!(
             "cannot implicitly convert {actual} to bool",
+        ))),
+        Some(Type::Unit) => Err(Diagnostic::new(format!(
+            "cannot implicitly convert {actual} to unit",
         ))),
         Some(expected) => Err(Diagnostic::new(format!(
             "cannot implicitly convert {actual} to {expected}",
@@ -2054,6 +2084,7 @@ fn resolve_number_literal(
             Ok(Type::Numeric(numeric))
         }
         Some(Type::Bool) => Err(Diagnostic::new("numeric literal is not assignable to bool")),
+        Some(Type::Unit) => Err(Diagnostic::new("numeric literal is not assignable to unit")),
         Some(Type::String) => Err(Diagnostic::new(
             "numeric literal is not assignable to string",
         )),
@@ -2139,7 +2170,7 @@ fn infer_function_expr(
             saw_return = true;
         }
     }
-    if !saw_return {
+    if !saw_return && return_ty != Type::Unit {
         return Err(Diagnostic::new("function expression is missing a return"));
     }
     coerce_type(function_ty, expected)
@@ -3082,7 +3113,18 @@ mod tests {
     }
 
     #[test]
-    fn rejects_print_in_expression_position() {
+    fn type_checks_unit_return_with_print() {
+        let source = r#"
+            function check(): unit
+                print("hello")
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn rejects_print_in_non_unit_expression_context() {
         let source = r#"
             function check(): string
                 return print("hello")
@@ -3090,7 +3132,10 @@ mod tests {
         "#;
         let program = parse(source).expect("parse should succeed");
         let error = super::type_check(&program).expect_err("type check should fail");
-        assert_eq!(error.to_string(), "unknown name 'print'");
+        assert_eq!(
+            error.to_string(),
+            "cannot implicitly convert unit to string"
+        );
     }
 
     #[test]
