@@ -12,6 +12,8 @@ pub struct Program {
     /// Consumed by the module linker in `waluau-driver` and ignored when a
     /// program is compiled as a standalone entry point.
     pub export: Option<Expr>,
+    pub sources: BTreeMap<String, String>,
+    pub entry_file_path: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -27,6 +29,7 @@ pub struct Function {
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
     pub body: Vec<Stmt>,
+    pub file_path: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -36,6 +39,8 @@ pub struct FunctionExpr {
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
     pub body: Vec<Stmt>,
+    pub file_path: String,
+    pub span: Option<Span>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -255,27 +260,31 @@ pub enum Rebindability {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr {
-    Number(NumberLiteral),
-    Bool(bool),
-    String(String),
-    Name(String),
+    Number(NumberLiteral, Option<Span>),
+    Bool(bool, Option<Span>),
+    String(String, Option<Span>),
+    Name(String, Option<Span>),
     Unary {
         op: UnaryOp,
         expr: Box<Expr>,
+        span: Option<Span>,
     },
     Cast {
         expr: Box<Expr>,
         ty: Type,
+        span: Option<Span>,
     },
     Binary {
         op: BinaryOp,
         left: Box<Expr>,
         right: Box<Expr>,
+        span: Option<Span>,
     },
     If {
         condition: Box<Expr>,
         then_expr: Box<Expr>,
         else_expr: Box<Expr>,
+        span: Option<Span>,
     },
     Call {
         callee: Box<Expr>,
@@ -290,25 +299,51 @@ pub enum Expr {
     /// `waluau-driver` resolves it and replaces this node with a reference to
     /// the imported module's exported function, so later compiler stages never
     /// observe a `Require` node.
-    Require(String),
+    Require(String, Option<Span>),
     ArrayLiteral {
         elements: Vec<Expr>,
+        span: Option<Span>,
     },
     /// A table literal with named fields, e.g. `{ add = fn, sub = other }`.
     ///
     /// Supported for module exports and `require` results only in the MVP.
     TableLiteral {
         fields: Vec<TableField>,
+        span: Option<Span>,
     },
     /// Field access on a namespace value, e.g. `m.add`.
     Field {
         base: Box<Expr>,
         name: String,
+        span: Option<Span>,
     },
     Index {
         base: Box<Expr>,
         index: Box<Expr>,
+        span: Option<Span>,
     },
+}
+
+impl Expr {
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            Expr::Number(_, span) => *span,
+            Expr::Bool(_, span) => *span,
+            Expr::String(_, span) => *span,
+            Expr::Name(_, span) => *span,
+            Expr::Unary { span, .. } => *span,
+            Expr::Cast { span, .. } => *span,
+            Expr::Binary { span, .. } => *span,
+            Expr::If { span, .. } => *span,
+            Expr::Call { span, .. } => *span,
+            Expr::Function(f) => f.span,
+            Expr::Require(_, span) => *span,
+            Expr::ArrayLiteral { span, .. } => *span,
+            Expr::TableLiteral { span, .. } => *span,
+            Expr::Field { span, .. } => *span,
+            Expr::Index { span, .. } => *span,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
