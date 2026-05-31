@@ -304,6 +304,30 @@ impl Parser {
             let condition = self.parse_expr()?;
             return Ok(Stmt::Repeat { body, condition });
         }
+        if self.check_simple(&TokenKind::For) {
+            self.advance();
+            let name = self.expect_identifier()?;
+            self.expect_simple(TokenKind::Equal, "expected '=' after for loop variable")?;
+            let start = self.parse_expr()?;
+            self.expect_simple(TokenKind::Comma, "expected ',' after for loop start")?;
+            let stop = self.parse_expr()?;
+            let step = if self.check_simple(&TokenKind::Comma) {
+                self.advance();
+                Some(self.parse_expr()?)
+            } else {
+                None
+            };
+            self.expect_simple(TokenKind::Do, "expected 'do' after for loop range")?;
+            let body = self.parse_block_until(&[TokenKind::End]);
+            self.expect_simple(TokenKind::End, "expected 'end' after for loop body")?;
+            return Ok(Stmt::NumericFor {
+                name,
+                start,
+                stop,
+                step,
+                body,
+            });
+        }
         if self.check_simple(&TokenKind::Break) {
             self.advance();
             return Ok(Stmt::Break);
@@ -1170,9 +1194,11 @@ impl Parser {
             }
 
             match token.kind {
-                TokenKind::If | TokenKind::While | TokenKind::Repeat | TokenKind::Function => {
-                    depth += 1
-                }
+                TokenKind::If
+                | TokenKind::While
+                | TokenKind::For
+                | TokenKind::Repeat
+                | TokenKind::Function => depth += 1,
                 TokenKind::End if depth > 0 => depth -= 1,
                 _ => {}
             }
@@ -1192,6 +1218,7 @@ fn is_statement_start(kind: &TokenKind) -> bool {
             | TokenKind::Function
             | TokenKind::If
             | TokenKind::While
+            | TokenKind::For
             | TokenKind::Repeat
             | TokenKind::Return
             | TokenKind::Break
@@ -1590,6 +1617,43 @@ mod tests {
             &function.body[1],
             waluau_ast::Stmt::Repeat { body, condition } if body.len() == 1
                 && matches!(condition, waluau_ast::Expr::Binary { .. })
+        ));
+    }
+
+    #[test]
+    fn parses_numeric_for_loop_with_optional_step() {
+        let source = r#"
+            function entry(limit: i32): i32
+                local acc: i32 = 0
+                for i = 0, limit do
+                    acc += i
+                end
+                for j = limit, 0, -2 do
+                    acc += j
+                end
+                return acc
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert!(matches!(
+            &function.body[1],
+            Stmt::NumericFor {
+                name,
+                step: None,
+                body,
+                ..
+            } if name == "i" && body.len() == 1
+        ));
+        assert!(matches!(
+            &function.body[2],
+            Stmt::NumericFor {
+                name,
+                step: Some(_),
+                body,
+                ..
+            } if name == "j" && body.len() == 1
         ));
     }
 

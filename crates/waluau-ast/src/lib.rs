@@ -193,6 +193,7 @@ impl std::fmt::Display for Type {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Stmt {
     Let {
         name: String,
@@ -223,6 +224,13 @@ pub enum Stmt {
     Repeat {
         body: Vec<Stmt>,
         condition: Expr,
+    },
+    NumericFor {
+        name: String,
+        start: Expr,
+        stop: Expr,
+        step: Option<Expr>,
+        body: Vec<Stmt>,
     },
     Break,
     Continue,

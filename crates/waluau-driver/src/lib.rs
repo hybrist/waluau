@@ -232,6 +232,90 @@ mod tests {
     }
 
     #[test]
+    fn executes_numeric_for_loops() {
+        let source = r#"
+            function sum_even_to(limit: i32): i32
+                local acc: i32 = 0
+                for i = 2::i32, limit, 2::i32 do
+                    acc += i
+                end
+                return acc
+            end
+
+            function countdown_sum(start: i32): i32
+                local acc: i32 = 0
+                local step: i32 = -1::i32
+                for i = start, 1::i32, step do
+                    acc += i
+                end
+                return acc
+            end
+
+            function default_step_sum(limit: i32): i32
+                local acc: i32 = 0
+                for i = 1::i32, limit do
+                    acc += i
+                end
+                return acc
+            end
+        "#;
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let sum_even_to = instance
+            .get_typed_func::<i32, i32>(&mut store, "sum_even_to")
+            .expect("sum_even_to export should exist");
+        assert_eq!(
+            sum_even_to
+                .call(&mut store, 6)
+                .expect("call should succeed"),
+            12
+        );
+        let countdown_sum = instance
+            .get_typed_func::<i32, i32>(&mut store, "countdown_sum")
+            .expect("countdown_sum export should exist");
+        assert_eq!(
+            countdown_sum
+                .call(&mut store, 4)
+                .expect("call should succeed"),
+            10
+        );
+        let default_step_sum = instance
+            .get_typed_func::<i32, i32>(&mut store, "default_step_sum")
+            .expect("default_step_sum export should exist");
+        assert_eq!(
+            default_step_sum
+                .call(&mut store, 4)
+                .expect("call should succeed"),
+            10
+        );
+    }
+
+    #[test]
+    fn executes_numeric_for_countdown_only() {
+        let source = r#"
+            function countdown_sum(start: i32): i32
+                local acc: i32 = 0
+                local step: i32 = -1::i32
+                for i = start, 1::i32, step do
+                    acc += i
+                end
+                return acc
+            end
+        "#;
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let countdown_sum = instance
+            .get_typed_func::<i32, i32>(&mut store, "countdown_sum")
+            .expect("countdown_sum export should exist");
+        assert_eq!(
+            countdown_sum
+                .call(&mut store, 4)
+                .expect("call should succeed"),
+            10
+        );
+    }
+
+    #[test]
     fn executes_i64_and_u64_locals_initialized_from_literals() {
         let source = fixture_source("literals_i64_u64");
         let wasm = super::compile_source(source).expect("compile should succeed");

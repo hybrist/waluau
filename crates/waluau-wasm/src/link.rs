@@ -499,6 +499,22 @@ impl Rewriter<'_> {
                 self.rewrite_block(body, &mut inner);
                 self.rewrite_expr(condition, &inner);
             }
+            Stmt::NumericFor {
+                name,
+                start,
+                stop,
+                step,
+                body,
+            } => {
+                self.rewrite_expr(start, bound);
+                self.rewrite_expr(stop, bound);
+                if let Some(step_expr) = step {
+                    self.rewrite_expr(step_expr, bound);
+                }
+                let mut inner = bound.clone();
+                inner.insert(name.clone());
+                self.rewrite_block(body, &mut inner);
+            }
             Stmt::Return(expr) => self.rewrite_expr(expr, bound),
             Stmt::ReturnMulti(values) => {
                 for value in values {
@@ -674,6 +690,20 @@ fn stmt_mentions_name_in_stmt(name: &str, stmt: &Stmt) -> bool {
         Stmt::Repeat { body, condition } => {
             stmt_mentions_name(name, body) || expr_mentions_name(name, condition)
         }
+        Stmt::NumericFor {
+            start,
+            stop,
+            step,
+            body,
+            ..
+        } => {
+            expr_mentions_name(name, start)
+                || expr_mentions_name(name, stop)
+                || step
+                    .as_ref()
+                    .is_some_and(|step_expr| expr_mentions_name(name, step_expr))
+                || stmt_mentions_name(name, body)
+        }
         Stmt::ReturnMulti(values)
         | Stmt::LetMulti { values, .. }
         | Stmt::AssignMulti { values, .. } => {
@@ -752,6 +782,20 @@ fn collect_block(stmts: &[Stmt], out: &mut Vec<String>) {
             }
             Stmt::While { condition, body } | Stmt::Repeat { body, condition } => {
                 collect_expr(condition, out);
+                collect_block(body, out);
+            }
+            Stmt::NumericFor {
+                start,
+                stop,
+                step,
+                body,
+                ..
+            } => {
+                collect_expr(start, out);
+                collect_expr(stop, out);
+                if let Some(step_expr) = step {
+                    collect_expr(step_expr, out);
+                }
                 collect_block(body, out);
             }
             Stmt::Return(expr) | Stmt::Expr(expr) => collect_expr(expr, out),

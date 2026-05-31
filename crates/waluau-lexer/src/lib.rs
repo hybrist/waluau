@@ -18,6 +18,7 @@ pub enum TokenKind {
     Else,
     End,
     While,
+    For,
     Repeat,
     Until,
     Do,
@@ -277,6 +278,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                     "else" => TokenKind::Else,
                     "end" => TokenKind::End,
                     "while" => TokenKind::While,
+                    "for" => TokenKind::For,
                     "repeat" => TokenKind::Repeat,
                     "until" => TokenKind::Until,
                     "do" => TokenKind::Do,
@@ -403,10 +405,11 @@ mod tests {
     #[test]
     fn distinguishes_keywords_from_identifiers() {
         assert_eq!(
-            kinds("function local ifelse trueish not_a_keyword _foo Function const"),
+            kinds("function local for ifelse trueish not_a_keyword _foo Function const"),
             vec![
                 TokenKind::Function,
                 TokenKind::Local,
+                TokenKind::For,
                 TokenKind::Identifier("ifelse".into()),
                 TokenKind::Identifier("trueish".into()),
                 TokenKind::Identifier("not_a_keyword".into()),

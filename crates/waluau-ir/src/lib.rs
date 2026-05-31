@@ -251,6 +251,22 @@ impl<'a> Monomorphizer<'a> {
                 body: self.rewrite_stmts(body, subst, active)?,
                 condition: self.rewrite_expr(condition, subst, active)?,
             },
+            Stmt::NumericFor {
+                name,
+                start,
+                stop,
+                step,
+                body,
+            } => Stmt::NumericFor {
+                name: name.clone(),
+                start: self.rewrite_expr(start, subst, active)?,
+                stop: self.rewrite_expr(stop, subst, active)?,
+                step: step
+                    .as_ref()
+                    .map(|expr| self.rewrite_expr(expr, subst, active))
+                    .transpose()?,
+                body: self.rewrite_stmts(body, subst, active)?,
+            },
             Stmt::Break => Stmt::Break,
             Stmt::Continue => Stmt::Continue,
             Stmt::Return(expr) => Stmt::Return(self.rewrite_expr(expr, subst, active)?),
@@ -2152,6 +2168,15 @@ impl Builder<'_> {
             Stmt::Repeat { body, condition } => {
                 self.lower_repeat(body, condition, env, types)?;
             }
+            Stmt::NumericFor {
+                name,
+                start,
+                stop,
+                step,
+                body,
+            } => {
+                self.lower_numeric_for(name, start, stop, step.as_ref(), body, env, types)?;
+            }
         }
         Ok(())
     }
@@ -2434,6 +2459,218 @@ impl Builder<'_> {
 
         for (name, phi) in phis {
             env.insert(name.clone(), body_env.get(&name).copied().unwrap_or(phi));
+        }
+        self.current_block = exit;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_numeric_for(
+        &mut self,
+        name: &str,
+        start: &Expr,
+        stop: &Expr,
+        step: Option<&Expr>,
+        body: &[Stmt],
+        env: &mut HashMap<String, ValueId>,
+        types: &mut HashMap<String, Type>,
+    ) -> Result<(), Diagnostic> {
+        let start_ty = self.infer_expr_type(start, types, None)?;
+        let stop_ty = self.infer_expr_type(stop, types, None)?;
+        let mut loop_ty = common_numeric_type(start_ty, stop_ty)?;
+        if let Some(step_expr) = step {
+            let step_ty = self.infer_expr_type(step_expr, types, None)?;
+            loop_ty = common_numeric_type(loop_ty, step_ty)?;
+        }
+        let Type::Numeric(numeric_ty) = loop_ty else {
+            return Err(Diagnostic::new("numeric for-loop bounds must be numeric"));
+        };
+        let loop_ty = Type::Numeric(numeric_ty);
+        let start_value = self.lower_expr(start, env, types, Some(loop_ty.clone()))?;
+        let stop_init = self.lower_expr(stop, env, types, Some(loop_ty.clone()))?;
+        let zero_value = self.emit(Instruction::Number {
+            ty: numeric_ty,
+            literal: NumberLiteral { raw: "0".into() },
+        });
+        let default_step_value = if step.is_none() {
+            let default_step_expr = Expr::Cast {
+                expr: Box::new(Expr::Number(NumberLiteral { raw: "1".into() }, None)),
+                ty: loop_ty.clone(),
+                span: None,
+            };
+            Some(self.lower_expr(&default_step_expr, env, types, Some(loop_ty.clone()))?)
+        } else {
+            None
+        };
+
+        let preheader = self.current_block;
+        let header = self.new_block();
+        let loop_body = self.new_block();
+        let exit = self.new_block();
+        self.set_terminator(preheader, Terminator::Jump(header));
+
+        let mutated = collect_assigned_names(body);
+        self.current_block = header;
+        let mut loop_env = env.clone();
+        let loop_types = types.clone();
+        let mut phis = HashMap::new();
+        for name in &mutated {
+            if let Some(initial) = env.get(name).copied() {
+                let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
+                loop_env.insert(name.clone(), phi);
+                phis.insert(name.clone(), phi);
+            }
+        }
+        let stop_phi = self.emit(Instruction::Phi(vec![(preheader, stop_init)]));
+        let index_phi = self.emit(Instruction::Phi(vec![(preheader, start_value)]));
+        let step_value = if let Some(step_expr) = step {
+            self.lower_expr(step_expr, &loop_env, &loop_types, Some(loop_ty.clone()))?
+        } else {
+            default_step_value.expect("precomputed default step")
+        };
+
+        let step_positive = self.emit(Instruction::Binary {
+            op: BinaryOp::Greater,
+            left: step_value,
+            right: zero_value,
+            operand_ty: loop_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        let step_negative = self.emit(Instruction::Binary {
+            op: BinaryOp::Less,
+            left: step_value,
+            right: zero_value,
+            operand_ty: loop_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        let i_lt_stop = self.emit(Instruction::Binary {
+            op: BinaryOp::Less,
+            left: index_phi,
+            right: stop_phi,
+            operand_ty: loop_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        let i_gt_stop = self.emit(Instruction::Binary {
+            op: BinaryOp::Greater,
+            left: index_phi,
+            right: stop_phi,
+            operand_ty: loop_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        let i_eq_stop_for_le = self.emit(Instruction::Binary {
+            op: BinaryOp::Eq,
+            left: index_phi,
+            right: stop_phi,
+            operand_ty: loop_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        let i_eq_stop_for_ge = self.emit(Instruction::Binary {
+            op: BinaryOp::Eq,
+            left: index_phi,
+            right: stop_phi,
+            operand_ty: loop_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        let i_le_stop = self.emit(Instruction::Binary {
+            op: BinaryOp::Or,
+            left: i_lt_stop,
+            right: i_eq_stop_for_le,
+            operand_ty: Type::Bool,
+            result_ty: Type::Bool,
+        });
+        let i_ge_stop = self.emit(Instruction::Binary {
+            op: BinaryOp::Or,
+            left: i_gt_stop,
+            right: i_eq_stop_for_ge,
+            operand_ty: Type::Bool,
+            result_ty: Type::Bool,
+        });
+        let forward_ok = self.emit(Instruction::Binary {
+            op: BinaryOp::And,
+            left: step_positive,
+            right: i_le_stop,
+            operand_ty: Type::Bool,
+            result_ty: Type::Bool,
+        });
+        let backward_ok = self.emit(Instruction::Binary {
+            op: BinaryOp::And,
+            left: step_negative,
+            right: i_ge_stop,
+            operand_ty: Type::Bool,
+            result_ty: Type::Bool,
+        });
+        let loop_cond = self.emit(Instruction::Binary {
+            op: BinaryOp::Or,
+            left: forward_ok,
+            right: backward_ok,
+            operand_ty: Type::Bool,
+            result_ty: Type::Bool,
+        });
+
+        self.loop_stack.push(LoopContext {
+            header,
+            continue_target: header,
+            break_target: exit,
+            phis: phis.clone(),
+        });
+        self.set_terminator(
+            header,
+            Terminator::Branch {
+                condition: loop_cond,
+                then_block: loop_body,
+                else_block: exit,
+            },
+        );
+
+        self.current_block = loop_body;
+        let mut body_env = loop_env.clone();
+        let mut body_types = loop_types.clone();
+        body_env.insert(name.to_string(), index_phi);
+        body_types.insert(name.to_string(), loop_ty.clone());
+        for stmt in body {
+            if self.current_block == DEAD_BLOCK {
+                break;
+            }
+            self.lower_stmt(stmt, &mut body_env, &mut body_types)?;
+        }
+        let loop_ctx = self
+            .loop_stack
+            .pop()
+            .expect("loop stack must contain entry for numeric for loop");
+        let phis = loop_ctx.phis;
+        let body_exit = self.current_block;
+        if body_exit != DEAD_BLOCK {
+            let stop_next = self.emit(Instruction::Binary {
+                op: BinaryOp::Add,
+                left: stop_phi,
+                right: zero_value,
+                operand_ty: loop_ty.clone(),
+                result_ty: loop_ty.clone(),
+            });
+            let next_index = self.emit(Instruction::Binary {
+                op: BinaryOp::Add,
+                left: index_phi,
+                right: step_value,
+                operand_ty: loop_ty.clone(),
+                result_ty: loop_ty.clone(),
+            });
+            self.set_terminator(body_exit, Terminator::Jump(header));
+            add_phi_incoming(&mut self.function, header, stop_phi, (body_exit, stop_next));
+            add_phi_incoming(
+                &mut self.function,
+                header,
+                index_phi,
+                (body_exit, next_index),
+            );
+            for (name, phi) in &phis {
+                if let Some(next_value) = body_env.get(name).copied() {
+                    add_phi_incoming(&mut self.function, header, *phi, (body_exit, next_value));
+                }
+            }
+        }
+
+        for (name, phi) in phis {
+            env.insert(name, phi);
         }
         self.current_block = exit;
         Ok(())
@@ -4132,6 +4369,24 @@ fn collect_expr_captures_from_stmt(
             }
             collect_expr_captures(condition, bound, env, signatures, captures);
         }
+        Stmt::NumericFor {
+            name,
+            start,
+            stop,
+            step,
+            body,
+        } => {
+            collect_expr_captures(start, bound, env, signatures, captures);
+            collect_expr_captures(stop, bound, env, signatures, captures);
+            if let Some(step_expr) = step {
+                collect_expr_captures(step_expr, bound, env, signatures, captures);
+            }
+            let mut nested_bound = bound.clone();
+            nested_bound.insert(name.clone());
+            for stmt in body {
+                collect_expr_captures_from_stmt(stmt, &nested_bound, env, signatures, captures);
+            }
+        }
         Stmt::Return(expr) | Stmt::Expr(expr) => {
             collect_expr_captures(expr, bound, env, signatures, captures)
         }
@@ -4252,6 +4507,7 @@ fn collect_assigned_into(stmts: &[Stmt], out: &mut BTreeSet<String>) {
             }
             Stmt::While { body, .. } => collect_assigned_into(body, out),
             Stmt::Repeat { body, .. } => collect_assigned_into(body, out),
+            Stmt::NumericFor { body, .. } => collect_assigned_into(body, out),
             Stmt::Return(_)
             | Stmt::ReturnMulti(_)
             | Stmt::Expr(_)
@@ -4316,6 +4572,22 @@ fn collect_nested_from_stmt(stmt: &Stmt, out: &mut HashSet<String>) {
                 collect_nested_from_stmt(s, out);
             }
             collect_nested_from_expr(condition, out);
+        }
+        Stmt::NumericFor {
+            start,
+            stop,
+            step,
+            body,
+            ..
+        } => {
+            collect_nested_from_expr(start, out);
+            collect_nested_from_expr(stop, out);
+            if let Some(step_expr) = step {
+                collect_nested_from_expr(step_expr, out);
+            }
+            for s in body {
+                collect_nested_from_stmt(s, out);
+            }
         }
         Stmt::Break | Stmt::Continue => {}
     }
@@ -4431,6 +4703,24 @@ fn collect_free_names_in_stmts(stmts: &[Stmt], bound: &HashSet<String>, out: &mu
                     collect_free_names_in_stmts(std::slice::from_ref(s), bound, out);
                 }
                 collect_free_names_in_expr(condition, bound, out);
+            }
+            Stmt::NumericFor {
+                name,
+                start,
+                stop,
+                step,
+                body,
+            } => {
+                collect_free_names_in_expr(start, bound, out);
+                collect_free_names_in_expr(stop, bound, out);
+                if let Some(step_expr) = step {
+                    collect_free_names_in_expr(step_expr, bound, out);
+                }
+                let mut nested_bound = bound.clone();
+                nested_bound.insert(name.clone());
+                for s in body {
+                    collect_free_names_in_stmts(std::slice::from_ref(s), &nested_bound, out);
+                }
             }
             Stmt::Return(expr) | Stmt::Expr(expr) => {
                 collect_free_names_in_expr(expr, bound, out);

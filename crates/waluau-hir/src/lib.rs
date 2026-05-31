@@ -534,6 +534,20 @@ fn stmt_calls_name(stmt: &Stmt, callee: &str) -> bool {
             body.iter().any(|stmt| stmt_calls_name(stmt, callee))
                 || expr_calls_name(condition, callee)
         }
+        Stmt::NumericFor {
+            start,
+            stop,
+            step,
+            body,
+            ..
+        } => {
+            expr_calls_name(start, callee)
+                || expr_calls_name(stop, callee)
+                || step
+                    .as_ref()
+                    .is_some_and(|step_expr| expr_calls_name(step_expr, callee))
+                || body.iter().any(|stmt| stmt_calls_name(stmt, callee))
+        }
         Stmt::Break | Stmt::Continue => false,
     }
 }
@@ -695,6 +709,40 @@ fn collect_return_types(
                 if condition_ty != Type::Bool {
                     return Err(Diagnostic::new("repeat-until condition must be bool"));
                 }
+            }
+            Stmt::NumericFor {
+                name,
+                start,
+                stop,
+                step,
+                body,
+            } => {
+                let start_ty = infer_expr(start, &scope, fn_signatures, active_type_params, None)?;
+                let stop_ty = infer_expr(stop, &scope, fn_signatures, active_type_params, None)?;
+                let mut loop_ty = common_numeric_type(start_ty, stop_ty)?;
+                if let Some(step_expr) = step {
+                    let step_ty =
+                        infer_expr(step_expr, &scope, fn_signatures, active_type_params, None)?;
+                    loop_ty = common_numeric_type(loop_ty, step_ty)?;
+                }
+                if !matches!(loop_ty, Type::Numeric(_)) {
+                    return Err(Diagnostic::new("numeric for-loop bounds must be numeric"));
+                }
+                let mut loop_scope = scope.clone();
+                loop_scope.insert(
+                    name.clone(),
+                    Binding {
+                        ty: loop_ty,
+                        rebindability: Rebindability::Const,
+                    },
+                );
+                collect_return_types(
+                    body,
+                    &loop_scope,
+                    fn_signatures,
+                    active_type_params,
+                    returns,
+                )?;
             }
             Stmt::Break | Stmt::Continue => {}
             Stmt::Return(expr) => {
@@ -1024,6 +1072,43 @@ fn check_stmt(
             )?;
             if condition_ty != Type::Bool {
                 return Err(Diagnostic::new("repeat-until condition must be bool"));
+            }
+            Ok(false)
+        }
+        Stmt::NumericFor {
+            name,
+            start,
+            stop,
+            step,
+            body,
+        } => {
+            let start_ty = infer_expr(start, vars, fn_signatures, active_type_params, None)?;
+            let stop_ty = infer_expr(stop, vars, fn_signatures, active_type_params, None)?;
+            let mut loop_ty = common_numeric_type(start_ty, stop_ty)?;
+            if let Some(step_expr) = step {
+                let step_ty = infer_expr(step_expr, vars, fn_signatures, active_type_params, None)?;
+                loop_ty = common_numeric_type(loop_ty, step_ty)?;
+            }
+            if !matches!(loop_ty, Type::Numeric(_)) {
+                return Err(Diagnostic::new("numeric for-loop bounds must be numeric"));
+            }
+            let mut loop_scope = vars.clone();
+            loop_scope.insert(
+                name.clone(),
+                Binding {
+                    ty: loop_ty,
+                    rebindability: Rebindability::Const,
+                },
+            );
+            for stmt in body {
+                let _ = check_stmt(
+                    stmt,
+                    &mut loop_scope,
+                    fn_signatures,
+                    active_type_params,
+                    expected_return,
+                    true,
+                )?;
             }
             Ok(false)
         }
@@ -2640,6 +2725,24 @@ mod tests {
             end
         "#;
 
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn type_checks_numeric_for_loop() {
+        let source = r#"
+            function entry(limit: i32): i32
+                local acc: i32 = 0
+                for i = 0::i32, limit do
+                    acc += i
+                end
+                for j = limit, 0::i32, -2::i32 do
+                    acc += j
+                end
+                return acc
+            end
+        "#;
         let program = parse(source).expect("parse should succeed");
         super::type_check(&program).expect("type check should succeed");
     }
