@@ -14,6 +14,8 @@ struct Parser {
     tokens: Vec<Token>,
     index: usize,
     diagnostics: Vec<Diagnostic>,
+    /// Type parameters visible while parsing a function signature or body.
+    type_param_scope: Vec<String>,
 }
 
 impl Parser {
@@ -22,6 +24,7 @@ impl Parser {
             tokens,
             index: 0,
             diagnostics: Vec::new(),
+            type_param_scope: Vec::new(),
         }
     }
 
@@ -86,12 +89,12 @@ impl Parser {
     fn parse_function(&mut self) -> Result<Function, Diagnostic> {
         self.expect_simple(TokenKind::Function, "expected 'function'")?;
         let name = self.expect_identifier()?;
-        self.reject_generic_type_params(&name)?;
         let function_expr = self.parse_function_expr_tail(Some(name), false)?;
         Ok(Function {
             name: function_expr
                 .name
                 .expect("top-level functions always have a name"),
+            type_params: function_expr.type_params,
             params: function_expr.params,
             return_type: function_expr.return_type,
             body: function_expr.body,
@@ -101,6 +104,21 @@ impl Parser {
     fn parse_function_expr_tail(
         &mut self,
         name: Option<String>,
+        require_return_type: bool,
+    ) -> Result<FunctionExpr, Diagnostic> {
+        let type_params = self.parse_type_param_list()?;
+        let scope_token = self.type_param_scope.len();
+        self.type_param_scope.extend(type_params.iter().cloned());
+        let parsed =
+            self.parse_function_expr_after_type_params(name, type_params, require_return_type);
+        self.type_param_scope.truncate(scope_token);
+        parsed
+    }
+
+    fn parse_function_expr_after_type_params(
+        &mut self,
+        name: Option<String>,
+        type_params: Vec<String>,
         require_return_type: bool,
     ) -> Result<FunctionExpr, Diagnostic> {
         self.expect_simple(TokenKind::LParen, "expected '('")?;
@@ -146,10 +164,69 @@ impl Parser {
         self.expect_simple(TokenKind::End, "expected 'end' after function body")?;
         Ok(FunctionExpr {
             name,
+            type_params,
             params,
             return_type,
             body,
         })
+    }
+
+    fn parse_type_param_list(&mut self) -> Result<Vec<String>, Diagnostic> {
+        if !self.check_simple(&TokenKind::Less) {
+            return Ok(Vec::new());
+        }
+        self.advance();
+        let mut params = Vec::new();
+        if !self.check_simple(&TokenKind::Greater) {
+            loop {
+                params.push(self.expect_identifier()?);
+                if self.check_simple(&TokenKind::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect_simple(TokenKind::Greater, "expected '>' after type parameters")?;
+        Ok(params)
+    }
+
+    fn try_parse_type_arg_list(&mut self) -> Option<Vec<Type>> {
+        if !self.check_simple(&TokenKind::Less) {
+            return None;
+        }
+        let checkpoint = self.index;
+        self.advance();
+        if self.check_simple(&TokenKind::Greater) {
+            self.index = checkpoint;
+            return None;
+        }
+        let mut type_args = Vec::new();
+        loop {
+            match self.parse_type() {
+                Ok(ty) => type_args.push(ty),
+                Err(_) => {
+                    self.index = checkpoint;
+                    return None;
+                }
+            }
+            if self.check_simple(&TokenKind::Comma) {
+                self.advance();
+                continue;
+            }
+            if self.check_simple(&TokenKind::Greater) {
+                self.advance();
+                break;
+            }
+            self.index = checkpoint;
+            return None;
+        }
+        if self.check_simple(&TokenKind::LParen) {
+            Some(type_args)
+        } else {
+            self.index = checkpoint;
+            None
+        }
     }
 
     fn parse_block_until(&mut self, end_markers: &[TokenKind]) -> Vec<Stmt> {
@@ -580,13 +657,11 @@ impl Parser {
                 };
                 continue;
             }
-            if let Expr::Name(ref name) = expr {
-                if self.check_simple(&TokenKind::Less) {
-                    if let Some(err) = self.check_generic_call_attempt(name) {
-                        return Err(err);
-                    }
-                }
-            }
+            let type_args = if self.check_simple(&TokenKind::Less) {
+                self.try_parse_type_arg_list().unwrap_or_default()
+            } else {
+                Vec::new()
+            };
             if self.check_simple(&TokenKind::LParen) {
                 self.advance();
                 let mut args = Vec::new();
@@ -603,80 +678,19 @@ impl Parser {
                 self.expect_simple(TokenKind::RParen, "expected ')' after call arguments")?;
                 expr = Expr::Call {
                     callee: Box::new(expr),
+                    type_args,
                     args,
                 };
                 continue;
             }
+            if !type_args.is_empty() {
+                return Err(Diagnostic::new(
+                    "type arguments are only allowed before a call argument list",
+                ));
+            }
             break;
         }
         Ok(expr)
-    }
-
-    fn check_generic_call_attempt(&mut self, callee_name: &str) -> Option<Diagnostic> {
-        let checkpoint = self.index;
-        let angle_start = self.peek().map(|t| t.span.start).unwrap_or(0);
-        self.advance();
-        let mut depth = 1u32;
-        let mut has_type_like_content = false;
-        while depth > 0 {
-            match self.peek().map(|t| &t.kind) {
-                Some(TokenKind::Less) => {
-                    depth += 1;
-                    self.advance();
-                }
-                Some(TokenKind::Greater) => {
-                    depth -= 1;
-                    self.advance();
-                }
-                Some(
-                    TokenKind::Identifier(_)
-                    | TokenKind::I32Type
-                    | TokenKind::I64Type
-                    | TokenKind::U32Type
-                    | TokenKind::U64Type
-                    | TokenKind::F32Type
-                    | TokenKind::F64Type
-                    | TokenKind::NumberType
-                    | TokenKind::BoolType
-                    | TokenKind::StringType
-                    | TokenKind::Comma,
-                ) => {
-                    has_type_like_content = true;
-                    self.advance();
-                }
-                None => {
-                    self.index = checkpoint;
-                    return None;
-                }
-                _ => {
-                    self.index = checkpoint;
-                    return None;
-                }
-            }
-        }
-        if self.check_simple(&TokenKind::LParen) && has_type_like_content {
-            let angle_end = self
-                .tokens
-                .get(self.index.saturating_sub(1))
-                .map(|t| t.span.end)
-                .unwrap_or(angle_start + 1);
-            return Some(
-                Diagnostic::new_with_code(
-                    "generic/unsupported-call",
-                    format!(
-                        "explicit type arguments in function calls are not supported in this MVP: '{callee_name}<...>(...)'"
-                    ),
-                )
-                .with_category(DiagnosticCategory::Unsupported)
-                .with_span(Span {
-                    start: angle_start,
-                    end: angle_end,
-                })
-                .with_action("remove type arguments; the compiler infers types from arguments"),
-            );
-        }
-        self.index = checkpoint;
-        None
     }
 
     fn parse_binary(
@@ -736,11 +750,9 @@ impl Parser {
                     ..
                 }) = self.peek()
                 {
-                    if self
-                        .peek_n(1)
-                        .map(|token| same_variant(&token.kind, &TokenKind::LParen))
-                        .unwrap_or(false)
-                    {
+                    if self.peek_n(1).is_some_and(|token| {
+                        matches!(token.kind, TokenKind::LParen | TokenKind::Less)
+                    }) {
                         Some(self.expect_identifier()?)
                     } else {
                         None
@@ -847,7 +859,18 @@ impl Parser {
             Some(TokenKind::BoolType) => Ok(Type::Bool),
             Some(TokenKind::StringType) => Ok(Type::String),
             Some(TokenKind::Identifier(name)) if self.check_simple(&TokenKind::Less) => {
-                self.reject_generic_type_annotation(&name)
+                if self.type_param_scope.contains(&name) {
+                    Err(self.diagnostic_at_current(&format!(
+                        "type parameter '{name}' cannot be used with type arguments"
+                    )))
+                } else {
+                    self.reject_generic_type_annotation(&name)
+                }
+            }
+            Some(TokenKind::Identifier(name))
+                if self.type_param_scope.contains(&name) =>
+            {
+                Ok(Type::TypeParam(name))
             }
             _ => Err(self.diagnostic_at_current(
                 "expected type (number, u32, u64, i32, i64, f32, f64, bool, string, {T}, or (T1, T2) -> R)",
@@ -950,46 +973,6 @@ impl Parser {
         } else {
             Diagnostic::new(message)
         }
-    }
-
-    fn reject_generic_type_params(&mut self, name: &str) -> Result<(), Diagnostic> {
-        if !self.check_simple(&TokenKind::Less) {
-            return Ok(());
-        }
-        let angle_start = self.peek().map(|t| t.span.start).unwrap_or(0);
-        self.advance();
-        let mut depth = 1u32;
-        while depth > 0 {
-            match self.peek().map(|t| &t.kind) {
-                Some(TokenKind::Less) => {
-                    depth += 1;
-                    self.advance();
-                }
-                Some(TokenKind::Greater) => {
-                    depth -= 1;
-                    self.advance();
-                }
-                Some(TokenKind::LParen) | None => break,
-                _ => {
-                    self.advance();
-                }
-            }
-        }
-        let angle_end = self
-            .tokens
-            .get(self.index.saturating_sub(1))
-            .map(|t| t.span.end)
-            .unwrap_or(angle_start + 1);
-        Err(Diagnostic::new_with_code(
-            "generic/unsupported-function",
-            format!("generic type parameters are not supported in this MVP: '{name}<...>'"),
-        )
-        .with_category(DiagnosticCategory::Unsupported)
-        .with_span(Span {
-            start: angle_start,
-            end: angle_end,
-        })
-        .with_action("remove type parameters and use concrete types"))
     }
 
     fn sync_to_next_function(&mut self) {
@@ -1694,21 +1677,36 @@ mod tests {
     }
 
     #[test]
-    fn rejects_generic_function_declaration() {
+    fn parses_generic_function_declaration() {
         let source = r#"
             function identity<T>(x: T): T
                 return x
             end
         "#;
-        let error = parse(source).expect_err("parse should fail");
-        assert_eq!(error.code(), Some("generic/unsupported-function"));
-        assert!(
-            error
-                .to_string()
-                .contains("generic type parameters are not supported"),
-            "message was: {}",
-            error
-        );
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert_eq!(function.name, "identity");
+        assert_eq!(function.type_params, vec!["T".to_string()]);
+        assert_eq!(function.params[0].ty, Type::TypeParam("T".into()));
+        assert_eq!(function.return_type, Some(Type::TypeParam("T".into())));
+    }
+
+    #[test]
+    fn parses_generic_call_with_type_arguments() {
+        let source = r#"
+            function entry(): i32
+                return identity<i32>(42)
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let waluau_ast::Stmt::Return(waluau_ast::Expr::Call {
+            type_args, args, ..
+        }) = &program.functions[0].body[0]
+        else {
+            panic!("expected return of generic call");
+        };
+        assert_eq!(type_args, &vec![Type::Numeric(NumericType::I32)]);
+        assert_eq!(args.len(), 1);
     }
 
     #[test]
@@ -1725,24 +1723,6 @@ mod tests {
             error
                 .to_string()
                 .contains("generic types are not supported"),
-            "message was: {}",
-            error
-        );
-    }
-
-    #[test]
-    fn rejects_generic_call_expression() {
-        let source = r#"
-            function entry(): i32
-                return identity<i32>(42)
-            end
-        "#;
-        let error = parse(source).expect_err("parse should fail");
-        assert_eq!(error.code(), Some("generic/unsupported-call"));
-        assert!(
-            error
-                .to_string()
-                .contains("explicit type arguments in function calls are not supported"),
             "message was: {}",
             error
         );

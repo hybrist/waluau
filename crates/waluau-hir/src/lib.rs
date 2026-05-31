@@ -1,10 +1,26 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use waluau_ast::{
     AssignOp, BinaryOp, Expr, Function, FunctionExpr, NumberLiteral, NumericType, Program,
     Rebindability, Stmt, Type, UnaryOp,
 };
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
+
+#[derive(Clone, Debug)]
+struct GenericScheme {
+    type_params: Vec<String>,
+    params: Vec<Type>,
+    return_type: Type,
+}
+
+#[derive(Clone, Debug)]
+enum FnSignature {
+    Mono {
+        params: Vec<Type>,
+        return_type: Type,
+    },
+    Generic(GenericScheme),
+}
 
 const COROUTINE_CREATE: &str = "coroutine_create";
 const COROUTINE_RESUME: &str = "coroutine_resume";
@@ -32,6 +48,214 @@ fn inference_diagnostic(
         .with_action(action)
 }
 
+fn generic_diagnostic(
+    code: &'static str,
+    message: impl Into<String>,
+    action: impl Into<String>,
+) -> Diagnostic {
+    Diagnostic::new(message)
+        .with_code(code)
+        .with_category(DiagnosticCategory::Unsupported)
+        .with_action(action)
+}
+
+fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
+    match ty {
+        Type::TypeParam(name) => subst
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| Type::TypeParam(name.clone())),
+        Type::Array(inner) => Type::Array(Box::new(substitute_type(inner, subst))),
+        Type::Function {
+            params,
+            return_type,
+        } => Type::Function {
+            params: params
+                .iter()
+                .map(|param| substitute_type(param, subst))
+                .collect(),
+            return_type: Box::new(substitute_type(return_type, subst)),
+        },
+        other => other.clone(),
+    }
+}
+
+fn validate_type_param_list(
+    type_params: &[String],
+    outer_type_params: &HashSet<String>,
+) -> Result<(), Diagnostic> {
+    let mut seen = HashSet::new();
+    for param in type_params {
+        if !seen.insert(param.clone()) {
+            return Err(generic_diagnostic(
+                "generic/duplicate-type-param",
+                format!("duplicate type parameter '{param}'"),
+                "rename or remove the duplicate type parameter",
+            ));
+        }
+        if outer_type_params.contains(param) {
+            return Err(generic_diagnostic(
+                "generic/shadowed-type-param",
+                format!("type parameter '{param}' shadows an outer generic type parameter"),
+                "choose a different type parameter name",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_type_in_scope(ty: &Type, allowed: &HashSet<String>) -> Result<(), Diagnostic> {
+    match ty {
+        Type::TypeParam(name) if !allowed.contains(name) => Err(generic_diagnostic(
+            "generic/unknown-type-param",
+            format!("unknown type parameter '{name}'"),
+            "declare the type parameter on the enclosing generic function",
+        )),
+        Type::Array(inner) => validate_type_in_scope(inner, allowed),
+        Type::Function {
+            params,
+            return_type,
+        } => {
+            for param in params {
+                validate_type_in_scope(param, allowed)?;
+            }
+            validate_type_in_scope(return_type, allowed)
+        }
+        _ => Ok(()),
+    }
+}
+
+fn is_valid_type_argument(ty: &Type, active_type_params: &HashSet<String>) -> bool {
+    match ty {
+        Type::TypeParam(name) => active_type_params.contains(name),
+        Type::Array(inner) => is_valid_type_argument(inner, active_type_params),
+        Type::Function {
+            params,
+            return_type,
+        } => {
+            params
+                .iter()
+                .all(|param| is_valid_type_argument(param, active_type_params))
+                && is_valid_type_argument(return_type, active_type_params)
+        }
+        _ => true,
+    }
+}
+
+fn active_type_param_set(type_params: &[String]) -> HashSet<String> {
+    type_params.iter().cloned().collect()
+}
+
+fn infer_generic_call(
+    scheme: &GenericScheme,
+    type_args: &[Type],
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Result<Type, Diagnostic> {
+    if type_args.is_empty() {
+        return Err(generic_diagnostic(
+            "generic/missing-type-args",
+            "generic function call requires explicit type arguments",
+            "supply type arguments between the callee and argument list, e.g. id<i32>(value)",
+        ));
+    }
+    if type_args.len() != scheme.type_params.len() {
+        return Err(generic_diagnostic(
+            "generic/type-arg-count",
+            format!(
+                "generic function expects {} type argument{}, got {}",
+                scheme.type_params.len(),
+                if scheme.type_params.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                },
+                type_args.len()
+            ),
+            "match the number of type parameters declared on the generic function",
+        ));
+    }
+    for ty in type_args {
+        if !is_valid_type_argument(ty, active_type_params) {
+            return Err(generic_diagnostic(
+                "generic/non-concrete-type-arg",
+                format!("type argument '{ty}' is not a concrete type in this scope"),
+                "use a concrete type or forward an in-scope type parameter",
+            ));
+        }
+        validate_type_in_scope(ty, active_type_params)?;
+    }
+    let subst = scheme
+        .type_params
+        .iter()
+        .cloned()
+        .zip(type_args.iter().cloned())
+        .collect::<HashMap<_, _>>();
+    let params = scheme
+        .params
+        .iter()
+        .map(|param| substitute_type(param, &subst))
+        .collect::<Vec<_>>();
+    let ret = substitute_type(&scheme.return_type, &subst);
+    let actual_args =
+        infer_expr_list(args, vars, fn_signatures, active_type_params, Some(&params))?;
+    if params.len() != actual_args.len() {
+        return Err(Diagnostic::new(format!(
+            "function expects {} arguments, got {}",
+            params.len(),
+            actual_args.len()
+        )));
+    }
+    for (expected_param, actual) in params.iter().zip(actual_args.iter()) {
+        if expected_param != actual {
+            return Err(Diagnostic::new(format!(
+                "call expected {}, got {}",
+                expected_param, actual
+            )));
+        }
+    }
+    coerce_type(ret, expected)
+}
+
+fn infer_generic_function_expr_call(
+    function: &FunctionExpr,
+    type_args: &[Type],
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Result<Type, Diagnostic> {
+    let return_ty = function.return_type.clone().ok_or_else(|| {
+        generic_diagnostic(
+            "generic/missing-return-type",
+            "generic function expression requires an explicit return type",
+            "add a return type annotation to the generic function expression",
+        )
+    })?;
+    let scheme = GenericScheme {
+        type_params: function.type_params.clone(),
+        params: function
+            .params
+            .iter()
+            .map(|param| param.ty.clone())
+            .collect(),
+        return_type: return_ty,
+    };
+    infer_generic_call(
+        &scheme,
+        type_args,
+        args,
+        vars,
+        fn_signatures,
+        active_type_params,
+        expected,
+    )
+}
+
 #[derive(Clone)]
 struct Binding {
     ty: Type,
@@ -48,6 +272,7 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
     if !typed.top_level.is_empty() {
         typed.functions.push(Function {
             name: "__waluau_top_level_init".to_string(),
+            type_params: Vec::new(),
             params: Vec::new(),
             return_type: Some(Type::number()),
             body: {
@@ -59,19 +284,34 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
             },
         });
     }
-    let mut signatures: HashMap<String, (Vec<Type>, Type)> = HashMap::new();
+    let mut fn_signatures: HashMap<String, FnSignature> = HashMap::new();
     for function in &typed.functions {
-        if let Some(ret) = &function.return_type {
-            signatures.insert(
+        if function.type_params.is_empty() {
+            if let Some(ret) = &function.return_type {
+                fn_signatures.insert(
+                    function.name.clone(),
+                    FnSignature::Mono {
+                        params: function
+                            .params
+                            .iter()
+                            .map(|param| param.ty.clone())
+                            .collect(),
+                        return_type: ret.clone(),
+                    },
+                );
+            }
+        } else if let Some(ret) = &function.return_type {
+            fn_signatures.insert(
                 function.name.clone(),
-                (
-                    function
+                FnSignature::Generic(GenericScheme {
+                    type_params: function.type_params.clone(),
+                    params: function
                         .params
                         .iter()
                         .map(|param| param.ty.clone())
                         .collect(),
-                    ret.clone(),
-                ),
+                    return_type: ret.clone(),
+                }),
             );
         }
     }
@@ -80,7 +320,9 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
         .functions
         .iter()
         .enumerate()
-        .filter_map(|(idx, function)| function.return_type.is_none().then_some(idx))
+        .filter_map(|(idx, function)| {
+            (function.return_type.is_none() && function.type_params.is_empty()).then_some(idx)
+        })
         .collect();
 
     while !unresolved.is_empty() {
@@ -98,10 +340,17 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
                 .iter()
                 .map(|param| param.ty.clone())
                 .collect();
-            match infer_top_level_function_return_type(function, &signatures, &unresolved_names)? {
+            match infer_top_level_function_return_type(function, &fn_signatures, &unresolved_names)?
+            {
                 Some(ret) => {
                     typed.functions[idx].return_type = Some(ret.clone());
-                    signatures.insert(function_name, (function_params, ret));
+                    fn_signatures.insert(
+                        function_name,
+                        FnSignature::Mono {
+                            params: function_params,
+                            return_type: ret,
+                        },
+                    );
                     progressed = true;
                 }
                 None => next_unresolved.push(idx),
@@ -120,7 +369,7 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
     }
 
     for function in &typed.functions {
-        check_function(function, &signatures)?;
+        check_function(function, &fn_signatures, &HashSet::new())?;
     }
 
     Ok(typed)
@@ -128,13 +377,35 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
 
 fn check_function(
     function: &Function,
-    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    outer_type_params: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
+    validate_type_param_list(&function.type_params, outer_type_params)?;
+    let active_type_params = active_type_param_set(&function.type_params);
+    let mut allowed_type_params = outer_type_params.clone();
+    allowed_type_params.extend(active_type_params.iter().cloned());
+    for param in &function.params {
+        validate_type_in_scope(&param.ty, &allowed_type_params)?;
+    }
+    if let Some(ret) = &function.return_type {
+        validate_type_in_scope(ret, &allowed_type_params)?;
+    }
     let expected_return = function.return_type.clone().ok_or_else(|| {
-        Diagnostic::new(format!(
-            "cannot infer return type for recursive or cyclic function '{}'",
-            function.name
-        ))
+        if function.type_params.is_empty() {
+            Diagnostic::new(format!(
+                "cannot infer return type for recursive or cyclic function '{}'",
+                function.name
+            ))
+        } else {
+            generic_diagnostic(
+                "generic/missing-return-type",
+                format!(
+                    "generic function '{}' requires an explicit return type",
+                    function.name
+                ),
+                "add a return type annotation to the generic function",
+            )
+        }
     })?;
     let mut vars: HashMap<String, Binding> = HashMap::new();
     for param in &function.params {
@@ -149,7 +420,14 @@ fn check_function(
 
     let mut saw_return = false;
     for stmt in &function.body {
-        if check_stmt(stmt, &mut vars, signatures, &expected_return, false)? {
+        if check_stmt(
+            stmt,
+            &mut vars,
+            fn_signatures,
+            &active_type_params,
+            &expected_return,
+            false,
+        )? {
             saw_return = true;
         }
     }
@@ -164,7 +442,7 @@ fn check_function(
 
 fn infer_top_level_function_return_type(
     function: &Function,
-    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    fn_signatures: &HashMap<String, FnSignature>,
     unresolved_names: &[String],
 ) -> Result<Option<Type>, Diagnostic> {
     let mut vars: HashMap<String, Binding> = HashMap::new();
@@ -184,7 +462,13 @@ fn infer_top_level_function_return_type(
     {
         return Ok(None);
     }
-    if let Err(error) = collect_return_types(&function.body, &vars, signatures, &mut returns) {
+    if let Err(error) = collect_return_types(
+        &function.body,
+        &vars,
+        fn_signatures,
+        &HashSet::new(),
+        &mut returns,
+    ) {
         let message = error.to_string();
         if unresolved_names
             .iter()
@@ -272,6 +556,7 @@ fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
         }
         Expr::Call {
             callee: called,
+            type_args: _,
             args,
         } => {
             matches!(called.as_ref(), Expr::Name(name) if name == callee)
@@ -292,7 +577,8 @@ fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
 fn collect_return_types(
     body: &[Stmt],
     vars: &HashMap<String, Binding>,
-    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
     returns: &mut Vec<Type>,
 ) -> Result<(), Diagnostic> {
     let mut scope = vars.clone();
@@ -305,9 +591,15 @@ fn collect_return_types(
                 value,
             } => {
                 let inferred_ty = if let Some(expected_ty) = ty {
-                    infer_expr(value, &scope, signatures, Some(expected_ty.clone()))?
+                    infer_expr(
+                        value,
+                        &scope,
+                        fn_signatures,
+                        active_type_params,
+                        Some(expected_ty.clone()),
+                    )?
                 } else {
-                    infer_expr(value, &scope, signatures, None)?
+                    infer_expr(value, &scope, fn_signatures, active_type_params, None)?
                 };
                 scope.insert(
                     name.clone(),
@@ -321,56 +613,94 @@ fn collect_return_types(
                 let existing = scope
                     .get(name)
                     .ok_or_else(|| Diagnostic::new(format!("unknown local '{name}'")))?;
-                let _ = infer_expr(value, &scope, signatures, Some(existing.ty.clone()))?;
+                let _ = infer_expr(
+                    value,
+                    &scope,
+                    fn_signatures,
+                    active_type_params,
+                    Some(existing.ty.clone()),
+                )?;
             }
             Stmt::IndexAssign {
                 base, index, value, ..
             } => {
-                let base_ty = infer_expr(base, &scope, signatures, None)?;
+                let base_ty = infer_expr(base, &scope, fn_signatures, active_type_params, None)?;
                 let element_ty = base_ty.element_type().ok_or_else(|| {
                     Diagnostic::new("array element assignment requires an array operand")
                 })?;
                 let _ = infer_expr(
                     index,
                     &scope,
-                    signatures,
+                    fn_signatures,
+                    active_type_params,
                     Some(Type::Numeric(NumericType::I32)),
                 )?;
-                let _ = infer_expr(value, &scope, signatures, Some(element_ty))?;
+                let _ = infer_expr(
+                    value,
+                    &scope,
+                    fn_signatures,
+                    active_type_params,
+                    Some(element_ty),
+                )?;
             }
             Stmt::If {
                 condition,
                 then_body,
                 else_body,
             } => {
-                let condition_ty = infer_expr(condition, &scope, signatures, None)?;
+                let condition_ty =
+                    infer_expr(condition, &scope, fn_signatures, active_type_params, None)?;
                 if condition_ty != Type::Bool {
                     return Err(Diagnostic::new("if condition must be bool"));
                 }
-                collect_return_types(then_body, &scope, signatures, returns)?;
-                collect_return_types(else_body, &scope, signatures, returns)?;
+                collect_return_types(
+                    then_body,
+                    &scope,
+                    fn_signatures,
+                    active_type_params,
+                    returns,
+                )?;
+                collect_return_types(
+                    else_body,
+                    &scope,
+                    fn_signatures,
+                    active_type_params,
+                    returns,
+                )?;
             }
             Stmt::While { condition, body } => {
-                let condition_ty = infer_expr(condition, &scope, signatures, None)?;
+                let condition_ty =
+                    infer_expr(condition, &scope, fn_signatures, active_type_params, None)?;
                 if condition_ty != Type::Bool {
                     return Err(Diagnostic::new("while condition must be bool"));
                 }
-                collect_return_types(body, &scope, signatures, returns)?;
+                collect_return_types(body, &scope, fn_signatures, active_type_params, returns)?;
             }
             Stmt::Repeat { body, condition } => {
-                collect_return_types(body, &scope, signatures, returns)?;
-                let condition_ty = infer_expr(condition, &scope, signatures, None)?;
+                collect_return_types(body, &scope, fn_signatures, active_type_params, returns)?;
+                let condition_ty =
+                    infer_expr(condition, &scope, fn_signatures, active_type_params, None)?;
                 if condition_ty != Type::Bool {
                     return Err(Diagnostic::new("repeat-until condition must be bool"));
                 }
             }
             Stmt::Break | Stmt::Continue => {}
             Stmt::Return(expr) => {
-                returns.push(infer_expr(expr, &scope, signatures, None)?);
+                returns.push(infer_expr(
+                    expr,
+                    &scope,
+                    fn_signatures,
+                    active_type_params,
+                    None,
+                )?);
             }
             Stmt::ReturnMulti(values) => {
                 returns.push(Type::Multi(infer_expr_list(
-                    values, &scope, signatures, None,
+                    values,
+                    &scope,
+                    fn_signatures,
+                    active_type_params,
+                    None,
                 )?));
             }
             Stmt::LetMulti { bindings, values } => {
@@ -386,7 +716,13 @@ fn collect_return_types(
                         .iter()
                         .map(|binding| binding.ty.clone().expect("checked above"))
                         .collect();
-                    let actual = infer_expr_list(values, &scope, signatures, Some(&expected))?;
+                    let actual = infer_expr_list(
+                        values,
+                        &scope,
+                        fn_signatures,
+                        active_type_params,
+                        Some(&expected),
+                    )?;
                     if actual.len() != expected.len() {
                         return Err(Diagnostic::new(format!(
                             "multi-binding declaration expects {} values, got {}",
@@ -409,7 +745,8 @@ fn collect_return_types(
                     }
                     actual
                 } else {
-                    let actual = infer_expr_list(values, &scope, signatures, None)?;
+                    let actual =
+                        infer_expr_list(values, &scope, fn_signatures, active_type_params, None)?;
                     if actual.len() != bindings.len() {
                         return Err(Diagnostic::new(format!(
                             "multi-binding declaration expects {} values, got {}",
@@ -438,7 +775,13 @@ fn collect_return_types(
                         .ok_or_else(|| Diagnostic::new(format!("unknown local '{target}'")))?;
                     expected.push(binding.ty.clone());
                 }
-                let actual = infer_expr_list(values, &scope, signatures, Some(&expected))?;
+                let actual = infer_expr_list(
+                    values,
+                    &scope,
+                    fn_signatures,
+                    active_type_params,
+                    Some(&expected),
+                )?;
                 if actual.len() != expected.len() {
                     return Err(Diagnostic::new(format!(
                         "multi-assignment expects {} values, got {}",
@@ -448,7 +791,7 @@ fn collect_return_types(
                 }
             }
             Stmt::Expr(expr) => {
-                let _ = infer_expr(expr, &scope, signatures, None)?;
+                let _ = infer_expr(expr, &scope, fn_signatures, active_type_params, None)?;
             }
         }
     }
@@ -483,7 +826,8 @@ fn common_return_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
 fn check_stmt(
     stmt: &Stmt,
     vars: &mut HashMap<String, Binding>,
-    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
     expected_return: &Type,
     in_loop: bool,
 ) -> Result<bool, Diagnostic> {
@@ -495,7 +839,13 @@ fn check_stmt(
             value,
         } => {
             let inferred_ty = if let Some(expected_ty) = ty {
-                let value_ty = infer_expr(value, vars, signatures, Some(expected_ty.clone()))?;
+                let value_ty = infer_expr(
+                    value,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    Some(expected_ty.clone()),
+                )?;
                 if &value_ty != expected_ty {
                     return Err(Diagnostic::new(format!(
                         "let '{}' expects {}, got {}",
@@ -504,7 +854,7 @@ fn check_stmt(
                 }
                 expected_ty.clone()
             } else {
-                infer_expr(value, vars, signatures, None)?
+                infer_expr(value, vars, fn_signatures, active_type_params, None)?
             };
             vars.insert(
                 name.clone(),
@@ -531,7 +881,13 @@ fn check_stmt(
                     name
                 )));
             }
-            let value_ty = infer_expr(value, vars, signatures, Some(existing.ty.clone()))?;
+            let value_ty = infer_expr(
+                value,
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(existing.ty.clone()),
+            )?;
             if existing.ty != value_ty {
                 return Err(Diagnostic::new(format!(
                     "assignment to '{}' expects {}, got {}",
@@ -546,7 +902,7 @@ fn check_stmt(
             index,
             value,
         } => {
-            let base_ty = infer_expr(base, vars, signatures, None)?;
+            let base_ty = infer_expr(base, vars, fn_signatures, active_type_params, None)?;
             let element_ty = base_ty.element_type().ok_or_else(|| {
                 Diagnostic::new("array element assignment requires an array operand")
             })?;
@@ -558,13 +914,20 @@ fn check_stmt(
             let index_ty = infer_expr(
                 index,
                 vars,
-                signatures,
+                fn_signatures,
+                active_type_params,
                 Some(Type::Numeric(NumericType::I32)),
             )?;
             if index_ty != Type::Numeric(NumericType::I32) {
                 return Err(Diagnostic::new("array index must be i32"));
             }
-            let value_ty = infer_expr(value, vars, signatures, Some(element_ty.clone()))?;
+            let value_ty = infer_expr(
+                value,
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(element_ty.clone()),
+            )?;
             if value_ty != element_ty {
                 return Err(Diagnostic::new(format!(
                     "array element assignment expects {}, got {}",
@@ -578,7 +941,8 @@ fn check_stmt(
             then_body,
             else_body,
         } => {
-            let condition_ty = infer_expr(condition, vars, signatures, None)?;
+            let condition_ty =
+                infer_expr(condition, vars, fn_signatures, active_type_params, None)?;
             if condition_ty != Type::Bool {
                 return Err(Diagnostic::new("if condition must be bool"));
             }
@@ -587,32 +951,65 @@ fn check_stmt(
             let mut then_returns = false;
             let mut else_returns = false;
             for stmt in then_body {
-                then_returns |=
-                    check_stmt(stmt, &mut then_scope, signatures, expected_return, in_loop)?;
+                then_returns |= check_stmt(
+                    stmt,
+                    &mut then_scope,
+                    fn_signatures,
+                    active_type_params,
+                    expected_return,
+                    in_loop,
+                )?;
             }
             for stmt in else_body {
-                else_returns |=
-                    check_stmt(stmt, &mut else_scope, signatures, expected_return, in_loop)?;
+                else_returns |= check_stmt(
+                    stmt,
+                    &mut else_scope,
+                    fn_signatures,
+                    active_type_params,
+                    expected_return,
+                    in_loop,
+                )?;
             }
             Ok(then_returns && else_returns)
         }
         Stmt::While { condition, body } => {
-            let condition_ty = infer_expr(condition, vars, signatures, None)?;
+            let condition_ty =
+                infer_expr(condition, vars, fn_signatures, active_type_params, None)?;
             if condition_ty != Type::Bool {
                 return Err(Diagnostic::new("while condition must be bool"));
             }
             let mut loop_scope = vars.clone();
             for stmt in body {
-                let _ = check_stmt(stmt, &mut loop_scope, signatures, expected_return, true)?;
+                let _ = check_stmt(
+                    stmt,
+                    &mut loop_scope,
+                    fn_signatures,
+                    active_type_params,
+                    expected_return,
+                    true,
+                )?;
             }
             Ok(false)
         }
         Stmt::Repeat { body, condition } => {
             let mut loop_scope = vars.clone();
             for stmt in body {
-                let _ = check_stmt(stmt, &mut loop_scope, signatures, expected_return, true)?;
+                let _ = check_stmt(
+                    stmt,
+                    &mut loop_scope,
+                    fn_signatures,
+                    active_type_params,
+                    expected_return,
+                    true,
+                )?;
             }
-            let condition_ty = infer_expr(condition, &loop_scope, signatures, None)?;
+            let condition_ty = infer_expr(
+                condition,
+                &loop_scope,
+                fn_signatures,
+                active_type_params,
+                None,
+            )?;
             if condition_ty != Type::Bool {
                 return Err(Diagnostic::new("repeat-until condition must be bool"));
             }
@@ -631,7 +1028,13 @@ fn check_stmt(
             Ok(false)
         }
         Stmt::Return(expr) => {
-            let ty = infer_expr(expr, vars, signatures, Some(expected_return.clone()))?;
+            let ty = infer_expr(
+                expr,
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(expected_return.clone()),
+            )?;
             if &ty != expected_return {
                 return Err(Diagnostic::new(format!(
                     "return expects {}, got {}",
@@ -645,7 +1048,13 @@ fn check_stmt(
                 Type::Multi(types) => types.clone(),
                 _ => vec![expected_return.clone()],
             };
-            let actual = infer_expr_list(values, vars, signatures, Some(&expected))?;
+            let actual = infer_expr_list(
+                values,
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(&expected),
+            )?;
             if actual.len() != expected.len() {
                 return Err(Diagnostic::new(format!(
                     "return expects {} values, got {}",
@@ -679,7 +1088,13 @@ fn check_stmt(
                     .iter()
                     .map(|binding| binding.ty.clone().expect("checked above"))
                     .collect();
-                let actual = infer_expr_list(values, vars, signatures, Some(&expected))?;
+                let actual = infer_expr_list(
+                    values,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    Some(&expected),
+                )?;
                 if actual.len() != expected.len() {
                     return Err(Diagnostic::new(format!(
                         "multi-binding declaration expects {} values, got {}",
@@ -700,7 +1115,8 @@ fn check_stmt(
                 }
                 actual
             } else {
-                let actual = infer_expr_list(values, vars, signatures, None)?;
+                let actual =
+                    infer_expr_list(values, vars, fn_signatures, active_type_params, None)?;
                 if actual.len() != bindings.len() {
                     return Err(Diagnostic::new(format!(
                         "multi-binding declaration expects {} values, got {}",
@@ -736,7 +1152,13 @@ fn check_stmt(
                 }
                 expected.push(binding.ty.clone());
             }
-            let actual = infer_expr_list(values, vars, signatures, Some(&expected))?;
+            let actual = infer_expr_list(
+                values,
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(&expected),
+            )?;
             if actual.len() != expected.len() {
                 return Err(Diagnostic::new(format!(
                     "multi-assignment expects {} values, got {}",
@@ -761,7 +1183,13 @@ fn check_stmt(
             if !matches!(expr, Expr::Call { .. }) {
                 return Err(Diagnostic::new("expression statements must be calls"));
             }
-            if let Expr::Call { callee, args } = expr {
+            if let Expr::Call {
+                callee,
+                type_args: _,
+                args,
+                ..
+            } = expr
+            {
                 if let Expr::Name(name) = callee.as_ref() {
                     if name == ASSERT {
                         if args.len() != 1 {
@@ -770,7 +1198,13 @@ fn check_stmt(
                                 args.len()
                             )));
                         }
-                        let actual = infer_expr(&args[0], vars, signatures, Some(Type::Bool))?;
+                        let actual = infer_expr(
+                            &args[0],
+                            vars,
+                            fn_signatures,
+                            active_type_params,
+                            Some(Type::Bool),
+                        )?;
                         if actual != Type::Bool {
                             return Err(Diagnostic::new(format!(
                                 "{ASSERT} expects bool, got {actual}"
@@ -780,7 +1214,7 @@ fn check_stmt(
                     }
                 }
             }
-            let _ = infer_expr(expr, vars, signatures, None)?;
+            let _ = infer_expr(expr, vars, fn_signatures, active_type_params, None)?;
             Ok(false)
         }
     }
@@ -789,7 +1223,8 @@ fn check_stmt(
 fn infer_expr(
     expr: &Expr,
     vars: &HashMap<String, Binding>,
-    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
     match expr {
@@ -801,9 +1236,22 @@ fn infer_expr(
              relative imports are unavailable when compiling a single source string"
         ))),
         Expr::Name(name) => {
+            if matches!(fn_signatures.get(name), Some(FnSignature::Generic(_))) {
+                return Err(generic_diagnostic(
+                    "generic/uninstantiated-value",
+                    format!(
+                        "generic function '{name}' cannot be used as a value without type arguments"
+                    ),
+                    "call the generic function with explicit type arguments, e.g. id<i32>(value)",
+                ));
+            }
             let actual = if let Some(local) = vars.get(name) {
                 local.ty.clone()
-            } else if let Some((params, return_type)) = signatures.get(name) {
+            } else if let Some(FnSignature::Mono {
+                params,
+                return_type,
+            }) = fn_signatures.get(name)
+            {
                 Type::Function {
                     params: params.clone(),
                     return_type: Box::new(return_type.clone()),
@@ -815,27 +1263,39 @@ fn infer_expr(
         }
         Expr::Unary { op, expr } => match op {
             UnaryOp::Neg => {
-                let actual = infer_expr(expr, vars, signatures, expected.clone())?;
+                let actual = infer_expr(
+                    expr,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    expected.clone(),
+                )?;
                 match actual {
                     Type::Numeric(_) => coerce_type(actual, expected),
                     Type::Bool => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::String => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Array(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Multi(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
-                    Type::Function { .. } => {
+                    Type::Function { .. } | Type::TypeParam(_) => {
                         Err(Diagnostic::new("unary '-' requires a numeric operand"))
                     }
                 }
             }
             UnaryOp::Not => {
-                let actual = infer_expr(expr, vars, signatures, Some(Type::Bool))?;
+                let actual = infer_expr(
+                    expr,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    Some(Type::Bool),
+                )?;
                 if actual != Type::Bool {
                     return Err(Diagnostic::new("unary 'not' requires a bool operand"));
                 }
                 coerce_type(Type::Bool, expected)
             }
             UnaryOp::Len => {
-                let actual = infer_expr(expr, vars, signatures, None)?;
+                let actual = infer_expr(expr, vars, fn_signatures, active_type_params, None)?;
                 if !actual.is_array() {
                     return Err(Diagnostic::new("# requires an array operand"));
                 }
@@ -843,7 +1303,7 @@ fn infer_expr(
             }
         },
         Expr::Cast { expr, ty } => {
-            let actual = infer_expr(expr, vars, signatures, None)?;
+            let actual = infer_expr(expr, vars, fn_signatures, active_type_params, None)?;
             require_numeric_cast(actual, ty.clone())?;
             coerce_type(ty.clone(), expected)
         }
@@ -852,12 +1312,30 @@ fn infer_expr(
             then_expr,
             else_expr,
         } => {
-            let condition_ty = infer_expr(condition, vars, signatures, Some(Type::Bool))?;
+            let condition_ty = infer_expr(
+                condition,
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(Type::Bool),
+            )?;
             if condition_ty != Type::Bool {
                 return Err(Diagnostic::new("if expression condition must be bool"));
             }
-            let then_ty = infer_expr(then_expr, vars, signatures, expected.clone())?;
-            let else_ty = infer_expr(else_expr, vars, signatures, expected.clone())?;
+            let then_ty = infer_expr(
+                then_expr,
+                vars,
+                fn_signatures,
+                active_type_params,
+                expected.clone(),
+            )?;
+            let else_ty = infer_expr(
+                else_expr,
+                vars,
+                fn_signatures,
+                active_type_params,
+                expected.clone(),
+            )?;
             if then_ty == else_ty {
                 Ok(then_ty)
             } else {
@@ -866,22 +1344,69 @@ fn infer_expr(
                 ))
             }
         }
-        Expr::Call { callee, args } => {
+        Expr::Call {
+            callee,
+            type_args,
+            args,
+        } => {
             if let Expr::Name(name) = callee.as_ref() {
-                if let Some(result) =
-                    infer_math_builtin_call(name, args, vars, signatures, expected.clone())
-                {
+                if let Some(result) = infer_math_builtin_call(
+                    name,
+                    args,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    expected.clone(),
+                ) {
                     return result;
                 }
             }
             if let Expr::Name(name) = callee.as_ref() {
-                if let Some(result) =
-                    infer_coroutine_builtin_call(name, args, vars, signatures, expected.clone())
-                {
+                if let Some(result) = infer_coroutine_builtin_call(
+                    name,
+                    args,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    expected.clone(),
+                ) {
                     return result;
                 }
             }
-            let callee_ty = infer_expr(callee, vars, signatures, None)?;
+            if let Expr::Name(name) = callee.as_ref() {
+                if let Some(FnSignature::Generic(scheme)) = fn_signatures.get(name) {
+                    return infer_generic_call(
+                        scheme,
+                        type_args,
+                        args,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        expected,
+                    );
+                }
+            }
+            if let Expr::Function(function) = callee.as_ref() {
+                if !function.type_params.is_empty() {
+                    return infer_generic_function_expr_call(
+                        function,
+                        type_args,
+                        args,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        expected,
+                    );
+                }
+            }
+            if !type_args.is_empty() {
+                return Err(generic_diagnostic(
+                    "generic/extra-type-args",
+                    "type arguments are only allowed when calling a generic function",
+                    "remove the type argument list or call a generic function",
+                ));
+            }
+            let callee_ty = infer_expr(callee, vars, fn_signatures, active_type_params, None)?;
             let (params, ret) = match callee_ty {
                 Type::Function {
                     params,
@@ -893,7 +1418,8 @@ fn infer_expr(
                     )));
                 }
             };
-            let actual_args = infer_expr_list(args, vars, signatures, Some(&params))?;
+            let actual_args =
+                infer_expr_list(args, vars, fn_signatures, active_type_params, Some(&params))?;
             if params.len() != actual_args.len() {
                 return Err(Diagnostic::new(format!(
                     "function expects {} arguments, got {}",
@@ -901,29 +1427,32 @@ fn infer_expr(
                     actual_args.len()
                 )));
             }
-            for (expected, actual) in params.iter().zip(actual_args.iter()) {
-                if expected != actual {
+            for (expected_param, actual) in params.iter().zip(actual_args.iter()) {
+                if expected_param != actual {
                     return Err(Diagnostic::new(format!(
                         "call expected {}, got {}",
-                        expected, actual
+                        expected_param, actual
                     )));
                 }
             }
             coerce_type(ret, expected)
         }
-        Expr::Function(function) => infer_function_expr(function, vars, signatures, expected),
+        Expr::Function(function) => {
+            infer_function_expr(function, vars, fn_signatures, active_type_params, expected)
+        }
         Expr::ArrayLiteral { elements } => {
-            infer_array_literal(elements, vars, signatures, expected)
+            infer_array_literal(elements, vars, fn_signatures, active_type_params, expected)
         }
         Expr::Index { base, index } => {
-            let base_ty = infer_expr(base, vars, signatures, None)?;
+            let base_ty = infer_expr(base, vars, fn_signatures, active_type_params, None)?;
             let element_ty = base_ty
                 .element_type()
                 .ok_or_else(|| Diagnostic::new("indexing requires an array operand"))?;
             let index_ty = infer_expr(
                 index,
                 vars,
-                signatures,
+                fn_signatures,
+                active_type_params,
                 Some(Type::Numeric(NumericType::I32)),
             )?;
             if index_ty != Type::Numeric(NumericType::I32) {
@@ -933,9 +1462,15 @@ fn infer_expr(
         }
         Expr::Binary { op, left, right } => match op {
             BinaryOp::Add => {
-                let left_ty = infer_expr(left, vars, signatures, None)?;
+                let left_ty = infer_expr(left, vars, fn_signatures, active_type_params, None)?;
                 if left_ty == Type::String {
-                    let right_ty = infer_expr(right, vars, signatures, Some(Type::String))?;
+                    let right_ty = infer_expr(
+                        right,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        Some(Type::String),
+                    )?;
                     if right_ty != Type::String {
                         return Err(Diagnostic::new(
                             "string concatenation requires both operands to be strings",
@@ -943,36 +1478,86 @@ fn infer_expr(
                     }
                     return coerce_type(Type::String, expected);
                 }
-                let operand_ty =
-                    infer_numeric_common_type(left, right, vars, signatures, expected.clone())?;
+                let operand_ty = infer_numeric_common_type(
+                    left,
+                    right,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    expected.clone(),
+                )?;
                 coerce_type(operand_ty, expected)
             }
             BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::FloorDiv | BinaryOp::Mod => {
-                let operand_ty =
-                    infer_numeric_common_type(left, right, vars, signatures, expected.clone())?;
+                let operand_ty = infer_numeric_common_type(
+                    left,
+                    right,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    expected.clone(),
+                )?;
                 coerce_type(operand_ty, expected)
             }
             BinaryOp::Less | BinaryOp::Greater => {
-                let _ = infer_numeric_common_type(left, right, vars, signatures, None)?;
+                let _ = infer_numeric_common_type(
+                    left,
+                    right,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    None,
+                )?;
                 Ok(Type::Bool)
             }
             BinaryOp::And | BinaryOp::Or => {
-                let left_ty = infer_expr(left, vars, signatures, Some(Type::Bool))?;
-                let right_ty = infer_expr(right, vars, signatures, Some(Type::Bool))?;
+                let left_ty = infer_expr(
+                    left,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    Some(Type::Bool),
+                )?;
+                let right_ty = infer_expr(
+                    right,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    Some(Type::Bool),
+                )?;
                 require_bool_pair(left_ty, right_ty)?;
                 Ok(Type::Bool)
             }
             BinaryOp::Eq => {
-                let left_ty = infer_expr(left, vars, signatures, None)?;
+                let left_ty = infer_expr(left, vars, fn_signatures, active_type_params, None)?;
                 if left_ty == Type::Bool {
-                    let right_ty = infer_expr(right, vars, signatures, Some(Type::Bool))?;
+                    let right_ty = infer_expr(
+                        right,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        Some(Type::Bool),
+                    )?;
                     if right_ty != Type::Bool {
                         return Err(Diagnostic::new("== requires both sides to have same type"));
                     }
                 } else if left_ty.is_numeric() {
-                    let _ = infer_numeric_common_type(left, right, vars, signatures, None)?;
+                    let _ = infer_numeric_common_type(
+                        left,
+                        right,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        None,
+                    )?;
                 } else if left_ty == Type::String {
-                    let right_ty = infer_expr(right, vars, signatures, Some(Type::String))?;
+                    let right_ty = infer_expr(
+                        right,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        Some(Type::String),
+                    )?;
                     if right_ty != Type::String {
                         return Err(Diagnostic::new("== requires both sides to have same type"));
                     }
@@ -991,7 +1576,8 @@ fn infer_coroutine_builtin_call(
     name: &str,
     args: &[Expr],
     vars: &HashMap<String, Binding>,
-    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
     expected: Option<Type>,
 ) -> Option<Result<Type, Diagnostic>> {
     match name {
@@ -1002,10 +1588,11 @@ fn infer_coroutine_builtin_call(
                     args.len()
                 ))));
             }
-            let coroutine_ty = match infer_expr(&args[0], vars, signatures, None) {
-                Ok(ty) => ty,
-                Err(error) => return Some(Err(error)),
-            };
+            let coroutine_ty =
+                match infer_expr(&args[0], vars, fn_signatures, active_type_params, None) {
+                    Ok(ty) => ty,
+                    Err(error) => return Some(Err(error)),
+                };
             match &coroutine_ty {
                 Type::Function { params, .. } if params.is_empty() => {
                     Some(coerce_type(coroutine_ty, expected))
@@ -1022,10 +1609,11 @@ fn infer_coroutine_builtin_call(
                     args.len()
                 ))));
             }
-            let coroutine_ty = match infer_expr(&args[0], vars, signatures, None) {
-                Ok(ty) => ty,
-                Err(error) => return Some(Err(error)),
-            };
+            let coroutine_ty =
+                match infer_expr(&args[0], vars, fn_signatures, active_type_params, None) {
+                    Ok(ty) => ty,
+                    Err(error) => return Some(Err(error)),
+                };
             match coroutine_ty {
                 Type::Function {
                     params,
@@ -1043,10 +1631,11 @@ fn infer_coroutine_builtin_call(
                     args.len()
                 ))));
             }
-            let coroutine_ty = match infer_expr(&args[0], vars, signatures, None) {
-                Ok(ty) => ty,
-                Err(error) => return Some(Err(error)),
-            };
+            let coroutine_ty =
+                match infer_expr(&args[0], vars, fn_signatures, active_type_params, None) {
+                    Ok(ty) => ty,
+                    Err(error) => return Some(Err(error)),
+                };
             match coroutine_ty {
                 Type::Function { params, .. } if params.is_empty() => {
                     Some(coerce_type(Type::Bool, expected))
@@ -1064,7 +1653,8 @@ fn infer_math_builtin_call(
     name: &str,
     args: &[Expr],
     vars: &HashMap<String, Binding>,
-    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
     expected: Option<Type>,
 ) -> Option<Result<Type, Diagnostic>> {
     let arity = match name {
@@ -1079,7 +1669,7 @@ fn infer_math_builtin_call(
             args.len()
         ))));
     }
-    let first = match infer_expr(&args[0], vars, signatures, None) {
+    let first = match infer_expr(&args[0], vars, fn_signatures, active_type_params, None) {
         Ok(ty) => ty,
         Err(error) => return Some(Err(error)),
     };
@@ -1092,7 +1682,8 @@ fn infer_math_builtin_call(
         let second = match infer_expr(
             &args[1],
             vars,
-            signatures,
+            fn_signatures,
+            active_type_params,
             Some(Type::Numeric(first_numeric)),
         ) {
             Ok(ty) => ty,
@@ -1122,16 +1713,17 @@ fn infer_math_builtin_call(
 fn infer_expr_list(
     exprs: &[Expr],
     vars: &HashMap<String, Binding>,
-    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
     expected: Option<&[Type]>,
 ) -> Result<Vec<Type>, Diagnostic> {
     let mut out = Vec::new();
     for expr in exprs {
         let next_expected = expected.and_then(|types| types.get(out.len()).cloned());
         let ty = if matches!(expr, Expr::Call { .. }) {
-            infer_expr(expr, vars, signatures, None)?
+            infer_expr(expr, vars, fn_signatures, active_type_params, None)?
         } else {
-            infer_expr(expr, vars, signatures, next_expected)?
+            infer_expr(expr, vars, fn_signatures, active_type_params, next_expected)?
         };
         match ty {
             Type::Multi(types) => out.extend(types),
@@ -1151,7 +1743,8 @@ fn infer_expr_list(
 fn infer_array_literal(
     elements: &[Expr],
     vars: &HashMap<String, Binding>,
-    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
     if elements.is_empty() {
@@ -1166,9 +1759,21 @@ fn infer_array_literal(
     let expected_element = expected.as_ref().and_then(Type::element_type);
     let mut iter = elements.iter();
     let first = iter.next().expect("non-empty array literal");
-    let mut element_ty = infer_expr(first, vars, signatures, expected_element.clone())?;
+    let mut element_ty = infer_expr(
+        first,
+        vars,
+        fn_signatures,
+        active_type_params,
+        expected_element.clone(),
+    )?;
     for element in iter {
-        let actual = infer_expr(element, vars, signatures, Some(element_ty.clone()))?;
+        let actual = infer_expr(
+            element,
+            vars,
+            fn_signatures,
+            active_type_params,
+            Some(element_ty.clone()),
+        )?;
         element_ty = common_element_type(element_ty, actual)?;
     }
 
@@ -1202,7 +1807,8 @@ fn infer_numeric_common_type(
     left: &Expr,
     right: &Expr,
     vars: &HashMap<String, Binding>,
-    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
     let expected_numeric = match expected {
@@ -1216,24 +1822,48 @@ fn infer_numeric_common_type(
     ) {
         (true, true) => {
             let ty = expected_numeric.unwrap_or(NumericType::F64);
-            let left_ty = infer_expr(left, vars, signatures, Some(Type::Numeric(ty)))?;
-            let right_ty = infer_expr(right, vars, signatures, Some(Type::Numeric(ty)))?;
+            let left_ty = infer_expr(
+                left,
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(Type::Numeric(ty)),
+            )?;
+            let right_ty = infer_expr(
+                right,
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(Type::Numeric(ty)),
+            )?;
             require_same_numeric(left_ty.clone(), right_ty)?;
             Ok(left_ty)
         }
         (true, false) => {
-            let right_ty = infer_expr(right, vars, signatures, None)?;
-            let left_ty = infer_expr(left, vars, signatures, Some(right_ty.clone()))?;
+            let right_ty = infer_expr(right, vars, fn_signatures, active_type_params, None)?;
+            let left_ty = infer_expr(
+                left,
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(right_ty.clone()),
+            )?;
             common_numeric_type(left_ty, right_ty)
         }
         (false, true) => {
-            let left_ty = infer_expr(left, vars, signatures, None)?;
-            let right_ty = infer_expr(right, vars, signatures, Some(left_ty.clone()))?;
+            let left_ty = infer_expr(left, vars, fn_signatures, active_type_params, None)?;
+            let right_ty = infer_expr(
+                right,
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(left_ty.clone()),
+            )?;
             common_numeric_type(left_ty, right_ty)
         }
         _ => {
-            let left_ty = infer_expr(left, vars, signatures, None)?;
-            let right_ty = infer_expr(right, vars, signatures, None)?;
+            let left_ty = infer_expr(left, vars, fn_signatures, active_type_params, None)?;
+            let right_ty = infer_expr(right, vars, fn_signatures, active_type_params, None)?;
             common_numeric_type(left_ty, right_ty)
         }
     }
@@ -1301,6 +1931,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Function { .. } => Err(Diagnostic::new(format!(
                 "cannot implicitly convert function to {expected_numeric}",
             ))),
+            Type::TypeParam(_) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert generic type parameter to {expected_numeric}",
+            ))),
         },
         Some(Type::Bool) => Err(Diagnostic::new(format!(
             "cannot implicitly convert {actual} to bool",
@@ -1350,6 +1983,9 @@ fn resolve_number_literal(
         Some(Type::Multi(_)) => Err(Diagnostic::new(
             "numeric literal is not assignable to multiple values",
         )),
+        Some(Type::TypeParam(_)) => Err(Diagnostic::new(
+            "numeric literal is not assignable to generic type parameter",
+        )),
         None => Ok(Type::number()),
     }
 }
@@ -1357,9 +1993,18 @@ fn resolve_number_literal(
 fn infer_function_expr(
     function: &FunctionExpr,
     vars: &HashMap<String, Binding>,
-    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
+    validate_type_param_list(&function.type_params, active_type_params)?;
+    if !function.type_params.is_empty() {
+        return Err(generic_diagnostic(
+            "generic/uninstantiated-value",
+            "generic function expressions cannot be used as values without instantiation",
+            "call the generic function expression with explicit type arguments immediately",
+        ));
+    }
     let return_ty = function.return_type.clone().ok_or_else(|| {
         inference_diagnostic(
             "inference/unsupported",
@@ -1397,7 +2042,14 @@ fn infer_function_expr(
     }
     let mut saw_return = false;
     for stmt in &function.body {
-        if check_stmt(stmt, &mut local_scope, signatures, &return_ty, false)? {
+        if check_stmt(
+            stmt,
+            &mut local_scope,
+            fn_signatures,
+            active_type_params,
+            &return_ty,
+            false,
+        )? {
             saw_return = true;
         }
     }

@@ -160,6 +160,14 @@ pub enum Terminator {
 }
 
 pub fn build(program: &Program) -> Result<Module, Diagnostic> {
+    for function in &program.functions {
+        if !function.type_params.is_empty() {
+            return Err(Diagnostic::new(format!(
+                "generic function '{}' cannot be lowered until monomorphization is implemented",
+                function.name
+            )));
+        }
+    }
     let signatures: HashMap<_, _> = program
         .functions
         .iter()
@@ -1283,7 +1291,12 @@ impl Builder<'_> {
                 });
             }
             Stmt::Expr(expr) => {
-                if let Expr::Call { callee, args } = expr {
+                if let Expr::Call {
+                    callee,
+                    type_args: _,
+                    args,
+                } = expr
+                {
                     if let Expr::Name(name) = callee.as_ref() {
                         if name == ASSERT {
                             self.lower_assert_call(args, env, types)?;
@@ -1717,6 +1730,11 @@ impl Builder<'_> {
                             "numeric literal is not assignable to multiple values",
                         ));
                     }
+                    Type::TypeParam(_) => {
+                        return Err(Diagnostic::new(
+                            "generic type parameters must be specialized before IR lowering",
+                        ));
+                    }
                 };
                 self.emit(Instruction::Number {
                     ty,
@@ -1794,6 +1812,11 @@ impl Builder<'_> {
                                 ));
                             }
                             Type::Multi(_) => {
+                                return Err(Diagnostic::new(
+                                    "unary '-' requires a numeric operand",
+                                ));
+                            }
+                            Type::TypeParam(_) => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -1946,7 +1969,11 @@ impl Builder<'_> {
                     self.coerce_value(value, raw_result_ty, expected)?
                 }
             },
-            Expr::Call { callee, args } => {
+            Expr::Call {
+                callee,
+                type_args: _,
+                args,
+            } => {
                 if let Expr::Name(name) = callee.as_ref() {
                     if let Some(result) =
                         self.lower_math_builtin_call(name, args, env, types, expected.clone())
@@ -2173,6 +2200,7 @@ impl Builder<'_> {
         // Also include any names that the nested function's inner nested functions capture.
         let nested_inner_captures = collect_nested_function_capture_names(&waluau_ast::Function {
             name: function.name.clone().unwrap_or_default(),
+            type_params: function.type_params.clone(),
             params: function.params.clone(),
             return_type: Some(return_ty.clone()),
             body: function.body.clone(),
@@ -2269,6 +2297,9 @@ impl Builder<'_> {
                 Some(Type::Multi(_)) => Err(Diagnostic::new(
                     "numeric literal is not assignable to multiple values",
                 )),
+                Some(Type::TypeParam(_)) => Err(Diagnostic::new(
+                    "numeric literal is not assignable to generic type parameter",
+                )),
                 None => Ok(Type::number()),
             },
             Expr::Bool(_) => Ok(Type::Bool),
@@ -2306,6 +2337,9 @@ impl Builder<'_> {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                         Type::Multi(_) => {
+                            Err(Diagnostic::new("unary '-' requires a numeric operand"))
+                        }
+                        Type::TypeParam(_) => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                     }
@@ -2761,6 +2795,7 @@ impl Builder<'_> {
             name,
             &Expr::Call {
                 callee: Box::new(Expr::Name(name.to_string())),
+                type_args: Vec::new(),
                 args: args.to_vec(),
             },
             types,
@@ -2977,6 +3012,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Function { .. } => Err(Diagnostic::new(format!(
                 "cannot implicitly convert function to {expected_numeric}",
             ))),
+            Type::TypeParam(_) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert generic type parameter to {expected_numeric}",
+            ))),
         },
         Some(Type::Bool) => Err(Diagnostic::new(format!(
             "cannot implicitly convert {actual} to bool",
@@ -3143,7 +3181,11 @@ fn collect_expr_captures(
             collect_expr_captures(then_expr, bound, env, signatures, captures);
             collect_expr_captures(else_expr, bound, env, signatures, captures);
         }
-        Expr::Call { callee, args } => {
+        Expr::Call {
+            callee,
+            type_args: _,
+            args,
+        } => {
             collect_expr_captures(callee, bound, env, signatures, captures);
             for arg in args {
                 collect_expr_captures(arg, bound, env, signatures, captures);
@@ -3288,7 +3330,11 @@ fn collect_nested_from_expr(expr: &Expr, out: &mut HashSet<String>) {
             collect_nested_from_expr(then_expr, out);
             collect_nested_from_expr(else_expr, out);
         }
-        Expr::Call { callee, args } => {
+        Expr::Call {
+            callee,
+            type_args: _,
+            args,
+        } => {
             collect_nested_from_expr(callee, out);
             for a in args {
                 collect_nested_from_expr(a, out);
@@ -3392,7 +3438,11 @@ fn collect_free_names_in_expr(expr: &Expr, bound: &HashSet<String>, out: &mut Ha
             collect_free_names_in_expr(then_expr, bound, out);
             collect_free_names_in_expr(else_expr, bound, out);
         }
-        Expr::Call { callee, args } => {
+        Expr::Call {
+            callee,
+            type_args: _,
+            args,
+        } => {
             collect_free_names_in_expr(callee, bound, out);
             for a in args {
                 collect_free_names_in_expr(a, bound, out);
