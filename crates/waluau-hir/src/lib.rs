@@ -1471,7 +1471,7 @@ fn infer_expr(
             coerce_type(element_ty, expected)
         }
         Expr::Binary { op, left, right } => match op {
-            BinaryOp::Add => {
+            BinaryOp::Concat => {
                 let left_ty = infer_expr(left, vars, fn_signatures, active_type_params, None)?;
                 if left_ty == Type::String {
                     let right_ty = infer_expr(
@@ -1488,6 +1488,11 @@ fn infer_expr(
                     }
                     return coerce_type(Type::String, expected);
                 }
+                Err(Diagnostic::new(
+                    "string concatenation requires both operands to be strings",
+                ))
+            }
+            BinaryOp::Add => {
                 let operand_ty = infer_numeric_common_type(
                     left,
                     right,

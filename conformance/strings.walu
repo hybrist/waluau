@@ -10,7 +10,7 @@ function string_local(): bool
 end
 
 function string_concat(): bool
-    return ("foo" + "bar") == "foobar"
+    return ("foo" .. "bar") == "foobar"
 end
 
 function string_array(): i32

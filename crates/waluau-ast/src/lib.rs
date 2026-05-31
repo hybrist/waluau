@@ -316,6 +316,7 @@ pub struct NumberLiteral {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BinaryOp {
     Add,
+    Concat,
     Sub,
     Mul,
     Div,
