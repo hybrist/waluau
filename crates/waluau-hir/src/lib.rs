@@ -24,7 +24,7 @@ enum FnSignature {
 
 const COROUTINE_CREATE: &str = "coroutine_create";
 const COROUTINE_RESUME: &str = "coroutine_resume";
-const COROUTINE_STATUS: &str = "coroutine_status";
+const COROUTINE_CLOSE: &str = "coroutine_close";
 const COROUTINE_YIELD: &str = "coroutine_yield";
 const MATH_ABS: &str = "math_abs";
 const MATH_MIN: &str = "math_min";
@@ -1489,7 +1489,7 @@ fn infer_expr(
                     Type::String => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Array(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Multi(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
-                    Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) => {
+                    Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
                         Err(Diagnostic::new("unary '-' requires a numeric operand"))
                     }
                 }
@@ -1832,6 +1832,7 @@ fn infer_coroutine_builtin_call(
     active_type_params: &HashSet<String>,
     expected: Option<Type>,
 ) -> Option<Result<Type, Diagnostic>> {
+    let i32_ty = Type::Numeric(NumericType::I32);
     match name {
         COROUTINE_CREATE => {
             if args.len() != 1 {
@@ -1846,11 +1847,14 @@ fn infer_coroutine_builtin_call(
                     Err(error) => return Some(Err(error)),
                 };
             match &coroutine_ty {
-                Type::Function { params, .. } if params.is_empty() => {
-                    Some(coerce_type(coroutine_ty, expected))
+                Type::Function {
+                    params,
+                    return_type,
+                } if params.is_empty() && **return_type == i32_ty => {
+                    Some(coerce_type(Type::Thread, expected))
                 }
                 _ => Some(Err(Diagnostic::new(
-                    "coroutine_create expects a zero-argument function",
+                    "coroutine_create expects a zero-argument i32-returning function",
                 ))),
             }
         }
@@ -1867,19 +1871,14 @@ fn infer_coroutine_builtin_call(
                     Err(error) => return Some(Err(error)),
                 };
             match coroutine_ty {
-                Type::Function {
-                    params,
-                    return_type,
-                } if params.is_empty() => Some(coerce_type(*return_type, expected)),
-                _ => Some(Err(Diagnostic::new(
-                    "coroutine_resume expects a coroutine created from a zero-argument function",
-                ))),
+                Type::Thread => Some(coerce_type(Type::Multi(vec![Type::Bool, i32_ty]), expected)),
+                _ => Some(Err(Diagnostic::new("coroutine_resume expects a thread"))),
             }
         }
-        COROUTINE_STATUS => {
+        COROUTINE_CLOSE => {
             if args.len() != 1 {
                 return Some(Err(Diagnostic::new(format!(
-                    "{COROUTINE_STATUS} expects 1 argument, got {}",
+                    "{COROUTINE_CLOSE} expects 1 argument, got {}",
                     args.len()
                 ))));
             }
@@ -1889,12 +1888,8 @@ fn infer_coroutine_builtin_call(
                     Err(error) => return Some(Err(error)),
                 };
             match coroutine_ty {
-                Type::Function { params, .. } if params.is_empty() => {
-                    Some(coerce_type(Type::Bool, expected))
-                }
-                _ => Some(Err(Diagnostic::new(
-                    "coroutine_status expects a coroutine created from a zero-argument function",
-                ))),
+                Type::Thread => Some(coerce_type(Type::Bool, expected)),
+                _ => Some(Err(Diagnostic::new("coroutine_close expects a thread"))),
             }
         }
         COROUTINE_YIELD => {
@@ -1904,10 +1899,19 @@ fn infer_coroutine_builtin_call(
                     args.len()
                 ))));
             }
-            let _ = match infer_expr(&args[0], vars, fn_signatures, active_type_params, None) {
-                Ok(ty) => ty,
+            match infer_expr(
+                &args[0],
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(i32_ty.clone()),
+            ) {
+                Ok(ty) if ty == i32_ty => {}
+                Ok(_) => {
+                    return Some(Err(Diagnostic::new("coroutine_yield expects an i32 value")));
+                }
                 Err(error) => return Some(Err(error)),
-            };
+            }
             Some(coerce_type(Type::Unit, expected))
         }
         _ => None,
@@ -2270,6 +2274,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::TypeParam(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert generic type parameter to {expected_numeric}",
             ))),
+            Type::Thread => Err(Diagnostic::new(format!(
+                "cannot implicitly convert thread to {expected_numeric}",
+            ))),
         },
         Some(Type::Bool) => Err(Diagnostic::new(format!(
             "cannot implicitly convert {actual} to bool",
@@ -2328,6 +2335,9 @@ fn resolve_number_literal(
         )),
         Some(Type::TypeParam(_)) => Err(Diagnostic::new(
             "numeric literal is not assignable to generic type parameter",
+        )),
+        Some(Type::Thread) => Err(Diagnostic::new(
+            "numeric literal is not assignable to thread",
         )),
         None => Ok(Type::number()),
     }
@@ -3277,8 +3287,9 @@ mod tests {
                 local job: () -> i32 = function(): i32
                     return 7
                 end
-                local co: () -> i32 = coroutine_create(job)
-                return coroutine_resume(co)
+                local co: thread = coroutine_create(job)
+                local ok: bool, value: i32 = coroutine_resume(co)
+                return value
             end
         "#;
         let program = parse(source).expect("parse should succeed");
@@ -3292,7 +3303,7 @@ mod tests {
                 local job: (i32) -> i32 = function(x: i32): i32
                     return x
                 end
-                local co: (i32) -> i32 = coroutine_create(job)
+                local co: thread = coroutine_create(job)
                 return 0
             end
         "#;
@@ -3300,23 +3311,39 @@ mod tests {
         let error = super::type_check(&program).expect_err("type check should fail");
         assert_eq!(
             error.to_string(),
-            "coroutine_create expects a zero-argument function"
+            "coroutine_create expects a zero-argument i32-returning function"
         );
     }
 
     #[test]
-    fn type_checks_coroutine_status_for_zero_arg_coroutines() {
+    fn type_checks_coroutine_close_for_threads() {
         let source = r#"
             function run_job(): bool
                 local job: () -> i32 = function(): i32
                     return 7
                 end
-                local co: () -> i32 = coroutine_create(job)
-                return coroutine_status(co)
+                local co: thread = coroutine_create(job)
+                return coroutine_close(co)
             end
         "#;
         let program = parse(source).expect("parse should succeed");
         super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn rejects_coroutine_resume_for_non_thread() {
+        let source = r#"
+            function run_job(): i32
+                local co: () -> i32 = function(): i32
+                    return 7
+                end
+                local ok: bool, value: i32 = coroutine_resume(co)
+                return value
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.to_string(), "coroutine_resume expects a thread");
     }
 
     #[test]
@@ -3329,6 +3356,19 @@ mod tests {
         "#;
         let program = parse(source).expect("parse should succeed");
         super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn rejects_coroutine_yield_with_non_i32_argument() {
+        let source = r#"
+            function run_job(): i32
+                coroutine_yield(true)
+                return 7
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.to_string(), "coroutine_yield expects an i32 value");
     }
 
     #[test]
