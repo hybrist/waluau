@@ -7,13 +7,22 @@ use waluau_ir::{Function as IrFunction, Instruction as IrInstruction, Module};
 
 pub const IMPORTED_STRING_CONSTANTS_MODULE: &str = "string_constants";
 pub const JS_STRING_BUILTINS_MODULE: &str = "wasm:js-string";
+pub const IMPORT_MODULE: &str = "waluau";
 pub const CUSTOM_SECTION_NAME: &str = "waluau.strc";
 
 pub const IMPORT_JS_STRING_EQ: &str = "equals";
 pub const IMPORT_JS_STRING_CONCAT: &str = "concat";
+pub const IMPORT_JS_TOSTRING_I32: &str = "js_tostring_i32";
+pub const IMPORT_JS_TOSTRING_U32: &str = "js_tostring_u32";
+pub const IMPORT_JS_TOSTRING_I64: &str = "js_tostring_i64";
+pub const IMPORT_JS_TOSTRING_U64: &str = "js_tostring_u64";
+pub const IMPORT_JS_TOSTRING_F32: &str = "js_tostring_f32";
+pub const IMPORT_JS_TOSTRING_F64: &str = "js_tostring_f64";
+pub const IMPORT_JS_TOSTRING_BOOL: &str = "js_tostring_bool";
+pub const IMPORT_PRINT: &str = "print";
 
 /// Number of imported host functions emitted before user-defined functions.
-pub const HOST_IMPORT_COUNT: u32 = 2;
+pub const HOST_IMPORT_COUNT: u32 = 10;
 
 /// Function index of the first user-defined function in the combined import+defined index space.
 pub const fn defined_func_index(user_index: u32) -> u32 {
@@ -24,9 +33,18 @@ pub const fn defined_func_index(user_index: u32) -> u32 {
 pub const IMPORT_JS_STRING_EQ_FUNC: u32 = 0;
 /// Index of `IMPORT_JS_STRING_CONCAT` in the combined function index space.
 pub const IMPORT_JS_STRING_CONCAT_FUNC: u32 = 1;
+/// Index of `IMPORT_PRINT` in the combined function index space.
+pub const IMPORT_PRINT_FUNC: u32 = 2;
+pub const IMPORT_JS_TOSTRING_I32_FUNC: u32 = 3;
+pub const IMPORT_JS_TOSTRING_U32_FUNC: u32 = 4;
+pub const IMPORT_JS_TOSTRING_I64_FUNC: u32 = 5;
+pub const IMPORT_JS_TOSTRING_U64_FUNC: u32 = 6;
+pub const IMPORT_JS_TOSTRING_F32_FUNC: u32 = 7;
+pub const IMPORT_JS_TOSTRING_F64_FUNC: u32 = 8;
+pub const IMPORT_JS_TOSTRING_BOOL_FUNC: u32 = 9;
 
 /// Number of host function types emitted after array types in the type section.
-pub const HOST_TYPE_COUNT: u32 = 2;
+pub const HOST_TYPE_COUNT: u32 = 7;
 
 pub fn encode_string_constants_section(strings: &[String]) -> Vec<u8> {
     let mut out = Vec::new();

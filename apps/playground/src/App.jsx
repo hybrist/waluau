@@ -58,7 +58,7 @@ const DEFAULT_PRESET = PRESETS[0] || {
 const WALUAU_STRING_CONSTANTS_MODULE = 'string_constants';
 const WALUAU_IMPORT_MODULE = 'waluau';
 // Must match waluau_codegen_wasm::host::HOST_IMPORT_COUNT
-const WALUAU_HOST_IMPORT_COUNT = 2;
+const WALUAU_HOST_IMPORT_COUNT = 10;
 
 function buildWaluauImports() {
   const waluauImports = new Proxy({}, {
@@ -67,7 +67,7 @@ function buildWaluauImports() {
       if (name.startsWith('js_tostring_')) {
         return (value) => String(value);
       }
-      if (name === 'js_log') {
+      if (name === 'print' || name === 'js_log') {
         return (value) => {
           console.log(value);
         };
