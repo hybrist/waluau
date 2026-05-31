@@ -5,6 +5,7 @@
   "scripts": {
     "build:playground": "pnpm --filter playground build",
     "dev": "pnpm --filter playground dev",
-    "test:playground": "pnpm --filter playground test"
+    "test:playground": "pnpm --filter playground test",
+    "test:conformance-browser": "pnpm --filter conformance-runner test:browser"
   }
 }
