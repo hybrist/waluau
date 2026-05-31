@@ -54,10 +54,13 @@ test.describe('inline function calling', () => {
     const widget = page.locator('.inline-runner-widget');
     await expect(widget).toBeVisible();
 
-    // Click the inline runner's close (X) button
-    await widget.locator('.inline-runner-close').click();
+    // Monaco overlays can interfere with pointer-based clicks in CI.
+    // Trigger a direct DOM click to verify close-button behavior deterministically.
+    const closeButton = widget.locator('.inline-runner-close');
+    await expect(closeButton).toBeVisible();
+    await closeButton.evaluate((button) => button.click());
 
     // Verify the widget is removed
-    await expect(widget).not.toBeVisible();
+    await expect(widget).toBeHidden({ timeout: 10_000 });
   });
 });

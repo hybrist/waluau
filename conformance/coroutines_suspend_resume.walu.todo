@@ -1,0 +1,41 @@
+-- Pending conformance case for true coroutine suspension.
+-- Rename to `.walu` once `coroutine_yield` is implemented.
+
+function counter_job(): i32
+    coroutine_yield(1)
+    coroutine_yield(2)
+    return 3
+end
+
+local co: () -> i32 = coroutine_create(counter_job)
+
+assert(coroutine_status(co))
+assert(coroutine_resume(co) == 1)
+assert(coroutine_status(co))
+assert(coroutine_resume(co) == 2)
+assert(coroutine_status(co))
+assert(coroutine_resume(co) == 3)
+
+-- Yield should also work through normal calls, not only when the yield call
+-- appears directly in the coroutine entry function.
+function emit_three_values(): ()
+    coroutine_yield(10)
+    coroutine_yield(20)
+end
+
+function delegated_job(): i32
+    emit_three_values()
+    return 30
+end
+
+local delegated = coroutine_create(delegated_job)
+
+assert(coroutine_status(delegated))
+assert(coroutine_resume(delegated) == 10)
+assert(coroutine_status(delegated))
+assert(coroutine_resume(delegated) == 20)
+assert(coroutine_status(delegated))
+assert(coroutine_resume(delegated) == 30)
+
+-- Optional future assertion depending on finalized runtime semantics:
+-- resuming after completion should trap or report a distinct terminal status.

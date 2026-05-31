@@ -1,0 +1,15 @@
+function job_one(): i32
+    return 7
+end
+
+function job_two(): i32
+    return 11
+end
+
+local first_co = coroutine_create(job_one)
+assert(coroutine_status(first_co))
+assert(coroutine_resume(first_co) == 7)
+
+local second_co = coroutine_create(job_two)
+assert(coroutine_status(second_co))
+assert(coroutine_resume(second_co) == 11)
