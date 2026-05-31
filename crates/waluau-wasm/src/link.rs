@@ -129,18 +129,40 @@ fn module_prefix(id: usize, entry_id: usize) -> String {
         format!("__waluau_m{id}_")
     }
 }
+fn validate_imported_top_level(stmts: &[Stmt]) -> Result<(), String> {
+    for stmt in stmts {
+        let Stmt::Let { value, .. } = stmt else {
+            return Err(
+                "imported module top-level statements may only bind `require` imports".to_string(),
+            );
+        };
+        if !matches!(value, Expr::Require(_)) {
+            return Err(
+                "imported module top-level statements may only bind `require` imports".to_string(),
+            );
+        }
+    }
+    Ok(())
+}
+
 fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, String> {
     let mut functions = Vec::new();
     let mut top_level = Vec::new();
+    let mut export_cache = HashMap::new();
 
     for (id, module) in modules.iter().enumerate() {
-        if id != entry_id && !module.program.top_level.is_empty() {
-            return Err(
-                "imported modules may only contain functions and a trailing `return` export"
-                    .to_string(),
-            );
+        if id != entry_id {
+            validate_imported_top_level(&module.program.top_level)?;
         }
+    }
 
+    for (id, _) in modules.iter().enumerate() {
+        if id != entry_id {
+            compute_module_export(modules, id, entry_id, &mut export_cache)?;
+        }
+    }
+
+    for (id, module) in modules.iter().enumerate() {
         let prefix = module_prefix(id, entry_id);
         let mut module_functions = module.program.functions.clone();
         if let Some(export) = &module.program.export {
@@ -153,16 +175,14 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, String> {
 
         let mut imports = HashMap::new();
         for (raw, &target_id) in &module.requires {
-            imports.insert(
-                raw.clone(),
-                resolve_import(modules, target_id, entry_id, raw)?,
-            );
+            imports.insert(raw.clone(), export_cache[&target_id].clone());
         }
 
         let mut rewriter = Rewriter {
             prefix: &prefix,
             func_names: &func_names,
             imports: &imports,
+            re_exports: HashMap::new(),
             namespaces: HashMap::new(),
         };
 
@@ -195,6 +215,7 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, String> {
     })
 }
 
+#[derive(Clone)]
 enum ResolvedImport {
     Function(String),
     Namespace(BTreeMap<String, String>),
@@ -225,79 +246,170 @@ fn function_expr_to_function(name: &str, function: &FunctionExpr) -> Function {
     }
 }
 
-fn resolve_import(
+fn compute_module_export(
     modules: &[LoadedModule],
-    target_id: usize,
+    id: usize,
     entry_id: usize,
-    raw: &str,
+    cache: &mut HashMap<usize, ResolvedImport>,
 ) -> Result<ResolvedImport, String> {
-    let prefix = module_prefix(target_id, entry_id);
-    let module = &modules[target_id];
-    let mut top_level_names: HashSet<String> = module
-        .program
-        .functions
+    if let Some(resolved) = cache.get(&id) {
+        return Ok(resolved.clone());
+    }
+
+    let module = &modules[id];
+    let prefix = module_prefix(id, entry_id);
+
+    let mut imports = HashMap::new();
+    for (raw, &target_id) in &module.requires {
+        let resolved = compute_module_export(modules, target_id, entry_id, cache)?;
+        imports.insert(raw.clone(), resolved);
+    }
+
+    let mut module_functions = module.program.functions.clone();
+    if let Some(export) = &module.program.export {
+        hoist_table_export_functions(&mut module_functions, export)?;
+    }
+    let top_level_names = module_function_names(&module_functions, &module.program.export);
+    let (re_exports, namespaces) = process_reexport_bindings(&module.program.top_level, &imports);
+
+    let resolved = resolve_module_export(
+        module.program.export.as_ref(),
+        &prefix,
+        &top_level_names,
+        &re_exports,
+        &namespaces,
+    )?;
+
+    cache.insert(id, resolved.clone());
+    Ok(resolved)
+}
+
+fn module_function_names(functions: &[Function], export: &Option<Expr>) -> HashSet<String> {
+    let mut names: HashSet<String> = functions
         .iter()
         .map(|function| function.name.clone())
         .collect();
-    if let Some(Expr::TableLiteral { fields }) = &module.program.export {
+    if let Some(Expr::TableLiteral { fields }) = export {
         for field in fields {
             if matches!(field.value, Expr::Function(_)) {
-                top_level_names.insert(field.name.clone());
+                names.insert(field.name.clone());
             }
         }
     }
+    names
+}
 
-    match &module.program.export {
-        Some(Expr::Name(name)) => {
-            if top_level_names.contains(name) {
-                Ok(ResolvedImport::Function(format!("{prefix}{name}")))
-            } else {
-                Err(format!(
-                    "module imported via \"{raw}\" exports unknown function '{name}'"
-                ))
-            }
-        }
+fn process_reexport_bindings(
+    top_level: &[Stmt],
+    imports: &HashMap<String, ResolvedImport>,
+) -> (
+    HashMap<String, String>,
+    HashMap<String, BTreeMap<String, String>>,
+) {
+    let empty = HashSet::new();
+    let mut rewriter = Rewriter {
+        prefix: "",
+        func_names: &empty,
+        imports,
+        re_exports: HashMap::new(),
+        namespaces: HashMap::new(),
+    };
+    let mut stmts = top_level.to_vec();
+    let mut bound = HashSet::new();
+    rewriter.rewrite_block(&mut stmts, &mut bound);
+    (rewriter.re_exports, rewriter.namespaces)
+}
+
+fn resolve_module_export(
+    export: Option<&Expr>,
+    prefix: &str,
+    top_level_names: &HashSet<String>,
+    re_exports: &HashMap<String, String>,
+    namespaces: &HashMap<String, BTreeMap<String, String>>,
+) -> Result<ResolvedImport, String> {
+    match export {
+        Some(Expr::Name(name)) => Ok(ResolvedImport::Function(export_function_name(
+            name,
+            prefix,
+            top_level_names,
+            re_exports,
+            "module export",
+        )?)),
         Some(Expr::TableLiteral { fields }) => {
             let mut namespace = BTreeMap::new();
             for field in fields {
-                let function_name = export_field_function_name(field, &top_level_names, raw)?;
-                namespace.insert(field.name.clone(), format!("{prefix}{function_name}"));
+                let function_name = export_field_function_name(
+                    field,
+                    prefix,
+                    top_level_names,
+                    re_exports,
+                    namespaces,
+                )?;
+                namespace.insert(field.name.clone(), function_name);
             }
             if namespace.is_empty() {
-                return Err(format!(
-                    "module imported via \"{raw}\" exports an empty table"
-                ));
+                return Err("module exports an empty table".to_string());
             }
             Ok(ResolvedImport::Namespace(namespace))
         }
-        Some(_) => Err(format!(
-            "module imported via \"{raw}\" must export a function name or table of functions"
-        )),
-        None => Err(format!(
-            "module imported via \"{raw}\" has no export; add `return <function>` or `return {{ ... }}`"
-        )),
+        Some(_) => Err("module must export a function name or table of functions".to_string()),
+        None => {
+            Err("module has no export; add `return <function>` or `return { ... }`".to_string())
+        }
     }
+}
+
+fn export_function_name(
+    name: &str,
+    prefix: &str,
+    top_level_names: &HashSet<String>,
+    re_exports: &HashMap<String, String>,
+    context: &str,
+) -> Result<String, String> {
+    if let Some(mangled) = re_exports.get(name) {
+        return Ok(mangled.clone());
+    }
+    if top_level_names.contains(name) {
+        return Ok(format!("{prefix}{name}"));
+    }
+    Err(format!("{context} references unknown function '{name}'"))
 }
 
 fn export_field_function_name(
     field: &TableField,
+    prefix: &str,
     top_level_names: &HashSet<String>,
-    raw: &str,
+    re_exports: &HashMap<String, String>,
+    namespaces: &HashMap<String, BTreeMap<String, String>>,
 ) -> Result<String, String> {
     match &field.value {
-        Expr::Name(name) => {
-            if top_level_names.contains(name) {
-                Ok(name.clone())
-            } else {
-                Err(format!(
-                    "module imported via \"{raw}\" exports unknown function '{name}' in field '{}'",
+        Expr::Name(name) => export_function_name(
+            name,
+            prefix,
+            top_level_names,
+            re_exports,
+            &format!("module export field '{}'", field.name),
+        ),
+        Expr::Field { base, name: member } if matches!(&**base, Expr::Name(_)) => {
+            let Expr::Name(namespace) = &**base else {
+                unreachable!()
+            };
+            let fields = namespaces.get(namespace).ok_or_else(|| {
+                format!(
+                    "module export field '{}' references unknown namespace '{namespace}'",
                     field.name
-                ))
-            }
+                )
+            })?;
+            fields.get(member).cloned().ok_or_else(|| {
+                format!(
+                    "module export field '{}' references unknown member '{member}' on '{namespace}'",
+                    field.name
+                )
+            })
         }
-        Expr::Function(_) => Ok(field.name.clone()),
+        Expr::Function(_) => Ok(format!("{prefix}{}", field.name)),
         _ => Err(format!(
-            "module imported via \"{raw}\" field '{}' must be a function name or `function ... end`",
+            "module export field '{}' must be a function name, namespace member, or `function ... end`",
             field.name
         )),
     }
@@ -309,6 +421,7 @@ struct Rewriter<'a> {
     prefix: &'a str,
     func_names: &'a HashSet<String>,
     imports: &'a HashMap<String, ResolvedImport>,
+    re_exports: HashMap<String, String>,
     namespaces: HashMap<String, BTreeMap<String, String>>,
 }
 
@@ -322,6 +435,18 @@ impl Rewriter<'_> {
     fn rewrite_stmt(&mut self, stmt: &mut Stmt, bound: &mut HashSet<String>) {
         match stmt {
             Stmt::Let { name, value, .. } => {
+                if let Expr::Require(path) = &*value {
+                    if let Some(resolved) = self.imports.get(path) {
+                        match resolved {
+                            ResolvedImport::Function(function) => {
+                                self.re_exports.insert(name.clone(), function.clone());
+                            }
+                            ResolvedImport::Namespace(fields) => {
+                                self.namespaces.insert(name.clone(), fields.clone());
+                            }
+                        }
+                    }
+                }
                 self.rewrite_expr(value, bound);
                 if let Expr::TableLiteral { fields } = &*value {
                     let mut field_map = BTreeMap::new();

@@ -58,10 +58,20 @@ return {
 }
 ```
 
-Table fields may be inline `function ... end` expressions or names of top-level
-functions in the same module. The `return` must be the last item in the file.
-The entry module (the file passed to the compiler) may also have one, but it is
-ignored.
+Table fields may be inline `function ... end` expressions, names of top-level
+functions in the same module, or bindings from top-level `require` imports
+(including namespace members like `ns.add`). The `return` must be the last item
+in the file. The entry module (the file passed to the compiler) may also have
+one, but it is ignored.
+
+Imported modules may bind `require` results at the top level and re-export them:
+
+```lua
+local double: (i32) -> i32 = require("./single-export")
+local ns = require("./multi-export")
+
+return { double = double, add = ns.add }
+```
 
 ### Using an Import
 
@@ -122,9 +132,10 @@ The merged `Program` then flows through the existing pipeline unchanged.
 
 These keep the first slice small; each can be lifted later.
 
-- An imported module may contain only functions and the trailing `return`. It may
-  not run top-level statements, which sidesteps cross-module initialization
-  ordering for now.
+- An imported module may contain only functions, top-level `local ... = require(...)`
+  bindings used for re-export, and the trailing `return`. It may not run other
+  top-level statements, which sidesteps cross-module initialization ordering
+  for now.
 - Table exports are limited to fixed named fields mapping to functions (no
   arbitrary table types or non-function values). General table support remains M4.
 - All linked functions, including mangled ones, are still emitted as Wasm
