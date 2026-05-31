@@ -652,6 +652,7 @@ impl EmissionContext<'_> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_function(
     function: &IrFunction,
     signatures: &HashMap<String, FunctionSignature>,
