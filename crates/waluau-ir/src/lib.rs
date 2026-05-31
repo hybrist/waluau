@@ -69,6 +69,7 @@ pub enum Instruction {
         literal: NumberLiteral,
     },
     Bool(bool),
+    String(String),
     Cast {
         value: ValueId,
         from: Type,
@@ -655,7 +656,10 @@ fn verify_function(
                         }
                     }
                 }
-                Instruction::Param(_) | Instruction::Number { .. } | Instruction::Bool(_) => {}
+                Instruction::Param(_)
+                | Instruction::Number { .. }
+                | Instruction::Bool(_)
+                | Instruction::String(_) => {}
             }
             seen_in_block.insert(*value);
         }
@@ -764,6 +768,7 @@ fn infer_instruction_type(
             .ok_or_else(|| Diagnostic::new(format!("param index {} out of bounds", index))),
         Instruction::Number { ty, .. } => Ok(Type::Numeric(*ty)),
         Instruction::Bool(_) => Ok(Type::Bool),
+        Instruction::String(_) => Ok(Type::String),
         Instruction::Cast { to, .. } => Ok(to.clone()),
         Instruction::Binary { result_ty, .. } => Ok(result_ty.clone()),
         Instruction::MathIntrinsic { result_ty, .. } => Ok(result_ty.clone()),
@@ -1719,11 +1724,7 @@ impl Builder<'_> {
                 })
             }
             Expr::Bool(value) => self.emit(Instruction::Bool(*value)),
-            Expr::String(_) => {
-                return Err(Diagnostic::new(
-                    "string values are not yet supported in IR lowering",
-                ));
-            }
+            Expr::String(value) => self.emit(Instruction::String(value.clone())),
             Expr::Name(name) => {
                 if let Some(value) = env.get(name).copied() {
                     let actual = types.get(name).cloned().ok_or_else(|| {
@@ -4175,17 +4176,22 @@ mod tests {
     }
 
     #[test]
-    fn rejects_string_value_lowering_for_now() {
+    fn lowers_string_value_to_ir() {
         let source = r#"
             function entry(): string
                 return "hello"
             end
         "#;
         let program = parse(source).expect("parse should succeed");
-        let err = build(&program).expect_err("ir build should fail for string values");
+        let module = build(&program).expect("ir build should succeed for string values");
+        let function = &module.functions[0];
+        assert_eq!(function.return_type, Type::String);
+        let block = function.blocks.get(&function.entry).expect("entry block");
+        let (_, instruction) = &block.instructions[0];
         assert!(
-            err.to_string()
-                .contains("string values are not yet supported in IR lowering")
+            matches!(instruction, Instruction::String(s) if s == "hello"),
+            "expected String instruction with 'hello', got {:?}",
+            instruction
         );
     }
 
