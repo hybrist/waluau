@@ -592,6 +592,22 @@ mod tests {
     }
 
     #[test]
+    fn executes_print_builtin() {
+        let source = r#"
+            function check(): i32
+                print("hello")
+                return 1
+            end
+        "#;
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let check = instance
+            .get_typed_func::<(), i32>(&mut store, "check")
+            .expect("check export should exist");
+        assert_eq!(check.call(&mut store, ()).expect("call should succeed"), 1);
+    }
+
+    #[test]
     fn rejects_invalid_fixture_file() {
         let source = fixture_source("mismatch");
         let err = super::compile_source(source).expect_err("compile should fail");

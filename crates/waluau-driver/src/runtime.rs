@@ -81,6 +81,15 @@ pub fn instantiate(
             ExternRef::new(&mut caller, left + &right)
         },
     )?;
+    linker.func_wrap(
+        host::IMPORT_MODULE,
+        host::IMPORT_PRINT,
+        |mut caller: Caller<'_, HostState>, value: Rooted<ExternRef>| -> wasmtime::Result<()> {
+            let value = externref_string(&mut caller, value, "print argument is not a string")?;
+            println!("{value}");
+            Ok(())
+        },
+    )?;
     let instance = linker.instantiate(&mut store, module)?;
     Ok((store, instance))
 }
