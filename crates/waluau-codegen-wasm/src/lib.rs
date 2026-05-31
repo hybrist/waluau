@@ -825,7 +825,7 @@ fn emit_block(
             }
             out.instruction(&Instruction::Return);
         }
-        Terminator::Unreachable => {
+        Terminator::Unreachable { .. } => {
             out.instruction(&Instruction::Unreachable);
         }
     }
@@ -1433,7 +1433,7 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
 
 fn terminator_operands(terminator: &Terminator) -> Vec<ValueId> {
     match terminator {
-        Terminator::Jump(_) | Terminator::Unreachable => Vec::new(),
+        Terminator::Jump(_) | Terminator::Unreachable { .. } => Vec::new(),
         Terminator::Branch { condition, .. } => vec![*condition],
         Terminator::Return(value) => vec![*value],
     }

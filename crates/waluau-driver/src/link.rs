@@ -556,6 +556,7 @@ impl Rewriter<'_> {
                 callee,
                 type_args: _,
                 args,
+                ..
             } => {
                 self.rewrite_expr(callee, bound);
                 for arg in args {
@@ -675,6 +676,7 @@ fn expr_mentions_name(name: &str, expr: &Expr) -> bool {
             callee,
             args,
             type_args: _,
+            ..
         } => {
             expr_mentions_name(name, callee) || args.iter().any(|arg| expr_mentions_name(name, arg))
         }
@@ -757,6 +759,7 @@ fn collect_expr(expr: &Expr, out: &mut Vec<String>) {
             callee,
             type_args: _,
             args,
+            ..
         } => {
             collect_expr(callee, out);
             for arg in args {

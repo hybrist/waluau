@@ -320,7 +320,8 @@ impl<'a> Monomorphizer<'a> {
                 callee,
                 type_args,
                 args,
-            } => self.rewrite_call_expr(callee, type_args, args, subst, active)?,
+                span,
+            } => self.rewrite_call_expr(callee, type_args, args, *span, subst, active)?,
             Expr::Function(function) => {
                 Expr::Function(self.rewrite_function_expr(function, subst, active)?)
             }
@@ -357,6 +358,7 @@ impl<'a> Monomorphizer<'a> {
         callee: &Expr,
         type_args: &[Type],
         args: &[Expr],
+        span: Option<waluau_ast::Span>,
         subst: &HashMap<String, Type>,
         active: Option<&ActiveSpecialization>,
     ) -> Result<Expr, Diagnostic> {
@@ -378,6 +380,7 @@ impl<'a> Monomorphizer<'a> {
                     callee: Box::new(Expr::Name(specialized_name)),
                     type_args: Vec::new(),
                     args,
+                    span,
                 });
             }
         }
@@ -390,6 +393,7 @@ impl<'a> Monomorphizer<'a> {
                     callee: Box::new(Expr::Function(specialized)),
                     type_args: Vec::new(),
                     args,
+                    span,
                 });
             }
         }
@@ -401,6 +405,7 @@ impl<'a> Monomorphizer<'a> {
                 .map(|ty| substitute_type(ty, subst))
                 .collect(),
             args,
+            span,
         })
     }
 
@@ -719,7 +724,9 @@ pub enum Terminator {
         else_block: BlockId,
     },
     Return(ValueId),
-    Unreachable,
+    Unreachable {
+        span: Option<waluau_ast::Span>,
+    },
 }
 
 pub fn build(program: &Program) -> Result<Module, Diagnostic> {
@@ -1303,7 +1310,7 @@ fn verify_function(
                     )));
                 }
             }
-            Terminator::Unreachable => {}
+            Terminator::Unreachable { .. } => {}
         }
     }
 
@@ -1581,7 +1588,7 @@ fn build_function(
         BasicBlock {
             id: out.entry,
             instructions: Vec::new(),
-            terminator: Terminator::Unreachable,
+            terminator: Terminator::Unreachable { span: None },
         },
     );
 
@@ -1681,7 +1688,7 @@ impl Builder<'_> {
             BasicBlock {
                 id,
                 instructions: Vec::new(),
-                terminator: Terminator::Unreachable,
+                terminator: Terminator::Unreachable { span: None },
             },
         );
         id
@@ -1896,11 +1903,12 @@ impl Builder<'_> {
                     callee,
                     type_args: _,
                     args,
+                    span,
                 } = expr
                 {
                     if let Expr::Name(name) = callee.as_ref() {
                         if name == ASSERT {
-                            self.lower_assert_call(args, env, types)?;
+                            self.lower_assert_call(args, *span, env, types)?;
                             return Ok(());
                         }
                     }
@@ -2039,6 +2047,7 @@ impl Builder<'_> {
     fn lower_assert_call(
         &mut self,
         args: &[Expr],
+        span: Option<waluau_ast::Span>,
         env: &mut HashMap<String, ValueId>,
         types: &mut HashMap<String, Type>,
     ) -> Result<(), Diagnostic> {
@@ -2060,11 +2069,9 @@ impl Builder<'_> {
             },
         );
         self.current_block = trap_block;
-        // TODO: include assertion expression and source location details once spans
-        // are threaded through AST/HIR/IR lowering (tracked in beads).
         let message = self.emit(Instruction::String("Assertion failed".to_string()));
         self.emit(Instruction::Print { value: message });
-        self.set_terminator(trap_block, Terminator::Unreachable);
+        self.set_terminator(trap_block, Terminator::Unreachable { span });
         self.current_block = continue_block;
         Ok(())
     }
@@ -2592,6 +2599,7 @@ impl Builder<'_> {
                 callee,
                 type_args: _,
                 args,
+                ..
             } => {
                 if let Expr::Name(name) = callee.as_ref() {
                     if let Some(result) =
@@ -2803,7 +2811,7 @@ impl Builder<'_> {
             BasicBlock {
                 id: lifted.entry,
                 instructions: Vec::new(),
-                terminator: Terminator::Unreachable,
+                terminator: Terminator::Unreachable { span: None },
             },
         );
         for (name, ty) in &captures {
@@ -3503,6 +3511,7 @@ impl Builder<'_> {
                 callee: Box::new(Expr::Name(name.to_string())),
                 type_args: Vec::new(),
                 args: args.to_vec(),
+                span: None,
             },
             types,
         ) {
@@ -4024,6 +4033,7 @@ fn collect_expr_captures(
             callee,
             type_args: _,
             args,
+            ..
         } => {
             collect_expr_captures(callee, bound, env, signatures, captures);
             for arg in args {
@@ -4181,6 +4191,7 @@ fn collect_nested_from_expr(expr: &Expr, out: &mut HashSet<String>) {
             callee,
             type_args: _,
             args,
+            ..
         } => {
             collect_nested_from_expr(callee, out);
             for a in args {
@@ -4295,6 +4306,7 @@ fn collect_free_names_in_expr(expr: &Expr, bound: &HashSet<String>, out: &mut Ha
             callee,
             type_args: _,
             args,
+            ..
         } => {
             collect_free_names_in_expr(callee, bound, out);
             for a in args {
@@ -4359,7 +4371,7 @@ fn predecessors(function: &Function) -> HashMap<BlockId, Vec<BlockId>> {
                 out.entry(*then_block).or_default().push(*id);
                 out.entry(*else_block).or_default().push(*id);
             }
-            Terminator::Return(_) | Terminator::Unreachable => {}
+            Terminator::Return(_) | Terminator::Unreachable { .. } => {}
         }
     }
     out
@@ -4527,6 +4539,28 @@ mod tests {
             .count();
         assert_eq!(branch_count, 1);
         assert_eq!(return_count, 2);
+    }
+
+    #[test]
+    fn threads_assert_call_span_to_trap_terminator() {
+        let source = r#"
+            function entry(): i32
+                assert(false)
+                return 1
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let module = build(&program).expect("ir build should succeed");
+        let function = &module.functions[0];
+        let trap_span = function
+            .blocks
+            .values()
+            .find_map(|block| match block.terminator {
+                Terminator::Unreachable { span } => span,
+                _ => None,
+            });
+        let span = trap_span.expect("assert trap should carry source span");
+        assert!(span.end > span.start);
     }
 
     #[test]
@@ -5151,7 +5185,7 @@ mod tests {
         let trap_block = function
             .blocks
             .values()
-            .find(|block| matches!(block.terminator, Terminator::Unreachable))
+            .find(|block| matches!(block.terminator, Terminator::Unreachable { .. }))
             .expect("assert should lower a trap block");
         assert!(trap_block.instructions.iter().any(|(_, instruction)| {
             matches!(

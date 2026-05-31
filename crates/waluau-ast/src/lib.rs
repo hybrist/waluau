@@ -281,6 +281,7 @@ pub enum Expr {
         callee: Box<Expr>,
         type_args: Vec<Type>,
         args: Vec<Expr>,
+        span: Option<Span>,
     },
     Function(FunctionExpr),
     /// A relative module import, e.g. `require("./math")`.

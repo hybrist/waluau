@@ -680,6 +680,7 @@ impl Parser {
                 Vec::new()
             };
             if self.check_simple(&TokenKind::LParen) {
+                let call_start = self.peek().map(|token| token.span.start).unwrap_or(0);
                 self.advance();
                 let mut args = Vec::new();
                 if !self.check_simple(&TokenKind::RParen) {
@@ -692,11 +693,19 @@ impl Parser {
                         }
                     }
                 }
+                let call_end = self
+                    .peek()
+                    .map(|token| token.span.end)
+                    .ok_or_else(|| Diagnostic::new("expected ')' after call arguments"))?;
                 self.expect_simple(TokenKind::RParen, "expected ')' after call arguments")?;
                 expr = Expr::Call {
                     callee: Box::new(expr),
                     type_args,
                     args,
+                    span: Some(Span {
+                        start: call_start,
+                        end: call_end,
+                    }),
                 };
                 continue;
             }
@@ -1422,12 +1431,29 @@ mod tests {
                 callee,
                 args,
                 type_args: _,
+                ..
             }) if args.len() == 2
                 && matches!(
                     callee.as_ref(),
                     waluau_ast::Expr::Field { name, .. } if name == "add"
                 )
         ));
+    }
+
+    #[test]
+    fn records_call_span() {
+        let source = r#"
+            function main(): i32
+                return add(1, 2)
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let Stmt::Return(waluau_ast::Expr::Call { span, .. }) = &program.functions[0].body[0]
+        else {
+            panic!("expected return call");
+        };
+        let span = span.expect("call span should be present");
+        assert!(span.end > span.start);
     }
 
     #[test]
