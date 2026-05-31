@@ -9,6 +9,7 @@ use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 const COROUTINE_CREATE: &str = "coroutine_create";
 const COROUTINE_RESUME: &str = "coroutine_resume";
 const COROUTINE_STATUS: &str = "coroutine_status";
+const COROUTINE_YIELD: &str = "coroutine_yield";
 const MATH_ABS: &str = "math_abs";
 const MATH_MIN: &str = "math_min";
 const MATH_MAX: &str = "math_max";
@@ -3367,6 +3368,20 @@ impl Builder<'_> {
                     ))),
                 }
             }
+            COROUTINE_YIELD => {
+                if args.len() != 1 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{COROUTINE_YIELD} expects 1 argument, got {}",
+                        args.len()
+                    ))));
+                }
+                let _yield_value = match self.lower_expr(&args[0], env, types, None) {
+                    Ok(value) => value,
+                    Err(error) => return Some(Err(error)),
+                };
+                let value = self.emit(Instruction::Unit);
+                Some(self.coerce_value(value, Type::Unit, expected))
+            }
             _ => None,
         }
     }
@@ -3437,6 +3452,19 @@ impl Builder<'_> {
                         "coroutine_status expects a coroutine created from a zero-argument function",
                     ))),
                 }
+            }
+            COROUTINE_YIELD => {
+                if args.len() != 1 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{COROUTINE_YIELD} expects 1 argument, got {}",
+                        args.len()
+                    ))));
+                }
+                let _ = match self.infer_expr_type(&args[0], types, None) {
+                    Ok(ty) => ty,
+                    Err(error) => return Some(Err(error)),
+                };
+                Some(Ok(Type::Unit))
             }
             _ => None,
         }
