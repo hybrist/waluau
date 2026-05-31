@@ -881,6 +881,9 @@ impl Parser {
                 }
             }
             self.expect_simple(TokenKind::RParen, "expected ')' after function type params")?;
+            if params.is_empty() && !self.check_simple(&TokenKind::Arrow) {
+                return Ok(Type::Unit);
+            }
             self.expect_simple(TokenKind::Arrow, "expected '->' in function type")?;
             let return_type = self.parse_type()?;
             return Ok(Type::Function {
@@ -1133,6 +1136,28 @@ mod tests {
         let program = parse(source).expect("parse should succeed");
         assert_eq!(program.functions[0].return_type, Some(Type::Unit));
         assert_eq!(program.functions[1].return_type, Some(Type::Unit));
+    }
+
+    #[test]
+    fn parses_paren_unit_type_alias() {
+        let source = r#"
+            function f(): ()
+                return 0
+            end
+            function g(cb: () -> i32): ()
+                return cb()
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        assert_eq!(program.functions[0].return_type, Some(Type::Unit));
+        assert_eq!(program.functions[1].return_type, Some(Type::Unit));
+        assert_eq!(
+            program.functions[1].params[0].ty,
+            Type::Function {
+                params: vec![],
+                return_type: Box::new(Type::Numeric(NumericType::I32)),
+            }
+        );
     }
 
     #[test]
