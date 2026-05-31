@@ -291,6 +291,31 @@ mod tests {
     }
 
     #[test]
+    fn executes_numeric_for_countdown_only() {
+        let source = r#"
+            function countdown_sum(start: i32): i32
+                local acc: i32 = 0
+                local step: i32 = -1::i32
+                for i = start, 1::i32, step do
+                    acc += i
+                end
+                return acc
+            end
+        "#;
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let countdown_sum = instance
+            .get_typed_func::<i32, i32>(&mut store, "countdown_sum")
+            .expect("countdown_sum export should exist");
+        assert_eq!(
+            countdown_sum
+                .call(&mut store, 4)
+                .expect("call should succeed"),
+            10
+        );
+    }
+
+    #[test]
     fn executes_i64_and_u64_locals_initialized_from_literals() {
         let source = fixture_source("literals_i64_u64");
         let wasm = super::compile_source(source).expect("compile should succeed");

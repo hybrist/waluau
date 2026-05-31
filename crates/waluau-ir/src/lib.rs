@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use waluau_ast::{
-    AssignOp, BinaryOp, Expr, Function as AstFunction, NumberLiteral, NumericType, Program,
-    Rebindability, Stmt, Type, UnaryOp,
+    AssignOp, BinaryOp, Expr, Function as AstFunction, NumberLiteral, NumericType, Program, Stmt,
+    Type, UnaryOp,
 };
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
@@ -2443,111 +2443,193 @@ impl Builder<'_> {
             return Err(Diagnostic::new("numeric for-loop bounds must be numeric"));
         };
         let loop_ty = Type::Numeric(numeric_ty);
-        let unique = self.function.next_value;
-        let index_name = format!("__waluau_numfor_index_{unique}");
-        let stop_name = format!("__waluau_numfor_stop_{unique}");
-        let step_name = format!("__waluau_numfor_step_{unique}");
-        let zero = Expr::Cast {
-            expr: Box::new(Expr::Number(NumberLiteral {
-                raw: "0".to_string(),
-            })),
-            ty: loop_ty.clone(),
-        };
-        let default_step = Expr::Cast {
-            expr: Box::new(Expr::Number(NumberLiteral {
-                raw: "1".to_string(),
-            })),
-            ty: loop_ty.clone(),
+        let start_value = self.lower_expr(start, env, types, Some(loop_ty.clone()))?;
+        let stop_init = self.lower_expr(stop, env, types, Some(loop_ty.clone()))?;
+        let zero_value = self.emit(Instruction::Number {
+            ty: numeric_ty,
+            literal: NumberLiteral { raw: "0".into() },
+        });
+        let default_step_value = if step.is_none() {
+            let default_step_expr = Expr::Cast {
+                expr: Box::new(Expr::Number(NumberLiteral { raw: "1".into() })),
+                ty: loop_ty.clone(),
+            };
+            Some(self.lower_expr(&default_step_expr, env, types, Some(loop_ty.clone()))?)
+        } else {
+            None
         };
 
-        let mut while_body = Vec::with_capacity(body.len() + 2);
-        while_body.push(Stmt::Let {
-            name: name.to_string(),
-            rebindability: Rebindability::Const,
-            ty: Some(loop_ty.clone()),
-            value: Expr::Name(index_name.clone()),
+        let preheader = self.current_block;
+        let header = self.new_block();
+        let loop_body = self.new_block();
+        let exit = self.new_block();
+        self.set_terminator(preheader, Terminator::Jump(header));
+
+        let mutated = collect_assigned_names(body);
+        self.current_block = header;
+        let mut loop_env = env.clone();
+        let loop_types = types.clone();
+        let mut phis = HashMap::new();
+        for name in &mutated {
+            if let Some(initial) = env.get(name).copied() {
+                let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
+                loop_env.insert(name.clone(), phi);
+                phis.insert(name.clone(), phi);
+            }
+        }
+        let stop_phi = self.emit(Instruction::Phi(vec![(preheader, stop_init)]));
+        let index_phi = self.emit(Instruction::Phi(vec![(preheader, start_value)]));
+        let step_value = if let Some(step_expr) = step {
+            self.lower_expr(step_expr, &loop_env, &loop_types, Some(loop_ty.clone()))?
+        } else {
+            default_step_value.expect("precomputed default step")
+        };
+
+        let step_positive = self.emit(Instruction::Binary {
+            op: BinaryOp::Greater,
+            left: step_value,
+            right: zero_value,
+            operand_ty: loop_ty.clone(),
+            result_ty: Type::Bool,
         });
-        while_body.extend(body.iter().cloned());
-        while_body.push(Stmt::Assign {
-            op: AssignOp::Set,
-            name: index_name.clone(),
-            value: Expr::Binary {
+        let step_negative = self.emit(Instruction::Binary {
+            op: BinaryOp::Less,
+            left: step_value,
+            right: zero_value,
+            operand_ty: loop_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        let i_lt_stop = self.emit(Instruction::Binary {
+            op: BinaryOp::Less,
+            left: index_phi,
+            right: stop_phi,
+            operand_ty: loop_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        let i_gt_stop = self.emit(Instruction::Binary {
+            op: BinaryOp::Greater,
+            left: index_phi,
+            right: stop_phi,
+            operand_ty: loop_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        let i_eq_stop_for_le = self.emit(Instruction::Binary {
+            op: BinaryOp::Eq,
+            left: index_phi,
+            right: stop_phi,
+            operand_ty: loop_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        let i_eq_stop_for_ge = self.emit(Instruction::Binary {
+            op: BinaryOp::Eq,
+            left: index_phi,
+            right: stop_phi,
+            operand_ty: loop_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        let i_le_stop = self.emit(Instruction::Binary {
+            op: BinaryOp::Or,
+            left: i_lt_stop,
+            right: i_eq_stop_for_le,
+            operand_ty: Type::Bool,
+            result_ty: Type::Bool,
+        });
+        let i_ge_stop = self.emit(Instruction::Binary {
+            op: BinaryOp::Or,
+            left: i_gt_stop,
+            right: i_eq_stop_for_ge,
+            operand_ty: Type::Bool,
+            result_ty: Type::Bool,
+        });
+        let forward_ok = self.emit(Instruction::Binary {
+            op: BinaryOp::And,
+            left: step_positive,
+            right: i_le_stop,
+            operand_ty: Type::Bool,
+            result_ty: Type::Bool,
+        });
+        let backward_ok = self.emit(Instruction::Binary {
+            op: BinaryOp::And,
+            left: step_negative,
+            right: i_ge_stop,
+            operand_ty: Type::Bool,
+            result_ty: Type::Bool,
+        });
+        let loop_cond = self.emit(Instruction::Binary {
+            op: BinaryOp::Or,
+            left: forward_ok,
+            right: backward_ok,
+            operand_ty: Type::Bool,
+            result_ty: Type::Bool,
+        });
+
+        self.loop_stack.push(LoopContext {
+            header,
+            continue_target: header,
+            break_target: exit,
+            phis: phis.clone(),
+        });
+        self.set_terminator(
+            header,
+            Terminator::Branch {
+                condition: loop_cond,
+                then_block: loop_body,
+                else_block: exit,
+            },
+        );
+
+        self.current_block = loop_body;
+        let mut body_env = loop_env.clone();
+        let mut body_types = loop_types.clone();
+        body_env.insert(name.to_string(), index_phi);
+        body_types.insert(name.to_string(), loop_ty.clone());
+        for stmt in body {
+            if self.current_block == DEAD_BLOCK {
+                break;
+            }
+            self.lower_stmt(stmt, &mut body_env, &mut body_types)?;
+        }
+        let loop_ctx = self
+            .loop_stack
+            .pop()
+            .expect("loop stack must contain entry for numeric for loop");
+        let phis = loop_ctx.phis;
+        let body_exit = self.current_block;
+        if body_exit != DEAD_BLOCK {
+            let stop_next = self.emit(Instruction::Binary {
                 op: BinaryOp::Add,
-                left: Box::new(Expr::Name(index_name.clone())),
-                right: Box::new(Expr::Name(step_name.clone())),
-            },
-        });
-        let positive_while_condition = Expr::Unary {
-            op: UnaryOp::Not,
-            expr: Box::new(Expr::Binary {
-                op: BinaryOp::Greater,
-                left: Box::new(Expr::Name(index_name.clone())),
-                right: Box::new(Expr::Name(stop_name.clone())),
-            }),
-        };
-        let negative_while_condition = Expr::Unary {
-            op: UnaryOp::Not,
-            expr: Box::new(Expr::Binary {
-                op: BinaryOp::Less,
-                left: Box::new(Expr::Name(index_name.clone())),
-                right: Box::new(Expr::Name(stop_name.clone())),
-            }),
-        };
-        let numeric_for_lowered = Stmt::If {
-            condition: Expr::Binary {
-                op: BinaryOp::Greater,
-                left: Box::new(Expr::Name(step_name.clone())),
-                right: Box::new(zero.clone()),
-            },
-            then_body: vec![Stmt::While {
-                condition: positive_while_condition,
-                body: while_body.clone(),
-            }],
-            else_body: vec![Stmt::If {
-                condition: Expr::Binary {
-                    op: BinaryOp::Less,
-                    left: Box::new(Expr::Name(step_name.clone())),
-                    right: Box::new(zero),
-                },
-                then_body: vec![Stmt::While {
-                    condition: negative_while_condition,
-                    body: while_body,
-                }],
-                else_body: vec![],
-            }],
-        };
+                left: stop_phi,
+                right: zero_value,
+                operand_ty: loop_ty.clone(),
+                result_ty: loop_ty.clone(),
+            });
+            let next_index = self.emit(Instruction::Binary {
+                op: BinaryOp::Add,
+                left: index_phi,
+                right: step_value,
+                operand_ty: loop_ty.clone(),
+                result_ty: loop_ty.clone(),
+            });
+            self.set_terminator(body_exit, Terminator::Jump(header));
+            add_phi_incoming(&mut self.function, header, stop_phi, (body_exit, stop_next));
+            add_phi_incoming(
+                &mut self.function,
+                header,
+                index_phi,
+                (body_exit, next_index),
+            );
+            for (name, phi) in &phis {
+                if let Some(next_value) = body_env.get(name).copied() {
+                    add_phi_incoming(&mut self.function, header, *phi, (body_exit, next_value));
+                }
+            }
+        }
 
-        self.lower_stmt(
-            &Stmt::Let {
-                name: index_name.clone(),
-                rebindability: Rebindability::Rebindable,
-                ty: Some(loop_ty.clone()),
-                value: start.clone(),
-            },
-            env,
-            types,
-        )?;
-        self.lower_stmt(
-            &Stmt::Let {
-                name: stop_name.clone(),
-                rebindability: Rebindability::Const,
-                ty: Some(loop_ty.clone()),
-                value: stop.clone(),
-            },
-            env,
-            types,
-        )?;
-        self.lower_stmt(
-            &Stmt::Let {
-                name: step_name.clone(),
-                rebindability: Rebindability::Const,
-                ty: Some(loop_ty.clone()),
-                value: step.cloned().unwrap_or(default_step),
-            },
-            env,
-            types,
-        )?;
-        self.lower_stmt(&numeric_for_lowered, env, types)
+        for (name, phi) in phis {
+            env.insert(name, phi);
+        }
+        self.current_block = exit;
+        Ok(())
     }
 
     fn lower_expr(
