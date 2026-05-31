@@ -557,6 +557,7 @@ fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
             callee: called,
             type_args: _,
             args,
+            ..
         } => {
             matches!(called.as_ref(), Expr::Name(name) if name == callee)
                 || expr_calls_name(called, callee)
@@ -1352,6 +1353,7 @@ fn infer_expr(
             callee,
             type_args,
             args,
+            ..
         } => {
             if let Expr::Name(name) = callee.as_ref() {
                 if let Some(result) = infer_math_builtin_call(
