@@ -753,6 +753,31 @@ mod tests {
     }
 
     #[test]
+    fn executes_generic_specializations() {
+        let source = r#"
+            function identity<T>(value: T): T
+                return value
+            end
+
+            function forward<T>(value: T): T
+                return identity<T>(value)
+            end
+
+            function main(): i32
+                local a: i32 = forward<i32>(41)
+                local b: i32 = forward<i32>(1)
+                return a + b
+            end
+        "#;
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let main = instance
+            .get_typed_func::<(), i32>(&mut store, "main")
+            .expect("main export should exist");
+        assert_eq!(main.call(&mut store, ()).expect("call should succeed"), 42);
+    }
+
+    #[test]
     fn cli_reports_compile_diagnostics() {
         let tempdir = tempdir().expect("tempdir should exist");
         let input_path = tempdir.path().join("mismatch.walu");
