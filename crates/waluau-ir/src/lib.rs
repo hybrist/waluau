@@ -1730,6 +1730,11 @@ impl Builder<'_> {
                             "numeric literal is not assignable to multiple values",
                         ));
                     }
+                    Type::Record(_) => {
+                        return Err(Diagnostic::new(
+                            "numeric literal is not assignable to namespace",
+                        ));
+                    }
                     Type::TypeParam(_) => {
                         return Err(Diagnostic::new(
                             "generic type parameters must be specialized before IR lowering",
@@ -1806,7 +1811,7 @@ impl Builder<'_> {
                                     "unary '-' requires a numeric operand",
                                 ));
                             }
-                            Type::Function { .. } => {
+                            Type::Function { .. } | Type::Record(_) => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -2076,6 +2081,16 @@ impl Builder<'_> {
                 });
                 self.coerce_value(value, element_ty, expected)?
             }
+            Expr::TableLiteral { .. } => {
+                return Err(Diagnostic::new(
+                    "table literals are only supported in module export expressions",
+                ));
+            }
+            Expr::Field { .. } => {
+                return Err(Diagnostic::new(
+                    "namespace member access must be resolved before IR lowering",
+                ));
+            }
         };
         Ok(value)
     }
@@ -2297,6 +2312,9 @@ impl Builder<'_> {
                 Some(Type::Multi(_)) => Err(Diagnostic::new(
                     "numeric literal is not assignable to multiple values",
                 )),
+                Some(Type::Record(_)) => Err(Diagnostic::new(
+                    "numeric literal is not assignable to namespace",
+                )),
                 Some(Type::TypeParam(_)) => Err(Diagnostic::new(
                     "numeric literal is not assignable to generic type parameter",
                 )),
@@ -2333,7 +2351,7 @@ impl Builder<'_> {
                         Type::Array(_) => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
-                        Type::Function { .. } => {
+                        Type::Function { .. } | Type::Record(_) => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                         Type::Multi(_) => {
@@ -2416,6 +2434,12 @@ impl Builder<'_> {
             Expr::ArrayLiteral { elements } => {
                 self.infer_array_literal_type(elements, types, expected)
             }
+            Expr::TableLiteral { .. } => Err(Diagnostic::new(
+                "table literals are only supported in module export expressions",
+            )),
+            Expr::Field { .. } => Err(Diagnostic::new(
+                "namespace member access must be resolved before IR lowering",
+            )),
             Expr::Index { base, index } => {
                 let base_ty = self.infer_expr_type(base, types, None)?;
                 let element_ty = base_ty
@@ -3012,6 +3036,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Function { .. } => Err(Diagnostic::new(format!(
                 "cannot implicitly convert function to {expected_numeric}",
             ))),
+            Type::Record(_) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert namespace to {expected_numeric}",
+            ))),
             Type::TypeParam(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert generic type parameter to {expected_numeric}",
             ))),
@@ -3197,6 +3224,14 @@ fn collect_expr_captures(
                 collect_expr_captures(element, bound, env, signatures, captures);
             }
         }
+        Expr::TableLiteral { fields } => {
+            for field in fields {
+                collect_expr_captures(&field.value, bound, env, signatures, captures);
+            }
+        }
+        Expr::Field { base, .. } => {
+            collect_expr_captures(base, bound, env, signatures, captures);
+        }
         Expr::Index { base, index } => {
             collect_expr_captures(base, bound, env, signatures, captures);
             collect_expr_captures(index, bound, env, signatures, captures);
@@ -3345,6 +3380,12 @@ fn collect_nested_from_expr(expr: &Expr, out: &mut HashSet<String>) {
                 collect_nested_from_expr(e, out);
             }
         }
+        Expr::TableLiteral { fields } => {
+            for field in fields {
+                collect_nested_from_expr(&field.value, out);
+            }
+        }
+        Expr::Field { base, .. } => collect_nested_from_expr(base, out),
         Expr::Index { base, index } => {
             collect_nested_from_expr(base, out);
             collect_nested_from_expr(index, out);
@@ -3462,6 +3503,12 @@ fn collect_free_names_in_expr(expr: &Expr, bound: &HashSet<String>, out: &mut Ha
                 collect_free_names_in_expr(e, bound, out);
             }
         }
+        Expr::TableLiteral { fields } => {
+            for field in fields {
+                collect_free_names_in_expr(&field.value, bound, out);
+            }
+        }
+        Expr::Field { base, .. } => collect_free_names_in_expr(base, bound, out),
         Expr::Index { base, index } => {
             collect_free_names_in_expr(base, bound, out);
             collect_free_names_in_expr(index, bound, out);

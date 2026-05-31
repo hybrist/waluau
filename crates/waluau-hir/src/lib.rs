@@ -568,6 +568,10 @@ fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
             .iter()
             .any(|stmt| stmt_calls_name(stmt, callee)),
         Expr::ArrayLiteral { elements } => elements.iter().any(|el| expr_calls_name(el, callee)),
+        Expr::TableLiteral { fields } => fields
+            .iter()
+            .any(|field| expr_calls_name(&field.value, callee)),
+        Expr::Field { base, .. } => expr_calls_name(base, callee),
         Expr::Index { base, index } => {
             expr_calls_name(base, callee) || expr_calls_name(index, callee)
         }
@@ -1276,7 +1280,7 @@ fn infer_expr(
                     Type::String => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Array(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Multi(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
-                    Type::Function { .. } | Type::TypeParam(_) => {
+                    Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) => {
                         Err(Diagnostic::new("unary '-' requires a numeric operand"))
                     }
                 }
@@ -1443,6 +1447,12 @@ fn infer_expr(
         Expr::ArrayLiteral { elements } => {
             infer_array_literal(elements, vars, fn_signatures, active_type_params, expected)
         }
+        Expr::TableLiteral { .. } => Err(Diagnostic::new(
+            "table literals are only supported in module export expressions",
+        )),
+        Expr::Field { .. } => Err(Diagnostic::new(
+            "namespace member access must be resolved before type checking",
+        )),
         Expr::Index { base, index } => {
             let base_ty = infer_expr(base, vars, fn_signatures, active_type_params, None)?;
             let element_ty = base_ty
@@ -1931,6 +1941,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Function { .. } => Err(Diagnostic::new(format!(
                 "cannot implicitly convert function to {expected_numeric}",
             ))),
+            Type::Record(_) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert namespace to {expected_numeric}",
+            ))),
             Type::TypeParam(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert generic type parameter to {expected_numeric}",
             ))),
@@ -1979,6 +1992,9 @@ fn resolve_number_literal(
         )),
         Some(Type::Function { .. }) => Err(Diagnostic::new(
             "numeric literal is not assignable to function",
+        )),
+        Some(Type::Record(_)) => Err(Diagnostic::new(
+            "numeric literal is not assignable to namespace",
         )),
         Some(Type::Multi(_)) => Err(Diagnostic::new(
             "numeric literal is not assignable to multiple values",

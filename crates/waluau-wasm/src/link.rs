@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet};
-use waluau_ast::{Expr, Program, Stmt};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use waluau_ast::{Expr, Function, FunctionExpr, Program, Stmt, TableField};
 
 pub struct LoadedModule {
     pub program: Program,
@@ -129,7 +129,6 @@ fn module_prefix(id: usize, entry_id: usize) -> String {
         format!("__waluau_m{id}_")
     }
 }
-
 fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, String> {
     let mut functions = Vec::new();
     let mut top_level = Vec::new();
@@ -137,33 +136,37 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, String> {
     for (id, module) in modules.iter().enumerate() {
         if id != entry_id && !module.program.top_level.is_empty() {
             return Err(
-                "imported modules may only contain functions and a trailing `return <function>`"
+                "imported modules may only contain functions and a trailing `return` export"
                     .to_string(),
             );
         }
 
         let prefix = module_prefix(id, entry_id);
-        let func_names: HashSet<String> = module
-            .program
-            .functions
+        let mut module_functions = module.program.functions.clone();
+        if let Some(export) = &module.program.export {
+            hoist_table_export_functions(&mut module_functions, export)?;
+        }
+        let func_names: HashSet<String> = module_functions
             .iter()
             .map(|function| function.name.clone())
             .collect();
 
         let mut imports = HashMap::new();
         for (raw, &target_id) in &module.requires {
-            let export_name = exported_function(modules, target_id, raw)?;
-            let resolved = format!("{}{}", module_prefix(target_id, entry_id), export_name);
-            imports.insert(raw.clone(), resolved);
+            imports.insert(
+                raw.clone(),
+                resolve_import(modules, target_id, entry_id, raw)?,
+            );
         }
 
-        let rewriter = Rewriter {
+        let mut rewriter = Rewriter {
             prefix: &prefix,
             func_names: &func_names,
             imports: &imports,
+            namespaces: HashMap::new(),
         };
 
-        for function in &module.program.functions {
+        for function in &module_functions {
             let mut lowered = function.clone();
             let mut bound: HashSet<String> = lowered
                 .params
@@ -171,6 +174,7 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, String> {
                 .map(|param| param.name.clone())
                 .collect();
             rewriter.rewrite_block(&mut lowered.body, &mut bound);
+            strip_unused_namespace_lets(&mut lowered.body);
             lowered.name = format!("{prefix}{}", function.name);
             functions.push(lowered);
         }
@@ -179,6 +183,7 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, String> {
             let mut lowered = module.program.top_level.clone();
             let mut bound = HashSet::new();
             rewriter.rewrite_block(&mut lowered, &mut bound);
+            strip_unused_namespace_lets(&mut lowered);
             top_level = lowered;
         }
     }
@@ -190,52 +195,145 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, String> {
     })
 }
 
-fn exported_function(
+enum ResolvedImport {
+    Function(String),
+    Namespace(BTreeMap<String, String>),
+}
+
+fn hoist_table_export_functions(
+    functions: &mut Vec<Function>,
+    export: &Expr,
+) -> Result<(), String> {
+    let Expr::TableLiteral { fields } = export else {
+        return Ok(());
+    };
+    for field in fields {
+        if let Expr::Function(function) = &field.value {
+            functions.push(function_expr_to_function(&field.name, function));
+        }
+    }
+    Ok(())
+}
+
+fn function_expr_to_function(name: &str, function: &FunctionExpr) -> Function {
+    Function {
+        name: name.to_string(),
+        type_params: function.type_params.clone(),
+        params: function.params.clone(),
+        return_type: function.return_type.clone(),
+        body: function.body.clone(),
+    }
+}
+
+fn resolve_import(
     modules: &[LoadedModule],
     target_id: usize,
+    entry_id: usize,
     raw: &str,
-) -> Result<String, String> {
-    match &modules[target_id].program.export {
+) -> Result<ResolvedImport, String> {
+    let prefix = module_prefix(target_id, entry_id);
+    let module = &modules[target_id];
+    let mut top_level_names: HashSet<String> = module
+        .program
+        .functions
+        .iter()
+        .map(|function| function.name.clone())
+        .collect();
+    if let Some(Expr::TableLiteral { fields }) = &module.program.export {
+        for field in fields {
+            if matches!(field.value, Expr::Function(_)) {
+                top_level_names.insert(field.name.clone());
+            }
+        }
+    }
+
+    match &module.program.export {
         Some(Expr::Name(name)) => {
-            if modules[target_id]
-                .program
-                .functions
-                .iter()
-                .any(|function| &function.name == name)
-            {
-                Ok(name.clone())
+            if top_level_names.contains(name) {
+                Ok(ResolvedImport::Function(format!("{prefix}{name}")))
             } else {
                 Err(format!(
                     "module imported via \"{raw}\" exports unknown function '{name}'"
                 ))
             }
         }
+        Some(Expr::TableLiteral { fields }) => {
+            let mut namespace = BTreeMap::new();
+            for field in fields {
+                let function_name = export_field_function_name(field, &top_level_names, raw)?;
+                namespace.insert(field.name.clone(), format!("{prefix}{function_name}"));
+            }
+            if namespace.is_empty() {
+                return Err(format!(
+                    "module imported via \"{raw}\" exports an empty table"
+                ));
+            }
+            Ok(ResolvedImport::Namespace(namespace))
+        }
         Some(_) => Err(format!(
-            "module imported via \"{raw}\" must export a function name, e.g. `return myFunction`"
+            "module imported via \"{raw}\" must export a function name or table of functions"
         )),
         None => Err(format!(
-            "module imported via \"{raw}\" has no export; add `return <function>`"
+            "module imported via \"{raw}\" has no export; add `return <function>` or `return {{ ... }}`"
         )),
     }
 }
 
+fn export_field_function_name(
+    field: &TableField,
+    top_level_names: &HashSet<String>,
+    raw: &str,
+) -> Result<String, String> {
+    match &field.value {
+        Expr::Name(name) => {
+            if top_level_names.contains(name) {
+                Ok(name.clone())
+            } else {
+                Err(format!(
+                    "module imported via \"{raw}\" exports unknown function '{name}' in field '{}'",
+                    field.name
+                ))
+            }
+        }
+        Expr::Function(_) => Ok(field.name.clone()),
+        _ => Err(format!(
+            "module imported via \"{raw}\" field '{}' must be a function name or `function ... end`",
+            field.name
+        )),
+    }
+}
+
+/// Rewrites a single module's bodies: mangles references to its own top-level
+/// functions and replaces `require(...)` with resolved imports.
 struct Rewriter<'a> {
     prefix: &'a str,
     func_names: &'a HashSet<String>,
-    imports: &'a HashMap<String, String>,
+    imports: &'a HashMap<String, ResolvedImport>,
+    namespaces: HashMap<String, BTreeMap<String, String>>,
 }
 
 impl Rewriter<'_> {
-    fn rewrite_block(&self, stmts: &mut [Stmt], bound: &mut HashSet<String>) {
+    fn rewrite_block(&mut self, stmts: &mut [Stmt], bound: &mut HashSet<String>) {
         for stmt in stmts {
             self.rewrite_stmt(stmt, bound);
         }
     }
 
-    fn rewrite_stmt(&self, stmt: &mut Stmt, bound: &mut HashSet<String>) {
+    fn rewrite_stmt(&mut self, stmt: &mut Stmt, bound: &mut HashSet<String>) {
         match stmt {
             Stmt::Let { name, value, .. } => {
                 self.rewrite_expr(value, bound);
+                if let Expr::TableLiteral { fields } = &*value {
+                    let mut field_map = BTreeMap::new();
+                    for field in fields {
+                        if let Expr::Name(function_name) = &field.value {
+                            field_map.insert(field.name.clone(), function_name.clone());
+                        }
+                    }
+                    if !field_map.is_empty() && field_map.len() == fields.len() {
+                        self.namespaces.insert(name.clone(), field_map);
+                    }
+                }
                 bound.insert(name.clone());
             }
             Stmt::Assign { value, .. } => self.rewrite_expr(value, bound),
@@ -260,6 +358,7 @@ impl Rewriter<'_> {
                 self.rewrite_block(body, &mut bound.clone());
             }
             Stmt::Repeat { body, condition } => {
+                // `until` can observe locals declared inside the loop body.
                 let mut inner = bound.clone();
                 self.rewrite_block(body, &mut inner);
                 self.rewrite_expr(condition, &inner);
@@ -288,11 +387,33 @@ impl Rewriter<'_> {
         }
     }
 
-    fn rewrite_expr(&self, expr: &mut Expr, bound: &HashSet<String>) {
+    fn rewrite_expr(&mut self, expr: &mut Expr, bound: &HashSet<String>) {
+        if let Expr::Field { base, name: field } = expr {
+            if let Expr::Name(local) = &**base {
+                if let Some(fields) = self.namespaces.get(local) {
+                    if let Some(resolved) = fields.get(field) {
+                        *expr = Expr::Name(resolved.clone());
+                        return;
+                    }
+                }
+            }
+        }
+
         match expr {
             Expr::Require(path) => {
                 if let Some(resolved) = self.imports.get(path) {
-                    *expr = Expr::Name(resolved.clone());
+                    *expr = match resolved {
+                        ResolvedImport::Function(name) => Expr::Name(name.clone()),
+                        ResolvedImport::Namespace(fields) => Expr::TableLiteral {
+                            fields: fields
+                                .iter()
+                                .map(|(name, function)| TableField {
+                                    name: name.clone(),
+                                    value: Expr::Name(function.clone()),
+                                })
+                                .collect(),
+                        },
+                    };
                 }
             }
             Expr::Name(name) => {
@@ -340,11 +461,117 @@ impl Rewriter<'_> {
                     self.rewrite_expr(element, bound);
                 }
             }
+            Expr::TableLiteral { fields } => {
+                for field in fields {
+                    self.rewrite_expr(&mut field.value, bound);
+                }
+            }
+            Expr::Field { base, .. } => self.rewrite_expr(base, bound),
             Expr::Index { base, index } => {
                 self.rewrite_expr(base, bound);
                 self.rewrite_expr(index, bound);
             }
         }
+    }
+}
+
+fn strip_unused_namespace_lets(stmts: &mut Vec<Stmt>) {
+    let unused: HashSet<String> = stmts
+        .iter()
+        .filter_map(|stmt| {
+            if let Stmt::Let { name, value, .. } = stmt {
+                if matches!(value, Expr::TableLiteral { .. }) && !stmt_mentions_name(name, stmts) {
+                    return Some(name.clone());
+                }
+            }
+            None
+        })
+        .collect();
+    if unused.is_empty() {
+        return;
+    }
+    stmts.retain(|stmt| !matches!(stmt, Stmt::Let { name, .. } if unused.contains(name)));
+}
+
+fn stmt_mentions_name(name: &str, stmts: &[Stmt]) -> bool {
+    stmts
+        .iter()
+        .any(|stmt| stmt_mentions_name_in_stmt(name, stmt))
+}
+
+fn stmt_mentions_name_in_stmt(name: &str, stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Let {
+            name: local, value, ..
+        } if local == name => false,
+        Stmt::Let { value, .. }
+        | Stmt::Assign { value, .. }
+        | Stmt::Return(value)
+        | Stmt::Expr(value) => expr_mentions_name(name, value),
+        Stmt::IndexAssign {
+            base, index, value, ..
+        } => {
+            expr_mentions_name(name, base)
+                || expr_mentions_name(name, index)
+                || expr_mentions_name(name, value)
+        }
+        Stmt::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
+            expr_mentions_name(name, condition)
+                || stmt_mentions_name(name, then_body)
+                || stmt_mentions_name(name, else_body)
+        }
+        Stmt::While { condition, body } => {
+            expr_mentions_name(name, condition) || stmt_mentions_name(name, body)
+        }
+        Stmt::Repeat { body, condition } => {
+            stmt_mentions_name(name, body) || expr_mentions_name(name, condition)
+        }
+        Stmt::ReturnMulti(values)
+        | Stmt::LetMulti { values, .. }
+        | Stmt::AssignMulti { values, .. } => {
+            values.iter().any(|value| expr_mentions_name(name, value))
+        }
+        Stmt::Break | Stmt::Continue => false,
+    }
+}
+
+fn expr_mentions_name(name: &str, expr: &Expr) -> bool {
+    match expr {
+        Expr::Name(local) => local == name,
+        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => expr_mentions_name(name, expr),
+        Expr::Binary { left, right, .. } => {
+            expr_mentions_name(name, left) || expr_mentions_name(name, right)
+        }
+        Expr::If {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            expr_mentions_name(name, condition)
+                || expr_mentions_name(name, then_expr)
+                || expr_mentions_name(name, else_expr)
+        }
+        Expr::Call {
+            callee,
+            args,
+            type_args: _,
+        } => {
+            expr_mentions_name(name, callee) || args.iter().any(|arg| expr_mentions_name(name, arg))
+        }
+        Expr::Function(function) => stmt_mentions_name(name, &function.body),
+        Expr::ArrayLiteral { elements } => elements.iter().any(|el| expr_mentions_name(name, el)),
+        Expr::TableLiteral { fields } => fields
+            .iter()
+            .any(|field| expr_mentions_name(name, &field.value)),
+        Expr::Field { base, .. } => expr_mentions_name(name, base),
+        Expr::Index { base, index } => {
+            expr_mentions_name(name, base) || expr_mentions_name(name, index)
+        }
+        Expr::Require(_) | Expr::Number(_) | Expr::Bool(_) | Expr::String(_) => false,
     }
 }
 
@@ -426,6 +653,12 @@ fn collect_expr(expr: &Expr, out: &mut Vec<String>) {
                 collect_expr(element, out);
             }
         }
+        Expr::TableLiteral { fields } => {
+            for field in fields {
+                collect_expr(&field.value, out);
+            }
+        }
+        Expr::Field { base, .. } => collect_expr(base, out),
         Expr::Index { base, index } => {
             collect_expr(base, out);
             collect_expr(index, out);
