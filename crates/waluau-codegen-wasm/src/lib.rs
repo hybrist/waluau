@@ -8,9 +8,9 @@ use waluau_ir::{
     Terminator, ValueId,
 };
 use wasm_encoder::{
-    BlockType, CodeSection, ConstExpr, ElementSection, Elements, ExportKind, ExportSection,
-    Function, FunctionSection, HeapType, Instruction, Module as WasmModule, RefType, StartSection,
-    StorageType, TableSection, TableType, TypeSection, ValType,
+    AbstractHeapType, BlockType, CodeSection, ConstExpr, ElementSection, Elements, ExportKind,
+    ExportSection, Function, FunctionSection, HeapType, Instruction, Module as WasmModule, RefType,
+    StartSection, StorageType, TableSection, TableType, TypeSection, ValType,
 };
 use wasmparser::{Validator, WasmFeatures};
 
@@ -218,9 +218,7 @@ fn array_storage_type(
         Type::Numeric(NumericType::F32) => Ok(StorageType::Val(ValType::F32)),
         Type::Numeric(NumericType::F64) => Ok(StorageType::Val(ValType::F64)),
         Type::Bool => Ok(StorageType::Val(ValType::I32)),
-        Type::String => Err(Diagnostic::new(
-            "string values are not yet supported in array storage",
-        )),
+        Type::String => Ok(StorageType::Val(ValType::Ref(RefType::EXTERNREF))),
         Type::Array(_) => {
             let index = registry.index(element_ty)?;
             Ok(StorageType::Val(ValType::Ref(RefType {
@@ -602,6 +600,7 @@ fn infer_value_types(
                 IrInstruction::Param(index) => function.params[*index].1.clone(),
                 IrInstruction::Number { ty, .. } => Type::Numeric(*ty),
                 IrInstruction::Bool(_) => Type::Bool,
+                IrInstruction::String(_) => Type::String,
                 IrInstruction::Cast { to, .. } => to.clone(),
                 IrInstruction::Binary { result_ty, .. } => result_ty.clone(),
                 IrInstruction::MathIntrinsic { result_ty, .. } => result_ty.clone(),
@@ -765,6 +764,13 @@ fn emit_block_instructions(
             }
             IrInstruction::Bool(flag) => {
                 out.instruction(&Instruction::I32Const(i32::from(*flag)));
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::String(_) => {
+                out.instruction(&Instruction::RefNull(HeapType::Abstract {
+                    shared: false,
+                    ty: AbstractHeapType::Extern,
+                }));
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::Cast {
@@ -1254,9 +1260,10 @@ fn assign_locals_by_live_range(
 
 fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
     match instruction {
-        IrInstruction::Param(_) | IrInstruction::Number { .. } | IrInstruction::Bool(_) => {
-            Vec::new()
-        }
+        IrInstruction::Param(_)
+        | IrInstruction::Number { .. }
+        | IrInstruction::Bool(_)
+        | IrInstruction::String(_) => Vec::new(),
         IrInstruction::Cast { value, .. } => vec![*value],
         IrInstruction::Binary { left, right, .. } => vec![*left, *right],
         IrInstruction::MathIntrinsic { args, .. } => args.clone(),
@@ -1304,7 +1311,10 @@ fn instruction_use_requires_local(instruction: &IrInstruction) -> bool {
 
 fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: ValueId) -> bool {
     match instruction {
-        IrInstruction::Param(_) | IrInstruction::Number { .. } | IrInstruction::Bool(_) => false,
+        IrInstruction::Param(_)
+        | IrInstruction::Number { .. }
+        | IrInstruction::Bool(_)
+        | IrInstruction::String(_) => false,
         IrInstruction::Cast { value: source, .. } => *source == value,
         IrInstruction::Binary { left, .. } => *left == value,
         IrInstruction::MathIntrinsic { args, .. } => args.first().copied() == Some(value),
@@ -2009,9 +2019,7 @@ fn wasm_type(ty: &Type, array_registry: &ArrayTypeRegistry) -> Result<ValType, D
                 heap_type: HeapType::Concrete(index),
             }))
         }
-        Type::String => Err(Diagnostic::new(
-            "string values are not yet supported in Wasm signatures",
-        )),
+        Type::String => Ok(ValType::Ref(RefType::EXTERNREF)),
         Type::Multi(_) => Err(Diagnostic::new(
             "multi-value types are not supported in Wasm signatures yet",
         )),
