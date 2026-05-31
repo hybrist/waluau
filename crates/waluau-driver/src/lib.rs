@@ -460,7 +460,7 @@ mod tests {
     fn executes_closure_capture_fixture() {
         let source = fixture_source("closure_capture");
         let wasm = super::compile_source(source).expect("compile should succeed");
-        let (mut store, instance) = instantiate(&wasm);
+        let (mut store, instance) = instantiate_with_gc(&wasm);
         let capture_entry = instance
             .get_typed_func::<i32, i32>(&mut store, "capture_entry")
             .expect("capture_entry export should exist");

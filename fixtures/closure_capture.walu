@@ -1,4 +1,5 @@
 function capture_entry(x: i32): i32
+    local unused = 0
     local addx: (i32) -> i32 = function(y: i32): i32
         return x + y
     end
