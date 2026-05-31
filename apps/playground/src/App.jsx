@@ -14,6 +14,12 @@ const moduleFixtures = import.meta.glob('../../../fixtures/modules/*.walu', {
   import: 'default'
 });
 
+const conformanceModules = import.meta.glob('../../../conformance/*.walu', {
+  eager: true,
+  query: '?raw',
+  import: 'default'
+});
+
 const SINGLE_PRESETS = Object.entries(fixtureModules)
   .map(([path, source]) => {
     const filename = path.split('/').pop();
@@ -33,6 +39,25 @@ const SINGLE_PRESETS = Object.entries(fixtureModules)
     };
   });
 
+const CONFORMANCE_PRESETS = Object.entries(conformanceModules)
+  .map(([path, source]) => {
+    const filename = path.split('/').pop();
+    const key = filename.replace(/\.walu$/, '');
+    const label = key
+      .split('_')
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ');
+    
+    return {
+      key: `conformance-${key}`,
+      label: `${label} (Test)`,
+      files: {
+        [`/${filename}`]: source
+      },
+      entryFile: `/${filename}`
+    };
+  });
+
 const MULTI_PRESET = {
   key: 'require-flow',
   label: 'Require Flow Example',
@@ -44,7 +69,7 @@ const MULTI_PRESET = {
   entryFile: '/main.walu'
 };
 
-const PRESETS = [...SINGLE_PRESETS, MULTI_PRESET].sort((left, right) =>
+const PRESETS = [...SINGLE_PRESETS, MULTI_PRESET, ...CONFORMANCE_PRESETS].sort((left, right) =>
   left.label.localeCompare(right.label)
 );
 
@@ -370,6 +395,89 @@ export default function App() {
   const [editorInstance, setEditorInstance] = useState(null);
   const [monacoInstance, setMonacoInstance] = useState(null);
   const [activeRunners, setActiveRunners] = useState([]);
+  const [openFileSearch, setOpenFileSearch] = useState(false);
+
+  const selectPreset = (preset) => {
+    setFiles(preset.files);
+    setActiveFile(preset.entryFile);
+    setEntryFile(preset.entryFile);
+  };
+
+  const allSearchableFiles = useMemo(() => {
+    const items = [];
+    
+    // 1. Single fixtures
+    for (const [path, source] of Object.entries(fixtureModules)) {
+      const filename = path.split('/').pop();
+      items.push({
+        type: 'fixture',
+        path,
+        name: filename,
+        source,
+        category: 'Fixture',
+        onSelect: () => {
+          selectPreset({
+            key: filename.replace(/\.walu$/, ''),
+            files: { [`/${filename}`]: source },
+            entryFile: `/${filename}`
+          });
+        }
+      });
+    }
+
+    // 2. Conformance tests
+    for (const [path, source] of Object.entries(conformanceModules)) {
+      const filename = path.split('/').pop();
+      items.push({
+        type: 'conformance',
+        path,
+        name: filename,
+        source,
+        category: 'Conformance',
+        onSelect: () => {
+          selectPreset({
+            key: `conformance-${filename.replace(/\.walu$/, '')}`,
+            files: { [`/${filename}`]: source },
+            entryFile: `/${filename}`
+          });
+        }
+      });
+    }
+
+    // 3. Module fixtures
+    for (const [path, source] of Object.entries(moduleFixtures)) {
+      const filename = path.split('/').pop();
+      items.push({
+        type: 'module',
+        path,
+        name: `modules/${filename}`,
+        source,
+        category: 'Module',
+        onSelect: () => {
+          setFiles(MULTI_PRESET.files);
+          setEntryFile(MULTI_PRESET.entryFile);
+          setActiveFile(`/${filename}`);
+        }
+      });
+    }
+
+    return items.sort((left, right) => left.name.localeCompare(right.name));
+  }, []);
+
+  useEffect(() => {
+    const handleGlobalKeyDown = (e) => {
+      const isTrigger = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p';
+      if (isTrigger) {
+        e.preventDefault();
+        e.stopPropagation();
+        setOpenFileSearch(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown, true);
+    return () => {
+      window.removeEventListener('keydown', handleGlobalKeyDown, true);
+    };
+  }, []);
 
   const exportsListRef = useRef(exportsList);
   const activeRunnersRef = useRef(activeRunners);
@@ -895,12 +1003,6 @@ export default function App() {
     }
   }, [errorMsg, monacoInstance, editorInstance, files, entryFile]);
 
-  const selectPreset = (preset) => {
-    setFiles(preset.files);
-    setActiveFile(preset.entryFile);
-    setEntryFile(preset.entryFile);
-  };
-
   // Sync runInstance, exportsList, inputs and results when wasm changes
   useEffect(() => {
     let active = true;
@@ -1021,6 +1123,26 @@ export default function App() {
       {/* Preset toolbar */}
       <div className="presets-bar">
         <span className="presets-label">Examples:</span>
+        <button
+          className="preset-btn search-trigger-btn"
+          title="Search fixture & conformance files (Cmd+P / Ctrl+P)"
+          onClick={() => setOpenFileSearch(true)}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '4px',
+            background: 'rgba(55, 148, 255, 0.1)',
+            borderColor: 'rgba(55, 148, 255, 0.3)',
+            color: 'var(--accent-cyan)',
+            fontWeight: '600'
+          }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '2px' }}>
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          Search (Cmd+P)
+        </button>
         {PRESETS.map((preset) => (
           <button key={preset.key} className="preset-btn" onClick={() => selectPreset(preset)}>
             {preset.label}
@@ -1437,7 +1559,128 @@ export default function App() {
           runner.domNode
         )
       )}
+      {/* File Search Modal */}
+      {openFileSearch && (
+        <FileSearchModal
+          isOpen={openFileSearch}
+          onClose={() => setOpenFileSearch(false)}
+          items={allSearchableFiles}
+        />
+      )}
     </div>
+  );
+}
+
+function FileSearchModal({ isOpen, onClose, items }) {
+  const [search, setSearch] = useState('');
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const inputRef = useRef(null);
+  const resultsRef = useRef(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      inputRef.current?.focus();
+    }, 50);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const filteredItems = useMemo(() => {
+    if (!search.trim()) return items;
+    const query = search.toLowerCase();
+    return items.filter(item => item.name.toLowerCase().includes(query));
+  }, [items, search]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        e.stopPropagation();
+        setSelectedIndex(prev => (filteredItems.length > 0 ? (prev + 1) % filteredItems.length : 0));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        e.stopPropagation();
+        setSelectedIndex(prev => (filteredItems.length > 0 ? (prev - 1 + filteredItems.length) % filteredItems.length : 0));
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (filteredItems[selectedIndex]) {
+          filteredItems[selectedIndex].onSelect();
+          onClose();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [isOpen, filteredItems, selectedIndex, onClose]);
+
+  useEffect(() => {
+    const activeEl = resultsRef.current?.querySelector('.search-item.active');
+    if (activeEl) {
+      activeEl.scrollIntoView({ block: 'nearest' });
+    }
+  }, [selectedIndex]);
+
+  if (!isOpen) return null;
+
+  return createPortal(
+    <div className="search-modal-backdrop" onClick={onClose}>
+      <div className="search-modal-container" onClick={e => e.stopPropagation()}>
+        <div className="search-modal-header">
+          <svg className="search-input-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input
+            ref={inputRef}
+            type="text"
+            className="search-input-field"
+            placeholder="Search files by name..."
+            value={search}
+            onChange={e => {
+              setSearch(e.target.value);
+              setSelectedIndex(0);
+            }}
+          />
+        </div>
+        <div className="search-modal-results" ref={resultsRef}>
+          {filteredItems.length === 0 ? (
+            <div className="search-no-results">No files found</div>
+          ) : (
+            filteredItems.map((item, idx) => (
+              <div
+                key={item.path}
+                className={`search-item ${idx === selectedIndex ? 'active' : ''}`}
+                onClick={() => {
+                  item.onSelect();
+                  onClose();
+                }}
+              >
+                <div className="search-item-info">
+                  <span className="search-item-name">{item.name}</span>
+                  <span className="search-item-path">{item.path.replace('../../../', '')}</span>
+                </div>
+                <span className={`search-category-tag tag-${item.type}`}>
+                  {item.category}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+        <div className="search-modal-footer">
+          <span>&uarr;&darr; to navigate</span>
+          <span>&crarr; to select</span>
+          <span>esc to close</span>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 

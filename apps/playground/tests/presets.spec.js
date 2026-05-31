@@ -16,7 +16,7 @@ test.describe('preset selector', () => {
     // At minimum the fixtures that existed when tests were written should be present.
     const expectedLabels = ['Add', 'Fib', 'Mismatch', 'Control'];
     for (const label of expectedLabels) {
-      await expect(page.getByRole('button', { name: label })).toBeVisible();
+      await expect(page.getByRole('button', { name: label, exact: true })).toBeVisible();
     }
   });
 
@@ -64,5 +64,50 @@ test.describe('preset selector', () => {
 
     await page.getByRole('button', { name: 'Generated IR' }).click();
     await expect(page.locator('.ir-output')).toContainText('compute');
+  });
+
+  test('global Ctrl+P/Cmd+P opens file search modal and lets user select a file', async ({ page }) => {
+    await page.evaluate(() => {
+      const event = new KeyboardEvent('keydown', {
+        key: 'p',
+        code: 'KeyP',
+        ctrlKey: true,
+        metaKey: true,
+        bubbles: true,
+        cancelable: true
+      });
+      document.body.dispatchEvent(event);
+    });
+    await expect(page.locator('.search-modal-container')).toBeVisible();
+    await expect(page.locator('.search-input-field')).toBeFocused();
+    
+    await page.locator('.search-input-field').fill('arith');
+    const results = page.locator('.search-item');
+    await expect(results).toHaveCount(1);
+    await expect(results.first().locator('.search-item-name')).toHaveText('arithmetic.walu');
+    await expect(results.first().locator('.search-category-tag')).toHaveText('Conformance');
+    
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.search-modal-container')).not.toBeVisible();
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+  });
+
+  test('clicking Search button opens file search modal and lets user select a file', async ({ page }) => {
+    await page.getByRole('button', { name: 'Search (Cmd+P)' }).click();
+    await expect(page.locator('.search-modal-container')).toBeVisible();
+    await expect(page.locator('.search-input-field')).toBeFocused();
+    
+    await page.locator('.search-input-field').fill('arith');
+    const results = page.locator('.search-item');
+    await expect(results).toHaveCount(1);
+    await expect(results.first().locator('.search-item-name')).toHaveText('arithmetic.walu');
+    
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.search-modal-container')).not.toBeVisible();
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
   });
 });
