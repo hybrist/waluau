@@ -2058,6 +2058,11 @@ impl Builder<'_> {
                 else_block: trap_block,
             },
         );
+        self.current_block = trap_block;
+        // TODO: include assertion expression and source location details once spans
+        // are threaded through AST/HIR/IR lowering (tracked in beads).
+        let message = self.emit(Instruction::String("Assertion failed".to_string()));
+        self.emit(Instruction::Print { value: message });
         self.set_terminator(trap_block, Terminator::Unreachable);
         self.current_block = continue_block;
         Ok(())
@@ -5097,6 +5102,40 @@ mod tests {
             matches!(instruction, Instruction::String(s) if s == "hello"),
             "expected String instruction with 'hello', got {:?}",
             instruction
+        );
+    }
+
+    #[test]
+    fn lowers_assertion_failure_message_before_trap() {
+        let source = r#"
+            function check(): i32
+                assert(0 == 1)
+                return 1
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let module = build(&program).expect("ir build should succeed");
+        let function = module
+            .functions
+            .iter()
+            .find(|function| function.name == "check")
+            .expect("check function should exist");
+        let trap_block = function
+            .blocks
+            .values()
+            .find(|block| matches!(block.terminator, Terminator::Unreachable))
+            .expect("assert should lower a trap block");
+        assert!(trap_block.instructions.iter().any(|(_, instruction)| {
+            matches!(
+                instruction,
+                Instruction::String(message) if message == "Assertion failed"
+            )
+        }));
+        assert!(
+            trap_block
+                .instructions
+                .iter()
+                .any(|(_, instruction)| { matches!(instruction, Instruction::Print { .. }) })
         );
     }
 
