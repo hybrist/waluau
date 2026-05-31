@@ -359,7 +359,7 @@ export default function App() {
   const [loadErrorMsg, setLoadErrorMsg] = useState('');
   const [compilerReady, setCompilerReady] = useState(false);
   const [compileSource, setCompileSource] = useState(null);
-  const [activeTab, setActiveTab] = useState('ir'); // 'ir', 'logs', 'run'
+  const [activeTab, setActiveTab] = useState('run'); // 'run', 'ir', 'wat', 'logs'
   const [runInstance, setRunInstance] = useState(null);
   const [runError, setRunError] = useState(null);
   const [exportsList, setExportsList] = useState([]);
@@ -1194,6 +1194,12 @@ export default function App() {
           <div className="panel-header tab-header">
             <div className="tab-buttons">
               <button
+                className={`tab-btn ${activeTab === 'run' ? 'active' : ''}`}
+                onClick={() => setActiveTab('run')}
+              >
+                Run
+              </button>
+              <button
                 className={`tab-btn ${activeTab === 'ir' ? 'active' : ''}`}
                 onClick={() => setActiveTab('ir')}
               >
@@ -1210,12 +1216,6 @@ export default function App() {
                 onClick={() => setActiveTab('logs')}
               >
                 Compiler Diagnostics
-              </button>
-              <button
-                className={`tab-btn ${activeTab === 'run' ? 'active' : ''}`}
-                onClick={() => setActiveTab('run')}
-              >
-                Function Calling
               </button>
             </div>
           </div>
@@ -1305,7 +1305,7 @@ export default function App() {
             {activeTab === 'run' && (
               <div className="func-calling-container">
                 <div className="func-calling-header">
-                  <h3>Function Calling</h3>
+                  <h3>Run</h3>
                   <label className="autorun-toggle">
                     <input
                       type="checkbox"

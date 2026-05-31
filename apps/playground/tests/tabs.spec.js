@@ -12,7 +12,14 @@ test.describe('output tabs', () => {
     );
   });
 
-  test('IR tab is active by default and shows compiler output', async ({ page }) => {
+  test('Run tab is active by default and lists exported functions', async ({ page }) => {
+    await expect(page.getByRole('button', { name: 'Run' })).toHaveClass(/active/);
+    await expect(page.locator('.func-card')).toBeVisible();
+    await expect(page.locator('.func-signature-name').first()).toHaveText('add');
+  });
+
+  test('IR tab shows compiler output when clicked', async ({ page }) => {
+    await page.getByRole('button', { name: 'Generated IR' }).click();
     await expect(page.getByRole('button', { name: 'Generated IR' })).toHaveClass(/active/);
     await expect(page.locator('.ir-output')).toBeVisible();
     // IR output should be non-empty after a successful compile.
@@ -44,8 +51,8 @@ test.describe('output tabs', () => {
     await expect(page.locator('.error-block')).toBeVisible();
   });
 
-  test('Function Calling tab lists exported functions', async ({ page }) => {
-    await page.getByRole('button', { name: 'Function Calling' }).click();
+  test('Run tab lists exported functions', async ({ page }) => {
+    await page.getByRole('button', { name: 'Run' }).click();
     await expect(page.locator('.func-card')).toBeVisible();
     await expect(page.locator('.func-signature-name').first()).toHaveText('add');
   });
