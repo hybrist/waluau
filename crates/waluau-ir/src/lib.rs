@@ -5157,7 +5157,7 @@ mod tests {
         let trap_block = function
             .blocks
             .values()
-            .find(|block| matches!(block.terminator, Terminator::Unreachable))
+            .find(|block| matches!(block.terminator, Terminator::Unreachable { .. }))
             .expect("assert should lower a trap block");
         assert!(trap_block.instructions.iter().any(|(_, instruction)| {
             matches!(
