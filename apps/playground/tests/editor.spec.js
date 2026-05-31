@@ -32,7 +32,8 @@ test.describe('editor', () => {
     await expect(page.locator('.status-text')).toHaveText('Compilation Failed', {
       timeout: COMPILER_READY_TIMEOUT,
     });
-    // The IR tab (active by default) should show the diagnostic.
+    // Switch to Generated IR tab to see the diagnostic.
+    await page.getByRole('button', { name: 'Generated IR' }).click();
     await expect(page.locator('.diagnostic-output')).toBeVisible();
   });
 

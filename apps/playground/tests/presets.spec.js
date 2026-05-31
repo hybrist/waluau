@@ -62,6 +62,7 @@ test.describe('preset selector', () => {
       timeout: COMPILER_READY_TIMEOUT,
     });
 
+    await page.getByRole('button', { name: 'Generated IR' }).click();
     await expect(page.locator('.ir-output')).toContainText('compute');
   });
 });

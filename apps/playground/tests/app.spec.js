@@ -30,7 +30,7 @@ test.describe('page load', () => {
   });
 
   test('four output tabs are visible', async ({ page }) => {
-    for (const label of ['Generated IR', 'Wasm Text (WAT)', 'Compiler Diagnostics', 'Function Calling']) {
+    for (const label of ['Run', 'Generated IR', 'Wasm Text (WAT)', 'Compiler Diagnostics']) {
       await expect(page.getByRole('button', { name: label })).toBeVisible();
     }
   });
