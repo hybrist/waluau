@@ -1,13 +1,16 @@
--- String support: tests string type mapping to externref
--- String literals are currently emitted as ref.null extern (placeholder)
+-- String support: literals materialize via host imports as externref values.
 
-function string_param(s: string): string
-    return s
+function string_param(s: string): bool
+    return s == "hello"
 end
 
-function string_local(): string
+function string_local(): bool
     local s: string = "hello"
-    return s
+    return s == "hello"
+end
+
+function string_concat(): bool
+    return ("foo" + "bar") == "foobar"
 end
 
 function string_array(): i32
@@ -15,6 +18,7 @@ function string_array(): i32
     return #arr
 end
 
--- String literals are null (placeholder), so we can't assert on content.
--- These tests verify compilation and type checking work end-to-end.
+assert(string_param("hello"))
+assert(string_local())
+assert(string_concat())
 assert(string_array() == 3)

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use waluau_diagnostics::Diagnostic;
 
 mod link;
+pub mod runtime;
 
 /// Compile a single source string with no module resolution.
 ///
@@ -108,8 +109,10 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
+    use std::sync::Arc;
+
     use tempfile::tempdir;
-    use wasmtime::{Config, Engine, Instance, Module, Store};
+    use wasmtime::{Config, Engine, Instance, Module};
 
     fn fixture_source(name: &str) -> &'static str {
         match name {
@@ -135,21 +138,26 @@ mod tests {
         }
     }
 
-    fn instantiate(wasm: &[u8]) -> (Store<()>, Instance) {
-        let engine = Engine::default();
-        let module = Module::new(&engine, wasm).expect("module should compile");
-        let mut store = Store::new(&engine, ());
-        let instance = Instance::new(&mut store, &module, &[]).expect("instance should create");
-        (store, instance)
+    fn engine() -> Engine {
+        Engine::new(
+            Config::new()
+                .wasm_function_references(true)
+                .wasm_gc(true)
+                .wasm_reference_types(true),
+        )
+        .expect("engine should configure wasm features")
     }
 
-    fn instantiate_with_gc(wasm: &[u8]) -> (Store<()>, Instance) {
-        let engine = Engine::new(Config::new().wasm_function_references(true).wasm_gc(true))
-            .expect("engine should configure wasm-gc");
+    fn instantiate(wasm: &[u8]) -> (wasmtime::Store<super::runtime::HostState>, Instance) {
+        let engine = engine();
+        let strings =
+            Arc::from(super::runtime::parse_string_table(wasm).expect("string table should parse"));
         let module = Module::new(&engine, wasm).expect("module should compile");
-        let mut store = Store::new(&engine, ());
-        let instance = Instance::new(&mut store, &module, &[]).expect("instance should create");
-        (store, instance)
+        super::runtime::instantiate(&engine, &module, strings).expect("instance should create")
+    }
+
+    fn instantiate_with_gc(wasm: &[u8]) -> (wasmtime::Store<super::runtime::HostState>, Instance) {
+        instantiate(wasm)
     }
 
     fn os(value: impl AsRef<Path>) -> OsString {
@@ -521,10 +529,13 @@ mod tests {
             end
         "#;
         let wasm = super::compile_source(source).expect("compile should succeed");
-        let engine = Engine::default();
+        let engine = engine();
+        let strings = Arc::from(
+            super::runtime::parse_string_table(&wasm).expect("string table should parse"),
+        );
         let module = Module::new(&engine, wasm).expect("module should compile");
-        let mut store = Store::new(&engine, ());
-        Instance::new(&mut store, &module, &[]).expect_err("instantiation should trap");
+        super::runtime::instantiate(&engine, &module, strings)
+            .expect_err("instantiation should trap");
     }
 
     #[test]
@@ -596,7 +607,7 @@ mod tests {
         super::run_with_args([os(&input_path)]).expect("cli run should succeed");
 
         let wasm = fs::read(&output_path).expect("default output should exist");
-        Module::new(&Engine::default(), wasm).expect("output should be valid wasm");
+        Module::new(&engine(), wasm).expect("output should be valid wasm");
     }
 
     fn fixture_path(relative: &str) -> std::path::PathBuf {

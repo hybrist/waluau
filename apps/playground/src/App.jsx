@@ -55,6 +55,74 @@ const DEFAULT_PRESET = PRESETS[0] || {
   entryFile: '/main.walu'
 };
 
+const WALUAU_IMPORT_MODULE = 'waluau';
+const WALUAU_STRING_SECTION = 'waluau.str';
+// Must match waluau_codegen_wasm::host::HOST_IMPORT_COUNT
+const WALUAU_HOST_IMPORT_COUNT = 3;
+
+function readU32Le(bytes, offset) {
+  return (
+    bytes[offset] |
+    (bytes[offset + 1] << 8) |
+    (bytes[offset + 2] << 16) |
+    (bytes[offset + 3] << 24)
+  ) >>> 0;
+}
+
+function parseWaluauStringSection(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let pos = 8;
+  while (pos < bytes.length) {
+    const sectionId = bytes[pos++];
+    let sectionLen = 0;
+    let shift = 0;
+    while (true) {
+      const byte = bytes[pos++];
+      sectionLen |= (byte & 0x7f) << shift;
+      if ((byte & 0x80) === 0) break;
+      shift += 7;
+    }
+    const sectionEnd = pos + sectionLen;
+    if (sectionId === 0) {
+      let nameLen = 0;
+      shift = 0;
+      while (true) {
+        const byte = bytes[pos++];
+        nameLen |= (byte & 0x7f) << shift;
+        if ((byte & 0x80) === 0) break;
+        shift += 7;
+      }
+      const name = new TextDecoder().decode(bytes.subarray(pos, pos + nameLen));
+      pos += nameLen;
+      if (name === WALUAU_STRING_SECTION) {
+        const data = bytes.subarray(pos, sectionEnd);
+        const count = readU32Le(data, 0);
+        const strings = [];
+        let offset = 4;
+        for (let i = 0; i < count; i++) {
+          const len = readU32Le(data, offset);
+          offset += 4;
+          strings.push(new TextDecoder().decode(data.subarray(offset, offset + len)));
+          offset += len;
+        }
+        return strings;
+      }
+    }
+    pos = sectionEnd;
+  }
+  return [];
+}
+
+function buildWaluauImports(strings) {
+  return {
+    [WALUAU_IMPORT_MODULE]: {
+      string_lit: (index) => strings[index] ?? '',
+      string_eq: (left, right) => (left === right ? 1 : 0),
+      string_concat: (left, right) => `${left}${right}`,
+    },
+  };
+}
+
 // Parse WebAssembly binary to extract exports and signatures
 function getWasmExports(buffer) {
   if (!buffer) return [];
@@ -75,9 +143,40 @@ function getWasmExports(buffer) {
     return result;
   }
 
+  function readValTypeCode() {
+    const byte = bytes[pos++];
+    if (byte === 0x63 || byte === 0x64) {
+      pos += 1; // heap type (e.g. extern)
+      return byte === 0x63 ? 0x6f : 0x64;
+    }
+    return byte;
+  }
+
+  function skipTypeDefinition(form) {
+    if (form === 0x60) {
+      const numParams = readVaruint();
+      for (let p = 0; p < numParams; p++) {
+        readValTypeCode();
+      }
+      const numReturns = readVaruint();
+      for (let r = 0; r < numReturns; r++) {
+        readValTypeCode();
+      }
+      return;
+    }
+    if (form === 0x5e) {
+      readValTypeCode(); // storage type
+      pos += 1; // mutable flag
+      return;
+    }
+    // Unknown composite type: bail out to end of section by caller.
+    throw new Error(`unsupported wasm type form: 0x${form.toString(16)}`);
+  }
+
   const types = [];
   const funcTypeIndices = [];
   const exports = [];
+  let importFuncCount = WALUAU_HOST_IMPORT_COUNT;
 
   while (pos < bytes.length) {
     const sectionId = bytes[pos++];
@@ -85,22 +184,49 @@ function getWasmExports(buffer) {
     const sectionEnd = pos + sectionLength;
     if (sectionEnd > bytes.length) break;
 
-    if (sectionId === 1) { // Type section
+    if (sectionId === 2) { // Import section
+      const numImports = readVaruint();
+      importFuncCount = 0;
+      for (let i = 0; i < numImports; i++) {
+        const moduleLen = readVaruint();
+        pos += moduleLen;
+        const nameLen = readVaruint();
+        pos += nameLen;
+        const kind = bytes[pos++];
+        if (kind === 0) {
+          importFuncCount += 1;
+          readVaruint(); // type index
+        } else if (kind === 1) {
+          pos += 2; // table type
+        } else if (kind === 2) {
+          pos += 2; // memory limits
+        } else if (kind === 3) {
+          pos += 2; // global type
+        }
+      }
+    } else if (sectionId === 1) { // Type section
       const numTypes = readVaruint();
       for (let i = 0; i < numTypes; i++) {
-        const form = bytes[pos++]; // 0x60 for function
+        const form = bytes[pos++];
         if (form === 0x60) {
           const numParams = readVaruint();
           const params = [];
           for (let p = 0; p < numParams; p++) {
-            params.push(bytes[pos++]);
+            params.push(readValTypeCode());
           }
           const numReturns = readVaruint();
           const returns = [];
           for (let r = 0; r < numReturns; r++) {
-            returns.push(bytes[pos++]);
+            returns.push(readValTypeCode());
           }
           types.push({ params, returns });
+        } else {
+          try {
+            skipTypeDefinition(form);
+          } catch {
+            pos = sectionEnd;
+            break;
+          }
         }
       }
     } else if (sectionId === 3) { // Function section
@@ -127,7 +253,8 @@ function getWasmExports(buffer) {
   }
 
   return exports.map(exp => {
-    const typeIdx = funcTypeIndices[exp.index];
+    const definedIndex = exp.index - importFuncCount;
+    const typeIdx = funcTypeIndices[definedIndex];
     const signature = types[typeIdx] || { params: [], returns: [] };
     return {
       name: exp.name,
@@ -770,34 +897,36 @@ export default function App() {
         }
         return;
       }
+      const wasmBuffer = new Uint8Array(outputWasmBytes);
+      const list = getWasmExports(wasmBuffer);
+      if (active) {
+        setExportsList(list);
+        setFuncInputs(prev => {
+          const next = { ...prev };
+          let changed = false;
+          for (const func of list) {
+            if (!next[func.name] || next[func.name].length !== func.params.length) {
+              next[func.name] = func.params.map(() => '0');
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+      }
       try {
-        const wasmBuffer = new Uint8Array(outputWasmBytes);
-        const list = getWasmExports(wasmBuffer);
-        const obj = await WebAssembly.instantiate(wasmBuffer, {});
-        
+        const strings = parseWaluauStringSection(wasmBuffer);
+        const imports = buildWaluauImports(strings);
+        const obj = await WebAssembly.instantiate(wasmBuffer, imports);
+
         if (active) {
           setRunInstance(obj.instance);
-          setExportsList(list);
           setRunError(null);
           setManualResults({});
-          
-          setFuncInputs(prev => {
-            const next = { ...prev };
-            let changed = false;
-            for (const func of list) {
-              if (!next[func.name] || next[func.name].length !== func.params.length) {
-                next[func.name] = func.params.map(() => '0');
-                changed = true;
-              }
-            }
-            return changed ? next : prev;
-          });
         }
       } catch (err) {
         if (active) {
           console.error("Instantiation failed:", err);
           setRunInstance(null);
-          setExportsList([]);
           setRunError(classifyWasmInstantiationError(err, requiresWasmGc));
           setManualResults({});
         }

@@ -8,16 +8,22 @@ use waluau_ir::{
     Terminator, ValueId,
 };
 use wasm_encoder::{
-    AbstractHeapType, BlockType, CodeSection, ConstExpr, ElementSection, Elements, ExportKind,
-    ExportSection, Function, FunctionSection, HeapType, Instruction, Module as WasmModule, RefType,
-    StartSection, StorageType, TableSection, TableType, TypeSection, ValType,
+    AbstractHeapType, BlockType, CodeSection, ConstExpr, CustomSection, ElementSection, Elements,
+    EntityType, ExportKind, ExportSection, Function, FunctionSection, HeapType, ImportSection,
+    Instruction, Module as WasmModule, RefType, StartSection, StorageType, TableSection, TableType,
+    TypeSection, ValType,
 };
 use wasmparser::{Validator, WasmFeatures};
 
+pub mod host;
+
 pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     let array_types = collect_array_types(module);
+    let string_literals = host::collect_string_literals(module);
     let start_thunk = module.start;
-    // We'll emit array types first in the type section so their indices begin at 0.
+    let host_type_base = array_types.len() as u32;
+    let user_type_base = host_type_base + host::HOST_TYPE_COUNT;
+    // Array types come first in the type section (indices 0..N-1).
     let array_registry = ArrayTypeRegistry::with_function_type_offset(&array_types, 0);
 
     let signatures = module
@@ -46,7 +52,19 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         let storage = array_storage_type(&element_ty, &array_registry)?;
         types.ty().array(&storage, true);
     }
-    // Now emit function types.
+    // Host import function types: string_lit(i32) -> externref, string_eq/concat(externref, externref) -> i32/externref.
+    types
+        .ty()
+        .function(vec![ValType::I32], vec![externref_val_type()]);
+    types.ty().function(
+        vec![externref_val_type(), externref_val_type()],
+        vec![ValType::I32],
+    );
+    types.ty().function(
+        vec![externref_val_type(), externref_val_type()],
+        vec![externref_val_type()],
+    );
+    // Now emit user function types.
     for function in &module.functions {
         let params = function
             .params
@@ -68,25 +86,51 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
             .function(Vec::<ValType>::new(), Vec::<ValType>::new());
     }
 
+    let mut imports = ImportSection::new();
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_STRING_LIT,
+        EntityType::Function(host_type_base),
+    );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_STRING_EQ,
+        EntityType::Function(host_type_base + 1),
+    );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_STRING_CONCAT,
+        EntityType::Function(host_type_base + 2),
+    );
+
     let mut functions = FunctionSection::new();
     let mut tables = TableSection::new();
     let mut elements = ElementSection::new();
     let mut exports = ExportSection::new();
     let mut codes = CodeSection::new();
-    let array_type_count = array_types.len() as u32;
     for (index, function) in module.functions.iter().enumerate() {
-        // Function type indices come after the array types in the type section.
-        functions.function(array_type_count + index as u32);
+        // User function type indices come after array and host types in the type section.
+        functions.function(user_type_base + index as u32);
         if function.name != "__waluau_top_level_init" {
-            exports.export(&function.name, ExportKind::Func, index as u32);
+            exports.export(
+                &function.name,
+                ExportKind::Func,
+                host::defined_func_index(index as u32),
+            );
         }
-        codes.function(&emit_function(function, &signatures, &array_registry)?);
+        codes.function(&emit_function(
+            function,
+            &signatures,
+            &array_registry,
+            &string_literals,
+            user_type_base,
+        )?);
     }
     if let Some(start) = start_thunk {
         let thunk_index = module.functions.len() as u32;
-        functions.function(array_type_count + thunk_index);
+        functions.function(user_type_base + thunk_index);
         let mut thunk = Function::new(Vec::new());
-        thunk.instruction(&Instruction::Call(start as u32));
+        thunk.instruction(&Instruction::Call(host::defined_func_index(start as u32)));
         let n_returns = match &module.functions[start].return_type {
             Type::Multi(types) => types.len(),
             _ => 1,
@@ -97,14 +141,18 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         thunk.instruction(&Instruction::End);
         codes.function(&thunk);
     }
+    let defined_func_count = module.functions.len() as u64;
+    let table_size = host::HOST_IMPORT_COUNT as u64 + defined_func_count;
     tables.table(TableType {
         element_type: RefType::FUNCREF,
         table64: false,
-        minimum: module.functions.len() as u64,
-        maximum: Some(module.functions.len() as u64),
+        minimum: table_size,
+        maximum: Some(table_size),
         shared: false,
     });
-    let table_inits = (0..module.functions.len() as u32).collect::<Vec<_>>();
+    let table_inits = (0..module.functions.len() as u32)
+        .map(host::defined_func_index)
+        .collect::<Vec<_>>();
     elements.active(
         Some(0),
         &ConstExpr::i32_const(0),
@@ -112,16 +160,21 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     );
 
     wasm.section(&types);
+    wasm.section(&imports);
     wasm.section(&functions);
     wasm.section(&tables);
     wasm.section(&exports);
     if start_thunk.is_some() {
         wasm.section(&StartSection {
-            function_index: module.functions.len() as u32,
+            function_index: host::defined_func_index(module.functions.len() as u32),
         });
     }
     wasm.section(&elements);
     wasm.section(&codes);
+    wasm.section(&CustomSection {
+        name: host::CUSTOM_SECTION_NAME.into(),
+        data: Cow::Owned(host::encode_string_section(&string_literals)),
+    });
 
     let bytes = wasm.finish();
     let features = WasmFeatures::all();
@@ -218,7 +271,7 @@ fn array_storage_type(
         Type::Numeric(NumericType::F32) => Ok(StorageType::Val(ValType::F32)),
         Type::Numeric(NumericType::F64) => Ok(StorageType::Val(ValType::F64)),
         Type::Bool => Ok(StorageType::Val(ValType::I32)),
-        Type::String => Ok(StorageType::Val(ValType::Ref(RefType::EXTERNREF))),
+        Type::String => Ok(StorageType::Val(externref_val_type())),
         Type::Array(_) => {
             let index = registry.index(element_ty)?;
             Ok(StorageType::Val(ValType::Ref(RefType {
@@ -240,11 +293,32 @@ struct FunctionSignature {
     result: Type,
 }
 
+struct EmissionContext<'a> {
+    signatures: &'a HashMap<String, FunctionSignature>,
+    array_registry: &'a ArrayTypeRegistry,
+    string_literals: &'a [String],
+    user_type_base: u32,
+}
+
+impl EmissionContext<'_> {
+    fn wasm_func_index(&self, user_index: u32) -> u32 {
+        host::defined_func_index(user_index)
+    }
+}
+
 fn emit_function(
     function: &IrFunction,
     signatures: &HashMap<String, FunctionSignature>,
     array_registry: &ArrayTypeRegistry,
+    string_literals: &[String],
+    user_type_base: u32,
 ) -> Result<Function, Diagnostic> {
+    let ctx = EmissionContext {
+        signatures,
+        array_registry,
+        string_literals,
+        user_type_base,
+    };
     let value_types = infer_value_types(function, signatures)?;
     let local_plan = build_local_plan(function, &value_types, array_registry)?;
     let value_defs = build_value_definition_map(function);
@@ -253,11 +327,10 @@ fn emit_function(
     if try_emit_structured_fast_path(
         &mut out,
         function,
-        signatures,
+        &ctx,
         &value_types,
         &local_plan,
         &value_defs,
-        array_registry,
     )? {
         out.instruction(&Instruction::End);
         return Ok(out);
@@ -277,11 +350,10 @@ fn emit_function(
             &mut out,
             function,
             block,
-            signatures,
+            &ctx,
             &value_types,
             &local_plan,
             &value_defs,
-            array_registry,
         )?;
         out.instruction(&Instruction::End);
     }
@@ -296,11 +368,10 @@ fn emit_function(
 fn try_emit_structured_fast_path(
     out: &mut Function,
     function: &IrFunction,
-    signatures: &HashMap<String, FunctionSignature>,
+    ctx: &EmissionContext<'_>,
     value_types: &BTreeMap<ValueId, Type>,
     local_plan: &LocalPlan,
     value_defs: &HashMap<ValueId, IrInstruction>,
-    array_registry: &ArrayTypeRegistry,
 ) -> Result<bool, Diagnostic> {
     if function.blocks.len() == 3 {
         let entry = function
@@ -320,14 +391,7 @@ fn try_emit_structured_fast_path(
         if then_bb.is_some_and(|b| matches!(b.terminator, Terminator::Return(_)))
             && else_bb.is_some_and(|b| matches!(b.terminator, Terminator::Return(_)))
         {
-            emit_block_instructions(
-                out,
-                entry,
-                signatures,
-                local_plan,
-                value_defs,
-                array_registry,
-            )?;
+            emit_block_instructions(out, entry, ctx, local_plan, value_defs)?;
             emit_value_operand(out, local_plan, condition)?;
             out.instruction(&Instruction::If(BlockType::Empty));
             emit_phi_copies(out, function, entry.id, then_block, local_plan)?;
@@ -335,11 +399,10 @@ fn try_emit_structured_fast_path(
                 out,
                 function,
                 then_bb.unwrap(),
-                signatures,
+                ctx,
                 value_types,
                 local_plan,
                 value_defs,
-                array_registry,
             )?;
             out.instruction(&Instruction::Else);
             emit_phi_copies(out, function, entry.id, else_block, local_plan)?;
@@ -347,11 +410,10 @@ fn try_emit_structured_fast_path(
                 out,
                 function,
                 else_bb.unwrap(),
-                signatures,
+                ctx,
                 value_types,
                 local_plan,
                 value_defs,
-                array_registry,
             )?;
             out.instruction(&Instruction::End);
             return Ok(true);
@@ -383,25 +445,11 @@ fn try_emit_structured_fast_path(
                 .is_some_and(|b| matches!(b.terminator, Terminator::Jump(t) if t == second.id))
                 && else_bb.is_some_and(|b| matches!(b.terminator, Terminator::Return(_)))
             {
-                emit_block_instructions(
-                    out,
-                    entry,
-                    signatures,
-                    local_plan,
-                    value_defs,
-                    array_registry,
-                )?;
+                emit_block_instructions(out, entry, ctx, local_plan, value_defs)?;
                 emit_phi_copies(out, function, entry.id, second.id, local_plan)?;
                 out.instruction(&Instruction::Block(BlockType::Empty));
                 out.instruction(&Instruction::Loop(BlockType::Empty));
-                emit_block_instructions(
-                    out,
-                    second,
-                    signatures,
-                    local_plan,
-                    value_defs,
-                    array_registry,
-                )?;
+                emit_block_instructions(out, second, ctx, local_plan, value_defs)?;
                 emit_value_operand(out, local_plan, condition)?;
                 out.instruction(&Instruction::I32Eqz);
                 out.instruction(&Instruction::BrIf(1));
@@ -409,10 +457,9 @@ fn try_emit_structured_fast_path(
                 emit_block_instructions(
                     out,
                     then_bb.expect("checked above"),
-                    signatures,
+                    ctx,
                     local_plan,
                     value_defs,
-                    array_registry,
                 )?;
                 emit_phi_copies(out, function, then_block, second.id, local_plan)?;
                 out.instruction(&Instruction::Br(0));
@@ -423,11 +470,10 @@ fn try_emit_structured_fast_path(
                     out,
                     function,
                     else_bb.expect("checked above"),
-                    signatures,
+                    ctx,
                     value_types,
                     local_plan,
                     value_defs,
-                    array_registry,
                 )?;
                 return Ok(true);
             }
@@ -448,34 +494,13 @@ fn try_emit_structured_fast_path(
                             "unsupported repeat-until CFG shape for structured wasm emission",
                         )
                     })?;
-                emit_block_instructions(
-                    out,
-                    entry,
-                    signatures,
-                    local_plan,
-                    value_defs,
-                    array_registry,
-                )?;
+                emit_block_instructions(out, entry, ctx, local_plan, value_defs)?;
                 emit_phi_copies(out, function, entry.id, body.id, local_plan)?;
                 out.instruction(&Instruction::Block(BlockType::Empty));
                 out.instruction(&Instruction::Loop(BlockType::Empty));
-                emit_block_instructions(
-                    out,
-                    body,
-                    signatures,
-                    local_plan,
-                    value_defs,
-                    array_registry,
-                )?;
+                emit_block_instructions(out, body, ctx, local_plan, value_defs)?;
                 emit_phi_copies(out, function, body.id, second.id, local_plan)?;
-                emit_block_instructions(
-                    out,
-                    second,
-                    signatures,
-                    local_plan,
-                    value_defs,
-                    array_registry,
-                )?;
+                emit_block_instructions(out, second, ctx, local_plan, value_defs)?;
                 emit_value_operand(out, local_plan, condition)?;
                 out.instruction(&Instruction::BrIf(1));
                 emit_phi_copies(out, function, second.id, body.id, local_plan)?;
@@ -487,11 +512,10 @@ fn try_emit_structured_fast_path(
                     out,
                     function,
                     then_bb.expect("checked above"),
-                    signatures,
+                    ctx,
                     value_types,
                     local_plan,
                     value_defs,
-                    array_registry,
                 )?;
                 return Ok(true);
             }
@@ -690,25 +714,16 @@ fn infer_value_types(
     Ok(types)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn emit_block(
     out: &mut Function,
     function: &IrFunction,
     block: &BasicBlock,
-    signatures: &HashMap<String, FunctionSignature>,
+    ctx: &EmissionContext<'_>,
     value_types: &BTreeMap<ValueId, Type>,
     local_plan: &LocalPlan,
     value_defs: &HashMap<ValueId, IrInstruction>,
-    array_registry: &ArrayTypeRegistry,
 ) -> Result<(), Diagnostic> {
-    emit_block_instructions(
-        out,
-        block,
-        signatures,
-        local_plan,
-        value_defs,
-        array_registry,
-    )?;
+    emit_block_instructions(out, block, ctx, local_plan, value_defs)?;
     match &block.terminator {
         Terminator::Jump(target) => {
             emit_phi_copies(out, function, block.id, *target, local_plan)?;
@@ -750,10 +765,9 @@ fn emit_block(
 fn emit_block_instructions(
     out: &mut Function,
     block: &BasicBlock,
-    signatures: &HashMap<String, FunctionSignature>,
+    ctx: &EmissionContext<'_>,
     local_plan: &LocalPlan,
     value_defs: &HashMap<ValueId, IrInstruction>,
-    array_registry: &ArrayTypeRegistry,
 ) -> Result<(), Diagnostic> {
     for (value, instruction) in &block.instructions {
         match instruction {
@@ -766,11 +780,10 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::I32Const(i32::from(*flag)));
                 emit_value_store(out, local_plan, *value)?;
             }
-            IrInstruction::String(_) => {
-                out.instruction(&Instruction::RefNull(HeapType::Abstract {
-                    shared: false,
-                    ty: AbstractHeapType::Extern,
-                }));
+            IrInstruction::String(literal) => {
+                let index = host::string_literal_index(ctx.string_literals, literal)?;
+                out.instruction(&Instruction::I32Const(index as i32));
+                out.instruction(&Instruction::Call(host::IMPORT_STRING_LIT_FUNC));
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::Cast {
@@ -796,7 +809,7 @@ fn emit_block_instructions(
                 } else {
                     emit_value_operand(out, local_plan, *left)?;
                     emit_value_operand(out, local_plan, *right)?;
-                    emit_binary(out, *op, operand_ty.clone(), result_ty.clone())?;
+                    emit_binary(out, ctx, *op, operand_ty.clone(), result_ty.clone())?;
                 }
                 emit_value_store(out, local_plan, *value)?;
             }
@@ -816,10 +829,10 @@ fn emit_block_instructions(
                 for arg in args {
                     emit_value_operand(out, local_plan, *arg)?;
                 }
-                let callee = signatures.get(name).ok_or_else(|| {
+                let callee = ctx.signatures.get(name).ok_or_else(|| {
                     Diagnostic::new(format!("unknown function '{name}' during wasm emission"))
                 })?;
-                out.instruction(&Instruction::Call(callee.index));
+                out.instruction(&Instruction::Call(ctx.wasm_func_index(callee.index)));
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::CallValue {
@@ -840,7 +853,7 @@ fn emit_block_instructions(
                             "indirect-call signature mismatch for closure value",
                         ));
                     }
-                    let target = signatures.get(name).ok_or_else(|| {
+                    let target = ctx.signatures.get(name).ok_or_else(|| {
                         Diagnostic::new(format!(
                             "unknown closure target function '{name}' during wasm emission"
                         ))
@@ -873,7 +886,7 @@ fn emit_block_instructions(
                     for arg in args {
                         emit_value_operand(out, local_plan, *arg)?;
                     }
-                    out.instruction(&Instruction::Call(target.index));
+                    out.instruction(&Instruction::Call(ctx.wasm_func_index(target.index)));
                     emit_value_store(out, local_plan, *value)?;
                     continue;
                 }
@@ -881,7 +894,12 @@ fn emit_block_instructions(
                     emit_value_operand(out, local_plan, *arg)?;
                 }
                 emit_value_operand(out, local_plan, *callee)?;
-                let type_index = find_function_type_index(signatures, params, return_type)?;
+                let type_index = find_function_type_index(
+                    ctx.signatures,
+                    ctx.user_type_base,
+                    params,
+                    return_type,
+                )?;
                 out.instruction(&Instruction::CallIndirect {
                     type_index,
                     table_index: 0,
@@ -894,10 +912,16 @@ fn emit_block_instructions(
                 params,
                 return_type,
             } => {
-                let callee = signatures.get(name).ok_or_else(|| {
+                let callee = ctx.signatures.get(name).ok_or_else(|| {
                     Diagnostic::new(format!("unknown function '{name}' during wasm emission"))
                 })?;
-                let _ = find_function_type_index(signatures, params, return_type)?;
+                let _ = find_function_type_index(
+                    ctx.signatures,
+                    ctx.user_type_base,
+                    params,
+                    return_type,
+                )?;
+                // Indirect calls use table slot indices, not module function indices.
                 out.instruction(&Instruction::I32Const(callee.index as i32));
                 emit_value_store(out, local_plan, *value)?;
             }
@@ -909,7 +933,7 @@ fn emit_block_instructions(
                     emit_value_operand(out, local_plan, *element)?;
                 }
                 let array_ty = Type::Array(Box::new(element_ty.clone()));
-                let array_type_index = array_registry.index(&array_ty)?;
+                let array_type_index = ctx.array_registry.index(&array_ty)?;
                 out.instruction(&Instruction::ArrayNewFixed {
                     array_type_index,
                     array_size: elements.len() as u32,
@@ -924,7 +948,7 @@ fn emit_block_instructions(
                 let array_local = local(local_plan, *array)?;
                 let index_local = local(local_plan, *index)?;
                 let array_ty = Type::Array(Box::new(element_ty.clone()));
-                let array_type_index = array_registry.index(&array_ty)?;
+                let array_type_index = ctx.array_registry.index(&array_ty)?;
                 emit_bounds_check(out, array_local, index_local);
                 out.instruction(&Instruction::LocalGet(array_local));
                 out.instruction(&Instruction::LocalGet(index_local));
@@ -940,7 +964,7 @@ fn emit_block_instructions(
                 let array_local = local(local_plan, *array)?;
                 let index_local = local(local_plan, *index)?;
                 let array_ty = Type::Array(Box::new(element_ty.clone()));
-                let array_type_index = array_registry.index(&array_ty)?;
+                let array_type_index = ctx.array_registry.index(&array_ty)?;
                 emit_bounds_check(out, array_local, index_local);
                 out.instruction(&Instruction::LocalGet(array_local));
                 out.instruction(&Instruction::LocalGet(index_local));
@@ -1510,6 +1534,7 @@ fn emit_cast(out: &mut Function, from: Type, to: Type) -> Result<(), Diagnostic>
 
 fn emit_binary(
     out: &mut Function,
+    _ctx: &EmissionContext<'_>,
     op: BinaryOp,
     operand_ty: Type,
     _result_ty: Type,
@@ -1534,9 +1559,7 @@ fn emit_binary(
                 ));
             }
             Type::String => {
-                return Err(Diagnostic::new(
-                    "string add is not supported during wasm emission",
-                ));
+                out.instruction(&Instruction::Call(host::IMPORT_STRING_CONCAT_FUNC));
             }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
@@ -1660,9 +1683,7 @@ fn emit_binary(
                 out.instruction(&Instruction::F64Eq);
             }
             Type::String => {
-                return Err(Diagnostic::new(
-                    "string equality is not supported during wasm emission",
-                ));
+                out.instruction(&Instruction::Call(host::IMPORT_STRING_EQ_FUNC));
             }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
@@ -2006,6 +2027,17 @@ fn local(local_plan: &LocalPlan, value: ValueId) -> Result<u32, Diagnostic> {
         .ok_or_else(|| Diagnostic::new(format!("missing local slot for value {:?}", value)))
 }
 
+fn externref_val_type() -> ValType {
+    // Long-form `(ref null extern)` (0x63 0x6f) so Wasmtime host imports type-check.
+    ValType::Ref(RefType {
+        nullable: false,
+        heap_type: HeapType::Abstract {
+            shared: false,
+            ty: AbstractHeapType::Extern,
+        },
+    })
+}
+
 fn wasm_type(ty: &Type, array_registry: &ArrayTypeRegistry) -> Result<ValType, Diagnostic> {
     match ty {
         Type::Bool | Type::Numeric(NumericType::U32 | NumericType::I32) => Ok(ValType::I32),
@@ -2019,7 +2051,7 @@ fn wasm_type(ty: &Type, array_registry: &ArrayTypeRegistry) -> Result<ValType, D
                 heap_type: HeapType::Concrete(index),
             }))
         }
-        Type::String => Ok(ValType::Ref(RefType::EXTERNREF)),
+        Type::String => Ok(externref_val_type()),
         Type::Multi(_) => Err(Diagnostic::new(
             "multi-value types are not supported in Wasm signatures yet",
         )),
@@ -2032,13 +2064,14 @@ fn wasm_type(ty: &Type, array_registry: &ArrayTypeRegistry) -> Result<ValType, D
 
 fn find_function_type_index(
     signatures: &HashMap<String, FunctionSignature>,
+    user_type_base: u32,
     params: &[Type],
     return_type: &Type,
 ) -> Result<u32, Diagnostic> {
     signatures
         .values()
         .find(|signature| signature.params == params && signature.result == *return_type)
-        .map(|signature| signature.index)
+        .map(|signature| user_type_base + signature.index)
         .ok_or_else(|| {
             Diagnostic::new(format!(
                 "no wasm function type found for indirect call signature ({}) -> {}",
