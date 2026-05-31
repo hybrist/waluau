@@ -54,9 +54,9 @@ test.describe('preset selector', () => {
   test('Require Flow Example preset loads and compiles multiple files successfully', async ({ page }) => {
     await page.getByRole('button', { name: 'Require Flow Example' }).click();
     
-    await expect(page.locator('.file-item').getByText('main.walu')).toBeVisible();
-    await expect(page.locator('.file-item').getByText('double.walu')).toBeVisible();
-    await expect(page.locator('.file-item').getByText('add.walu')).toBeVisible();
+    await expect(page.locator('.file-item').getByText('main.walu', { exact: true })).toBeVisible();
+    await expect(page.locator('.file-item').getByText('double.walu', { exact: true })).toBeVisible();
+    await expect(page.locator('.file-item').getByText('add.walu', { exact: true })).toBeVisible();
 
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
       timeout: COMPILER_READY_TIMEOUT,
