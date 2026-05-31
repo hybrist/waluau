@@ -1,0 +1,40 @@
+name: Conformance Runner
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: conformance-runner-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-conformance:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm --filter conformance-runner exec playwright install --with-deps chromium
+
+      - name: Run browser conformance tests
+        run: pnpm --filter conformance-runner test:browser
