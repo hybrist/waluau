@@ -4,16 +4,17 @@ use std::sync::Arc;
 
 use waluau_codegen_wasm::host;
 use waluau_diagnostics::Diagnostic;
-use wasmtime::{Caller, Engine, ExternRef, Instance, Linker, Module, Rooted, Store};
+use wasmtime::{
+    Caller, Engine, Extern, ExternRef, ExternType, Global, Instance, Linker, Module, Rooted, Store,
+    Val,
+};
 
 #[derive(Clone, Debug)]
-pub struct HostState {
-    strings: Arc<[String]>,
-}
+pub struct HostState;
 
 impl HostState {
-    fn new(strings: Arc<[String]>) -> Self {
-        Self { strings }
+    fn new() -> Self {
+        Self
     }
 }
 
@@ -22,33 +23,20 @@ pub fn parse_string_constants(wasm: &[u8]) -> Result<Vec<String>, Diagnostic> {
 }
 
 /// Create a store configured for Waluau modules (GC + reference types).
-pub fn new_store(engine: &Engine, strings: Arc<[String]>) -> Store<HostState> {
-    Store::new(engine, HostState::new(strings))
+pub fn new_store(engine: &Engine) -> Store<HostState> {
+    Store::new(engine, HostState::new())
 }
 
-/// Instantiate a compiled Waluau module with the required `waluau` host imports.
+/// Instantiate a compiled Waluau module with the required host imports.
 pub fn instantiate(
     engine: &Engine,
     module: &Module,
     strings: Arc<[String]>,
 ) -> wasmtime::Result<(Store<HostState>, Instance)> {
-    let mut store = new_store(engine, strings);
+    let mut store = new_store(engine);
     let mut linker = Linker::new(engine);
     linker.func_wrap(
-        host::IMPORT_MODULE,
-        host::IMPORT_JS_STRING_CONST,
-        |mut caller: Caller<'_, HostState>, index: i32| -> wasmtime::Result<Rooted<ExternRef>> {
-            let value = caller
-                .data()
-                .strings
-                .get(index as usize)
-                .ok_or_else(|| wasmtime::Error::msg("js_string_const index out of bounds"))?
-                .clone();
-            ExternRef::new(&mut caller, value)
-        },
-    )?;
-    linker.func_wrap(
-        host::IMPORT_MODULE,
+        host::JS_STRING_BUILTINS_MODULE,
         host::IMPORT_JS_STRING_EQ,
         |mut caller: Caller<'_, HostState>, left: Rooted<ExternRef>, right: Rooted<ExternRef>| {
             let left = externref_string(
@@ -65,7 +53,7 @@ pub fn instantiate(
         },
     )?;
     linker.func_wrap(
-        host::IMPORT_MODULE,
+        host::JS_STRING_BUILTINS_MODULE,
         host::IMPORT_JS_STRING_CONCAT,
         |mut caller: Caller<'_, HostState>, left: Rooted<ExternRef>, right: Rooted<ExternRef>| {
             let left = externref_string(
@@ -81,6 +69,28 @@ pub fn instantiate(
             ExternRef::new(&mut caller, left + &right)
         },
     )?;
+    for import in module.imports() {
+        if import.module() != host::IMPORTED_STRING_CONSTANTS_MODULE {
+            continue;
+        }
+        let ExternType::Global(global_ty) = import.ty() else {
+            continue;
+        };
+        let literal = import.name();
+        if !strings.iter().any(|value| value == literal) {
+            return Err(wasmtime::Error::msg(format!(
+                "missing imported string constant `{literal}`"
+            )));
+        }
+        let literal_ref = ExternRef::new(&mut store, literal.to_string())?;
+        let global = Global::new(&mut store, global_ty, Val::ExternRef(Some(literal_ref)))?;
+        linker.define(
+            &mut store,
+            host::IMPORTED_STRING_CONSTANTS_MODULE,
+            literal,
+            Extern::Global(global),
+        )?;
+    }
     let instance = linker.instantiate(&mut store, module)?;
     Ok((store, instance))
 }

@@ -5,30 +5,28 @@ use std::collections::HashMap;
 use waluau_diagnostics::Diagnostic;
 use waluau_ir::{Function as IrFunction, Instruction as IrInstruction, Module};
 
-pub const IMPORT_MODULE: &str = "waluau";
+pub const IMPORTED_STRING_CONSTANTS_MODULE: &str = "string_constants";
+pub const JS_STRING_BUILTINS_MODULE: &str = "wasm:js-string";
 pub const CUSTOM_SECTION_NAME: &str = "waluau.strc";
 
-pub const IMPORT_JS_STRING_CONST: &str = "js_string_const";
-pub const IMPORT_JS_STRING_EQ: &str = "js_string_eq";
-pub const IMPORT_JS_STRING_CONCAT: &str = "js_string_concat";
+pub const IMPORT_JS_STRING_EQ: &str = "equals";
+pub const IMPORT_JS_STRING_CONCAT: &str = "concat";
 
 /// Number of imported host functions emitted before user-defined functions.
-pub const HOST_IMPORT_COUNT: u32 = 3;
+pub const HOST_IMPORT_COUNT: u32 = 2;
 
 /// Function index of the first user-defined function in the combined import+defined index space.
 pub const fn defined_func_index(user_index: u32) -> u32 {
     HOST_IMPORT_COUNT + user_index
 }
 
-/// Index of `IMPORT_JS_STRING_CONST` in the combined function index space.
-pub const IMPORT_JS_STRING_CONST_FUNC: u32 = 0;
 /// Index of `IMPORT_JS_STRING_EQ` in the combined function index space.
-pub const IMPORT_JS_STRING_EQ_FUNC: u32 = 1;
+pub const IMPORT_JS_STRING_EQ_FUNC: u32 = 0;
 /// Index of `IMPORT_JS_STRING_CONCAT` in the combined function index space.
-pub const IMPORT_JS_STRING_CONCAT_FUNC: u32 = 2;
+pub const IMPORT_JS_STRING_CONCAT_FUNC: u32 = 1;
 
 /// Number of host function types emitted after array types in the type section.
-pub const HOST_TYPE_COUNT: u32 = 3;
+pub const HOST_TYPE_COUNT: u32 = 2;
 
 pub fn encode_string_constants_section(strings: &[String]) -> Vec<u8> {
     let mut out = Vec::new();

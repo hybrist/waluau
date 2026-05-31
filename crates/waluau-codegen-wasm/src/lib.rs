@@ -52,10 +52,7 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         let storage = array_storage_type(&element_ty, &array_registry)?;
         types.ty().array(&storage, true);
     }
-    // Host import function types: string_lit(i32) -> externref, string_eq/concat(externref, externref) -> i32/externref.
-    types
-        .ty()
-        .function(vec![ValType::I32], vec![externref_val_type()]);
+    // Host import function types for wasm:js-string builtins.
     types.ty().function(
         vec![externref_val_type(), externref_val_type()],
         vec![ValType::I32],
@@ -88,20 +85,26 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
 
     let mut imports = ImportSection::new();
     imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_JS_STRING_CONST,
+        host::JS_STRING_BUILTINS_MODULE,
+        host::IMPORT_JS_STRING_EQ,
         EntityType::Function(host_type_base),
     );
     imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_JS_STRING_EQ,
+        host::JS_STRING_BUILTINS_MODULE,
+        host::IMPORT_JS_STRING_CONCAT,
         EntityType::Function(host_type_base + 1),
     );
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_JS_STRING_CONCAT,
-        EntityType::Function(host_type_base + 2),
-    );
+    for string in &string_constants {
+        imports.import(
+            host::IMPORTED_STRING_CONSTANTS_MODULE,
+            string,
+            EntityType::Global(wasm_encoder::GlobalType {
+                val_type: externref_val_type(),
+                mutable: false,
+                shared: false,
+            }),
+        );
+    }
 
     let mut functions = FunctionSection::new();
     let mut tables = TableSection::new();
@@ -782,8 +785,7 @@ fn emit_block_instructions(
             }
             IrInstruction::String(literal) => {
                 let index = host::string_constant_index(ctx.string_constants, literal)?;
-                out.instruction(&Instruction::I32Const(index as i32));
-                out.instruction(&Instruction::Call(host::IMPORT_JS_STRING_CONST_FUNC));
+                out.instruction(&Instruction::GlobalGet(index));
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::Cast {
