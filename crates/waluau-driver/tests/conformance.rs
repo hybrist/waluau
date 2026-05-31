@@ -17,8 +17,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use waluau_driver::compile_source;
-use wasmtime::{Config, Engine, Instance, Module, Store};
+use std::sync::Arc;
+
+use waluau_driver::{compile_source, runtime};
+use wasmtime::{Config, Engine, Module};
 
 /// Absolute path to the top-level `conformance/` directory.
 fn conformance_dir() -> PathBuf {
@@ -52,8 +54,13 @@ fn collect_walu_files(dir: &Path, out: &mut Vec<PathBuf>) {
 /// An engine configured with the WebAssembly features the codegen relies on
 /// (e.g. wasm-gc, used by arrays).
 fn engine() -> Engine {
-    Engine::new(Config::new().wasm_function_references(true).wasm_gc(true))
-        .expect("engine should configure wasm features")
+    Engine::new(
+        Config::new()
+            .wasm_function_references(true)
+            .wasm_gc(true)
+            .wasm_reference_types(true),
+    )
+    .expect("engine should configure wasm features")
 }
 
 /// Compile and instantiate a single conformance program. Instantiation runs the
@@ -62,9 +69,12 @@ fn engine() -> Engine {
 /// trapping.
 fn run_case(engine: &Engine, source: &str) -> Result<(), String> {
     let wasm = compile_source(source).map_err(|error| format!("compile error: {error}"))?;
+    let strings = Arc::from(
+        runtime::parse_string_table(&wasm)
+            .map_err(|error| format!("string table error: {error}"))?,
+    );
     let module = Module::new(engine, &wasm).map_err(|error| format!("invalid module: {error}"))?;
-    let mut store = Store::new(engine, ());
-    Instance::new(&mut store, &module, &[])
+    runtime::instantiate(engine, &module, strings)
         .map_err(|error| format!("trap during instantiation: {error}"))?;
     Ok(())
 }

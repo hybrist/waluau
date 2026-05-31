@@ -932,12 +932,22 @@ fn infer_expr(
             coerce_type(element_ty, expected)
         }
         Expr::Binary { op, left, right } => match op {
-            BinaryOp::Add
-            | BinaryOp::Sub
-            | BinaryOp::Mul
-            | BinaryOp::Div
-            | BinaryOp::FloorDiv
-            | BinaryOp::Mod => {
+            BinaryOp::Add => {
+                let left_ty = infer_expr(left, vars, signatures, None)?;
+                if left_ty == Type::String {
+                    let right_ty = infer_expr(right, vars, signatures, Some(Type::String))?;
+                    if right_ty != Type::String {
+                        return Err(Diagnostic::new(
+                            "string concatenation requires both operands to be strings",
+                        ));
+                    }
+                    return coerce_type(Type::String, expected);
+                }
+                let operand_ty =
+                    infer_numeric_common_type(left, right, vars, signatures, expected.clone())?;
+                coerce_type(operand_ty, expected)
+            }
+            BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::FloorDiv | BinaryOp::Mod => {
                 let operand_ty =
                     infer_numeric_common_type(left, right, vars, signatures, expected.clone())?;
                 coerce_type(operand_ty, expected)
