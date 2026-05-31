@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed.
+In progress (single-function exports implemented; table namespace exports added).
 
 ## Goal
 
@@ -47,17 +47,36 @@ end
 return add
 ```
 
-For this first slice the exported value must be the name of a top-level function
-in that module. The `return` must be the last item in the file. The entry module
-(the file passed to the compiler) may also have one, but it is ignored.
+For this first slice the exported value is either the name of a top-level
+function or a table of functions:
+
+```lua
+return {
+    add = function (a: f64, b: f64): f64
+        return a + b
+    end,
+}
+```
+
+Table fields may be inline `function ... end` expressions or names of top-level
+functions in the same module. The `return` must be the last item in the file.
+The entry module (the file passed to the compiler) may also have one, but it is
+ignored.
 
 ### Using an Import
 
-Because a module exports a function, `require` evaluates to a function value:
+A single-function export works as before:
 
 ```lua
 local add: (i32, i32) -> i32 = require("./add")
 local total: i32 = add(2, 3)
+```
+
+A table export binds a local namespace; members are called with dot syntax:
+
+```lua
+local m = require("./ops")
+local total: f64 = m.add(2.0, 3.0)
 ```
 
 This relies on a top-level function name being usable as a first-class value.
@@ -106,8 +125,8 @@ These keep the first slice small; each can be lifted later.
 - An imported module may contain only functions and the trailing `return`. It may
   not run top-level statements, which sidesteps cross-module initialization
   ordering for now.
-- A module exports exactly one function. Re-exporting tables or namespaces of
-  functions waits on table support (M4).
+- Table exports are limited to fixed named fields mapping to functions (no
+  arbitrary table types or non-function values). General table support remains M4.
 - All linked functions, including mangled ones, are still emitted as Wasm
   exports. Restricting exports to the entry module is a later refinement.
 

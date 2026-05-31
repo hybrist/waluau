@@ -1,6 +1,6 @@
 use waluau_ast::{
     AssignOp, BinaryOp, Binding, Expr, Function, FunctionExpr, NumberLiteral, NumericType, Param,
-    Program, Rebindability, Span, Stmt, Type, UnaryOp,
+    Program, Rebindability, Span, Stmt, TableField, Type, UnaryOp,
 };
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 use waluau_lexer::{Token, TokenKind};
@@ -570,6 +570,15 @@ impl Parser {
     fn parse_postfix_expr(&mut self) -> Result<Expr, Diagnostic> {
         let mut expr = self.parse_primary()?;
         loop {
+            if self.check_simple(&TokenKind::Dot) {
+                self.advance();
+                let name = self.expect_identifier()?;
+                expr = Expr::Field {
+                    base: Box::new(expr),
+                    name,
+                };
+                continue;
+            }
             if self.check_simple(&TokenKind::LBracket) {
                 self.advance();
                 let index = self.parse_expr()?;
@@ -750,7 +759,7 @@ impl Parser {
                 };
                 Ok(Expr::Function(self.parse_function_expr_tail(name, false)?))
             }
-            TokenKind::LBrace => self.parse_array_literal(),
+            TokenKind::LBrace => self.parse_brace_literal(),
             TokenKind::LParen => {
                 let inner = self.parse_expr()?;
                 self.expect_simple(TokenKind::RParen, "expected ')' after expression")?;
@@ -777,34 +786,58 @@ impl Parser {
         Ok(Expr::Require(path))
     }
 
-    fn parse_array_literal(&mut self) -> Result<Expr, Diagnostic> {
+    fn parse_brace_literal(&mut self) -> Result<Expr, Diagnostic> {
+        if self.check_simple(&TokenKind::RBrace) {
+            self.advance();
+            return Ok(Expr::ArrayLiteral {
+                elements: Vec::new(),
+            });
+        }
+
+        if let Some(Token {
+            kind: TokenKind::Identifier(_),
+            ..
+        }) = self.peek()
+        {
+            if matches!(
+                self.peek_n(1).map(|token| &token.kind),
+                Some(TokenKind::Equal)
+            ) {
+                return self.parse_table_literal_body();
+            }
+        }
+
         let mut elements = Vec::new();
-        if !self.check_simple(&TokenKind::RBrace) {
-            loop {
-                if let Some(Token {
-                    kind: TokenKind::Identifier(_),
-                    ..
-                }) = self.peek()
-                {
-                    if matches!(
-                        self.peek_n(1).map(|token| &token.kind),
-                        Some(TokenKind::Equal)
-                    ) {
-                        return Err(Diagnostic::new(
-                            "table literals with named fields are not supported",
-                        ));
-                    }
-                }
-                elements.push(self.parse_expr()?);
-                if self.check_simple(&TokenKind::Comma) {
-                    self.advance();
-                } else {
-                    break;
-                }
+        loop {
+            elements.push(self.parse_expr()?);
+            if self.check_simple(&TokenKind::Comma) {
+                self.advance();
+            } else {
+                break;
             }
         }
         self.expect_simple(TokenKind::RBrace, "expected '}' after array literal")?;
         Ok(Expr::ArrayLiteral { elements })
+    }
+
+    fn parse_table_literal_body(&mut self) -> Result<Expr, Diagnostic> {
+        let mut fields = Vec::new();
+        loop {
+            if self.check_simple(&TokenKind::RBrace) {
+                break;
+            }
+            let name = self.expect_identifier()?;
+            self.expect_simple(TokenKind::Equal, "expected '=' after table field name")?;
+            let value = self.parse_expr()?;
+            fields.push(TableField { name, value });
+            if self.check_simple(&TokenKind::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        self.expect_simple(TokenKind::RBrace, "expected '}' after table literal")?;
+        Ok(Expr::TableLiteral { fields })
     }
 
     fn parse_type(&mut self) -> Result<Type, Diagnostic> {
@@ -1301,20 +1334,46 @@ mod tests {
     }
 
     #[test]
-    fn rejects_named_table_literals() {
+    fn parses_named_table_literals() {
         let source = r#"
-            function entry(): i32
-                local t: {i32} = {key = 1}
-                return 0
+            return {
+                add = function (a: f64, b: f64): f64
+                    return a + b
+                end,
+            }
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        assert!(matches!(
+            program.export,
+            Some(waluau_ast::Expr::TableLiteral { fields }) if fields.len() == 1
+                && fields[0].name == "add"
+                && matches!(fields[0].value, waluau_ast::Expr::Function(_))
+        ));
+    }
+
+    #[test]
+    fn parses_namespace_member_access() {
+        let source = r#"
+            function main(): f64
+                local m = require("./ops")
+                return m.add(2.0, 3.0)
             end
         "#;
 
-        let error = parse(source).expect_err("parse should fail");
-        assert!(
-            error
-                .to_string()
-                .contains("table literals with named fields are not supported")
-        );
+        let program = parse(source).expect("parse should succeed");
+        let body = &program.functions[0].body;
+        assert!(matches!(
+            &body[1],
+            Stmt::Return(waluau_ast::Expr::Call {
+                callee,
+                args,
+            }) if args.len() == 2
+                && matches!(
+                    callee.as_ref(),
+                    waluau_ast::Expr::Field { name, .. } if name == "add"
+                )
+        ));
     }
 
     #[test]

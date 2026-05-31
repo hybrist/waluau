@@ -1,15 +1,23 @@
 pub use waluau_span::Span;
 
+use std::collections::BTreeMap;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Program {
     pub functions: Vec<Function>,
     pub top_level: Vec<Stmt>,
     /// The value a module exports through a trailing top-level `return`.
     ///
-    /// For the MVP this is always a single top-level function name. It is
-    /// consumed by the module linker in `waluau-driver` and is ignored when a
+    /// The value a module exports: a function name or a table of functions.
+    /// Consumed by the module linker in `waluau-driver` and ignored when a
     /// program is compiled as a standalone entry point.
     pub export: Option<Expr>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TableField {
+    pub name: String,
+    pub value: Expr,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -55,6 +63,8 @@ pub enum Type {
         params: Vec<Type>,
         return_type: Box<Type>,
     },
+    /// A fixed-shape record used for module namespaces (`require` results).
+    Record(BTreeMap<String, Type>),
 }
 
 impl Type {
@@ -70,9 +80,20 @@ impl Type {
         matches!(self, Self::Array(_))
     }
 
+    pub fn is_record(&self) -> bool {
+        matches!(self, Self::Record(_))
+    }
+
     pub fn element_type(&self) -> Option<Type> {
         match self {
             Self::Array(element) => Some(*element.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn record_field(&self, name: &str) -> Option<Type> {
+        match self {
+            Self::Record(fields) => fields.get(name).cloned(),
             _ => None,
         }
     }
@@ -144,6 +165,16 @@ impl std::fmt::Display for Type {
                     write!(f, "{param}")?;
                 }
                 write!(f, ") -> {return_type}")
+            }
+            Self::Record(fields) => {
+                write!(f, "{{")?;
+                for (index, (name, ty)) in fields.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{name}: {ty}")?;
+                }
+                write!(f, "}}")
             }
         }
     }
@@ -253,6 +284,17 @@ pub enum Expr {
     Require(String),
     ArrayLiteral {
         elements: Vec<Expr>,
+    },
+    /// A table literal with named fields, e.g. `{ add = fn, sub = other }`.
+    ///
+    /// Supported for module exports and `require` results only in the MVP.
+    TableLiteral {
+        fields: Vec<TableField>,
+    },
+    /// Field access on a namespace value, e.g. `m.add`.
+    Field {
+        base: Box<Expr>,
+        name: String,
     },
     Index {
         base: Box<Expr>,

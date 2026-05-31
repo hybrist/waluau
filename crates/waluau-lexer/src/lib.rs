@@ -55,6 +55,7 @@ pub enum TokenKind {
     Arrow,
     ColonColon,
     Colon,
+    Dot,
     Comma,
     Hash,
     LBrace,
@@ -116,7 +117,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                         "string concatenation '..' is not supported in MVP",
                     ));
                 }
-                return Err(Diagnostic::new("unexpected character '.'"));
+                (TokenKind::Dot, 1)
             }
             '<' => (TokenKind::Less, 1),
             '>' => (TokenKind::Greater, 1),

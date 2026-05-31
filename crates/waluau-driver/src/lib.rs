@@ -622,6 +622,17 @@ mod tests {
     }
 
     #[test]
+    fn compiles_namespace_table_exports() {
+        let wasm = super::compile_file(&fixture_path("modules/namespace_main.walu"))
+            .expect("compile should succeed");
+        let (mut store, instance) = instantiate(&wasm);
+        let main = instance
+            .get_typed_func::<(), f64>(&mut store, "main")
+            .expect("main export should exist");
+        assert_eq!(main.call(&mut store, ()).expect("call should succeed"), 5.0);
+    }
+
+    #[test]
     fn mangling_keeps_same_named_functions_from_different_modules() {
         // `helper` is defined in both the entry module and the imported
         // `double` module; linking must keep both as distinct exports.

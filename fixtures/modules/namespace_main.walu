@@ -1,0 +1,4 @@
+function main(): f64
+    local m = require("./ops")
+    return m.add(2.0, 3.0)
+end
