@@ -76,6 +76,7 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     types
         .ty()
         .function(vec![ValType::F64], vec![externref_val_type()]);
+    types.ty().function(vec![externref_val_type()], vec![]);
     // Now emit user function types.
     for function in &module.functions {
         let params = function
@@ -113,6 +114,11 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         host::IMPORT_MODULE,
         host::IMPORT_JS_STRING_CONCAT,
         EntityType::Function(host_type_base + 2),
+    );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_PRINT,
+        EntityType::Function(host_type_base + 7),
     );
     imports.import(
         host::IMPORT_MODULE,
@@ -676,6 +682,7 @@ fn infer_value_types(
                 IrInstruction::Binary { result_ty, .. } => result_ty.clone(),
                 IrInstruction::MathIntrinsic { result_ty, .. } => result_ty.clone(),
                 IrInstruction::ToString { .. } => Type::String,
+                IrInstruction::Print { .. } => Type::Numeric(NumericType::I32),
                 IrInstruction::Call { name, .. } => signatures
                     .get(name)
                     .ok_or_else(|| {
@@ -871,6 +878,12 @@ fn emit_block_instructions(
                     emit_value_operand(out, local_plan, *arg)?;
                 }
                 emit_math_intrinsic(out, *intrinsic, operand_ty.clone())?;
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::Print { value: printed } => {
+                emit_value_operand(out, local_plan, *printed)?;
+                out.instruction(&Instruction::Call(host::IMPORT_PRINT_FUNC));
+                out.instruction(&Instruction::I32Const(0));
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::ToString {
@@ -1377,6 +1390,7 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
         IrInstruction::Cast { value, .. } => vec![*value],
         IrInstruction::Binary { left, right, .. } => vec![*left, *right],
         IrInstruction::MathIntrinsic { args, .. } => args.clone(),
+        IrInstruction::Print { value } => vec![*value],
         IrInstruction::Call { args, .. } => args.clone(),
         IrInstruction::CallValue { callee, args, .. } => {
             let mut out = Vec::with_capacity(args.len() + 1);
@@ -1429,6 +1443,7 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         IrInstruction::Cast { value: source, .. } => *source == value,
         IrInstruction::Binary { left, .. } => *left == value,
         IrInstruction::MathIntrinsic { args, .. } => args.first().copied() == Some(value),
+        IrInstruction::Print { value: printed } => *printed == value,
         IrInstruction::Call { args, .. } => args.first().copied() == Some(value),
         IrInstruction::CallValue { .. } => false,
         IrInstruction::Closure { captures, .. } => captures.first().copied() == Some(value),

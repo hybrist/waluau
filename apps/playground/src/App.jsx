@@ -58,7 +58,7 @@ const DEFAULT_PRESET = PRESETS[0] || {
 const WALUAU_IMPORT_MODULE = 'waluau';
 const WALUAU_STRING_SECTION = 'waluau.strc';
 // Must match waluau_codegen_wasm::host::HOST_IMPORT_COUNT
-const WALUAU_HOST_IMPORT_COUNT = 10;
+const WALUAU_HOST_IMPORT_COUNT = 11;
 
 function readU32Le(bytes, offset) {
   return (
@@ -119,6 +119,9 @@ function buildWaluauImports(strings) {
       js_string_const: (index) => strings[index] ?? '',
       js_string_eq: (left, right) => (left === right ? 1 : 0),
       js_string_concat: (left, right) => `${left}${right}`,
+      print: (value) => {
+        console.log(value);
+      },
       js_tostring_i32: (value) => `${value | 0}`,
       js_tostring_u32: (value) => `${value >>> 0}`,
       js_tostring_i64: (value) => `${value}`,

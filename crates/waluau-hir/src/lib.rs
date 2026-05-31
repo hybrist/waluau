@@ -36,6 +36,7 @@ const MATH_NEAREST: &str = "math_nearest";
 const MATH_COPYSIGN: &str = "math_copysign";
 const TO_STRING: &str = "tostring";
 const ASSERT: &str = "assert";
+const PRINT: &str = "print";
 
 fn inference_diagnostic(
     code: &'static str,
@@ -1213,6 +1214,27 @@ fn check_stmt(
                         if actual != Type::Bool {
                             return Err(Diagnostic::new(format!(
                                 "{ASSERT} expects bool, got {actual}"
+                            )));
+                        }
+                        return Ok(false);
+                    }
+                    if name == PRINT {
+                        if args.len() != 1 {
+                            return Err(Diagnostic::new(format!(
+                                "{PRINT} expects 1 argument, got {}",
+                                args.len()
+                            )));
+                        }
+                        let actual = infer_expr(
+                            &args[0],
+                            vars,
+                            fn_signatures,
+                            active_type_params,
+                            Some(Type::String),
+                        )?;
+                        if actual != Type::String {
+                            return Err(Diagnostic::new(format!(
+                                "{PRINT} expects string, got {actual}"
                             )));
                         }
                         return Ok(false);
@@ -3045,6 +3067,30 @@ mod tests {
         let program = parse(source).expect("parse should succeed");
         let error = super::type_check(&program).expect_err("type check should fail");
         assert_eq!(error.to_string(), "cannot implicitly convert i32 to bool");
+    }
+
+    #[test]
+    fn type_checks_print_with_string_argument() {
+        let source = r#"
+            function check(): i32
+                print("hello")
+                return 1
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn rejects_print_in_expression_position() {
+        let source = r#"
+            function check(): string
+                return print("hello")
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.to_string(), "unknown name 'print'");
     }
 
     #[test]

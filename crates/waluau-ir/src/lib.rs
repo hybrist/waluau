@@ -20,6 +20,7 @@ const MATH_NEAREST: &str = "math_nearest";
 const MATH_COPYSIGN: &str = "math_copysign";
 const TO_STRING: &str = "tostring";
 const ASSERT: &str = "assert";
+const PRINT: &str = "print";
 
 fn inference_diagnostic(
     code: &'static str,
@@ -92,6 +93,9 @@ pub enum Instruction {
     ToString {
         value: ValueId,
         from: Type,
+    },
+    Print {
+        value: ValueId,
     },
     Call {
         name: String,
@@ -322,6 +326,21 @@ fn verify_function(
                         return Err(Diagnostic::new(format!(
                             "math intrinsic in block {:?} must have numeric operand/result types",
                             block.id
+                        )));
+                    }
+                }
+                Instruction::Print { value } => {
+                    let value_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *value,
+                    )?;
+                    if value_ty != Type::String {
+                        return Err(Diagnostic::new(format!(
+                            "print argument in block {:?} has type {}, expected string",
+                            block.id, value_ty
                         )));
                     }
                 }
@@ -807,6 +826,7 @@ fn infer_instruction_type(
         Instruction::Binary { result_ty, .. } => Ok(result_ty.clone()),
         Instruction::MathIntrinsic { result_ty, .. } => Ok(result_ty.clone()),
         Instruction::ToString { .. } => Ok(Type::String),
+        Instruction::Print { .. } => Ok(Type::Numeric(NumericType::I32)),
         Instruction::Call { name, .. } => signatures
             .get(name)
             .map(|(_, ret)| ret.clone())
@@ -1327,6 +1347,18 @@ impl Builder<'_> {
                     if let Expr::Name(name) = callee.as_ref() {
                         if name == ASSERT {
                             self.lower_assert_call(args, env, types)?;
+                            return Ok(());
+                        }
+                        if name == PRINT {
+                            if args.len() != 1 {
+                                return Err(Diagnostic::new(format!(
+                                    "{PRINT} expects 1 argument, got {}",
+                                    args.len()
+                                )));
+                            }
+                            let value =
+                                self.lower_expr(&args[0], env, types, Some(Type::String))?;
+                            let _ = self.emit(Instruction::Print { value });
                             return Ok(());
                         }
                     }
