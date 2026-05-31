@@ -280,11 +280,13 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
             return_type: Some(Type::number()),
             body: {
                 let mut body = typed.top_level.clone();
-                body.push(Stmt::Return(Expr::Number(NumberLiteral {
-                    raw: "0".into(),
-                })));
+                body.push(Stmt::Return(Expr::Number(
+                    NumberLiteral { raw: "0".into() },
+                    None,
+                )));
                 body
             },
+            file_path: typed.entry_file_path.clone(),
         });
     }
     let mut fn_signatures: HashMap<String, FnSignature> = HashMap::new();
@@ -552,9 +554,11 @@ fn stmt_calls_name(stmt: &Stmt, callee: &str) -> bool {
 
 fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
     match expr {
-        Expr::Name(_) | Expr::Number(_) | Expr::Bool(_) | Expr::String(_) | Expr::Require(_) => {
-            false
-        }
+        Expr::Name(..)
+        | Expr::Number(..)
+        | Expr::Bool(..)
+        | Expr::String(..)
+        | Expr::Require(..) => false,
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => expr_calls_name(expr, callee),
         Expr::Binary { left, right, .. } => {
             expr_calls_name(left, callee) || expr_calls_name(right, callee)
@@ -563,6 +567,7 @@ fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
             condition,
             then_expr,
             else_expr,
+            ..
         } => {
             expr_calls_name(condition, callee)
                 || expr_calls_name(then_expr, callee)
@@ -574,7 +579,7 @@ fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
             args,
             ..
         } => {
-            matches!(called.as_ref(), Expr::Name(name) if name == callee)
+            matches!(called.as_ref(), Expr::Name(name, _) if name == callee)
                 || expr_calls_name(called, callee)
                 || args.iter().any(|arg| expr_calls_name(arg, callee))
         }
@@ -582,12 +587,14 @@ fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
             .body
             .iter()
             .any(|stmt| stmt_calls_name(stmt, callee)),
-        Expr::ArrayLiteral { elements } => elements.iter().any(|el| expr_calls_name(el, callee)),
-        Expr::TableLiteral { fields } => fields
+        Expr::ArrayLiteral { elements, .. } => {
+            elements.iter().any(|el| expr_calls_name(el, callee))
+        }
+        Expr::TableLiteral { fields, .. } => fields
             .iter()
             .any(|field| expr_calls_name(&field.value, callee)),
         Expr::Field { base, .. } => expr_calls_name(base, callee),
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             expr_calls_name(base, callee) || expr_calls_name(index, callee)
         }
     }
@@ -1280,7 +1287,7 @@ fn check_stmt(
                 ..
             } = expr
             {
-                if let Expr::Name(name) = callee.as_ref() {
+                if let Expr::Name(name, _) = callee.as_ref() {
                     if name == ASSERT {
                         if args.len() != 1 {
                             return Err(Diagnostic::new(format!(
@@ -1318,14 +1325,14 @@ fn infer_expr(
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
     match expr {
-        Expr::Number(value) => resolve_number_literal(value, expected),
-        Expr::Bool(_) => Ok(Type::Bool),
-        Expr::String(_) => coerce_type(Type::String, expected),
-        Expr::Require(path) => Err(Diagnostic::new(format!(
+        Expr::Number(value, _) => resolve_number_literal(value, expected),
+        Expr::Bool(..) => Ok(Type::Bool),
+        Expr::String(..) => coerce_type(Type::String, expected),
+        Expr::Require(path, _) => Err(Diagnostic::new(format!(
             "require(\"{path}\") can only be resolved when compiling from a file; \
              relative imports are unavailable when compiling a single source string"
         ))),
-        Expr::Name(name) => {
+        Expr::Name(name, _) => {
             if matches!(fn_signatures.get(name), Some(FnSignature::Generic(_))) {
                 return Err(generic_diagnostic(
                     "generic/uninstantiated-value",
@@ -1351,7 +1358,7 @@ fn infer_expr(
             };
             coerce_type(actual, expected)
         }
-        Expr::Unary { op, expr } => match op {
+        Expr::Unary { op, expr, .. } => match op {
             UnaryOp::Neg => {
                 let actual = infer_expr(
                     expr,
@@ -1393,7 +1400,7 @@ fn infer_expr(
                 coerce_type(Type::Numeric(NumericType::I32), expected)
             }
         },
-        Expr::Cast { expr, ty } => {
+        Expr::Cast { expr, ty, .. } => {
             let actual = infer_expr(expr, vars, fn_signatures, active_type_params, None)?;
             require_numeric_cast(actual, ty.clone())?;
             coerce_type(ty.clone(), expected)
@@ -1402,6 +1409,7 @@ fn infer_expr(
             condition,
             then_expr,
             else_expr,
+            ..
         } => {
             let condition_ty = infer_expr(
                 condition,
@@ -1441,7 +1449,7 @@ fn infer_expr(
             args,
             ..
         } => {
-            if let Expr::Name(name) = callee.as_ref() {
+            if let Expr::Name(name, _) = callee.as_ref() {
                 if let Some(result) = infer_math_builtin_call(
                     name,
                     args,
@@ -1453,7 +1461,7 @@ fn infer_expr(
                     return result;
                 }
             }
-            if let Expr::Name(name) = callee.as_ref() {
+            if let Expr::Name(name, _) = callee.as_ref() {
                 if let Some(result) = infer_coroutine_builtin_call(
                     name,
                     args,
@@ -1465,7 +1473,7 @@ fn infer_expr(
                     return result;
                 }
             }
-            if let Expr::Name(name) = callee.as_ref() {
+            if let Expr::Name(name, _) = callee.as_ref() {
                 if let Some(result) = infer_tostring_builtin_call(
                     name,
                     args,
@@ -1477,7 +1485,7 @@ fn infer_expr(
                     return result;
                 }
             }
-            if let Expr::Name(name) = callee.as_ref() {
+            if let Expr::Name(name, _) = callee.as_ref() {
                 if let Some(result) = infer_print_builtin_call(
                     name,
                     args,
@@ -1489,7 +1497,7 @@ fn infer_expr(
                     return result;
                 }
             }
-            if let Expr::Name(name) = callee.as_ref() {
+            if let Expr::Name(name, _) = callee.as_ref() {
                 if let Some(FnSignature::Generic(scheme)) = fn_signatures.get(name) {
                     return infer_generic_call(
                         scheme,
@@ -1556,7 +1564,7 @@ fn infer_expr(
         Expr::Function(function) => {
             infer_function_expr(function, vars, fn_signatures, active_type_params, expected)
         }
-        Expr::ArrayLiteral { elements } => {
+        Expr::ArrayLiteral { elements, .. } => {
             infer_array_literal(elements, vars, fn_signatures, active_type_params, expected)
         }
         Expr::TableLiteral { .. } => Err(Diagnostic::new(
@@ -1565,7 +1573,7 @@ fn infer_expr(
         Expr::Field { .. } => Err(Diagnostic::new(
             "namespace member access must be resolved before type checking",
         )),
-        Expr::Index { base, index } => {
+        Expr::Index { base, index, .. } => {
             let base_ty = infer_expr(base, vars, fn_signatures, active_type_params, None)?;
             let element_ty = base_ty
                 .element_type()
@@ -1582,7 +1590,9 @@ fn infer_expr(
             }
             coerce_type(element_ty, expected)
         }
-        Expr::Binary { op, left, right } => match op {
+        Expr::Binary {
+            op, left, right, ..
+        } => match op {
             BinaryOp::Concat => {
                 let left_ty = infer_expr(left, vars, fn_signatures, active_type_params, None)?;
                 if left_ty == Type::String {
@@ -2022,8 +2032,8 @@ fn infer_numeric_common_type(
     };
 
     match (
-        matches!(left, Expr::Number(_)),
-        matches!(right, Expr::Number(_)),
+        matches!(left, Expr::Number(..)),
+        matches!(right, Expr::Number(..)),
     ) {
         (true, true) => {
             let ty = expected_numeric.unwrap_or(NumericType::F64);

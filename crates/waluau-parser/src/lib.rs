@@ -6,8 +6,17 @@ use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 use waluau_lexer::{Token, TokenKind};
 
 pub fn parse(source: &str) -> Result<Program, Diagnostic> {
+    parse_with_path(source, "source")
+}
+
+pub fn parse_with_path(source: &str, file_path: &str) -> Result<Program, Diagnostic> {
     let tokens = waluau_lexer::lex(source)?;
-    Parser::new(tokens).parse_program()
+    let mut program = Parser::new(tokens, file_path.to_string()).parse_program()?;
+    program
+        .sources
+        .insert(file_path.to_string(), source.to_string());
+    program.entry_file_path = file_path.to_string();
+    Ok(program)
 }
 
 struct Parser {
@@ -16,15 +25,17 @@ struct Parser {
     diagnostics: Vec<Diagnostic>,
     /// Type parameters visible while parsing a function signature or body.
     type_param_scope: Vec<String>,
+    file_path: String,
 }
 
 impl Parser {
-    fn new(tokens: Vec<Token>) -> Self {
+    fn new(tokens: Vec<Token>, file_path: String) -> Self {
         Self {
             tokens,
             index: 0,
             diagnostics: Vec::new(),
             type_param_scope: Vec::new(),
+            file_path,
         }
     }
 
@@ -77,6 +88,8 @@ impl Parser {
                 functions,
                 top_level,
                 export,
+                sources: std::collections::BTreeMap::new(),
+                entry_file_path: self.file_path.clone(),
             })
         } else if self.diagnostics.len() == 1 {
             Err(self.diagnostics.remove(0))
@@ -87,9 +100,10 @@ impl Parser {
     }
 
     fn parse_function(&mut self) -> Result<Function, Diagnostic> {
+        let start_pos = self.peek().map(|t| t.span.start).unwrap_or(0);
         self.expect_simple(TokenKind::Function, "expected 'function'")?;
         let name = self.expect_identifier()?;
-        let function_expr = self.parse_function_expr_tail(Some(name), false)?;
+        let function_expr = self.parse_function_expr_tail(Some(name), false, start_pos)?;
         Ok(Function {
             name: function_expr
                 .name
@@ -98,6 +112,7 @@ impl Parser {
             params: function_expr.params,
             return_type: function_expr.return_type,
             body: function_expr.body,
+            file_path: self.file_path.clone(),
         })
     }
 
@@ -105,12 +120,17 @@ impl Parser {
         &mut self,
         name: Option<String>,
         require_return_type: bool,
+        start_pos: u32,
     ) -> Result<FunctionExpr, Diagnostic> {
         let type_params = self.parse_type_param_list()?;
         let scope_token = self.type_param_scope.len();
         self.type_param_scope.extend(type_params.iter().cloned());
-        let parsed =
-            self.parse_function_expr_after_type_params(name, type_params, require_return_type);
+        let parsed = self.parse_function_expr_after_type_params(
+            name,
+            type_params,
+            require_return_type,
+            start_pos,
+        );
         self.type_param_scope.truncate(scope_token);
         parsed
     }
@@ -120,6 +140,7 @@ impl Parser {
         name: Option<String>,
         type_params: Vec<String>,
         require_return_type: bool,
+        start_pos: u32,
     ) -> Result<FunctionExpr, Diagnostic> {
         self.expect_simple(TokenKind::LParen, "expected '('")?;
         let mut params = Vec::new();
@@ -161,6 +182,8 @@ impl Parser {
             None
         };
         let body = self.parse_block_until(&[TokenKind::End]);
+        let end_token = self.peek().cloned();
+        let end_pos = end_token.map(|t| t.span.end).unwrap_or(start_pos);
         self.expect_simple(TokenKind::End, "expected 'end' after function body")?;
         Ok(FunctionExpr {
             name,
@@ -168,6 +191,11 @@ impl Parser {
             params,
             return_type,
             body,
+            file_path: self.file_path.clone(),
+            span: Some(Span {
+                start: start_pos,
+                end: end_pos,
+            }),
         })
     }
 
@@ -446,12 +474,12 @@ impl Parser {
         }
         Ok(Some(if targets.len() == 1 && values.len() == 1 {
             match targets.into_iter().next().expect("len checked") {
-                Expr::Name(name) => Stmt::Assign {
+                Expr::Name(name, _) => Stmt::Assign {
                     op,
                     name,
                     value: values.into_iter().next().expect("len checked"),
                 },
-                Expr::Index { base, index } => Stmt::IndexAssign {
+                Expr::Index { base, index, .. } => Stmt::IndexAssign {
                     op,
                     base,
                     index,
@@ -465,7 +493,7 @@ impl Parser {
             let mut names = Vec::new();
             for target in targets {
                 match target {
-                    Expr::Name(name) => names.push(name),
+                    Expr::Name(name, _) => names.push(name),
                     _ => return Err(Diagnostic::new("multi-assignment targets must be names")),
                 }
             }
@@ -543,16 +571,22 @@ impl Parser {
     }
 
     fn parse_if_expr(&mut self) -> Result<Expr, Diagnostic> {
+        let start_pos = self.peek().map(|t| t.span.start).unwrap_or(0);
         self.expect_simple(TokenKind::If, "expected 'if'")?;
         let condition = self.parse_expr()?;
         self.expect_simple(TokenKind::Then, "expected 'then' after if condition")?;
         let then_expr = self.parse_expr()?;
         self.expect_simple(TokenKind::Else, "expected 'else' in if expression")?;
         let else_expr = self.parse_expr()?;
+        let end_pos = else_expr.span().map(|s| s.end).unwrap_or(start_pos);
         Ok(Expr::If {
             condition: Box::new(condition),
             then_expr: Box::new(then_expr),
             else_expr: Box::new(else_expr),
+            span: Some(Span {
+                start: start_pos,
+                end: end_pos,
+            }),
         })
     }
 
@@ -641,11 +675,18 @@ impl Parser {
     fn parse_cast(&mut self) -> Result<Expr, Diagnostic> {
         let mut expr = self.parse_unary()?;
         while self.check_simple(&TokenKind::ColonColon) {
+            let start_pos = expr.span().map(|s| s.start).unwrap_or(0);
             self.advance();
             let ty = self.parse_type()?;
+            let end_token = self.tokens.get(self.index.saturating_sub(1));
+            let end_pos = end_token.map(|t| t.span.end).unwrap_or(start_pos);
             expr = Expr::Cast {
                 expr: Box::new(expr),
                 ty,
+                span: Some(Span {
+                    start: start_pos,
+                    end: end_pos,
+                }),
             };
         }
         Ok(expr)
@@ -653,24 +694,45 @@ impl Parser {
 
     fn parse_unary(&mut self) -> Result<Expr, Diagnostic> {
         if self.check_simple(&TokenKind::Minus) {
+            let start_pos = self.peek().map(|t| t.span.start).unwrap_or(0);
             self.advance();
+            let operand = self.parse_unary()?;
+            let end_pos = operand.span().map(|s| s.end).unwrap_or(start_pos);
             return Ok(Expr::Unary {
                 op: UnaryOp::Neg,
-                expr: Box::new(self.parse_unary()?),
+                expr: Box::new(operand),
+                span: Some(Span {
+                    start: start_pos,
+                    end: end_pos,
+                }),
             });
         }
         if self.check_simple(&TokenKind::Not) {
+            let start_pos = self.peek().map(|t| t.span.start).unwrap_or(0);
             self.advance();
+            let operand = self.parse_unary()?;
+            let end_pos = operand.span().map(|s| s.end).unwrap_or(start_pos);
             return Ok(Expr::Unary {
                 op: UnaryOp::Not,
-                expr: Box::new(self.parse_unary()?),
+                expr: Box::new(operand),
+                span: Some(Span {
+                    start: start_pos,
+                    end: end_pos,
+                }),
             });
         }
         if self.check_simple(&TokenKind::Hash) {
+            let start_pos = self.peek().map(|t| t.span.start).unwrap_or(0);
             self.advance();
+            let operand = self.parse_unary()?;
+            let end_pos = operand.span().map(|s| s.end).unwrap_or(start_pos);
             return Ok(Expr::Unary {
                 op: UnaryOp::Len,
-                expr: Box::new(self.parse_unary()?),
+                expr: Box::new(operand),
+                span: Some(Span {
+                    start: start_pos,
+                    end: end_pos,
+                }),
             });
         }
         self.parse_postfix_expr()
@@ -679,12 +741,19 @@ impl Parser {
     fn parse_postfix_expr(&mut self) -> Result<Expr, Diagnostic> {
         let mut expr = self.parse_primary()?;
         loop {
+            let start_pos = expr.span().map(|s| s.start).unwrap_or(0);
             if self.check_simple(&TokenKind::Dot) {
                 self.advance();
                 let name = self.expect_identifier()?;
+                let end_token = self.tokens.get(self.index.saturating_sub(1));
+                let end_pos = end_token.map(|t| t.span.end).unwrap_or(start_pos);
                 expr = Expr::Field {
                     base: Box::new(expr),
                     name,
+                    span: Some(Span {
+                        start: start_pos,
+                        end: end_pos,
+                    }),
                 };
                 continue;
             }
@@ -692,9 +761,15 @@ impl Parser {
                 self.advance();
                 let index = self.parse_expr()?;
                 self.expect_simple(TokenKind::RBracket, "expected ']' after array index")?;
+                let end_token = self.tokens.get(self.index.saturating_sub(1));
+                let end_pos = end_token.map(|t| t.span.end).unwrap_or(start_pos);
                 expr = Expr::Index {
                     base: Box::new(expr),
                     index: Box::new(index),
+                    span: Some(Span {
+                        start: start_pos,
+                        end: end_pos,
+                    }),
                 };
                 continue;
             }
@@ -759,12 +834,18 @@ impl Parser {
                 }
             }
             if let Some(op) = matched {
+                let start_pos = expr.span().map(|s| s.start).unwrap_or(0);
                 self.advance();
                 let right = sub(self)?;
+                let end_pos = right.span().map(|s| s.end).unwrap_or(start_pos);
                 expr = Expr::Binary {
                     op,
                     left: Box::new(expr),
                     right: Box::new(right),
+                    span: Some(Span {
+                        start: start_pos,
+                        end: end_pos,
+                    }),
                 };
             } else {
                 break;
@@ -777,10 +858,11 @@ impl Parser {
         let token = self
             .advance()
             .ok_or_else(|| Diagnostic::new("unexpected end of input"))?;
+        let span = Some(token.span);
         match token.kind {
-            TokenKind::Number(value) => Ok(Expr::Number(NumberLiteral { raw: value })),
-            TokenKind::True => Ok(Expr::Bool(true)),
-            TokenKind::False => Ok(Expr::Bool(false)),
+            TokenKind::Number(value) => Ok(Expr::Number(NumberLiteral { raw: value }, span)),
+            TokenKind::True => Ok(Expr::Bool(true, span)),
+            TokenKind::False => Ok(Expr::Bool(false, span)),
             TokenKind::Identifier(name) => {
                 // `require("...")` is parsed as a dedicated node so the
                 // linker can resolve module ids before IR lowering.
@@ -789,12 +871,13 @@ impl Parser {
                         .peek()
                         .is_some_and(|token| same_variant(&token.kind, &TokenKind::LParen))
                 {
-                    return self.parse_require();
+                    return self.parse_require(token.span.start);
                 }
-                Ok(Expr::Name(name))
+                Ok(Expr::Name(name, span))
             }
-            TokenKind::Str(value) => Ok(Expr::String(value)),
+            TokenKind::Str(value) => Ok(Expr::String(value, span)),
             TokenKind::Function => {
+                let start_pos = token.span.start;
                 let name = if let Some(Token {
                     kind: TokenKind::Identifier(_),
                     ..
@@ -810,9 +893,11 @@ impl Parser {
                 } else {
                     None
                 };
-                Ok(Expr::Function(self.parse_function_expr_tail(name, false)?))
+                Ok(Expr::Function(
+                    self.parse_function_expr_tail(name, false, start_pos)?,
+                ))
             }
-            TokenKind::LBrace => self.parse_brace_literal(),
+            TokenKind::LBrace => self.parse_brace_literal(token.span.start),
             TokenKind::LParen => {
                 let inner = self.parse_expr()?;
                 self.expect_simple(TokenKind::RParen, "expected ')' after expression")?;
@@ -822,7 +907,7 @@ impl Parser {
         }
     }
 
-    fn parse_require(&mut self) -> Result<Expr, Diagnostic> {
+    fn parse_require(&mut self, start_pos: u32) -> Result<Expr, Diagnostic> {
         self.expect_simple(TokenKind::LParen, "expected '(' after require")?;
         let path = match self.advance() {
             Some(Token {
@@ -835,15 +920,29 @@ impl Parser {
                 ));
             }
         };
+        let end_token = self.peek().cloned();
+        let end_pos = end_token.map(|t| t.span.end).unwrap_or(start_pos);
         self.expect_simple(TokenKind::RParen, "expected ')' after require path")?;
-        Ok(Expr::Require(path))
+        Ok(Expr::Require(
+            path,
+            Some(Span {
+                start: start_pos,
+                end: end_pos,
+            }),
+        ))
     }
 
-    fn parse_brace_literal(&mut self) -> Result<Expr, Diagnostic> {
+    fn parse_brace_literal(&mut self, start_pos: u32) -> Result<Expr, Diagnostic> {
         if self.check_simple(&TokenKind::RBrace) {
+            let end_token = self.peek().cloned();
+            let end_pos = end_token.map(|t| t.span.end).unwrap_or(start_pos);
             self.advance();
             return Ok(Expr::ArrayLiteral {
                 elements: Vec::new(),
+                span: Some(Span {
+                    start: start_pos,
+                    end: end_pos,
+                }),
             });
         }
 
@@ -856,7 +955,7 @@ impl Parser {
                 self.peek_n(1).map(|token| &token.kind),
                 Some(TokenKind::Equal)
             ) {
-                return self.parse_table_literal_body();
+                return self.parse_table_literal_body(start_pos);
             }
         }
 
@@ -869,11 +968,19 @@ impl Parser {
                 break;
             }
         }
+        let end_token = self.peek().cloned();
+        let end_pos = end_token.map(|t| t.span.end).unwrap_or(start_pos);
         self.expect_simple(TokenKind::RBrace, "expected '}' after array literal")?;
-        Ok(Expr::ArrayLiteral { elements })
+        Ok(Expr::ArrayLiteral {
+            elements,
+            span: Some(Span {
+                start: start_pos,
+                end: end_pos,
+            }),
+        })
     }
 
-    fn parse_table_literal_body(&mut self) -> Result<Expr, Diagnostic> {
+    fn parse_table_literal_body(&mut self, start_pos: u32) -> Result<Expr, Diagnostic> {
         let mut fields = Vec::new();
         loop {
             if self.check_simple(&TokenKind::RBrace) {
@@ -889,8 +996,16 @@ impl Parser {
                 break;
             }
         }
+        let end_token = self.peek().cloned();
+        let end_pos = end_token.map(|t| t.span.end).unwrap_or(start_pos);
         self.expect_simple(TokenKind::RBrace, "expected '}' after table literal")?;
-        Ok(Expr::TableLiteral { fields })
+        Ok(Expr::TableLiteral {
+            fields,
+            span: Some(Span {
+                start: start_pos,
+                end: end_pos,
+            }),
+        })
     }
 
     fn parse_type(&mut self) -> Result<Type, Diagnostic> {
@@ -1227,7 +1342,7 @@ mod tests {
         let function = &program.functions[0];
         assert!(matches!(
             &function.body[0],
-            waluau_ast::Stmt::Return(waluau_ast::Expr::Number(NumberLiteral { raw }))
+            waluau_ast::Stmt::Return(waluau_ast::Expr::Number(NumberLiteral { raw }, _))
                 if raw == "18446744073709551615"
         ));
     }
@@ -1264,7 +1379,7 @@ mod tests {
                     ..
                 }] if matches!(
                     then_body.as_slice(),
-                    [waluau_ast::Stmt::Return(waluau_ast::Expr::Name(name))] if name == "x"
+                    [waluau_ast::Stmt::Return(waluau_ast::Expr::Name(name, _))] if name == "x"
                 )
             )
         ));
@@ -1337,6 +1452,7 @@ mod tests {
                 op: BinaryOp::Eq,
                 left,
                 right,
+                ..
             }) if matches!(left.as_ref(), waluau_ast::Expr::Binary { op: BinaryOp::Concat, .. })
                 && matches!(right.as_ref(), waluau_ast::Expr::Binary { op: BinaryOp::Concat, .. })
         ));
@@ -1400,7 +1516,7 @@ mod tests {
             &function.body[0],
             waluau_ast::Stmt::Let {
                 ty: Some(Type::Array(element)),
-                value: waluau_ast::Expr::ArrayLiteral { elements },
+                value: waluau_ast::Expr::ArrayLiteral { elements, .. },
                 ..
             } if elements.len() == 3
                 && **element == Type::number()
@@ -1411,7 +1527,7 @@ mod tests {
                 op: AssignOp::Set,
                 index,
                 ..
-            } if matches!(index.as_ref(), waluau_ast::Expr::Number(NumberLiteral { raw }) if raw == "1")
+            } if matches!(index.as_ref(), waluau_ast::Expr::Number(NumberLiteral { raw: _ }, _))
         ));
         assert!(matches!(
             &function.body[2],
@@ -1435,7 +1551,7 @@ mod tests {
         let program = parse(source).expect("parse should succeed");
         assert!(matches!(
             program.export,
-            Some(waluau_ast::Expr::TableLiteral { fields }) if fields.len() == 1
+            Some(waluau_ast::Expr::TableLiteral { fields, .. }) if fields.len() == 1
                 && fields[0].name == "add"
                 && matches!(fields[0].value, waluau_ast::Expr::Function(_))
         ));
@@ -1822,7 +1938,9 @@ mod tests {
             return helper
         "#;
         let program = parse(source).expect("parse should succeed");
-        assert!(matches!(program.export, Some(waluau_ast::Expr::Name(name)) if name == "helper"));
+        assert!(
+            matches!(program.export, Some(waluau_ast::Expr::Name(name, _)) if name == "helper")
+        );
     }
 
     #[test]
@@ -1848,7 +1966,7 @@ mod tests {
         let waluau_ast::Stmt::Let { value, .. } = &program.top_level[0] else {
             panic!("expected a let binding");
         };
-        assert!(matches!(value, waluau_ast::Expr::Require(path) if path == "./add"));
+        assert!(matches!(value, waluau_ast::Expr::Require(path, _) if path == "./add"));
     }
 
     #[test]
@@ -1858,7 +1976,7 @@ mod tests {
         let waluau_ast::Stmt::Let { value, .. } = &program.top_level[0] else {
             panic!("expected a let binding");
         };
-        assert!(matches!(value, waluau_ast::Expr::String(value) if value == "ok"));
+        assert!(matches!(value, waluau_ast::Expr::String(value, _) if value == "ok"));
     }
 
     #[test]
