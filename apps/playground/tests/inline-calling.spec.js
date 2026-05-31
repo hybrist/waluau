@@ -54,11 +54,13 @@ test.describe('inline function calling', () => {
     const widget = page.locator('.inline-runner-widget');
     await expect(widget).toBeVisible();
 
-    // Monaco's overlay canvas can intermittently intercept pointer events.
-    // Use a forced click so the test validates close behavior instead of z-order.
-    await widget.locator('.inline-runner-close').click({ force: true });
+    // Monaco overlays can interfere with pointer-based clicks in CI.
+    // Trigger a direct DOM click to verify close-button behavior deterministically.
+    const closeButton = widget.locator('.inline-runner-close');
+    await expect(closeButton).toBeVisible();
+    await closeButton.evaluate((button) => button.click());
 
     // Verify the widget is removed
-    await expect(widget).not.toBeVisible();
+    await expect(widget).toBeHidden({ timeout: 10_000 });
   });
 });
