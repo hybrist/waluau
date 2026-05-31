@@ -52,17 +52,14 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         let storage = array_storage_type(&element_ty, &array_registry)?;
         types.ty().array(&storage, true);
     }
-    // Host import function types.
-    types
-        .ty()
-        .function(vec![ValType::I32], vec![externref_val_type()]);
+    // Host import function types for wasm:js-string builtins.
     types.ty().function(
         vec![externref_val_type(), externref_val_type()],
         vec![ValType::I32],
     );
     types.ty().function(
         vec![externref_val_type(), externref_val_type()],
-        vec![externref_val_type()],
+        vec![externref_nonnull_val_type()],
     );
     types
         .ty()
@@ -101,59 +98,65 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
 
     let mut imports = ImportSection::new();
     imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_JS_STRING_CONST,
+        host::JS_STRING_BUILTINS_MODULE,
+        host::IMPORT_JS_STRING_EQ,
         EntityType::Function(host_type_base),
     );
     imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_JS_STRING_EQ,
+        host::JS_STRING_BUILTINS_MODULE,
+        host::IMPORT_JS_STRING_CONCAT,
         EntityType::Function(host_type_base + 1),
     );
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_JS_STRING_CONCAT,
-        EntityType::Function(host_type_base + 2),
-    );
+    for string in &string_constants {
+        imports.import(
+            host::IMPORTED_STRING_CONSTANTS_MODULE,
+            string,
+            EntityType::Global(wasm_encoder::GlobalType {
+                val_type: externref_val_type(),
+                mutable: false,
+                shared: false,
+            }),
+        );
+    }
     imports.import(
         host::IMPORT_MODULE,
         host::IMPORT_PRINT,
-        EntityType::Function(host_type_base + 7),
-    );
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_JS_TOSTRING_I32,
-        EntityType::Function(host_type_base + 3),
-    );
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_JS_TOSTRING_U32,
-        EntityType::Function(host_type_base + 3),
-    );
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_JS_TOSTRING_I64,
-        EntityType::Function(host_type_base + 4),
-    );
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_JS_TOSTRING_U64,
-        EntityType::Function(host_type_base + 4),
-    );
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_JS_TOSTRING_F32,
-        EntityType::Function(host_type_base + 5),
-    );
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_JS_TOSTRING_F64,
         EntityType::Function(host_type_base + 6),
     );
     imports.import(
         host::IMPORT_MODULE,
-        host::IMPORT_JS_TOSTRING_BOOL,
+        host::IMPORT_JS_TOSTRING_I32,
+        EntityType::Function(host_type_base + 2),
+    );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_JS_TOSTRING_U32,
+        EntityType::Function(host_type_base + 2),
+    );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_JS_TOSTRING_I64,
         EntityType::Function(host_type_base + 3),
+    );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_JS_TOSTRING_U64,
+        EntityType::Function(host_type_base + 3),
+    );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_JS_TOSTRING_F32,
+        EntityType::Function(host_type_base + 4),
+    );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_JS_TOSTRING_F64,
+        EntityType::Function(host_type_base + 5),
+    );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_JS_TOSTRING_BOOL,
+        EntityType::Function(host_type_base + 2),
     );
 
     let mut functions = FunctionSection::new();
@@ -837,8 +840,7 @@ fn emit_block_instructions(
             }
             IrInstruction::String(literal) => {
                 let index = host::string_constant_index(ctx.string_constants, literal)?;
-                out.instruction(&Instruction::I32Const(index as i32));
-                out.instruction(&Instruction::Call(host::IMPORT_JS_STRING_CONST_FUNC));
+                out.instruction(&Instruction::GlobalGet(index));
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::Cast {
@@ -2142,7 +2144,17 @@ fn local(local_plan: &LocalPlan, value: ValueId) -> Result<u32, Diagnostic> {
 }
 
 fn externref_val_type() -> ValType {
-    // Long-form `(ref null extern)` (0x63 0x6f) so Wasmtime host imports type-check.
+    // Long-form `(ref null extern)` (0x63 0x6f).
+    ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Abstract {
+            shared: false,
+            ty: AbstractHeapType::Extern,
+        },
+    })
+}
+
+fn externref_nonnull_val_type() -> ValType {
     ValType::Ref(RefType {
         nullable: false,
         heap_type: HeapType::Abstract {
