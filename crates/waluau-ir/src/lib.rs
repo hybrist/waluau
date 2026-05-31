@@ -2464,6 +2464,7 @@ impl Builder<'_> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn lower_numeric_for(
         &mut self,
         name: &str,
@@ -2493,8 +2494,9 @@ impl Builder<'_> {
         });
         let default_step_value = if step.is_none() {
             let default_step_expr = Expr::Cast {
-                expr: Box::new(Expr::Number(NumberLiteral { raw: "1".into() })),
+                expr: Box::new(Expr::Number(NumberLiteral { raw: "1".into() }, None)),
                 ty: loop_ty.clone(),
+                span: None,
             };
             Some(self.lower_expr(&default_step_expr, env, types, Some(loop_ty.clone()))?)
         } else {

@@ -193,6 +193,7 @@ impl std::fmt::Display for Type {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Stmt {
     Let {
         name: String,
