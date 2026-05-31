@@ -1559,7 +1559,9 @@ fn emit_binary(
                 ));
             }
             Type::String => {
-                out.instruction(&Instruction::Call(host::IMPORT_STRING_CONCAT_FUNC));
+                return Err(Diagnostic::new(
+                    "string add is not supported during wasm emission",
+                ));
             }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
@@ -1568,6 +1570,16 @@ fn emit_binary(
                 ));
             }
             Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) => unreachable!(),
+        },
+        BinaryOp::Concat => match operand_ty {
+            Type::String => {
+                out.instruction(&Instruction::Call(host::IMPORT_STRING_CONCAT_FUNC));
+            }
+            _ => {
+                return Err(Diagnostic::new(
+                    "concat is only supported for strings during wasm emission",
+                ));
+            }
         },
         BinaryOp::Sub => match operand_ty {
             Type::Numeric(NumericType::U32 | NumericType::I32) => {

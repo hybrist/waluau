@@ -574,9 +574,17 @@ impl Parser {
 
     fn parse_comparison(&mut self) -> Result<Expr, Diagnostic> {
         self.parse_binary(
-            Parser::parse_add,
+            Parser::parse_concat,
             &[TokenKind::EqualEqual, TokenKind::Less, TokenKind::Greater],
             &[BinaryOp::Eq, BinaryOp::Less, BinaryOp::Greater],
+        )
+    }
+
+    fn parse_concat(&mut self) -> Result<Expr, Diagnostic> {
+        self.parse_binary(
+            Parser::parse_add,
+            &[TokenKind::DoubleDot],
+            &[BinaryOp::Concat],
         )
     }
 
@@ -1233,6 +1241,27 @@ mod tests {
                 op: UnaryOp::Neg,
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn parses_concat_between_add_and_comparison_precedence() {
+        let source = r#"
+            function entry(a: string, b: string, x: i32): bool
+                return a .. b == "x" .. "y"
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert!(matches!(
+            &function.body[0],
+            waluau_ast::Stmt::Return(waluau_ast::Expr::Binary {
+                op: BinaryOp::Eq,
+                left,
+                right,
+            }) if matches!(left.as_ref(), waluau_ast::Expr::Binary { op: BinaryOp::Concat, .. })
+                && matches!(right.as_ref(), waluau_ast::Expr::Binary { op: BinaryOp::Concat, .. })
         ));
     }
 

@@ -56,6 +56,7 @@ pub enum TokenKind {
     ColonColon,
     Colon,
     Dot,
+    DoubleDot,
     Comma,
     Hash,
     LBrace,
@@ -113,11 +114,10 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
             '%' => (TokenKind::Percent, 1),
             '.' => {
                 if matches!(chars.get(i + 1), Some('.')) {
-                    return Err(Diagnostic::new(
-                        "string concatenation '..' is not supported in MVP",
-                    ));
+                    (TokenKind::DoubleDot, 2)
+                } else {
+                    (TokenKind::Dot, 1)
                 }
-                (TokenKind::Dot, 1)
             }
             '<' => (TokenKind::Less, 1),
             '>' => (TokenKind::Greater, 1),
@@ -221,8 +221,19 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
             }
             d if d.is_ascii_digit() => {
                 let mut end = i + 1;
-                while end < chars.len() && (chars[end].is_ascii_digit() || chars[end] == '.') {
-                    end += 1;
+                while end < chars.len() {
+                    if chars[end].is_ascii_digit() {
+                        end += 1;
+                        continue;
+                    }
+                    if chars[end] == '.' {
+                        if matches!(chars.get(end + 1), Some('.')) {
+                            break;
+                        }
+                        end += 1;
+                        continue;
+                    }
+                    break;
                 }
                 let number = source[i..end].to_string();
                 if number.matches('.').count() > 1 {
@@ -333,15 +344,30 @@ mod tests {
 
     #[test]
     fn rejects_malformed_number_literals() {
-        assert_eq!(err("1..2").to_string(), "invalid number literal");
         assert_eq!(err("12.34.56").to_string(), "invalid number literal");
     }
 
     #[test]
-    fn rejects_concat_operator_in_mvp() {
+    fn tokenizes_number_concat_number() {
         assert_eq!(
-            err(r#""a" .. "b""#).to_string(),
-            "string concatenation '..' is not supported in MVP"
+            kinds("1..2"),
+            vec![
+                TokenKind::Number("1".into()),
+                TokenKind::DoubleDot,
+                TokenKind::Number("2".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn tokenizes_concat_operator() {
+        assert_eq!(
+            kinds(r#""a" .. "b""#),
+            vec![
+                TokenKind::Str("a".into()),
+                TokenKind::DoubleDot,
+                TokenKind::Str("b".into()),
+            ]
         );
     }
 
@@ -392,7 +418,7 @@ mod tests {
     #[test]
     fn tokenizes_compound_punctuation() {
         assert_eq!(
-            kinds("== :: : = += -> < >"),
+            kinds("== :: : = += -> < > .."),
             vec![
                 TokenKind::EqualEqual,
                 TokenKind::ColonColon,
@@ -402,6 +428,7 @@ mod tests {
                 TokenKind::Arrow,
                 TokenKind::Less,
                 TokenKind::Greater,
+                TokenKind::DoubleDot,
             ]
         );
     }

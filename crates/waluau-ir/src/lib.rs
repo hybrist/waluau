@@ -2458,7 +2458,8 @@ impl Builder<'_> {
                 | BinaryOp::Mul
                 | BinaryOp::Div
                 | BinaryOp::FloorDiv
-                | BinaryOp::Mod => {
+                | BinaryOp::Mod
+                | BinaryOp::Concat => {
                     let raw = self.infer_binary_operand_type(left, right, op, types, None)?;
                     coerce_type(raw, expected)
                 }
@@ -2516,7 +2517,7 @@ impl Builder<'_> {
                     )
                 }
             }
-            BinaryOp::Add => {
+            BinaryOp::Concat => {
                 let left_ty = self.infer_expr_type(left, types, None)?;
                 if left_ty == Type::String {
                     let right_ty = self.infer_expr_type(right, types, Some(Type::String))?;
@@ -2527,6 +2528,18 @@ impl Builder<'_> {
                             "could not resolve operand type during IR lowering",
                         ))
                     }
+                } else {
+                    Err(Diagnostic::new(
+                        "could not resolve operand type during IR lowering",
+                    ))
+                }
+            }
+            BinaryOp::Add => {
+                let left_ty = self.infer_expr_type(left, types, None)?;
+                if left_ty == Type::String {
+                    Err(Diagnostic::new(
+                        "could not resolve operand type during IR lowering",
+                    ))
                 } else {
                     infer_numeric_common_type(
                         left,
