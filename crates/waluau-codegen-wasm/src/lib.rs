@@ -1314,9 +1314,7 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         IrInstruction::Binary { left, .. } => *left == value,
         IrInstruction::MathIntrinsic { args, .. } => args.first().copied() == Some(value),
         IrInstruction::Call { args, .. } => args.first().copied() == Some(value),
-        IrInstruction::CallValue { args, callee, .. } => {
-            args.first().copied() == Some(value) || (args.is_empty() && *callee == value)
-        }
+        IrInstruction::CallValue { .. } => false,
         IrInstruction::Closure { captures, .. } => captures.first().copied() == Some(value),
         IrInstruction::ArrayNew { elements, .. } => elements.first().copied() == Some(value),
         IrInstruction::ArrayGet { .. } | IrInstruction::ArraySet { .. } => false,
