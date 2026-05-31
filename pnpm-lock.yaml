@@ -13,6 +13,9 @@ importers:
       '@vitest/browser-playwright':
         specifier: ^4.0.8
         version: 4.1.7(playwright@1.60.0)(vite@8.0.14)(vitest@4.1.7)
+      playwright:
+        specifier: ^1.60.0
+        version: 1.60.0
       vite:
         specifier: ^8.0.14
         version: 8.0.14
