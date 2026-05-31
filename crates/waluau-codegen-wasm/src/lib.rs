@@ -59,7 +59,7 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     );
     types.ty().function(
         vec![externref_val_type(), externref_val_type()],
-        vec![externref_val_type()],
+        vec![externref_nonnull_val_type()],
     );
     types
         .ty()
@@ -2147,6 +2147,16 @@ fn externref_val_type() -> ValType {
     // Long-form `(ref null extern)` (0x63 0x6f).
     ValType::Ref(RefType {
         nullable: true,
+        heap_type: HeapType::Abstract {
+            shared: false,
+            ty: AbstractHeapType::Extern,
+        },
+    })
+}
+
+fn externref_nonnull_val_type() -> ValType {
+    ValType::Ref(RefType {
+        nullable: false,
         heap_type: HeapType::Abstract {
             shared: false,
             ty: AbstractHeapType::Extern,

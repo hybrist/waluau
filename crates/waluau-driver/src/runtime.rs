@@ -70,7 +70,7 @@ pub fn instantiate(
                 right,
                 "js_string_concat right operand is not a string",
             )?;
-            Ok(Some(ExternRef::new(&mut caller, left + &right)?))
+            ExternRef::new(&mut caller, left + &right)
         },
     )?;
     for import in module.imports() {
