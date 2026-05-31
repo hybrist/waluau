@@ -2734,10 +2734,10 @@ mod tests {
         let source = r#"
             function entry(limit: i32): i32
                 local acc: i32 = 0
-                for i = 0, limit do
+                for i = 0::i32, limit do
                     acc += i
                 end
-                for j = limit, 0, -2 do
+                for j = limit, 0::i32, -2::i32 do
                     acc += j
                 end
                 return acc
