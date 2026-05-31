@@ -11,6 +11,9 @@ deterministic specialization. The MVP should be useful for container helpers and
 numeric helper functions without introducing generic inference, trait-style
 constraints, or polymorphic first-class function values.
 
+For user/contributor-facing usage and limitation notes, see
+[`docs/generic-functions-mvp.md`](../generic-functions-mvp.md).
+
 ## Scope
 
 Included:
