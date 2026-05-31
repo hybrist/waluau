@@ -34,6 +34,7 @@ const MATH_CEIL: &str = "math_ceil";
 const MATH_TRUNC: &str = "math_trunc";
 const MATH_NEAREST: &str = "math_nearest";
 const MATH_COPYSIGN: &str = "math_copysign";
+const TO_STRING: &str = "tostring";
 const ASSERT: &str = "assert";
 
 fn inference_diagnostic(
@@ -1378,6 +1379,18 @@ fn infer_expr(
                 }
             }
             if let Expr::Name(name) = callee.as_ref() {
+                if let Some(result) = infer_tostring_builtin_call(
+                    name,
+                    args,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    expected.clone(),
+                ) {
+                    return result;
+                }
+            }
+            if let Expr::Name(name) = callee.as_ref() {
                 if let Some(FnSignature::Generic(scheme)) = fn_signatures.get(name) {
                     return infer_generic_call(
                         scheme,
@@ -1723,6 +1736,36 @@ fn infer_math_builtin_call(
         ))));
     }
     Some(coerce_type(Type::Numeric(first_numeric), expected))
+}
+
+fn infer_tostring_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    if name != TO_STRING {
+        return None;
+    }
+    if args.len() != 1 {
+        return Some(Err(Diagnostic::new(format!(
+            "{TO_STRING} expects 1 argument, got {}",
+            args.len()
+        ))));
+    }
+    let arg_ty = match infer_expr(&args[0], vars, fn_signatures, active_type_params, None) {
+        Ok(ty) => ty,
+        Err(error) => return Some(Err(error)),
+    };
+    if arg_ty.is_numeric() || arg_ty == Type::Bool || arg_ty == Type::String {
+        Some(coerce_type(Type::String, expected))
+    } else {
+        Some(Err(Diagnostic::new(format!(
+            "{TO_STRING} expects a primitive argument (numeric, bool, or string), got {arg_ty}",
+        ))))
+    }
 }
 
 fn infer_expr_list(
@@ -3042,6 +3085,35 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "numeric literal is not assignable to string"
+        );
+    }
+
+    #[test]
+    fn type_checks_tostring_for_primitive_inputs() {
+        let source = r#"
+            function entry(a: i32, b: bool, c: string): string
+                local x: string = tostring(a)
+                local y: string = tostring(b)
+                local z: string = tostring(c)
+                return x .. y .. z
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn rejects_tostring_for_non_primitive_inputs() {
+        let source = r#"
+            function entry(xs: {i32}): string
+                return tostring(xs)
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "tostring expects a primitive argument (numeric, bool, or string), got {i32}"
         );
     }
 

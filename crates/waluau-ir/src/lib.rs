@@ -18,6 +18,7 @@ const MATH_CEIL: &str = "math_ceil";
 const MATH_TRUNC: &str = "math_trunc";
 const MATH_NEAREST: &str = "math_nearest";
 const MATH_COPYSIGN: &str = "math_copysign";
+const TO_STRING: &str = "tostring";
 const ASSERT: &str = "assert";
 
 fn inference_diagnostic(
@@ -87,6 +88,10 @@ pub enum Instruction {
         args: Vec<ValueId>,
         operand_ty: Type,
         result_ty: Type,
+    },
+    ToString {
+        value: ValueId,
+        from: Type,
     },
     Call {
         name: String,
@@ -668,6 +673,27 @@ fn verify_function(
                 | Instruction::Number { .. }
                 | Instruction::Bool(_)
                 | Instruction::String(_) => {}
+                Instruction::ToString { value, from } => {
+                    let value_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *value,
+                    )?;
+                    if &value_ty != from {
+                        return Err(Diagnostic::new(format!(
+                            "tostring source type mismatch in block {:?}: expected {}, got {}",
+                            block.id, from, value_ty
+                        )));
+                    }
+                    if !(from.is_numeric() || *from == Type::Bool || *from == Type::String) {
+                        return Err(Diagnostic::new(format!(
+                            "tostring requires primitive source type, got {}",
+                            from
+                        )));
+                    }
+                }
             }
             seen_in_block.insert(*value);
         }
@@ -780,6 +806,7 @@ fn infer_instruction_type(
         Instruction::Cast { to, .. } => Ok(to.clone()),
         Instruction::Binary { result_ty, .. } => Ok(result_ty.clone()),
         Instruction::MathIntrinsic { result_ty, .. } => Ok(result_ty.clone()),
+        Instruction::ToString { .. } => Ok(Type::String),
         Instruction::Call { name, .. } => signatures
             .get(name)
             .map(|(_, ret)| ret.clone())
@@ -1994,6 +2021,13 @@ impl Builder<'_> {
                     }
                 }
                 if let Expr::Name(name) = callee.as_ref() {
+                    if let Some(result) =
+                        self.lower_tostring_builtin_call(name, args, env, types, expected.clone())
+                    {
+                        return result;
+                    }
+                }
+                if let Expr::Name(name) = callee.as_ref() {
                     if let Some((param_types, _)) = self.signatures.get(name) {
                         let args = args
                             .iter()
@@ -2412,6 +2446,11 @@ impl Builder<'_> {
                 if let Expr::Name(name) = callee.as_ref() {
                     if let Some(result) = self.infer_coroutine_builtin_call_type(name, expr, types)
                     {
+                        return result;
+                    }
+                }
+                if let Expr::Name(name) = callee.as_ref() {
+                    if let Some(result) = self.infer_tostring_builtin_call_type(name, expr, types) {
                         return result;
                     }
                 }
@@ -2858,6 +2897,47 @@ impl Builder<'_> {
         Some(self.coerce_value(value, operand_ty, expected))
     }
 
+    fn lower_tostring_builtin_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        env: &HashMap<String, ValueId>,
+        types: &HashMap<String, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<ValueId, Diagnostic>> {
+        if name != TO_STRING {
+            return None;
+        }
+        if args.len() != 1 {
+            return Some(Err(Diagnostic::new(format!(
+                "{TO_STRING} expects 1 argument, got {}",
+                args.len()
+            ))));
+        }
+        let arg_ty = match self.infer_expr_type(&args[0], types, None) {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        if !(arg_ty.is_numeric() || arg_ty == Type::Bool || arg_ty == Type::String) {
+            return Some(Err(Diagnostic::new(format!(
+                "{TO_STRING} expects a primitive argument (numeric, bool, or string), got {arg_ty}",
+            ))));
+        }
+        let lowered = match self.lower_expr(&args[0], env, types, Some(arg_ty.clone())) {
+            Ok(value) => value,
+            Err(error) => return Some(Err(error)),
+        };
+        let value = if arg_ty == Type::String {
+            lowered
+        } else {
+            self.emit(Instruction::ToString {
+                value: lowered,
+                from: arg_ty,
+            })
+        };
+        Some(self.coerce_value(value, Type::String, expected))
+    }
+
     fn infer_math_builtin_call_type(
         &self,
         name: &str,
@@ -2931,6 +3011,37 @@ impl Builder<'_> {
         }
 
         Some(Ok(Type::Numeric(first_numeric)))
+    }
+
+    fn infer_tostring_builtin_call_type(
+        &self,
+        name: &str,
+        call: &Expr,
+        types: &HashMap<String, Type>,
+    ) -> Option<Result<Type, Diagnostic>> {
+        if name != TO_STRING {
+            return None;
+        }
+        let Expr::Call { args, .. } = call else {
+            return None;
+        };
+        if args.len() != 1 {
+            return Some(Err(Diagnostic::new(format!(
+                "{TO_STRING} expects 1 argument, got {}",
+                args.len()
+            ))));
+        }
+        let arg_ty = match self.infer_expr_type(&args[0], types, None) {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        if arg_ty.is_numeric() || arg_ty == Type::Bool || arg_ty == Type::String {
+            Some(Ok(Type::String))
+        } else {
+            Some(Err(Diagnostic::new(format!(
+                "{TO_STRING} expects a primitive argument (numeric, bool, or string), got {arg_ty}",
+            ))))
+        }
     }
 }
 

@@ -52,7 +52,7 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         let storage = array_storage_type(&element_ty, &array_registry)?;
         types.ty().array(&storage, true);
     }
-    // Host import function types: string_lit(i32) -> externref, string_eq/concat(externref, externref) -> i32/externref.
+    // Host import function types.
     types
         .ty()
         .function(vec![ValType::I32], vec![externref_val_type()]);
@@ -64,6 +64,18 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         vec![externref_val_type(), externref_val_type()],
         vec![externref_val_type()],
     );
+    types
+        .ty()
+        .function(vec![ValType::I32], vec![externref_val_type()]);
+    types
+        .ty()
+        .function(vec![ValType::I64], vec![externref_val_type()]);
+    types
+        .ty()
+        .function(vec![ValType::F32], vec![externref_val_type()]);
+    types
+        .ty()
+        .function(vec![ValType::F64], vec![externref_val_type()]);
     // Now emit user function types.
     for function in &module.functions {
         let params = function
@@ -101,6 +113,41 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         host::IMPORT_MODULE,
         host::IMPORT_JS_STRING_CONCAT,
         EntityType::Function(host_type_base + 2),
+    );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_JS_TOSTRING_I32,
+        EntityType::Function(host_type_base + 3),
+    );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_JS_TOSTRING_U32,
+        EntityType::Function(host_type_base + 3),
+    );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_JS_TOSTRING_I64,
+        EntityType::Function(host_type_base + 4),
+    );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_JS_TOSTRING_U64,
+        EntityType::Function(host_type_base + 4),
+    );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_JS_TOSTRING_F32,
+        EntityType::Function(host_type_base + 5),
+    );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_JS_TOSTRING_F64,
+        EntityType::Function(host_type_base + 6),
+    );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_JS_TOSTRING_BOOL,
+        EntityType::Function(host_type_base + 3),
     );
 
     let mut functions = FunctionSection::new();
@@ -628,6 +675,7 @@ fn infer_value_types(
                 IrInstruction::Cast { to, .. } => to.clone(),
                 IrInstruction::Binary { result_ty, .. } => result_ty.clone(),
                 IrInstruction::MathIntrinsic { result_ty, .. } => result_ty.clone(),
+                IrInstruction::ToString { .. } => Type::String,
                 IrInstruction::Call { name, .. } => signatures
                     .get(name)
                     .ok_or_else(|| {
@@ -823,6 +871,43 @@ fn emit_block_instructions(
                     emit_value_operand(out, local_plan, *arg)?;
                 }
                 emit_math_intrinsic(out, *intrinsic, operand_ty.clone())?;
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::ToString {
+                value: source,
+                from,
+            } => {
+                emit_value_operand(out, local_plan, *source)?;
+                match from {
+                    Type::Numeric(NumericType::I32) => {
+                        out.instruction(&Instruction::Call(host::IMPORT_JS_TOSTRING_I32_FUNC));
+                    }
+                    Type::Numeric(NumericType::U32) => {
+                        out.instruction(&Instruction::Call(host::IMPORT_JS_TOSTRING_U32_FUNC));
+                    }
+                    Type::Numeric(NumericType::I64) => {
+                        out.instruction(&Instruction::Call(host::IMPORT_JS_TOSTRING_I64_FUNC));
+                    }
+                    Type::Numeric(NumericType::U64) => {
+                        out.instruction(&Instruction::Call(host::IMPORT_JS_TOSTRING_U64_FUNC));
+                    }
+                    Type::Numeric(NumericType::F32) => {
+                        out.instruction(&Instruction::Call(host::IMPORT_JS_TOSTRING_F32_FUNC));
+                    }
+                    Type::Numeric(NumericType::F64) => {
+                        out.instruction(&Instruction::Call(host::IMPORT_JS_TOSTRING_F64_FUNC));
+                    }
+                    Type::Bool => {
+                        out.instruction(&Instruction::Call(host::IMPORT_JS_TOSTRING_BOOL_FUNC));
+                    }
+                    Type::String => {}
+                    other => {
+                        return Err(Diagnostic::new(format!(
+                            "tostring is not supported for {} during wasm emission",
+                            other
+                        )));
+                    }
+                }
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::Call { name, args } => {
@@ -1288,6 +1373,7 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
         | IrInstruction::Number { .. }
         | IrInstruction::Bool(_)
         | IrInstruction::String(_) => Vec::new(),
+        IrInstruction::ToString { value, .. } => vec![*value],
         IrInstruction::Cast { value, .. } => vec![*value],
         IrInstruction::Binary { left, right, .. } => vec![*left, *right],
         IrInstruction::MathIntrinsic { args, .. } => args.clone(),
@@ -1339,6 +1425,7 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         | IrInstruction::Number { .. }
         | IrInstruction::Bool(_)
         | IrInstruction::String(_) => false,
+        IrInstruction::ToString { .. } => false,
         IrInstruction::Cast { value: source, .. } => *source == value,
         IrInstruction::Binary { left, .. } => *left == value,
         IrInstruction::MathIntrinsic { args, .. } => args.first().copied() == Some(value),
