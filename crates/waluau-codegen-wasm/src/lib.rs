@@ -17,6 +17,73 @@ use wasmparser::{Validator, WasmFeatures};
 
 pub mod host;
 
+#[derive(Clone)]
+struct SignatureRegistry {
+    unique_signatures: Vec<(Vec<Type>, Type)>,
+    signature_indices: HashMap<(Vec<Type>, Type), u32>,
+}
+
+impl SignatureRegistry {
+    fn new() -> Self {
+        Self {
+            unique_signatures: Vec::new(),
+            signature_indices: HashMap::new(),
+        }
+    }
+
+    fn add(&mut self, params: Vec<Type>, result: Type) {
+        let key = (params, result);
+        if !self.signature_indices.contains_key(&key) {
+            let index = self.unique_signatures.len() as u32;
+            self.signature_indices.insert(key.clone(), index);
+            self.unique_signatures.push(key);
+        }
+    }
+
+    fn get(&self, params: &[Type], result: &Type) -> Option<u32> {
+        let key = (params.to_vec(), result.clone());
+        self.signature_indices.get(&key).copied()
+    }
+}
+
+fn collect_user_signatures(module: &Module, start_thunk: bool) -> SignatureRegistry {
+    let mut registry = SignatureRegistry::new();
+    // Register actual signatures of all functions in the module
+    for function in &module.functions {
+        let params = function.params.iter().map(|(_, ty)| ty.clone()).collect();
+        registry.add(params, function.return_type.clone());
+    }
+    // Register signatures of all closures and indirect calls
+    for function in &module.functions {
+        for block in function.blocks.values() {
+            for (_, instruction) in &block.instructions {
+                match instruction {
+                    IrInstruction::Closure {
+                        params,
+                        return_type,
+                        ..
+                    } => {
+                        registry.add(params.clone(), return_type.clone());
+                    }
+                    IrInstruction::CallValue {
+                        params,
+                        return_type,
+                        ..
+                    } => {
+                        registry.add(params.clone(), return_type.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    // Register thunk if needed
+    if start_thunk {
+        registry.add(Vec::new(), Type::Unit);
+    }
+    registry
+}
+
 pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     let array_types = collect_array_types(module);
     let string_constants = host::collect_string_constants(module);
@@ -36,6 +103,8 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     // Array types come first in the type section (indices 0..N-1).
     let mut array_registry = ArrayTypeRegistry::with_function_type_offset(&array_types, 0);
     array_registry.coroutine_state_type = coroutine_state_type;
+
+    let signature_registry = collect_user_signatures(module, start_thunk.is_some());
 
     let signatures = module
         .functions
@@ -117,13 +186,12 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         types.ty().struct_(fields);
     }
     // Now emit user function types.
-    for function in &module.functions {
-        let params = function
-            .params
+    for (params, return_type) in &signature_registry.unique_signatures {
+        let params = params
             .iter()
-            .map(|(_, ty)| wasm_type(ty, &array_registry))
+            .map(|ty| wasm_type(ty, &array_registry))
             .collect::<Result<Vec<_>, _>>()?;
-        let results = match &function.return_type {
+        let results = match return_type {
             Type::Multi(multi_types) => multi_types
                 .iter()
                 .map(|ty| wasm_type(ty, &array_registry))
@@ -132,11 +200,6 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
             other => vec![wasm_type(other, &array_registry)?],
         };
         types.ty().function(params, results);
-    }
-    if start_thunk.is_some() {
-        types
-            .ty()
-            .function(Vec::<ValType>::new(), Vec::<ValType>::new());
     }
 
     let mut imports = ImportSection::new();
@@ -213,7 +276,15 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     let mut codes = CodeSection::new();
     for (index, function) in module.functions.iter().enumerate() {
         // User function type indices come after array, host, and coroutine types.
-        functions.function(user_type_base + index as u32);
+        let params = function
+            .params
+            .iter()
+            .map(|(_, ty)| ty.clone())
+            .collect::<Vec<_>>();
+        let sig_index = signature_registry
+            .get(&params, &function.return_type)
+            .unwrap();
+        functions.function(user_type_base + sig_index);
         if function.name != "__waluau_top_level_init" {
             exports.export(
                 &function.name,
@@ -224,6 +295,7 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         codes.function(&emit_function(
             function,
             &signatures,
+            &signature_registry,
             &array_registry,
             &string_constants,
             user_type_base,
@@ -232,8 +304,8 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         )?);
     }
     if let Some(start) = start_thunk {
-        let thunk_index = module.functions.len() as u32;
-        functions.function(user_type_base + thunk_index);
+        let thunk_sig_index = signature_registry.get(&[], &Type::Unit).unwrap();
+        functions.function(user_type_base + thunk_sig_index);
         let mut thunk = Function::new(Vec::new());
         thunk.instruction(&Instruction::Call(host::defined_func_index(start as u32)));
         let n_returns = match &module.functions[start].return_type {
@@ -556,6 +628,7 @@ impl CoroutinePlan {
 
 struct EmissionContext<'a> {
     signatures: &'a HashMap<String, FunctionSignature>,
+    signature_registry: &'a SignatureRegistry,
     array_registry: &'a ArrayTypeRegistry,
     string_constants: &'a [String],
     user_type_base: u32,
@@ -579,9 +652,11 @@ impl EmissionContext<'_> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_function(
     function: &IrFunction,
     signatures: &HashMap<String, FunctionSignature>,
+    signature_registry: &SignatureRegistry,
     array_registry: &ArrayTypeRegistry,
     string_constants: &[String],
     user_type_base: u32,
@@ -590,6 +665,7 @@ fn emit_function(
 ) -> Result<Function, Diagnostic> {
     let ctx = EmissionContext {
         signatures,
+        signature_registry,
         array_registry,
         string_constants,
         user_type_base,
@@ -887,10 +963,20 @@ fn build_local_plan(
     let phi_copy_sources = collect_phi_copy_sources(function);
     let mut stack_values = BTreeSet::new();
 
+    let mut captured_values = BTreeSet::new();
+    for b in function.blocks.values() {
+        for (_, inst) in &b.instructions {
+            if let IrInstruction::Closure { captures, .. } = inst {
+                captured_values.extend(captures.iter().copied());
+            }
+        }
+    }
+
     for block in function.blocks.values() {
         let block_stack_values = compute_stack_values(
             block,
             phi_copy_sources.get(&block.id).cloned().unwrap_or_default(),
+            &captured_values,
         );
         stack_values.extend(block_stack_values);
     }
@@ -1391,7 +1477,7 @@ fn emit_block_instructions(
                 }
                 emit_value_operand(out, local_plan, *callee)?;
                 let type_index = find_function_type_index(
-                    ctx.signatures,
+                    ctx.signature_registry,
                     ctx.user_type_base,
                     params,
                     return_type,
@@ -1522,7 +1608,7 @@ fn emit_block_instructions(
                     Diagnostic::new(format!("unknown function '{name}' during wasm emission"))
                 })?;
                 let _ = find_function_type_index(
-                    ctx.signatures,
+                    ctx.signature_registry,
                     ctx.user_type_base,
                     params,
                     return_type,
@@ -1718,6 +1804,7 @@ fn collect_phi_copy_sources(
 fn compute_stack_values(
     block: &BasicBlock,
     phi_copy_sources: BTreeSet<ValueId>,
+    captured_values: &BTreeSet<ValueId>,
 ) -> BTreeSet<ValueId> {
     let mut uses = BTreeMap::<ValueId, Vec<usize>>::new();
     for (index, (_, instruction)) in block.instructions.iter().enumerate() {
@@ -1739,6 +1826,9 @@ fn compute_stack_values(
             continue;
         }
         if phi_copy_sources.contains(value) {
+            continue;
+        }
+        if captured_values.contains(value) {
             continue;
         }
         let Some(use_sites) = uses.get(value) else {
@@ -2780,15 +2870,14 @@ fn wasm_type(ty: &Type, array_registry: &ArrayTypeRegistry) -> Result<ValType, D
 }
 
 fn find_function_type_index(
-    signatures: &HashMap<String, FunctionSignature>,
+    registry: &SignatureRegistry,
     user_type_base: u32,
     params: &[Type],
     return_type: &Type,
 ) -> Result<u32, Diagnostic> {
-    signatures
-        .values()
-        .find(|signature| signature.params == params && signature.result == *return_type)
-        .map(|signature| user_type_base + signature.index)
+    registry
+        .get(params, return_type)
+        .map(|index| user_type_base + index)
         .ok_or_else(|| {
             Diagnostic::new(format!(
                 "no wasm function type found for indirect call signature ({}) -> {}",
@@ -3010,6 +3099,33 @@ mod tests {
                 local x: i32, y: i32 = a, b
                 x, y = swap(x, y)
                 return x + y
+            end
+        "#;
+        let program = waluau_parser::parse(source).expect("parse should succeed");
+        let ir = waluau_ir::build(&program).expect("ir should succeed");
+        let wasm = super::emit(&ir).expect("emit should succeed");
+        Validator::new()
+            .validate_all(&wasm)
+            .expect("emitted module should validate");
+    }
+
+    #[test]
+    fn emits_valid_wasm_for_for_in_closure_iterator() {
+        let source = r#"
+            function entry(): i32
+                local i: i32 = 0
+                local iter = function(): bool, i32, i32
+                    i = i + 1
+                    if i > 3 then
+                        return false, 0, 0
+                    end
+                    return true, i, i + 10
+                end
+                local acc: i32 = 0
+                for a, b in iter do
+                    acc = acc + a + b
+                end
+                return acc
             end
         "#;
         let program = waluau_parser::parse(source).expect("parse should succeed");
