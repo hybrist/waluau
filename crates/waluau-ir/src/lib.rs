@@ -70,6 +70,7 @@ pub enum Instruction {
         ty: NumericType,
         literal: NumberLiteral,
     },
+    Unit,
     Bool(bool),
     String(String),
     Cast {
@@ -690,6 +691,7 @@ fn verify_function(
                 }
                 Instruction::Param(_)
                 | Instruction::Number { .. }
+                | Instruction::Unit
                 | Instruction::Bool(_)
                 | Instruction::String(_) => {}
                 Instruction::ToString { value, from } => {
@@ -820,13 +822,14 @@ fn infer_instruction_type(
             .map(|(_, ty)| ty.clone())
             .ok_or_else(|| Diagnostic::new(format!("param index {} out of bounds", index))),
         Instruction::Number { ty, .. } => Ok(Type::Numeric(*ty)),
+        Instruction::Unit => Ok(Type::Unit),
         Instruction::Bool(_) => Ok(Type::Bool),
         Instruction::String(_) => Ok(Type::String),
         Instruction::Cast { to, .. } => Ok(to.clone()),
         Instruction::Binary { result_ty, .. } => Ok(result_ty.clone()),
         Instruction::MathIntrinsic { result_ty, .. } => Ok(result_ty.clone()),
         Instruction::ToString { .. } => Ok(Type::String),
-        Instruction::Print { .. } => Ok(Type::Numeric(NumericType::I32)),
+        Instruction::Print { .. } => Ok(Type::Unit),
         Instruction::Call { name, .. } => signatures
             .get(name)
             .map(|(_, ret)| ret.clone())
@@ -1082,6 +1085,11 @@ fn build_function(
             break;
         }
         builder.lower_stmt(stmt, &mut env, &mut type_env)?;
+    }
+    if builder.current_block != DEAD_BLOCK && builder.function.return_type == Type::Unit {
+        let value = builder.emit(Instruction::Unit);
+        builder.set_terminator(builder.current_block, Terminator::Return(value));
+        builder.current_block = DEAD_BLOCK;
     }
     let mut functions = vec![builder.function];
     functions.extend(builder.lifted_functions);
@@ -1347,18 +1355,6 @@ impl Builder<'_> {
                     if let Expr::Name(name) = callee.as_ref() {
                         if name == ASSERT {
                             self.lower_assert_call(args, env, types)?;
-                            return Ok(());
-                        }
-                        if name == PRINT {
-                            if args.len() != 1 {
-                                return Err(Diagnostic::new(format!(
-                                    "{PRINT} expects 1 argument, got {}",
-                                    args.len()
-                                )));
-                            }
-                            let value =
-                                self.lower_expr(&args[0], env, types, Some(Type::String))?;
-                            let _ = self.emit(Instruction::Print { value });
                             return Ok(());
                         }
                     }
@@ -1769,6 +1765,9 @@ impl Builder<'_> {
                 let ty = match self.infer_expr_type(expr, types, expected)? {
                     Type::Numeric(ty) => ty,
                     Type::Bool => unreachable!("number literal cannot lower as bool"),
+                    Type::Unit => {
+                        return Err(Diagnostic::new("numeric literal is not assignable to unit"));
+                    }
                     Type::String => {
                         return Err(Diagnostic::new(
                             "numeric literal is not assignable to string",
@@ -1856,6 +1855,11 @@ impl Builder<'_> {
                         let operand_ty = match actual {
                             Type::Numeric(ty) => ty,
                             Type::Bool => {
+                                return Err(Diagnostic::new(
+                                    "unary '-' requires a numeric operand",
+                                ));
+                            }
+                            Type::Unit => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -2055,6 +2059,13 @@ impl Builder<'_> {
                 if let Expr::Name(name) = callee.as_ref() {
                     if let Some(result) =
                         self.lower_tostring_builtin_call(name, args, env, types, expected.clone())
+                    {
+                        return result;
+                    }
+                }
+                if let Expr::Name(name) = callee.as_ref() {
+                    if let Some(result) =
+                        self.lower_print_builtin_call(name, args, env, types, expected.clone())
                     {
                         return result;
                     }
@@ -2366,6 +2377,9 @@ impl Builder<'_> {
                 Some(Type::Bool) => {
                     Err(Diagnostic::new("numeric literal is not assignable to bool"))
                 }
+                Some(Type::Unit) => {
+                    Err(Diagnostic::new("numeric literal is not assignable to unit"))
+                }
                 Some(Type::String) => Err(Diagnostic::new(
                     "numeric literal is not assignable to string",
                 )),
@@ -2411,6 +2425,7 @@ impl Builder<'_> {
                     match actual {
                         Type::Numeric(_) => coerce_type(actual, expected),
                         Type::Bool => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                        Type::Unit => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                         Type::String => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
@@ -2483,6 +2498,11 @@ impl Builder<'_> {
                 }
                 if let Expr::Name(name) = callee.as_ref() {
                     if let Some(result) = self.infer_tostring_builtin_call_type(name, expr, types) {
+                        return result;
+                    }
+                }
+                if let Expr::Name(name) = callee.as_ref() {
+                    if let Some(result) = self.infer_print_builtin_call_type(name, expr, types) {
                         return result;
                     }
                 }
@@ -2970,6 +2990,31 @@ impl Builder<'_> {
         Some(self.coerce_value(value, Type::String, expected))
     }
 
+    fn lower_print_builtin_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        env: &HashMap<String, ValueId>,
+        types: &HashMap<String, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<ValueId, Diagnostic>> {
+        if name != PRINT {
+            return None;
+        }
+        if args.len() != 1 {
+            return Some(Err(Diagnostic::new(format!(
+                "{PRINT} expects 1 argument, got {}",
+                args.len()
+            ))));
+        }
+        let value = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+            Ok(value) => value,
+            Err(error) => return Some(Err(error)),
+        };
+        let print_value = self.emit(Instruction::Print { value });
+        Some(self.coerce_value(print_value, Type::Unit, expected))
+    }
+
     fn infer_math_builtin_call_type(
         &self,
         name: &str,
@@ -3073,6 +3118,33 @@ impl Builder<'_> {
             Some(Err(Diagnostic::new(format!(
                 "{TO_STRING} expects a primitive argument (numeric, bool, or string), got {arg_ty}",
             ))))
+        }
+    }
+
+    fn infer_print_builtin_call_type(
+        &self,
+        name: &str,
+        call: &Expr,
+        types: &HashMap<String, Type>,
+    ) -> Option<Result<Type, Diagnostic>> {
+        if name != PRINT {
+            return None;
+        }
+        let Expr::Call { args, .. } = call else {
+            return None;
+        };
+        if args.len() != 1 {
+            return Some(Err(Diagnostic::new(format!(
+                "{PRINT} expects 1 argument, got {}",
+                args.len()
+            ))));
+        }
+        match self.infer_expr_type(&args[0], types, Some(Type::String)) {
+            Ok(Type::String) => Some(Ok(Type::Unit)),
+            Ok(actual) => Some(Err(Diagnostic::new(format!(
+                "{PRINT} expects string, got {actual}",
+            )))),
+            Err(error) => Some(Err(error)),
         }
     }
 }
@@ -3180,6 +3252,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Bool => Err(Diagnostic::new(format!(
                 "cannot implicitly convert bool to {expected_numeric}",
             ))),
+            Type::Unit => Err(Diagnostic::new(format!(
+                "cannot implicitly convert unit to {expected_numeric}",
+            ))),
             Type::String => Err(Diagnostic::new(format!(
                 "cannot implicitly convert string to {expected_numeric}",
             ))),
@@ -3201,6 +3276,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
         },
         Some(Type::Bool) => Err(Diagnostic::new(format!(
             "cannot implicitly convert {actual} to bool",
+        ))),
+        Some(Type::Unit) => Err(Diagnostic::new(format!(
+            "cannot implicitly convert {actual} to unit",
         ))),
         Some(expected) => Err(Diagnostic::new(format!(
             "cannot implicitly convert {actual} to {expected}",

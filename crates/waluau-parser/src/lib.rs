@@ -897,6 +897,7 @@ impl Parser {
             Some(TokenKind::I32Type) => Ok(Type::Numeric(NumericType::I32)),
             Some(TokenKind::I64Type) => Ok(Type::Numeric(NumericType::I64)),
             Some(TokenKind::F32Type) => Ok(Type::Numeric(NumericType::F32)),
+            Some(TokenKind::UnitType) => Ok(Type::Unit),
             Some(TokenKind::BoolType) => Ok(Type::Bool),
             Some(TokenKind::StringType) => Ok(Type::String),
             Some(TokenKind::Identifier(name)) if self.check_simple(&TokenKind::Less) => {
@@ -914,7 +915,7 @@ impl Parser {
                 Ok(Type::TypeParam(name))
             }
             _ => Err(self.diagnostic_at_current(
-                "expected type (number, u32, u64, i32, i64, f32, f64, bool, string, {T}, or (T1, T2) -> R)",
+                "expected type (number, u32, u64, i32, i64, f32, f64, unit, bool, string, {T}, or (T1, T2) -> R)",
             )),
         }
     }
@@ -1117,6 +1118,21 @@ mod tests {
         assert_eq!(function.params[2].ty, Type::Numeric(NumericType::U64));
         assert_eq!(function.params[3].ty, Type::Numeric(NumericType::I64));
         assert_eq!(function.return_type, Some(Type::Numeric(NumericType::F64)));
+    }
+
+    #[test]
+    fn parses_unit_and_void_type_aliases() {
+        let source = r#"
+            function a(): unit
+                return 1
+            end
+            function b(): void
+                return 2
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        assert_eq!(program.functions[0].return_type, Some(Type::Unit));
+        assert_eq!(program.functions[1].return_type, Some(Type::Unit));
     }
 
     #[test]

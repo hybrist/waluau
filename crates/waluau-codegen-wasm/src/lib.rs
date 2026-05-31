@@ -86,6 +86,7 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
                 .iter()
                 .map(|ty| wasm_type(ty, &array_registry))
                 .collect::<Result<Vec<_>, _>>()?,
+            Type::Unit => Vec::new(),
             other => vec![wasm_type(other, &array_registry)?],
         };
         types.ty().function(params, results);
@@ -189,6 +190,7 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         thunk.instruction(&Instruction::Call(host::defined_func_index(start as u32)));
         let n_returns = match &module.functions[start].return_type {
             Type::Multi(types) => types.len(),
+            Type::Unit => 0,
             _ => 1,
         };
         for _ in 0..n_returns {
@@ -339,6 +341,7 @@ fn array_storage_type(
             "multi-value types are not supported in array storage yet",
         )),
         Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) => unreachable!(),
+        Type::Unit => unreachable!(),
     }
 }
 
@@ -585,6 +588,7 @@ struct LocalPlan {
     multi_slots: BTreeMap<ValueId, Vec<u32>>,
     extra_locals: Vec<ValType>,
     stack_values: BTreeSet<ValueId>,
+    unit_values: BTreeSet<ValueId>,
     pc_local: u32,
 }
 
@@ -602,6 +606,10 @@ fn build_local_plan(
     array_registry: &ArrayTypeRegistry,
 ) -> Result<LocalPlan, Diagnostic> {
     let mut slots = BTreeMap::new();
+    let unit_values = value_types
+        .iter()
+        .filter_map(|(value, ty)| matches!(ty, Type::Unit).then_some(*value))
+        .collect::<BTreeSet<_>>();
     let phi_copy_sources = collect_phi_copy_sources(function);
     let mut stack_values = BTreeSet::new();
 
@@ -612,7 +620,7 @@ fn build_local_plan(
         );
         stack_values.extend(block_stack_values);
     }
-    stack_values.retain(|v| !matches!(value_types.get(v), Some(Type::Multi(_))));
+    stack_values.retain(|v| !matches!(value_types.get(v), Some(Type::Multi(_)) | Some(Type::Unit)));
 
     let intervals = compute_live_intervals(function, value_types, &stack_values)?;
     let (local_slots, mut extra_locals) =
@@ -654,6 +662,7 @@ fn build_local_plan(
         multi_slots,
         extra_locals,
         stack_values,
+        unit_values,
         pc_local,
     })
 }
@@ -679,13 +688,14 @@ fn infer_value_types(
             let ty = match instruction {
                 IrInstruction::Param(index) => function.params[*index].1.clone(),
                 IrInstruction::Number { ty, .. } => Type::Numeric(*ty),
+                IrInstruction::Unit => Type::Unit,
                 IrInstruction::Bool(_) => Type::Bool,
                 IrInstruction::String(_) => Type::String,
                 IrInstruction::Cast { to, .. } => to.clone(),
                 IrInstruction::Binary { result_ty, .. } => result_ty.clone(),
                 IrInstruction::MathIntrinsic { result_ty, .. } => result_ty.clone(),
                 IrInstruction::ToString { .. } => Type::String,
-                IrInstruction::Print { .. } => Type::Numeric(NumericType::I32),
+                IrInstruction::Print { .. } => Type::Unit,
                 IrInstruction::Call { name, .. } => signatures
                     .get(name)
                     .ok_or_else(|| {
@@ -807,10 +817,12 @@ fn emit_block(
             out.instruction(&Instruction::Br(1));
         }
         Terminator::Return(value) => {
-            let _ = value_types.get(value).ok_or_else(|| {
+            let return_ty = value_types.get(value).ok_or_else(|| {
                 Diagnostic::new(format!("missing type for return value {:?}", value))
             })?;
-            emit_value_operand(out, local_plan, *value)?;
+            if !matches!(return_ty, Type::Unit) {
+                emit_value_operand(out, local_plan, *value)?;
+            }
             out.instruction(&Instruction::Return);
         }
         Terminator::Unreachable => {
@@ -830,6 +842,9 @@ fn emit_block_instructions(
     for (value, instruction) in &block.instructions {
         match instruction {
             IrInstruction::Param(_) | IrInstruction::Phi(_) => {}
+            IrInstruction::Unit => {
+                emit_value_store(out, local_plan, *value)?;
+            }
             IrInstruction::Number { ty, literal } => {
                 emit_numeric_const(out, *ty, literal)?;
                 emit_value_store(out, local_plan, *value)?;
@@ -885,7 +900,6 @@ fn emit_block_instructions(
             IrInstruction::Print { value: printed } => {
                 emit_value_operand(out, local_plan, *printed)?;
                 out.instruction(&Instruction::Call(host::IMPORT_PRINT_FUNC));
-                out.instruction(&Instruction::I32Const(0));
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::ToString {
@@ -1301,7 +1315,7 @@ fn compute_live_intervals(
             .get(&value)
             .cloned()
             .ok_or_else(|| Diagnostic::new(format!("missing type for value {:?}", value)))?;
-        if matches!(ty, Type::Multi(_)) {
+        if matches!(ty, Type::Multi(_) | Type::Unit) {
             continue;
         }
         let end = last_use_positions.get(&value).copied().unwrap_or(start);
@@ -1386,6 +1400,7 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
     match instruction {
         IrInstruction::Param(_)
         | IrInstruction::Number { .. }
+        | IrInstruction::Unit
         | IrInstruction::Bool(_)
         | IrInstruction::String(_) => Vec::new(),
         IrInstruction::ToString { value, .. } => vec![*value],
@@ -1439,6 +1454,7 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
     match instruction {
         IrInstruction::Param(_)
         | IrInstruction::Number { .. }
+        | IrInstruction::Unit
         | IrInstruction::Bool(_)
         | IrInstruction::String(_) => false,
         IrInstruction::ToString { .. } => false,
@@ -1466,6 +1482,9 @@ fn emit_value_operand(
     if local_plan.stack_values.contains(&value) {
         return Ok(());
     }
+    if local_plan.unit_values.contains(&value) {
+        return Ok(());
+    }
     if let Some(slots) = local_plan.multi_slots.get(&value) {
         for &slot in slots {
             out.instruction(&Instruction::LocalGet(slot));
@@ -1482,6 +1501,9 @@ fn emit_value_store(
     value: ValueId,
 ) -> Result<(), Diagnostic> {
     if local_plan.stack_values.contains(&value) {
+        return Ok(());
+    }
+    if local_plan.unit_values.contains(&value) {
         return Ok(());
     }
     if let Some(slots) = local_plan.multi_slots.get(&value) {
@@ -1674,6 +1696,7 @@ fn emit_binary(
                 ));
             }
             Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) => unreachable!(),
+            Type::Unit => unreachable!(),
         },
         BinaryOp::Concat => match operand_ty {
             Type::String => {
@@ -1715,6 +1738,7 @@ fn emit_binary(
                 ));
             }
             Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) => unreachable!(),
+            Type::Unit => unreachable!(),
         },
         BinaryOp::Mul => match operand_ty {
             Type::Numeric(NumericType::U32 | NumericType::I32) => {
@@ -1746,6 +1770,7 @@ fn emit_binary(
                 ));
             }
             Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) => unreachable!(),
+            Type::Unit => unreachable!(),
         },
         BinaryOp::Div => match operand_ty {
             Type::Numeric(NumericType::U32) => {
@@ -1783,6 +1808,7 @@ fn emit_binary(
                 ));
             }
             Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) => unreachable!(),
+            Type::Unit => unreachable!(),
         },
         BinaryOp::FloorDiv | BinaryOp::Mod => unreachable!("handled before stack binary emission"),
         BinaryOp::Eq => match operand_ty {
@@ -1808,6 +1834,7 @@ fn emit_binary(
                 ));
             }
             Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) => unreachable!(),
+            Type::Unit => unreachable!(),
         },
         BinaryOp::Less => match operand_ty {
             Type::Numeric(NumericType::U32) => {
@@ -1845,6 +1872,7 @@ fn emit_binary(
                 ));
             }
             Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) => unreachable!(),
+            Type::Unit => unreachable!(),
         },
         BinaryOp::Greater => match operand_ty {
             Type::Numeric(NumericType::U32) => {
@@ -1882,6 +1910,7 @@ fn emit_binary(
                 ));
             }
             Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) => unreachable!(),
+            Type::Unit => unreachable!(),
         },
         BinaryOp::And => {
             out.instruction(&Instruction::I32And);
@@ -2178,6 +2207,9 @@ fn wasm_type(ty: &Type, array_registry: &ArrayTypeRegistry) -> Result<ValType, D
             }))
         }
         Type::String => Ok(externref_val_type()),
+        Type::Unit => Err(Diagnostic::new(
+            "unit type has no wasm value representation",
+        )),
         Type::Multi(_) => Err(Diagnostic::new(
             "multi-value types are not supported in Wasm signatures yet",
         )),

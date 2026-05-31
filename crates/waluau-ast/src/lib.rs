@@ -57,6 +57,7 @@ pub enum NumericType {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Type {
     Numeric(NumericType),
+    Unit,
     Bool,
     String,
     Array(Box<Type>),
@@ -145,6 +146,7 @@ impl std::fmt::Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Numeric(ty) => ty.fmt(f),
+            Self::Unit => f.write_str("unit"),
             Self::Bool => f.write_str("bool"),
             Self::String => f.write_str("string"),
             Self::Array(element) => write!(f, "{{{element}}}"),
