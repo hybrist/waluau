@@ -3257,7 +3257,7 @@ fn collect_nested_from_expr(expr: &Expr, out: &mut HashSet<String>) {
             collect_nested_from_expr(base, out);
             collect_nested_from_expr(index, out);
         }
-        Expr::Name(_) | Expr::Number(_) | Expr::Bool(_) | Expr::Require(_) => {}
+        Expr::Name(_) | Expr::Number(_) | Expr::Bool(_) | Expr::String(_) | Expr::Require(_) => {}
     }
 }
 
@@ -3370,7 +3370,7 @@ fn collect_free_names_in_expr(expr: &Expr, bound: &HashSet<String>, out: &mut Ha
             collect_free_names_in_expr(base, bound, out);
             collect_free_names_in_expr(index, bound, out);
         }
-        Expr::Number(_) | Expr::Bool(_) | Expr::Require(_) => {}
+        Expr::Number(_) | Expr::Bool(_) | Expr::String(_) | Expr::Require(_) => {}
     }
 }
 

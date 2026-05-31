@@ -19,10 +19,6 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     let start_thunk = module.start;
     // We'll emit array types first in the type section so their indices begin at 0.
     let array_registry = ArrayTypeRegistry::with_function_type_offset(&array_types, 0);
-    eprintln!(
-        "debug: array_registry.indices = {:?}",
-        array_registry.indices
-    );
 
     let signatures = module
         .functions
@@ -42,7 +38,6 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
 
     let mut wasm = WasmModule::new();
     let mut types = TypeSection::new();
-    eprintln!("debug: array_types_count={}", array_types.len());
     // Emit array types first so function types can reference them.
     for array_ty in &array_types {
         let element_ty = array_ty
