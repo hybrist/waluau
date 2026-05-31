@@ -1,8 +1,8 @@
 use waluau_ast::{
     AssignOp, BinaryOp, Binding, Expr, Function, FunctionExpr, NumberLiteral, NumericType, Param,
-    Program, Rebindability, Stmt, Type, UnaryOp,
+    Program, Rebindability, Span, Stmt, Type, UnaryOp,
 };
-use waluau_diagnostics::Diagnostic;
+use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 use waluau_lexer::{Token, TokenKind};
 
 pub fn parse(source: &str) -> Result<Program, Diagnostic> {
@@ -13,7 +13,7 @@ pub fn parse(source: &str) -> Result<Program, Diagnostic> {
 struct Parser {
     tokens: Vec<Token>,
     index: usize,
-    diagnostics: Vec<String>,
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl Parser {
@@ -75,14 +75,18 @@ impl Parser {
                 top_level,
                 export,
             })
+        } else if self.diagnostics.len() == 1 {
+            Err(self.diagnostics.remove(0))
         } else {
-            Err(Diagnostic::new(self.diagnostics.join("\n")))
+            let messages: Vec<String> = self.diagnostics.iter().map(|d| d.to_string()).collect();
+            Err(Diagnostic::new(messages.join("\n")))
         }
     }
 
     fn parse_function(&mut self) -> Result<Function, Diagnostic> {
         self.expect_simple(TokenKind::Function, "expected 'function'")?;
         let name = self.expect_identifier()?;
+        self.reject_generic_type_params(&name)?;
         let function_expr = self.parse_function_expr_tail(Some(name), false)?;
         Ok(Function {
             name: function_expr
@@ -576,6 +580,13 @@ impl Parser {
                 };
                 continue;
             }
+            if let Expr::Name(ref name) = expr {
+                if self.check_simple(&TokenKind::Less) {
+                    if let Some(err) = self.check_generic_call_attempt(name) {
+                        return Err(err);
+                    }
+                }
+            }
             if self.check_simple(&TokenKind::LParen) {
                 self.advance();
                 let mut args = Vec::new();
@@ -599,6 +610,73 @@ impl Parser {
             break;
         }
         Ok(expr)
+    }
+
+    fn check_generic_call_attempt(&mut self, callee_name: &str) -> Option<Diagnostic> {
+        let checkpoint = self.index;
+        let angle_start = self.peek().map(|t| t.span.start).unwrap_or(0);
+        self.advance();
+        let mut depth = 1u32;
+        let mut has_type_like_content = false;
+        while depth > 0 {
+            match self.peek().map(|t| &t.kind) {
+                Some(TokenKind::Less) => {
+                    depth += 1;
+                    self.advance();
+                }
+                Some(TokenKind::Greater) => {
+                    depth -= 1;
+                    self.advance();
+                }
+                Some(
+                    TokenKind::Identifier(_)
+                    | TokenKind::I32Type
+                    | TokenKind::I64Type
+                    | TokenKind::U32Type
+                    | TokenKind::U64Type
+                    | TokenKind::F32Type
+                    | TokenKind::F64Type
+                    | TokenKind::NumberType
+                    | TokenKind::BoolType
+                    | TokenKind::StringType
+                    | TokenKind::Comma,
+                ) => {
+                    has_type_like_content = true;
+                    self.advance();
+                }
+                None => {
+                    self.index = checkpoint;
+                    return None;
+                }
+                _ => {
+                    self.index = checkpoint;
+                    return None;
+                }
+            }
+        }
+        if self.check_simple(&TokenKind::LParen) && has_type_like_content {
+            let angle_end = self
+                .tokens
+                .get(self.index.saturating_sub(1))
+                .map(|t| t.span.end)
+                .unwrap_or(angle_start + 1);
+            return Some(
+                Diagnostic::new_with_code(
+                    "generic/unsupported-call",
+                    format!(
+                        "explicit type arguments in function calls are not supported in this MVP: '{callee_name}<...>(...)'"
+                    ),
+                )
+                .with_category(DiagnosticCategory::Unsupported)
+                .with_span(Span {
+                    start: angle_start,
+                    end: angle_end,
+                })
+                .with_action("remove type arguments; the compiler infers types from arguments"),
+            );
+        }
+        self.index = checkpoint;
+        None
     }
 
     fn parse_binary(
@@ -758,7 +836,8 @@ impl Parser {
             });
         }
 
-        match self.advance().map(|token| token.kind) {
+        let token = self.advance();
+        match token.map(|t| t.kind.clone()) {
             Some(TokenKind::NumberType | TokenKind::F64Type) => Ok(Type::number()),
             Some(TokenKind::U32Type) => Ok(Type::Numeric(NumericType::U32)),
             Some(TokenKind::U64Type) => Ok(Type::Numeric(NumericType::U64)),
@@ -767,10 +846,50 @@ impl Parser {
             Some(TokenKind::F32Type) => Ok(Type::Numeric(NumericType::F32)),
             Some(TokenKind::BoolType) => Ok(Type::Bool),
             Some(TokenKind::StringType) => Ok(Type::String),
+            Some(TokenKind::Identifier(name)) if self.check_simple(&TokenKind::Less) => {
+                self.reject_generic_type_annotation(&name)
+            }
             _ => Err(self.diagnostic_at_current(
                 "expected type (number, u32, u64, i32, i64, f32, f64, bool, string, {T}, or (T1, T2) -> R)",
             )),
         }
+    }
+
+    fn reject_generic_type_annotation(&mut self, type_name: &str) -> Result<Type, Diagnostic> {
+        let angle_start = self.peek().map(|t| t.span.start).unwrap_or(0);
+        self.advance();
+        let mut depth = 1u32;
+        while depth > 0 {
+            match self.peek().map(|t| &t.kind) {
+                Some(TokenKind::Less) => {
+                    depth += 1;
+                    self.advance();
+                }
+                Some(TokenKind::Greater) => {
+                    depth -= 1;
+                    self.advance();
+                }
+                None => break,
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+        let angle_end = self
+            .tokens
+            .get(self.index.saturating_sub(1))
+            .map(|t| t.span.end)
+            .unwrap_or(angle_start + 1);
+        Err(Diagnostic::new_with_code(
+            "generic/unsupported-type",
+            format!("generic types are not supported in this MVP: '{type_name}<...>'"),
+        )
+        .with_category(DiagnosticCategory::Unsupported)
+        .with_span(Span {
+            start: angle_start,
+            end: angle_end,
+        })
+        .with_action("use a concrete type like {i32} for arrays"))
     }
 
     fn expect_identifier(&mut self) -> Result<String, Diagnostic> {
@@ -815,7 +934,7 @@ impl Parser {
     }
 
     fn record_error(&mut self, diagnostic: Diagnostic) {
-        self.diagnostics.push(diagnostic.to_string());
+        self.diagnostics.push(diagnostic);
     }
 
     fn diagnostic_at_current(&self, message: &str) -> Diagnostic {
@@ -831,6 +950,46 @@ impl Parser {
         } else {
             Diagnostic::new(message)
         }
+    }
+
+    fn reject_generic_type_params(&mut self, name: &str) -> Result<(), Diagnostic> {
+        if !self.check_simple(&TokenKind::Less) {
+            return Ok(());
+        }
+        let angle_start = self.peek().map(|t| t.span.start).unwrap_or(0);
+        self.advance();
+        let mut depth = 1u32;
+        while depth > 0 {
+            match self.peek().map(|t| &t.kind) {
+                Some(TokenKind::Less) => {
+                    depth += 1;
+                    self.advance();
+                }
+                Some(TokenKind::Greater) => {
+                    depth -= 1;
+                    self.advance();
+                }
+                Some(TokenKind::LParen) | None => break,
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+        let angle_end = self
+            .tokens
+            .get(self.index.saturating_sub(1))
+            .map(|t| t.span.end)
+            .unwrap_or(angle_start + 1);
+        Err(Diagnostic::new_with_code(
+            "generic/unsupported-function",
+            format!("generic type parameters are not supported in this MVP: '{name}<...>'"),
+        )
+        .with_category(DiagnosticCategory::Unsupported)
+        .with_span(Span {
+            start: angle_start,
+            end: angle_end,
+        })
+        .with_action("remove type parameters and use concrete types"))
     }
 
     fn sync_to_next_function(&mut self) {
@@ -1532,5 +1691,84 @@ mod tests {
             saw_continue,
             "expected a repeat-until loop containing a continue"
         );
+    }
+
+    #[test]
+    fn rejects_generic_function_declaration() {
+        let source = r#"
+            function identity<T>(x: T): T
+                return x
+            end
+        "#;
+        let error = parse(source).expect_err("parse should fail");
+        assert_eq!(error.code(), Some("generic/unsupported-function"));
+        assert!(
+            error
+                .to_string()
+                .contains("generic type parameters are not supported"),
+            "message was: {}",
+            error
+        );
+    }
+
+    #[test]
+    fn rejects_generic_type_annotation() {
+        let source = r#"
+            function entry(): i32
+                local xs: Array<i32> = {}
+                return 0
+            end
+        "#;
+        let error = parse(source).expect_err("parse should fail");
+        assert_eq!(error.code(), Some("generic/unsupported-type"));
+        assert!(
+            error
+                .to_string()
+                .contains("generic types are not supported"),
+            "message was: {}",
+            error
+        );
+    }
+
+    #[test]
+    fn rejects_generic_call_expression() {
+        let source = r#"
+            function entry(): i32
+                return identity<i32>(42)
+            end
+        "#;
+        let error = parse(source).expect_err("parse should fail");
+        assert_eq!(error.code(), Some("generic/unsupported-call"));
+        assert!(
+            error
+                .to_string()
+                .contains("explicit type arguments in function calls are not supported"),
+            "message was: {}",
+            error
+        );
+    }
+
+    #[test]
+    fn allows_less_than_comparison_not_confused_with_generics() {
+        let source = r#"
+            function entry(x: i32, y: i32): bool
+                return x < y
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        assert_eq!(program.functions.len(), 1);
+    }
+
+    #[test]
+    fn allows_chained_comparisons_not_confused_with_generics() {
+        let source = r#"
+            function entry(x: i32, y: i32, z: i32): bool
+                local a: bool = x < y
+                local b: bool = y > z
+                return a and b
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        assert_eq!(program.functions.len(), 1);
     }
 }

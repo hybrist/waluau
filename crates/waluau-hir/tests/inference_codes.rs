@@ -1,4 +1,78 @@
+use waluau_diagnostics::DiagnosticCategory;
 use waluau_parser::parse;
+
+#[test]
+fn generic_function_unsupported_code() {
+    let source = r#"
+        function identity<T>(x: T): T
+            return x
+        end
+    "#;
+    let error = parse(source).expect_err("parse should fail");
+    assert_eq!(error.code(), Some("generic/unsupported-function"));
+    assert_eq!(error.category(), Some(DiagnosticCategory::Unsupported));
+    assert!(error.span().is_some(), "diagnostic should have a span");
+    assert_eq!(
+        error.action(),
+        Some("remove type parameters and use concrete types")
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("generic type parameters are not supported"),
+        "message was: {}",
+        error
+    );
+}
+
+#[test]
+fn generic_type_unsupported_code() {
+    let source = r#"
+        function entry(): i32
+            local xs: Array<i32> = {}
+            return 0
+        end
+    "#;
+    let error = parse(source).expect_err("parse should fail");
+    assert_eq!(error.code(), Some("generic/unsupported-type"));
+    assert_eq!(error.category(), Some(DiagnosticCategory::Unsupported));
+    assert!(error.span().is_some(), "diagnostic should have a span");
+    assert_eq!(
+        error.action(),
+        Some("use a concrete type like {i32} for arrays")
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("generic types are not supported"),
+        "message was: {}",
+        error
+    );
+}
+
+#[test]
+fn generic_call_unsupported_code() {
+    let source = r#"
+        function entry(): i32
+            return identity<i32>(42)
+        end
+    "#;
+    let error = parse(source).expect_err("parse should fail");
+    assert_eq!(error.code(), Some("generic/unsupported-call"));
+    assert_eq!(error.category(), Some(DiagnosticCategory::Unsupported));
+    assert!(error.span().is_some(), "diagnostic should have a span");
+    assert_eq!(
+        error.action(),
+        Some("remove type arguments; the compiler infers types from arguments")
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("explicit type arguments in function calls are not supported"),
+        "message was: {}",
+        error
+    );
+}
 
 #[test]
 fn inference_empty_array_missing_context_code() {
