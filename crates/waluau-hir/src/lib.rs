@@ -25,6 +25,7 @@ enum FnSignature {
 const COROUTINE_CREATE: &str = "coroutine_create";
 const COROUTINE_RESUME: &str = "coroutine_resume";
 const COROUTINE_STATUS: &str = "coroutine_status";
+const COROUTINE_YIELD: &str = "coroutine_yield";
 const MATH_ABS: &str = "math_abs";
 const MATH_MIN: &str = "math_min";
 const MATH_MAX: &str = "math_max";
@@ -1684,6 +1685,19 @@ fn infer_coroutine_builtin_call(
                 ))),
             }
         }
+        COROUTINE_YIELD => {
+            if args.len() != 1 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{COROUTINE_YIELD} expects 1 argument, got {}",
+                    args.len()
+                ))));
+            }
+            let _ = match infer_expr(&args[0], vars, fn_signatures, active_type_params, None) {
+                Ok(ty) => ty,
+                Err(error) => return Some(Err(error)),
+            };
+            Some(coerce_type(Type::Unit, expected))
+        }
         _ => None,
     }
 }
@@ -3069,6 +3083,18 @@ mod tests {
                 end
                 local co: () -> i32 = coroutine_create(job)
                 return coroutine_status(co)
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn type_checks_coroutine_yield_calls() {
+        let source = r#"
+            function run_job(): i32
+                coroutine_yield(1)
+                return 7
             end
         "#;
         let program = parse(source).expect("parse should succeed");
