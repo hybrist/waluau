@@ -28,7 +28,7 @@ function delegated_job(): i32
     return 30
 end
 
-local delegated: () -> i32 = coroutine_create(delegated_job)
+local delegated = coroutine_create(delegated_job)
 
 assert(coroutine_status(delegated))
 assert(coroutine_resume(delegated) == 10)
