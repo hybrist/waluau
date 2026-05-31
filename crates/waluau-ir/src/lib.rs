@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use waluau_ast::{
-    AssignOp, BinaryOp, Expr, Function as AstFunction, NumberLiteral, NumericType, Program, Stmt,
-    Type, UnaryOp,
+    AssignOp, BinaryOp, Expr, Function as AstFunction, NumberLiteral, NumericType, Program,
+    Rebindability, Stmt, Type, UnaryOp,
 };
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
@@ -247,6 +247,22 @@ impl<'a> Monomorphizer<'a> {
             Stmt::Repeat { body, condition } => Stmt::Repeat {
                 body: self.rewrite_stmts(body, subst, active)?,
                 condition: self.rewrite_expr(condition, subst, active)?,
+            },
+            Stmt::NumericFor {
+                name,
+                start,
+                stop,
+                step,
+                body,
+            } => Stmt::NumericFor {
+                name: name.clone(),
+                start: self.rewrite_expr(start, subst, active)?,
+                stop: self.rewrite_expr(stop, subst, active)?,
+                step: step
+                    .as_ref()
+                    .map(|expr| self.rewrite_expr(expr, subst, active))
+                    .transpose()?,
+                body: self.rewrite_stmts(body, subst, active)?,
             },
             Stmt::Break => Stmt::Break,
             Stmt::Continue => Stmt::Continue,
@@ -2126,6 +2142,15 @@ impl Builder<'_> {
             Stmt::Repeat { body, condition } => {
                 self.lower_repeat(body, condition, env, types)?;
             }
+            Stmt::NumericFor {
+                name,
+                start,
+                stop,
+                step,
+                body,
+            } => {
+                self.lower_numeric_for(name, start, stop, step.as_ref(), body, env, types)?;
+            }
         }
         Ok(())
     }
@@ -2395,6 +2420,134 @@ impl Builder<'_> {
         }
         self.current_block = exit;
         Ok(())
+    }
+
+    fn lower_numeric_for(
+        &mut self,
+        name: &str,
+        start: &Expr,
+        stop: &Expr,
+        step: Option<&Expr>,
+        body: &[Stmt],
+        env: &mut HashMap<String, ValueId>,
+        types: &mut HashMap<String, Type>,
+    ) -> Result<(), Diagnostic> {
+        let start_ty = self.infer_expr_type(start, types, None)?;
+        let stop_ty = self.infer_expr_type(stop, types, None)?;
+        let mut loop_ty = common_numeric_type(start_ty, stop_ty)?;
+        if let Some(step_expr) = step {
+            let step_ty = self.infer_expr_type(step_expr, types, None)?;
+            loop_ty = common_numeric_type(loop_ty, step_ty)?;
+        }
+        let Type::Numeric(numeric_ty) = loop_ty else {
+            return Err(Diagnostic::new("numeric for-loop bounds must be numeric"));
+        };
+        let loop_ty = Type::Numeric(numeric_ty);
+        let unique = self.function.next_value;
+        let index_name = format!("__waluau_numfor_index_{unique}");
+        let stop_name = format!("__waluau_numfor_stop_{unique}");
+        let step_name = format!("__waluau_numfor_step_{unique}");
+        let zero = Expr::Cast {
+            expr: Box::new(Expr::Number(NumberLiteral {
+                raw: "0".to_string(),
+            })),
+            ty: loop_ty.clone(),
+        };
+        let default_step = Expr::Cast {
+            expr: Box::new(Expr::Number(NumberLiteral {
+                raw: "1".to_string(),
+            })),
+            ty: loop_ty.clone(),
+        };
+
+        let mut while_body = Vec::with_capacity(body.len() + 2);
+        while_body.push(Stmt::Let {
+            name: name.to_string(),
+            rebindability: Rebindability::Const,
+            ty: Some(loop_ty.clone()),
+            value: Expr::Name(index_name.clone()),
+        });
+        while_body.extend(body.iter().cloned());
+        while_body.push(Stmt::Assign {
+            op: AssignOp::Set,
+            name: index_name.clone(),
+            value: Expr::Binary {
+                op: BinaryOp::Add,
+                left: Box::new(Expr::Name(index_name.clone())),
+                right: Box::new(Expr::Name(step_name.clone())),
+            },
+        });
+        let positive_while_condition = Expr::Unary {
+            op: UnaryOp::Not,
+            expr: Box::new(Expr::Binary {
+                op: BinaryOp::Greater,
+                left: Box::new(Expr::Name(index_name.clone())),
+                right: Box::new(Expr::Name(stop_name.clone())),
+            }),
+        };
+        let negative_while_condition = Expr::Unary {
+            op: UnaryOp::Not,
+            expr: Box::new(Expr::Binary {
+                op: BinaryOp::Less,
+                left: Box::new(Expr::Name(index_name.clone())),
+                right: Box::new(Expr::Name(stop_name.clone())),
+            }),
+        };
+        let numeric_for_lowered = Stmt::If {
+            condition: Expr::Binary {
+                op: BinaryOp::Greater,
+                left: Box::new(Expr::Name(step_name.clone())),
+                right: Box::new(zero.clone()),
+            },
+            then_body: vec![Stmt::While {
+                condition: positive_while_condition,
+                body: while_body.clone(),
+            }],
+            else_body: vec![Stmt::If {
+                condition: Expr::Binary {
+                    op: BinaryOp::Less,
+                    left: Box::new(Expr::Name(step_name.clone())),
+                    right: Box::new(zero),
+                },
+                then_body: vec![Stmt::While {
+                    condition: negative_while_condition,
+                    body: while_body,
+                }],
+                else_body: vec![],
+            }],
+        };
+
+        self.lower_stmt(
+            &Stmt::Let {
+                name: index_name.clone(),
+                rebindability: Rebindability::Rebindable,
+                ty: Some(loop_ty.clone()),
+                value: start.clone(),
+            },
+            env,
+            types,
+        )?;
+        self.lower_stmt(
+            &Stmt::Let {
+                name: stop_name.clone(),
+                rebindability: Rebindability::Const,
+                ty: Some(loop_ty.clone()),
+                value: stop.clone(),
+            },
+            env,
+            types,
+        )?;
+        self.lower_stmt(
+            &Stmt::Let {
+                name: step_name.clone(),
+                rebindability: Rebindability::Const,
+                ty: Some(loop_ty.clone()),
+                value: step.cloned().unwrap_or(default_step),
+            },
+            env,
+            types,
+        )?;
+        self.lower_stmt(&numeric_for_lowered, env, types)
     }
 
     fn lower_expr(
@@ -4081,6 +4234,24 @@ fn collect_expr_captures_from_stmt(
             }
             collect_expr_captures(condition, bound, env, signatures, captures);
         }
+        Stmt::NumericFor {
+            name,
+            start,
+            stop,
+            step,
+            body,
+        } => {
+            collect_expr_captures(start, bound, env, signatures, captures);
+            collect_expr_captures(stop, bound, env, signatures, captures);
+            if let Some(step_expr) = step {
+                collect_expr_captures(step_expr, bound, env, signatures, captures);
+            }
+            let mut nested_bound = bound.clone();
+            nested_bound.insert(name.clone());
+            for stmt in body {
+                collect_expr_captures_from_stmt(stmt, &nested_bound, env, signatures, captures);
+            }
+        }
         Stmt::Return(expr) | Stmt::Expr(expr) => {
             collect_expr_captures(expr, bound, env, signatures, captures)
         }
@@ -4200,6 +4371,7 @@ fn collect_assigned_into(stmts: &[Stmt], out: &mut BTreeSet<String>) {
             }
             Stmt::While { body, .. } => collect_assigned_into(body, out),
             Stmt::Repeat { body, .. } => collect_assigned_into(body, out),
+            Stmt::NumericFor { body, .. } => collect_assigned_into(body, out),
             Stmt::Return(_)
             | Stmt::ReturnMulti(_)
             | Stmt::Expr(_)
@@ -4264,6 +4436,22 @@ fn collect_nested_from_stmt(stmt: &Stmt, out: &mut HashSet<String>) {
                 collect_nested_from_stmt(s, out);
             }
             collect_nested_from_expr(condition, out);
+        }
+        Stmt::NumericFor {
+            start,
+            stop,
+            step,
+            body,
+            ..
+        } => {
+            collect_nested_from_expr(start, out);
+            collect_nested_from_expr(stop, out);
+            if let Some(step_expr) = step {
+                collect_nested_from_expr(step_expr, out);
+            }
+            for s in body {
+                collect_nested_from_stmt(s, out);
+            }
         }
         Stmt::Break | Stmt::Continue => {}
     }
@@ -4374,6 +4562,24 @@ fn collect_free_names_in_stmts(stmts: &[Stmt], bound: &HashSet<String>, out: &mu
                     collect_free_names_in_stmts(std::slice::from_ref(s), bound, out);
                 }
                 collect_free_names_in_expr(condition, bound, out);
+            }
+            Stmt::NumericFor {
+                name,
+                start,
+                stop,
+                step,
+                body,
+            } => {
+                collect_free_names_in_expr(start, bound, out);
+                collect_free_names_in_expr(stop, bound, out);
+                if let Some(step_expr) = step {
+                    collect_free_names_in_expr(step_expr, bound, out);
+                }
+                let mut nested_bound = bound.clone();
+                nested_bound.insert(name.clone());
+                for s in body {
+                    collect_free_names_in_stmts(std::slice::from_ref(s), &nested_bound, out);
+                }
             }
             Stmt::Return(expr) | Stmt::Expr(expr) => {
                 collect_free_names_in_expr(expr, bound, out);

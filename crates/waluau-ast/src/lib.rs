@@ -219,6 +219,13 @@ pub enum Stmt {
         body: Vec<Stmt>,
         condition: Expr,
     },
+    NumericFor {
+        name: String,
+        start: Expr,
+        stop: Expr,
+        step: Option<Expr>,
+        body: Vec<Stmt>,
+    },
     Break,
     Continue,
     Return(Expr),
