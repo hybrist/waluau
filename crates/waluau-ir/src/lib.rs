@@ -267,6 +267,15 @@ impl<'a> Monomorphizer<'a> {
                     .transpose()?,
                 body: self.rewrite_stmts(body, subst, active)?,
             },
+            Stmt::ForIn {
+                names,
+                iterator,
+                body,
+            } => Stmt::ForIn {
+                names: names.clone(),
+                iterator: self.rewrite_expr(iterator, subst, active)?,
+                body: self.rewrite_stmts(body, subst, active)?,
+            },
             Stmt::Break => Stmt::Break,
             Stmt::Continue => Stmt::Continue,
             Stmt::Return(expr) => Stmt::Return(self.rewrite_expr(expr, subst, active)?),
@@ -2177,6 +2186,13 @@ impl Builder<'_> {
             } => {
                 self.lower_numeric_for(name, start, stop, step.as_ref(), body, env, types)?;
             }
+            Stmt::ForIn {
+                names,
+                iterator,
+                body,
+            } => {
+                self.lower_for_in(names, iterator, body, env, types)?;
+            }
         }
         Ok(())
     }
@@ -2662,6 +2678,159 @@ impl Builder<'_> {
                 index_phi,
                 (body_exit, next_index),
             );
+            for (name, phi) in &phis {
+                if let Some(next_value) = body_env.get(name).copied() {
+                    add_phi_incoming(&mut self.function, header, *phi, (body_exit, next_value));
+                }
+            }
+        }
+
+        for (name, phi) in phis {
+            env.insert(name, phi);
+        }
+        self.current_block = exit;
+        Ok(())
+    }
+
+    fn lower_for_in(
+        &mut self,
+        names: &[String],
+        iterator: &Expr,
+        body: &[Stmt],
+        env: &mut HashMap<String, ValueId>,
+        types: &mut HashMap<String, Type>,
+    ) -> Result<(), Diagnostic> {
+        let iterator_ty = self.infer_expr_type(iterator, types, None)?;
+        let Type::Function {
+            params,
+            return_type,
+        } = iterator_ty
+        else {
+            return Err(Diagnostic::new("for-in iterator must be a function"));
+        };
+        if !params.is_empty() {
+            return Err(Diagnostic::new(
+                "for-in iterator function must not require parameters",
+            ));
+        }
+        let return_values = match *return_type {
+            Type::Multi(values) => values,
+            other => vec![other],
+        };
+        if return_values.len() != names.len() + 1 {
+            return Err(Diagnostic::new(format!(
+                "for-in iterator expects {} return values (bool + {} loop values), got {}",
+                names.len() + 1,
+                names.len(),
+                return_values.len()
+            )));
+        }
+        if return_values[0] != Type::Bool {
+            return Err(Diagnostic::new(
+                "for-in iterator first return value must be bool",
+            ));
+        }
+        let loop_value_types = return_values.into_iter().skip(1).collect::<Vec<_>>();
+        let return_ty = Type::Multi(
+            std::iter::once(Type::Bool)
+                .chain(loop_value_types.clone())
+                .collect(),
+        );
+        let direct_iterator_name = match iterator {
+            Expr::Name(name, _) => self.signatures.get(name).and_then(|(params, ret)| {
+                if params.is_empty() && *ret == return_ty {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            }),
+            _ => None,
+        };
+        let iterator_value = if direct_iterator_name.is_none() {
+            Some(self.lower_expr(iterator, env, types, None)?)
+        } else {
+            None
+        };
+
+        let preheader = self.current_block;
+        let header = self.new_block();
+        let loop_body = self.new_block();
+        let exit = self.new_block();
+        self.set_terminator(preheader, Terminator::Jump(header));
+
+        let mutated = collect_assigned_names(body);
+        self.current_block = header;
+        let mut loop_env = env.clone();
+        let loop_types = types.clone();
+        let mut phis = HashMap::new();
+        for name in &mutated {
+            if let Some(initial) = env.get(name).copied() {
+                let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
+                loop_env.insert(name.clone(), phi);
+                phis.insert(name.clone(), phi);
+            }
+        }
+
+        let call = if let Some(name) = direct_iterator_name {
+            self.emit(Instruction::Call {
+                name,
+                args: Vec::new(),
+            })
+        } else {
+            self.emit(Instruction::CallValue {
+                callee: iterator_value.expect("lowered above when not direct"),
+                args: Vec::new(),
+                params: Vec::new(),
+                return_type: return_ty,
+            })
+        };
+        let continue_value = self.emit(Instruction::MultiGet {
+            value: call,
+            index: 0,
+            ty: Type::Bool,
+        });
+        self.loop_stack.push(LoopContext {
+            header,
+            continue_target: header,
+            break_target: exit,
+            phis: phis.clone(),
+        });
+        self.set_terminator(
+            header,
+            Terminator::Branch {
+                condition: continue_value,
+                then_block: loop_body,
+                else_block: exit,
+            },
+        );
+
+        self.current_block = loop_body;
+        let mut body_env = loop_env.clone();
+        let mut body_types = loop_types.clone();
+        for (index, (name, ty)) in names.iter().zip(loop_value_types.iter()).enumerate() {
+            let value = self.emit(Instruction::MultiGet {
+                value: call,
+                index: index + 1,
+                ty: ty.clone(),
+            });
+            body_env.insert(name.clone(), value);
+            body_types.insert(name.clone(), ty.clone());
+        }
+        for stmt in body {
+            if self.current_block == DEAD_BLOCK {
+                break;
+            }
+            self.lower_stmt(stmt, &mut body_env, &mut body_types)?;
+        }
+
+        let loop_ctx = self
+            .loop_stack
+            .pop()
+            .expect("loop stack must contain entry for for-in loop");
+        let phis = loop_ctx.phis;
+        let body_exit = self.current_block;
+        if body_exit != DEAD_BLOCK {
+            self.set_terminator(body_exit, Terminator::Jump(header));
             for (name, phi) in &phis {
                 if let Some(next_value) = body_env.get(name).copied() {
                     add_phi_incoming(&mut self.function, header, *phi, (body_exit, next_value));
@@ -4387,6 +4556,20 @@ fn collect_expr_captures_from_stmt(
                 collect_expr_captures_from_stmt(stmt, &nested_bound, env, signatures, captures);
             }
         }
+        Stmt::ForIn {
+            names,
+            iterator,
+            body,
+        } => {
+            collect_expr_captures(iterator, bound, env, signatures, captures);
+            let mut nested_bound = bound.clone();
+            for name in names {
+                nested_bound.insert(name.clone());
+            }
+            for stmt in body {
+                collect_expr_captures_from_stmt(stmt, &nested_bound, env, signatures, captures);
+            }
+        }
         Stmt::Return(expr) | Stmt::Expr(expr) => {
             collect_expr_captures(expr, bound, env, signatures, captures)
         }
@@ -4508,6 +4691,7 @@ fn collect_assigned_into(stmts: &[Stmt], out: &mut BTreeSet<String>) {
             Stmt::While { body, .. } => collect_assigned_into(body, out),
             Stmt::Repeat { body, .. } => collect_assigned_into(body, out),
             Stmt::NumericFor { body, .. } => collect_assigned_into(body, out),
+            Stmt::ForIn { body, .. } => collect_assigned_into(body, out),
             Stmt::Return(_)
             | Stmt::ReturnMulti(_)
             | Stmt::Expr(_)
@@ -4585,6 +4769,12 @@ fn collect_nested_from_stmt(stmt: &Stmt, out: &mut HashSet<String>) {
             if let Some(step_expr) = step {
                 collect_nested_from_expr(step_expr, out);
             }
+            for s in body {
+                collect_nested_from_stmt(s, out);
+            }
+        }
+        Stmt::ForIn { iterator, body, .. } => {
+            collect_nested_from_expr(iterator, out);
             for s in body {
                 collect_nested_from_stmt(s, out);
             }
@@ -4718,6 +4908,20 @@ fn collect_free_names_in_stmts(stmts: &[Stmt], bound: &HashSet<String>, out: &mu
                 }
                 let mut nested_bound = bound.clone();
                 nested_bound.insert(name.clone());
+                for s in body {
+                    collect_free_names_in_stmts(std::slice::from_ref(s), &nested_bound, out);
+                }
+            }
+            Stmt::ForIn {
+                names,
+                iterator,
+                body,
+            } => {
+                collect_free_names_in_expr(iterator, bound, out);
+                let mut nested_bound = bound.clone();
+                for name in names {
+                    nested_bound.insert(name.clone());
+                }
                 for s in body {
                     collect_free_names_in_stmts(std::slice::from_ref(s), &nested_bound, out);
                 }

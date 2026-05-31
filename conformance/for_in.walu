@@ -1,0 +1,9 @@
+function stop_now(): bool, i32
+    return false, 42
+end
+
+local acc: i32 = 0
+for v in stop_now do
+    acc = acc + v
+end
+assert(acc == 0)

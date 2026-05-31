@@ -306,25 +306,43 @@ impl Parser {
         }
         if self.check_simple(&TokenKind::For) {
             self.advance();
-            let name = self.expect_identifier()?;
-            self.expect_simple(TokenKind::Equal, "expected '=' after for loop variable")?;
-            let start = self.parse_expr()?;
-            self.expect_simple(TokenKind::Comma, "expected ',' after for loop start")?;
-            let stop = self.parse_expr()?;
-            let step = if self.check_simple(&TokenKind::Comma) {
+            let first_name = self.expect_identifier()?;
+            if self.check_simple(&TokenKind::Equal) {
                 self.advance();
-                Some(self.parse_expr()?)
-            } else {
-                None
-            };
-            self.expect_simple(TokenKind::Do, "expected 'do' after for loop range")?;
+                let start = self.parse_expr()?;
+                self.expect_simple(TokenKind::Comma, "expected ',' after for loop start")?;
+                let stop = self.parse_expr()?;
+                let step = if self.check_simple(&TokenKind::Comma) {
+                    self.advance();
+                    Some(self.parse_expr()?)
+                } else {
+                    None
+                };
+                self.expect_simple(TokenKind::Do, "expected 'do' after for loop range")?;
+                let body = self.parse_block_until(&[TokenKind::End]);
+                self.expect_simple(TokenKind::End, "expected 'end' after for loop body")?;
+                return Ok(Stmt::NumericFor {
+                    name: first_name,
+                    start,
+                    stop,
+                    step,
+                    body,
+                });
+            }
+
+            let mut names = vec![first_name];
+            while self.check_simple(&TokenKind::Comma) {
+                self.advance();
+                names.push(self.expect_identifier()?);
+            }
+            self.expect_simple(TokenKind::In, "expected 'in' after for loop variables")?;
+            let iterator = self.parse_expr()?;
+            self.expect_simple(TokenKind::Do, "expected 'do' after for loop iterator")?;
             let body = self.parse_block_until(&[TokenKind::End]);
             self.expect_simple(TokenKind::End, "expected 'end' after for loop body")?;
-            return Ok(Stmt::NumericFor {
-                name,
-                start,
-                stop,
-                step,
+            return Ok(Stmt::ForIn {
+                names,
+                iterator,
                 body,
             });
         }
@@ -1654,6 +1672,29 @@ mod tests {
                 body,
                 ..
             } if name == "j" && body.len() == 1
+        ));
+    }
+
+    #[test]
+    fn parses_for_in_loop_with_multiple_bindings() {
+        let source = r#"
+            function entry(): i32
+                local acc: i32 = 0
+                local iter = function(): bool, i32, i32
+                    return true, 1, 2
+                end
+                for i, v in iter do
+                    acc += i + v
+                end
+                return acc
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert!(matches!(
+            &function.body[2],
+            Stmt::ForIn { names, body, .. } if names == &vec!["i".to_string(), "v".to_string()] && body.len() == 1
         ));
     }
 
