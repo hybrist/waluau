@@ -57,6 +57,8 @@ const DEFAULT_PRESET = PRESETS[0] || {
 
 const WALUAU_IMPORT_MODULE = 'waluau';
 const WALUAU_STRING_SECTION = 'waluau.str';
+// Must match waluau_codegen_wasm::host::HOST_IMPORT_COUNT
+const WALUAU_HOST_IMPORT_COUNT = 3;
 
 function readU32Le(bytes, offset) {
   return (
@@ -144,6 +146,7 @@ function getWasmExports(buffer) {
   const types = [];
   const funcTypeIndices = [];
   const exports = [];
+  let importFuncCount = WALUAU_HOST_IMPORT_COUNT;
 
   while (pos < bytes.length) {
     const sectionId = bytes[pos++];
@@ -151,7 +154,27 @@ function getWasmExports(buffer) {
     const sectionEnd = pos + sectionLength;
     if (sectionEnd > bytes.length) break;
 
-    if (sectionId === 1) { // Type section
+    if (sectionId === 2) { // Import section
+      const numImports = readVaruint();
+      importFuncCount = 0;
+      for (let i = 0; i < numImports; i++) {
+        const moduleLen = readVaruint();
+        pos += moduleLen;
+        const nameLen = readVaruint();
+        pos += nameLen;
+        const kind = bytes[pos++];
+        if (kind === 0) {
+          importFuncCount += 1;
+          readVaruint(); // type index
+        } else if (kind === 1) {
+          pos += 2; // table type
+        } else if (kind === 2) {
+          pos += 2; // memory limits
+        } else if (kind === 3) {
+          pos += 2; // global type
+        }
+      }
+    } else if (sectionId === 1) { // Type section
       const numTypes = readVaruint();
       for (let i = 0; i < numTypes; i++) {
         const form = bytes[pos++]; // 0x60 for function
@@ -193,7 +216,8 @@ function getWasmExports(buffer) {
   }
 
   return exports.map(exp => {
-    const typeIdx = funcTypeIndices[exp.index];
+    const definedIndex = exp.index - importFuncCount;
+    const typeIdx = funcTypeIndices[definedIndex];
     const signature = types[typeIdx] || { params: [], returns: [] };
     return {
       name: exp.name,
