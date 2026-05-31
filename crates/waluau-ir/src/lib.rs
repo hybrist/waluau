@@ -581,6 +581,8 @@ fn mangle_type(ty: &Type) -> String {
                 .join("")
         ),
         Type::TypeParam(name) => format!("$p{name}"),
+        #[allow(unreachable_patterns)]
+        _ => format!("$u{}", ty),
     }
 }
 
