@@ -1,0 +1,7 @@
+function check(x: i32): i32
+    assert(x > 0)
+    return x + 1
+end
+
+assert(check(1) == 2)
+assert(check(41) == 42)
