@@ -44,16 +44,16 @@ fn rejects_conflicting_inferred_local_reassignment() {
 }
 
 #[test]
-fn rejects_missing_context_for_empty_array_inference() {
+fn infers_empty_braces_as_record_for_local_bindings() {
     let source = r#"
         function entry(): i32
             local xs = {}
-            return #xs
+            xs.value = 1::i32
+            return xs.value
         end
     "#;
     let program = parse(source).expect("parse should succeed");
-    let error = waluau_hir::type_check_and_infer(&program).expect_err("inference should fail");
-    assert_eq!(error.code(), Some("inference/missing-context"));
+    waluau_hir::type_check_and_infer(&program).expect("inference should succeed");
 }
 
 #[test]

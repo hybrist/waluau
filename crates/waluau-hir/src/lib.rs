@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use waluau_ast::{
     AssignOp, BinaryOp, Expr, Function, FunctionExpr, NumberLiteral, NumericType, Program,
@@ -631,6 +631,9 @@ fn collect_return_types(
                         active_type_params,
                         Some(expected_ty.clone()),
                     )?
+                } else if matches!(value, Expr::ArrayLiteral { elements, .. } if elements.is_empty())
+                {
+                    Type::Record(BTreeMap::new())
                 } else {
                     infer_expr(value, &scope, fn_signatures, active_type_params, None)?
                 };
@@ -676,9 +679,49 @@ fn collect_return_types(
                     Some(element_ty),
                 )?;
             }
-            Stmt::FieldAssign { base, value, .. } => {
-                let _ = infer_expr(base, &scope, fn_signatures, active_type_params, None)?;
-                let _ = infer_expr(value, &scope, fn_signatures, active_type_params, None)?;
+            Stmt::FieldAssign {
+                base, name, value, ..
+            } => {
+                let base_name = match base.as_ref() {
+                    Expr::Name(local, _) => local,
+                    _ => {
+                        return Err(Diagnostic::new(
+                            "field assignment base must be a local name",
+                        ));
+                    }
+                };
+                let binding = scope
+                    .get(base_name)
+                    .cloned()
+                    .ok_or_else(|| Diagnostic::new(format!("unknown local '{base_name}'")))?;
+                let Type::Record(mut fields) = binding.ty else {
+                    return Err(Diagnostic::new("field assignment requires a record base"));
+                };
+                let existing = fields.get(name).cloned();
+                let value_ty = infer_expr(
+                    value,
+                    &scope,
+                    fn_signatures,
+                    active_type_params,
+                    existing.clone(),
+                )?;
+                if let Some(ty) = fields.get(name) {
+                    if *ty != value_ty {
+                        return Err(Diagnostic::new(format!(
+                            "field assignment to '{}.{}' expects {}, got {}",
+                            base_name, name, ty, value_ty
+                        )));
+                    }
+                } else {
+                    fields.insert(name.clone(), value_ty);
+                }
+                scope.insert(
+                    base_name.clone(),
+                    Binding {
+                        ty: Type::Record(fields),
+                        rebindability: binding.rebindability,
+                    },
+                );
             }
             Stmt::If {
                 condition,
@@ -978,6 +1021,8 @@ fn check_stmt(
                     )));
                 }
                 expected_ty.clone()
+            } else if matches!(value, Expr::ArrayLiteral { elements, .. } if elements.is_empty()) {
+                Type::Record(BTreeMap::new())
             } else {
                 infer_expr(value, vars, fn_signatures, active_type_params, None)?
             };
@@ -1061,9 +1106,64 @@ fn check_stmt(
             }
             Ok(false)
         }
-        Stmt::FieldAssign { .. } => Err(Diagnostic::new(
-            "field assignment type checking is not yet supported",
-        )),
+        Stmt::FieldAssign {
+            op,
+            base,
+            name,
+            value,
+        } => {
+            let base_name = match base.as_ref() {
+                Expr::Name(local, _) => local,
+                _ => {
+                    return Err(Diagnostic::new(
+                        "field assignment base must be a local name",
+                    ));
+                }
+            };
+            let binding = vars
+                .get(base_name)
+                .cloned()
+                .ok_or_else(|| Diagnostic::new(format!("unknown local '{base_name}'")))?;
+            let Type::Record(mut fields) = binding.ty else {
+                return Err(Diagnostic::new("field assignment requires a record base"));
+            };
+            let existing_field = fields.get(name).cloned();
+            let value_ty = infer_expr(
+                value,
+                vars,
+                fn_signatures,
+                active_type_params,
+                existing_field.clone(),
+            )?;
+            if *op == AssignOp::Add {
+                let field_ty = existing_field.clone().ok_or_else(|| {
+                    Diagnostic::new("compound field assignment requires an existing numeric field")
+                })?;
+                if !field_ty.is_numeric() || value_ty != field_ty {
+                    return Err(Diagnostic::new(
+                        "compound field assignment requires a numeric field",
+                    ));
+                }
+            }
+            if let Some(ty) = fields.get(name) {
+                if *ty != value_ty {
+                    return Err(Diagnostic::new(format!(
+                        "field assignment to '{}.{}' expects {}, got {}",
+                        base_name, name, ty, value_ty
+                    )));
+                }
+            } else {
+                fields.insert(name.clone(), value_ty);
+            }
+            vars.insert(
+                base_name.clone(),
+                Binding {
+                    ty: Type::Record(fields),
+                    rebindability: binding.rebindability,
+                },
+            );
+            Ok(false)
+        }
         Stmt::If {
             condition,
             then_body,
@@ -1692,12 +1792,25 @@ fn infer_expr(
         Expr::ArrayLiteral { elements, .. } => {
             infer_array_literal(elements, vars, fn_signatures, active_type_params, expected)
         }
-        Expr::TableLiteral { .. } => Err(Diagnostic::new(
-            "table literals are only supported in module export expressions",
-        )),
-        Expr::Field { .. } => Err(Diagnostic::new(
-            "namespace member access must be resolved before type checking",
-        )),
+        Expr::TableLiteral { fields, .. } => {
+            let mut record_fields = BTreeMap::new();
+            for field in fields {
+                let field_ty =
+                    infer_expr(&field.value, vars, fn_signatures, active_type_params, None)?;
+                record_fields.insert(field.name.clone(), field_ty);
+            }
+            coerce_type(Type::Record(record_fields), expected)
+        }
+        Expr::Field { base, name, .. } => {
+            let base_ty = infer_expr(base, vars, fn_signatures, active_type_params, None)?;
+            let Type::Record(fields) = base_ty else {
+                return Err(Diagnostic::new("field access requires a record base"));
+            };
+            let Some(field_ty) = fields.get(name) else {
+                return Err(Diagnostic::new(format!("unknown record field '{name}'")));
+            };
+            coerce_type(field_ty.clone(), expected)
+        }
         Expr::Index { base, index, .. } => {
             let base_ty = infer_expr(base, vars, fn_signatures, active_type_params, None)?;
             let element_ty = base_ty
@@ -2736,20 +2849,17 @@ mod tests {
     }
 
     #[test]
-    fn rejects_ambiguous_empty_array_local_inference() {
+    fn treats_untyped_empty_braces_as_record_locals() {
         let source = r#"
             function entry(): i32
-                local xs = {}
-                return #xs
+                local t = {}
+                t.x = 1::i32
+                return t.x
             end
         "#;
 
         let program = parse(source).expect("parse should succeed");
-        let error = super::type_check_and_infer(&program).expect_err("inference should fail");
-        assert_eq!(
-            error.to_string(),
-            "empty array literal requires explicit element type"
-        );
+        super::type_check_and_infer(&program).expect("inference should succeed");
     }
 
     #[test]
@@ -3182,6 +3292,44 @@ mod tests {
     }
 
     #[test]
+    fn type_checks_table_literal_and_field_access() {
+        let source = r#"
+            function entry(): i32
+                local t = { x = 41::i32 }
+                return t.x
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn type_checks_incremental_field_assignment_on_record_local() {
+        let source = r#"
+            function entry(): i32
+                local t = { x = 10::i32 }
+                t.y = 2::i32
+                return t.x + t.y
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn rejects_unknown_record_field_access() {
+        let source = r#"
+            function entry(): i32
+                local t = { x = 1 }
+                return t.y
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.to_string(), "unknown record field 'y'");
+    }
+
+    #[test]
     fn rejects_multi_assignment_arity_mismatch() {
         let source = r#"
             function pair(x: i32): i32, i32
@@ -3551,21 +3699,15 @@ mod tests {
     }
 
     #[test]
-    fn tags_empty_array_inference_failure_with_missing_context_diagnostic() {
+    fn empty_braces_record_can_be_unused() {
         let source = r#"
             function entry(): i32
-                local xs = {}
+                local t = {}
                 return 0
             end
         "#;
         let program = parse(source).expect("parse should succeed");
-        let error = super::type_check(&program).expect_err("type check should fail");
-        assert_eq!(error.code(), Some("inference/missing-context"));
-        assert_eq!(error.category(), Some(DiagnosticCategory::MissingContext));
-        assert_eq!(
-            error.action(),
-            Some("add an explicit element type annotation, e.g. local xs: {i32} = {}")
-        );
+        super::type_check(&program).expect("type check should succeed");
     }
 
     #[test]
