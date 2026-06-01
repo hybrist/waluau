@@ -1009,3 +1009,46 @@ fn lowers_array_for_in_loop() {
     let function = &module.functions[0];
     println!("FUNCTION IR: {:#?}", function);
 }
+
+#[test]
+fn lowers_record_table_literal_and_field_access() {
+    let source = r#"
+        function entry(): f64
+            local t = { x = 41 }
+            return t.x + 1
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("ir build should succeed");
+    let function = &module.functions[0];
+    assert!(function.blocks.values().any(|block| {
+        block
+            .instructions
+            .iter()
+            .any(|(_, instruction)| matches!(instruction, Instruction::StructNew { .. }))
+    }));
+    assert!(function.blocks.values().any(|block| {
+        block.instructions.iter().any(|(_, instruction)| {
+            matches!(instruction, Instruction::StructGet { field, .. } if field == "x")
+        })
+    }));
+}
+
+#[test]
+fn lowers_record_field_assignment() {
+    let source = r#"
+        function entry(): f64
+            local t = { x = 1 }
+            t.x = t.x + 2
+            return t.x
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("ir build should succeed");
+    let function = &module.functions[0];
+    assert!(function.blocks.values().any(|block| {
+        block.instructions.iter().any(|(_, instruction)| {
+            matches!(instruction, Instruction::StructSet { field, .. } if field == "x")
+        })
+    }));
+}

@@ -387,9 +387,48 @@ impl Builder<'_> {
                 });
             }
             Stmt::FieldAssign { .. } => {
-                return Err(Diagnostic::new(
-                    "field assignment lowering is not yet supported",
-                ));
+                let Stmt::FieldAssign {
+                    op,
+                    base,
+                    name,
+                    value,
+                } = stmt
+                else {
+                    unreachable!();
+                };
+                let base_ty = self.infer_expr_type(base, types, None)?;
+                let field_ty = base_ty
+                    .record_field(name)
+                    .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
+                let base = self.lower_expr(base, env, types, Some(base_ty))?;
+                let value = match op {
+                    AssignOp::Set => self.lower_expr(value, env, types, Some(field_ty.clone()))?,
+                    AssignOp::Add => {
+                        if !field_ty.is_numeric() {
+                            return Err(Diagnostic::new(
+                                "compound field assignment requires a numeric field",
+                            ));
+                        }
+                        let current = self.emit(Instruction::StructGet {
+                            base,
+                            field: name.clone(),
+                            field_ty: field_ty.clone(),
+                        });
+                        let rhs = self.lower_expr(value, env, types, Some(field_ty.clone()))?;
+                        self.emit(Instruction::Binary {
+                            op: BinaryOp::Add,
+                            left: current,
+                            right: rhs,
+                            operand_ty: field_ty.clone(),
+                            result_ty: field_ty.clone(),
+                        })
+                    }
+                };
+                self.emit(Instruction::StructSet {
+                    base,
+                    field: name.clone(),
+                    value,
+                });
             }
             Stmt::Expr(expr) => {
                 if let Expr::Call {
@@ -1756,15 +1795,45 @@ impl Builder<'_> {
                 });
                 self.coerce_value(value, element_ty, expected)?
             }
-            Expr::TableLiteral { .. } => {
-                return Err(Diagnostic::new(
-                    "table literals are only supported in module export expressions",
-                ));
+            Expr::TableLiteral { fields, .. } => {
+                let struct_ty = self.infer_expr_type(expr, types, expected.clone())?;
+                let Type::Record(record_fields) = &struct_ty else {
+                    return Err(Diagnostic::new(
+                        "table literal lowering requires a record type",
+                    ));
+                };
+                let lowered_fields = record_fields
+                    .iter()
+                    .map(|(name, field_ty)| {
+                        let field_expr = fields
+                            .iter()
+                            .find(|field| field.name == *name)
+                            .ok_or_else(|| {
+                                Diagnostic::new(format!(
+                                    "missing table literal field '{name}' during lowering"
+                                ))
+                            })?;
+                        self.lower_expr(&field_expr.value, env, types, Some(field_ty.clone()))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let value = self.emit(Instruction::StructNew {
+                    struct_ty: struct_ty.clone(),
+                    fields: lowered_fields,
+                });
+                self.coerce_value(value, struct_ty, expected)?
             }
-            Expr::Field { .. } => {
-                return Err(Diagnostic::new(
-                    "namespace member access must be resolved before IR lowering",
-                ));
+            Expr::Field { base, name, .. } => {
+                let base_ty = self.infer_expr_type(base, types, None)?;
+                let field_ty = base_ty
+                    .record_field(name)
+                    .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
+                let base = self.lower_expr(base, env, types, Some(base_ty))?;
+                let value = self.emit(Instruction::StructGet {
+                    base,
+                    field: name.clone(),
+                    field_ty: field_ty.clone(),
+                });
+                self.coerce_value(value, field_ty, expected)?
             }
         };
         Ok(value)
@@ -2135,12 +2204,21 @@ impl Builder<'_> {
             Expr::ArrayLiteral { elements, .. } => {
                 self.infer_array_literal_type(elements, types, expected)
             }
-            Expr::TableLiteral { .. } => Err(Diagnostic::new(
-                "table literals are only supported in module export expressions",
-            )),
-            Expr::Field { .. } => Err(Diagnostic::new(
-                "namespace member access must be resolved before IR lowering",
-            )),
+            Expr::TableLiteral { fields, .. } => {
+                let mut record_fields = BTreeMap::new();
+                for field in fields {
+                    let field_ty = self.infer_expr_type(&field.value, types, None)?;
+                    record_fields.insert(field.name.clone(), field_ty);
+                }
+                coerce_type(Type::Record(record_fields), expected)
+            }
+            Expr::Field { base, name, .. } => {
+                let base_ty = self.infer_expr_type(base, types, None)?;
+                let field_ty = base_ty
+                    .record_field(name)
+                    .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
+                coerce_type(field_ty, expected)
+            }
             Expr::Index { base, index, .. } => {
                 let base_ty = self.infer_expr_type(base, types, None)?;
                 let element_ty = base_ty

@@ -211,6 +211,9 @@ pub(crate) fn infer_value_types(
                 IrInstruction::ArrayGet { element_ty, .. } => element_ty.clone(),
                 IrInstruction::ArraySet { .. } => Type::Numeric(NumericType::I32),
                 IrInstruction::ArrayLen { .. } => Type::Numeric(NumericType::I32),
+                IrInstruction::StructNew { struct_ty, .. } => struct_ty.clone(),
+                IrInstruction::StructGet { field_ty, .. } => field_ty.clone(),
+                IrInstruction::StructSet { .. } => Type::Unit,
                 IrInstruction::PackMulti { types, .. } => Type::Multi(types.clone()),
                 IrInstruction::MultiGet { ty, .. } => ty.clone(),
                 IrInstruction::Phi(_) => continue,
@@ -550,6 +553,9 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
             ..
         } => vec![*array, *index, *value],
         IrInstruction::ArrayLen { array } => vec![*array],
+        IrInstruction::StructNew { fields, .. } => fields.clone(),
+        IrInstruction::StructGet { base, .. } => vec![*base],
+        IrInstruction::StructSet { base, value, .. } => vec![*base, *value],
         IrInstruction::PackMulti { values, .. } => values.clone(),
         IrInstruction::MultiGet { value, .. } => vec![*value],
         IrInstruction::Phi(_) => Vec::new(),
@@ -573,6 +579,8 @@ fn instruction_use_requires_local(instruction: &IrInstruction) -> bool {
             ..
         } | IrInstruction::ArrayGet { .. }
             | IrInstruction::ArraySet { .. }
+            | IrInstruction::StructGet { .. }
+            | IrInstruction::StructSet { .. }
     )
 }
 
@@ -597,6 +605,9 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         IrInstruction::ArrayNew { elements, .. } => elements.first().copied() == Some(value),
         IrInstruction::ArrayGet { .. } | IrInstruction::ArraySet { .. } => false,
         IrInstruction::ArrayLen { array } => *array == value,
+        IrInstruction::StructNew { fields, .. } => fields.first().copied() == Some(value),
+        IrInstruction::StructGet { base, .. } => *base == value,
+        IrInstruction::StructSet { base, .. } => *base == value,
         IrInstruction::PackMulti { values, .. } => values.first().copied() == Some(value),
         IrInstruction::MultiGet { value: source, .. } => *source == value,
         IrInstruction::Phi(_) => false,

@@ -114,6 +114,20 @@ pub enum Instruction {
     ArrayLen {
         array: ValueId,
     },
+    StructNew {
+        struct_ty: Type,
+        fields: Vec<ValueId>,
+    },
+    StructGet {
+        base: ValueId,
+        field: String,
+        field_ty: Type,
+    },
+    StructSet {
+        base: ValueId,
+        field: String,
+        value: ValueId,
+    },
     PackMulti {
         values: Vec<ValueId>,
         types: Vec<Type>,

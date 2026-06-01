@@ -426,6 +426,90 @@ fn verify_function(
                         )));
                     }
                 }
+                Instruction::StructNew { struct_ty, fields } => {
+                    let Type::Record(record_fields) = struct_ty else {
+                        return Err(Diagnostic::new(format!(
+                            "struct new in block {:?} requires a record type",
+                            block.id
+                        )));
+                    };
+                    if fields.len() != record_fields.len() {
+                        return Err(Diagnostic::new(format!(
+                            "struct new in block {:?} has {} fields but type has {}",
+                            block.id,
+                            fields.len(),
+                            record_fields.len()
+                        )));
+                    }
+                    for (value, (_, field_ty)) in fields.iter().zip(record_fields.iter()) {
+                        let actual = require_dominating_definition(
+                            &definitions,
+                            &dominators,
+                            &seen_in_block,
+                            block.id,
+                            *value,
+                        )?;
+                        if actual != *field_ty {
+                            return Err(Diagnostic::new(format!(
+                                "struct new field in block {:?} has type {}, expected {}",
+                                block.id, actual, field_ty
+                            )));
+                        }
+                    }
+                }
+                Instruction::StructGet {
+                    base,
+                    field,
+                    field_ty,
+                } => {
+                    let base_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *base,
+                    )?;
+                    let actual_field_ty = base_ty.record_field(field).ok_or_else(|| {
+                        Diagnostic::new(format!(
+                            "struct get in block {:?} missing field '{}'",
+                            block.id, field
+                        ))
+                    })?;
+                    if actual_field_ty != *field_ty {
+                        return Err(Diagnostic::new(format!(
+                            "struct get in block {:?} field '{}' has type {}, expected {}",
+                            block.id, field, actual_field_ty, field_ty
+                        )));
+                    }
+                }
+                Instruction::StructSet { base, field, value } => {
+                    let base_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *base,
+                    )?;
+                    let expected_field_ty = base_ty.record_field(field).ok_or_else(|| {
+                        Diagnostic::new(format!(
+                            "struct set in block {:?} missing field '{}'",
+                            block.id, field
+                        ))
+                    })?;
+                    let actual_value_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *value,
+                    )?;
+                    if actual_value_ty != expected_field_ty {
+                        return Err(Diagnostic::new(format!(
+                            "struct set in block {:?} field '{}' has type {}, expected {}",
+                            block.id, field, actual_value_ty, expected_field_ty
+                        )));
+                    }
+                }
                 Instruction::PackMulti { values, types } => {
                     if values.len() != types.len() {
                         return Err(Diagnostic::new(format!(
@@ -692,6 +776,9 @@ fn infer_instruction_type(
         Instruction::ArrayGet { element_ty, .. } => Ok(element_ty.clone()),
         Instruction::ArraySet { .. } => Ok(Type::Numeric(NumericType::I32)),
         Instruction::ArrayLen { .. } => Ok(Type::Numeric(NumericType::I32)),
+        Instruction::StructNew { struct_ty, .. } => Ok(struct_ty.clone()),
+        Instruction::StructGet { field_ty, .. } => Ok(field_ty.clone()),
+        Instruction::StructSet { .. } => Ok(Type::Unit),
         Instruction::PackMulti { types, .. } => Ok(Type::Multi(types.clone())),
         Instruction::MultiGet { ty, .. } => Ok(ty.clone()),
         Instruction::Phi(_) => Err(Diagnostic::new(
