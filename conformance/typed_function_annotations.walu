@@ -1,0 +1,61 @@
+-- Explicit multi-value return type in function type annotations (waluau-5a3).
+-- () -> (bool, i32) and function f(): (f64, f64) should parse as Type::Multi returns.
+
+-- Parenthesised return type in a function declaration.
+function two(): (f64, f64)
+    return 1, 2
+end
+local a, b = two()
+assert(a == 1)
+assert(b == 2)
+
+-- A non-capturing closure stored in an explicitly typed local used as a for-in iterator.
+function never_runs_typed(): i32
+    local iter: () -> (bool, i32) = function(): bool, i32
+        return false, 99
+    end
+    local acc: i32 = 0
+    for v in iter do
+        acc = acc + v
+    end
+    return acc
+end
+assert(never_runs_typed() == 0)
+
+-- A capturing closure assigned to a typed local; the loop runs n times.
+function sum_to_typed(n: i32): i32
+    local i: i32 = 0
+    local iter: () -> (bool, i32) = function(): bool, i32
+        i = i + 1
+        if i > n then
+            return false, 0
+        end
+        return true, i
+    end
+    local acc: i32 = 0
+    for v in iter do
+        acc = acc + v
+    end
+    return acc
+end
+assert(sum_to_typed(0) == 0)
+assert(sum_to_typed(3) == 6)
+assert(sum_to_typed(5) == 15)
+
+-- Function accepting a typed iterator parameter and iterating over it directly.
+-- Uses a non-capturing closure to avoid the call_indirect capture limitation.
+function run_non_capturing(iter: () -> (bool, i32)): i32
+    local acc: i32 = 0
+    for v in iter do
+        acc = acc + v
+    end
+    return acc
+end
+
+function non_capturing_via_param(): i32
+    local iter: () -> (bool, i32) = function(): bool, i32
+        return false, 7
+    end
+    return run_non_capturing(iter)
+end
+assert(non_capturing_via_param() == 0)
