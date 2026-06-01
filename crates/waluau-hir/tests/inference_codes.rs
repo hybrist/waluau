@@ -27,28 +27,17 @@ fn generic_type_on_alias_still_unsupported_code() {
 }
 
 #[test]
-fn inference_empty_array_missing_context_code() {
+fn inference_empty_braces_defaults_to_record_for_locals() {
     let source = r#"
         function entry(): i32
             local xs = {}
-            return #xs
+            return xs.x
         end
     "#;
     let program = parse(source).expect("parse should succeed");
     let error = waluau_hir::type_check_and_infer(&program).expect_err("inference should fail");
-    assert_eq!(error.code(), Some("inference/missing-context"));
-    assert_eq!(error.category(), Some(DiagnosticCategory::MissingContext));
-    assert_eq!(
-        error.action(),
-        Some("add an explicit element type annotation, e.g. local xs: {i32} = {}")
-    );
-    assert!(
-        error
-            .to_string()
-            .contains("empty array literal requires explicit element type"),
-        "message was: {}",
-        error
-    );
+    assert_eq!(error.code(), None);
+    assert!(error.to_string().contains("unknown record field 'x'"));
 }
 
 #[test]
