@@ -7,3 +7,31 @@ for v in stop_now do
     acc = acc + v
 end
 assert(acc == 0)
+
+function test_array_iteration_1_var(): i32
+    local arr: {i32} = {10, 20, 30}
+    local sum: i32 = 0
+    for v in arr do
+        sum = sum + v
+    end
+    return sum
+end
+
+function test_array_iteration_2_vars(): i32, i32
+    local arr: {i32} = {10, 20, 30}
+    local sum_i: i32 = 0
+    local sum_v: i32 = 0
+    for i, v in arr do
+        sum_i = sum_i + i
+        sum_v = sum_v + v
+    end
+    return sum_i, sum_v
+end
+
+assert(test_array_iteration_1_var() == 60)
+
+local final_sum_i: i32 = 0
+local final_sum_v: i32 = 0
+final_sum_i, final_sum_v = test_array_iteration_2_vars()
+assert(final_sum_i == 3)
+assert(final_sum_v == 60)

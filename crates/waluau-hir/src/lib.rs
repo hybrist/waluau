@@ -755,37 +755,55 @@ fn collect_return_types(
             } => {
                 let iterator_ty =
                     infer_expr(iterator, &scope, fn_signatures, active_type_params, None)?;
-                let Type::Function {
-                    params,
-                    return_type,
-                } = iterator_ty
-                else {
-                    return Err(Diagnostic::new("for-in iterator must be a function"));
+                let loop_value_types = match iterator_ty {
+                    Type::Function {
+                        params,
+                        return_type,
+                    } => {
+                        if !params.is_empty() {
+                            return Err(Diagnostic::new(
+                                "for-in iterator function must not require parameters",
+                            ));
+                        }
+                        let return_values = match *return_type {
+                            Type::Multi(values) => values,
+                            other => vec![other],
+                        };
+                        if return_values.len() != names.len() + 1 {
+                            return Err(Diagnostic::new(format!(
+                                "for-in iterator expects {} return values (bool + {} loop values), got {}",
+                                names.len() + 1,
+                                names.len(),
+                                return_values.len()
+                            )));
+                        }
+                        if return_values[0] != Type::Bool {
+                            return Err(Diagnostic::new(
+                                "for-in iterator first return value must be bool",
+                            ));
+                        }
+                        return_values.into_iter().skip(1).collect::<Vec<_>>()
+                    }
+                    Type::Array(element_ty) => {
+                        if names.len() == 1 {
+                            vec![*element_ty]
+                        } else if names.len() == 2 {
+                            vec![Type::Numeric(NumericType::I32), *element_ty]
+                        } else {
+                            return Err(Diagnostic::new(format!(
+                                "array for-in loop expects 1 or 2 loop variables, got {}",
+                                names.len()
+                            )));
+                        }
+                    }
+                    _ => {
+                        return Err(Diagnostic::new(
+                            "for-in iterator must be a function or an array",
+                        ));
+                    }
                 };
-                if !params.is_empty() {
-                    return Err(Diagnostic::new(
-                        "for-in iterator function must not require parameters",
-                    ));
-                }
-                let return_values = match *return_type {
-                    Type::Multi(values) => values,
-                    other => vec![other],
-                };
-                if return_values.len() != names.len() + 1 {
-                    return Err(Diagnostic::new(format!(
-                        "for-in iterator expects {} return values (bool + {} loop values), got {}",
-                        names.len() + 1,
-                        names.len(),
-                        return_values.len()
-                    )));
-                }
-                if return_values[0] != Type::Bool {
-                    return Err(Diagnostic::new(
-                        "for-in iterator first return value must be bool",
-                    ));
-                }
                 let mut loop_scope = scope.clone();
-                for (name, ty) in names.iter().zip(return_values.into_iter().skip(1)) {
+                for (name, ty) in names.iter().zip(loop_value_types) {
                     loop_scope.insert(
                         name.clone(),
                         Binding {
@@ -1176,37 +1194,55 @@ fn check_stmt(
             body,
         } => {
             let iterator_ty = infer_expr(iterator, vars, fn_signatures, active_type_params, None)?;
-            let Type::Function {
-                params,
-                return_type,
-            } = iterator_ty
-            else {
-                return Err(Diagnostic::new("for-in iterator must be a function"));
+            let loop_value_types = match iterator_ty {
+                Type::Function {
+                    params,
+                    return_type,
+                } => {
+                    if !params.is_empty() {
+                        return Err(Diagnostic::new(
+                            "for-in iterator function must not require parameters",
+                        ));
+                    }
+                    let return_values = match *return_type {
+                        Type::Multi(values) => values,
+                        other => vec![other],
+                    };
+                    if return_values.len() != names.len() + 1 {
+                        return Err(Diagnostic::new(format!(
+                            "for-in iterator expects {} return values (bool + {} loop values), got {}",
+                            names.len() + 1,
+                            names.len(),
+                            return_values.len()
+                        )));
+                    }
+                    if return_values[0] != Type::Bool {
+                        return Err(Diagnostic::new(
+                            "for-in iterator first return value must be bool",
+                        ));
+                    }
+                    return_values.into_iter().skip(1).collect::<Vec<_>>()
+                }
+                Type::Array(element_ty) => {
+                    if names.len() == 1 {
+                        vec![*element_ty]
+                    } else if names.len() == 2 {
+                        vec![Type::Numeric(NumericType::I32), *element_ty]
+                    } else {
+                        return Err(Diagnostic::new(format!(
+                            "array for-in loop expects 1 or 2 loop variables, got {}",
+                            names.len()
+                        )));
+                    }
+                }
+                _ => {
+                    return Err(Diagnostic::new(
+                        "for-in iterator must be a function or an array",
+                    ));
+                }
             };
-            if !params.is_empty() {
-                return Err(Diagnostic::new(
-                    "for-in iterator function must not require parameters",
-                ));
-            }
-            let return_values = match *return_type {
-                Type::Multi(values) => values,
-                other => vec![other],
-            };
-            if return_values.len() != names.len() + 1 {
-                return Err(Diagnostic::new(format!(
-                    "for-in iterator expects {} return values (bool + {} loop values), got {}",
-                    names.len() + 1,
-                    names.len(),
-                    return_values.len()
-                )));
-            }
-            if return_values[0] != Type::Bool {
-                return Err(Diagnostic::new(
-                    "for-in iterator first return value must be bool",
-                ));
-            }
             let mut loop_scope = vars.clone();
-            for (name, ty) in names.iter().zip(return_values.into_iter().skip(1)) {
+            for (name, ty) in names.iter().zip(loop_value_types) {
                 loop_scope.insert(
                     name.clone(),
                     Binding {
