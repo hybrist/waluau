@@ -1057,7 +1057,7 @@ impl Parser {
                 return Ok(Type::Unit);
             }
             self.expect_simple(TokenKind::Arrow, "expected '->' in function type")?;
-            let return_type = self.parse_type()?;
+            let return_type = self.parse_return_type()?;
             return Ok(Type::Function {
                 params,
                 return_type: Box::new(return_type),
@@ -1094,6 +1094,44 @@ impl Parser {
                 "expected type (number, u32, u64, i32, i64, f32, f64, unit, bool, string, thread, {T}, or (T1, T2) -> R)",
             )),
         }
+    }
+
+    /// Parse the return-type position of a function type annotation.
+    ///
+    /// `(T1, T2)` not followed by `->` becomes `Type::Multi([T1, T2])`.
+    /// `(T1, T2) -> R` becomes a nested `Type::Function`.
+    /// `()` becomes `Type::Unit`.
+    /// Anything else delegates to `parse_type`.
+    fn parse_return_type(&mut self) -> Result<Type, Diagnostic> {
+        if !self.check_simple(&TokenKind::LParen) {
+            return self.parse_type();
+        }
+        self.advance(); // consume '('
+        let mut types = Vec::new();
+        if !self.check_simple(&TokenKind::RParen) {
+            loop {
+                types.push(self.parse_type()?);
+                if self.check_simple(&TokenKind::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect_simple(TokenKind::RParen, "expected ')' in return type")?;
+        if self.check_simple(&TokenKind::Arrow) {
+            self.advance(); // consume '->'
+            let nested_return = self.parse_return_type()?;
+            return Ok(Type::Function {
+                params: types,
+                return_type: Box::new(nested_return),
+            });
+        }
+        Ok(match types.len() {
+            0 => Type::Unit,
+            1 => types.remove(0),
+            _ => Type::Multi(types),
+        })
     }
 
     fn reject_generic_type_annotation(&mut self, type_name: &str) -> Result<Type, Diagnostic> {
@@ -1334,6 +1372,43 @@ mod tests {
                 return_type: Box::new(Type::Numeric(NumericType::I32)),
             }
         );
+    }
+
+    #[test]
+    fn parses_multi_value_return_type_in_function_type() {
+        // () -> (bool, i32)  — iterator-style function type
+        let source = r#"
+            function take_iter(iter: () -> (bool, i32)): i32
+                return 0
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        assert_eq!(
+            program.functions[0].params[0].ty,
+            Type::Function {
+                params: vec![],
+                return_type: Box::new(Type::Multi(vec![
+                    Type::Bool,
+                    Type::Numeric(NumericType::I32),
+                ])),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_multi_value_return_type_on_local() {
+        // local with explicit function type annotation using multi-value return
+        let source = r#"
+            function entry(): i32
+                local iter: () -> (bool, i32) = function(): bool, i32
+                    return false, 0
+                end
+                return 0
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let body = &program.functions[0].body;
+        assert!(matches!(body[0], waluau_ast::Stmt::Let { .. }));
     }
 
     #[test]
