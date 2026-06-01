@@ -57,7 +57,7 @@ cp -rf source dest          # NOT: cp -r source dest
 - `apt-get` - use `-y` flag
 - `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
 
-<!-- BEGIN BEADS INTEGRATION v:1 profile:full hash:f65d5d33 -->
+<!-- BEGIN BEADS INTEGRATION v:1 profile:full hash:0a1bbe8a -->
 ## Issue Tracking with bd (beads)
 
 **IMPORTANT**: This project uses **bd (beads)** for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.
@@ -70,13 +70,6 @@ cp -rf source dest          # NOT: cp -r source dest
 - Prevents duplicate tracking systems and confusion
 
 ### Quick Start
-
-**Bootstrap a fresh clone or worktree once:**
-
-```bash
-git config beads.role maintainer   # or contributor
-bd bootstrap --yes                 # clones Dolt database from git remote
-```
 
 **Check for ready work:**
 
@@ -144,10 +137,9 @@ bd close bd-42 --reason "Completed" --json
 bd automatically syncs via Dolt:
 
 - Each write auto-commits to Dolt history
-- The Dolt upstream is the source of truth for the shared queue
-- Each checkout keeps its own untracked `.beads/embeddeddolt/` database and local exports
-- Use `bd dolt push`/`bd dolt pull` for shared-state sync
 - No manual export/import needed!
+
+**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
 
 ### Important Rules
 
@@ -173,7 +165,6 @@ For more details, see README.md and docs/QUICKSTART.md.
 4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
    git pull --rebase
-   bd dolt push
    git push
    git status  # MUST show "up to date with origin"
    ```
