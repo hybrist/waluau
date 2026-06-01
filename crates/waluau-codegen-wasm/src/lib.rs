@@ -22,7 +22,10 @@ mod locals;
 mod signatures;
 mod wasm_types;
 
-use arrays::{ArrayTypeRegistry, array_storage_type, collect_array_types};
+use arrays::{
+    ArrayTypeRegistry, array_storage_type, collect_array_types, collect_record_types,
+    record_storage_type,
+};
 use coroutines::{
     CoroutinePlan, STATE_CONT_FIELD, STATE_TAG_FIELD, STATE_YIELDED_FIELD, TAG_ERROR, TAG_FINISHED,
     TAG_SUSPENDED, coroutine_body_ref_type, coroutine_state_ref_type,
@@ -55,6 +58,7 @@ fn collect_closure_targets(module: &Module) -> Vec<String> {
 
 pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     let array_types = collect_array_types(module);
+    let record_types = collect_record_types(module);
     let string_constants = host::collect_string_constants(module);
     let coroutine_plan = CoroutinePlan::new(module, string_constants.len() as u32);
     let start_thunk = module.start;
@@ -72,11 +76,14 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         .has_state()
         .then_some(coroutine_types_base + 1);
     let coroutine_type_count = if coroutine_plan.has_state() { 2 } else { 0 };
-    let user_type_base = coroutine_types_base + coroutine_type_count;
+    let record_types_base = coroutine_types_base + coroutine_type_count;
+    let user_type_base = record_types_base + record_types.len() as u32;
     // Array types come first in the type section (indices 0..N-1).
     let mut array_registry = ArrayTypeRegistry::with_function_type_offset(
         &array_types,
+        &record_types,
         0,
+        record_types_base,
         anyref_array_type,
         func_val_struct_type,
     );
@@ -198,6 +205,20 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         }
         let _ = state_type;
         types.ty().struct_(fields);
+    }
+    // Record struct types used by sealed tables/records.
+    for record_ty in &record_types {
+        let Type::Record(fields) = record_ty else {
+            continue;
+        };
+        let mut wasm_fields = Vec::with_capacity(fields.len());
+        for field_ty in fields.values() {
+            wasm_fields.push(FieldType {
+                element_type: record_storage_type(field_ty, &array_registry)?,
+                mutable: true,
+            });
+        }
+        types.ty().struct_(wasm_fields);
     }
     // Emit user function types (logical signatures).
     for (params, return_type) in &signature_registry.unique_signatures {
@@ -660,7 +681,15 @@ fn try_emit_structured_fast_path(
         if then_bb.is_some_and(|b| matches!(b.terminator, Terminator::Return(_)))
             && else_bb.is_some_and(|b| matches!(b.terminator, Terminator::Return(_)))
         {
-            emit_block_instructions(out, function, entry, ctx, local_plan, value_defs)?;
+            emit_block_instructions(
+                out,
+                function,
+                entry,
+                ctx,
+                value_types,
+                local_plan,
+                value_defs,
+            )?;
             emit_value_operand(out, local_plan, condition)?;
             out.instruction(&Instruction::If(BlockType::Empty));
             emit_phi_copies(out, function, entry.id, then_block, local_plan)?;
@@ -714,11 +743,27 @@ fn try_emit_structured_fast_path(
                 .is_some_and(|b| matches!(b.terminator, Terminator::Jump(t) if t == second.id))
                 && else_bb.is_some_and(|b| matches!(b.terminator, Terminator::Return(_)))
             {
-                emit_block_instructions(out, function, entry, ctx, local_plan, value_defs)?;
+                emit_block_instructions(
+                    out,
+                    function,
+                    entry,
+                    ctx,
+                    value_types,
+                    local_plan,
+                    value_defs,
+                )?;
                 emit_phi_copies(out, function, entry.id, second.id, local_plan)?;
                 out.instruction(&Instruction::Block(BlockType::Empty));
                 out.instruction(&Instruction::Loop(BlockType::Empty));
-                emit_block_instructions(out, function, second, ctx, local_plan, value_defs)?;
+                emit_block_instructions(
+                    out,
+                    function,
+                    second,
+                    ctx,
+                    value_types,
+                    local_plan,
+                    value_defs,
+                )?;
                 emit_value_operand(out, local_plan, condition)?;
                 out.instruction(&Instruction::I32Eqz);
                 out.instruction(&Instruction::BrIf(1));
@@ -728,6 +773,7 @@ fn try_emit_structured_fast_path(
                     function,
                     then_bb.expect("checked above"),
                     ctx,
+                    value_types,
                     local_plan,
                     value_defs,
                 )?;
@@ -764,13 +810,37 @@ fn try_emit_structured_fast_path(
                             "unsupported repeat-until CFG shape for structured wasm emission",
                         )
                     })?;
-                emit_block_instructions(out, function, entry, ctx, local_plan, value_defs)?;
+                emit_block_instructions(
+                    out,
+                    function,
+                    entry,
+                    ctx,
+                    value_types,
+                    local_plan,
+                    value_defs,
+                )?;
                 emit_phi_copies(out, function, entry.id, body.id, local_plan)?;
                 out.instruction(&Instruction::Block(BlockType::Empty));
                 out.instruction(&Instruction::Loop(BlockType::Empty));
-                emit_block_instructions(out, function, body, ctx, local_plan, value_defs)?;
+                emit_block_instructions(
+                    out,
+                    function,
+                    body,
+                    ctx,
+                    value_types,
+                    local_plan,
+                    value_defs,
+                )?;
                 emit_phi_copies(out, function, body.id, second.id, local_plan)?;
-                emit_block_instructions(out, function, second, ctx, local_plan, value_defs)?;
+                emit_block_instructions(
+                    out,
+                    function,
+                    second,
+                    ctx,
+                    value_types,
+                    local_plan,
+                    value_defs,
+                )?;
                 emit_value_operand(out, local_plan, condition)?;
                 out.instruction(&Instruction::BrIf(1));
                 emit_phi_copies(out, function, second.id, body.id, local_plan)?;
@@ -803,7 +873,15 @@ fn emit_block(
     local_plan: &LocalPlan,
     value_defs: &HashMap<ValueId, IrInstruction>,
 ) -> Result<(), Diagnostic> {
-    emit_block_instructions(out, function, block, ctx, local_plan, value_defs)?;
+    emit_block_instructions(
+        out,
+        function,
+        block,
+        ctx,
+        value_types,
+        local_plan,
+        value_defs,
+    )?;
     match &block.terminator {
         Terminator::Jump(target) => {
             emit_phi_copies(out, function, block.id, *target, local_plan)?;
@@ -914,6 +992,7 @@ fn emit_block_instructions(
     function: &IrFunction,
     block: &BasicBlock,
     ctx: &EmissionContext<'_>,
+    value_types: &BTreeMap<ValueId, Type>,
     local_plan: &LocalPlan,
     value_defs: &HashMap<ValueId, IrInstruction>,
 ) -> Result<(), Diagnostic> {
@@ -1331,12 +1410,56 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::ArrayLen);
                 emit_value_store(out, local_plan, *value)?;
             }
-            IrInstruction::StructNew { .. }
-            | IrInstruction::StructGet { .. }
-            | IrInstruction::StructSet { .. } => {
-                return Err(Diagnostic::new(
-                    "record struct instructions are not yet supported in wasm codegen",
-                ));
+            IrInstruction::StructNew { struct_ty, fields } => {
+                let struct_type_index = ctx.array_registry.record_index(struct_ty)?;
+                for field in fields {
+                    emit_value_operand(out, local_plan, *field)?;
+                }
+                out.instruction(&Instruction::StructNew(struct_type_index));
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::StructGet { base, field, .. } => {
+                let base_ty = value_types.get(base).ok_or_else(|| {
+                    Diagnostic::new(format!("missing type for struct.get base {:?}", base))
+                })?;
+                let Type::Record(_) = base_ty else {
+                    return Err(Diagnostic::new(format!(
+                        "struct.get base must be a record type, got {}",
+                        base_ty
+                    )));
+                };
+                let struct_type_index = ctx.array_registry.record_index(base_ty)?;
+                let field_index = ctx.array_registry.record_field_index(base_ty, field)?;
+                emit_value_operand(out, local_plan, *base)?;
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index,
+                    field_index,
+                });
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::StructSet {
+                base,
+                field,
+                value: stored,
+            } => {
+                let base_ty = value_types.get(base).ok_or_else(|| {
+                    Diagnostic::new(format!("missing type for struct.set base {:?}", base))
+                })?;
+                let Type::Record(_) = base_ty else {
+                    return Err(Diagnostic::new(format!(
+                        "struct.set base must be a record type, got {}",
+                        base_ty
+                    )));
+                };
+                let struct_type_index = ctx.array_registry.record_index(base_ty)?;
+                let field_index = ctx.array_registry.record_field_index(base_ty, field)?;
+                emit_value_operand(out, local_plan, *base)?;
+                emit_value_operand(out, local_plan, *stored)?;
+                out.instruction(&Instruction::StructSet {
+                    struct_type_index,
+                    field_index,
+                });
+                emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::PackMulti { values, .. } => {
                 for v in values {

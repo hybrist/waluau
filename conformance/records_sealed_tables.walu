@@ -1,0 +1,39 @@
+function point_sum(seed: i32): i32
+    local point: { x: i32, y: i32 } = { x = seed, y = seed + 1 }
+    return point.x + point.y
+end
+
+function point_mutation(seed: i32): i32
+    local point: { x: i32, y: i32 } = { x = seed, y = seed + 1 }
+    point.x = point.x + 40
+    point.y = point.y + 2
+    return point.x + point.y
+end
+
+function nested_record(seed: i32): i32
+    local wrapper: { inner: { x: i32 }, z: i32 } = {
+        inner = { x = seed },
+        z = seed + 10,
+    }
+    local inner = wrapper.inner
+    inner.x = inner.x + 3
+    return inner.x + wrapper.z
+end
+
+assert(point_sum(2) == 5)
+assert(point_mutation(2) == 47)
+assert(nested_record(4) == 21)
+
+function vec(x: i32, y: i32): { x: i32, y: i32 }
+    local new_vec = { x = x, y = y }
+    return new_vec
+end
+
+function sqlen_vec(v: { x: i32, y: i32 }): i32
+    return v.x * v.x + v.y * v.y
+end
+
+local my_v = vec(2, 4)
+assert(my_v.x == 2)
+assert(my_v.y == 4)
+assert(sqlen_vec(my_v) == 20)

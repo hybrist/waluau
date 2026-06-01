@@ -55,7 +55,13 @@ pub(crate) fn wasm_type(
         Type::Thread => Ok(coroutine_state_ref_type(
             array_registry.coroutine_state_type()?,
         )),
-        Type::Record(_) => unreachable!("namespace types are not stored in wasm locals"),
+        Type::Record(_) => {
+            let index = array_registry.record_index(ty)?;
+            Ok(ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(index),
+            }))
+        }
         Type::TypeParam(_) => {
             unreachable!("generic type parameters must be specialized before codegen")
         }
