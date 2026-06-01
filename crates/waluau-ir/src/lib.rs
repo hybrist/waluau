@@ -669,6 +669,9 @@ pub struct Function {
     pub entry: BlockId,
     pub blocks: BTreeMap<BlockId, BasicBlock>,
     next_value: usize,
+    /// Number of leading `params` entries that are capture-cell arrays passed by the caller.
+    /// Zero for top-level functions; equal to the number of captured variables for lifted closures.
+    pub capture_count: usize,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1720,6 +1723,7 @@ fn build_function(
         entry: BlockId(0),
         blocks: BTreeMap::new(),
         next_value: 0,
+        capture_count: 0,
     };
 
     out.blocks.insert(
@@ -3492,6 +3496,7 @@ impl Builder<'_> {
         let lifted_name = format!("{}$lambda{}", self.function.name, self.lambda_counter);
         self.lambda_counter += 1;
 
+        let capture_count = captures.len();
         let mut lifted = Function {
             name: lifted_name.clone(),
             params: Vec::new(),
@@ -3499,6 +3504,7 @@ impl Builder<'_> {
             entry: BlockId(0),
             blocks: BTreeMap::new(),
             next_value: 0,
+            capture_count,
         };
         lifted.blocks.insert(
             lifted.entry,
@@ -5647,6 +5653,7 @@ mod tests {
             return_type: Type::Numeric(NumericType::I64),
             entry: BlockId(0),
             next_value: 2,
+            capture_count: 0,
             blocks: BTreeMap::from([
                 (
                     BlockId(0),
@@ -5698,6 +5705,7 @@ mod tests {
             return_type: Type::Bool,
             entry: BlockId(0),
             next_value: 1,
+            capture_count: 0,
             blocks: BTreeMap::from([(
                 BlockId(0),
                 BasicBlock {
@@ -5768,6 +5776,7 @@ mod tests {
             return_type: Type::Numeric(NumericType::I64),
             entry: BlockId(0),
             next_value: 5,
+            capture_count: 0,
             blocks: BTreeMap::from([
                 (
                     BlockId(0),
