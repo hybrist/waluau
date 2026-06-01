@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use waluau_ast::Type;
-use waluau_diagnostics::Diagnostic;
 use waluau_ir::{Instruction as IrInstruction, Module};
 
 #[derive(Clone)]
@@ -97,26 +96,4 @@ pub(crate) fn collect_user_signatures(module: &Module, start_thunk: bool) -> Sig
         registry.add(Vec::new(), Type::Unit);
     }
     registry
-}
-
-pub(crate) fn find_function_type_index(
-    registry: &SignatureRegistry,
-    user_type_base: u32,
-    params: &[Type],
-    return_type: &Type,
-) -> Result<u32, Diagnostic> {
-    registry
-        .get(params, return_type)
-        .map(|index| user_type_base + index)
-        .ok_or_else(|| {
-            Diagnostic::new(format!(
-                "no wasm function type found for indirect call signature ({}) -> {}",
-                params
-                    .iter()
-                    .map(|ty| ty.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                return_type
-            ))
-        })
 }
