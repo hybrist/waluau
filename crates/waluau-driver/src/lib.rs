@@ -114,6 +114,7 @@ mod tests {
         match name {
             "add" => include_str!("../../../fixtures/add.walu"),
             "mismatch" => include_str!("../../../fixtures/mismatch.walu"),
+            "array_ops" => include_str!("../../../fixtures/array_ops.walu"),
             other => panic!("unknown fixture: {other}"),
         }
     }
@@ -245,5 +246,10 @@ mod tests {
     fn compiles_reexported_bindings() {
         super::compile_file(&fixture_path("modules/reexport_main.walu"))
             .expect("compile should succeed");
+    }
+
+    #[test]
+    fn compiles_array_ops() {
+        super::compile_file(&fixture_path("array_ops.walu")).expect("compile should succeed");
     }
 }
