@@ -17,6 +17,17 @@ use super::signatures::{
 };
 use super::statements::check_stmt;
 
+fn builtin_name(callee: &Expr) -> Option<String> {
+    match callee {
+        Expr::Name(name, _) => Some(name.clone()),
+        Expr::Field { base, name, .. } => match base.as_ref() {
+            Expr::Name(namespace, _) => Some(format!("{namespace}.{name}")),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 pub(super) fn infer_expr(
     expr: &Expr,
     vars: &HashMap<String, Binding>,
@@ -149,9 +160,9 @@ pub(super) fn infer_expr(
             args,
             ..
         } => {
-            if let Expr::Name(name, _) = callee.as_ref() {
+            if let Some(name) = builtin_name(callee.as_ref()) {
                 if let Some(result) = infer_math_builtin_call(
-                    name,
+                    &name,
                     args,
                     vars,
                     fn_signatures,
@@ -161,9 +172,9 @@ pub(super) fn infer_expr(
                     return result;
                 }
             }
-            if let Expr::Name(name, _) = callee.as_ref() {
+            if let Some(name) = builtin_name(callee.as_ref()) {
                 if let Some(result) = infer_coroutine_builtin_call(
-                    name,
+                    &name,
                     args,
                     vars,
                     fn_signatures,
@@ -173,9 +184,9 @@ pub(super) fn infer_expr(
                     return result;
                 }
             }
-            if let Expr::Name(name, _) = callee.as_ref() {
+            if let Some(name) = builtin_name(callee.as_ref()) {
                 if let Some(result) = infer_tostring_builtin_call(
-                    name,
+                    &name,
                     args,
                     vars,
                     fn_signatures,
@@ -185,9 +196,9 @@ pub(super) fn infer_expr(
                     return result;
                 }
             }
-            if let Expr::Name(name, _) = callee.as_ref() {
+            if let Some(name) = builtin_name(callee.as_ref()) {
                 if let Some(result) = infer_print_builtin_call(
-                    name,
+                    &name,
                     args,
                     vars,
                     fn_signatures,

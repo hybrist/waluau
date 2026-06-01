@@ -973,8 +973,8 @@ fn type_checks_coroutine_create_and_resume_for_zero_arg_functions() {
             local job: () -> i32 = function(): i32
                 return 7
             end
-            local co: thread = coroutine_create(job)
-            local ok: bool, value: i32 = coroutine_resume(co)
+            local co: thread = coroutine.create(job)
+            local ok: bool, value: i32 = coroutine.resume(co)
             return value
         end
     "#;
@@ -989,7 +989,7 @@ fn rejects_coroutine_create_for_non_zero_arg_functions() {
             local job: (i32) -> i32 = function(x: i32): i32
                 return x
             end
-            local co: thread = coroutine_create(job)
+            local co: thread = coroutine.create(job)
             return 0
         end
     "#;
@@ -997,7 +997,7 @@ fn rejects_coroutine_create_for_non_zero_arg_functions() {
     let error = super::type_check(&program).expect_err("type check should fail");
     assert_eq!(
         error.to_string(),
-        "coroutine_create expects a zero-argument i32-returning function"
+        "coroutine.create expects a zero-argument i32-returning function"
     );
 }
 
@@ -1008,8 +1008,8 @@ fn type_checks_coroutine_close_for_threads() {
             local job: () -> i32 = function(): i32
                 return 7
             end
-            local co: thread = coroutine_create(job)
-            return coroutine_close(co)
+            local co: thread = coroutine.create(job)
+            return coroutine.close(co)
         end
     "#;
     let program = parse(source).expect("parse should succeed");
@@ -1023,20 +1023,20 @@ fn rejects_coroutine_resume_for_non_thread() {
             local co: () -> i32 = function(): i32
                 return 7
             end
-            local ok: bool, value: i32 = coroutine_resume(co)
+            local ok: bool, value: i32 = coroutine.resume(co)
             return value
         end
     "#;
     let program = parse(source).expect("parse should succeed");
     let error = super::type_check(&program).expect_err("type check should fail");
-    assert_eq!(error.to_string(), "coroutine_resume expects a thread");
+    assert_eq!(error.to_string(), "coroutine.resume expects a thread");
 }
 
 #[test]
 fn type_checks_coroutine_yield_calls() {
     let source = r#"
         function run_job(): i32
-            coroutine_yield(1)
+            coroutine.yield(1)
             return 7
         end
     "#;
@@ -1048,13 +1048,13 @@ fn type_checks_coroutine_yield_calls() {
 fn rejects_coroutine_yield_with_non_i32_argument() {
     let source = r#"
         function run_job(): i32
-            coroutine_yield(true)
+            coroutine.yield(true)
             return 7
         end
     "#;
     let program = parse(source).expect("parse should succeed");
     let error = super::type_check(&program).expect_err("type check should fail");
-    assert_eq!(error.to_string(), "coroutine_yield expects an i32 value");
+    assert_eq!(error.to_string(), "coroutine.yield expects an i32 value");
 }
 
 #[test]

@@ -7,19 +7,19 @@ use super::Binding;
 use super::numeric::coerce_type;
 use super::signatures::FnSignature;
 
-pub(super) const COROUTINE_CREATE: &str = "coroutine_create";
-pub(super) const COROUTINE_RESUME: &str = "coroutine_resume";
-pub(super) const COROUTINE_CLOSE: &str = "coroutine_close";
-pub(super) const COROUTINE_YIELD: &str = "coroutine_yield";
-pub(super) const MATH_ABS: &str = "math_abs";
-pub(super) const MATH_MIN: &str = "math_min";
-pub(super) const MATH_MAX: &str = "math_max";
-pub(super) const MATH_SQRT: &str = "math_sqrt";
-pub(super) const MATH_FLOOR: &str = "math_floor";
-pub(super) const MATH_CEIL: &str = "math_ceil";
-pub(super) const MATH_TRUNC: &str = "math_trunc";
-pub(super) const MATH_NEAREST: &str = "math_nearest";
-pub(super) const MATH_COPYSIGN: &str = "math_copysign";
+pub(super) const COROUTINE_CREATE: &str = "coroutine.create";
+pub(super) const COROUTINE_RESUME: &str = "coroutine.resume";
+pub(super) const COROUTINE_CLOSE: &str = "coroutine.close";
+pub(super) const COROUTINE_YIELD: &str = "coroutine.yield";
+pub(super) const MATH_ABS: &str = "math.abs";
+pub(super) const MATH_MIN: &str = "math.min";
+pub(super) const MATH_MAX: &str = "math.max";
+pub(super) const MATH_SQRT: &str = "math.sqrt";
+pub(super) const MATH_FLOOR: &str = "math.floor";
+pub(super) const MATH_CEIL: &str = "math.ceil";
+pub(super) const MATH_TRUNC: &str = "math.trunc";
+pub(super) const MATH_NEAREST: &str = "math.nearest";
+pub(super) const MATH_COPYSIGN: &str = "math.copysign";
 pub(super) const TO_STRING: &str = "tostring";
 pub(super) const ASSERT: &str = "assert";
 pub(super) const PRINT: &str = "print";
@@ -59,7 +59,7 @@ pub(super) fn infer_coroutine_builtin_call(
                     Some(coerce_type(Type::Thread, expected))
                 }
                 _ => Some(Err(Diagnostic::new(
-                    "coroutine_create expects a zero-argument i32-returning function",
+                    "coroutine.create expects a zero-argument i32-returning function",
                 ))),
             }
         }
@@ -82,7 +82,7 @@ pub(super) fn infer_coroutine_builtin_call(
             };
             match coroutine_ty {
                 Type::Thread => Some(coerce_type(Type::Multi(vec![Type::Bool, i32_ty]), expected)),
-                _ => Some(Err(Diagnostic::new("coroutine_resume expects a thread"))),
+                _ => Some(Err(Diagnostic::new("coroutine.resume expects a thread"))),
             }
         }
         COROUTINE_CLOSE => {
@@ -104,7 +104,7 @@ pub(super) fn infer_coroutine_builtin_call(
             };
             match coroutine_ty {
                 Type::Thread => Some(coerce_type(Type::Bool, expected)),
-                _ => Some(Err(Diagnostic::new("coroutine_close expects a thread"))),
+                _ => Some(Err(Diagnostic::new("coroutine.close expects a thread"))),
             }
         }
         COROUTINE_YIELD => {
@@ -123,7 +123,7 @@ pub(super) fn infer_coroutine_builtin_call(
             ) {
                 Ok(ty) if ty == i32_ty => {}
                 Ok(_) => {
-                    return Some(Err(Diagnostic::new("coroutine_yield expects an i32 value")));
+                    return Some(Err(Diagnostic::new("coroutine.yield expects an i32 value")));
                 }
                 Err(error) => return Some(Err(error)),
             }

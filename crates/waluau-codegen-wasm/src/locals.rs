@@ -20,7 +20,7 @@ pub(crate) struct LocalPlan {
     pub(crate) unit_values: BTreeSet<ValueId>,
     pub(crate) pc_local: u32,
     /// Scratch `(ref null $coroutine_state)` local for saving/restoring the active
-    /// instance across a `coroutine_resume` (nested-coroutine support).
+    /// instance across a `coroutine.resume` (nested-coroutine support).
     pub(crate) coroutine_save_local: Option<u32>,
     /// Scratch i32 local for spilling a yielded value before mutating the state struct.
     pub(crate) coroutine_yield_tmp: Option<u32>,

@@ -936,12 +936,12 @@ fn tags_ir_inference_failures_with_structured_diagnostics() {
 fn lowers_coroutine_builtins_to_typed_instructions() {
     let source = r#"
         function run(): i32
-            local co: thread = coroutine_create(function(): i32
-                coroutine_yield(1)
+            local co: thread = coroutine.create(function(): i32
+                coroutine.yield(1)
                 return 2
             end)
-            local ok: bool, value: i32 = coroutine_resume(co)
-            local closed: bool = coroutine_close(co)
+            local ok: bool, value: i32 = coroutine.resume(co)
+            local closed: bool = coroutine.close(co)
             return value
         end
     "#;
@@ -978,7 +978,7 @@ fn lowers_coroutine_builtins_to_typed_instructions() {
 fn rejects_coroutine_create_for_non_i32_function() {
     let source = r#"
         function run(): i32
-            local co: thread = coroutine_create(function(): f64
+            local co: thread = coroutine.create(function(): f64
                 return 1.0
             end)
             return 0
@@ -988,7 +988,7 @@ fn rejects_coroutine_create_for_non_i32_function() {
     let error = build(&program).expect_err("ir build should fail");
     assert_eq!(
         error.to_string(),
-        "coroutine_create expects a zero-argument i32-returning function"
+        "coroutine.create expects a zero-argument i32-returning function"
     );
 }
 
