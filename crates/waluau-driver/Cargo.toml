@@ -12,7 +12,6 @@ waluau-diagnostics.workspace = true
 waluau-hir.workspace = true
 waluau-ir.workspace = true
 waluau-parser.workspace = true
-wasmtime = "34"
 
 [dev-dependencies]
 tempfile = "3"
