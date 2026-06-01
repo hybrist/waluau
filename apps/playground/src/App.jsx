@@ -161,6 +161,14 @@ function getWasmExports(buffer) {
       pos += 1; // mutable flag
       return;
     }
+    if (form === 0x5f) {
+      const numFields = readVaruint();
+      for (let f = 0; f < numFields; f++) {
+        readValTypeCode(); // storage type
+        pos += 1; // mutable flag
+      }
+      return;
+    }
     // Unknown composite type: bail out to end of section by caller.
     throw new Error(`unsupported wasm type form: 0x${form.toString(16)}`);
   }
