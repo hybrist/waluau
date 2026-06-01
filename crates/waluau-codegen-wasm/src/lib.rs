@@ -8,81 +8,26 @@ use waluau_ir::{
     Terminator, ValueId,
 };
 use wasm_encoder::{
-    AbstractHeapType, BlockType, CodeSection, ConstExpr, CustomSection, ElementSection, Elements,
-    EntityType, ExportKind, ExportSection, FieldType, Function, FunctionSection, GlobalSection,
-    GlobalType, HeapType, ImportSection, Instruction, Module as WasmModule, RefType, StartSection,
-    StorageType, TableSection, TableType, TypeSection, ValType,
+    BlockType, CodeSection, ConstExpr, CustomSection, ElementSection, Elements, EntityType,
+    ExportKind, ExportSection, FieldType, Function, FunctionSection, GlobalSection, HeapType,
+    ImportSection, Instruction, Module as WasmModule, RefType, StartSection, StorageType,
+    TableSection, TableType, TypeSection, ValType,
 };
 use wasmparser::{Validator, WasmFeatures};
 
+mod arrays;
+mod coroutines;
 pub mod host;
+mod signatures;
+mod wasm_types;
 
-#[derive(Clone)]
-struct SignatureRegistry {
-    unique_signatures: Vec<(Vec<Type>, Type)>,
-    signature_indices: HashMap<(Vec<Type>, Type), u32>,
-}
-
-impl SignatureRegistry {
-    fn new() -> Self {
-        Self {
-            unique_signatures: Vec::new(),
-            signature_indices: HashMap::new(),
-        }
-    }
-
-    fn add(&mut self, params: Vec<Type>, result: Type) {
-        let key = (params, result);
-        if !self.signature_indices.contains_key(&key) {
-            let index = self.unique_signatures.len() as u32;
-            self.signature_indices.insert(key.clone(), index);
-            self.unique_signatures.push(key);
-        }
-    }
-
-    fn get(&self, params: &[Type], result: &Type) -> Option<u32> {
-        let key = (params.to_vec(), result.clone());
-        self.signature_indices.get(&key).copied()
-    }
-}
-
-fn collect_user_signatures(module: &Module, start_thunk: bool) -> SignatureRegistry {
-    let mut registry = SignatureRegistry::new();
-    // Register actual signatures of all functions in the module
-    for function in &module.functions {
-        let params = function.params.iter().map(|(_, ty)| ty.clone()).collect();
-        registry.add(params, function.return_type.clone());
-    }
-    // Register signatures of all closures and indirect calls
-    for function in &module.functions {
-        for block in function.blocks.values() {
-            for (_, instruction) in &block.instructions {
-                match instruction {
-                    IrInstruction::Closure {
-                        params,
-                        return_type,
-                        ..
-                    } => {
-                        registry.add(params.clone(), return_type.clone());
-                    }
-                    IrInstruction::CallValue {
-                        params,
-                        return_type,
-                        ..
-                    } => {
-                        registry.add(params.clone(), return_type.clone());
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-    // Register thunk if needed
-    if start_thunk {
-        registry.add(Vec::new(), Type::Unit);
-    }
-    registry
-}
+use arrays::{ArrayTypeRegistry, array_storage_type, collect_array_types};
+use coroutines::{
+    CoroutinePlan, STATE_CONT_FIELD, STATE_TAG_FIELD, STATE_YIELDED_FIELD, TAG_ERROR, TAG_FINISHED,
+    TAG_SUSPENDED, coroutine_body_ref_type, coroutine_state_ref_type,
+};
+use signatures::{SignatureRegistry, collect_user_signatures, find_function_type_index};
+use wasm_types::{compress_locals, externref_nonnull_val_type, externref_val_type, wasm_type};
 
 pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     let array_types = collect_array_types(module);
@@ -365,265 +310,11 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     Ok(bytes)
 }
 
-// Wasm-GC struct layout for a coroutine instance (see design 0007):
-//   { tag: i32, yielded_value: i32, continuation: (ref null $body_sig), pc_*: i32 ... }
-const STATE_TAG_FIELD: u32 = 0;
-const STATE_YIELDED_FIELD: u32 = 1;
-const STATE_CONT_FIELD: u32 = 2;
-const STATE_PC_FIELD_BASE: u32 = 3;
-// `tag` values.
-const TAG_SUSPENDED: i32 = 0;
-const TAG_FINISHED: i32 = 1;
-const TAG_ERROR: i32 = 2;
-
-struct ArrayTypeRegistry {
-    indices: HashMap<String, u32>,
-    /// Type index of the `$coroutine_state` GC struct, when the module uses coroutines.
-    coroutine_state_type: Option<u32>,
-}
-
-impl ArrayTypeRegistry {
-    fn with_function_type_offset(array_types: &[Type], function_type_count: u32) -> Self {
-        let indices = array_types
-            .iter()
-            .enumerate()
-            .map(|(offset, array_ty)| (type_key(array_ty), function_type_count + offset as u32))
-            .collect();
-        Self {
-            indices,
-            coroutine_state_type: None,
-        }
-    }
-
-    fn index(&self, array_ty: &Type) -> Result<u32, Diagnostic> {
-        self.indices
-            .get(&type_key(array_ty))
-            .copied()
-            .ok_or_else(|| Diagnostic::new(format!("missing wasm array type for {array_ty}")))
-    }
-
-    fn coroutine_state_type(&self) -> Result<u32, Diagnostic> {
-        self.coroutine_state_type
-            .ok_or_else(|| Diagnostic::new("missing coroutine state struct type"))
-    }
-}
-
-/// A nullable reference to the `$coroutine_state` struct (the wasm value of a `thread`).
-fn coroutine_state_ref_type(state_type_index: u32) -> ValType {
-    ValType::Ref(RefType {
-        nullable: true,
-        heap_type: HeapType::Concrete(state_type_index),
-    })
-}
-
-/// A nullable reference to the coroutine body signature (`() -> i32`); the continuation field.
-fn coroutine_body_ref_type(body_sig_index: u32) -> ValType {
-    ValType::Ref(RefType {
-        nullable: true,
-        heap_type: HeapType::Concrete(body_sig_index),
-    })
-}
-
-fn type_key(ty: &Type) -> String {
-    ty.to_string()
-}
-
-fn collect_array_types(module: &Module) -> Vec<Type> {
-    let mut seen = BTreeSet::new();
-    let mut types = Vec::new();
-    for function in &module.functions {
-        for (_, ty) in &function.params {
-            insert_array_type(ty, &mut seen, &mut types);
-        }
-        insert_array_type(&function.return_type, &mut seen, &mut types);
-        for block in function.blocks.values() {
-            for (_, instruction) in &block.instructions {
-                collect_array_types_from_instruction(instruction, &mut seen, &mut types);
-            }
-        }
-    }
-    types.sort_by_key(array_type_depth);
-    types
-}
-
-fn array_type_depth(ty: &Type) -> usize {
-    match ty {
-        Type::Array(element) => 1 + array_type_depth(element),
-        _ => 0,
-    }
-}
-
-fn insert_array_type(ty: &Type, seen: &mut BTreeSet<String>, out: &mut Vec<Type>) {
-    if let Type::Array(element) = ty {
-        insert_array_type(element, seen, out);
-        if seen.insert(type_key(ty)) {
-            out.push(ty.clone());
-        }
-    }
-}
-
-fn collect_array_types_from_instruction(
-    instruction: &IrInstruction,
-    seen: &mut BTreeSet<String>,
-    out: &mut Vec<Type>,
-) {
-    match instruction {
-        IrInstruction::ArrayNew { element_ty, .. } => {
-            insert_array_type(&Type::Array(Box::new(element_ty.clone())), seen, out);
-        }
-        IrInstruction::ArrayGet { element_ty, .. } | IrInstruction::ArraySet { element_ty, .. } => {
-            insert_array_type(&Type::Array(Box::new(element_ty.clone())), seen, out);
-        }
-        IrInstruction::ArrayLen { .. } => {}
-        _ => {}
-    }
-}
-
-fn array_storage_type(
-    element_ty: &Type,
-    registry: &ArrayTypeRegistry,
-) -> Result<StorageType, Diagnostic> {
-    match element_ty {
-        Type::Numeric(NumericType::I32 | NumericType::U32) => Ok(StorageType::Val(ValType::I32)),
-        Type::Numeric(NumericType::I64 | NumericType::U64) => Ok(StorageType::Val(ValType::I64)),
-        Type::Numeric(NumericType::F32) => Ok(StorageType::Val(ValType::F32)),
-        Type::Numeric(NumericType::F64) => Ok(StorageType::Val(ValType::F64)),
-        Type::Bool => Ok(StorageType::Val(ValType::I32)),
-        Type::String => Ok(StorageType::Val(externref_val_type())),
-        Type::Array(_) => {
-            let index = registry.index(element_ty)?;
-            Ok(StorageType::Val(ValType::Ref(RefType {
-                nullable: true,
-                heap_type: HeapType::Concrete(index),
-            })))
-        }
-        Type::Multi(_) => Err(Diagnostic::new(
-            "multi-value types are not supported in array storage yet",
-        )),
-        Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
-            unreachable!()
-        }
-        Type::Unit => unreachable!(),
-    }
-}
-
 #[derive(Clone)]
 struct FunctionSignature {
     index: u32,
     params: Vec<Type>,
     result: Type,
-}
-
-#[derive(Clone, Debug)]
-struct CoroutinePlan {
-    /// Reference-typed global holding the currently-running coroutine instance
-    /// (`(ref null $coroutine_state)`, null = none). Doubles as the runtime
-    /// "is a coroutine on the stack?" check for `coroutine_yield`.
-    active_global: Option<u32>,
-    /// Struct field index of each directly-yielding function's program counter.
-    pc_fields: HashMap<String, u32>,
-    yielding_functions: BTreeSet<String>,
-}
-
-impl CoroutinePlan {
-    fn new(module: &Module, imported_global_count: u32) -> Self {
-        let mut directly_yielding = BTreeSet::new();
-        for function in &module.functions {
-            if function
-                .blocks
-                .values()
-                .any(|block| matches!(block.terminator, Terminator::CoroutineYield { .. }))
-            {
-                directly_yielding.insert(function.name.clone());
-            }
-        }
-
-        let mut yielding_functions = directly_yielding.clone();
-        loop {
-            let mut changed = false;
-            for function in &module.functions {
-                if yielding_functions.contains(&function.name) {
-                    continue;
-                }
-                let calls_yielding = function.blocks.values().any(|block| {
-                    block.instructions.iter().any(|(_, instruction)| {
-                        matches!(instruction, IrInstruction::Call { name, .. } if yielding_functions.contains(name))
-                    })
-                });
-                if calls_yielding {
-                    changed |= yielding_functions.insert(function.name.clone());
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
-
-        let has_coroutine_ops = module.functions.iter().any(|function| {
-            function.blocks.values().any(|block| {
-                block.instructions.iter().any(|(_, instruction)| {
-                    matches!(
-                        instruction,
-                        IrInstruction::CoroutineCreate { .. }
-                            | IrInstruction::CoroutineResume { .. }
-                            | IrInstruction::CoroutineClose { .. }
-                    )
-                })
-            })
-        });
-
-        let has_state = has_coroutine_ops || !yielding_functions.is_empty();
-        if !has_state {
-            return Self {
-                active_global: None,
-                pc_fields: HashMap::new(),
-                yielding_functions,
-            };
-        }
-
-        let mut pc_fields = HashMap::new();
-        for (index, name) in directly_yielding.into_iter().enumerate() {
-            pc_fields.insert(name, STATE_PC_FIELD_BASE + index as u32);
-        }
-
-        Self {
-            active_global: Some(imported_global_count),
-            pc_fields,
-            yielding_functions,
-        }
-    }
-
-    fn has_state(&self) -> bool {
-        self.active_global.is_some()
-    }
-
-    fn active_global(&self) -> Result<u32, Diagnostic> {
-        self.active_global
-            .ok_or_else(|| Diagnostic::new("missing coroutine active-instance global"))
-    }
-
-    fn pc_field(&self, name: &str) -> Option<u32> {
-        self.pc_fields.get(name).copied()
-    }
-
-    fn pc_field_count(&self) -> u32 {
-        self.pc_fields.len() as u32
-    }
-
-    /// Emit the single reference-typed `active` global (null = no coroutine running).
-    fn emit_globals(&self, globals: &mut GlobalSection, state_type_index: u32) {
-        if !self.has_state() {
-            return;
-        }
-        globals.global(
-            GlobalType {
-                val_type: coroutine_state_ref_type(state_type_index),
-                mutable: true,
-                shared: false,
-            },
-            &ConstExpr::ref_null(HeapType::Concrete(state_type_index)),
-        );
-    }
 }
 
 struct EmissionContext<'a> {
@@ -768,11 +459,7 @@ fn try_emit_structured_fast_path(
     local_plan: &LocalPlan,
     value_defs: &HashMap<ValueId, IrInstruction>,
 ) -> Result<bool, Diagnostic> {
-    if ctx
-        .coroutine_plan
-        .yielding_functions
-        .contains(&function.name)
-    {
+    if ctx.coroutine_plan.function_yields(&function.name) {
         return Ok(false);
     }
 
@@ -1426,7 +1113,7 @@ fn emit_block_instructions(
                 })?;
                 out.instruction(&Instruction::Call(ctx.wasm_func_index(callee.index)));
                 emit_value_store(out, local_plan, *value)?;
-                if ctx.coroutine_plan.yielding_functions.contains(name) {
+                if ctx.coroutine_plan.function_yields(name) {
                     emit_return_if_coroutine_yielded(out, function, ctx)?;
                 }
             }
@@ -2832,95 +2519,6 @@ fn local(local_plan: &LocalPlan, value: ValueId) -> Result<u32, Diagnostic> {
         .get(&value)
         .copied()
         .ok_or_else(|| Diagnostic::new(format!("missing local slot for value {:?}", value)))
-}
-
-fn externref_val_type() -> ValType {
-    // Long-form `(ref null extern)` (0x63 0x6f).
-    ValType::Ref(RefType {
-        nullable: true,
-        heap_type: HeapType::Abstract {
-            shared: false,
-            ty: AbstractHeapType::Extern,
-        },
-    })
-}
-
-fn externref_nonnull_val_type() -> ValType {
-    ValType::Ref(RefType {
-        nullable: false,
-        heap_type: HeapType::Abstract {
-            shared: false,
-            ty: AbstractHeapType::Extern,
-        },
-    })
-}
-
-fn wasm_type(ty: &Type, array_registry: &ArrayTypeRegistry) -> Result<ValType, Diagnostic> {
-    match ty {
-        Type::Bool | Type::Numeric(NumericType::U32 | NumericType::I32) => Ok(ValType::I32),
-        Type::Numeric(NumericType::U64 | NumericType::I64) => Ok(ValType::I64),
-        Type::Numeric(NumericType::F32) => Ok(ValType::F32),
-        Type::Numeric(NumericType::F64) => Ok(ValType::F64),
-        Type::Array(_) => {
-            let index = array_registry.index(ty)?;
-            Ok(ValType::Ref(RefType {
-                nullable: true,
-                heap_type: HeapType::Concrete(index),
-            }))
-        }
-        Type::String => Ok(externref_val_type()),
-        Type::Unit => Err(Diagnostic::new(
-            "unit type has no wasm value representation",
-        )),
-        Type::Multi(_) => Err(Diagnostic::new(
-            "multi-value types are not supported in Wasm signatures yet",
-        )),
-        Type::Function { .. } => Ok(ValType::I32),
-        Type::Thread => Ok(coroutine_state_ref_type(
-            array_registry.coroutine_state_type()?,
-        )),
-        Type::Record(_) => unreachable!("namespace types are not stored in wasm locals"),
-        Type::TypeParam(_) => {
-            unreachable!("generic type parameters must be specialized before codegen")
-        }
-    }
-}
-
-fn find_function_type_index(
-    registry: &SignatureRegistry,
-    user_type_base: u32,
-    params: &[Type],
-    return_type: &Type,
-) -> Result<u32, Diagnostic> {
-    registry
-        .get(params, return_type)
-        .map(|index| user_type_base + index)
-        .ok_or_else(|| {
-            Diagnostic::new(format!(
-                "no wasm function type found for indirect call signature ({}) -> {}",
-                params
-                    .iter()
-                    .map(|ty| ty.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                return_type
-            ))
-        })
-}
-
-fn compress_locals(locals: Vec<ValType>) -> Vec<(u32, ValType)> {
-    let mut compressed = Vec::new();
-    for ty in locals {
-        if let Some((count, last_ty)) = compressed.last_mut() {
-            if *last_ty == ty {
-                *count += 1;
-                continue;
-            }
-        }
-
-        compressed.push((1, ty));
-    }
-    compressed
 }
 
 #[cfg(test)]
