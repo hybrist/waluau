@@ -575,7 +575,7 @@ impl Parser {
     }
 
     fn parse_return_type_list(&mut self) -> Result<Type, Diagnostic> {
-        let first = self.parse_type()?;
+        let first = self.parse_return_type()?;
         if !self.check_simple(&TokenKind::Comma) {
             return Ok(first);
         }
@@ -1409,6 +1409,21 @@ mod tests {
         let program = parse(source).expect("parse should succeed");
         let body = &program.functions[0].body;
         assert!(matches!(body[0], waluau_ast::Stmt::Let { .. }));
+    }
+
+    #[test]
+    fn parses_paren_multi_value_return_in_function_decl() {
+        // function two(): (f64, f64) — parenthesised form in function declaration return type
+        let source = r#"
+            function two(): (f64, f64)
+                return 1, 2
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        assert_eq!(
+            program.functions[0].return_type,
+            Some(Type::Multi(vec![Type::number(), Type::number(),]))
+        );
     }
 
     #[test]

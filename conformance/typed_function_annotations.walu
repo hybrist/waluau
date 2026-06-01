@@ -1,5 +1,13 @@
 -- Explicit multi-value return type in function type annotations (waluau-5a3).
--- () -> (bool, i32) should parse as a function type whose return is Type::Multi.
+-- () -> (bool, i32) and function f(): (f64, f64) should parse as Type::Multi returns.
+
+-- Parenthesised return type in a function declaration.
+function two(): (f64, f64)
+    return 1, 2
+end
+local a, b = two()
+assert(a == 1)
+assert(b == 2)
 
 -- A non-capturing closure stored in an explicitly typed local used as a for-in iterator.
 function never_runs_typed(): i32
