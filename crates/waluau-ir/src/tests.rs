@@ -917,8 +917,7 @@ fn rejects_cross_specialization_recursive_generics() {
 fn tags_ir_inference_failures_with_structured_diagnostics() {
     let source = r#"
         function entry(): i32
-            local xs = {}
-            return 0
+            return {}
         end
     "#;
     let program = parse(source).expect("parse should succeed");
