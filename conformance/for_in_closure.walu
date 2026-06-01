@@ -1,0 +1,60 @@
+-- for..in over local iterator *values* (closures), which lower to indirect
+-- calls returning multiple values (`bool` + loop values). See waluau-e80.
+
+-- A non-capturing closure stored in a local. The loop never starts because the
+-- iterator immediately reports "done".
+function never_runs(): i32
+    local iter = function(): bool, i32
+        return false, 99
+    end
+    local acc: i32 = 0
+    for v in iter do
+        acc = acc + v
+    end
+    return acc
+end
+assert(never_runs() == 0)
+
+-- A capturing closure that mutates its captured state across iterations. It
+-- yields 1, 2, ..., n and then terminates, so the loop body runs `n` times.
+function sum_to(n: i32): i32
+    local i: i32 = 0
+    local iter = function(): bool, i32
+        i = i + 1
+        if i > n then
+            return false, 0
+        end
+        return true, i
+    end
+    local acc: i32 = 0
+    for v in iter do
+        acc = acc + v
+    end
+    return acc
+end
+assert(sum_to(0) == 0)
+assert(sum_to(3) == 6)
+assert(sum_to(5) == 15)
+
+-- The iterator value is only known dynamically (selected by a branch), so the
+-- call cannot be devirtualized and lowers to a genuine `call_indirect` with a
+-- multi-value result.
+function pick(use_second: bool): i32
+    local first = function(): bool, i32
+        return false, 1
+    end
+    local second = function(): bool, i32
+        return false, 2
+    end
+    local iter = first
+    if use_second then
+        iter = second
+    end
+    local acc: i32 = 0
+    for v in iter do
+        acc = acc + v
+    end
+    return acc
+end
+assert(pick(false) == 0)
+assert(pick(true) == 0)
