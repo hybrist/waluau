@@ -190,6 +190,13 @@ mod tests {
     }
 
     #[test]
+    fn compile_incremental_record_init_from_empty_table() {
+        let source = "function f(): i32\n    local t = {}\n    t.x = 1::i32\n    return t.x\nend\n";
+        let result = compile_source(source).expect("incremental record init should compile");
+        assert!(result.wat.contains("(module"));
+    }
+
+    #[test]
     fn compile_multi_resolves_imports() {
         let mut files = std::collections::HashMap::new();
         files.insert(

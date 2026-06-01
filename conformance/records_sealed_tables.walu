@@ -33,7 +33,18 @@ function sqlen_vec(v: { x: i32, y: i32 }): i32
     return v.x * v.x + v.y * v.y
 end
 
+function make_incremental_record(seed: i32): { x: i32, y: i32 }
+    local t = {}
+    t.x = seed
+    t.y = seed + 1
+    return t
+end
+
 local my_v = vec(2, 4)
 assert(my_v.x == 2)
 assert(my_v.y == 4)
 assert(sqlen_vec(my_v) == 20)
+
+local incremental = make_incremental_record(10)
+assert(incremental.x == 10)
+assert(incremental.y == 11)

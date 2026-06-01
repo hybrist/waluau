@@ -251,6 +251,10 @@ impl Builder<'_> {
             } => {
                 let inferred_ty = if let Some(ty) = ty.clone() {
                     ty
+                } else if matches!(value, Expr::ArrayLiteral { elements, .. } if elements.is_empty()) {
+                    // Keep parity with HIR inference: bare `{}` in local initialization starts
+                    // as an empty record so subsequent `t.field = ...` can shape it.
+                    Type::Record(BTreeMap::new())
                 } else {
                     self.infer_expr_type(value, types, None)?
                 };
@@ -408,9 +412,52 @@ impl Builder<'_> {
                     unreachable!();
                 };
                 let base_ty = self.infer_expr_type(base, types, None)?;
-                let field_ty = base_ty
-                    .record_field(name)
-                    .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
+                let (base_ty, field_ty) = if let Expr::Name(base_name, _) = base.as_ref() {
+                    let Some(Type::Record(mut fields)) = types.get(base_name).cloned() else {
+                        return Err(Diagnostic::new("field assignment requires a record base"));
+                    };
+                    let existing_field = fields.get(name).cloned();
+                    match existing_field {
+                        Some(existing) => (Type::Record(fields), existing),
+                        None => {
+                            let inferred = self.infer_expr_type(value, types, None)?;
+                            let previous_ty = Type::Record(fields.clone());
+                            fields.insert(name.clone(), inferred.clone());
+                            let updated_ty = Type::Record(fields.clone());
+                            let base_value =
+                                self.lower_expr(base, env, types, Some(previous_ty.clone()))?;
+                            let new_field_value =
+                                self.lower_expr(value, env, types, Some(inferred.clone()))?;
+
+                            // Shape transition for incremental record initialization: rebuild
+                            // the struct with existing fields + the newly introduced field.
+                            let mut lowered_fields = Vec::with_capacity(fields.len());
+                            for (field_name, field_ty) in &fields {
+                                if field_name == name {
+                                    lowered_fields.push(new_field_value);
+                                } else {
+                                    lowered_fields.push(self.emit(Instruction::StructGet {
+                                        base: base_value,
+                                        field: field_name.clone(),
+                                        field_ty: field_ty.clone(),
+                                    }));
+                                }
+                            }
+                            let rebuilt = self.emit(Instruction::StructNew {
+                                struct_ty: updated_ty.clone(),
+                                fields: lowered_fields,
+                            });
+                            env.insert(base_name.clone(), rebuilt);
+                            types.insert(base_name.clone(), updated_ty);
+                            return Ok(());
+                        }
+                    }
+                } else {
+                    let field_ty = base_ty.record_field(name).ok_or_else(|| {
+                        Diagnostic::new(format!("unknown record field '{name}'"))
+                    })?;
+                    (base_ty, field_ty)
+                };
                 let base = self.lower_expr(base, env, types, Some(base_ty))?;
                 let value = match op {
                     AssignOp::Set => self.lower_expr(value, env, types, Some(field_ty.clone()))?,
@@ -1775,6 +1822,19 @@ impl Builder<'_> {
                 )));
             }
             Expr::ArrayLiteral { elements, .. } => {
+                if elements.is_empty()
+                    && matches!(expected.as_ref(), Some(Type::Record(_)))
+                {
+                    let struct_ty = expected.expect("checked above");
+                    let Type::Record(record_fields) = &struct_ty else {
+                        unreachable!("checked above");
+                    };
+                    let value = self.emit(Instruction::StructNew {
+                        struct_ty: struct_ty.clone(),
+                        fields: Vec::with_capacity(record_fields.len()),
+                    });
+                    return self.coerce_value(value, struct_ty, None);
+                }
                 let array_ty = self.infer_array_literal_type(elements, types, expected.clone())?;
                 let element_ty = array_ty
                     .element_type()
