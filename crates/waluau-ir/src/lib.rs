@@ -2712,6 +2712,142 @@ impl Builder<'_> {
         types: &mut HashMap<String, Type>,
     ) -> Result<(), Diagnostic> {
         let iterator_ty = self.infer_expr_type(iterator, types, None)?;
+        if let Type::Array(element_ty) = &iterator_ty {
+            if names.len() != 1 && names.len() != 2 {
+                return Err(Diagnostic::new(format!(
+                    "array for-in loop expects 1 or 2 loop variables, got {}",
+                    names.len()
+                )));
+            }
+            let array_val = self.lower_expr(iterator, env, types, Some(iterator_ty.clone()))?;
+            let array_len_init = self.emit(Instruction::ArrayLen { array: array_val });
+            let const_zero = self.emit(Instruction::Number {
+                ty: NumericType::I32,
+                literal: NumberLiteral { raw: "0".into() },
+            });
+            let const_one = self.emit(Instruction::Number {
+                ty: NumericType::I32,
+                literal: NumberLiteral { raw: "1".into() },
+            });
+
+            let preheader = self.current_block;
+            let header = self.new_block();
+            let loop_body = self.new_block();
+            let exit = self.new_block();
+            self.set_terminator(preheader, Terminator::Jump(header));
+
+            let mutated = collect_assigned_names(body);
+            self.current_block = header;
+            let mut loop_env = env.clone();
+            let loop_types = types.clone();
+            let mut phis = HashMap::new();
+            for name in &mutated {
+                if let Some(initial) = env.get(name).copied() {
+                    let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
+                    loop_env.insert(name.clone(), phi);
+                    phis.insert(name.clone(), phi);
+                }
+            }
+            let array_len_phi = self.emit(Instruction::Phi(vec![(preheader, array_len_init)]));
+            let index_phi = self.emit(Instruction::Phi(vec![(preheader, const_zero)]));
+
+            let loop_cond = self.emit(Instruction::Binary {
+                op: BinaryOp::Less,
+                left: index_phi,
+                right: array_len_phi,
+                operand_ty: Type::Numeric(NumericType::I32),
+                result_ty: Type::Bool,
+            });
+            self.loop_stack.push(LoopContext {
+                header,
+                continue_target: header,
+                break_target: exit,
+                phis: phis.clone(),
+            });
+            self.set_terminator(
+                header,
+                Terminator::Branch {
+                    condition: loop_cond,
+                    then_block: loop_body,
+                    else_block: exit,
+                },
+            );
+
+            self.current_block = loop_body;
+            let mut body_env = loop_env.clone();
+            let mut body_types = loop_types.clone();
+
+            let element_val = self.emit(Instruction::ArrayGet {
+                array: array_val,
+                index: index_phi,
+                element_ty: *element_ty.clone(),
+            });
+
+            if names.len() == 1 {
+                body_env.insert(names[0].clone(), element_val);
+                body_types.insert(names[0].clone(), *element_ty.clone());
+            } else {
+                body_env.insert(names[0].clone(), index_phi);
+                body_types.insert(names[0].clone(), Type::Numeric(NumericType::I32));
+                body_env.insert(names[1].clone(), element_val);
+                body_types.insert(names[1].clone(), *element_ty.clone());
+            }
+
+            for stmt in body {
+                if self.current_block == DEAD_BLOCK {
+                    break;
+                }
+                self.lower_stmt(stmt, &mut body_env, &mut body_types)?;
+            }
+
+            let loop_ctx = self
+                .loop_stack
+                .pop()
+                .expect("loop stack must contain entry for array for loop");
+            let phis = loop_ctx.phis;
+            let body_exit = self.current_block;
+            if body_exit != DEAD_BLOCK {
+                let array_len_next = self.emit(Instruction::Binary {
+                    op: BinaryOp::Add,
+                    left: array_len_phi,
+                    right: const_zero,
+                    operand_ty: Type::Numeric(NumericType::I32),
+                    result_ty: Type::Numeric(NumericType::I32),
+                });
+                let next_index = self.emit(Instruction::Binary {
+                    op: BinaryOp::Add,
+                    left: index_phi,
+                    right: const_one,
+                    operand_ty: Type::Numeric(NumericType::I32),
+                    result_ty: Type::Numeric(NumericType::I32),
+                });
+                self.set_terminator(body_exit, Terminator::Jump(header));
+                add_phi_incoming(
+                    &mut self.function,
+                    header,
+                    array_len_phi,
+                    (body_exit, array_len_next),
+                );
+                add_phi_incoming(
+                    &mut self.function,
+                    header,
+                    index_phi,
+                    (body_exit, next_index),
+                );
+                for (name, phi) in &phis {
+                    if let Some(next_value) = body_env.get(name).copied() {
+                        add_phi_incoming(&mut self.function, header, *phi, (body_exit, next_value));
+                    }
+                }
+            }
+
+            for (name, phi) in phis {
+                env.insert(name, phi);
+            }
+            self.current_block = exit;
+            return Ok(());
+        }
+
         let Type::Function {
             params,
             return_type,
@@ -6053,5 +6189,23 @@ mod tests {
             error.to_string(),
             "coroutine_create expects a zero-argument i32-returning function"
         );
+    }
+
+    #[test]
+    fn lowers_array_for_in_loop() {
+        let source = r#"
+            function test_array_iteration_1_var(): i32
+                local arr: {i32} = {10, 20, 30}
+                local sum: i32 = 0
+                for v in arr do
+                    sum = sum + v
+                end
+                return sum
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let module = build(&program).expect("ir build should succeed");
+        let function = &module.functions[0];
+        println!("FUNCTION IR: {:#?}", function);
     }
 }
