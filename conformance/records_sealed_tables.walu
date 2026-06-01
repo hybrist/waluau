@@ -23,3 +23,17 @@ end
 assert(point_sum(2) == 5)
 assert(point_mutation(2) == 47)
 assert(nested_record(4) == 21)
+
+function vec(x: i32, y: i32): { x: i32, y: i32 }
+    local new_vec = { x = x, y = y }
+    return new_vec
+end
+
+function sqlen_vec(v: { x: i32, y: i32 }): i32
+    return v.x * v.x + v.y * v.y
+end
+
+local my_v = vec(2, 4)
+assert(my_v.x == 2)
+assert(my_v.y == 4)
+assert(sqlen_vec(my_v) == 20)
