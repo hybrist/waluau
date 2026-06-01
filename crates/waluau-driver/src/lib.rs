@@ -132,11 +132,11 @@ mod tests {
     fn rejects_math_abs_for_integer_types() {
         let source = r#"
             function bad(x: i32): i32
-                return math_abs(x)
+                return math.abs(x)
             end
         "#;
         let err = super::compile_source(source).expect_err("compile should fail");
-        assert!(err.to_string().contains("math_abs does not support i32"));
+        assert!(err.to_string().contains("math.abs does not support i32"));
     }
 
     #[test]

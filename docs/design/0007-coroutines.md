@@ -7,7 +7,7 @@ Accepted.
 ## Goal
 
 Define the coroutine model, IR representation, and Wasm codegen strategy for
-`coroutine_create`, `coroutine_resume`, `coroutine_yield`, and `coroutine_close`.
+`coroutine.create`, `coroutine.resume`, `coroutine.yield`, and `coroutine.close`.
 
 The design must:
 
@@ -33,35 +33,35 @@ higher-kinded type — tracked separately (see Non-Goals).
 ### Builtins
 
 ```
-coroutine_create(f: () -> i32): thread
-coroutine_resume(co: thread): (bool, i32)
-coroutine_yield(value: i32): ()
-coroutine_close(co: thread): bool
+coroutine.create(f: () -> i32): thread
+coroutine.resume(co: thread): (bool, i32)
+coroutine.yield(value: i32): ()
+coroutine.close(co: thread): bool
 ```
 
-- `coroutine_create` wraps a zero-argument, `i32`-returning function as a
-  coroutine. The function body may call `coroutine_yield`.
-- `coroutine_resume` advances the coroutine to the next yield or return, returning
+- `coroutine.create` wraps a zero-argument, `i32`-returning function as a
+  coroutine. The function body may call `coroutine.yield`.
+- `coroutine.resume` advances the coroutine to the next yield or return, returning
   `(true, value)` where `value` is the yielded or returned `i32`, or `(false, 0)`
   if the coroutine errored or is already dead.
-- `coroutine_yield` suspends the currently running coroutine and delivers the
-  `i32` value to the caller of `coroutine_resume`. `coroutine_yield` is valid in
+- `coroutine.yield` suspends the currently running coroutine and delivers the
+  `i32` value to the caller of `coroutine.resume`. `coroutine.yield` is valid in
   any function called (directly or transitively) while a coroutine is running;
   whether a yield is legal is a runtime check — the static type system only
   verifies that the argument is `i32`.
-- `coroutine_close` terminates a suspended or dead coroutine, transitioning it to
+- `coroutine.close` terminates a suspended or dead coroutine, transitioning it to
   the dead state. Returns `true` if the coroutine was suspended (closed cleanly)
   or was already dead; returns `false` if it was in an error state.
 
-Calling `coroutine_resume` on a dead coroutine returns `(false, 0)`.
+Calling `coroutine.resume` on a dead coroutine returns `(false, 0)`.
 
 ### Example
 
 ```lua
 function make_counter(): thread
-    return coroutine_create(function(): i32
-        coroutine_yield(1)
-        coroutine_yield(2)
+    return coroutine.create(function(): i32
+        coroutine.yield(1)
+        coroutine.yield(2)
         return 3
     end)
 end
@@ -70,13 +70,13 @@ function run(): i32
     local co: thread = make_counter()
     local ok1: bool
     local a: i32
-    ok1, a = coroutine_resume(co)   -- true, 1
+    ok1, a = coroutine.resume(co)   -- true, 1
     local ok2: bool
     local b: i32
-    ok2, b = coroutine_resume(co)   -- true, 2
+    ok2, b = coroutine.resume(co)   -- true, 2
     local ok3: bool
     local c: i32
-    ok3, c = coroutine_resume(co)   -- true, 3  (body returned)
+    ok3, c = coroutine.resume(co)   -- true, 3  (body returned)
     return a + b + c                -- 6
 end
 ```
@@ -236,22 +236,22 @@ CPS transformation is a backend concern because:
 
 Required stable diagnostics:
 
-- `coroutine_create` argument is not a zero-argument `i32`-returning function (static)
-- `coroutine_yield` argument is not `i32` (static)
-- `coroutine_resume` argument is not a `thread` (static)
-- `coroutine_close` argument is not a `thread` (static)
-- `coroutine_yield` called outside a coroutine context (runtime)
-- `coroutine_resume` on a dead coroutine returns `(false, 0)` (runtime, not a trap)
+- `coroutine.create` argument is not a zero-argument `i32`-returning function (static)
+- `coroutine.yield` argument is not `i32` (static)
+- `coroutine.resume` argument is not a `thread` (static)
+- `coroutine.close` argument is not a `thread` (static)
+- `coroutine.yield` called outside a coroutine context (runtime)
+- `coroutine.resume` on a dead coroutine returns `(false, 0)` (runtime, not a trap)
 
 ## Test Matrix
 
 - HIR type checking:
-  - `coroutine_create` round-trip: `() -> i32` function → `thread`
-  - `coroutine_resume` produces `(bool, i32)`
-  - `coroutine_yield` accepted inside coroutine body
-  - `coroutine_yield` with non-`i32` argument rejected
-  - `coroutine_create` rejected for non-zero-arg function
-  - `coroutine_create` rejected for function returning non-`i32`
+  - `coroutine.create` round-trip: `() -> i32` function → `thread`
+  - `coroutine.resume` produces `(bool, i32)`
+  - `coroutine.yield` accepted inside coroutine body
+  - `coroutine.yield` with non-`i32` argument rejected
+  - `coroutine.create` rejected for non-zero-arg function
+  - `coroutine.create` rejected for function returning non-`i32`
 - IR verifier:
   - `CoroutineCreate` type rules
   - `CoroutineResume` type rules

@@ -159,6 +159,17 @@ struct LoopContext {
     phis: HashMap<String, ValueId>,
 }
 
+fn builtin_name(callee: &Expr) -> Option<String> {
+    match callee {
+        Expr::Name(name, _) => Some(name.clone()),
+        Expr::Field { base, name, .. } => match base.as_ref() {
+            Expr::Name(namespace, _) => Some(format!("{namespace}.{name}")),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 impl Builder<'_> {
     fn function_expr_return_type(function: &waluau_ast::FunctionExpr) -> Result<Type, Diagnostic> {
         function.return_type.clone().ok_or_else(|| {
@@ -1679,30 +1690,28 @@ impl Builder<'_> {
                 args,
                 ..
             } => {
-                if let Expr::Name(name, _) = callee.as_ref() {
+                if let Some(name) = builtin_name(callee.as_ref()) {
                     if let Some(result) =
-                        self.lower_math_builtin_call(name, args, env, types, expected.clone())
+                        self.lower_math_builtin_call(&name, args, env, types, expected.clone())
                     {
                         return result;
                     }
-                }
-                if let Expr::Name(name, _) = callee.as_ref() {
+                    if let Some(result) = self.lower_coroutine_builtin_call(
+                        &name,
+                        args,
+                        env,
+                        types,
+                        expected.clone(),
+                    ) {
+                        return result;
+                    }
                     if let Some(result) =
-                        self.lower_coroutine_builtin_call(name, args, env, types, expected.clone())
+                        self.lower_tostring_builtin_call(&name, args, env, types, expected.clone())
                     {
                         return result;
                     }
-                }
-                if let Expr::Name(name, _) = callee.as_ref() {
                     if let Some(result) =
-                        self.lower_tostring_builtin_call(name, args, env, types, expected.clone())
-                    {
-                        return result;
-                    }
-                }
-                if let Expr::Name(name, _) = callee.as_ref() {
-                    if let Some(result) =
-                        self.lower_print_builtin_call(name, args, env, types, expected.clone())
+                        self.lower_print_builtin_call(&name, args, env, types, expected.clone())
                     {
                         return result;
                     }
@@ -2164,24 +2173,20 @@ impl Builder<'_> {
                 }
             }
             Expr::Call { callee, .. } => {
-                if let Expr::Name(name, _) = callee.as_ref() {
-                    if let Some(result) = self.infer_math_builtin_call_type(name, expr, types) {
+                if let Some(name) = builtin_name(callee.as_ref()) {
+                    if let Some(result) = self.infer_math_builtin_call_type(&name, expr, types) {
                         return result;
                     }
-                }
-                if let Expr::Name(name, _) = callee.as_ref() {
-                    if let Some(result) = self.infer_coroutine_builtin_call_type(name, expr, types)
+                    if let Some(result) =
+                        self.infer_coroutine_builtin_call_type(&name, expr, types)
                     {
                         return result;
                     }
-                }
-                if let Expr::Name(name, _) = callee.as_ref() {
-                    if let Some(result) = self.infer_tostring_builtin_call_type(name, expr, types) {
+                    if let Some(result) = self.infer_tostring_builtin_call_type(&name, expr, types)
+                    {
                         return result;
                     }
-                }
-                if let Expr::Name(name, _) = callee.as_ref() {
-                    if let Some(result) = self.infer_print_builtin_call_type(name, expr, types) {
+                    if let Some(result) = self.infer_print_builtin_call_type(&name, expr, types) {
                         return result;
                     }
                 }
@@ -2437,7 +2442,7 @@ impl Builder<'_> {
                 };
                 if coroutine_ty != callee_ty {
                     return Some(Err(Diagnostic::new(
-                        "coroutine_create expects a zero-argument i32-returning function",
+                        "coroutine.create expects a zero-argument i32-returning function",
                     )));
                 }
                 let callee = match self.lower_expr(&args[0], env, types, Some(callee_ty)) {
@@ -2531,7 +2536,7 @@ impl Builder<'_> {
                         Some(Ok(Type::Thread))
                     }
                     _ => Some(Err(Diagnostic::new(
-                        "coroutine_create expects a zero-argument i32-returning function",
+                        "coroutine.create expects a zero-argument i32-returning function",
                     ))),
                 }
             }
@@ -2551,7 +2556,7 @@ impl Builder<'_> {
                         Type::Bool,
                         Type::Numeric(NumericType::I32),
                     ]))),
-                    _ => Some(Err(Diagnostic::new("coroutine_resume expects a thread"))),
+                    _ => Some(Err(Diagnostic::new("coroutine.resume expects a thread"))),
                 }
             }
             COROUTINE_CLOSE => {
@@ -2567,7 +2572,7 @@ impl Builder<'_> {
                 };
                 match coroutine_ty {
                     Type::Thread => Some(Ok(Type::Bool)),
-                    _ => Some(Err(Diagnostic::new("coroutine_close expects a thread"))),
+                    _ => Some(Err(Diagnostic::new("coroutine.close expects a thread"))),
                 }
             }
             COROUTINE_YIELD => {

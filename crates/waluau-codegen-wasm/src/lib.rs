@@ -840,7 +840,7 @@ fn emit_block(
             })?;
             if !matches!(value_ty, Type::Numeric(NumericType::I32)) {
                 return Err(Diagnostic::new(format!(
-                    "coroutine_yield currently supports i32 values during wasm emission, got {}",
+                    "coroutine.yield currently supports i32 values during wasm emission, got {}",
                     value_ty
                 )));
             }
@@ -1153,7 +1153,7 @@ fn emit_block_instructions(
                     .coroutine_save_local
                     .ok_or_else(|| Diagnostic::new("missing coroutine save local for resume"))?;
                 let slots = local_plan.multi_slots.get(value).ok_or_else(|| {
-                    Diagnostic::new("coroutine_resume result has no multi-value slots")
+                    Diagnostic::new("coroutine.resume result has no multi-value slots")
                 })?;
                 let ok_slot = slots[0];
                 let value_slot = slots[1];
@@ -1383,7 +1383,7 @@ fn emit_return_if_coroutine_yielded(
         Type::Unit | Type::Numeric(NumericType::I32)
     ) {
         return Err(Diagnostic::new(format!(
-            "delegated coroutine_yield currently supports i32 or unit returns, got {}",
+            "delegated coroutine.yield currently supports i32 or unit returns, got {}",
             function.return_type
         )));
     }

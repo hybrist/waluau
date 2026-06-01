@@ -2,8 +2,8 @@
 -- own suspension points when resumed in interleaved order.
 
 function helper(): ()
-    coroutine_yield(1)
-    coroutine_yield(2)
+    coroutine.yield(1)
+    coroutine.yield(2)
 end
 
 function counter_job(): i32
@@ -11,20 +11,20 @@ function counter_job(): i32
     return 3
 end
 
-local co1: thread = coroutine_create(counter_job)
-local co2: thread = coroutine_create(counter_job)
+local co1: thread = coroutine.create(counter_job)
+local co2: thread = coroutine.create(counter_job)
 
-local a1: bool, x1: i32 = coroutine_resume(co1)
-local b1: bool, y1: i32 = coroutine_resume(co2)
+local a1: bool, x1: i32 = coroutine.resume(co1)
+local b1: bool, y1: i32 = coroutine.resume(co2)
 assert(x1 == 1)
 assert(y1 == 1)
 
-local a2: bool, x2: i32 = coroutine_resume(co1)
-local b2: bool, y2: i32 = coroutine_resume(co2)
+local a2: bool, x2: i32 = coroutine.resume(co1)
+local b2: bool, y2: i32 = coroutine.resume(co2)
 assert(x2 == 2)
 assert(y2 == 2)
 
-local a3: bool, x3: i32 = coroutine_resume(co1)
-local b3: bool, y3: i32 = coroutine_resume(co2)
+local a3: bool, x3: i32 = coroutine.resume(co1)
+local b3: bool, y3: i32 = coroutine.resume(co2)
 assert(x3 == 3)
 assert(y3 == 3)
