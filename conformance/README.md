@@ -39,9 +39,10 @@ assert(add(-1, 1) == 0)
 ## Running the suite
 
 ```bash
-cargo test -p waluau-driver --test conformance
+pnpm --filter conformance-runner test:browser
 ```
 
-The harness lives in `crates/waluau-driver/tests/conformance.rs`. It discovers
-every `*.walu` file under this directory, compiles and instantiates each, and
-reports which ones passed or failed.
+The harness lives in `apps/conformance-runner`. It discovers every `*.walu`
+file under this directory, compiles and instantiates each with
+`WebAssembly.instantiate()` in a real browser (via Playwright), and reports
+which ones passed or failed.
