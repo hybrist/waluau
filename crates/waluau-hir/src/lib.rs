@@ -69,6 +69,12 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
             .cloned()
             .unwrap_or_else(|| Type::TypeParam(name.clone())),
         Type::Array(inner) => Type::Array(Box::new(substitute_type(inner, subst))),
+        Type::Record(fields) => Type::Record(
+            fields
+                .iter()
+                .map(|(name, ty)| (name.clone(), substitute_type(ty, subst)))
+                .collect(),
+        ),
         Type::Function {
             params,
             return_type,
@@ -115,6 +121,12 @@ fn validate_type_in_scope(ty: &Type, allowed: &HashSet<String>) -> Result<(), Di
             "declare the type parameter on the enclosing generic function",
         )),
         Type::Array(inner) => validate_type_in_scope(inner, allowed),
+        Type::Record(fields) => {
+            for ty in fields.values() {
+                validate_type_in_scope(ty, allowed)?;
+            }
+            Ok(())
+        }
         Type::Function {
             params,
             return_type,
@@ -132,6 +144,9 @@ fn is_valid_type_argument(ty: &Type, active_type_params: &HashSet<String>) -> bo
     match ty {
         Type::TypeParam(name) => active_type_params.contains(name),
         Type::Array(inner) => is_valid_type_argument(inner, active_type_params),
+        Type::Record(fields) => fields
+            .values()
+            .all(|field| is_valid_type_argument(field, active_type_params)),
         Type::Function {
             params,
             return_type,
@@ -2400,6 +2415,37 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
     match expected {
         None => Ok(actual),
         Some(expected) if actual == expected => Ok(expected),
+        Some(Type::Record(expected_fields)) => {
+            let Type::Record(actual_fields) = actual else {
+                let expected_record = Type::Record(expected_fields.clone());
+                return Err(Diagnostic::new(format!(
+                    "cannot implicitly convert {} to {}",
+                    actual, expected_record
+                )));
+            };
+
+            for (name, expected_ty) in &expected_fields {
+                let Some(actual_ty) = actual_fields.get(name) else {
+                    return Err(Diagnostic::new(format!("missing record field '{}'", name)));
+                };
+                if actual_ty != expected_ty {
+                    return Err(Diagnostic::new(format!(
+                        "record field '{}' expects {}, got {}",
+                        name, expected_ty, actual_ty
+                    )));
+                }
+            }
+            for name in actual_fields.keys() {
+                if !expected_fields.contains_key(name) {
+                    return Err(Diagnostic::new(format!(
+                        "unexpected record field '{}'",
+                        name
+                    )));
+                }
+            }
+
+            Ok(Type::Record(expected_fields))
+        }
         Some(Type::Numeric(expected_numeric)) => match actual {
             Type::Numeric(actual_numeric)
                 if actual_numeric.can_implicitly_widen_to(expected_numeric) =>
@@ -3363,6 +3409,65 @@ mod tests {
         let program = parse(source).expect("parse should succeed");
         let error = super::type_check(&program).expect_err("type check should fail");
         assert_eq!(error.to_string(), "unknown record field 'y'");
+    }
+
+    #[test]
+    fn type_checks_record_param_return_and_function_type_annotation() {
+        let source = r#"
+            function make_point(x: i32, y: i32): { x: i32, y: i32 }
+                return { x = x, y = y }
+            end
+
+            function consume_point(p: { x: i32, y: i32 }): i32
+                return p.x + p.y
+            end
+
+            function entry(): i32
+                local make: (i32, i32) -> { x: i32, y: i32 } = make_point
+                return consume_point(make(1, 2))
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn rejects_record_missing_field_on_annotation() {
+        let source = r#"
+            function entry(): i32
+                local p: { x: i32, y: i32 } = { x = 1::i32 }
+                return p.x
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.to_string(), "missing record field 'y'");
+    }
+
+    #[test]
+    fn rejects_record_extra_field_on_annotation() {
+        let source = r#"
+            function entry(): i32
+                local p: { x: i32 } = { x = 1::i32, y = 2::i32 }
+                return p.x
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.to_string(), "unexpected record field 'y'");
+    }
+
+    #[test]
+    fn rejects_record_field_type_mismatch_on_annotation() {
+        let source = r#"
+            function entry(): i32
+                local p: { x: i32 } = { x = 1.5 }
+                return p.x
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(error.to_string(), "record field 'x' expects i32, got f64");
     }
 
     #[test]

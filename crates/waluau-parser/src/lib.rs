@@ -1035,6 +1035,36 @@ impl Parser {
     fn parse_type(&mut self) -> Result<Type, Diagnostic> {
         if self.check_simple(&TokenKind::LBrace) {
             self.advance();
+            let is_record_type = matches!(
+                (self.tokens.get(self.index), self.tokens.get(self.index + 1)),
+                (
+                    Some(Token {
+                        kind: TokenKind::Identifier(_),
+                        ..
+                    }),
+                    Some(Token {
+                        kind: TokenKind::Colon,
+                        ..
+                    })
+                )
+            );
+            if is_record_type {
+                let mut fields = std::collections::BTreeMap::new();
+                loop {
+                    let name = self.expect_identifier()?;
+                    self.expect_simple(TokenKind::Colon, "expected ':' after record field name")?;
+                    let field_ty = self.parse_type()?;
+                    fields.insert(name, field_ty);
+                    if self.check_simple(&TokenKind::Comma) {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                self.expect_simple(TokenKind::RBrace, "expected '}' after record type")?;
+                return Ok(Type::Record(fields));
+            }
+
             let element = self.parse_type()?;
             self.expect_simple(TokenKind::RBrace, "expected '}' after array element type")?;
             return Ok(Type::Array(Box::new(element)));
@@ -1091,7 +1121,7 @@ impl Parser {
                 Ok(Type::TypeParam(name))
             }
             _ => Err(self.diagnostic_at_current(
-                "expected type (number, u32, u64, i32, i64, f32, f64, unit, bool, string, thread, {T}, or (T1, T2) -> R)",
+                "expected type (number, u32, u64, i32, i64, f32, f64, unit, bool, string, thread, {T}, { x: T }, or (T1, T2) -> R)",
             )),
         }
     }
@@ -1870,6 +1900,41 @@ mod tests {
         assert!(matches!(
             &function.body[1],
             waluau_ast::Stmt::Return(waluau_ast::Expr::Call { .. })
+        ));
+    }
+
+    #[test]
+    fn parses_record_type_annotations_and_function_signature_types() {
+        let source = r#"
+            function mk_point(x: i32, y: i32): { x: i32, y: i32 }
+                return { x = x, y = y }
+            end
+
+            function entry(): i32
+                local p: { x: i32, y: i32 } = mk_point(1, 2)
+                local mk: (i32, i32) -> { x: i32, y: i32 } = mk_point
+                return p.x + mk(3, 4).y
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        assert!(matches!(
+            program.functions[0].return_type,
+            Some(Type::Record(_))
+        ));
+        assert!(matches!(
+            &program.functions[1].body[0],
+            Stmt::Let {
+                ty: Some(Type::Record(_)),
+                ..
+            }
+        ));
+        assert!(matches!(
+            &program.functions[1].body[1],
+            Stmt::Let {
+                ty: Some(Type::Function { return_type, .. }),
+                ..
+            } if matches!(return_type.as_ref(), Type::Record(_))
         ));
     }
 
