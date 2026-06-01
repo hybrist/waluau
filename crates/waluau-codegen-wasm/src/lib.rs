@@ -8,9 +8,9 @@ use waluau_ir::{
     Terminator, ValueId,
 };
 use wasm_encoder::{
-    BlockType, CodeSection, ConstExpr, CustomSection, ElementSection, Elements, EntityType,
-    ExportKind, ExportSection, FieldType, Function, FunctionSection, GlobalSection, HeapType,
-    ImportSection, Instruction, Module as WasmModule, RefType, StartSection, StorageType,
+    AbstractHeapType, BlockType, CodeSection, ConstExpr, CustomSection, ElementSection, Elements,
+    EntityType, ExportKind, ExportSection, FieldType, Function, FunctionSection, GlobalSection,
+    HeapType, ImportSection, Instruction, Module as WasmModule, RefType, StartSection, StorageType,
     TableSection, TableType, TypeSection, ValType,
 };
 use wasmparser::{Validator, WasmFeatures};
@@ -26,8 +26,27 @@ use coroutines::{
     CoroutinePlan, STATE_CONT_FIELD, STATE_TAG_FIELD, STATE_YIELDED_FIELD, TAG_ERROR, TAG_FINISHED,
     TAG_SUSPENDED, coroutine_body_ref_type, coroutine_state_ref_type,
 };
-use signatures::{SignatureRegistry, collect_user_signatures, find_function_type_index};
+use signatures::{SignatureRegistry, collect_user_signatures};
 use wasm_types::{compress_locals, externref_nonnull_val_type, externref_val_type, wasm_type};
+
+/// Collect the ordered set of function names that appear as `Closure` targets in the module.
+/// These each need a wrapper function with the env-based calling convention.
+fn collect_closure_targets(module: &Module) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut names = Vec::new();
+    for function in &module.functions {
+        for block in function.blocks.values() {
+            for (_, inst) in &block.instructions {
+                if let IrInstruction::Closure { name, .. } = inst {
+                    if seen.insert(name.clone()) {
+                        names.push(name.clone());
+                    }
+                }
+            }
+        }
+    }
+    names
+}
 
 pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     let array_types = collect_array_types(module);
@@ -35,10 +54,14 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     let coroutine_plan = CoroutinePlan::new(module, string_constants.len() as u32);
     let start_thunk = module.start;
     let host_type_base = array_types.len() as u32;
-    // When the module uses coroutines, two GC types sit between the host types and the
-    // user function types: the body signature `() -> i32` and the `$coroutine_state` struct.
-    // They must precede user function types so `thread` params can reference the struct.
-    let coroutine_types_base = host_type_base + host::HOST_TYPE_COUNT;
+    // Two closure GC types sit after host types:
+    //   $anyref_array = (array (ref null any) mutable)
+    //   $func_val = (struct { func_idx: i32, env: ref null $anyref_array })
+    let closure_gc_base = host_type_base + host::HOST_TYPE_COUNT;
+    let anyref_array_type = closure_gc_base;
+    let func_val_struct_type = closure_gc_base + 1;
+    // Coroutine GC types sit after the closure GC types.
+    let coroutine_types_base = closure_gc_base + 2;
     let coroutine_body_sig_type = coroutine_plan.has_state().then_some(coroutine_types_base);
     let coroutine_state_type = coroutine_plan
         .has_state()
@@ -46,7 +69,12 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     let coroutine_type_count = if coroutine_plan.has_state() { 2 } else { 0 };
     let user_type_base = coroutine_types_base + coroutine_type_count;
     // Array types come first in the type section (indices 0..N-1).
-    let mut array_registry = ArrayTypeRegistry::with_function_type_offset(&array_types, 0);
+    let mut array_registry = ArrayTypeRegistry::with_function_type_offset(
+        &array_types,
+        0,
+        anyref_array_type,
+        func_val_struct_type,
+    );
     array_registry.coroutine_state_type = coroutine_state_type;
 
     let signature_registry = collect_user_signatures(module, start_thunk.is_some());
@@ -99,6 +127,42 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         .ty()
         .function(vec![ValType::F64], vec![externref_val_type()]);
     types.ty().function(vec![externref_val_type()], vec![]);
+    // Closure GC types: $anyref_array and $func_val (always present).
+    {
+        // $anyref_array = (array (ref null any) mutable)
+        let anyref_storage = StorageType::Val(ValType::Ref(RefType {
+            nullable: true,
+            heap_type: HeapType::Abstract {
+                shared: false,
+                ty: AbstractHeapType::Any,
+            },
+        }));
+        debug_assert_eq!(anyref_array_type, closure_gc_base);
+        types.ty().array(&anyref_storage, true);
+        // $func_val = (struct {
+        //   func_idx: i32 (mut)    — original function's table slot (for coroutine use)
+        //   env: ref null $anyref_array (mut) — capture-cell env for wrapper calls
+        //   wrapper_idx: i32 (mut) — wrapper table slot (for call_indirect)
+        // })
+        debug_assert_eq!(func_val_struct_type, closure_gc_base + 1);
+        types.ty().struct_(vec![
+            FieldType {
+                element_type: StorageType::Val(ValType::I32),
+                mutable: true,
+            },
+            FieldType {
+                element_type: StorageType::Val(ValType::Ref(RefType {
+                    nullable: true,
+                    heap_type: HeapType::Concrete(anyref_array_type),
+                })),
+                mutable: true,
+            },
+            FieldType {
+                element_type: StorageType::Val(ValType::I32),
+                mutable: true,
+            },
+        ]);
+    }
     // Coroutine GC types (before user function types so `thread` params can reference them).
     if let (Some(body_sig), Some(state_type)) = (coroutine_body_sig_type, coroutine_state_type) {
         // Body signature: () -> i32 (the continuation funcref type).
@@ -130,7 +194,7 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         let _ = state_type;
         types.ty().struct_(fields);
     }
-    // Now emit user function types.
+    // Emit user function types (logical signatures).
     for (params, return_type) in &signature_registry.unique_signatures {
         let params = params
             .iter()
@@ -145,6 +209,26 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
             other => vec![wasm_type(other, &array_registry)?],
         };
         types.ty().function(params, results);
+    }
+    // Emit wrapper function types for closure call_indirect: (env, logical_params...) -> returns.
+    let env_val_type = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(anyref_array_type),
+    });
+    for (params, return_type) in &signature_registry.wrapper_sigs {
+        let mut wrapper_params = vec![env_val_type];
+        for ty in params {
+            wrapper_params.push(wasm_type(ty, &array_registry)?);
+        }
+        let results = match return_type {
+            Type::Multi(multi_types) => multi_types
+                .iter()
+                .map(|ty| wasm_type(ty, &array_registry))
+                .collect::<Result<Vec<_>, _>>()?,
+            Type::Unit => Vec::new(),
+            other => vec![wasm_type(other, &array_registry)?],
+        };
+        types.ty().function(wrapper_params, results);
     }
 
     let mut imports = ImportSection::new();
@@ -210,6 +294,15 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         EntityType::Function(host_type_base + 2),
     );
 
+    // Build wrapper slot map: function name → table slot index for its wrapper.
+    // Wrappers are placed in table slots N..N+W-1 (after the N user-defined functions).
+    let closure_targets = collect_closure_targets(module);
+    let closure_wrapper_slots: HashMap<String, u32> = closure_targets
+        .iter()
+        .enumerate()
+        .map(|(i, name)| (name.clone(), module.functions.len() as u32 + i as u32))
+        .collect();
+
     let mut functions = FunctionSection::new();
     let mut tables = TableSection::new();
     let mut elements = ElementSection::new();
@@ -246,6 +339,7 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
             user_type_base,
             &coroutine_plan,
             coroutine_body_sig_type,
+            &closure_wrapper_slots,
         )?);
     }
     if let Some(start) = start_thunk {
@@ -264,8 +358,38 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         thunk.instruction(&Instruction::End);
         codes.function(&thunk);
     }
+    // Emit closure wrapper functions (after user functions and optional start thunk).
+    // Each wrapper has signature (env: ref null $anyref_array, logical_params...) -> logical_returns
+    // and dispatches to the original function, extracting captures from the env array.
+    let thunk_offset = if start_thunk.is_some() { 1u32 } else { 0 };
+    for (wrapper_idx, name) in closure_targets.iter().enumerate() {
+        let target_fn = module
+            .functions
+            .iter()
+            .find(|f| f.name == *name)
+            .ok_or_else(|| {
+                Diagnostic::new(format!("closure target '{name}' not found in module"))
+            })?;
+        let target_sig = signatures.get(name).ok_or_else(|| {
+            Diagnostic::new(format!("missing signature for closure target '{name}'"))
+        })?;
+        let logical_params: Vec<Type> = target_fn.params[target_fn.capture_count..]
+            .iter()
+            .map(|(_, ty)| ty.clone())
+            .collect();
+        let wrapper_type_idx = signature_registry
+            .get_wrapper_type_index(user_type_base, &logical_params, &target_fn.return_type)
+            .ok_or_else(|| Diagnostic::new(format!("missing wrapper type for closure '{name}'")))?;
+        functions.function(wrapper_type_idx);
+        let wrapper_fn =
+            emit_closure_wrapper(target_fn, target_sig, &logical_params, &array_registry)?;
+        codes.function(&wrapper_fn);
+        let _ = wrapper_idx;
+    }
+
     let defined_func_count = module.functions.len() as u64;
-    let table_size = host::HOST_IMPORT_COUNT as u64 + defined_func_count;
+    let wrapper_count = closure_targets.len() as u64;
+    let table_size = host::HOST_IMPORT_COUNT as u64 + defined_func_count + wrapper_count;
     tables.table(TableType {
         element_type: RefType::FUNCREF,
         table64: false,
@@ -273,9 +397,15 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         maximum: Some(table_size),
         shared: false,
     });
-    let table_inits = (0..module.functions.len() as u32)
+    // Element segment: user functions at slots 0..N-1, wrappers at slots N..N+W-1.
+    let mut table_inits: Vec<u32> = (0..module.functions.len() as u32)
         .map(host::defined_func_index)
-        .collect::<Vec<_>>();
+        .collect();
+    for i in 0..closure_targets.len() as u32 {
+        let wrapper_module_idx =
+            host::defined_func_index(module.functions.len() as u32 + thunk_offset + i);
+        table_inits.push(wrapper_module_idx);
+    }
     elements.active(
         Some(0),
         &ConstExpr::i32_const(0),
@@ -326,6 +456,8 @@ struct EmissionContext<'a> {
     coroutine_plan: &'a CoroutinePlan,
     /// Type index of the coroutine body signature `() -> i32` (continuation funcref type).
     coroutine_body_sig_type: Option<u32>,
+    /// Map from closure-target function name to its wrapper table slot index.
+    closure_wrapper_slots: &'a HashMap<String, u32>,
 }
 
 impl EmissionContext<'_> {
@@ -353,6 +485,7 @@ fn emit_function(
     user_type_base: u32,
     coroutine_plan: &CoroutinePlan,
     coroutine_body_sig_type: Option<u32>,
+    closure_wrapper_slots: &HashMap<String, u32>,
 ) -> Result<Function, Diagnostic> {
     let ctx = EmissionContext {
         signatures,
@@ -362,6 +495,7 @@ fn emit_function(
         user_type_base,
         coroutine_plan,
         coroutine_body_sig_type,
+        closure_wrapper_slots,
     };
     let value_types = infer_value_types(function, signatures)?;
     let local_plan = build_local_plan(function, &value_types, array_registry)?;
@@ -411,6 +545,46 @@ fn emit_function(
     out.instruction(&Instruction::Unreachable);
     out.instruction(&Instruction::End);
     out.instruction(&Instruction::Unreachable);
+    out.instruction(&Instruction::End);
+    Ok(out)
+}
+
+/// Emit a closure wrapper function for `target_fn`.
+///
+/// The wrapper has signature `(env: ref null $anyref_array, logical_params...) -> logical_returns`.
+/// It extracts the capture-cell arrays from `env` (one per captured variable) and calls the
+/// underlying function, which expects `(capture_cells..., logical_params...)`.
+fn emit_closure_wrapper(
+    target_fn: &IrFunction,
+    target_sig: &FunctionSignature,
+    logical_params: &[Type],
+    array_registry: &ArrayTypeRegistry,
+) -> Result<Function, Diagnostic> {
+    let capture_count = target_fn.capture_count;
+    // Wrapper has no extra locals (all work is done via params and the stack).
+    let mut out = Function::new(Vec::new());
+
+    // For each capture slot: load its array-cell ref from the env array.
+    // env is param 0; captures are elements 0..C-1 in the env array.
+    for i in 0..capture_count {
+        let capture_ty = &target_fn.params[i].1; // Array(T) for the capture cell
+        out.instruction(&Instruction::LocalGet(0)); // env
+        out.instruction(&Instruction::I32Const(i as i32));
+        out.instruction(&Instruction::ArrayGet(array_registry.anyref_array_type));
+        // Cast the anyref element back to the specific capture-cell array type.
+        let heap_type = HeapType::Concrete(array_registry.index(capture_ty)?);
+        out.instruction(&Instruction::RefCastNullable(heap_type));
+    }
+
+    // Push logical params: they are wrapper params 1..P (0-indexed, after env).
+    for j in 0..logical_params.len() {
+        out.instruction(&Instruction::LocalGet(1 + j as u32));
+    }
+
+    // Call the original function (which takes capture_cells... + logical_params...).
+    out.instruction(&Instruction::Call(host::defined_func_index(
+        target_sig.index,
+    )));
     out.instruction(&Instruction::End);
     Ok(out)
 }
@@ -1172,16 +1346,38 @@ fn emit_block_instructions(
                     emit_value_store(out, local_plan, *value)?;
                     continue;
                 }
+                // Indirect call via $func_val struct: push (env, args..., wrapper_idx).
+                // Load env from field 1 of the $func_val struct.
+                emit_value_operand(out, local_plan, *callee)?;
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: ctx.array_registry.func_val_struct_type,
+                    field_index: 1,
+                });
+                // Push logical args.
                 for arg in args {
                     emit_value_operand(out, local_plan, *arg)?;
                 }
+                // Load wrapper table slot from field 2 of the $func_val struct.
                 emit_value_operand(out, local_plan, *callee)?;
-                let type_index = find_function_type_index(
-                    ctx.signature_registry,
-                    ctx.user_type_base,
-                    params,
-                    return_type,
-                )?;
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: ctx.array_registry.func_val_struct_type,
+                    field_index: 2,
+                });
+                // call_indirect with wrapper type: (env, logical_params...) -> logical_returns.
+                let type_index = ctx
+                    .signature_registry
+                    .get_wrapper_type_index(ctx.user_type_base, params, return_type)
+                    .ok_or_else(|| {
+                        Diagnostic::new(format!(
+                            "missing wrapper type for indirect call ({}) -> {}",
+                            params
+                                .iter()
+                                .map(|t| t.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            return_type
+                        ))
+                    })?;
                 out.instruction(&Instruction::CallIndirect {
                     type_index,
                     table_index: 0,
@@ -1194,8 +1390,14 @@ fn emit_block_instructions(
                 // struct.new $coroutine_state { tag=suspended, yielded=0, continuation, pc*=0 }
                 out.instruction(&Instruction::I32Const(TAG_SUSPENDED));
                 out.instruction(&Instruction::I32Const(0));
-                // Continuation: turn the callee's table index into a typed funcref.
+                // Continuation: extract orig_idx (field 0) from $func_val, look up funcref.
+                // The original function has the coroutine body signature () -> i32; the
+                // wrapper (field 2) would have a different type and cause a cast failure.
                 emit_value_operand(out, local_plan, *callee)?;
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: ctx.array_registry.func_val_struct_type,
+                    field_index: 0,
+                });
                 out.instruction(&Instruction::TableGet(0));
                 out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(body_sig)));
                 for _ in 0..ctx.coroutine_plan.pc_field_count() {
@@ -1300,21 +1502,43 @@ fn emit_block_instructions(
             }
             IrInstruction::Closure {
                 name,
-                captures: _,
-                params,
-                return_type,
+                captures,
+                params: _,
+                return_type: _,
             } => {
-                let callee = ctx.signatures.get(name).ok_or_else(|| {
+                // Look up the original function and wrapper table slots.
+                let orig_sig = ctx.signatures.get(name).ok_or_else(|| {
                     Diagnostic::new(format!("unknown function '{name}' during wasm emission"))
                 })?;
-                let _ = find_function_type_index(
-                    ctx.signature_registry,
-                    ctx.user_type_base,
-                    params,
-                    return_type,
-                )?;
-                // Indirect calls use table slot indices, not module function indices.
-                out.instruction(&Instruction::I32Const(callee.index as i32));
+                let wrapper_slot =
+                    ctx.closure_wrapper_slots
+                        .get(name)
+                        .copied()
+                        .ok_or_else(|| {
+                            Diagnostic::new(format!("no wrapper slot for closure '{name}'"))
+                        })?;
+                // Build a $func_val struct: { orig_idx, env, wrapper_idx }.
+                // struct.new expects fields in declaration order: field 0, field 1, field 2.
+                out.instruction(&Instruction::I32Const(orig_sig.index as i32));
+                // Build the env array: pack capture-cell refs as anyref elements.
+                if captures.is_empty() {
+                    out.instruction(&Instruction::RefNull(HeapType::Concrete(
+                        ctx.array_registry.anyref_array_type,
+                    )));
+                } else {
+                    for capture in captures {
+                        // Each capture is already a GC array ref, which is an anyref subtype.
+                        emit_value_operand(out, local_plan, *capture)?;
+                    }
+                    out.instruction(&Instruction::ArrayNewFixed {
+                        array_type_index: ctx.array_registry.anyref_array_type,
+                        array_size: captures.len() as u32,
+                    });
+                }
+                out.instruction(&Instruction::I32Const(wrapper_slot as i32));
+                out.instruction(&Instruction::StructNew(
+                    ctx.array_registry.func_val_struct_type,
+                ));
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::ArrayNew {

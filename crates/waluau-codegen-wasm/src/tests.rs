@@ -251,9 +251,11 @@ fn reuses_i32_local_slots_for_disjoint_live_ranges() {
     .collect::<std::collections::HashMap<_, _>>();
     let value_types = super::infer_value_types(function, &signatures).expect("types should infer");
     let array_types = super::collect_array_types(&ir);
-    let array_registry = super::ArrayTypeRegistry::with_function_type_offset(
+    let array_registry = super::arrays::ArrayTypeRegistry::with_function_type_offset(
         &array_types,
         ir.functions.len() as u32 + u32::from(ir.start.is_some()),
+        0, // anyref_array_type placeholder (unused in this test)
+        0, // func_val_struct_type placeholder (unused in this test)
     );
     let local_plan = super::build_local_plan(function, &value_types, &array_registry)
         .expect("plan should build");
@@ -314,4 +316,42 @@ fn test_array_for_in_tostring_bug() {
     let ir = waluau_ir::build(&program).expect("ir should succeed");
     let wasm = super::emit(&ir);
     assert!(wasm.is_ok(), "Wasm emission failed: {:?}", wasm.err());
+}
+
+#[test]
+fn emits_valid_wasm_for_capturing_closure_through_phi() {
+    // A capturing closure that flows through a Phi (branch merge) is called
+    // via call_indirect.  Previously this trapped because call_indirect used
+    // the logical signature without the capture-cell parameters.
+    let source = r#"
+        function entry(n: i32): i32
+            local i: i32 = 0
+            local cap = function(): bool, i32
+                i = i + 1
+                if i > n then
+                    return false, 0
+                end
+                return true, i
+            end
+            local noop = function(): bool, i32
+                return false, 0
+            end
+            local use_cap: bool = true
+            local iter = noop
+            if use_cap then
+                iter = cap
+            end
+            local acc: i32 = 0
+            for v in iter do
+                acc = acc + v
+            end
+            return acc
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let wasm = super::emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
 }

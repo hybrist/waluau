@@ -58,3 +58,62 @@ function pick(use_second: bool): i32
 end
 assert(pick(false) == 0)
 assert(pick(true) == 0)
+
+-- A capturing closure that flows through a Phi node (branch selection) before
+-- being called. The callee is not statically visible at the call site so the
+-- for..in loop must use call_indirect.  The bug this exercises (fixed together
+-- with waluau-5a3 support) was that call_indirect used the logical type
+-- signature without the capture-cell parameters, causing a wasm type mismatch.
+function sum_capturing_through_phi(n: i32): i32
+    local i: i32 = 0
+    local cap_iter = function(): bool, i32
+        i = i + 1
+        if i > n then
+            return false, 0
+        end
+        return true, i
+    end
+    local dead_iter = function(): bool, i32
+        return false, 0
+    end
+    local use_cap: bool = true
+    local iter = dead_iter
+    if use_cap then
+        iter = cap_iter
+    end
+    local acc: i32 = 0
+    for v in iter do
+        acc = acc + v
+    end
+    return acc
+end
+assert(sum_capturing_through_phi(0) == 0)
+assert(sum_capturing_through_phi(3) == 6)
+assert(sum_capturing_through_phi(5) == 15)
+
+-- A capturing closure passed as a typed function parameter and called via
+-- call_indirect in the receiver. Previously trapped because the actual Wasm
+-- function had extra capture-cell parameters that the logical call_indirect
+-- type did not include.
+function run_iter(iter: () -> (bool, i32)): i32
+    local acc: i32 = 0
+    for v in iter do
+        acc = acc + v
+    end
+    return acc
+end
+
+function make_capturing_iter(n: i32): () -> (bool, i32)
+    local i: i32 = 0
+    return function(): bool, i32
+        i = i + 1
+        if i > n then
+            return false, 0
+        end
+        return true, i
+    end
+end
+
+assert(run_iter(make_capturing_iter(0)) == 0)
+assert(run_iter(make_capturing_iter(3)) == 6)
+assert(run_iter(make_capturing_iter(5)) == 15)

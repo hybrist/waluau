@@ -48,7 +48,10 @@ pub(crate) fn wasm_type(
         Type::Multi(_) => Err(Diagnostic::new(
             "multi-value types are not supported in Wasm signatures yet",
         )),
-        Type::Function { .. } => Ok(ValType::I32),
+        Type::Function { .. } => Ok(ValType::Ref(RefType {
+            nullable: true,
+            heap_type: HeapType::Concrete(array_registry.func_val_struct_type),
+        })),
         Type::Thread => Ok(coroutine_state_ref_type(
             array_registry.coroutine_state_type()?,
         )),

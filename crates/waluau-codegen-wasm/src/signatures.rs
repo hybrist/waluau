@@ -1,13 +1,17 @@
 use std::collections::HashMap;
 
 use waluau_ast::Type;
-use waluau_diagnostics::Diagnostic;
 use waluau_ir::{Instruction as IrInstruction, Module};
 
 #[derive(Clone)]
 pub(crate) struct SignatureRegistry {
     pub(crate) unique_signatures: Vec<(Vec<Type>, Type)>,
     signature_indices: HashMap<(Vec<Type>, Type), u32>,
+    /// Wrapper signatures for `call_indirect` on closure values.
+    /// Each entry corresponds to a closure logical type `(params, return_type)`.
+    /// The Wasm type prepends an env param: `(ref null $anyref_array, params...) -> return`.
+    pub(crate) wrapper_sigs: Vec<(Vec<Type>, Type)>,
+    wrapper_sig_indices: HashMap<(Vec<Type>, Type), u32>,
 }
 
 impl SignatureRegistry {
@@ -15,6 +19,8 @@ impl SignatureRegistry {
         Self {
             unique_signatures: Vec::new(),
             signature_indices: HashMap::new(),
+            wrapper_sigs: Vec::new(),
+            wrapper_sig_indices: HashMap::new(),
         }
     }
 
@@ -30,6 +36,28 @@ impl SignatureRegistry {
     pub(crate) fn get(&self, params: &[Type], result: &Type) -> Option<u32> {
         let key = (params.to_vec(), result.clone());
         self.signature_indices.get(&key).copied()
+    }
+
+    pub(crate) fn add_wrapper(&mut self, params: Vec<Type>, result: Type) {
+        let key = (params, result);
+        if !self.wrapper_sig_indices.contains_key(&key) {
+            let index = self.wrapper_sigs.len() as u32;
+            self.wrapper_sig_indices.insert(key.clone(), index);
+            self.wrapper_sigs.push(key);
+        }
+    }
+
+    /// Return the type section index of the wrapper sig for the given logical closure type.
+    /// Wrapper types sit after all logical signature types in the type section.
+    pub(crate) fn get_wrapper_type_index(
+        &self,
+        user_type_base: u32,
+        params: &[Type],
+        result: &Type,
+    ) -> Option<u32> {
+        let key = (params.to_vec(), result.clone());
+        let wrapper_idx = self.wrapper_sig_indices.get(&key).copied()?;
+        Some(user_type_base + self.unique_signatures.len() as u32 + wrapper_idx)
     }
 }
 
@@ -49,6 +77,7 @@ pub(crate) fn collect_user_signatures(module: &Module, start_thunk: bool) -> Sig
                         ..
                     } => {
                         registry.add(params.clone(), return_type.clone());
+                        registry.add_wrapper(params.clone(), return_type.clone());
                     }
                     IrInstruction::CallValue {
                         params,
@@ -56,6 +85,7 @@ pub(crate) fn collect_user_signatures(module: &Module, start_thunk: bool) -> Sig
                         ..
                     } => {
                         registry.add(params.clone(), return_type.clone());
+                        registry.add_wrapper(params.clone(), return_type.clone());
                     }
                     _ => {}
                 }
@@ -66,26 +96,4 @@ pub(crate) fn collect_user_signatures(module: &Module, start_thunk: bool) -> Sig
         registry.add(Vec::new(), Type::Unit);
     }
     registry
-}
-
-pub(crate) fn find_function_type_index(
-    registry: &SignatureRegistry,
-    user_type_base: u32,
-    params: &[Type],
-    return_type: &Type,
-) -> Result<u32, Diagnostic> {
-    registry
-        .get(params, return_type)
-        .map(|index| user_type_base + index)
-        .ok_or_else(|| {
-            Diagnostic::new(format!(
-                "no wasm function type found for indirect call signature ({}) -> {}",
-                params
-                    .iter()
-                    .map(|ty| ty.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                return_type
-            ))
-        })
 }

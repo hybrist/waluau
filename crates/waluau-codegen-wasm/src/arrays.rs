@@ -10,12 +10,18 @@ use crate::wasm_types::externref_val_type;
 pub(crate) struct ArrayTypeRegistry {
     indices: HashMap<String, u32>,
     pub(crate) coroutine_state_type: Option<u32>,
+    /// Type index of `$anyref_array = (array (ref null any) mutable)`.
+    pub(crate) anyref_array_type: u32,
+    /// Type index of `$func_val = (struct { orig_idx: i32, env: ref null $anyref_array, wrapper_idx: i32 })`.
+    pub(crate) func_val_struct_type: u32,
 }
 
 impl ArrayTypeRegistry {
     pub(crate) fn with_function_type_offset(
         array_types: &[Type],
         function_type_count: u32,
+        anyref_array_type: u32,
+        func_val_struct_type: u32,
     ) -> Self {
         let indices = array_types
             .iter()
@@ -25,6 +31,8 @@ impl ArrayTypeRegistry {
         Self {
             indices,
             coroutine_state_type: None,
+            anyref_array_type,
+            func_val_struct_type,
         }
     }
 

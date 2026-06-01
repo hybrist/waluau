@@ -106,13 +106,17 @@ fn function_requires_wasm_gc(function: &waluau_ir::Function) -> bool {
                         | waluau_ir::Instruction::ArrayGet { .. }
                         | waluau_ir::Instruction::ArraySet { .. }
                         | waluau_ir::Instruction::ArrayLen { .. }
+                        | waluau_ir::Instruction::Closure { .. }
                 )
             })
         })
 }
 
 fn type_requires_wasm_gc(ty: &waluau_ast::Type) -> bool {
-    matches!(ty, waluau_ast::Type::Array(_))
+    matches!(
+        ty,
+        waluau_ast::Type::Array(_) | waluau_ast::Type::Function { .. }
+    )
 }
 
 #[cfg(test)]
