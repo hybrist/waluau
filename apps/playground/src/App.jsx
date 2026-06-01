@@ -221,12 +221,16 @@ function getWasmExports(buffer) {
           }
           types.push({ params, returns });
         } else {
+          // Non-function type (array, struct, …).  Push null to keep the
+          // types[] index aligned with the Wasm type section index, which
+          // funcTypeIndices references directly.
           try {
             skipTypeDefinition(form);
           } catch {
             pos = sectionEnd;
             break;
           }
+          types.push(null);
         }
       }
     } else if (sectionId === 3) { // Function section
