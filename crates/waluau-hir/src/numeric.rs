@@ -46,14 +46,14 @@ pub(super) fn infer_numeric_common_type(
     ) {
         (true, true) => {
             let ty = expected_numeric.unwrap_or(NumericType::F64);
-            let left_ty = super::infer_expr(
+            let left_ty = super::expressions::infer_expr(
                 left,
                 vars,
                 fn_signatures,
                 active_type_params,
                 Some(Type::Numeric(ty)),
             )?;
-            let right_ty = super::infer_expr(
+            let right_ty = super::expressions::infer_expr(
                 right,
                 vars,
                 fn_signatures,
@@ -64,8 +64,14 @@ pub(super) fn infer_numeric_common_type(
             Ok(left_ty)
         }
         (true, false) => {
-            let right_ty = super::infer_expr(right, vars, fn_signatures, active_type_params, None)?;
-            let left_ty = super::infer_expr(
+            let right_ty = super::expressions::infer_expr(
+                right,
+                vars,
+                fn_signatures,
+                active_type_params,
+                None,
+            )?;
+            let left_ty = super::expressions::infer_expr(
                 left,
                 vars,
                 fn_signatures,
@@ -75,8 +81,14 @@ pub(super) fn infer_numeric_common_type(
             common_numeric_type(left_ty, right_ty)
         }
         (false, true) => {
-            let left_ty = super::infer_expr(left, vars, fn_signatures, active_type_params, None)?;
-            let right_ty = super::infer_expr(
+            let left_ty = super::expressions::infer_expr(
+                left,
+                vars,
+                fn_signatures,
+                active_type_params,
+                None,
+            )?;
+            let right_ty = super::expressions::infer_expr(
                 right,
                 vars,
                 fn_signatures,
@@ -86,8 +98,20 @@ pub(super) fn infer_numeric_common_type(
             common_numeric_type(left_ty, right_ty)
         }
         _ => {
-            let left_ty = super::infer_expr(left, vars, fn_signatures, active_type_params, None)?;
-            let right_ty = super::infer_expr(right, vars, fn_signatures, active_type_params, None)?;
+            let left_ty = super::expressions::infer_expr(
+                left,
+                vars,
+                fn_signatures,
+                active_type_params,
+                None,
+            )?;
+            let right_ty = super::expressions::infer_expr(
+                right,
+                vars,
+                fn_signatures,
+                active_type_params,
+                None,
+            )?;
             common_numeric_type(left_ty, right_ty)
         }
     }
