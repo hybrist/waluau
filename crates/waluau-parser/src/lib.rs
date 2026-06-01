@@ -503,6 +503,12 @@ impl Parser {
                     index,
                     value: values.into_iter().next().expect("len checked"),
                 },
+                Expr::Field { base, name, .. } => Stmt::FieldAssign {
+                    op,
+                    base,
+                    name,
+                    value: values.into_iter().next().expect("len checked"),
+                },
                 _ => {
                     return Err(Diagnostic::new("invalid assignment target"));
                 }
@@ -1577,6 +1583,27 @@ mod tests {
     }
 
     #[test]
+    fn parses_table_literal_in_local_expression_context() {
+        let source = r#"
+            function entry(): i32
+                local t = { x = 1 }
+                return t.x
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let body = &program.functions[0].body;
+        assert!(matches!(
+            &body[0],
+            Stmt::Let {
+                value: waluau_ast::Expr::TableLiteral { fields, .. },
+                ..
+            } if fields.len() == 1
+                && fields[0].name == "x"
+        ));
+    }
+
+    #[test]
     fn parses_namespace_member_access() {
         let source = r#"
             function main(): f64
@@ -1855,6 +1882,29 @@ mod tests {
                 op: AssignOp::Add,
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn parses_field_assignment_statement() {
+        let source = r#"
+            function entry(): i32
+                local t = {}
+                t.x = 10
+                return t.x
+            end
+        "#;
+
+        let program = parse(source).expect("parse should succeed");
+        let function = &program.functions[0];
+        assert!(matches!(
+            &function.body[1],
+            waluau_ast::Stmt::FieldAssign {
+                op: AssignOp::Set,
+                name,
+                value: waluau_ast::Expr::Number(NumberLiteral { raw }, _),
+                ..
+            } if name == "x" && raw == "10"
         ));
     }
 

@@ -234,6 +234,17 @@ impl<'a> Monomorphizer<'a> {
                 index: Box::new(self.rewrite_expr(index, subst, active)?),
                 value: self.rewrite_expr(value, subst, active)?,
             },
+            Stmt::FieldAssign {
+                op,
+                base,
+                name,
+                value,
+            } => Stmt::FieldAssign {
+                op: *op,
+                base: Box::new(self.rewrite_expr(base, subst, active)?),
+                name: name.clone(),
+                value: self.rewrite_expr(value, subst, active)?,
+            },
             Stmt::If {
                 condition,
                 then_body,
@@ -2029,6 +2040,11 @@ impl Builder<'_> {
                     value,
                     element_ty,
                 });
+            }
+            Stmt::FieldAssign { .. } => {
+                return Err(Diagnostic::new(
+                    "field assignment lowering is not yet supported",
+                ));
             }
             Stmt::Expr(expr) => {
                 if let Expr::Call {
@@ -4480,6 +4496,10 @@ fn collect_expr_captures_from_stmt(
             collect_expr_captures(index, bound, env, signatures, captures);
             collect_expr_captures(value, bound, env, signatures, captures);
         }
+        Stmt::FieldAssign { base, value, .. } => {
+            collect_expr_captures(base, bound, env, signatures, captures);
+            collect_expr_captures(value, bound, env, signatures, captures);
+        }
         Stmt::If {
             condition,
             then_body,
@@ -4646,7 +4666,7 @@ fn collect_assigned_into(stmts: &[Stmt], out: &mut BTreeSet<String>) {
                     out.insert(target.clone());
                 }
             }
-            Stmt::IndexAssign { .. } => {}
+            Stmt::IndexAssign { .. } | Stmt::FieldAssign { .. } => {}
             Stmt::If {
                 then_body,
                 else_body,
@@ -4697,6 +4717,10 @@ fn collect_nested_from_stmt(stmt: &Stmt, out: &mut HashSet<String>) {
         } => {
             collect_nested_from_expr(base, out);
             collect_nested_from_expr(index, out);
+            collect_nested_from_expr(value, out);
+        }
+        Stmt::FieldAssign { base, value, .. } => {
+            collect_nested_from_expr(base, out);
             collect_nested_from_expr(value, out);
         }
         Stmt::If {
@@ -4834,6 +4858,10 @@ fn collect_free_names_in_stmts(stmts: &[Stmt], bound: &HashSet<String>, out: &mu
             } => {
                 collect_free_names_in_expr(base, bound, out);
                 collect_free_names_in_expr(index, bound, out);
+                collect_free_names_in_expr(value, bound, out);
+            }
+            Stmt::FieldAssign { base, value, .. } => {
+                collect_free_names_in_expr(base, bound, out);
                 collect_free_names_in_expr(value, bound, out);
             }
             Stmt::If {
