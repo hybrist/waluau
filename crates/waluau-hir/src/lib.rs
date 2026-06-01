@@ -278,6 +278,16 @@ fn infer_generic_function_expr_call(
 struct Binding {
     ty: Type,
     rebindability: Rebindability,
+    record_open: bool,
+}
+
+fn binding_for(ty: Type, rebindability: Rebindability) -> Binding {
+    let record_open = matches!(ty, Type::Record(_));
+    Binding {
+        ty,
+        rebindability,
+        record_open,
+    }
 }
 
 pub fn type_check(program: &Program) -> Result<(), Diagnostic> {
@@ -431,10 +441,7 @@ fn check_function(
     for param in &function.params {
         vars.insert(
             param.name.clone(),
-            Binding {
-                ty: param.ty.clone(),
-                rebindability: Rebindability::Rebindable,
-            },
+            binding_for(param.ty.clone(), Rebindability::Rebindable),
         );
     }
 
@@ -469,10 +476,7 @@ fn infer_top_level_function_return_type(
     for param in &function.params {
         vars.insert(
             param.name.clone(),
-            Binding {
-                ty: param.ty.clone(),
-                rebindability: Rebindability::Rebindable,
-            },
+            binding_for(param.ty.clone(), Rebindability::Rebindable),
         );
     }
 
@@ -622,6 +626,61 @@ fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
     }
 }
 
+fn seal_record_locals_in_expr(expr: &Expr, vars: &mut HashMap<String, Binding>) {
+    match expr {
+        Expr::Name(name, _) => {
+            if let Some(binding) = vars.get_mut(name) {
+                if matches!(binding.ty, Type::Record(_)) {
+                    binding.record_open = false;
+                }
+            }
+        }
+        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => {
+            seal_record_locals_in_expr(expr, vars)
+        }
+        Expr::If {
+            condition,
+            then_expr,
+            else_expr,
+            ..
+        } => {
+            seal_record_locals_in_expr(condition, vars);
+            seal_record_locals_in_expr(then_expr, vars);
+            seal_record_locals_in_expr(else_expr, vars);
+        }
+        Expr::Call { callee, args, .. } => {
+            seal_record_locals_in_expr(callee, vars);
+            for arg in args {
+                seal_record_locals_in_expr(arg, vars);
+            }
+        }
+        Expr::Function(_)
+        | Expr::Number(..)
+        | Expr::Bool(..)
+        | Expr::String(..)
+        | Expr::Require(..) => {}
+        Expr::ArrayLiteral { elements, .. } => {
+            for element in elements {
+                seal_record_locals_in_expr(element, vars);
+            }
+        }
+        Expr::TableLiteral { fields, .. } => {
+            for field in fields {
+                seal_record_locals_in_expr(&field.value, vars);
+            }
+        }
+        Expr::Field { base, .. } => seal_record_locals_in_expr(base, vars),
+        Expr::Index { base, index, .. } => {
+            seal_record_locals_in_expr(base, vars);
+            seal_record_locals_in_expr(index, vars);
+        }
+        Expr::Binary { left, right, .. } => {
+            seal_record_locals_in_expr(left, vars);
+            seal_record_locals_in_expr(right, vars);
+        }
+    }
+}
+
 fn collect_return_types(
     body: &[Stmt],
     vars: &HashMap<String, Binding>,
@@ -652,13 +711,8 @@ fn collect_return_types(
                 } else {
                     infer_expr(value, &scope, fn_signatures, active_type_params, None)?
                 };
-                scope.insert(
-                    name.clone(),
-                    Binding {
-                        ty: inferred_ty,
-                        rebindability: *rebindability,
-                    },
-                );
+                seal_record_locals_in_expr(value, &mut scope);
+                scope.insert(name.clone(), binding_for(inferred_ty, *rebindability));
             }
             Stmt::Assign { name, value, .. } => {
                 let existing = scope
@@ -671,6 +725,7 @@ fn collect_return_types(
                     active_type_params,
                     Some(existing.ty.clone()),
                 )?;
+                seal_record_locals_in_expr(value, &mut scope);
             }
             Stmt::IndexAssign {
                 base, index, value, ..
@@ -727,16 +782,20 @@ fn collect_return_types(
                             base_name, name, ty, value_ty
                         )));
                     }
-                } else {
+                } else if binding.record_open {
                     fields.insert(name.clone(), value_ty);
+                } else {
+                    return Err(Diagnostic::new(format!(
+                        "cannot add new field '{}.{}' after record was sealed",
+                        base_name, name
+                    )));
                 }
-                scope.insert(
-                    base_name.clone(),
-                    Binding {
-                        ty: Type::Record(fields),
-                        rebindability: binding.rebindability,
-                    },
-                );
+                seal_record_locals_in_expr(value, &mut scope);
+                let mut updated = binding_for(Type::Record(fields), binding.rebindability);
+                if !binding.record_open {
+                    updated.record_open = false;
+                }
+                scope.insert(base_name.clone(), updated);
             }
             Stmt::If {
                 condition,
@@ -745,6 +804,7 @@ fn collect_return_types(
             } => {
                 let condition_ty =
                     infer_expr(condition, &scope, fn_signatures, active_type_params, None)?;
+                seal_record_locals_in_expr(condition, &mut scope);
                 if condition_ty != Type::Bool {
                     return Err(Diagnostic::new("if condition must be bool"));
                 }
@@ -766,6 +826,7 @@ fn collect_return_types(
             Stmt::While { condition, body } => {
                 let condition_ty =
                     infer_expr(condition, &scope, fn_signatures, active_type_params, None)?;
+                seal_record_locals_in_expr(condition, &mut scope);
                 if condition_ty != Type::Bool {
                     return Err(Diagnostic::new("while condition must be bool"));
                 }
@@ -775,6 +836,7 @@ fn collect_return_types(
                 collect_return_types(body, &scope, fn_signatures, active_type_params, returns)?;
                 let condition_ty =
                     infer_expr(condition, &scope, fn_signatures, active_type_params, None)?;
+                seal_record_locals_in_expr(condition, &mut scope);
                 if condition_ty != Type::Bool {
                     return Err(Diagnostic::new("repeat-until condition must be bool"));
                 }
@@ -788,23 +850,20 @@ fn collect_return_types(
             } => {
                 let start_ty = infer_expr(start, &scope, fn_signatures, active_type_params, None)?;
                 let stop_ty = infer_expr(stop, &scope, fn_signatures, active_type_params, None)?;
+                seal_record_locals_in_expr(start, &mut scope);
+                seal_record_locals_in_expr(stop, &mut scope);
                 let mut loop_ty = common_numeric_type(start_ty, stop_ty)?;
                 if let Some(step_expr) = step {
                     let step_ty =
                         infer_expr(step_expr, &scope, fn_signatures, active_type_params, None)?;
+                    seal_record_locals_in_expr(step_expr, &mut scope);
                     loop_ty = common_numeric_type(loop_ty, step_ty)?;
                 }
                 if !matches!(loop_ty, Type::Numeric(_)) {
                     return Err(Diagnostic::new("numeric for-loop bounds must be numeric"));
                 }
                 let mut loop_scope = scope.clone();
-                loop_scope.insert(
-                    name.clone(),
-                    Binding {
-                        ty: loop_ty,
-                        rebindability: Rebindability::Const,
-                    },
-                );
+                loop_scope.insert(name.clone(), binding_for(loop_ty, Rebindability::Const));
                 collect_return_types(
                     body,
                     &loop_scope,
@@ -820,6 +879,7 @@ fn collect_return_types(
             } => {
                 let iterator_ty =
                     infer_expr(iterator, &scope, fn_signatures, active_type_params, None)?;
+                seal_record_locals_in_expr(iterator, &mut scope);
                 let loop_value_types = match iterator_ty {
                     Type::Function {
                         params,
@@ -869,13 +929,7 @@ fn collect_return_types(
                 };
                 let mut loop_scope = scope.clone();
                 for (name, ty) in names.iter().zip(loop_value_types) {
-                    loop_scope.insert(
-                        name.clone(),
-                        Binding {
-                            ty,
-                            rebindability: Rebindability::Const,
-                        },
-                    );
+                    loop_scope.insert(name.clone(), binding_for(ty, Rebindability::Const));
                 }
                 collect_return_types(
                     body,
@@ -887,6 +941,7 @@ fn collect_return_types(
             }
             Stmt::Break | Stmt::Continue => {}
             Stmt::Return(expr) => {
+                seal_record_locals_in_expr(expr, &mut scope);
                 returns.push(infer_expr(
                     expr,
                     &scope,
@@ -896,6 +951,9 @@ fn collect_return_types(
                 )?);
             }
             Stmt::ReturnMulti(values) => {
+                for value in values {
+                    seal_record_locals_in_expr(value, &mut scope);
+                }
                 returns.push(Type::Multi(infer_expr_list(
                     values,
                     &scope,
@@ -957,15 +1015,12 @@ fn collect_return_types(
                     }
                     actual
                 };
+                for value in values {
+                    seal_record_locals_in_expr(value, &mut scope);
+                }
                 for (binding, value_ty) in bindings.iter().zip(actual) {
                     let ty = binding.ty.clone().unwrap_or(value_ty);
-                    scope.insert(
-                        binding.name.clone(),
-                        Binding {
-                            ty,
-                            rebindability: binding.rebindability,
-                        },
-                    );
+                    scope.insert(binding.name.clone(), binding_for(ty, binding.rebindability));
                 }
             }
             Stmt::AssignMulti { targets, values } => {
@@ -983,6 +1038,9 @@ fn collect_return_types(
                     active_type_params,
                     Some(&expected),
                 )?;
+                for value in values {
+                    seal_record_locals_in_expr(value, &mut scope);
+                }
                 if actual.len() != expected.len() {
                     return Err(Diagnostic::new(format!(
                         "multi-assignment expects {} values, got {}",
@@ -993,6 +1051,7 @@ fn collect_return_types(
             }
             Stmt::Expr(expr) => {
                 let _ = infer_expr(expr, &scope, fn_signatures, active_type_params, None)?;
+                seal_record_locals_in_expr(expr, &mut scope);
             }
         }
     }
@@ -1059,13 +1118,8 @@ fn check_stmt(
             } else {
                 infer_expr(value, vars, fn_signatures, active_type_params, None)?
             };
-            vars.insert(
-                name.clone(),
-                Binding {
-                    ty: inferred_ty,
-                    rebindability: *rebindability,
-                },
-            );
+            seal_record_locals_in_expr(value, vars);
+            vars.insert(name.clone(), binding_for(inferred_ty, *rebindability));
             Ok(false)
         }
         Stmt::Assign { op, name, value } => {
@@ -1097,6 +1151,7 @@ fn check_stmt(
                     name, existing.ty, value_ty
                 )));
             }
+            seal_record_locals_in_expr(value, vars);
             Ok(false)
         }
         Stmt::IndexAssign {
@@ -1185,16 +1240,20 @@ fn check_stmt(
                         base_name, name, ty, value_ty
                     )));
                 }
-            } else {
+            } else if binding.record_open {
                 fields.insert(name.clone(), value_ty);
+            } else {
+                return Err(Diagnostic::new(format!(
+                    "cannot add new field '{}.{}' after record was sealed",
+                    base_name, name
+                )));
             }
-            vars.insert(
-                base_name.clone(),
-                Binding {
-                    ty: Type::Record(fields),
-                    rebindability: binding.rebindability,
-                },
-            );
+            seal_record_locals_in_expr(value, vars);
+            let mut updated = binding_for(Type::Record(fields), binding.rebindability);
+            if !binding.record_open {
+                updated.record_open = false;
+            }
+            vars.insert(base_name.clone(), updated);
             Ok(false)
         }
         Stmt::If {
@@ -1204,6 +1263,7 @@ fn check_stmt(
         } => {
             let condition_ty =
                 infer_expr(condition, vars, fn_signatures, active_type_params, None)?;
+            seal_record_locals_in_expr(condition, vars);
             if condition_ty != Type::Bool {
                 return Err(Diagnostic::new("if condition must be bool"));
             }
@@ -1236,6 +1296,7 @@ fn check_stmt(
         Stmt::While { condition, body } => {
             let condition_ty =
                 infer_expr(condition, vars, fn_signatures, active_type_params, None)?;
+            seal_record_locals_in_expr(condition, vars);
             if condition_ty != Type::Bool {
                 return Err(Diagnostic::new("while condition must be bool"));
             }
@@ -1271,6 +1332,7 @@ fn check_stmt(
                 active_type_params,
                 None,
             )?;
+            seal_record_locals_in_expr(condition, &mut loop_scope);
             if condition_ty != Type::Bool {
                 return Err(Diagnostic::new("repeat-until condition must be bool"));
             }
@@ -1285,22 +1347,19 @@ fn check_stmt(
         } => {
             let start_ty = infer_expr(start, vars, fn_signatures, active_type_params, None)?;
             let stop_ty = infer_expr(stop, vars, fn_signatures, active_type_params, None)?;
+            seal_record_locals_in_expr(start, vars);
+            seal_record_locals_in_expr(stop, vars);
             let mut loop_ty = common_numeric_type(start_ty, stop_ty)?;
             if let Some(step_expr) = step {
                 let step_ty = infer_expr(step_expr, vars, fn_signatures, active_type_params, None)?;
+                seal_record_locals_in_expr(step_expr, vars);
                 loop_ty = common_numeric_type(loop_ty, step_ty)?;
             }
             if !matches!(loop_ty, Type::Numeric(_)) {
                 return Err(Diagnostic::new("numeric for-loop bounds must be numeric"));
             }
             let mut loop_scope = vars.clone();
-            loop_scope.insert(
-                name.clone(),
-                Binding {
-                    ty: loop_ty,
-                    rebindability: Rebindability::Const,
-                },
-            );
+            loop_scope.insert(name.clone(), binding_for(loop_ty, Rebindability::Const));
             for stmt in body {
                 let _ = check_stmt(
                     stmt,
@@ -1319,6 +1378,7 @@ fn check_stmt(
             body,
         } => {
             let iterator_ty = infer_expr(iterator, vars, fn_signatures, active_type_params, None)?;
+            seal_record_locals_in_expr(iterator, vars);
             let loop_value_types = match iterator_ty {
                 Type::Function {
                     params,
@@ -1368,13 +1428,7 @@ fn check_stmt(
             };
             let mut loop_scope = vars.clone();
             for (name, ty) in names.iter().zip(loop_value_types) {
-                loop_scope.insert(
-                    name.clone(),
-                    Binding {
-                        ty,
-                        rebindability: Rebindability::Const,
-                    },
-                );
+                loop_scope.insert(name.clone(), binding_for(ty, Rebindability::Const));
             }
             for stmt in body {
                 let _ = check_stmt(
@@ -1401,6 +1455,7 @@ fn check_stmt(
             Ok(false)
         }
         Stmt::Return(expr) => {
+            seal_record_locals_in_expr(expr, vars);
             let ty = infer_expr(
                 expr,
                 vars,
@@ -1417,6 +1472,9 @@ fn check_stmt(
             Ok(true)
         }
         Stmt::ReturnMulti(values) => {
+            for value in values {
+                seal_record_locals_in_expr(value, vars);
+            }
             let expected = match expected_return {
                 Type::Multi(types) => types.clone(),
                 _ => vec![expected_return.clone()],
@@ -1499,15 +1557,12 @@ fn check_stmt(
                 }
                 actual
             };
+            for value in values {
+                seal_record_locals_in_expr(value, vars);
+            }
             for (binding, value_ty) in bindings.iter().zip(actual) {
                 let ty = binding.ty.clone().unwrap_or(value_ty);
-                vars.insert(
-                    binding.name.clone(),
-                    Binding {
-                        ty,
-                        rebindability: binding.rebindability,
-                    },
-                );
+                vars.insert(binding.name.clone(), binding_for(ty, binding.rebindability));
             }
             Ok(false)
         }
@@ -1532,6 +1587,9 @@ fn check_stmt(
                 active_type_params,
                 Some(&expected),
             )?;
+            for value in values {
+                seal_record_locals_in_expr(value, vars);
+            }
             if actual.len() != expected.len() {
                 return Err(Diagnostic::new(format!(
                     "multi-assignment expects {} values, got {}",
@@ -1588,6 +1646,7 @@ fn check_stmt(
                 }
             }
             let _ = infer_expr(expr, vars, fn_signatures, active_type_params, None)?;
+            seal_record_locals_in_expr(expr, vars);
             Ok(false)
         }
     }
@@ -2583,19 +2642,13 @@ fn infer_function_expr(
     for param in &function.params {
         local_scope.insert(
             param.name.clone(),
-            Binding {
-                ty: param.ty.clone(),
-                rebindability: Rebindability::Rebindable,
-            },
+            binding_for(param.ty.clone(), Rebindability::Rebindable),
         );
     }
     if let Some(name) = &function.name {
         local_scope.insert(
             name.clone(),
-            Binding {
-                ty: function_ty.clone(),
-                rebindability: Rebindability::Rebindable,
-            },
+            binding_for(function_ty.clone(), Rebindability::Rebindable),
         );
     }
     let mut saw_return = false;
@@ -3396,6 +3449,59 @@ mod tests {
         "#;
         let program = parse(source).expect("parse should succeed");
         super::type_check(&program).expect("type check should succeed");
+    }
+
+    #[test]
+    fn rejects_new_field_after_record_read() {
+        let source = r#"
+            function entry(): i32
+                local t = {}
+                local x = t
+                t.y = 1::i32
+                return 0
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "cannot add new field 't.y' after record was sealed"
+        );
+    }
+
+    #[test]
+    fn rejects_new_field_after_record_field_read() {
+        let source = r#"
+            function entry(): i32
+                local t = { x = 1::i32 }
+                local x = t.x
+                t.y = 1::i32
+                return 0
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "cannot add new field 't.y' after record was sealed"
+        );
+    }
+
+    #[test]
+    fn rejects_new_field_after_record_return() {
+        let source = r#"
+            function entry()
+                local t = {}
+                return t
+                t.y = 1::i32
+            end
+        "#;
+        let program = parse(source).expect("parse should succeed");
+        let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+        assert_eq!(
+            error.to_string(),
+            "cannot add new field 't.y' after record was sealed"
+        );
     }
 
     #[test]
