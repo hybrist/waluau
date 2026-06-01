@@ -1,0 +1,272 @@
+use std::collections::{HashMap, HashSet};
+
+use waluau_ast::{Expr, NumericType, Type};
+use waluau_diagnostics::Diagnostic;
+
+use super::Binding;
+use super::numeric::coerce_type;
+use super::signatures::FnSignature;
+
+pub(super) const COROUTINE_CREATE: &str = "coroutine_create";
+pub(super) const COROUTINE_RESUME: &str = "coroutine_resume";
+pub(super) const COROUTINE_CLOSE: &str = "coroutine_close";
+pub(super) const COROUTINE_YIELD: &str = "coroutine_yield";
+pub(super) const MATH_ABS: &str = "math_abs";
+pub(super) const MATH_MIN: &str = "math_min";
+pub(super) const MATH_MAX: &str = "math_max";
+pub(super) const MATH_SQRT: &str = "math_sqrt";
+pub(super) const MATH_FLOOR: &str = "math_floor";
+pub(super) const MATH_CEIL: &str = "math_ceil";
+pub(super) const MATH_TRUNC: &str = "math_trunc";
+pub(super) const MATH_NEAREST: &str = "math_nearest";
+pub(super) const MATH_COPYSIGN: &str = "math_copysign";
+pub(super) const TO_STRING: &str = "tostring";
+pub(super) const ASSERT: &str = "assert";
+pub(super) const PRINT: &str = "print";
+
+pub(super) fn infer_coroutine_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    let i32_ty = Type::Numeric(NumericType::I32);
+    match name {
+        COROUTINE_CREATE => {
+            if args.len() != 1 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{COROUTINE_CREATE} expects 1 argument, got {}",
+                    args.len()
+                ))));
+            }
+            let coroutine_ty = match super::expressions::infer_expr(
+                &args[0],
+                vars,
+                fn_signatures,
+                active_type_params,
+                None,
+            ) {
+                Ok(ty) => ty,
+                Err(error) => return Some(Err(error)),
+            };
+            match &coroutine_ty {
+                Type::Function {
+                    params,
+                    return_type,
+                } if params.is_empty() && **return_type == i32_ty => {
+                    Some(coerce_type(Type::Thread, expected))
+                }
+                _ => Some(Err(Diagnostic::new(
+                    "coroutine_create expects a zero-argument i32-returning function",
+                ))),
+            }
+        }
+        COROUTINE_RESUME => {
+            if args.len() != 1 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{COROUTINE_RESUME} expects 1 argument, got {}",
+                    args.len()
+                ))));
+            }
+            let coroutine_ty = match super::expressions::infer_expr(
+                &args[0],
+                vars,
+                fn_signatures,
+                active_type_params,
+                None,
+            ) {
+                Ok(ty) => ty,
+                Err(error) => return Some(Err(error)),
+            };
+            match coroutine_ty {
+                Type::Thread => Some(coerce_type(Type::Multi(vec![Type::Bool, i32_ty]), expected)),
+                _ => Some(Err(Diagnostic::new("coroutine_resume expects a thread"))),
+            }
+        }
+        COROUTINE_CLOSE => {
+            if args.len() != 1 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{COROUTINE_CLOSE} expects 1 argument, got {}",
+                    args.len()
+                ))));
+            }
+            let coroutine_ty = match super::expressions::infer_expr(
+                &args[0],
+                vars,
+                fn_signatures,
+                active_type_params,
+                None,
+            ) {
+                Ok(ty) => ty,
+                Err(error) => return Some(Err(error)),
+            };
+            match coroutine_ty {
+                Type::Thread => Some(coerce_type(Type::Bool, expected)),
+                _ => Some(Err(Diagnostic::new("coroutine_close expects a thread"))),
+            }
+        }
+        COROUTINE_YIELD => {
+            if args.len() != 1 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{COROUTINE_YIELD} expects 1 argument, got {}",
+                    args.len()
+                ))));
+            }
+            match super::expressions::infer_expr(
+                &args[0],
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(i32_ty.clone()),
+            ) {
+                Ok(ty) if ty == i32_ty => {}
+                Ok(_) => {
+                    return Some(Err(Diagnostic::new("coroutine_yield expects an i32 value")));
+                }
+                Err(error) => return Some(Err(error)),
+            }
+            Some(coerce_type(Type::Unit, expected))
+        }
+        _ => None,
+    }
+}
+
+pub(super) fn infer_math_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    let arity = match name {
+        MATH_ABS | MATH_SQRT | MATH_FLOOR | MATH_CEIL | MATH_TRUNC | MATH_NEAREST => 1,
+        MATH_MIN | MATH_MAX | MATH_COPYSIGN => 2,
+        _ => return None,
+    };
+    if args.len() != arity {
+        return Some(Err(Diagnostic::new(format!(
+            "{name} expects {arity} argument{}, got {}",
+            if arity == 1 { "" } else { "s" },
+            args.len()
+        ))));
+    }
+    let first = match super::expressions::infer_expr(
+        &args[0],
+        vars,
+        fn_signatures,
+        active_type_params,
+        None,
+    ) {
+        Ok(ty) => ty,
+        Err(error) => return Some(Err(error)),
+    };
+    let Type::Numeric(first_numeric) = first else {
+        return Some(Err(Diagnostic::new(format!(
+            "{name} expects numeric arguments"
+        ))));
+    };
+    if arity == 2 {
+        let second = match super::expressions::infer_expr(
+            &args[1],
+            vars,
+            fn_signatures,
+            active_type_params,
+            Some(Type::Numeric(first_numeric)),
+        ) {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        if second != Type::Numeric(first_numeric) {
+            return Some(Err(Diagnostic::new(format!(
+                "{name} requires both arguments to have the same numeric type"
+            ))));
+        }
+    }
+    let supports = match name {
+        MATH_MIN | MATH_MAX => matches!(first_numeric, NumericType::F32 | NumericType::F64),
+        MATH_ABS | MATH_SQRT | MATH_FLOOR | MATH_CEIL | MATH_TRUNC | MATH_NEAREST
+        | MATH_COPYSIGN => matches!(first_numeric, NumericType::F32 | NumericType::F64),
+        _ => false,
+    };
+    if !supports {
+        return Some(Err(Diagnostic::new(format!(
+            "{name} does not support {}",
+            Type::Numeric(first_numeric)
+        ))));
+    }
+    Some(coerce_type(Type::Numeric(first_numeric), expected))
+}
+
+pub(super) fn infer_tostring_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    if name != TO_STRING {
+        return None;
+    }
+    if args.len() != 1 {
+        return Some(Err(Diagnostic::new(format!(
+            "{TO_STRING} expects 1 argument, got {}",
+            args.len()
+        ))));
+    }
+    let arg_ty = match super::expressions::infer_expr(
+        &args[0],
+        vars,
+        fn_signatures,
+        active_type_params,
+        None,
+    ) {
+        Ok(ty) => ty,
+        Err(error) => return Some(Err(error)),
+    };
+    if arg_ty.is_numeric() || arg_ty == Type::Bool || arg_ty == Type::String {
+        Some(coerce_type(Type::String, expected))
+    } else {
+        Some(Err(Diagnostic::new(format!(
+            "{TO_STRING} expects a primitive argument (numeric, bool, or string), got {arg_ty}",
+        ))))
+    }
+}
+
+pub(super) fn infer_print_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    if name != PRINT {
+        return None;
+    }
+    if args.len() != 1 {
+        return Some(Err(Diagnostic::new(format!(
+            "{PRINT} expects 1 argument, got {}",
+            args.len()
+        ))));
+    }
+    let arg_ty = match super::expressions::infer_expr(
+        &args[0],
+        vars,
+        fn_signatures,
+        active_type_params,
+        Some(Type::String),
+    ) {
+        Ok(ty) => ty,
+        Err(error) => return Some(Err(error)),
+    };
+    if arg_ty != Type::String {
+        return Some(Err(Diagnostic::new(format!(
+            "{PRINT} expects string, got {arg_ty}",
+        ))));
+    }
+    Some(coerce_type(Type::Unit, expected))
+}

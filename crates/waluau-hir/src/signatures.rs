@@ -1,9 +1,28 @@
 use std::collections::{HashMap, HashSet};
 
-use waluau_ast::{Expr, FunctionExpr, Type};
+use waluau_ast::{Expr, Function, FunctionExpr, Rebindability, Type};
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
-use super::{Binding, FnSignature, GenericScheme, coerce_type, infer_expr_list};
+use super::expressions::infer_expr_list;
+use super::numeric::coerce_type;
+use super::statements::{collect_return_types, common_return_type, function_calls};
+use super::{Binding, binding_for};
+
+#[derive(Clone, Debug)]
+pub(super) struct GenericScheme {
+    pub(super) type_params: Vec<String>,
+    pub(super) params: Vec<Type>,
+    pub(super) return_type: Type,
+}
+
+#[derive(Clone, Debug)]
+pub(super) enum FnSignature {
+    Mono {
+        params: Vec<Type>,
+        return_type: Type,
+    },
+    Generic(GenericScheme),
+}
 
 pub(super) fn inference_diagnostic(
     code: &'static str,
@@ -205,6 +224,51 @@ pub(super) fn infer_generic_call(
         }
     }
     coerce_type(ret, expected)
+}
+
+pub(super) fn infer_top_level_function_return_type(
+    function: &Function,
+    fn_signatures: &HashMap<String, FnSignature>,
+    unresolved_names: &[String],
+) -> Result<Option<Type>, Diagnostic> {
+    let mut vars: HashMap<String, Binding> = HashMap::new();
+    for param in &function.params {
+        vars.insert(
+            param.name.clone(),
+            binding_for(param.ty.clone(), Rebindability::Rebindable),
+        );
+    }
+
+    let mut returns = Vec::new();
+    if unresolved_names.iter().any(|name| name == &function.name)
+        && function_calls(function, &function.name)
+    {
+        return Ok(None);
+    }
+    if let Err(error) = collect_return_types(
+        &function.body,
+        &vars,
+        fn_signatures,
+        &HashSet::new(),
+        &mut returns,
+    ) {
+        let message = error.to_string();
+        if unresolved_names
+            .iter()
+            .any(|name| message.contains(&format!("unknown name '{name}'")))
+        {
+            return Ok(None);
+        }
+        return Err(error);
+    }
+    if returns.is_empty() {
+        return Ok(Some(Type::Unit));
+    }
+    let mut merged = returns[0].clone();
+    for ty in returns.into_iter().skip(1) {
+        merged = common_return_type(merged, ty)?;
+    }
+    Ok(Some(merged))
 }
 
 pub(super) fn infer_generic_function_expr_call(
