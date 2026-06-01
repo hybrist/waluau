@@ -64,6 +64,7 @@ pub(crate) fn build_function(
         entry: BlockId(0),
         blocks: BTreeMap::new(),
         next_value: 0,
+        capture_count: 0,
     };
 
     out.blocks.insert(
@@ -1836,6 +1837,7 @@ impl Builder<'_> {
         let lifted_name = format!("{}$lambda{}", self.function.name, self.lambda_counter);
         self.lambda_counter += 1;
 
+        let capture_count = captures.len();
         let mut lifted = Function {
             name: lifted_name.clone(),
             params: Vec::new(),
@@ -1843,6 +1845,7 @@ impl Builder<'_> {
             entry: BlockId(0),
             blocks: BTreeMap::new(),
             next_value: 0,
+            capture_count,
         };
         lifted.blocks.insert(
             lifted.entry,
@@ -2919,7 +2922,6 @@ fn block_mut(function: &mut Function, block: BlockId) -> &mut BasicBlock {
         .get_mut(&block)
         .expect("block must exist when mutating")
 }
-
 
 fn add_phi_incoming(
     function: &mut Function,

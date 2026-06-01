@@ -161,6 +161,14 @@ function getWasmExports(buffer) {
       pos += 1; // mutable flag
       return;
     }
+    if (form === 0x5f) {
+      const numFields = readVaruint();
+      for (let f = 0; f < numFields; f++) {
+        readValTypeCode(); // storage type
+        pos += 1; // mutable flag
+      }
+      return;
+    }
     // Unknown composite type: bail out to end of section by caller.
     throw new Error(`unsupported wasm type form: 0x${form.toString(16)}`);
   }
@@ -213,12 +221,16 @@ function getWasmExports(buffer) {
           }
           types.push({ params, returns });
         } else {
+          // Non-function type (array, struct, …).  Push null to keep the
+          // types[] index aligned with the Wasm type section index, which
+          // funcTypeIndices references directly.
           try {
             skipTypeDefinition(form);
           } catch {
             pos = sectionEnd;
             break;
           }
+          types.push(null);
         }
       }
     } else if (sectionId === 3) { // Function section

@@ -18,6 +18,9 @@ pub struct Function {
     pub entry: BlockId,
     pub blocks: BTreeMap<BlockId, BasicBlock>,
     pub(crate) next_value: usize,
+    /// Number of leading `params` entries that are capture-cell arrays passed by the caller.
+    /// Zero for top-level functions; equal to the number of captured variables for lifted closures.
+    pub capture_count: usize,
 }
 
 #[derive(Clone, Debug, PartialEq)]

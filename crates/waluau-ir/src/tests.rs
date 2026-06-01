@@ -449,6 +449,7 @@ fn rejects_non_bool_branch_condition() {
         return_type: Type::Numeric(NumericType::I64),
         entry: BlockId(0),
         next_value: 2,
+        capture_count: 0,
         blocks: BTreeMap::from([
             (
                 BlockId(0),
@@ -500,6 +501,7 @@ fn rejects_return_type_mismatch() {
         return_type: Type::Bool,
         entry: BlockId(0),
         next_value: 1,
+        capture_count: 0,
         blocks: BTreeMap::from([(
             BlockId(0),
             BasicBlock {
@@ -570,6 +572,7 @@ fn rejects_phi_predecessor_order_mismatch() {
         return_type: Type::Numeric(NumericType::I64),
         entry: BlockId(0),
         next_value: 5,
+        capture_count: 0,
         blocks: BTreeMap::from([
             (
                 BlockId(0),
