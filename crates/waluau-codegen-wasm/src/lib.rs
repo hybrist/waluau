@@ -964,11 +964,23 @@ fn build_local_plan(
     let mut stack_values = BTreeSet::new();
 
     let mut captured_values = BTreeSet::new();
+    let mut global_uses = BTreeMap::new();
     for b in function.blocks.values() {
         for (_, inst) in &b.instructions {
             if let IrInstruction::Closure { captures, .. } = inst {
                 captured_values.extend(captures.iter().copied());
             }
+            for operand in instruction_operands(inst) {
+                *global_uses.entry(operand).or_default() += 1;
+            }
+            if let IrInstruction::Phi(incoming) = inst {
+                for (_, incoming_value) in incoming {
+                    *global_uses.entry(*incoming_value).or_default() += 1;
+                }
+            }
+        }
+        for operand in terminator_operands(&b.terminator) {
+            *global_uses.entry(operand).or_default() += 1;
         }
     }
 
@@ -977,6 +989,7 @@ fn build_local_plan(
             block,
             phi_copy_sources.get(&block.id).cloned().unwrap_or_default(),
             &captured_values,
+            &global_uses,
         );
         stack_values.extend(block_stack_values);
     }
@@ -1805,6 +1818,7 @@ fn compute_stack_values(
     block: &BasicBlock,
     phi_copy_sources: BTreeSet<ValueId>,
     captured_values: &BTreeSet<ValueId>,
+    global_uses: &BTreeMap<ValueId, usize>,
 ) -> BTreeSet<ValueId> {
     let mut uses = BTreeMap::<ValueId, Vec<usize>>::new();
     for (index, (_, instruction)) in block.instructions.iter().enumerate() {
@@ -1829,6 +1843,9 @@ fn compute_stack_values(
             continue;
         }
         if captured_values.contains(value) {
+            continue;
+        }
+        if global_uses.get(value).copied().unwrap_or(0) != 1 {
             continue;
         }
         let Some(use_sites) = uses.get(value) else {
@@ -3209,5 +3226,21 @@ mod tests {
             .expect("c should exist");
 
         assert_eq!(local_plan.slots.get(&a), local_plan.slots.get(&c));
+    }
+
+    #[test]
+    fn test_array_for_in_tostring_bug() {
+        let source = r#"
+            function test_loop(): i32
+                for x in {1, 2, 3} do
+                    print("hello" .. tostring(x))
+                end
+                return 0
+            end
+        "#;
+        let program = waluau_parser::parse(source).expect("parse should succeed");
+        let ir = waluau_ir::build(&program).expect("ir should succeed");
+        let wasm = super::emit(&ir);
+        assert!(wasm.is_ok(), "Wasm emission failed: {:?}", wasm.err());
     }
 }

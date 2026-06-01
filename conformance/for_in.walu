@@ -35,3 +35,10 @@ local final_sum_v: i32 = 0
 final_sum_i, final_sum_v = test_array_iteration_2_vars()
 assert(final_sum_i == 3)
 assert(final_sum_v == 60)
+
+local result: string = ""
+for x in {1, 2, 3} do
+    result = result .. tostring(x)
+end
+assert(result == "123")
+
