@@ -882,7 +882,7 @@ fn emit_block(
                 field_index: STATE_YIELDED_FIELD,
             });
             emit_active_state_field_set_const(out, ctx, STATE_TAG_FIELD, TAG_SUSPENDED)?;
-            // Unwind the call stack back to `coroutine_resume`, propagating the i32 value
+            // Unwind the call stack back to `coroutine.resume`, propagating the i32 value
             // for functions that return one.
             if !matches!(function.return_type, Type::Unit) {
                 out.instruction(&Instruction::LocalGet(yield_tmp));
@@ -893,10 +893,10 @@ fn emit_block(
             let return_ty = value_types.get(value).ok_or_else(|| {
                 Diagnostic::new(format!("missing type for return value {:?}", value))
             })?;
-            // A normal return needs no coroutine bookkeeping: `coroutine_resume` marks the
-            // instance finished tentatively before the call, and only `coroutine_yield`
+            // A normal return needs no coroutine bookkeeping: `coroutine.resume` marks the
+            // instance finished tentatively before the call, and only `coroutine.yield`
             // flips it back to suspended. So a return that is *not* a yield leaves the
-            // finished tag in place, and `coroutine_resume` reads the body's result directly.
+            // finished tag in place, and `coroutine.resume` reads the body's result directly.
             if !matches!(return_ty, Type::Unit) {
                 emit_value_operand(out, local_plan, *value)?;
             }
@@ -1168,7 +1168,7 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::I32Eq);
                 out.instruction(&Instruction::If(BlockType::Empty));
 
-                // Tentatively mark finished; `coroutine_yield` flips it back to suspended.
+                // Tentatively mark finished; `coroutine.yield` flips it back to suspended.
                 emit_value_operand(out, local_plan, *coroutine)?;
                 out.instruction(&Instruction::I32Const(TAG_FINISHED));
                 out.instruction(&Instruction::StructSet {
@@ -1371,7 +1371,7 @@ fn emit_block_instructions(
     Ok(())
 }
 
-/// After calling a function that may yield, unwind toward `coroutine_resume` if the
+/// After calling a function that may yield, unwind toward `coroutine.resume` if the
 /// active instance is now suspended (i.e. a yield happened transitively).
 fn emit_return_if_coroutine_yielded(
     out: &mut Function,
