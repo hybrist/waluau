@@ -1331,6 +1331,13 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::ArrayLen);
                 emit_value_store(out, local_plan, *value)?;
             }
+            IrInstruction::StructNew { .. }
+            | IrInstruction::StructGet { .. }
+            | IrInstruction::StructSet { .. } => {
+                return Err(Diagnostic::new(
+                    "record struct instructions are not yet supported in wasm codegen",
+                ));
+            }
             IrInstruction::PackMulti { values, .. } => {
                 for v in values {
                     emit_value_operand(out, local_plan, *v)?;
