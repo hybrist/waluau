@@ -215,6 +215,12 @@ pub enum Stmt {
         index: Box<Expr>,
         value: Expr,
     },
+    FieldAssign {
+        op: AssignOp,
+        base: Box<Expr>,
+        name: String,
+        value: Expr,
+    },
     If {
         condition: Expr,
         then_body: Vec<Stmt>,
@@ -321,8 +327,6 @@ pub enum Expr {
         span: Option<Span>,
     },
     /// A table literal with named fields, e.g. `{ add = fn, sub = other }`.
-    ///
-    /// Supported for module exports and `require` results only in the MVP.
     TableLiteral {
         fields: Vec<TableField>,
         span: Option<Span>,

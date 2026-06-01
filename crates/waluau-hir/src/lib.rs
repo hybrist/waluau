@@ -517,6 +517,9 @@ fn stmt_calls_name(stmt: &Stmt, callee: &str) -> bool {
                 || expr_calls_name(index, callee)
                 || expr_calls_name(value, callee)
         }
+        Stmt::FieldAssign { base, value, .. } => {
+            expr_calls_name(base, callee) || expr_calls_name(value, callee)
+        }
         Stmt::If {
             condition,
             then_body,
@@ -672,6 +675,10 @@ fn collect_return_types(
                     active_type_params,
                     Some(element_ty),
                 )?;
+            }
+            Stmt::FieldAssign { base, value, .. } => {
+                let _ = infer_expr(base, &scope, fn_signatures, active_type_params, None)?;
+                let _ = infer_expr(value, &scope, fn_signatures, active_type_params, None)?;
             }
             Stmt::If {
                 condition,
@@ -1054,6 +1061,9 @@ fn check_stmt(
             }
             Ok(false)
         }
+        Stmt::FieldAssign { .. } => Err(Diagnostic::new(
+            "field assignment type checking is not yet supported",
+        )),
         Stmt::If {
             condition,
             then_body,

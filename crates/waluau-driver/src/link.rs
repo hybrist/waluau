@@ -470,6 +470,10 @@ impl Rewriter<'_> {
                 self.rewrite_expr(index, bound);
                 self.rewrite_expr(value, bound);
             }
+            Stmt::FieldAssign { base, value, .. } => {
+                self.rewrite_expr(base, bound);
+                self.rewrite_expr(value, bound);
+            }
             Stmt::If {
                 condition,
                 then_body,
@@ -675,6 +679,9 @@ fn stmt_mentions_name_in_stmt(name: &str, stmt: &Stmt) -> bool {
                 || expr_mentions_name(name, index)
                 || expr_mentions_name(name, value)
         }
+        Stmt::FieldAssign { base, value, .. } => {
+            expr_mentions_name(name, base) || expr_mentions_name(name, value)
+        }
         Stmt::If {
             condition,
             then_body,
@@ -772,6 +779,10 @@ fn collect_block(stmts: &[Stmt], out: &mut Vec<String>) {
             } => {
                 collect_expr(base, out);
                 collect_expr(index, out);
+                collect_expr(value, out);
+            }
+            Stmt::FieldAssign { base, value, .. } => {
+                collect_expr(base, out);
                 collect_expr(value, out);
             }
             Stmt::If {
