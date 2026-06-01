@@ -251,9 +251,12 @@ fn reuses_i32_local_slots_for_disjoint_live_ranges() {
     .collect::<std::collections::HashMap<_, _>>();
     let value_types = super::infer_value_types(function, &signatures).expect("types should infer");
     let array_types = super::collect_array_types(&ir);
+    let record_types = super::collect_record_types(&ir);
     let array_registry = super::arrays::ArrayTypeRegistry::with_function_type_offset(
         &array_types,
+        &record_types,
         ir.functions.len() as u32 + u32::from(ir.start.is_some()),
+        0, // record_type_offset placeholder (unused in this test)
         0, // anyref_array_type placeholder (unused in this test)
         0, // func_val_struct_type placeholder (unused in this test)
     );
@@ -351,6 +354,23 @@ fn emits_valid_wasm_for_capturing_closure_through_phi() {
     let program = waluau_parser::parse(source).expect("parse should succeed");
     let ir = waluau_ir::build(&program).expect("ir should succeed");
     let wasm = super::emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+}
+
+#[test]
+fn emits_valid_wasm_for_record_struct_ops() {
+    let source = r#"
+        function entry(seed: i32): i32
+            local point: { x: i32, y: i32 } = { x = seed, y = seed + 1 }
+            point.x = point.x + 41
+            return point.x
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let wasm = super::emit(&ir).expect("record structs should compile");
     Validator::new()
         .validate_all(&wasm)
         .expect("emitted module should validate");
