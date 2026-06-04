@@ -273,7 +273,7 @@ pub(super) fn infer_expr(
             coerce_type(ret, expected)
         }
         Expr::MethodCall { .. } => Err(Diagnostic::new(
-            "method call lowering is not implemented yet",
+            "method calls must be desugared before type checking",
         )),
         Expr::Function(function) => {
             infer_function_expr(function, vars, fn_signatures, active_type_params, expected)

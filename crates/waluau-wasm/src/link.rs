@@ -170,7 +170,7 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, String> {
         }
         let func_names: HashSet<String> = module_functions
             .iter()
-            .map(|function| function.name.clone())
+            .map(|function| function.name.to_string())
             .collect();
 
         let mut imports = HashMap::new();
@@ -195,7 +195,7 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, String> {
                 .collect();
             rewriter.rewrite_block(&mut lowered.body, &mut bound);
             strip_unused_namespace_lets(&mut lowered.body);
-            lowered.name = format!("{prefix}{}", function.name);
+            lowered.name = waluau_ast::FunctionName::Simple(format!("{prefix}{}", function.name));
             functions.push(lowered);
         }
 
@@ -246,7 +246,7 @@ fn hoist_table_export_functions(
 
 fn function_expr_to_function(name: &str, function: &FunctionExpr) -> Function {
     Function {
-        name: name.to_string(),
+        name: waluau_ast::FunctionName::Simple(name.to_string()),
         type_params: function.type_params.clone(),
         params: function.params.clone(),
         return_type: function.return_type.clone(),
@@ -296,7 +296,7 @@ fn compute_module_export(
 fn module_function_names(functions: &[Function], export: &Option<Expr>) -> HashSet<String> {
     let mut names: HashSet<String> = functions
         .iter()
-        .map(|function| function.name.clone())
+        .map(|function| function.name.to_string())
         .collect();
     if let Some(Expr::TableLiteral { fields, .. }) = export {
         for field in fields {
