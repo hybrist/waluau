@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use waluau_ast::{Expr, Function, NumberLiteral, Program, Rebindability, Stmt, Type};
+use waluau_ast::{Expr, Function, FunctionName, NumberLiteral, Program, Rebindability, Stmt, Type};
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
 mod builtins;
@@ -39,7 +39,7 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
     let mut typed = program.clone();
     if !typed.top_level.is_empty() {
         typed.functions.push(Function {
-            name: "__waluau_top_level_init".to_string(),
+            name: FunctionName::Simple("__waluau_top_level_init".to_string()),
             type_params: Vec::new(),
             params: Vec::new(),
             return_type: Some(Type::number()),
@@ -60,7 +60,7 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
         if function.type_params.is_empty() {
             if let Some(ret) = &function.return_type {
                 fn_signatures.insert(
-                    function.name.clone(),
+                    function.name.to_string(),
                     FnSignature::Mono {
                         params: function
                             .params
@@ -73,7 +73,7 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
             }
         } else if let Some(ret) = &function.return_type {
             fn_signatures.insert(
-                function.name.clone(),
+                function.name.to_string(),
                 FnSignature::Generic(GenericScheme {
                     type_params: function.type_params.clone(),
                     params: function
@@ -101,11 +101,11 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
         let mut next_unresolved = Vec::new();
         let unresolved_names: Vec<String> = unresolved
             .iter()
-            .map(|idx| typed.functions[*idx].name.clone())
+            .map(|idx| typed.functions[*idx].name.to_string())
             .collect();
         for idx in unresolved {
             let function = &typed.functions[idx];
-            let function_name = function.name.clone();
+            let function_name = function.name.to_string();
             let function_params: Vec<Type> = function
                 .params
                 .iter()

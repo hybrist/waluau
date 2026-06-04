@@ -24,7 +24,7 @@ pub struct TableField {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Function {
-    pub name: String,
+    pub name: FunctionName,
     pub type_params: Vec<String>,
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
@@ -41,6 +41,30 @@ pub struct FunctionExpr {
     pub body: Vec<Stmt>,
     pub file_path: String,
     pub span: Option<Span>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum FunctionName {
+    Simple(String),
+    Method { table: String, method: String },
+}
+
+impl FunctionName {
+    pub fn simple_name(&self) -> Option<&str> {
+        match self {
+            Self::Simple(name) => Some(name),
+            Self::Method { .. } => None,
+        }
+    }
+}
+
+impl std::fmt::Display for FunctionName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Simple(name) => f.write_str(name),
+            Self::Method { table, method } => write!(f, "{table}:{method}"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -314,6 +338,12 @@ pub enum Expr {
         args: Vec<Expr>,
         span: Option<Span>,
     },
+    MethodCall {
+        receiver: Box<Expr>,
+        name: String,
+        args: Vec<Expr>,
+        span: Option<Span>,
+    },
     Function(FunctionExpr),
     /// A relative module import, e.g. `require("./math")`.
     ///
@@ -356,6 +386,7 @@ impl Expr {
             Expr::Binary { span, .. } => *span,
             Expr::If { span, .. } => *span,
             Expr::Call { span, .. } => *span,
+            Expr::MethodCall { span, .. } => *span,
             Expr::Function(f) => f.span,
             Expr::Require(_, span) => *span,
             Expr::ArrayLiteral { span, .. } => *span,

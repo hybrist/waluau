@@ -1,4 +1,4 @@
-use waluau_ast::{Function, FunctionExpr, Param, Program, Span, Stmt, Type};
+use waluau_ast::{Function, FunctionExpr, FunctionName, Param, Program, Span, Stmt, Type};
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
 
@@ -93,9 +93,11 @@ impl Parser {
         let name = self.expect_identifier()?;
         let function_expr = self.parse_function_expr_tail(Some(name), false, start_pos)?;
         Ok(Function {
-            name: function_expr
-                .name
-                .expect("top-level functions always have a name"),
+            name: FunctionName::Simple(
+                function_expr
+                    .name
+                    .expect("top-level functions always have a name"),
+            ),
             type_params: function_expr.type_params,
             params: function_expr.params,
             return_type: function_expr.return_type,

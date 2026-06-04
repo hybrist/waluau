@@ -170,7 +170,7 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, String> {
         }
         let func_names: HashSet<String> = module_functions
             .iter()
-            .map(|function| function.name.clone())
+            .map(|function| function.name.to_string())
             .collect();
 
         let mut imports = HashMap::new();
@@ -195,7 +195,7 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, String> {
                 .collect();
             rewriter.rewrite_block(&mut lowered.body, &mut bound);
             strip_unused_namespace_lets(&mut lowered.body);
-            lowered.name = format!("{prefix}{}", function.name);
+            lowered.name = waluau_ast::FunctionName::Simple(format!("{prefix}{}", function.name));
             functions.push(lowered);
         }
 
@@ -246,7 +246,7 @@ fn hoist_table_export_functions(
 
 fn function_expr_to_function(name: &str, function: &FunctionExpr) -> Function {
     Function {
-        name: name.to_string(),
+        name: waluau_ast::FunctionName::Simple(name.to_string()),
         type_params: function.type_params.clone(),
         params: function.params.clone(),
         return_type: function.return_type.clone(),
@@ -296,7 +296,7 @@ fn compute_module_export(
 fn module_function_names(functions: &[Function], export: &Option<Expr>) -> HashSet<String> {
     let mut names: HashSet<String> = functions
         .iter()
-        .map(|function| function.name.clone())
+        .map(|function| function.name.to_string())
         .collect();
     if let Some(Expr::TableLiteral { fields, .. }) = export {
         for field in fields {
@@ -622,6 +622,12 @@ impl Rewriter<'_> {
                     self.rewrite_expr(arg, bound);
                 }
             }
+            Expr::MethodCall { receiver, args, .. } => {
+                self.rewrite_expr(receiver, bound);
+                for arg in args {
+                    self.rewrite_expr(arg, bound);
+                }
+            }
             Expr::Function(function) => {
                 let mut inner = bound.clone();
                 if let Some(name) = &function.name {
@@ -760,6 +766,10 @@ fn expr_mentions_name(name: &str, expr: &Expr) -> bool {
         } => {
             expr_mentions_name(name, callee) || args.iter().any(|arg| expr_mentions_name(name, arg))
         }
+        Expr::MethodCall { receiver, args, .. } => {
+            expr_mentions_name(name, receiver)
+                || args.iter().any(|arg| expr_mentions_name(name, arg))
+        }
         Expr::Function(function) => stmt_mentions_name(name, &function.body),
         Expr::ArrayLiteral { elements, .. } => {
             elements.iter().any(|el| expr_mentions_name(name, el))
@@ -867,6 +877,12 @@ fn collect_expr(expr: &Expr, out: &mut Vec<String>) {
             ..
         } => {
             collect_expr(callee, out);
+            for arg in args {
+                collect_expr(arg, out);
+            }
+        }
+        Expr::MethodCall { receiver, args, .. } => {
+            collect_expr(receiver, out);
             for arg in args {
                 collect_expr(arg, out);
             }
