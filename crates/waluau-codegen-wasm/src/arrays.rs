@@ -9,9 +9,9 @@ use crate::coroutines::coroutine_state_ref_type;
 use crate::wasm_types::externref_val_type;
 
 pub(crate) struct ArrayTypeRegistry {
-    indices: HashMap<String, u32>,
-    record_indices: HashMap<String, u32>,
-    record_field_indices: HashMap<String, BTreeMap<String, u32>>,
+    pub(crate) indices: HashMap<String, u32>,
+    pub(crate) record_indices: HashMap<String, u32>,
+    pub(crate) record_field_indices: HashMap<String, BTreeMap<String, u32>>,
     pub(crate) coroutine_state_type: Option<u32>,
     /// Type index of `$anyref_array = (array (ref null any) mutable)`.
     pub(crate) anyref_array_type: u32,

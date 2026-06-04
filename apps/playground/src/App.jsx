@@ -313,11 +313,196 @@ function parseStringInput(valStr) {
   return valStr;
 }
 
+function renderType(type) {
+  if (!type) return 'unknown';
+  switch (type.kind) {
+    case 'I32': return 'i32';
+    case 'I64': return 'i64';
+    case 'F32': return 'f32';
+    case 'F64': return 'f64';
+    case 'Bool': return 'bool';
+    case 'String': return 'string';
+    case 'Unit': return 'unit';
+    case 'Thread': return 'thread';
+    case 'Array': return `{${renderType(type.value.elementType)}}`;
+    case 'Record': {
+      const fields = type.value.fields;
+      const inner = Object.entries(fields)
+        .map(([name, ty]) => `${name}: ${renderType(ty)}`)
+        .join(', ');
+      return `{ ${inner} }`;
+    }
+    default: return 'unknown';
+  }
+}
+
 function getDefaultParamValue(type) {
+  if (typeof type === 'object' && type !== null) {
+    if (type.kind === 'Record') {
+      const obj = {};
+      for (const [name, fieldTy] of Object.entries(type.value.fields)) {
+        obj[name] = getDefaultParamValue(fieldTy);
+      }
+      return obj;
+    }
+    if (type.kind === 'Array') {
+      return '[]';
+    }
+    if (type.kind === 'String') return '""';
+    return '0';
+  }
   return type === 'string' ? '""' : '0';
 }
 
-function executeCall(instance, funcName, paramsInfo, inputValues) {
+function constructArg(val, type, instance) {
+  if (!type) return Number(val);
+  switch (type.kind) {
+    case 'I32': {
+      const n = Number(val);
+      return isNaN(n) ? 0 : n;
+    }
+    case 'I64': {
+      try {
+        return BigInt(String(val).trim().replace(/n$/, ''));
+      } catch {
+        return 0n;
+      }
+    }
+    case 'F32':
+    case 'F64': {
+      const n = Number(val);
+      return isNaN(n) ? 0 : n;
+    }
+    case 'Bool': {
+      return (val === 'true' || val === true || val === '1' || Number(val) === 1) ? 1 : 0;
+    }
+    case 'String': {
+      return parseStringInput(String(val));
+    }
+    case 'Record': {
+      const typeIdx = type.value.typeIndex;
+      const ctorName = `__waluau_new_record_${typeIdx}`;
+      const ctor = instance.exports[ctorName];
+      if (!ctor) {
+        throw new Error(`Constructor ${ctorName} not found`);
+      }
+      const args = Object.entries(type.value.fields).map(([name, fieldTy]) => {
+        const fieldVal = val ? val[name] : null;
+        return constructArg(fieldVal, fieldTy, instance);
+      });
+      return ctor(...args);
+    }
+    default: {
+      return Number(val);
+    }
+  }
+}
+
+function inspectVal(val, type, instance) {
+  if (val === null || val === undefined) return null;
+  if (!type) return val;
+  switch (type.kind) {
+    case 'I32': return Number(val);
+    case 'I64': return { _isBigInt: true, val: BigInt(val) };
+    case 'F32':
+    case 'F64': return Number(val);
+    case 'Bool': return Boolean(val);
+    case 'String': return String(val);
+    case 'Record': {
+      const typeIdx = type.value.typeIndex;
+      const obj = {};
+      Object.entries(type.value.fields).forEach(([fieldName, fieldTy], fieldIdx) => {
+        const getterName = `__waluau_get_record_${typeIdx}_${fieldIdx}`;
+        const getter = instance.exports[getterName];
+        if (getter) {
+          const fieldVal = getter(val);
+          obj[fieldName] = inspectVal(fieldVal, fieldTy, instance);
+        } else {
+          obj[fieldName] = 'undefined';
+        }
+      });
+      return obj;
+    }
+    default: return val;
+  }
+}
+
+function formatInspectedVal(inspectedVal) {
+  if (inspectedVal === null || inspectedVal === undefined) return 'nil';
+  if (typeof inspectedVal === 'object') {
+    if (inspectedVal._isBigInt) {
+      return inspectedVal.val.toString() + 'n';
+    }
+    if (Array.isArray(inspectedVal)) {
+      return '{' + inspectedVal.map(formatInspectedVal).join(', ') + '}';
+    }
+    const inner = Object.entries(inspectedVal)
+      .map(([name, val]) => `${name} = ${formatInspectedVal(val)}`)
+      .join(', ');
+    return `{ ${inner} }`;
+  }
+  if (typeof inspectedVal === 'string') {
+    return JSON.stringify(inspectedVal);
+  }
+  return String(inspectedVal);
+}
+
+function renderRecordInputFields(funcName, paramIdx, type, currentVal, handleRecordFieldChange, path = []) {
+  return Object.entries(type.value.fields).map(([fieldName, fieldTy]) => {
+    const fieldPath = [...path, fieldName];
+    const val = currentVal ? currentVal[fieldName] : getDefaultParamValue(fieldTy);
+
+    if (fieldTy.kind === 'Record') {
+      return (
+        <div key={fieldName} style={{ marginLeft: '12px', marginTop: '6px', borderLeft: '2px solid rgba(255,255,255,0.1)', paddingLeft: '8px' }}>
+          <div style={{ fontSize: '12px', opacity: 0.7, fontWeight: 'bold' }}>{fieldName}:</div>
+          {renderRecordInputFields(funcName, paramIdx, fieldTy, val, handleRecordFieldChange, fieldPath)}
+        </div>
+      );
+    }
+
+    const typeLabel = renderType(fieldTy);
+    return (
+      <div key={fieldName} className="func-input-row" style={{ marginLeft: '12px', marginTop: '4px' }}>
+        <label className="func-input-label">{fieldName} ({typeLabel}):</label>
+        <input
+          type="text"
+          className="func-input-field"
+          value={val ?? '0'}
+          onChange={(e) => handleRecordFieldChange(funcName, paramIdx, fieldPath, e.target.value)}
+          placeholder={`Enter ${typeLabel} value`}
+        />
+      </div>
+    );
+  });
+}
+
+function renderParamFields(funcName, paramIdx, type, richType, val, handleInputChange, handleRecordFieldChange, isInline = false) {
+  if (richType && richType.kind === 'Record') {
+    return (
+      <div key={paramIdx} style={{ marginTop: '8px', marginBottom: '8px' }}>
+        <div style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--accent-cyan)' }}>param{paramIdx} (record):</div>
+        {renderRecordInputFields(funcName, paramIdx, richType, val, handleRecordFieldChange)}
+      </div>
+    );
+  }
+
+  const typeLabel = richType ? renderType(richType) : type;
+  return (
+    <div key={paramIdx} className={isInline ? "inline-runner-input-row" : "func-input-row"}>
+      <label className={isInline ? "inline-runner-label" : "func-input-label"}>param{paramIdx} ({typeLabel}):</label>
+      <input
+        type="text"
+        className={isInline ? "inline-runner-field" : "func-input-field"}
+        value={val ?? '0'}
+        onChange={(e) => handleInputChange(funcName, paramIdx, e.target.value)}
+        placeholder={`Enter ${typeLabel} value`}
+      />
+    </div>
+  );
+}
+
+function executeCall(instance, funcName, paramsInfo, richParamsInfo, richReturnsInfo, inputValues) {
   if (!instance) return { error: 'No instance' };
   const func = instance.exports[funcName];
   if (!func) return { error: `Exported function "${funcName}" not found` };
@@ -331,41 +516,64 @@ function executeCall(instance, funcName, paramsInfo, inputValues) {
     const parsedArgs = [];
     for (let i = 0; i < paramsInfo.length; i++) {
       const type = paramsInfo[i];
-      const valStr = inputValues[i] || '0';
-      
-      if (type === 'i64') {
+      const richType = richParamsInfo ? richParamsInfo[i] : null;
+      const val = inputValues[i];
+
+      if (richType) {
         try {
-          parsedArgs.push(BigInt(valStr.trim().replace(/n$/, '')));
-        } catch {
-          return { error: `Parameter ${i} must be a valid 64-bit integer`, logs };
+          parsedArgs.push(constructArg(val, richType, instance));
+        } catch (err) {
+          return { error: `Parameter ${i} error: ${err.message}`, logs };
         }
-      } else if (type === 'i32') {
-        const val = Number(valStr);
-        if (isNaN(val) || !Number.isInteger(val)) {
-          return { error: `Parameter ${i} must be a valid 32-bit integer`, logs };
-        }
-        parsedArgs.push(val);
-      } else if (type === 'f32' || type === 'f64') {
-        const val = Number(valStr);
-        if (isNaN(val)) {
-          return { error: `Parameter ${i} must be a valid number`, logs };
-        }
-        parsedArgs.push(val);
-      } else if (type === 'string') {
-        parsedArgs.push(parseStringInput(valStr));
       } else {
-        parsedArgs.push(Number(valStr));
+        const valStr = val || '0';
+        if (type === 'i64') {
+          try {
+            parsedArgs.push(BigInt(valStr.trim().replace(/n$/, '')));
+          } catch {
+            return { error: `Parameter ${i} must be a valid 64-bit integer`, logs };
+          }
+        } else if (type === 'i32') {
+          const num = Number(valStr);
+          if (isNaN(num) || !Number.isInteger(num)) {
+            return { error: `Parameter ${i} must be a valid 32-bit integer`, logs };
+          }
+          parsedArgs.push(num);
+        } else if (type === 'f32' || type === 'f64') {
+          const num = Number(valStr);
+          if (isNaN(num)) {
+            return { error: `Parameter ${i} must be a valid number`, logs };
+          }
+          parsedArgs.push(num);
+        } else if (type === 'string') {
+          parsedArgs.push(parseStringInput(valStr));
+        } else {
+          parsedArgs.push(Number(valStr));
+        }
       }
     }
 
     const result = func(...parsedArgs);
     let valStr = '';
-    if (typeof result === 'bigint') {
-      valStr = result.toString() + 'n';
-    } else if (typeof result === 'string') {
-      valStr = JSON.stringify(result);
+    if (richReturnsInfo && richReturnsInfo.length > 0) {
+      if (richReturnsInfo.length === 1) {
+        const inspected = inspectVal(result, richReturnsInfo[0], instance);
+        valStr = formatInspectedVal(inspected);
+      } else {
+        const inspected = richReturnsInfo.map((retTy, rIdx) => {
+          const retVal = Array.isArray(result) ? result[rIdx] : (rIdx === 0 ? result : null);
+          return inspectVal(retVal, retTy, instance);
+        });
+        valStr = inspected.map(formatInspectedVal).join(', ');
+      }
     } else {
-      valStr = String(result);
+      if (typeof result === 'bigint') {
+        valStr = result.toString() + 'n';
+      } else if (typeof result === 'string') {
+        valStr = JSON.stringify(result);
+      } else {
+        valStr = String(result);
+      }
     }
     return { value: valStr, logs };
   } catch (err) {
@@ -1031,7 +1239,15 @@ export default function App() {
         return;
       }
       const wasmBuffer = new Uint8Array(outputWasmBytes);
-      const list = getWasmExports(wasmBuffer);
+      const richSigs = output?.signatures || {};
+      const list = getWasmExports(wasmBuffer).map(func => {
+        const richSig = richSigs[func.name];
+        return {
+          ...func,
+          richParams: richSig ? richSig.params : null,
+          richReturns: richSig ? richSig.returns : null,
+        };
+      });
       if (active) {
         setExportsList(list);
         setFuncInputs(prev => {
@@ -1039,7 +1255,10 @@ export default function App() {
           let changed = false;
           for (const func of list) {
             if (!next[func.name] || next[func.name].length !== func.params.length) {
-              next[func.name] = func.params.map(getDefaultParamValue);
+              const defaultVals = func.richParams
+                ? func.richParams.map(getDefaultParamValue)
+                : func.params.map(getDefaultParamValue);
+              next[func.name] = defaultVals;
               changed = true;
             }
           }
@@ -1078,7 +1297,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [outputWasmBytes, requiresWasmGc]);
+  }, [outputWasmBytes, requiresWasmGc, output]);
 
   const handleInputChange = (funcName, paramIndex, value) => {
     setFuncInputs(prev => {
@@ -1088,16 +1307,33 @@ export default function App() {
     });
   };
 
-  const handleManualRun = (funcName, params) => {
-    const inputs = funcInputs[funcName] || params.map(getDefaultParamValue);
-    const res = executeCall(runInstance, funcName, params, inputs);
+  const handleRecordFieldChange = (funcName, paramIndex, fieldPath, value) => {
+    setFuncInputs(prev => {
+      const funcParams = prev[funcName] ? [...prev[funcName]] : [];
+      let current = { ...funcParams[paramIndex] };
+      funcParams[paramIndex] = current;
+
+      for (let i = 0; i < fieldPath.length - 1; i++) {
+        const key = fieldPath[i];
+        current[key] = { ...current[key] };
+        current = current[key];
+      }
+      current[fieldPath[fieldPath.length - 1]] = value;
+
+      return { ...prev, [funcName]: funcParams };
+    });
+  };
+
+  const handleManualRun = (funcName, params, richParams, richReturns) => {
+    const inputs = funcInputs[funcName] || (richParams || params).map(getDefaultParamValue);
+    const res = executeCall(runInstance, funcName, params, richParams, richReturns, inputs);
     setManualResults(prev => ({ ...prev, [funcName]: res }));
   };
 
-  const getResult = (funcName, params) => {
+  const getResult = (funcName, params, richParams, richReturns) => {
     if (autoRun) {
-      const inputs = funcInputs[funcName] || params.map(getDefaultParamValue);
-      return executeCall(runInstance, funcName, params, inputs);
+      const inputs = funcInputs[funcName] || (richParams || params).map(getDefaultParamValue);
+      return executeCall(runInstance, funcName, params, richParams, richReturns, inputs);
     } else {
       return manualResults[funcName] || { isIdle: true };
     }
@@ -1479,48 +1715,62 @@ export default function App() {
                 ) : (
                   <div className="func-list">
                     {exportsList.map((func) => {
-                      const inputs = funcInputs[func.name] || func.params.map(getDefaultParamValue);
-                      const res = getResult(func.name, func.params);
+                      const inputs = funcInputs[func.name] || (func.richParams || func.params).map(getDefaultParamValue);
+                      const res = getResult(func.name, func.params, func.richParams, func.richReturns);
 
                       return (
                         <div key={func.name} className="func-card">
                           <div className="func-signature">
                             <span className="func-signature-name">{func.name}</span>
                             <span>(</span>
-                            {func.params.map((type, idx) => (
-                              <span key={idx}>
-                                param{idx}: <span className="func-signature-type">{type}</span>
-                                {idx < func.params.length - 1 ? ', ' : ''}
-                              </span>
-                            ))}
+                            {func.richParams ? (
+                              func.richParams.map((type, idx) => (
+                                <span key={idx}>
+                                  param{idx}: <span className="func-signature-type">{renderType(type)}</span>
+                                  {idx < func.richParams.length - 1 ? ', ' : ''}
+                                </span>
+                              ))
+                            ) : (
+                              func.params.map((type, idx) => (
+                                <span key={idx}>
+                                  param{idx}: <span className="func-signature-type">{type}</span>
+                                  {idx < func.params.length - 1 ? ', ' : ''}
+                                </span>
+                              ))
+                            )}
                             <span>)</span>
                             <span className="func-signature-arrow"> -&gt; </span>
                             <span className="func-signature-type">
-                              {func.returns.length > 0 ? func.returns.join(', ') : 'void'}
+                              {func.richReturns ? (
+                                func.richReturns.length > 0 ? func.richReturns.map(renderType).join(', ') : 'void'
+                              ) : (
+                                func.returns.length > 0 ? func.returns.join(', ') : 'void'
+                              )}
                             </span>
                           </div>
 
                           {func.params.length > 0 && (
                             <div className="func-inputs">
-                              {func.params.map((type, idx) => (
-                                <div key={idx} className="func-input-row">
-                                  <label className="func-input-label">param{idx} ({type}):</label>
-                                  <input
-                                    type="text"
-                                    className="func-input-field"
-                                    value={inputs[idx] ?? '0'}
-                                    onChange={(e) => handleInputChange(func.name, idx, e.target.value)}
-                                    placeholder={`Enter ${type} value`}
-                                  />
-                                </div>
-                              ))}
+                              {func.params.map((type, idx) => {
+                                const richType = func.richParams ? func.richParams[idx] : null;
+                                return renderParamFields(
+                                  func.name,
+                                  idx,
+                                  type,
+                                  richType,
+                                  inputs[idx],
+                                  handleInputChange,
+                                  handleRecordFieldChange,
+                                  false
+                                );
+                              })}
                             </div>
                           )}
 
                           {!autoRun && (
                             <button
                               className="func-run-btn"
-                              onClick={() => handleManualRun(func.name, func.params)}
+                              onClick={() => handleManualRun(func.name, func.params, func.richParams, func.richReturns)}
                             >
                               Run Function
                             </button>
@@ -1563,6 +1813,7 @@ export default function App() {
             exportsList={exportsList}
             funcInputs={funcInputs}
             handleInputChange={handleInputChange}
+            handleRecordFieldChange={handleRecordFieldChange}
             handleManualRun={handleManualRun}
             getResult={getResult}
             autoRun={autoRun}
@@ -1701,6 +1952,7 @@ function InlineRunner({
   exportsList,
   funcInputs,
   handleInputChange,
+  handleRecordFieldChange,
   handleManualRun,
   getResult,
   autoRun,
@@ -1709,8 +1961,8 @@ function InlineRunner({
   const func = exportsList.find((e) => e.name === funcName);
   if (!func) return null;
 
-  const inputs = funcInputs[funcName] || func.params.map(getDefaultParamValue);
-  const res = getResult(funcName, func.params);
+  const inputs = funcInputs[funcName] || (func.richParams || func.params).map(getDefaultParamValue);
+  const res = getResult(funcName, func.params, func.richParams, func.richReturns);
 
   return (
     <div className="inline-runner-widget">
@@ -1718,16 +1970,29 @@ function InlineRunner({
         <div className="inline-runner-signature">
           <span className="inline-runner-name">{func.name}</span>
           <span>(</span>
-          {func.params.map((type, idx) => (
-            <span key={idx}>
-              param{idx}: <span className="inline-runner-type">{type}</span>
-              {idx < func.params.length - 1 ? ', ' : ''}
-            </span>
-          ))}
+          {func.richParams ? (
+            func.richParams.map((type, idx) => (
+              <span key={idx}>
+                param{idx}: <span className="inline-runner-type">{renderType(type)}</span>
+                {idx < func.richParams.length - 1 ? ', ' : ''}
+              </span>
+            ))
+          ) : (
+            func.params.map((type, idx) => (
+              <span key={idx}>
+                param{idx}: <span className="inline-runner-type">{type}</span>
+                {idx < func.params.length - 1 ? ', ' : ''}
+              </span>
+            ))
+          )}
           <span>)</span>
           <span className="inline-runner-arrow"> -&gt; </span>
           <span className="inline-runner-type">
-            {func.returns.length > 0 ? func.returns.join(', ') : 'void'}
+            {func.richReturns ? (
+              func.richReturns.length > 0 ? func.richReturns.map(renderType).join(', ') : 'void'
+            ) : (
+              func.returns.length > 0 ? func.returns.join(', ') : 'void'
+            )}
           </span>
         </div>
         <button className="inline-runner-close" onClick={onClose} title="Close inline runner">
@@ -1737,18 +2002,19 @@ function InlineRunner({
 
       {func.params.length > 0 && (
         <div className="inline-runner-inputs">
-          {func.params.map((type, idx) => (
-            <div key={idx} className="inline-runner-input-row">
-              <label className="inline-runner-label">param{idx} ({type}):</label>
-              <input
-                type="text"
-                className="inline-runner-field"
-                value={inputs[idx] ?? '0'}
-                onChange={(e) => handleInputChange(func.name, idx, e.target.value)}
-                placeholder={`Enter ${type} value`}
-              />
-            </div>
-          ))}
+          {func.params.map((type, idx) => {
+            const richType = func.richParams ? func.richParams[idx] : null;
+            return renderParamFields(
+              func.name,
+              idx,
+              type,
+              richType,
+              inputs[idx],
+              handleInputChange,
+              handleRecordFieldChange,
+              true
+            );
+          })}
         </div>
       )}
 
@@ -1756,7 +2022,7 @@ function InlineRunner({
         {!autoRun && (
           <button
             className="inline-runner-run-btn"
-            onClick={() => handleManualRun(func.name, func.params)}
+            onClick={() => handleManualRun(func.name, func.params, func.richParams, func.richReturns)}
           >
             Run
           </button>

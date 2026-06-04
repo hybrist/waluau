@@ -25,7 +25,7 @@ pub fn compile_file(path: &Path) -> Result<Vec<u8>, Diagnostic> {
 fn compile_program(program: waluau_ast::Program) -> Result<Vec<u8>, Diagnostic> {
     let typed_program = waluau_hir::type_check_and_infer(&program)?;
     let ir = waluau_ir::build(&typed_program)?;
-    waluau_codegen_wasm::emit(&ir)
+    Ok(waluau_codegen_wasm::emit(&ir)?.wasm)
 }
 
 pub fn run() -> Result<(), Diagnostic> {
