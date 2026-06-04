@@ -273,6 +273,52 @@ pub(super) fn infer_top_level_function_return_type(
     Ok(Some(merged))
 }
 
+pub(super) fn infer_function_expr_return_type(
+    function: &FunctionExpr,
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+) -> Result<Type, Diagnostic> {
+    let mut local_vars = vars.clone();
+    for param in &function.params {
+        local_vars.insert(
+            param.name.clone(),
+            binding_for(param.ty.clone(), Rebindability::Rebindable),
+        );
+    }
+    if let Some(function_name) = &function.name {
+        let function_ty = Type::Function {
+            params: function
+                .params
+                .iter()
+                .map(|param| param.ty.clone())
+                .collect(),
+            return_type: Box::new(Type::Unit),
+        };
+        local_vars.insert(
+            function_name.clone(),
+            binding_for(function_ty, Rebindability::Rebindable),
+        );
+    }
+
+    let mut returns = Vec::new();
+    collect_return_types(
+        &function.body,
+        &local_vars,
+        fn_signatures,
+        active_type_params,
+        &mut returns,
+    )?;
+    if returns.is_empty() {
+        return Ok(Type::Unit);
+    }
+    let mut merged = returns[0].clone();
+    for ty in returns.into_iter().skip(1) {
+        merged = common_return_type(merged, ty)?;
+    }
+    Ok(merged)
+}
+
 pub(super) fn infer_generic_function_expr_call(
     function: &FunctionExpr,
     type_args: &[Type],

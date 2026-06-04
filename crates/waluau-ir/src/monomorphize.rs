@@ -443,6 +443,7 @@ impl<'a> Monomorphizer<'a> {
         }
         Ok(waluau_ast::FunctionExpr {
             name: function.name.clone(),
+            implicit_self: function.implicit_self.clone(),
             type_params: Vec::new(),
             params: function
                 .params
@@ -493,6 +494,7 @@ impl<'a> Monomorphizer<'a> {
         }
         Ok(waluau_ast::FunctionExpr {
             name: function.name.clone(),
+            implicit_self: function.implicit_self.clone(),
             type_params: Vec::new(),
             params: function
                 .params

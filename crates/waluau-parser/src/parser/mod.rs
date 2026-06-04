@@ -187,6 +187,7 @@ impl Parser {
         self.expect_simple(TokenKind::End, "expected 'end' after function body")?;
         Ok(FunctionExpr {
             name,
+            implicit_self: None,
             type_params,
             params,
             return_type,
