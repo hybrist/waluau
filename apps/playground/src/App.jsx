@@ -313,6 +313,14 @@ function parseStringInput(valStr) {
   return valStr;
 }
 
+function getEntries(obj) {
+  if (!obj) return [];
+  if (obj instanceof Map || typeof obj.entries === 'function') {
+    return Array.from(obj.entries());
+  }
+  return Object.entries(obj);
+}
+
 function renderType(type) {
   if (!type) return 'unknown';
   switch (type.kind) {
@@ -327,7 +335,7 @@ function renderType(type) {
     case 'Array': return `{${renderType(type.value.elementType)}}`;
     case 'Record': {
       const fields = type.value.fields;
-      const inner = Object.entries(fields)
+      const inner = getEntries(fields)
         .map(([name, ty]) => `${name}: ${renderType(ty)}`)
         .join(', ');
       return `{ ${inner} }`;
@@ -340,7 +348,7 @@ function getDefaultParamValue(type) {
   if (typeof type === 'object' && type !== null) {
     if (type.kind === 'Record') {
       const obj = {};
-      for (const [name, fieldTy] of Object.entries(type.value.fields)) {
+      for (const [name, fieldTy] of getEntries(type.value.fields)) {
         obj[name] = getDefaultParamValue(fieldTy);
       }
       return obj;
@@ -392,7 +400,7 @@ function constructArg(val, type, instance) {
       if (!ctor) {
         throw new Error(`Constructor ${ctorName} not found`);
       }
-      const args = Object.entries(type.value.fields).map(([name, fieldTy]) => {
+      const args = getEntries(type.value.fields).map(([name, fieldTy]) => {
         const fieldVal = val ? val[name] : null;
         return constructArg(fieldVal, fieldTy, instance);
       });
@@ -417,7 +425,7 @@ function inspectVal(val, type, instance) {
     case 'Record': {
       const typeIdx = type.value.typeIndex;
       const obj = {};
-      Object.entries(type.value.fields).forEach(([fieldName, fieldTy], fieldIdx) => {
+      getEntries(type.value.fields).forEach(([fieldName, fieldTy], fieldIdx) => {
         const getterName = `__waluau_get_record_${typeIdx}_${fieldIdx}`;
         const getter = instance.exports[getterName];
         if (getter) {
@@ -454,7 +462,7 @@ function formatInspectedVal(inspectedVal) {
 }
 
 function renderRecordInputFields(funcName, paramIdx, type, currentVal, handleRecordFieldChange, path = []) {
-  return Object.entries(type.value.fields).map(([fieldName, fieldTy]) => {
+  return getEntries(type.value.fields).map(([fieldName, fieldTy]) => {
     const fieldPath = [...path, fieldName];
     const val = currentVal ? currentVal[fieldName] : getDefaultParamValue(fieldTy);
 
