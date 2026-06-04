@@ -1110,6 +1110,7 @@ fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
         | Expr::Number(..)
         | Expr::Bool(..)
         | Expr::String(..)
+        | Expr::Bytes(..)
         | Expr::Require(..) => false,
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => expr_calls_name(expr, callee),
         Expr::Binary { left, right, .. } => {
@@ -1200,6 +1201,7 @@ fn seal_record_locals_in_expr(expr: &Expr, vars: &mut HashMap<String, Binding>) 
         | Expr::Number(..)
         | Expr::Bool(..)
         | Expr::String(..)
+        | Expr::Bytes(..)
         | Expr::Require(..) => {}
         Expr::ArrayLiteral { elements, .. } => {
             for element in elements {

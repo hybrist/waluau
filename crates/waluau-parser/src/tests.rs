@@ -919,6 +919,16 @@ fn parses_string_literals_as_values() {
 }
 
 #[test]
+fn parses_bytes_literals_as_values() {
+    let source = r#"local x: bytes = b"OK\x00""#;
+    let program = parse(source).expect("parse should succeed");
+    let waluau_ast::Stmt::Let { value, .. } = &program.top_level[0] else {
+        panic!("expected a let binding");
+    };
+    assert!(matches!(value, waluau_ast::Expr::Bytes(value, _) if value == &vec![79, 75, 0]));
+}
+
+#[test]
 fn parses_break_and_continue_in_loops() {
     let source = r#"
         function entry(): i32

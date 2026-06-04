@@ -1129,6 +1129,11 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::GlobalGet(index));
                 emit_value_store(out, local_plan, *value)?;
             }
+            IrInstruction::Bytes(_) => {
+                return Err(Diagnostic::new(
+                    "bytes literals are not supported during wasm emission yet",
+                ));
+            }
             IrInstruction::Cast {
                 value: source,
                 from,
@@ -1524,6 +1529,16 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::ArrayLen);
                 emit_value_store(out, local_plan, *value)?;
             }
+            IrInstruction::BytesGet { .. } => {
+                return Err(Diagnostic::new(
+                    "bytes indexing is not supported during wasm emission yet",
+                ));
+            }
+            IrInstruction::BytesLen { .. } => {
+                return Err(Diagnostic::new(
+                    "bytes length is not supported during wasm emission yet",
+                ));
+            }
             IrInstruction::StructNew { struct_ty, fields } => {
                 let struct_type_index = ctx.array_registry.record_index(struct_ty)?;
                 for field in fields {
@@ -1861,6 +1876,11 @@ fn emit_binary(
                     "string add is not supported during wasm emission",
                 ));
             }
+            Type::Bytes => {
+                return Err(Diagnostic::new(
+                    "bytes add is not supported during wasm emission",
+                ));
+            }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -1875,6 +1895,11 @@ fn emit_binary(
         BinaryOp::Concat => match operand_ty {
             Type::String => {
                 out.instruction(&Instruction::Call(host::IMPORT_JS_STRING_CONCAT_FUNC));
+            }
+            Type::Bytes => {
+                return Err(Diagnostic::new(
+                    "bytes concat is not supported during wasm emission yet",
+                ));
             }
             _ => {
                 return Err(Diagnostic::new(
@@ -1903,6 +1928,11 @@ fn emit_binary(
             Type::String => {
                 return Err(Diagnostic::new(
                     "string sub is not supported during wasm emission",
+                ));
+            }
+            Type::Bytes => {
+                return Err(Diagnostic::new(
+                    "bytes sub is not supported during wasm emission",
                 ));
             }
             Type::Array(_) => unreachable!(),
@@ -1937,6 +1967,11 @@ fn emit_binary(
             Type::String => {
                 return Err(Diagnostic::new(
                     "string mul is not supported during wasm emission",
+                ));
+            }
+            Type::Bytes => {
+                return Err(Diagnostic::new(
+                    "bytes mul is not supported during wasm emission",
                 ));
             }
             Type::Array(_) => unreachable!(),
@@ -1979,6 +2014,11 @@ fn emit_binary(
                     "string div is not supported during wasm emission",
                 ));
             }
+            Type::Bytes => {
+                return Err(Diagnostic::new(
+                    "bytes div is not supported during wasm emission",
+                ));
+            }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -2006,6 +2046,11 @@ fn emit_binary(
             }
             Type::String => {
                 out.instruction(&Instruction::Call(host::IMPORT_JS_STRING_EQ_FUNC));
+            }
+            Type::Bytes => {
+                return Err(Diagnostic::new(
+                    "bytes equality is not supported during wasm emission yet",
+                ));
             }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
@@ -2047,6 +2092,11 @@ fn emit_binary(
                     "string comparison is not supported during wasm emission",
                 ));
             }
+            Type::Bytes => {
+                return Err(Diagnostic::new(
+                    "bytes comparison is not supported during wasm emission yet",
+                ));
+            }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -2085,6 +2135,11 @@ fn emit_binary(
             Type::String => {
                 return Err(Diagnostic::new(
                     "string comparison is not supported during wasm emission",
+                ));
+            }
+            Type::Bytes => {
+                return Err(Diagnostic::new(
+                    "bytes comparison is not supported during wasm emission yet",
                 ));
             }
             Type::Array(_) => unreachable!(),

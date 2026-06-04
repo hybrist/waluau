@@ -90,6 +90,7 @@ pub enum Type {
     Unit,
     Bool,
     String,
+    Bytes,
     Array(Box<Type>),
     Multi(Vec<Type>),
     Function {
@@ -181,6 +182,7 @@ impl std::fmt::Display for Type {
             Self::Unit => f.write_str("unit"),
             Self::Bool => f.write_str("bool"),
             Self::String => f.write_str("string"),
+            Self::Bytes => f.write_str("bytes"),
             Self::Array(element) => write!(f, "{{{element}}}"),
             Self::Multi(types) => {
                 for (index, ty) in types.iter().enumerate() {
@@ -310,6 +312,7 @@ pub enum Expr {
     Number(NumberLiteral, Option<Span>),
     Bool(bool, Option<Span>),
     String(String, Option<Span>),
+    Bytes(Vec<u8>, Option<Span>),
     Name(String, Option<Span>),
     Unary {
         op: UnaryOp,
@@ -381,6 +384,7 @@ impl Expr {
             Expr::Number(_, span) => *span,
             Expr::Bool(_, span) => *span,
             Expr::String(_, span) => *span,
+            Expr::Bytes(_, span) => *span,
             Expr::Name(_, span) => *span,
             Expr::Unary { span, .. } => *span,
             Expr::Cast { span, .. } => *span,

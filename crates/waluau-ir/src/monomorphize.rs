@@ -293,6 +293,7 @@ impl<'a> Monomorphizer<'a> {
             Expr::Number(..)
             | Expr::Bool(..)
             | Expr::String(..)
+            | Expr::Bytes(..)
             | Expr::Name(..)
             | Expr::Require(..) => expr.clone(),
             Expr::Unary { op, expr, span } => Expr::Unary {

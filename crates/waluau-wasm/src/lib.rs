@@ -12,6 +12,7 @@ enum TypeJson {
     F64,
     Bool,
     String,
+    Bytes,
     Unit,
     Thread,
     Array {
@@ -55,6 +56,7 @@ fn to_type_json(
         },
         waluau_ast::Type::Bool => TypeJson::Bool,
         waluau_ast::Type::String => TypeJson::String,
+        waluau_ast::Type::Bytes => TypeJson::Bytes,
         waluau_ast::Type::Unit => TypeJson::Unit,
         waluau_ast::Type::Thread => TypeJson::Thread,
         waluau_ast::Type::Array(elem_ty) => TypeJson::Array {

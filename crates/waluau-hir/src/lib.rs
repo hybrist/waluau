@@ -273,6 +273,7 @@ fn resolve_expr_implicit_self(
         | Expr::Number(..)
         | Expr::Bool(..)
         | Expr::String(..)
+        | Expr::Bytes(..)
         | Expr::Require(..) => Ok(()),
     }
 }

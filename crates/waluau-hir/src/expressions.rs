@@ -39,6 +39,7 @@ pub(super) fn infer_expr(
         Expr::Number(value, _) => resolve_number_literal(value, expected),
         Expr::Bool(..) => Ok(Type::Bool),
         Expr::String(..) => coerce_type(Type::String, expected),
+        Expr::Bytes(..) => coerce_type(Type::Bytes, expected),
         Expr::Require(path, _) => Err(Diagnostic::new(format!(
             "require(\"{path}\") can only be resolved when compiling from a file; \
              relative imports are unavailable when compiling a single source string"
@@ -83,6 +84,7 @@ pub(super) fn infer_expr(
                     Type::Bool => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Unit => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::String => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                    Type::Bytes => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Array(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Multi(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
@@ -105,8 +107,11 @@ pub(super) fn infer_expr(
             }
             UnaryOp::Len => {
                 let actual = infer_expr(expr, vars, fn_signatures, active_type_params, None)?;
+                if actual == Type::Bytes {
+                    return coerce_type(Type::Numeric(NumericType::I32), expected);
+                }
                 if !actual.is_array() {
-                    return Err(Diagnostic::new("# requires an array operand"));
+                    return Err(Diagnostic::new("# requires an array or bytes operand"));
                 }
                 coerce_type(Type::Numeric(NumericType::I32), expected)
             }
@@ -356,9 +361,13 @@ pub(super) fn infer_expr(
         }
         Expr::Index { base, index, .. } => {
             let base_ty = infer_expr(base, vars, fn_signatures, active_type_params, None)?;
-            let element_ty = base_ty
-                .element_type()
-                .ok_or_else(|| Diagnostic::new("indexing requires an array operand"))?;
+            let element_ty = if base_ty == Type::Bytes {
+                Type::Numeric(NumericType::I32)
+            } else {
+                base_ty
+                    .element_type()
+                    .ok_or_else(|| Diagnostic::new("indexing requires an array or bytes operand"))?
+            };
             let index_ty = infer_expr(
                 index,
                 vars,
@@ -391,8 +400,23 @@ pub(super) fn infer_expr(
                     }
                     return coerce_type(Type::String, expected);
                 }
+                if left_ty == Type::Bytes {
+                    let right_ty = infer_expr(
+                        right,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        Some(Type::Bytes),
+                    )?;
+                    if right_ty != Type::Bytes {
+                        return Err(Diagnostic::new(
+                            "bytes concatenation requires both operands to be bytes",
+                        ));
+                    }
+                    return coerce_type(Type::Bytes, expected);
+                }
                 Err(Diagnostic::new(
-                    "string concatenation requires both operands to be strings",
+                    "concatenation requires both operands to be strings or both operands to be bytes",
                 ))
             }
             BinaryOp::Add => {
@@ -418,14 +442,30 @@ pub(super) fn infer_expr(
                 coerce_type(operand_ty, expected)
             }
             BinaryOp::Less | BinaryOp::Greater => {
-                let _ = infer_numeric_common_type(
-                    left,
-                    right,
-                    vars,
-                    fn_signatures,
-                    active_type_params,
-                    None,
-                )?;
+                let left_ty = infer_expr(left, vars, fn_signatures, active_type_params, None)?;
+                if left_ty == Type::Bytes {
+                    let right_ty = infer_expr(
+                        right,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        Some(Type::Bytes),
+                    )?;
+                    if right_ty != Type::Bytes {
+                        return Err(Diagnostic::new(
+                            "< and > require both sides to have same type",
+                        ));
+                    }
+                } else {
+                    let _ = infer_numeric_common_type(
+                        left,
+                        right,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        None,
+                    )?;
+                }
                 Ok(Type::Bool)
             }
             BinaryOp::And | BinaryOp::Or => {
@@ -479,9 +519,20 @@ pub(super) fn infer_expr(
                     if right_ty != Type::String {
                         return Err(Diagnostic::new("== requires both sides to have same type"));
                     }
+                } else if left_ty == Type::Bytes {
+                    let right_ty = infer_expr(
+                        right,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        Some(Type::Bytes),
+                    )?;
+                    if right_ty != Type::Bytes {
+                        return Err(Diagnostic::new("== requires both sides to have same type"));
+                    }
                 } else {
                     return Err(Diagnostic::new(
-                        "== supports only numeric, bool, and string operands in MVP",
+                        "== supports only numeric, bool, string, and bytes operands in MVP",
                     ));
                 }
                 Ok(Type::Bool)

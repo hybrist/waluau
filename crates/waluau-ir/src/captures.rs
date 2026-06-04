@@ -210,7 +210,11 @@ fn collect_expr_captures(
             collect_expr_captures(base, bound, env, signatures, captures);
             collect_expr_captures(index, bound, env, signatures, captures);
         }
-        Expr::Number(..) | Expr::Bool(..) | Expr::String(..) | Expr::Require(..) => {}
+        Expr::Number(..)
+        | Expr::Bool(..)
+        | Expr::String(..)
+        | Expr::Bytes(..)
+        | Expr::Require(..) => {}
     }
 }
 
@@ -406,6 +410,7 @@ fn collect_nested_from_expr(expr: &Expr, out: &mut HashSet<String>) {
         | Expr::Number(..)
         | Expr::Bool(..)
         | Expr::String(..)
+        | Expr::Bytes(..)
         | Expr::Require(..) => {}
     }
 }
@@ -573,6 +578,10 @@ fn collect_free_names_in_expr(expr: &Expr, bound: &HashSet<String>, out: &mut Ha
             collect_free_names_in_expr(base, bound, out);
             collect_free_names_in_expr(index, bound, out);
         }
-        Expr::Number(..) | Expr::Bool(..) | Expr::String(..) | Expr::Require(..) => {}
+        Expr::Number(..)
+        | Expr::Bool(..)
+        | Expr::String(..)
+        | Expr::Bytes(..)
+        | Expr::Require(..) => {}
     }
 }
