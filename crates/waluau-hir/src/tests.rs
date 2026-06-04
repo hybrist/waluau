@@ -1,4 +1,4 @@
-use waluau_ast::{NumericType, Type};
+use waluau_ast::{Expr, FunctionName, NumericType, Stmt, Type};
 use waluau_diagnostics::DiagnosticCategory;
 use waluau_parser::parse;
 
@@ -730,6 +730,73 @@ fn type_checks_incremental_field_assignment_on_record_local() {
     "#;
     let program = parse(source).expect("parse should succeed");
     super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn type_checks_method_declaration_with_implicit_self() {
+    let source = r#"
+        local point = { x = 41::i32 }
+
+        function point:get_x(): i32
+            return self.x
+        end
+
+        function entry(): i32
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn desugars_method_declaration_into_field_assignment_with_resolved_self_type() {
+    let source = r#"
+        local point = { x = 41::i32 }
+
+        function point:get_x()
+            return self.x
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+
+    assert!(
+        typed
+            .functions
+            .iter()
+            .all(|function| !matches!(function.name, FunctionName::Method { .. })),
+        "method declarations should be desugared before the typed program is returned"
+    );
+
+    let init = typed
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "__waluau_top_level_init")
+        .expect("expected synthesized top-level init");
+    let field_assign = init
+        .body
+        .iter()
+        .find_map(|stmt| match stmt {
+            Stmt::FieldAssign {
+                base, name, value, ..
+            } if matches!(base.as_ref(), Expr::Name(base_name, _) if base_name == "point")
+                && name == "get_x" =>
+            {
+                Some(value)
+            }
+            _ => None,
+        })
+        .expect("expected method declaration to lower to point.get_x assignment");
+    let Expr::Function(function) = field_assign else {
+        panic!("expected method assignment to store a function value");
+    };
+    assert_eq!(function.return_type, Some(Type::Numeric(NumericType::I32)));
+    assert_eq!(function.params[0].name, "self");
+    assert_eq!(
+        function.params[0].ty,
+        Type::Record(std::iter::once(("x".to_string(), Type::Numeric(NumericType::I32))).collect())
+    );
 }
 
 #[test]

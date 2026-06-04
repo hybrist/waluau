@@ -41,6 +41,7 @@ pub enum FunctionName {
 #[derive(Clone, Debug, PartialEq)]
 pub struct FunctionExpr {
     pub name: Option<String>,
+    pub implicit_self: Option<String>,
     pub type_params: Vec<String>,
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
