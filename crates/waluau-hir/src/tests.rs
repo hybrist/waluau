@@ -823,6 +823,69 @@ fn desugars_method_declaration_into_field_assignment_with_resolved_self_type() {
 }
 
 #[test]
+fn type_checks_generic_method_declaration() {
+    let source = r#"
+        local point = { x = 41::i32 }
+
+        function point:identity<T>(value: T): T
+            local _x: i32 = self.x
+            return value
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+    let init = typed
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "__waluau_top_level_init")
+        .expect("expected synthesized top-level init");
+    let field_assign = init
+        .body
+        .iter()
+        .find_map(|stmt| match stmt {
+            Stmt::FieldAssign {
+                base, name, value, ..
+            } if matches!(base.as_ref(), Expr::Name(base_name, _) if base_name == "point")
+                && name == "identity" =>
+            {
+                Some(value)
+            }
+            _ => None,
+        })
+        .expect("expected method declaration to lower to point.identity assignment");
+    let Expr::Function(function) = field_assign else {
+        panic!("expected method assignment to store a function value");
+    };
+    assert_eq!(function.type_params, vec!["T".to_string()]);
+    assert_eq!(function.params[0].name, "self");
+    assert_eq!(
+        function.params[0].ty,
+        Type::Record(std::iter::once(("x".to_string(), Type::Numeric(NumericType::I32))).collect())
+    );
+}
+
+#[test]
+fn rejects_generic_method_used_as_value_without_type_arguments() {
+    let source = r#"
+        local point = { x = 41::i32 }
+
+        function point:identity<T>(value: T): T
+            return value
+        end
+
+        function entry(): i32
+            local f = point.identity
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(error.code(), Some("generic/uninstantiated-value"));
+}
+
+#[test]
 fn rejects_new_field_after_record_read() {
     let source = r#"
         function entry(): i32

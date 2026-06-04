@@ -919,6 +919,35 @@ fn monomorphizes_generic_calls_once_per_type_arguments() {
 }
 
 #[test]
+fn lowers_generic_method_declaration_after_hir_desugaring() {
+    let source = r#"
+        local point = { x = 41::i32 }
+
+        function point:identity<T>(value: T): T
+            local _x: i32 = self.x
+            return value
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+
+    let init = module
+        .functions
+        .iter()
+        .find(|function| function.name == "__waluau_top_level_init")
+        .expect("top-level init should exist");
+    assert!(
+        init.blocks.values().all(|block| {
+            block.instructions.iter().all(|(_, instruction)| {
+                !matches!(instruction, Instruction::Closure { name, .. } if name.contains("identity"))
+            })
+        }),
+        "generic method declaration should not lower as an unspecialized closure value"
+    );
+}
+
+#[test]
 fn rejects_cross_specialization_recursive_generics() {
     let source = r#"
         function loop<T>(value: T): {T}
