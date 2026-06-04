@@ -359,19 +359,25 @@ function constructArg(val, type, instance) {
   switch (type.kind) {
     case 'I32': {
       const n = Number(val);
-      return isNaN(n) ? 0 : n;
+      if (isNaN(n) || !Number.isInteger(n)) {
+        throw new Error('must be a valid 32-bit integer');
+      }
+      return n;
     }
     case 'I64': {
       try {
         return BigInt(String(val).trim().replace(/n$/, ''));
       } catch {
-        return 0n;
+        throw new Error('must be a valid 64-bit integer');
       }
     }
     case 'F32':
     case 'F64': {
       const n = Number(val);
-      return isNaN(n) ? 0 : n;
+      if (isNaN(n)) {
+        throw new Error('must be a valid number');
+      }
+      return n;
     }
     case 'Bool': {
       return (val === 'true' || val === true || val === '1' || Number(val) === 1) ? 1 : 0;
@@ -1241,7 +1247,9 @@ export default function App() {
       const wasmBuffer = new Uint8Array(outputWasmBytes);
       const richSigs = output?.signatures || {};
       const list = getWasmExports(wasmBuffer).map(func => {
-        const richSig = richSigs[func.name];
+        const richSig = (richSigs instanceof Map || (richSigs && typeof richSigs.get === 'function'))
+          ? richSigs.get(func.name)
+          : richSigs[func.name];
         return {
           ...func,
           richParams: richSig ? richSig.params : null,

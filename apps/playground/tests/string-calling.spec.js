@@ -38,7 +38,7 @@ test.describe('string function calling', () => {
     await expect(concatCard.locator('.func-result-value.success')).toHaveText('""');
 
     const equalsCard = page.locator('.func-card:has(.func-signature-name:text("equals"))');
-    await expect(equalsCard.locator('.func-result-value.success')).toHaveText('1');
+    await expect(equalsCard.locator('.func-result-value.success')).toHaveText('true');
   });
 
   test('accepts quoted string literals', async ({ page }) => {
