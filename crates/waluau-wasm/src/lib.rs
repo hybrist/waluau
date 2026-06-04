@@ -313,6 +313,14 @@ mod tests {
     }
 
     #[test]
+    fn compile_records_conformance_with_alias_mutation() {
+        let source = include_str!("../../../conformance/records_sealed_tables.walu");
+        let result =
+            compile_source(source).expect("records conformance with alias mutation should compile");
+        assert!(result.wat.contains("(module"));
+    }
+
+    #[test]
     fn compile_multi_resolves_imports() {
         let mut files = std::collections::HashMap::new();
         files.insert(

@@ -20,9 +20,18 @@ function nested_record(seed: i32): i32
     return inner.x + wrapper.z
 end
 
+function alias_mutation(seed: i32): i32
+    local vec: { x: i32, y: i32 } = { x = seed, y = seed + 1 }
+    local alias = vec
+    alias.y = alias.y + 5
+    vec.x = vec.x + 9
+    return alias.x + vec.y
+end
+
 assert(point_sum(2) == 5)
 assert(point_mutation(2) == 47)
 assert(nested_record(4) == 21)
+assert(alias_mutation(1) == 17)
 
 function vec(x: i32, y: i32): { x: i32, y: i32 }
     local new_vec = { x = x, y = y }
@@ -48,3 +57,10 @@ assert(sqlen_vec(my_v) == 20)
 local incremental = make_incremental_record(10)
 assert(incremental.x == 10)
 assert(incremental.y == 11)
+
+local alias_vec = { x = 1::i32, y = 2::i32 }
+local alias_ref = alias_vec
+alias_ref.y = alias_ref.y + 5
+alias_vec.x = alias_vec.x + 9
+assert(alias_ref.x == 10)
+assert(alias_vec.y == 7)
