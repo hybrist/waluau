@@ -186,6 +186,12 @@ fn collect_expr_captures(
                 collect_expr_captures(arg, bound, env, signatures, captures);
             }
         }
+        Expr::MethodCall { receiver, args, .. } => {
+            collect_expr_captures(receiver, bound, env, signatures, captures);
+            for arg in args {
+                collect_expr_captures(arg, bound, env, signatures, captures);
+            }
+        }
         Expr::Function(_) => {}
         Expr::ArrayLiteral { elements, .. } => {
             for element in elements {
@@ -375,6 +381,12 @@ fn collect_nested_from_expr(expr: &Expr, out: &mut HashSet<String>) {
                 collect_nested_from_expr(a, out);
             }
         }
+        Expr::MethodCall { receiver, args, .. } => {
+            collect_nested_from_expr(receiver, out);
+            for a in args {
+                collect_nested_from_expr(a, out);
+            }
+        }
         Expr::ArrayLiteral { elements, .. } => {
             for e in elements {
                 collect_nested_from_expr(e, out);
@@ -527,6 +539,12 @@ fn collect_free_names_in_expr(expr: &Expr, bound: &HashSet<String>, out: &mut Ha
             ..
         } => {
             collect_free_names_in_expr(callee, bound, out);
+            for a in args {
+                collect_free_names_in_expr(a, bound, out);
+            }
+        }
+        Expr::MethodCall { receiver, args, .. } => {
+            collect_free_names_in_expr(receiver, bound, out);
             for a in args {
                 collect_free_names_in_expr(a, bound, out);
             }

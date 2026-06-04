@@ -34,7 +34,7 @@ pub struct Function {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum FunctionName {
-    Name(String),
+    Simple(String),
     Method { table: String, method: String },
 }
 
@@ -47,6 +47,24 @@ pub struct FunctionExpr {
     pub body: Vec<Stmt>,
     pub file_path: String,
     pub span: Option<Span>,
+}
+
+impl FunctionName {
+    pub fn simple_name(&self) -> Option<&str> {
+        match self {
+            Self::Simple(name) => Some(name),
+            Self::Method { .. } => None,
+        }
+    }
+}
+
+impl std::fmt::Display for FunctionName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Simple(name) => f.write_str(name),
+            Self::Method { table, method } => write!(f, "{table}:{method}"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -113,31 +131,6 @@ impl Type {
         match self {
             Self::Record(fields) => fields.get(name).cloned(),
             _ => None,
-        }
-    }
-}
-
-impl FunctionName {
-    pub fn as_str(&self) -> Option<&str> {
-        match self {
-            Self::Name(name) => Some(name),
-            Self::Method { .. } => None,
-        }
-    }
-
-    pub fn display_name(&self) -> String {
-        match self {
-            Self::Name(name) => name.clone(),
-            Self::Method { table, method } => format!("{table}:{method}"),
-        }
-    }
-}
-
-impl std::fmt::Display for FunctionName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Name(name) => f.write_str(name),
-            Self::Method { table, method } => write!(f, "{table}:{method}"),
         }
     }
 }
@@ -345,6 +338,12 @@ pub enum Expr {
         args: Vec<Expr>,
         span: Option<Span>,
     },
+    MethodCall {
+        receiver: Box<Expr>,
+        name: String,
+        args: Vec<Expr>,
+        span: Option<Span>,
+    },
     Function(FunctionExpr),
     /// A relative module import, e.g. `require("./math")`.
     ///
@@ -387,6 +386,7 @@ impl Expr {
             Expr::Binary { span, .. } => *span,
             Expr::If { span, .. } => *span,
             Expr::Call { span, .. } => *span,
+            Expr::MethodCall { span, .. } => *span,
             Expr::Function(f) => f.span,
             Expr::Require(_, span) => *span,
             Expr::ArrayLiteral { span, .. } => *span,

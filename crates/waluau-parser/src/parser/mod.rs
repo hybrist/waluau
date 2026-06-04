@@ -112,7 +112,7 @@ impl Parser {
                 method,
             })
         } else {
-            Ok(FunctionName::Name(name))
+            Ok(FunctionName::Simple(name))
         }
     }
 

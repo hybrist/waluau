@@ -94,7 +94,7 @@ impl<'a> Monomorphizer<'a> {
             };
             functions.push(self.rewrite_function_with_name(
                 template,
-                waluau_ast::FunctionName::Name(specialized_name),
+                waluau_ast::FunctionName::Simple(specialized_name),
                 &subst,
                 Some(&active),
             )?);
@@ -115,7 +115,12 @@ impl<'a> Monomorphizer<'a> {
         subst: &HashMap<String, Type>,
         active: Option<&ActiveSpecialization>,
     ) -> Result<AstFunction, Diagnostic> {
-        self.rewrite_function_with_name(function, function.name.clone(), subst, active)
+        self.rewrite_function_with_name(
+            function,
+            waluau_ast::FunctionName::Simple(function.name.to_string()),
+            subst,
+            active,
+        )
     }
 
     fn rewrite_function_with_name(
@@ -328,6 +333,11 @@ impl<'a> Monomorphizer<'a> {
                 args,
                 span,
             } => self.rewrite_call_expr(callee, type_args, args, *span, subst, active)?,
+            Expr::MethodCall { .. } => {
+                return Err(Diagnostic::new(
+                    "method calls must be desugared before monomorphization",
+                ));
+            }
             Expr::Function(function) => {
                 Expr::Function(self.rewrite_function_expr(function, subst, active)?)
             }

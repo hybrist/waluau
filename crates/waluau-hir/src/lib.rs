@@ -39,7 +39,7 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
     let mut typed = program.clone();
     if !typed.top_level.is_empty() {
         typed.functions.push(Function {
-            name: FunctionName::Name("__waluau_top_level_init".to_string()),
+            name: FunctionName::Simple("__waluau_top_level_init".to_string()),
             type_params: Vec::new(),
             params: Vec::new(),
             return_type: Some(Type::number()),

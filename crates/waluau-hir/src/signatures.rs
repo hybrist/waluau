@@ -240,7 +240,7 @@ pub(super) fn infer_top_level_function_return_type(
     }
 
     let mut returns = Vec::new();
-    if let Some(function_name) = function.name.as_str() {
+    if let Some(function_name) = function.name.simple_name() {
         if unresolved_names.iter().any(|name| name == function_name)
             && function_calls(function, function_name)
         {

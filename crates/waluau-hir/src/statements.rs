@@ -1135,6 +1135,9 @@ fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
                 || expr_calls_name(called, callee)
                 || args.iter().any(|arg| expr_calls_name(arg, callee))
         }
+        Expr::MethodCall { receiver, args, .. } => {
+            expr_calls_name(receiver, callee) || args.iter().any(|arg| expr_calls_name(arg, callee))
+        }
         Expr::Function(function) => function
             .body
             .iter()
@@ -1183,6 +1186,12 @@ fn seal_record_locals_in_expr(expr: &Expr, vars: &mut HashMap<String, Binding>) 
         }
         Expr::Call { callee, args, .. } => {
             seal_record_locals_in_expr(callee, vars);
+            for arg in args {
+                seal_record_locals_in_expr(arg, vars);
+            }
+        }
+        Expr::MethodCall { receiver, args, .. } => {
+            seal_record_locals_in_expr(receiver, vars);
             for arg in args {
                 seal_record_locals_in_expr(arg, vars);
             }
