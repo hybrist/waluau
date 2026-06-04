@@ -28,6 +28,10 @@ fn builtin_name(callee: &Expr) -> Option<String> {
     }
 }
 
+fn method_signature_name(base: &str, method: &str) -> String {
+    format!("{base}.{method}")
+}
+
 pub(super) fn infer_expr(
     expr: &Expr,
     vars: &HashMap<String, Binding>,
@@ -221,6 +225,22 @@ pub(super) fn infer_expr(
                     );
                 }
             }
+            if let Expr::Field { base, name, .. } = callee.as_ref() {
+                if let Expr::Name(base_name, _) = base.as_ref() {
+                    let method_name = method_signature_name(base_name, name);
+                    if let Some(FnSignature::Generic(scheme)) = fn_signatures.get(&method_name) {
+                        return infer_generic_call(
+                            scheme,
+                            type_args,
+                            args,
+                            vars,
+                            fn_signatures,
+                            active_type_params,
+                            expected,
+                        );
+                    }
+                }
+            }
             if let Expr::Function(function) = callee.as_ref() {
                 if !function.type_params.is_empty() {
                     return infer_generic_function_expr_call(
@@ -345,6 +365,30 @@ pub(super) fn infer_expr(
             coerce_type(Type::Record(record_fields), expected)
         }
         Expr::Field { base, name, .. } => {
+            if let Expr::Name(base_name, _) = base.as_ref() {
+                let method_name = method_signature_name(base_name, name);
+                if let Some(signature) = fn_signatures.get(&method_name) {
+                    return match signature {
+                        FnSignature::Mono {
+                            params,
+                            return_type,
+                        } => coerce_type(
+                            Type::Function {
+                                params: params.clone(),
+                                return_type: Box::new(return_type.clone()),
+                            },
+                            expected,
+                        ),
+                        FnSignature::Generic(_) => Err(generic_diagnostic(
+                            "generic/uninstantiated-value",
+                            format!(
+                                "generic function '{method_name}' cannot be used as a value without type arguments"
+                            ),
+                            "call the generic function with explicit type arguments",
+                        )),
+                    };
+                }
+            }
             let base_ty = infer_expr(base, vars, fn_signatures, active_type_params, None)?;
             let Type::Record(fields) = base_ty else {
                 return Err(Diagnostic::new("field access requires a record base"));

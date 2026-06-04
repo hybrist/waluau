@@ -12,6 +12,10 @@ use super::signatures::{
 };
 use super::{Binding, binding_for};
 
+fn method_signature_name(base: &str, method: &str) -> String {
+    format!("{base}.{method}")
+}
+
 pub(super) fn check_function(
     function: &Function,
     fn_signatures: &HashMap<String, FnSignature>,
@@ -608,6 +612,38 @@ pub(super) fn check_stmt(
             let Type::Record(mut fields) = binding.ty else {
                 return Err(Diagnostic::new("field assignment requires a record base"));
             };
+            let method_name = method_signature_name(base_name, name);
+            if let Expr::Function(function) = value {
+                if !function.type_params.is_empty() && fn_signatures.contains_key(&method_name) {
+                    if *op != AssignOp::Set {
+                        return Err(Diagnostic::new(
+                            "compound field assignment requires a numeric field",
+                        ));
+                    }
+                    if !fields.contains_key(name) && !binding.record_open {
+                        return Err(Diagnostic::new(format!(
+                            "cannot add new field '{}.{}' after record was sealed",
+                            base_name, name
+                        )));
+                    }
+                    let synthetic = Function {
+                        name: waluau_ast::FunctionName::Simple(method_name),
+                        type_params: function.type_params.clone(),
+                        params: function.params.clone(),
+                        return_type: function.return_type.clone(),
+                        body: function.body.clone(),
+                        file_path: function.file_path.clone(),
+                    };
+                    check_function(&synthetic, fn_signatures, active_type_params)?;
+                    seal_record_locals_in_expr(value, vars);
+                    let mut updated = binding_for(Type::Record(fields), binding.rebindability);
+                    if !binding.record_open {
+                        updated.record_open = false;
+                    }
+                    vars.insert(base_name.clone(), updated);
+                    return Ok(false);
+                }
+            }
             let existing_field = fields.get(name).cloned();
             let value_ty = infer_expr(
                 value,
