@@ -39,6 +39,7 @@ struct ActiveSpecialization {
 
 pub(crate) struct Monomorphizer<'a> {
     generic_functions: HashMap<String, &'a AstFunction>,
+    generic_methods: HashMap<String, &'a waluau_ast::FunctionExpr>,
     specialized_names: HashMap<SpecializationKey, String>,
     pending: Vec<SpecializationKey>,
 }
@@ -51,8 +52,34 @@ impl<'a> Monomorphizer<'a> {
             .filter(|function| !function.type_params.is_empty())
             .map(|function| (function.name.to_string(), function))
             .collect();
+        let generic_methods = program
+            .functions
+            .iter()
+            .find(|function| function.name.to_string() == "__waluau_top_level_init")
+            .map(|function| {
+                function
+                    .body
+                    .iter()
+                    .filter_map(|stmt| match stmt {
+                        Stmt::FieldAssign {
+                            base,
+                            name,
+                            value: Expr::Function(function),
+                            ..
+                        } if !function.type_params.is_empty() => match base.as_ref() {
+                            Expr::Name(table, _) => {
+                                Some((format!("{table}.{name}"), function))
+                            }
+                            _ => None,
+                        },
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         Self {
             generic_functions,
+            generic_methods,
             specialized_names: HashMap::new(),
             pending: Vec::new(),
         }
@@ -156,10 +183,20 @@ impl<'a> Monomorphizer<'a> {
         subst: &HashMap<String, Type>,
         active: Option<&ActiveSpecialization>,
     ) -> Result<Vec<Stmt>, Diagnostic> {
-        stmts
-            .iter()
-            .map(|stmt| self.rewrite_stmt(stmt, subst, active))
-            .collect()
+        let mut rewritten = Vec::with_capacity(stmts.len());
+        for stmt in stmts {
+            if let Stmt::FieldAssign {
+                value: Expr::Function(function),
+                ..
+            } = stmt
+            {
+                if !function.type_params.is_empty() {
+                    continue;
+                }
+            }
+            rewritten.push(self.rewrite_stmt(stmt, subst, active)?);
+        }
+        Ok(rewritten)
     }
 
     fn rewrite_stmt(
@@ -412,6 +449,22 @@ impl<'a> Monomorphizer<'a> {
                     args,
                     span,
                 });
+            }
+        }
+
+        if let Expr::Field { base, name, span } = callee {
+            if let Expr::Name(table, _) = base.as_ref() {
+                let method_name = format!("{table}.{name}");
+                if let Some(function) = self.generic_methods.get(&method_name).copied() {
+                    let specialized =
+                        self.specialize_function_expr(function, type_args, subst, active)?;
+                    return Ok(Expr::Call {
+                        callee: Box::new(Expr::Function(specialized)),
+                        type_args: Vec::new(),
+                        args,
+                        span: *span,
+                    });
+                }
             }
         }
 

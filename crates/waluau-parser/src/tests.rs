@@ -1001,6 +1001,28 @@ fn parses_method_function_declaration_name() {
 }
 
 #[test]
+fn parses_generic_method_function_declaration() {
+    let source = r#"
+        function point:identity<T>(value: T): T
+            return value
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let function = &program.functions[0];
+    assert_eq!(
+        function.name,
+        FunctionName::Method {
+            table: "point".to_string(),
+            method: "identity".to_string(),
+        }
+    );
+    assert_eq!(function.type_params, vec!["T".to_string()]);
+    assert_eq!(function.params[0].ty, Type::TypeParam("T".into()));
+    assert_eq!(function.return_type, Some(Type::TypeParam("T".into())));
+}
+
+#[test]
 fn parses_generic_call_with_type_arguments() {
     let source = r#"
         function entry(): i32

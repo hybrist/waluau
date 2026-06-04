@@ -13,7 +13,7 @@ mod signatures;
 mod statements;
 
 use signatures::{
-    FnSignature, GenericScheme, infer_function_expr_return_type,
+    FnSignature, GenericScheme, active_type_param_set, infer_function_expr_return_type,
     infer_top_level_function_return_type, inference_diagnostic,
 };
 use statements::{check_function, check_stmt};
@@ -42,12 +42,6 @@ fn desugar_method_declarations(program: &Program) -> Result<Program, Diagnostic>
         match &function.name {
             FunctionName::Simple(_) => rewritten.functions.push(function.clone()),
             FunctionName::Method { table, method } => {
-                if !function.type_params.is_empty() {
-                    return Err(Diagnostic::new(format!(
-                        "generic method declaration '{}:{}' is not supported yet",
-                        table, method
-                    )));
-                }
                 let mut params = Vec::with_capacity(function.params.len() + 1);
                 params.push(Param {
                     name: "self".to_string(),
@@ -61,7 +55,7 @@ fn desugar_method_declarations(program: &Program) -> Result<Program, Diagnostic>
                     value: Expr::Function(FunctionExpr {
                         name: None,
                         implicit_self: Some(table.clone()),
-                        type_params: Vec::new(),
+                        type_params: function.type_params.clone(),
                         params,
                         return_type: function.return_type.clone(),
                         body: function.body.clone(),
@@ -76,15 +70,53 @@ fn desugar_method_declarations(program: &Program) -> Result<Program, Diagnostic>
     Ok(rewritten)
 }
 
+fn method_signature_name(table: &str, method: &str) -> String {
+    format!("{table}.{method}")
+}
+
+fn signature_from_function_expr(function: &FunctionExpr) -> Option<FnSignature> {
+    let return_type = function.return_type.clone()?;
+    let params = function
+        .params
+        .iter()
+        .map(|param| param.ty.clone())
+        .collect();
+    Some(if function.type_params.is_empty() {
+        FnSignature::Mono {
+            params,
+            return_type,
+        }
+    } else {
+        FnSignature::Generic(GenericScheme {
+            type_params: function.type_params.clone(),
+            params,
+            return_type,
+        })
+    })
+}
+
 fn resolve_implicit_self_functions(
     stmts: &mut [Stmt],
-    fn_signatures: &HashMap<String, FnSignature>,
+    fn_signatures: &mut HashMap<String, FnSignature>,
 ) -> Result<(), Diagnostic> {
     let active_type_params = HashSet::new();
     let mut vars: HashMap<String, Binding> = HashMap::new();
 
     for stmt in stmts.iter_mut() {
         resolve_stmt_implicit_self(stmt, &vars, fn_signatures, &active_type_params)?;
+        if let Stmt::FieldAssign {
+            base,
+            name,
+            value: Expr::Function(function),
+            ..
+        } = stmt
+        {
+            if let Expr::Name(table, _) = base.as_ref() {
+                if let Some(signature) = signature_from_function_expr(function) {
+                    fn_signatures.insert(method_signature_name(table, name), signature);
+                }
+            }
+        }
         let _ = check_stmt(
             stmt,
             &mut vars,
@@ -190,6 +222,8 @@ fn resolve_expr_implicit_self(
 ) -> Result<(), Diagnostic> {
     match expr {
         Expr::Function(function) => {
+            let mut function_type_params = active_type_params.clone();
+            function_type_params.extend(active_type_param_set(&function.type_params));
             if let Some(table_name) = function.implicit_self.clone() {
                 let table_ty = vars
                     .get(&table_name)
@@ -204,13 +238,13 @@ fn resolve_expr_implicit_self(
                         function,
                         vars,
                         fn_signatures,
-                        active_type_params,
+                        &function_type_params,
                     )?);
                 }
                 function.implicit_self = None;
             }
             for stmt in &mut function.body {
-                resolve_stmt_implicit_self(stmt, vars, fn_signatures, active_type_params)?;
+                resolve_stmt_implicit_self(stmt, vars, fn_signatures, &function_type_params)?;
             }
             Ok(())
         }
@@ -392,7 +426,7 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
         .iter_mut()
         .find(|function| function.name.to_string() == "__waluau_top_level_init")
     {
-        resolve_implicit_self_functions(&mut top_level_init.body, &fn_signatures)?;
+        resolve_implicit_self_functions(&mut top_level_init.body, &mut fn_signatures)?;
     }
 
     for function in &typed.functions {
