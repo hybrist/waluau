@@ -32,6 +32,32 @@ fn method_signature_name(base: &str, method: &str) -> String {
     format!("{base}.{method}")
 }
 
+fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
+    if expected == actual {
+        return true;
+    }
+    match (expected, actual) {
+        (Type::Record(expected_fields), Type::Record(actual_fields)) => expected_fields
+            .iter()
+            .all(|(name, expected_ty)| actual_fields.get(name) == Some(expected_ty)),
+        _ => false,
+    }
+}
+
+fn method_signature<'a>(
+    receiver: &Expr,
+    name: &str,
+    fn_signatures: &'a HashMap<String, FnSignature>,
+) -> Option<(&'a FnSignature, String)> {
+    let Expr::Name(base, _) = receiver else {
+        return None;
+    };
+    let method_name = method_signature_name(base, name);
+    fn_signatures
+        .get(&method_name)
+        .map(|signature| (signature, method_name))
+}
+
 pub(super) fn infer_expr(
     expr: &Expr,
     vars: &HashMap<String, Binding>,
@@ -299,18 +325,38 @@ pub(super) fn infer_expr(
             ..
         } => {
             let receiver_ty = infer_expr(receiver, vars, fn_signatures, active_type_params, None)?;
-            let field_ty = receiver_ty
-                .record_field(name)
-                .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
-            let (params, ret) = match field_ty {
-                Type::Function {
-                    params,
-                    return_type,
-                } => (params, *return_type),
-                other => {
-                    return Err(Diagnostic::new(format!(
-                        "attempt to call non-function value of type {other}",
-                    )));
+            let (params, ret) = if let Some((signature, method_name)) =
+                method_signature(receiver, name, fn_signatures)
+            {
+                match signature {
+                    FnSignature::Mono {
+                        params,
+                        return_type,
+                    } => (params.clone(), return_type.clone()),
+                    FnSignature::Generic(_) => {
+                        return Err(generic_diagnostic(
+                            "generic/missing-type-args",
+                            format!(
+                                "generic method '{method_name}' requires explicit type arguments"
+                            ),
+                            "call the generic method with field syntax and explicit type arguments",
+                        ));
+                    }
+                }
+            } else {
+                let field_ty = receiver_ty
+                    .record_field(name)
+                    .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
+                match field_ty {
+                    Type::Function {
+                        params,
+                        return_type,
+                    } => (params, *return_type),
+                    other => {
+                        return Err(Diagnostic::new(format!(
+                            "attempt to call non-function value of type {other}",
+                        )));
+                    }
                 }
             };
             if params.is_empty() {
@@ -319,7 +365,7 @@ pub(super) fn infer_expr(
                     args.len() + 1
                 )));
             }
-            if params[0] != receiver_ty {
+            if !method_receiver_matches(&params[0], &receiver_ty) {
                 return Err(Diagnostic::new(format!(
                     "call expected {}, got {}",
                     params[0], receiver_ty
