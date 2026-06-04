@@ -37,6 +37,8 @@ fn binding_for(ty: Type, rebindability: Rebindability) -> Binding {
 fn desugar_method_declarations(program: &Program) -> Result<Program, Diagnostic> {
     let mut rewritten = program.clone();
     rewritten.functions.clear();
+    rewritten.top_level.clear();
+    let mut pending_methods: Vec<(String, Stmt)> = Vec::new();
 
     for function in &program.functions {
         match &function.name {
@@ -48,24 +50,46 @@ fn desugar_method_declarations(program: &Program) -> Result<Program, Diagnostic>
                     ty: Type::Unit,
                 });
                 params.extend(function.params.clone());
-                rewritten.top_level.push(Stmt::FieldAssign {
-                    op: AssignOp::Set,
-                    base: Box::new(Expr::Name(table.clone(), None)),
-                    name: method.clone(),
-                    value: Expr::Function(FunctionExpr {
-                        name: None,
-                        implicit_self: Some(table.clone()),
-                        type_params: function.type_params.clone(),
-                        params,
-                        return_type: function.return_type.clone(),
-                        body: function.body.clone(),
-                        file_path: function.file_path.clone(),
-                        span: None,
-                    }),
-                });
+                pending_methods.push((
+                    table.clone(),
+                    Stmt::FieldAssign {
+                        op: AssignOp::Set,
+                        base: Box::new(Expr::Name(table.clone(), None)),
+                        name: method.clone(),
+                        value: Expr::Function(FunctionExpr {
+                            name: None,
+                            implicit_self: Some(table.clone()),
+                            type_params: function.type_params.clone(),
+                            params,
+                            return_type: function.return_type.clone(),
+                            body: function.body.clone(),
+                            file_path: function.file_path.clone(),
+                            span: None,
+                        }),
+                    },
+                ));
             }
         }
     }
+
+    for stmt in &program.top_level {
+        rewritten.top_level.push(stmt.clone());
+        let Stmt::Let { name, .. } = stmt else {
+            continue;
+        };
+        let mut remaining = Vec::with_capacity(pending_methods.len());
+        for (table, method_stmt) in pending_methods.drain(..) {
+            if table == *name {
+                rewritten.top_level.push(method_stmt);
+            } else {
+                remaining.push((table, method_stmt));
+            }
+        }
+        pending_methods = remaining;
+    }
+    rewritten
+        .top_level
+        .extend(pending_methods.into_iter().map(|(_, stmt)| stmt));
 
     Ok(rewritten)
 }

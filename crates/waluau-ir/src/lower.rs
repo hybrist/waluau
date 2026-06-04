@@ -170,6 +170,33 @@ fn builtin_name(callee: &Expr) -> Option<String> {
     }
 }
 
+fn method_signature_name(base: &str, method: &str) -> String {
+    format!("{base}.{method}")
+}
+
+fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
+    if expected == actual {
+        return true;
+    }
+    match (expected, actual) {
+        (Type::Record(expected_fields), Type::Record(actual_fields)) => expected_fields
+            .iter()
+            .all(|(name, expected_ty)| actual_fields.get(name) == Some(expected_ty)),
+        _ => false,
+    }
+}
+
+fn method_signature(
+    receiver: &Expr,
+    name: &str,
+    signatures: &HashMap<String, (Vec<Type>, Type)>,
+) -> Option<(Vec<Type>, Type)> {
+    let Expr::Name(base, _) = receiver else {
+        return None;
+    };
+    signatures.get(&method_signature_name(base, name)).cloned()
+}
+
 impl Builder<'_> {
     fn function_expr_return_type(function: &waluau_ast::FunctionExpr) -> Result<Type, Diagnostic> {
         function.return_type.clone().ok_or_else(|| {
@@ -1547,15 +1574,23 @@ impl Builder<'_> {
                 ..
             } => {
                 let receiver_ty = self.infer_expr_type(receiver, types, None)?;
-                let field_ty = receiver_ty
-                    .record_field(name)
-                    .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
-                let Type::Function {
-                    params: param_types,
-                    return_type,
-                } = field_ty
-                else {
-                    return Err(Diagnostic::new("attempt to call non-function value"));
+                let (param_types, return_type) = if let Some(signature) =
+                    method_signature(receiver, name, self.signatures)
+                {
+                    let (params, return_type) = signature;
+                    (params, Box::new(return_type))
+                } else {
+                    let field_ty = receiver_ty
+                        .record_field(name)
+                        .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
+                    let Type::Function {
+                        params,
+                        return_type,
+                    } = field_ty
+                    else {
+                        return Err(Diagnostic::new("attempt to call non-function value"));
+                    };
+                    (params, return_type)
                 };
                 if param_types.is_empty() {
                     return Err(Diagnostic::new(format!(
@@ -1563,13 +1598,14 @@ impl Builder<'_> {
                         args.len() + 1
                     )));
                 }
-                if param_types[0] != receiver_ty {
+                if !method_receiver_matches(&param_types[0], &receiver_ty) {
                     return Err(Diagnostic::new(format!(
                         "call expected {}, got {}",
                         param_types[0], receiver_ty
                     )));
                 }
-                let receiver_value = self.lower_expr(receiver, env, types, Some(receiver_ty))?;
+                let receiver_value =
+                    self.lower_expr(receiver, env, types, Some(receiver_ty.clone()))?;
                 let callee_value = self.emit(Instruction::StructGet {
                     base: receiver_value,
                     field: name.clone(),
@@ -1579,7 +1615,11 @@ impl Builder<'_> {
                     },
                 });
                 let mut lowered_args = Vec::with_capacity(args.len() + 1);
-                lowered_args.push(receiver_value);
+                lowered_args.push(self.coerce_method_receiver(
+                    receiver_value,
+                    &receiver_ty,
+                    &param_types[0],
+                )?);
                 for (arg, param_ty) in args.iter().zip(param_types.iter().skip(1)) {
                     lowered_args.push(self.lower_expr(arg, env, types, Some(param_ty.clone()))?);
                 }
@@ -2260,15 +2300,23 @@ impl Builder<'_> {
                 ..
             } => {
                 let receiver_ty = self.infer_expr_type(receiver, types, None)?;
-                let field_ty = receiver_ty
-                    .record_field(name)
-                    .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
-                let Type::Function {
-                    params,
-                    return_type,
-                } = field_ty
-                else {
-                    return Err(Diagnostic::new("attempt to call non-function value"));
+                let (params, return_type) = if let Some(signature) =
+                    method_signature(receiver, name, self.signatures)
+                {
+                    let (params, return_type) = signature;
+                    (params, Box::new(return_type))
+                } else {
+                    let field_ty = receiver_ty
+                        .record_field(name)
+                        .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
+                    let Type::Function {
+                        params,
+                        return_type,
+                    } = field_ty
+                    else {
+                        return Err(Diagnostic::new("attempt to call non-function value"));
+                    };
+                    (params, return_type)
                 };
                 if params.is_empty() {
                     return Err(Diagnostic::new(format!(
@@ -2276,7 +2324,7 @@ impl Builder<'_> {
                         args.len() + 1
                     )));
                 }
-                if params[0] != receiver_ty {
+                if !method_receiver_matches(&params[0], &receiver_ty) {
                     return Err(Diagnostic::new(format!(
                         "call expected {}, got {}",
                         params[0], receiver_ty
@@ -2605,6 +2653,40 @@ impl Builder<'_> {
                     }))
                 }
             }
+        }
+    }
+
+    fn coerce_method_receiver(
+        &mut self,
+        value: ValueId,
+        actual: &Type,
+        expected: &Type,
+    ) -> Result<ValueId, Diagnostic> {
+        if actual == expected {
+            return Ok(value);
+        }
+        match (actual, expected) {
+            (Type::Record(actual_fields), Type::Record(expected_fields))
+                if expected_fields
+                    .iter()
+                    .all(|(name, expected_ty)| actual_fields.get(name) == Some(expected_ty)) =>
+            {
+                let fields = expected_fields
+                    .iter()
+                    .map(|(name, field_ty)| {
+                        self.emit(Instruction::StructGet {
+                            base: value,
+                            field: name.clone(),
+                            field_ty: field_ty.clone(),
+                        })
+                    })
+                    .collect();
+                Ok(self.emit(Instruction::StructNew {
+                    struct_ty: expected.clone(),
+                    fields,
+                }))
+            }
+            _ => self.coerce_value(value, actual.clone(), Some(expected.clone())),
         }
     }
 

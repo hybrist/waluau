@@ -254,6 +254,31 @@ mod tests {
     }
 
     #[test]
+    fn compile_file_supports_method_declarations_and_calls() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("methods.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local point = { x = 41::i32 }
+
+                function point:get_x(): i32
+                    return self.x
+                end
+
+                assert(point:get_x() == 41)
+            "#,
+        )
+        .expect("fixture should write");
+
+        let wasm = super::compile_file(&input_path).expect("compile should succeed");
+        assert!(
+            !wasm.is_empty(),
+            "successful compilation should produce a wasm module"
+        );
+    }
+
+    #[test]
     fn compiles_bytes_ops() {
         let source = r#"
             function entry(data: bytes): i32

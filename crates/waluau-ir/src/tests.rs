@@ -163,7 +163,7 @@ fn emits_branches_and_returns() {
 #[test]
 fn method_calls_reach_ir_call_checking() {
     let source = r#"
-        function ping(self: { x: f64 }): i32
+        function ping(self: { x: f64, y: f64 }): i32
             return 1
         end
 
@@ -178,8 +178,25 @@ fn method_calls_reach_ir_call_checking() {
     let error = build(&program).expect_err("ir build should fail");
     assert_eq!(
         error.to_string(),
-        "call expected {x: f64}, got {ping: ({x: f64}) -> i32, x: f64}"
+        "call expected {x: f64, y: f64}, got {ping: ({x: f64, y: f64}) -> i32, x: f64}"
     );
+}
+
+#[test]
+fn lowers_method_call_via_method_declaration() {
+    let source = r#"
+        local point = { x = 41::i32 }
+
+        function point:get_x(): i32
+            return self.x
+        end
+
+        assert(point:get_x() == 41)
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    build(&typed).expect("ir build should succeed");
 }
 
 #[test]

@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use waluau_ast::{Expr, Function, FunctionExpr, Program, Stmt, TableField};
+use waluau_ast::{Expr, Function, FunctionExpr, FunctionName, Program, Stmt, TableField};
 
 pub struct LoadedModule {
     pub program: Program,
@@ -195,7 +195,13 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, String> {
                 .collect();
             rewriter.rewrite_block(&mut lowered.body, &mut bound);
             strip_unused_namespace_lets(&mut lowered.body);
-            lowered.name = waluau_ast::FunctionName::Simple(format!("{prefix}{}", function.name));
+            lowered.name = match &function.name {
+                FunctionName::Simple(name) => FunctionName::Simple(format!("{prefix}{name}")),
+                FunctionName::Method { table, method } => FunctionName::Method {
+                    table: format!("{prefix}{table}"),
+                    method: method.clone(),
+                },
+            };
             functions.push(lowered);
         }
 
