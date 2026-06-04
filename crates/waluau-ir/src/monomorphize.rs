@@ -94,7 +94,7 @@ impl<'a> Monomorphizer<'a> {
             };
             functions.push(self.rewrite_function_with_name(
                 template,
-                specialized_name,
+                waluau_ast::FunctionName::Simple(specialized_name),
                 &subst,
                 Some(&active),
             )?);
@@ -115,18 +115,23 @@ impl<'a> Monomorphizer<'a> {
         subst: &HashMap<String, Type>,
         active: Option<&ActiveSpecialization>,
     ) -> Result<AstFunction, Diagnostic> {
-        self.rewrite_function_with_name(function, function.name.to_string(), subst, active)
+        self.rewrite_function_with_name(
+            function,
+            waluau_ast::FunctionName::Simple(function.name.to_string()),
+            subst,
+            active,
+        )
     }
 
     fn rewrite_function_with_name(
         &mut self,
         function: &AstFunction,
-        name: String,
+        name: waluau_ast::FunctionName,
         subst: &HashMap<String, Type>,
         active: Option<&ActiveSpecialization>,
     ) -> Result<AstFunction, Diagnostic> {
         Ok(AstFunction {
-            name: waluau_ast::FunctionName::Simple(name),
+            name,
             type_params: Vec::new(),
             params: function
                 .params

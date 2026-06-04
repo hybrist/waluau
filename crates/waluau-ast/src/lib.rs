@@ -32,6 +32,12 @@ pub struct Function {
     pub file_path: String,
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum FunctionName {
+    Simple(String),
+    Method { table: String, method: String },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct FunctionExpr {
     pub name: Option<String>,
@@ -41,12 +47,6 @@ pub struct FunctionExpr {
     pub body: Vec<Stmt>,
     pub file_path: String,
     pub span: Option<Span>,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum FunctionName {
-    Simple(String),
-    Method { table: String, method: String },
 }
 
 impl FunctionName {

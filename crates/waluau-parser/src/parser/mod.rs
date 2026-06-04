@@ -90,20 +90,30 @@ impl Parser {
     fn parse_function(&mut self) -> Result<Function, Diagnostic> {
         let start_pos = self.peek().map(|t| t.span.start).unwrap_or(0);
         self.expect_simple(TokenKind::Function, "expected 'function'")?;
-        let name = self.expect_identifier()?;
-        let function_expr = self.parse_function_expr_tail(Some(name), false, start_pos)?;
+        let name = self.parse_function_name()?;
+        let function_expr = self.parse_function_expr_tail(None, false, start_pos)?;
         Ok(Function {
-            name: FunctionName::Simple(
-                function_expr
-                    .name
-                    .expect("top-level functions always have a name"),
-            ),
+            name,
             type_params: function_expr.type_params,
             params: function_expr.params,
             return_type: function_expr.return_type,
             body: function_expr.body,
             file_path: self.file_path.clone(),
         })
+    }
+
+    fn parse_function_name(&mut self) -> Result<FunctionName, Diagnostic> {
+        let name = self.expect_identifier()?;
+        if self.check_simple(&TokenKind::Colon) {
+            self.advance();
+            let method = self.expect_identifier()?;
+            Ok(FunctionName::Method {
+                table: name,
+                method,
+            })
+        } else {
+            Ok(FunctionName::Simple(name))
+        }
     }
 
     pub(super) fn parse_function_expr_tail(
