@@ -939,7 +939,10 @@ fn parses_generic_function_declaration() {
     "#;
     let program = parse(source).expect("parse should succeed");
     let function = &program.functions[0];
-    assert_eq!(function.name, "identity");
+    assert_eq!(
+        function.name,
+        waluau_ast::FunctionName::Simple("identity".to_string())
+    );
     assert_eq!(function.type_params, vec!["T".to_string()]);
     assert_eq!(function.params[0].ty, Type::TypeParam("T".into()));
     assert_eq!(function.return_type, Some(Type::TypeParam("T".into())));

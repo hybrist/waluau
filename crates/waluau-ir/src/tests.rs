@@ -736,7 +736,7 @@ fn verifies_loop_with_break_and_continue() {
                     ))
                 })?;
                 Ok((
-                    function.name.clone(),
+                    function.name.to_string(),
                     (
                         function
                             .params

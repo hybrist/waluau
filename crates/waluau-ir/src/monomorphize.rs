@@ -49,7 +49,7 @@ impl<'a> Monomorphizer<'a> {
             .functions
             .iter()
             .filter(|function| !function.type_params.is_empty())
-            .map(|function| (function.name.clone(), function))
+            .map(|function| (function.name.to_string(), function))
             .collect();
         Self {
             generic_functions,
@@ -89,7 +89,7 @@ impl<'a> Monomorphizer<'a> {
                 .zip(key.type_args.iter().cloned())
                 .collect::<HashMap<_, _>>();
             let active = ActiveSpecialization {
-                generic_name: template.name.clone(),
+                generic_name: template.name.to_string(),
                 type_args: key.type_args.clone(),
             };
             functions.push(self.rewrite_function_with_name(
@@ -115,7 +115,7 @@ impl<'a> Monomorphizer<'a> {
         subst: &HashMap<String, Type>,
         active: Option<&ActiveSpecialization>,
     ) -> Result<AstFunction, Diagnostic> {
-        self.rewrite_function_with_name(function, function.name.clone(), subst, active)
+        self.rewrite_function_with_name(function, function.name.to_string(), subst, active)
     }
 
     fn rewrite_function_with_name(
@@ -126,7 +126,7 @@ impl<'a> Monomorphizer<'a> {
         active: Option<&ActiveSpecialization>,
     ) -> Result<AstFunction, Diagnostic> {
         Ok(AstFunction {
-            name,
+            name: waluau_ast::FunctionName::Simple(name),
             type_params: Vec::new(),
             params: function
                 .params
@@ -328,6 +328,11 @@ impl<'a> Monomorphizer<'a> {
                 args,
                 span,
             } => self.rewrite_call_expr(callee, type_args, args, *span, subst, active)?,
+            Expr::MethodCall { .. } => {
+                return Err(Diagnostic::new(
+                    "method calls must be desugared before monomorphization",
+                ));
+            }
             Expr::Function(function) => {
                 Expr::Function(self.rewrite_function_expr(function, subst, active)?)
             }
