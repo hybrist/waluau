@@ -314,6 +314,12 @@ pub enum Expr {
         args: Vec<Expr>,
         span: Option<Span>,
     },
+    MethodCall {
+        receiver: Box<Expr>,
+        name: String,
+        args: Vec<Expr>,
+        span: Option<Span>,
+    },
     Function(FunctionExpr),
     /// A relative module import, e.g. `require("./math")`.
     ///
@@ -356,6 +362,7 @@ impl Expr {
             Expr::Binary { span, .. } => *span,
             Expr::If { span, .. } => *span,
             Expr::Call { span, .. } => *span,
+            Expr::MethodCall { span, .. } => *span,
             Expr::Function(f) => f.span,
             Expr::Require(_, span) => *span,
             Expr::ArrayLiteral { span, .. } => *span,

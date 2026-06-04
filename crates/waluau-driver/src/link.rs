@@ -610,6 +610,12 @@ impl Rewriter<'_> {
                     self.rewrite_expr(arg, bound);
                 }
             }
+            Expr::MethodCall { receiver, args, .. } => {
+                self.rewrite_expr(receiver, bound);
+                for arg in args {
+                    self.rewrite_expr(arg, bound);
+                }
+            }
             Expr::Function(function) => {
                 let mut inner = bound.clone();
                 if let Some(name) = &function.name {
@@ -748,6 +754,10 @@ fn expr_mentions_name(name: &str, expr: &Expr) -> bool {
         } => {
             expr_mentions_name(name, callee) || args.iter().any(|arg| expr_mentions_name(name, arg))
         }
+        Expr::MethodCall { receiver, args, .. } => {
+            expr_mentions_name(name, receiver)
+                || args.iter().any(|arg| expr_mentions_name(name, arg))
+        }
         Expr::Function(function) => stmt_mentions_name(name, &function.body),
         Expr::ArrayLiteral { elements, .. } => {
             elements.iter().any(|el| expr_mentions_name(name, el))
@@ -855,6 +865,12 @@ fn collect_expr(expr: &Expr, out: &mut Vec<String>) {
             ..
         } => {
             collect_expr(callee, out);
+            for arg in args {
+                collect_expr(arg, out);
+            }
+        }
+        Expr::MethodCall { receiver, args, .. } => {
+            collect_expr(receiver, out);
             for arg in args {
                 collect_expr(arg, out);
             }

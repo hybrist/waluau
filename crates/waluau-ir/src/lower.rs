@@ -1811,6 +1811,11 @@ impl Builder<'_> {
                 let actual = self.infer_expr_type(expr, types, None)?;
                 self.coerce_value(value, actual, expected)?
             }
+            Expr::MethodCall { .. } => {
+                return Err(Diagnostic::new(
+                    "method call lowering is not implemented yet",
+                ));
+            }
             Expr::Function(function) => {
                 let value = self.lower_function_expr(function, env, types)?;
                 let actual = self.infer_expr_type(expr, types, None)?;
@@ -2258,6 +2263,9 @@ impl Builder<'_> {
                     ))),
                 }
             }
+            Expr::MethodCall { .. } => Err(Diagnostic::new(
+                "method call lowering is not implemented yet",
+            )),
             Expr::Function(function) => Ok(Type::Function {
                 return_type: Box::new(Self::function_expr_return_type(function)?),
                 params: function

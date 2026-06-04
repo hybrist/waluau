@@ -422,6 +422,28 @@ fn parses_namespace_member_access() {
 }
 
 #[test]
+fn parses_method_call_syntax() {
+    let source = r#"
+        function main(obj: { value: i32 }): i32
+            return obj:update(1)
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert!(matches!(
+        &program.functions[0].body[0],
+        Stmt::Return(waluau_ast::Expr::MethodCall {
+            receiver,
+            name,
+            args,
+            ..
+        }) if name == "update"
+            && args.len() == 1
+            && matches!(receiver.as_ref(), waluau_ast::Expr::Name(base, _) if base == "obj")
+    ));
+}
+
+#[test]
 fn records_call_span() {
     let source = r#"
         function main(): i32

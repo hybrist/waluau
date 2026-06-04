@@ -5,6 +5,43 @@ use waluau_lexer::{Token, TokenKind};
 use super::Parser;
 
 impl Parser {
+    fn check_method_call_start(&self) -> bool {
+        matches!(
+            (
+                self.peek().map(|token| &token.kind),
+                self.peek_n(1).map(|token| &token.kind),
+                self.peek_n(2).map(|token| &token.kind),
+            ),
+            (
+                Some(TokenKind::Colon),
+                Some(TokenKind::Identifier(_)),
+                Some(TokenKind::LParen)
+            )
+        )
+    }
+
+    fn parse_call_args(&mut self) -> Result<(Vec<Expr>, u32, u32), Diagnostic> {
+        let call_start = self.peek().map(|token| token.span.start).unwrap_or(0);
+        self.expect_simple(TokenKind::LParen, "expected '('")?;
+        let mut args = Vec::new();
+        if !self.check_simple(&TokenKind::RParen) {
+            loop {
+                args.push(self.parse_expr()?);
+                if self.check_simple(&TokenKind::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+        }
+        let call_end = self
+            .peek()
+            .map(|token| token.span.end)
+            .ok_or_else(|| Diagnostic::new("expected ')' after call arguments"))?;
+        self.expect_simple(TokenKind::RParen, "expected ')' after call arguments")?;
+        Ok((args, call_start, call_end))
+    }
+
     pub(super) fn try_parse_type_arg_list(&mut self) -> Option<Vec<waluau_ast::Type>> {
         if !self.check_simple(&TokenKind::Less) {
             return None;
@@ -225,30 +262,28 @@ impl Parser {
                 };
                 continue;
             }
+            if self.check_method_call_start() {
+                self.advance();
+                let name = self.expect_identifier()?;
+                let (args, _, call_end) = self.parse_call_args()?;
+                expr = Expr::MethodCall {
+                    receiver: Box::new(expr),
+                    name,
+                    args,
+                    span: Some(Span {
+                        start: start_pos,
+                        end: call_end,
+                    }),
+                };
+                continue;
+            }
             let type_args = if self.check_simple(&TokenKind::Less) {
                 self.try_parse_type_arg_list().unwrap_or_default()
             } else {
                 Vec::new()
             };
             if self.check_simple(&TokenKind::LParen) {
-                let call_start = self.peek().map(|token| token.span.start).unwrap_or(0);
-                self.advance();
-                let mut args = Vec::new();
-                if !self.check_simple(&TokenKind::RParen) {
-                    loop {
-                        args.push(self.parse_expr()?);
-                        if self.check_simple(&TokenKind::Comma) {
-                            self.advance();
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                let call_end = self
-                    .peek()
-                    .map(|token| token.span.end)
-                    .ok_or_else(|| Diagnostic::new("expected ')' after call arguments"))?;
-                self.expect_simple(TokenKind::RParen, "expected ')' after call arguments")?;
+                let (args, call_start, call_end) = self.parse_call_args()?;
                 expr = Expr::Call {
                     callee: Box::new(expr),
                     type_args,
