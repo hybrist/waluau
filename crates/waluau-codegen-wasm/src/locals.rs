@@ -179,6 +179,7 @@ pub(crate) fn infer_value_types(
                 IrInstruction::Unit => Type::Unit,
                 IrInstruction::Bool(_) => Type::Bool,
                 IrInstruction::String(_) => Type::String,
+                IrInstruction::Bytes(_) => Type::Bytes,
                 IrInstruction::Cast { to, .. } => to.clone(),
                 IrInstruction::Binary { result_ty, .. } => result_ty.clone(),
                 IrInstruction::MathIntrinsic { result_ty, .. } => result_ty.clone(),
@@ -211,6 +212,8 @@ pub(crate) fn infer_value_types(
                 IrInstruction::ArrayGet { element_ty, .. } => element_ty.clone(),
                 IrInstruction::ArraySet { .. } => Type::Numeric(NumericType::I32),
                 IrInstruction::ArrayLen { .. } => Type::Numeric(NumericType::I32),
+                IrInstruction::BytesGet { .. } => Type::Numeric(NumericType::I32),
+                IrInstruction::BytesLen { .. } => Type::Numeric(NumericType::I32),
                 IrInstruction::StructNew { struct_ty, .. } => struct_ty.clone(),
                 IrInstruction::StructGet { field_ty, .. } => field_ty.clone(),
                 IrInstruction::StructSet { .. } => Type::Unit,
@@ -527,7 +530,8 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
         | IrInstruction::Number { .. }
         | IrInstruction::Unit
         | IrInstruction::Bool(_)
-        | IrInstruction::String(_) => Vec::new(),
+        | IrInstruction::String(_)
+        | IrInstruction::Bytes(_) => Vec::new(),
         IrInstruction::ToString { value, .. } => vec![*value],
         IrInstruction::Cast { value, .. } => vec![*value],
         IrInstruction::Binary { left, right, .. } => vec![*left, *right],
@@ -553,6 +557,8 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
             ..
         } => vec![*array, *index, *value],
         IrInstruction::ArrayLen { array } => vec![*array],
+        IrInstruction::BytesGet { bytes, index } => vec![*bytes, *index],
+        IrInstruction::BytesLen { bytes } => vec![*bytes],
         IrInstruction::StructNew { fields, .. } => fields.clone(),
         IrInstruction::StructGet { base, .. } => vec![*base],
         IrInstruction::StructSet { base, value, .. } => vec![*base, *value],
@@ -590,7 +596,8 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         | IrInstruction::Number { .. }
         | IrInstruction::Unit
         | IrInstruction::Bool(_)
-        | IrInstruction::String(_) => false,
+        | IrInstruction::String(_)
+        | IrInstruction::Bytes(_) => false,
         IrInstruction::ToString { .. } => false,
         IrInstruction::Cast { value: source, .. } => *source == value,
         IrInstruction::Binary { left, .. } => *left == value,
@@ -605,6 +612,8 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         IrInstruction::ArrayNew { elements, .. } => elements.first().copied() == Some(value),
         IrInstruction::ArrayGet { .. } | IrInstruction::ArraySet { .. } => false,
         IrInstruction::ArrayLen { array } => *array == value,
+        IrInstruction::BytesGet { .. } => false,
+        IrInstruction::BytesLen { bytes } => *bytes == value,
         IrInstruction::StructNew { fields, .. } => fields.first().copied() == Some(value),
         IrInstruction::StructGet { base, .. } => *base == value,
         IrInstruction::StructSet { base, .. } => *base == value,

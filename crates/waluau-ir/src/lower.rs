@@ -1454,6 +1454,11 @@ impl Builder<'_> {
                             "numeric literal is not assignable to string",
                         ));
                     }
+                    Type::Bytes => {
+                        return Err(Diagnostic::new(
+                            "numeric literal is not assignable to bytes",
+                        ));
+                    }
                     Type::Array(_) => {
                         return Err(Diagnostic::new(
                             "numeric literal is not assignable to array",
@@ -1492,6 +1497,7 @@ impl Builder<'_> {
             }
             Expr::Bool(value, _) => self.emit(Instruction::Bool(*value)),
             Expr::String(value, _) => self.emit(Instruction::String(value.clone())),
+            Expr::Bytes(value, _) => self.emit(Instruction::Bytes(value.clone())),
             Expr::Name(name, _) => {
                 if let Some(value) = env.get(name).copied() {
                     let actual = types.get(name).cloned().ok_or_else(|| {
@@ -1614,6 +1620,11 @@ impl Builder<'_> {
                                     "unary '-' requires a numeric operand",
                                 ));
                             }
+                            Type::Bytes => {
+                                return Err(Diagnostic::new(
+                                    "unary '-' requires a numeric operand",
+                                ));
+                            }
                             Type::Array(_) => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
@@ -1671,8 +1682,17 @@ impl Builder<'_> {
                     }
                     UnaryOp::Len => {
                         let actual = self.infer_expr_type(expr, types, None)?;
+                        if actual == Type::Bytes {
+                            let bytes = self.lower_expr(expr, env, types, Some(Type::Bytes))?;
+                            let len = self.emit(Instruction::BytesLen { bytes });
+                            return self.coerce_value(
+                                len,
+                                Type::Numeric(NumericType::I32),
+                                expected,
+                            );
+                        }
                         if !actual.is_array() {
-                            return Err(Diagnostic::new("# requires an array operand"));
+                            return Err(Diagnostic::new("# requires an array or bytes operand"));
                         }
                         let array = self.lower_expr(expr, env, types, Some(actual))?;
                         let len = self.emit(Instruction::ArrayLen { array });
@@ -1910,9 +1930,16 @@ impl Builder<'_> {
             }
             Expr::Index { base, index, .. } => {
                 let base_ty = self.infer_expr_type(base, types, None)?;
+                if base_ty == Type::Bytes {
+                    let bytes = self.lower_expr(base, env, types, Some(Type::Bytes))?;
+                    let index =
+                        self.lower_expr(index, env, types, Some(Type::Numeric(NumericType::I32)))?;
+                    let value = self.emit(Instruction::BytesGet { bytes, index });
+                    return self.coerce_value(value, Type::Numeric(NumericType::I32), expected);
+                }
                 let element_ty = base_ty
                     .element_type()
-                    .ok_or_else(|| Diagnostic::new("indexing requires an array operand"))?;
+                    .ok_or_else(|| Diagnostic::new("indexing requires an array or bytes operand"))?;
                 let array = self.lower_expr(base, env, types, Some(base_ty))?;
                 let index =
                     self.lower_expr(index, env, types, Some(Type::Numeric(NumericType::I32)))?;
@@ -2183,6 +2210,9 @@ impl Builder<'_> {
                 Some(Type::String) => Err(Diagnostic::new(
                     "numeric literal is not assignable to string",
                 )),
+                Some(Type::Bytes) => Err(Diagnostic::new(
+                    "numeric literal is not assignable to bytes",
+                )),
                 Some(Type::Array(_)) => Err(Diagnostic::new(
                     "numeric literal is not assignable to array",
                 )),
@@ -2205,6 +2235,7 @@ impl Builder<'_> {
             },
             Expr::Bool(..) => Ok(Type::Bool),
             Expr::String(..) => Ok(Type::String),
+            Expr::Bytes(..) => Ok(Type::Bytes),
             Expr::Require(path, _) => Err(Diagnostic::new(format!(
                 "unresolved require(\"{path}\") reached IR lowering"
             ))),
@@ -2282,6 +2313,9 @@ impl Builder<'_> {
                         Type::String => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
+                        Type::Bytes => {
+                            Err(Diagnostic::new("unary '-' requires a numeric operand"))
+                        }
                         Type::Array(_) => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
@@ -2309,10 +2343,10 @@ impl Builder<'_> {
                 }
                 UnaryOp::Len => {
                     let actual = self.infer_expr_type(expr, types, None)?;
-                    if !actual.is_array() {
-                        Err(Diagnostic::new("# requires an array operand"))
-                    } else {
+                    if actual == Type::Bytes || actual.is_array() {
                         coerce_type(Type::Numeric(NumericType::I32), expected)
+                    } else {
+                        Err(Diagnostic::new("# requires an array or bytes operand"))
                     }
                 }
             },
@@ -2395,13 +2429,17 @@ impl Builder<'_> {
             }
             Expr::Index { base, index, .. } => {
                 let base_ty = self.infer_expr_type(base, types, None)?;
-                let element_ty = base_ty
-                    .element_type()
-                    .ok_or_else(|| Diagnostic::new("indexing requires an array operand"))?;
+                let element_ty = if base_ty == Type::Bytes {
+                    Type::Numeric(NumericType::I32)
+                } else {
+                    base_ty
+                        .element_type()
+                        .ok_or_else(|| Diagnostic::new("indexing requires an array or bytes operand"))?
+                };
                 let index_ty =
                     self.infer_expr_type(index, types, Some(Type::Numeric(NumericType::I32)))?;
                 if index_ty != Type::Numeric(NumericType::I32) {
-                    return Err(Diagnostic::new("array index must be i32"));
+                    return Err(Diagnostic::new("index must be i32"));
                 }
                 coerce_type(element_ty, expected)
             }
@@ -2462,6 +2500,15 @@ impl Builder<'_> {
                             "could not resolve operand type during IR lowering",
                         ))
                     }
+                } else if left_ty == Type::Bytes {
+                    let right_ty = self.infer_expr_type(right, types, Some(Type::Bytes))?;
+                    if right_ty == Type::Bytes {
+                        Ok(Type::Bytes)
+                    } else {
+                        Err(Diagnostic::new(
+                            "could not resolve operand type during IR lowering",
+                        ))
+                    }
                 } else {
                     infer_numeric_common_type(
                         left,
@@ -2478,6 +2525,15 @@ impl Builder<'_> {
                     let right_ty = self.infer_expr_type(right, types, Some(Type::String))?;
                     if right_ty == Type::String {
                         Ok(Type::String)
+                    } else {
+                        Err(Diagnostic::new(
+                            "could not resolve operand type during IR lowering",
+                        ))
+                    }
+                } else if left_ty == Type::Bytes {
+                    let right_ty = self.infer_expr_type(right, types, Some(Type::Bytes))?;
+                    if right_ty == Type::Bytes {
+                        Ok(Type::Bytes)
                     } else {
                         Err(Diagnostic::new(
                             "could not resolve operand type during IR lowering",
@@ -2512,6 +2568,15 @@ impl Builder<'_> {
             | BinaryOp::Mod
             | BinaryOp::Less
             | BinaryOp::Greater => {
+                if matches!(op, BinaryOp::Less | BinaryOp::Greater) {
+                    let left_ty = self.infer_expr_type(left, types, None)?;
+                    if left_ty == Type::Bytes {
+                        let right_ty = self.infer_expr_type(right, types, Some(Type::Bytes))?;
+                        if right_ty == Type::Bytes {
+                            return Ok(Type::Bytes);
+                        }
+                    }
+                }
                 infer_numeric_common_type(left, right, types, expected_numeric, |expr, expected| {
                     self.infer_expr_type(expr, types, expected)
                 })
@@ -3127,6 +3192,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             ))),
             Type::String => Err(Diagnostic::new(format!(
                 "cannot implicitly convert string to {expected_numeric}",
+            ))),
+            Type::Bytes => Err(Diagnostic::new(format!(
+                "cannot implicitly convert bytes to {expected_numeric}",
             ))),
             Type::Array(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert array to {expected_numeric}",

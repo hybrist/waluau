@@ -192,7 +192,10 @@ fn collect_array_types_from_instruction(
         IrInstruction::ArrayGet { element_ty, .. } | IrInstruction::ArraySet { element_ty, .. } => {
             insert_array_type(&Type::Array(Box::new(element_ty.clone())), seen, out);
         }
-        IrInstruction::ArrayLen { .. } => {}
+        IrInstruction::ArrayLen { .. }
+        | IrInstruction::Bytes(_)
+        | IrInstruction::BytesGet { .. }
+        | IrInstruction::BytesLen { .. } => {}
         _ => {}
     }
 }
@@ -243,6 +246,7 @@ fn collect_record_types_from_instruction(
         | IrInstruction::Number { .. }
         | IrInstruction::Bool(_)
         | IrInstruction::String(_)
+        | IrInstruction::Bytes(_)
         | IrInstruction::Binary { .. }
         | IrInstruction::MathIntrinsic { .. }
         | IrInstruction::Print { .. }
@@ -252,6 +256,8 @@ fn collect_record_types_from_instruction(
         | IrInstruction::CoroutineResume { .. }
         | IrInstruction::CoroutineClose { .. }
         | IrInstruction::ArrayLen { .. }
+        | IrInstruction::BytesGet { .. }
+        | IrInstruction::BytesLen { .. }
         | IrInstruction::StructSet { .. }
         | IrInstruction::MultiGet { .. } => {}
     }
@@ -268,6 +274,7 @@ pub(crate) fn array_storage_type(
         Type::Numeric(NumericType::F64) => Ok(StorageType::Val(ValType::F64)),
         Type::Bool => Ok(StorageType::Val(ValType::I32)),
         Type::String => Ok(StorageType::Val(externref_val_type())),
+        Type::Bytes => Ok(StorageType::Val(externref_val_type())),
         Type::Array(_) => {
             let index = registry.index(element_ty)?;
             Ok(StorageType::Val(ValType::Ref(RefType {
@@ -296,6 +303,7 @@ pub(crate) fn record_storage_type(
         Type::Numeric(NumericType::F64) => Ok(StorageType::Val(ValType::F64)),
         Type::Bool => Ok(StorageType::Val(ValType::I32)),
         Type::String => Ok(StorageType::Val(externref_val_type())),
+        Type::Bytes => Ok(StorageType::Val(externref_val_type())),
         Type::Array(_) => {
             let index = registry.index(field_ty)?;
             Ok(StorageType::Val(ValType::Ref(RefType {

@@ -83,11 +83,92 @@ const DEFAULT_PRESET = PRESETS[0] || {
 const WALUAU_STRING_CONSTANTS_MODULE = 'string_constants';
 const WALUAU_IMPORT_MODULE = 'waluau';
 // Must match waluau_codegen_wasm::host::HOST_IMPORT_COUNT
-const WALUAU_HOST_IMPORT_COUNT = 10;
+const WALUAU_HOST_IMPORT_COUNT = 16;
 
 let printCaptureCallback = null;
 
-function buildWaluauImports(initLogger) {
+function decodeBytesConstantsFromWasm(wasmBuffer) {
+  const bytes = wasmBuffer instanceof Uint8Array ? wasmBuffer : new Uint8Array(wasmBuffer);
+  let pos = 8;
+
+  function readVaruint() {
+    let result = 0;
+    let shift = 0;
+    while (pos < bytes.length) {
+      const byte = bytes[pos++];
+      result |= (byte & 0x7f) << shift;
+      if ((byte & 0x80) === 0) return result >>> 0;
+      shift += 7;
+    }
+    throw new Error('truncated wasm leb128');
+  }
+
+  function readU32Le(offset) {
+    return (
+      bytes[offset] |
+      (bytes[offset + 1] << 8) |
+      (bytes[offset + 2] << 16) |
+      (bytes[offset + 3] << 24)
+    ) >>> 0;
+  }
+
+  while (pos < bytes.length) {
+    const sectionId = bytes[pos++];
+    const sectionLength = readVaruint();
+    const sectionStart = pos;
+    const sectionEnd = sectionStart + sectionLength;
+    if (sectionEnd > bytes.length) break;
+
+    if (sectionId === 0) {
+      const nameLen = readVaruint();
+      const nameStart = pos;
+      const nameEnd = nameStart + nameLen;
+      const nameBytes = bytes.subarray(nameStart, nameEnd);
+      const name = new TextDecoder().decode(nameBytes);
+      pos = nameEnd;
+      if (name === 'waluau.bytc') {
+        let offset = pos;
+        const count = readU32Le(offset);
+        offset += 4;
+        const values = [];
+        for (let i = 0; i < count; i++) {
+          const len = readU32Le(offset);
+          offset += 4;
+          values.push(bytes.slice(offset, offset + len));
+          offset += len;
+        }
+        return values;
+      }
+    }
+
+    pos = sectionEnd;
+  }
+
+  return [];
+}
+
+function parseBytesInput(valStr) {
+  const trimmed = valStr.trim();
+  if (trimmed.startsWith('[')) {
+    const parsed = JSON.parse(trimmed);
+    if (!Array.isArray(parsed)) throw new Error('bytes input must be a JSON array');
+    return new Uint8Array(parsed.map((value) => {
+      const n = Number(value);
+      if (!Number.isInteger(n) || n < 0 || n > 255) {
+        throw new Error('bytes values must be integers in the range 0..255');
+      }
+      return n;
+    }));
+  }
+  throw new Error('bytes input must use JSON array syntax like [0, 255, 10]');
+}
+
+function buildWaluauImports(wasmBuffer, initLogger) {
+  const bytesConstants = decodeBytesConstantsFromWasm(wasmBuffer);
+  const asBytes = (value) => {
+    if (value instanceof Uint8Array) return value;
+    throw new Error(`Expected Uint8Array bytes value, got ${Object.prototype.toString.call(value)}`);
+  };
   const waluauImports = new Proxy({}, {
     get(_target, prop) {
       const name = String(prop);
@@ -103,6 +184,62 @@ function buildWaluauImports(initLogger) {
           } else {
             console.log(value);
           }
+        };
+      }
+      if (name === 'bytes_literal') {
+        return (index) => {
+          const literal = bytesConstants[index];
+          if (!literal) {
+            throw new Error(`Unknown bytes literal index ${index}`);
+          }
+          return literal.slice();
+        };
+      }
+      if (name === 'bytes_get') {
+        return (value, index) => {
+          const bytes = asBytes(value);
+          if (index < 0 || index >= bytes.length) {
+            throw new Error(`bytes index out of bounds: ${index}`);
+          }
+          return bytes[index];
+        };
+      }
+      if (name === 'bytes_len') {
+        return (value) => asBytes(value).length;
+      }
+      if (name === 'bytes_concat') {
+        return (left, right) => {
+          const a = asBytes(left);
+          const b = asBytes(right);
+          const merged = new Uint8Array(a.length + b.length);
+          merged.set(a, 0);
+          merged.set(b, a.length);
+          return merged;
+        };
+      }
+      if (name === 'bytes_eq') {
+        return (left, right) => {
+          const a = asBytes(left);
+          const b = asBytes(right);
+          if (a.length !== b.length) return 0;
+          for (let i = 0; i < a.length; i++) {
+            if (a[i] !== b[i]) return 0;
+          }
+          return 1;
+        };
+      }
+      if (name === 'bytes_compare') {
+        return (left, right) => {
+          const a = asBytes(left);
+          const b = asBytes(right);
+          const len = Math.min(a.length, b.length);
+          for (let i = 0; i < len; i++) {
+            if (a[i] < b[i]) return -1;
+            if (a[i] > b[i]) return 1;
+          }
+          if (a.length < b.length) return -1;
+          if (a.length > b.length) return 1;
+          return 0;
         };
       }
       return () => {
@@ -330,6 +467,7 @@ function renderType(type) {
     case 'F64': return 'f64';
     case 'Bool': return 'bool';
     case 'String': return 'string';
+    case 'Bytes': return 'bytes';
     case 'Unit': return 'unit';
     case 'Thread': return 'thread';
     case 'Array': return `{${renderType(type.value.elementType)}}`;
@@ -357,6 +495,7 @@ function getDefaultParamValue(type) {
       return '[]';
     }
     if (type.kind === 'String') return '""';
+    if (type.kind === 'Bytes') return '[]';
     return '0';
   }
   return type === 'string' ? '""' : '0';
@@ -393,6 +532,9 @@ function constructArg(val, type, instance) {
     case 'String': {
       return parseStringInput(String(val));
     }
+    case 'Bytes': {
+      return parseBytesInput(String(val));
+    }
     case 'Record': {
       const typeIdx = type.value.typeIndex;
       const ctorName = `__waluau_new_record_${typeIdx}`;
@@ -422,6 +564,7 @@ function inspectVal(val, type, instance) {
     case 'F64': return Number(val);
     case 'Bool': return Boolean(val);
     case 'String': return String(val);
+    case 'Bytes': return { _isBytes: true, bytes: Array.from(val instanceof Uint8Array ? val : []) };
     case 'Record': {
       const typeIdx = type.value.typeIndex;
       const obj = {};
@@ -446,6 +589,9 @@ function formatInspectedVal(inspectedVal) {
   if (typeof inspectedVal === 'object') {
     if (inspectedVal._isBigInt) {
       return inspectedVal.val.toString() + 'n';
+    }
+    if (inspectedVal._isBytes) {
+      return `bytes[${inspectedVal.bytes.join(', ')}]`;
     }
     if (Array.isArray(inspectedVal)) {
       return '{' + inspectedVal.map(formatInspectedVal).join(', ') + '}';
@@ -1283,7 +1429,7 @@ export default function App() {
       }
       const capturedInitLogs = [];
       try {
-        const imports = buildWaluauImports((msg) => {
+        const imports = buildWaluauImports(wasmBuffer, (msg) => {
           capturedInitLogs.push(msg);
         });
         const obj = await WebAssembly.instantiate(wasmBuffer, imports, {

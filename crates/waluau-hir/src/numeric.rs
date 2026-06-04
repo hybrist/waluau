@@ -204,6 +204,9 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             Type::String => Err(Diagnostic::new(format!(
                 "cannot implicitly convert string to {expected_numeric}",
             ))),
+            Type::Bytes => Err(Diagnostic::new(format!(
+                "cannot implicitly convert bytes to {expected_numeric}",
+            ))),
             Type::Array(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert array to {expected_numeric}",
             ))),
@@ -265,6 +268,9 @@ pub(super) fn resolve_number_literal(
         Some(Type::Unit) => Err(Diagnostic::new("numeric literal is not assignable to unit")),
         Some(Type::String) => Err(Diagnostic::new(
             "numeric literal is not assignable to string",
+        )),
+        Some(Type::Bytes) => Err(Diagnostic::new(
+            "numeric literal is not assignable to bytes",
         )),
         Some(Type::Array(_)) => Err(Diagnostic::new(
             "numeric literal is not assignable to array",

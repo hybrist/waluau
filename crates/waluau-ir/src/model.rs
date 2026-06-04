@@ -40,6 +40,7 @@ pub enum Instruction {
     Unit,
     Bool(bool),
     String(String),
+    Bytes(Vec<u8>),
     Cast {
         value: ValueId,
         from: Type,
@@ -113,6 +114,13 @@ pub enum Instruction {
     },
     ArrayLen {
         array: ValueId,
+    },
+    BytesGet {
+        bytes: ValueId,
+        index: ValueId,
+    },
+    BytesLen {
+        bytes: ValueId,
     },
     StructNew {
         struct_ty: Type,

@@ -8,10 +8,17 @@ use waluau_ir::{Function as IrFunction, Instruction as IrInstruction, Module};
 pub const IMPORTED_STRING_CONSTANTS_MODULE: &str = "string_constants";
 pub const JS_STRING_BUILTINS_MODULE: &str = "wasm:js-string";
 pub const IMPORT_MODULE: &str = "waluau";
-pub const CUSTOM_SECTION_NAME: &str = "waluau.strc";
+pub const STRING_CUSTOM_SECTION_NAME: &str = "waluau.strc";
+pub const BYTES_CUSTOM_SECTION_NAME: &str = "waluau.bytc";
 
 pub const IMPORT_JS_STRING_EQ: &str = "equals";
 pub const IMPORT_JS_STRING_CONCAT: &str = "concat";
+pub const IMPORT_BYTES_LITERAL: &str = "bytes_literal";
+pub const IMPORT_BYTES_GET: &str = "bytes_get";
+pub const IMPORT_BYTES_LEN: &str = "bytes_len";
+pub const IMPORT_BYTES_CONCAT: &str = "bytes_concat";
+pub const IMPORT_BYTES_EQ: &str = "bytes_eq";
+pub const IMPORT_BYTES_COMPARE: &str = "bytes_compare";
 pub const IMPORT_JS_TOSTRING_I32: &str = "js_tostring_i32";
 pub const IMPORT_JS_TOSTRING_U32: &str = "js_tostring_u32";
 pub const IMPORT_JS_TOSTRING_I64: &str = "js_tostring_i64";
@@ -22,7 +29,7 @@ pub const IMPORT_JS_TOSTRING_BOOL: &str = "js_tostring_bool";
 pub const IMPORT_PRINT: &str = "print";
 
 /// Number of imported host functions emitted before user-defined functions.
-pub const HOST_IMPORT_COUNT: u32 = 10;
+pub const HOST_IMPORT_COUNT: u32 = 16;
 
 /// Function index of the first user-defined function in the combined import+defined index space.
 pub const fn defined_func_index(user_index: u32) -> u32 {
@@ -33,18 +40,24 @@ pub const fn defined_func_index(user_index: u32) -> u32 {
 pub const IMPORT_JS_STRING_EQ_FUNC: u32 = 0;
 /// Index of `IMPORT_JS_STRING_CONCAT` in the combined function index space.
 pub const IMPORT_JS_STRING_CONCAT_FUNC: u32 = 1;
+pub const IMPORT_BYTES_LITERAL_FUNC: u32 = 2;
+pub const IMPORT_BYTES_GET_FUNC: u32 = 3;
+pub const IMPORT_BYTES_LEN_FUNC: u32 = 4;
+pub const IMPORT_BYTES_CONCAT_FUNC: u32 = 5;
+pub const IMPORT_BYTES_EQ_FUNC: u32 = 6;
+pub const IMPORT_BYTES_COMPARE_FUNC: u32 = 7;
 /// Index of `IMPORT_PRINT` in the combined function index space.
-pub const IMPORT_PRINT_FUNC: u32 = 2;
-pub const IMPORT_JS_TOSTRING_I32_FUNC: u32 = 3;
-pub const IMPORT_JS_TOSTRING_U32_FUNC: u32 = 4;
-pub const IMPORT_JS_TOSTRING_I64_FUNC: u32 = 5;
-pub const IMPORT_JS_TOSTRING_U64_FUNC: u32 = 6;
-pub const IMPORT_JS_TOSTRING_F32_FUNC: u32 = 7;
-pub const IMPORT_JS_TOSTRING_F64_FUNC: u32 = 8;
-pub const IMPORT_JS_TOSTRING_BOOL_FUNC: u32 = 9;
+pub const IMPORT_PRINT_FUNC: u32 = 8;
+pub const IMPORT_JS_TOSTRING_I32_FUNC: u32 = 9;
+pub const IMPORT_JS_TOSTRING_U32_FUNC: u32 = 10;
+pub const IMPORT_JS_TOSTRING_I64_FUNC: u32 = 11;
+pub const IMPORT_JS_TOSTRING_U64_FUNC: u32 = 12;
+pub const IMPORT_JS_TOSTRING_F32_FUNC: u32 = 13;
+pub const IMPORT_JS_TOSTRING_F64_FUNC: u32 = 14;
+pub const IMPORT_JS_TOSTRING_BOOL_FUNC: u32 = 15;
 
 /// Number of host function types emitted after array types in the type section.
-pub const HOST_TYPE_COUNT: u32 = 7;
+pub const HOST_TYPE_COUNT: u32 = 9;
 
 pub fn encode_string_constants_section(strings: &[String]) -> Vec<u8> {
     let mut out = Vec::new();
@@ -53,6 +66,16 @@ pub fn encode_string_constants_section(strings: &[String]) -> Vec<u8> {
         let bytes = string.as_bytes();
         push_u32(&mut out, bytes.len() as u32);
         out.extend_from_slice(bytes);
+    }
+    out
+}
+
+pub fn encode_bytes_constants_section(values: &[Vec<u8>]) -> Vec<u8> {
+    let mut out = Vec::new();
+    push_u32(&mut out, values.len() as u32);
+    for value in values {
+        push_u32(&mut out, value.len() as u32);
+        out.extend_from_slice(value);
     }
     out
 }
@@ -81,6 +104,27 @@ pub fn decode_string_constants_section(data: &[u8]) -> Result<Vec<String>, Diagn
     Ok(strings)
 }
 
+pub fn decode_bytes_constants_section(data: &[u8]) -> Result<Vec<Vec<u8>>, Diagnostic> {
+    let mut offset = 0usize;
+    let count = read_u32(data, &mut offset)?;
+    let mut values = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let len = read_u32(data, &mut offset)? as usize;
+        let end = offset
+            .checked_add(len)
+            .ok_or_else(|| Diagnostic::new("waluau.bytc section length overflow"))?;
+        if end > data.len() {
+            return Err(Diagnostic::new("waluau.bytc section truncated"));
+        }
+        values.push(data[offset..end].to_vec());
+        offset = end;
+    }
+    if offset != data.len() {
+        return Err(Diagnostic::new("waluau.bytc section has trailing bytes"));
+    }
+    Ok(values)
+}
+
 /// Collect every string literal in `module`, deduplicated in first-seen order.
 pub fn collect_string_constants(module: &Module) -> Vec<String> {
     let mut strings = Vec::new();
@@ -89,6 +133,15 @@ pub fn collect_string_constants(module: &Module) -> Vec<String> {
         collect_from_function(function, &mut strings, &mut indices);
     }
     strings
+}
+
+pub fn collect_bytes_constants(module: &Module) -> Vec<Vec<u8>> {
+    let mut values = Vec::new();
+    let mut indices = HashMap::<Vec<u8>, u32>::new();
+    for function in &module.functions {
+        collect_bytes_from_function(function, &mut values, &mut indices);
+    }
+    values
 }
 
 fn collect_from_function<'a>(
@@ -109,6 +162,24 @@ fn collect_from_function<'a>(
     }
 }
 
+fn collect_bytes_from_function(
+    function: &IrFunction,
+    values: &mut Vec<Vec<u8>>,
+    indices: &mut HashMap<Vec<u8>, u32>,
+) {
+    for block in function.blocks.values() {
+        for (_, instruction) in &block.instructions {
+            if let IrInstruction::Bytes(literal) = instruction
+                && indices
+                    .insert(literal.clone(), values.len() as u32)
+                    .is_none()
+            {
+                values.push(literal.clone());
+            }
+        }
+    }
+}
+
 pub fn string_constant_index(strings: &[String], literal: &str) -> Result<u32, Diagnostic> {
     strings
         .iter()
@@ -121,8 +192,34 @@ pub fn string_constant_index(strings: &[String], literal: &str) -> Result<u32, D
         })
 }
 
+pub fn bytes_constant_index(values: &[Vec<u8>], literal: &[u8]) -> Result<u32, Diagnostic> {
+    values
+        .iter()
+        .position(|value| value == literal)
+        .map(|index| index as u32)
+        .ok_or_else(|| Diagnostic::new("missing bytes literal in wasm bytes constants"))
+}
+
 /// Parse the `waluau.strc` custom section from a compiled Wasm module.
 pub fn parse_string_constants_from_wasm(wasm: &[u8]) -> Result<Vec<String>, Diagnostic> {
+    match find_named_custom_section(wasm, STRING_CUSTOM_SECTION_NAME)? {
+        Some(data) => decode_string_constants_section(data),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// Parse the `waluau.bytc` custom section from a compiled Wasm module.
+pub fn parse_bytes_constants_from_wasm(wasm: &[u8]) -> Result<Vec<Vec<u8>>, Diagnostic> {
+    match find_named_custom_section(wasm, BYTES_CUSTOM_SECTION_NAME)? {
+        Some(data) => decode_bytes_constants_section(data),
+        None => Ok(Vec::new()),
+    }
+}
+
+fn find_named_custom_section<'a>(
+    wasm: &'a [u8],
+    section_name: &str,
+) -> Result<Option<&'a [u8]>, Diagnostic> {
     let mut offset = 8usize;
     if wasm.len() < 8 || &wasm[0..4] != b"\0asm" {
         return Err(Diagnostic::new("input is not a wasm module"));
@@ -148,13 +245,13 @@ pub fn parse_string_constants_from_wasm(wasm: &[u8]) -> Result<Vec<String>, Diag
             }
             let name = std::str::from_utf8(&wasm[section_offset..name_end])
                 .map_err(|_| Diagnostic::new("wasm custom section name is not UTF-8"))?;
-            if name == CUSTOM_SECTION_NAME {
-                return decode_string_constants_section(&wasm[name_end..section_end]);
+            if name == section_name {
+                return Ok(Some(&wasm[name_end..section_end]));
             }
         }
         offset = section_end;
     }
-    Ok(Vec::new())
+    Ok(None)
 }
 
 fn push_u32(out: &mut Vec<u8>, value: u32) {
@@ -202,5 +299,13 @@ mod tests {
         let encoded = encode_string_constants_section(&strings);
         let decoded = decode_string_constants_section(&encoded).expect("decode should succeed");
         assert_eq!(decoded, strings);
+    }
+
+    #[test]
+    fn round_trips_bytes_constants_section() {
+        let values = vec![b"hello".to_vec(), vec![0, 255, 10], Vec::new()];
+        let encoded = encode_bytes_constants_section(&values);
+        let decoded = decode_bytes_constants_section(&encoded).expect("decode should succeed");
+        assert_eq!(decoded, values);
     }
 }
