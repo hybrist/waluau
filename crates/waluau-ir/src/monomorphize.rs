@@ -49,7 +49,7 @@ impl<'a> Monomorphizer<'a> {
             .functions
             .iter()
             .filter(|function| !function.type_params.is_empty())
-            .map(|function| (function.name.clone(), function))
+            .map(|function| (function.name.to_string(), function))
             .collect();
         Self {
             generic_functions,
@@ -89,12 +89,12 @@ impl<'a> Monomorphizer<'a> {
                 .zip(key.type_args.iter().cloned())
                 .collect::<HashMap<_, _>>();
             let active = ActiveSpecialization {
-                generic_name: template.name.clone(),
+                generic_name: template.name.to_string(),
                 type_args: key.type_args.clone(),
             };
             functions.push(self.rewrite_function_with_name(
                 template,
-                specialized_name,
+                waluau_ast::FunctionName::Name(specialized_name),
                 &subst,
                 Some(&active),
             )?);
@@ -121,7 +121,7 @@ impl<'a> Monomorphizer<'a> {
     fn rewrite_function_with_name(
         &mut self,
         function: &AstFunction,
-        name: String,
+        name: waluau_ast::FunctionName,
         subst: &HashMap<String, Type>,
         active: Option<&ActiveSpecialization>,
     ) -> Result<AstFunction, Diagnostic> {

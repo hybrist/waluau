@@ -1,3 +1,4 @@
+use waluau_ast::FunctionName;
 use waluau_parser::parse;
 
 #[test]
@@ -12,7 +13,10 @@ fn infers_local_and_return_types_for_happy_path() {
     let program = parse(source).expect("parse should succeed");
     let typed = waluau_hir::type_check_and_infer(&program).expect("inference should succeed");
     assert_eq!(typed.functions.len(), 1);
-    assert_eq!(typed.functions[0].name, "entry");
+    assert_eq!(
+        typed.functions[0].name,
+        FunctionName::Name("entry".to_string())
+    );
     assert!(typed.functions[0].return_type.is_some());
 }
 

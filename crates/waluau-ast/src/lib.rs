@@ -24,12 +24,18 @@ pub struct TableField {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Function {
-    pub name: String,
+    pub name: FunctionName,
     pub type_params: Vec<String>,
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
     pub body: Vec<Stmt>,
     pub file_path: String,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum FunctionName {
+    Name(String),
+    Method { table: String, method: String },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -107,6 +113,31 @@ impl Type {
         match self {
             Self::Record(fields) => fields.get(name).cloned(),
             _ => None,
+        }
+    }
+}
+
+impl FunctionName {
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::Name(name) => Some(name),
+            Self::Method { .. } => None,
+        }
+    }
+
+    pub fn display_name(&self) -> String {
+        match self {
+            Self::Name(name) => name.clone(),
+            Self::Method { table, method } => format!("{table}:{method}"),
+        }
+    }
+}
+
+impl std::fmt::Display for FunctionName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Name(name) => f.write_str(name),
+            Self::Method { table, method } => write!(f, "{table}:{method}"),
         }
     }
 }

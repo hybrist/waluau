@@ -11,7 +11,7 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
                 ))
             })?;
             Ok((
-                function.name.clone(),
+                function.name.to_string(),
                 (
                     function
                         .params
@@ -54,7 +54,7 @@ pub(crate) fn build_function(
         )
     })?;
     let mut out = Function {
-        name: function.name.clone(),
+        name: function.name.to_string(),
         params: function
             .params
             .iter()
@@ -2029,7 +2029,7 @@ impl Builder<'_> {
             captures.iter().map(|(n, _)| n.clone()).collect();
         // Also include any names that the nested function's inner nested functions capture.
         let nested_inner_captures = collect_nested_function_capture_names(&waluau_ast::Function {
-            name: function.name.clone().unwrap_or_default(),
+            name: FunctionName::Name(function.name.clone().unwrap_or_default()),
             type_params: function.type_params.clone(),
             params: function.params.clone(),
             return_type: Some(return_ty.clone()),

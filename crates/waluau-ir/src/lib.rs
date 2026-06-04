@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use waluau_ast::{
-    AssignOp, BinaryOp, Expr, Function as AstFunction, NumberLiteral, NumericType, Program, Stmt,
-    Type, UnaryOp,
+    AssignOp, BinaryOp, Expr, Function as AstFunction, FunctionName, NumberLiteral, NumericType,
+    Program, Stmt, Type, UnaryOp,
 };
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
