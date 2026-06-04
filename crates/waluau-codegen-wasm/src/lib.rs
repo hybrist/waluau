@@ -56,7 +56,13 @@ fn collect_closure_targets(module: &Module) -> Vec<String> {
     names
 }
 
-pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
+#[derive(Debug)]
+pub struct EmitResult {
+    pub wasm: Vec<u8>,
+    pub record_type_indices: HashMap<String, u32>,
+}
+
+pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     let array_types = collect_array_types(module);
     let record_types = collect_record_types(module);
     let string_constants = host::collect_string_constants(module);
@@ -257,6 +263,59 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         types.ty().function(wrapper_params, results);
     }
 
+    // Record type helper functions signatures and indices mapping.
+    let unique_sig_count = signature_registry.unique_signatures.len() as u32;
+    let wrapper_sig_count = signature_registry.wrapper_sigs.len() as u32;
+    let mut type_idx_counter = user_type_base + unique_sig_count + wrapper_sig_count;
+
+    struct RecordHelpersInfo {
+        record_idx: u32,
+        constructor_type_idx: u32,
+        getter_type_indices: Vec<u32>,
+    }
+
+    let mut record_helpers = Vec::new();
+    for (i, record_ty) in record_types.iter().enumerate() {
+        let Type::Record(fields) = record_ty else {
+            continue;
+        };
+        let record_idx = record_types_base + i as u32;
+
+        // Constructor signature: (field0, field1...) -> ref null record_idx
+        let mut constructor_params = Vec::new();
+        for field_ty in fields.values() {
+            constructor_params.push(wasm_type(field_ty, &array_registry)?);
+        }
+        let constructor_result = ValType::Ref(RefType {
+            nullable: true,
+            heap_type: HeapType::Concrete(record_idx),
+        });
+        types
+            .ty()
+            .function(constructor_params, vec![constructor_result]);
+        let constructor_type_idx = type_idx_counter;
+        type_idx_counter += 1;
+
+        // Getters signatures: for each field, (ref null record_idx) -> field_type
+        let mut getter_type_indices = Vec::new();
+        for field_ty in fields.values() {
+            let getter_param = ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(record_idx),
+            });
+            let getter_result = wasm_type(field_ty, &array_registry)?;
+            types.ty().function(vec![getter_param], vec![getter_result]);
+            getter_type_indices.push(type_idx_counter);
+            type_idx_counter += 1;
+        }
+
+        record_helpers.push(RecordHelpersInfo {
+            record_idx,
+            constructor_type_idx,
+            getter_type_indices,
+        });
+    }
+
     let mut imports = ImportSection::new();
     imports.import(
         host::JS_STRING_BUILTINS_MODULE,
@@ -413,6 +472,55 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
         let _ = wrapper_idx;
     }
 
+    // Emit record helper functions (constructors and getters)
+    let mut helper_func_idx_counter =
+        module.functions.len() as u32 + thunk_offset + closure_targets.len() as u32;
+    let mut record_helper_idx = 0;
+    for record_ty in &record_types {
+        let Type::Record(fields) = record_ty else {
+            continue;
+        };
+        let info = &record_helpers[record_helper_idx];
+        record_helper_idx += 1;
+
+        // 1. Emit constructor
+        functions.function(info.constructor_type_idx);
+        exports.export(
+            &format!("__waluau_new_record_{}", info.record_idx),
+            ExportKind::Func,
+            host::defined_func_index(helper_func_idx_counter),
+        );
+        helper_func_idx_counter += 1;
+
+        let mut constructor_fn = Function::new(Vec::new());
+        for f in 0..fields.len() {
+            constructor_fn.instruction(&Instruction::LocalGet(f as u32));
+        }
+        constructor_fn.instruction(&Instruction::StructNew(info.record_idx));
+        constructor_fn.instruction(&Instruction::End);
+        codes.function(&constructor_fn);
+
+        // 2. Emit getters
+        for (field_idx, _field_name) in fields.keys().enumerate() {
+            functions.function(info.getter_type_indices[field_idx]);
+            exports.export(
+                &format!("__waluau_get_record_{}_{}", info.record_idx, field_idx),
+                ExportKind::Func,
+                host::defined_func_index(helper_func_idx_counter),
+            );
+            helper_func_idx_counter += 1;
+
+            let mut getter_fn = Function::new(Vec::new());
+            getter_fn.instruction(&Instruction::LocalGet(0));
+            getter_fn.instruction(&Instruction::StructGet {
+                struct_type_index: info.record_idx,
+                field_index: field_idx as u32,
+            });
+            getter_fn.instruction(&Instruction::End);
+            codes.function(&getter_fn);
+        }
+    }
+
     let defined_func_count = module.functions.len() as u64;
     let wrapper_count = closure_targets.len() as u64;
     let table_size = host::HOST_IMPORT_COUNT as u64 + defined_func_count + wrapper_count;
@@ -463,7 +571,13 @@ pub fn emit(module: &Module) -> Result<Vec<u8>, Diagnostic> {
     Validator::new_with_features(features)
         .validate_all(&bytes)
         .map_err(|err| Diagnostic::new(format!("emitted invalid wasm: {err}")))?;
-    Ok(bytes)
+
+    let record_type_indices = array_registry.record_indices.clone();
+
+    Ok(EmitResult {
+        wasm: bytes,
+        record_type_indices,
+    })
 }
 
 #[derive(Clone)]

@@ -4,12 +4,92 @@ use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 #[derive(Debug, Serialize)]
+#[serde(tag = "kind", content = "value")]
+enum TypeJson {
+    I32,
+    I64,
+    F32,
+    F64,
+    Bool,
+    String,
+    Unit,
+    Thread,
+    Array {
+        #[serde(rename = "elementType")]
+        element_type: Box<TypeJson>,
+    },
+    Record {
+        #[serde(rename = "typeIndex")]
+        type_index: u32,
+        fields: std::collections::BTreeMap<String, TypeJson>,
+    },
+    Unknown(String),
+}
+
+#[derive(Debug, Serialize)]
+struct FunctionSignatureJson {
+    params: Vec<TypeJson>,
+    returns: Vec<TypeJson>,
+}
+
+#[derive(Debug, Serialize)]
 struct CompileResult {
     ir: String,
     wat: String,
     wasm: Vec<u8>,
     #[serde(rename = "requiresWasmGc")]
     requires_wasm_gc: bool,
+    signatures: std::collections::HashMap<String, FunctionSignatureJson>,
+}
+
+fn to_type_json(
+    ty: &waluau_ast::Type,
+    record_type_indices: &std::collections::HashMap<String, u32>,
+) -> TypeJson {
+    match ty {
+        waluau_ast::Type::Numeric(numeric_ty) => match numeric_ty {
+            waluau_ast::NumericType::I32 | waluau_ast::NumericType::U32 => TypeJson::I32,
+            waluau_ast::NumericType::I64 | waluau_ast::NumericType::U64 => TypeJson::I64,
+            waluau_ast::NumericType::F32 => TypeJson::F32,
+            waluau_ast::NumericType::F64 => TypeJson::F64,
+        },
+        waluau_ast::Type::Bool => TypeJson::Bool,
+        waluau_ast::Type::String => TypeJson::String,
+        waluau_ast::Type::Unit => TypeJson::Unit,
+        waluau_ast::Type::Thread => TypeJson::Thread,
+        waluau_ast::Type::Array(elem_ty) => TypeJson::Array {
+            element_type: Box::new(to_type_json(elem_ty, record_type_indices)),
+        },
+        waluau_ast::Type::Record(fields) => {
+            let type_index = record_type_indices
+                .get(&ty.to_string())
+                .copied()
+                .unwrap_or(0);
+            let fields_json = fields
+                .iter()
+                .map(|(name, field_ty)| (name.clone(), to_type_json(field_ty, record_type_indices)))
+                .collect();
+            TypeJson::Record {
+                type_index,
+                fields: fields_json,
+            }
+        }
+        other => TypeJson::Unknown(format!("{:?}", other)),
+    }
+}
+
+fn get_returns_json(
+    ty: &waluau_ast::Type,
+    record_type_indices: &std::collections::HashMap<String, u32>,
+) -> Vec<TypeJson> {
+    match ty {
+        waluau_ast::Type::Multi(tys) => tys
+            .iter()
+            .map(|t| to_type_json(t, record_type_indices))
+            .collect(),
+        waluau_ast::Type::Unit => Vec::new(),
+        other => vec![to_type_json(other, record_type_indices)],
+    }
 }
 
 /// Compile Waluau source to IR, WAT, and Wasm bytes.
@@ -54,14 +134,31 @@ fn compile_sources(
         ir_dump.push('\n');
     }
 
-    let wasm_bytes = waluau_codegen_wasm::emit(&module).map_err(|e| e.to_string())?;
-    let wat = wasmprinter::print_bytes(&wasm_bytes).map_err(|e| e.to_string())?;
+    let emit_res = waluau_codegen_wasm::emit(&module).map_err(|e| e.to_string())?;
+    let wat = wasmprinter::print_bytes(&emit_res.wasm).map_err(|e| e.to_string())?;
+
+    let mut signatures = std::collections::HashMap::new();
+    for function in &module.functions {
+        if function.name != "__waluau_top_level_init" {
+            let params = function
+                .params
+                .iter()
+                .map(|(_, ty)| to_type_json(ty, &emit_res.record_type_indices))
+                .collect();
+            let returns = get_returns_json(&function.return_type, &emit_res.record_type_indices);
+            signatures.insert(
+                function.name.clone(),
+                FunctionSignatureJson { params, returns },
+            );
+        }
+    }
 
     Ok(CompileResult {
         ir: ir_dump,
         wat,
-        wasm: wasm_bytes,
+        wasm: emit_res.wasm,
         requires_wasm_gc,
+        signatures,
     })
 }
 
@@ -77,14 +174,31 @@ fn compile_source(source: &str) -> Result<CompileResult, String> {
         ir_dump.push('\n');
     }
 
-    let wasm_bytes = waluau_codegen_wasm::emit(&module).map_err(|e| e.to_string())?;
-    let wat = wasmprinter::print_bytes(&wasm_bytes).map_err(|e| e.to_string())?;
+    let emit_res = waluau_codegen_wasm::emit(&module).map_err(|e| e.to_string())?;
+    let wat = wasmprinter::print_bytes(&emit_res.wasm).map_err(|e| e.to_string())?;
+
+    let mut signatures = std::collections::HashMap::new();
+    for function in &module.functions {
+        if function.name != "__waluau_top_level_init" {
+            let params = function
+                .params
+                .iter()
+                .map(|(_, ty)| to_type_json(ty, &emit_res.record_type_indices))
+                .collect();
+            let returns = get_returns_json(&function.return_type, &emit_res.record_type_indices);
+            signatures.insert(
+                function.name.clone(),
+                FunctionSignatureJson { params, returns },
+            );
+        }
+    }
 
     Ok(CompileResult {
         ir: ir_dump,
         wat,
-        wasm: wasm_bytes,
+        wasm: emit_res.wasm,
         requires_wasm_gc,
+        signatures,
     })
 }
 
@@ -115,7 +229,9 @@ fn function_requires_wasm_gc(function: &waluau_ir::Function) -> bool {
 fn type_requires_wasm_gc(ty: &waluau_ast::Type) -> bool {
     matches!(
         ty,
-        waluau_ast::Type::Array(_) | waluau_ast::Type::Function { .. }
+        waluau_ast::Type::Array(_)
+            | waluau_ast::Type::Function { .. }
+            | waluau_ast::Type::Record(_)
     )
 }
 

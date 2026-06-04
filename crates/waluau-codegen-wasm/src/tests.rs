@@ -3,6 +3,10 @@ use waluau_ir::Instruction as IrInstruction;
 use wasmparser::{Operator, Parser, Payload, Validator};
 use wasmprinter::print_bytes;
 
+fn emit(module: &waluau_ir::Module) -> Result<Vec<u8>, waluau_diagnostics::Diagnostic> {
+    super::emit(module).map(|r| r.wasm)
+}
+
 #[test]
 fn emits_valid_wasm_for_scalar_program() {
     let source = r#"
@@ -12,7 +16,7 @@ fn emits_valid_wasm_for_scalar_program() {
     "#;
     let program = waluau_parser::parse(source).expect("parse should succeed");
     let ir = waluau_ir::build(&program).expect("ir should succeed");
-    let wasm = super::emit(&ir).expect("emit should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
     Validator::new()
         .validate_all(&wasm)
         .expect("emitted module should validate");
@@ -30,7 +34,7 @@ fn emits_valid_wasm_for_array_program() {
     "#;
     let program = waluau_parser::parse(source).expect("parse should succeed");
     let ir = waluau_ir::build(&program).expect("ir should succeed");
-    let wasm = super::emit(&ir).expect("emit should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
     Validator::new()
         .validate_all(&wasm)
         .expect("emitted module should validate");
@@ -48,7 +52,7 @@ fn emits_valid_wasm_for_non_capturing_indirect_call() {
     "#;
     let program = waluau_parser::parse(source).expect("parse should succeed");
     let ir = waluau_ir::build(&program).expect("ir should succeed");
-    let wasm = super::emit(&ir).expect("emit should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
     Validator::new()
         .validate_all(&wasm)
         .expect("emitted module should validate");
@@ -66,7 +70,7 @@ fn emits_valid_wasm_for_capturing_closure_values() {
     "#;
     let program = waluau_parser::parse(source).expect("parse should succeed");
     let ir = waluau_ir::build(&program).expect("ir should succeed");
-    let wasm = super::emit(&ir).expect("capturing closures should compile");
+    let wasm = emit(&ir).expect("capturing closures should compile");
     Validator::new()
         .validate_all(&wasm)
         .expect("emitted module should validate");
@@ -85,7 +89,7 @@ fn emits_structured_if_for_simple_branch() {
     "#;
     let program = waluau_parser::parse(source).expect("parse should succeed");
     let ir = waluau_ir::build(&program).expect("ir should succeed");
-    let wasm = super::emit(&ir).expect("emit should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
     let wat = print_bytes(&wasm).expect("wat should print");
     assert!(wat.contains(" if"));
     assert!(!wat.contains("i32.eq\n    if"));
@@ -106,7 +110,7 @@ fn emits_structured_loop_for_simple_while() {
     "#;
     let program = waluau_parser::parse(source).expect("parse should succeed");
     let ir = waluau_ir::build(&program).expect("ir should succeed");
-    let wasm = super::emit(&ir).expect("emit should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
     let wat = print_bytes(&wasm).expect("wat should print");
     assert!(wat.contains(" loop"));
     assert!(!wat.contains("i32.eq\n    if"));
@@ -121,7 +125,7 @@ fn keeps_immediate_return_value_on_stack() {
     "#;
     let program = waluau_parser::parse(source).expect("parse should succeed");
     let ir = waluau_ir::build(&program).expect("ir should succeed");
-    let wasm = super::emit(&ir).expect("emit should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
     let mut saw_add_then_return = false;
     for payload in Parser::new(0).parse_all(&wasm) {
         let payload = payload.expect("wasm should parse");
@@ -154,7 +158,7 @@ fn emits_valid_wasm_for_multi_return() {
     "#;
     let program = waluau_parser::parse(source).expect("parse should succeed");
     let ir = waluau_ir::build(&program).expect("ir should succeed");
-    let wasm = super::emit(&ir).expect("emit should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
     Validator::new()
         .validate_all(&wasm)
         .expect("emitted module should validate");
@@ -173,7 +177,7 @@ fn emits_valid_wasm_for_multi_let_binding() {
     "#;
     let program = waluau_parser::parse(source).expect("parse should succeed");
     let ir = waluau_ir::build(&program).expect("ir should succeed");
-    let wasm = super::emit(&ir).expect("emit should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
     Validator::new()
         .validate_all(&wasm)
         .expect("emitted module should validate");
@@ -193,7 +197,7 @@ fn emits_valid_wasm_for_multi_assign() {
     "#;
     let program = waluau_parser::parse(source).expect("parse should succeed");
     let ir = waluau_ir::build(&program).expect("ir should succeed");
-    let wasm = super::emit(&ir).expect("emit should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
     Validator::new()
         .validate_all(&wasm)
         .expect("emitted module should validate");
@@ -220,7 +224,7 @@ fn emits_valid_wasm_for_for_in_closure_iterator() {
     "#;
     let program = waluau_parser::parse(source).expect("parse should succeed");
     let ir = waluau_ir::build(&program).expect("ir should succeed");
-    let wasm = super::emit(&ir).expect("emit should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
     Validator::new()
         .validate_all(&wasm)
         .expect("emitted module should validate");
@@ -317,7 +321,7 @@ fn test_array_for_in_tostring_bug() {
     "#;
     let program = waluau_parser::parse(source).expect("parse should succeed");
     let ir = waluau_ir::build(&program).expect("ir should succeed");
-    let wasm = super::emit(&ir);
+    let wasm = emit(&ir);
     assert!(wasm.is_ok(), "Wasm emission failed: {:?}", wasm.err());
 }
 
@@ -353,7 +357,7 @@ fn emits_valid_wasm_for_capturing_closure_through_phi() {
     "#;
     let program = waluau_parser::parse(source).expect("parse should succeed");
     let ir = waluau_ir::build(&program).expect("ir should succeed");
-    let wasm = super::emit(&ir).expect("emit should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
     Validator::new()
         .validate_all(&wasm)
         .expect("emitted module should validate");
@@ -370,7 +374,7 @@ fn emits_valid_wasm_for_record_struct_ops() {
     "#;
     let program = waluau_parser::parse(source).expect("parse should succeed");
     let ir = waluau_ir::build(&program).expect("ir should succeed");
-    let wasm = super::emit(&ir).expect("record structs should compile");
+    let wasm = emit(&ir).expect("record structs should compile");
     Validator::new()
         .validate_all(&wasm)
         .expect("emitted module should validate");
