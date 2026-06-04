@@ -1004,7 +1004,7 @@ pub(super) fn check_stmt(
             Ok(false)
         }
         Stmt::Expr(expr) => {
-            if !matches!(expr, Expr::Call { .. }) {
+            if !matches!(expr, Expr::Call { .. } | Expr::MethodCall { .. }) {
                 return Err(Diagnostic::new("expression statements must be calls"));
             }
             if let Expr::Call {

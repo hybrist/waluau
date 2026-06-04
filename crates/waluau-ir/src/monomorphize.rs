@@ -333,11 +333,20 @@ impl<'a> Monomorphizer<'a> {
                 args,
                 span,
             } => self.rewrite_call_expr(callee, type_args, args, *span, subst, active)?,
-            Expr::MethodCall { .. } => {
-                return Err(Diagnostic::new(
-                    "method calls must be desugared before monomorphization",
-                ));
-            }
+            Expr::MethodCall {
+                receiver,
+                name,
+                args,
+                span,
+            } => Expr::MethodCall {
+                receiver: Box::new(self.rewrite_expr(receiver, subst, active)?),
+                name: name.clone(),
+                args: args
+                    .iter()
+                    .map(|expr| self.rewrite_expr(expr, subst, active))
+                    .collect::<Result<Vec<_>, _>>()?,
+                span: *span,
+            },
             Expr::Function(function) => {
                 Expr::Function(self.rewrite_function_expr(function, subst, active)?)
             }
