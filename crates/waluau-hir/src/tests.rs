@@ -312,7 +312,7 @@ fn rejects_length_on_non_array() {
 
     let program = parse(source).expect("parse should succeed");
     let error = super::type_check(&program).expect_err("type check should fail");
-    assert_eq!(error.to_string(), "# requires an array operand");
+    assert_eq!(error.to_string(), "# requires an array or bytes operand");
 }
 
 #[test]
@@ -1315,6 +1315,25 @@ fn type_checks_string_equality_in_control_flow() {
 }
 
 #[test]
+fn type_checks_bytes_literals_and_operations() {
+    let source = r#"
+        function entry(a: bytes, b: bytes): i32
+            local prefix: bytes = b"OK"
+            local merged: bytes = prefix .. a
+            if merged == b then
+                return merged[0]
+            end
+            if merged < b"ZZ" then
+                return #merged
+            end
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
 fn rejects_string_equality_with_non_string() {
     let source = r#"
         function entry(a: string): bool
@@ -1369,7 +1388,7 @@ fn rejects_array_equality_in_mvp() {
     let error = super::type_check(&program).expect_err("type check should fail");
     assert_eq!(
         error.to_string(),
-        "== supports only numeric, bool, and string operands in MVP"
+        "== supports only numeric, bool, string, and bytes operands in MVP"
     );
 }
 
@@ -1390,7 +1409,7 @@ fn rejects_function_equality_in_mvp() {
     let error = super::type_check(&program).expect_err("type check should fail");
     assert_eq!(
         error.to_string(),
-        "== supports only numeric, bool, and string operands in MVP"
+        "== supports only numeric, bool, string, and bytes operands in MVP"
     );
 }
 

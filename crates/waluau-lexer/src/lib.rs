@@ -37,12 +37,14 @@ pub enum TokenKind {
     UnitType,
     BoolType,
     StringType,
+    BytesType,
     ThreadType,
     True,
     False,
     Identifier(String),
     Number(String),
     Str(String),
+    Bytes(Vec<u8>),
     Plus,
     PlusEqual,
     Minus,
@@ -178,43 +180,21 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 }
             }
             '"' => {
-                let mut end = i + 1;
-                let mut value = String::new();
-                loop {
-                    match chars.get(end) {
-                        None | Some('\n') => {
-                            return Err(Diagnostic::new("unterminated string literal"));
-                        }
-                        Some('"') => {
-                            end += 1;
-                            break;
-                        }
-                        Some('\\') => {
-                            end += 1;
-                            match chars.get(end) {
-                                Some('"') => value.push('"'),
-                                Some('\\') => value.push('\\'),
-                                Some('n') => value.push('\n'),
-                                Some('t') => value.push('\t'),
-                                Some(other) => {
-                                    return Err(Diagnostic::new(format!(
-                                        "unsupported string escape '\\{other}'"
-                                    )));
-                                }
-                                None => {
-                                    return Err(Diagnostic::new("unterminated string literal"));
-                                }
-                            }
-                            end += 1;
-                        }
-                        Some(other) => {
-                            value.push(*other);
-                            end += 1;
-                        }
-                    }
-                }
+                let (value, end) = parse_string_literal(&chars, i)?;
                 tokens.push(Token {
                     kind: TokenKind::Str(value),
+                    span: Span {
+                        start,
+                        end: end as u32,
+                    },
+                });
+                i = end;
+                continue;
+            }
+            'b' if matches!(chars.get(i + 1), Some('"')) => {
+                let (value, end) = parse_bytes_literal(&chars, i + 1)?;
+                tokens.push(Token {
+                    kind: TokenKind::Bytes(value),
                     span: Span {
                         start,
                         end: end as u32,
@@ -301,6 +281,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                     "unit" | "void" => TokenKind::UnitType,
                     "bool" => TokenKind::BoolType,
                     "string" => TokenKind::StringType,
+                    "bytes" => TokenKind::BytesType,
                     "thread" => TokenKind::ThreadType,
                     "true" => TokenKind::True,
                     "false" => TokenKind::False,
@@ -330,6 +311,108 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
     }
 
     Ok(tokens)
+}
+
+fn parse_string_literal(chars: &[char], quote_index: usize) -> Result<(String, usize), Diagnostic> {
+    let mut end = quote_index + 1;
+    let mut value = String::new();
+    loop {
+        match chars.get(end) {
+            None | Some('\n') => return Err(Diagnostic::new("unterminated string literal")),
+            Some('"') => {
+                end += 1;
+                break;
+            }
+            Some('\\') => {
+                end += 1;
+                match chars.get(end) {
+                    Some('"') => value.push('"'),
+                    Some('\\') => value.push('\\'),
+                    Some('n') => value.push('\n'),
+                    Some('t') => value.push('\t'),
+                    Some(other) => {
+                        return Err(Diagnostic::new(format!(
+                            "unsupported string escape '\\{other}'"
+                        )));
+                    }
+                    None => return Err(Diagnostic::new("unterminated string literal")),
+                }
+                end += 1;
+            }
+            Some(other) => {
+                value.push(*other);
+                end += 1;
+            }
+        }
+    }
+    Ok((value, end))
+}
+
+fn parse_bytes_literal(chars: &[char], quote_index: usize) -> Result<(Vec<u8>, usize), Diagnostic> {
+    let mut end = quote_index + 1;
+    let mut value = Vec::new();
+    loop {
+        match chars.get(end) {
+            None | Some('\n') => return Err(Diagnostic::new("unterminated bytes literal")),
+            Some('"') => {
+                end += 1;
+                break;
+            }
+            Some('\\') => {
+                end += 1;
+                match chars.get(end) {
+                    Some('"') => value.push(b'"'),
+                    Some('\\') => value.push(b'\\'),
+                    Some('n') => value.push(b'\n'),
+                    Some('t') => value.push(b'\t'),
+                    Some('x') => {
+                        let hi =
+                            chars
+                                .get(end + 1)
+                                .and_then(|c| c.to_digit(16))
+                                .ok_or_else(|| {
+                                    Diagnostic::new(
+                                        "bytes literal \\x escape requires two hex digits",
+                                    )
+                                })?;
+                        let lo =
+                            chars
+                                .get(end + 2)
+                                .and_then(|c| c.to_digit(16))
+                                .ok_or_else(|| {
+                                    Diagnostic::new(
+                                        "bytes literal \\x escape requires two hex digits",
+                                    )
+                                })?;
+                        value.push(((hi << 4) | lo) as u8);
+                        end += 2;
+                    }
+                    Some(other) if other.is_ascii() => {
+                        return Err(Diagnostic::new(format!(
+                            "unsupported bytes escape '\\{other}'"
+                        )));
+                    }
+                    Some(other) => {
+                        return Err(Diagnostic::new(format!(
+                            "bytes literal only supports ASCII source characters, got '{other}'"
+                        )));
+                    }
+                    None => return Err(Diagnostic::new("unterminated bytes literal")),
+                }
+                end += 1;
+            }
+            Some(other) if other.is_ascii() => {
+                value.push(*other as u8);
+                end += 1;
+            }
+            Some(other) => {
+                return Err(Diagnostic::new(format!(
+                    "bytes literal only supports ASCII source characters, got '{other}'"
+                )));
+            }
+        }
+    }
+    Ok((value, end))
 }
 
 #[cfg(test)]
@@ -501,6 +584,14 @@ mod tests {
     }
 
     #[test]
+    fn tokenizes_bytes_literals_with_hex_and_ascii_escapes() {
+        assert_eq!(
+            kinds(r#"b"ABC\x00\t\"""#),
+            vec![TokenKind::Bytes(vec![65, 66, 67, 0, 9, 34])]
+        );
+    }
+
+    #[test]
     fn rejects_unterminated_and_invalid_strings() {
         assert_eq!(err("\"open").to_string(), "unterminated string literal");
         assert_eq!(
@@ -510,6 +601,19 @@ mod tests {
         assert_eq!(
             err("\"\\q\"").to_string(),
             "unsupported string escape '\\q'"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_bytes_literals() {
+        assert_eq!(err("b\"open").to_string(), "unterminated bytes literal");
+        assert_eq!(
+            err("b\"\\x0\"").to_string(),
+            "bytes literal \\x escape requires two hex digits"
+        );
+        assert_eq!(
+            err("b\"é\"").to_string(),
+            "bytes literal only supports ASCII source characters, got 'é'"
         );
     }
 

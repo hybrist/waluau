@@ -66,6 +66,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     let array_types = collect_array_types(module);
     let record_types = collect_record_types(module);
     let string_constants = host::collect_string_constants(module);
+    let bytes_constants = host::collect_bytes_constants(module);
     let coroutine_plan = CoroutinePlan::new(module, string_constants.len() as u32);
     let start_thunk = module.start;
     let host_type_base = array_types.len() as u32;
@@ -145,6 +146,12 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         .ty()
         .function(vec![ValType::F64], vec![externref_val_type()]);
     types.ty().function(vec![externref_val_type()], vec![]);
+    types
+        .ty()
+        .function(vec![externref_val_type(), ValType::I32], vec![ValType::I32]);
+    types
+        .ty()
+        .function(vec![externref_val_type()], vec![ValType::I32]);
     // Closure GC types: $anyref_array and $func_val (always present).
     {
         // $anyref_array = (array (ref null any) mutable)
@@ -327,6 +334,36 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         host::IMPORT_JS_STRING_CONCAT,
         EntityType::Function(host_type_base + 1),
     );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_BYTES_LITERAL,
+        EntityType::Function(host_type_base + 2),
+    );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_BYTES_GET,
+        EntityType::Function(host_type_base + 7),
+    );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_BYTES_LEN,
+        EntityType::Function(host_type_base + 8),
+    );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_BYTES_CONCAT,
+        EntityType::Function(host_type_base + 1),
+    );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_BYTES_EQ,
+        EntityType::Function(host_type_base),
+    );
+    imports.import(
+        host::IMPORT_MODULE,
+        host::IMPORT_BYTES_COMPARE,
+        EntityType::Function(host_type_base),
+    );
     for string in &string_constants {
         imports.import(
             host::IMPORTED_STRING_CONSTANTS_MODULE,
@@ -421,6 +458,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             &signature_registry,
             &array_registry,
             &string_constants,
+            &bytes_constants,
             user_type_base,
             &coroutine_plan,
             coroutine_body_sig_type,
@@ -562,8 +600,12 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     wasm.section(&elements);
     wasm.section(&codes);
     wasm.section(&CustomSection {
-        name: host::CUSTOM_SECTION_NAME.into(),
+        name: host::STRING_CUSTOM_SECTION_NAME.into(),
         data: Cow::Owned(host::encode_string_constants_section(&string_constants)),
+    });
+    wasm.section(&CustomSection {
+        name: host::BYTES_CUSTOM_SECTION_NAME.into(),
+        data: Cow::Owned(host::encode_bytes_constants_section(&bytes_constants)),
     });
 
     let bytes = wasm.finish();
@@ -592,6 +634,7 @@ struct EmissionContext<'a> {
     signature_registry: &'a SignatureRegistry,
     array_registry: &'a ArrayTypeRegistry,
     string_constants: &'a [String],
+    bytes_constants: &'a [Vec<u8>],
     user_type_base: u32,
     coroutine_plan: &'a CoroutinePlan,
     /// Type index of the coroutine body signature `() -> i32` (continuation funcref type).
@@ -622,6 +665,7 @@ fn emit_function(
     signature_registry: &SignatureRegistry,
     array_registry: &ArrayTypeRegistry,
     string_constants: &[String],
+    bytes_constants: &[Vec<u8>],
     user_type_base: u32,
     coroutine_plan: &CoroutinePlan,
     coroutine_body_sig_type: Option<u32>,
@@ -632,6 +676,7 @@ fn emit_function(
         signature_registry,
         array_registry,
         string_constants,
+        bytes_constants,
         user_type_base,
         coroutine_plan,
         coroutine_body_sig_type,
@@ -1129,6 +1174,12 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::GlobalGet(index));
                 emit_value_store(out, local_plan, *value)?;
             }
+            IrInstruction::Bytes(literal) => {
+                let index = host::bytes_constant_index(ctx.bytes_constants, literal)?;
+                out.instruction(&Instruction::I32Const(index as i32));
+                out.instruction(&Instruction::Call(host::IMPORT_BYTES_LITERAL_FUNC));
+                emit_value_store(out, local_plan, *value)?;
+            }
             IrInstruction::Cast {
                 value: source,
                 from,
@@ -1524,6 +1575,17 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::ArrayLen);
                 emit_value_store(out, local_plan, *value)?;
             }
+            IrInstruction::BytesGet { bytes, index } => {
+                emit_value_operand(out, local_plan, *bytes)?;
+                emit_value_operand(out, local_plan, *index)?;
+                out.instruction(&Instruction::Call(host::IMPORT_BYTES_GET_FUNC));
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::BytesLen { bytes } => {
+                emit_value_operand(out, local_plan, *bytes)?;
+                out.instruction(&Instruction::Call(host::IMPORT_BYTES_LEN_FUNC));
+                emit_value_store(out, local_plan, *value)?;
+            }
             IrInstruction::StructNew { struct_ty, fields } => {
                 let struct_type_index = ctx.array_registry.record_index(struct_ty)?;
                 for field in fields {
@@ -1861,6 +1923,11 @@ fn emit_binary(
                     "string add is not supported during wasm emission",
                 ));
             }
+            Type::Bytes => {
+                return Err(Diagnostic::new(
+                    "bytes add is not supported during wasm emission",
+                ));
+            }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -1876,9 +1943,12 @@ fn emit_binary(
             Type::String => {
                 out.instruction(&Instruction::Call(host::IMPORT_JS_STRING_CONCAT_FUNC));
             }
+            Type::Bytes => {
+                out.instruction(&Instruction::Call(host::IMPORT_BYTES_CONCAT_FUNC));
+            }
             _ => {
                 return Err(Diagnostic::new(
-                    "concat is only supported for strings during wasm emission",
+                    "concat is only supported for strings and bytes during wasm emission",
                 ));
             }
         },
@@ -1903,6 +1973,11 @@ fn emit_binary(
             Type::String => {
                 return Err(Diagnostic::new(
                     "string sub is not supported during wasm emission",
+                ));
+            }
+            Type::Bytes => {
+                return Err(Diagnostic::new(
+                    "bytes sub is not supported during wasm emission",
                 ));
             }
             Type::Array(_) => unreachable!(),
@@ -1937,6 +2012,11 @@ fn emit_binary(
             Type::String => {
                 return Err(Diagnostic::new(
                     "string mul is not supported during wasm emission",
+                ));
+            }
+            Type::Bytes => {
+                return Err(Diagnostic::new(
+                    "bytes mul is not supported during wasm emission",
                 ));
             }
             Type::Array(_) => unreachable!(),
@@ -1979,6 +2059,11 @@ fn emit_binary(
                     "string div is not supported during wasm emission",
                 ));
             }
+            Type::Bytes => {
+                return Err(Diagnostic::new(
+                    "bytes div is not supported during wasm emission",
+                ));
+            }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -2006,6 +2091,9 @@ fn emit_binary(
             }
             Type::String => {
                 out.instruction(&Instruction::Call(host::IMPORT_JS_STRING_EQ_FUNC));
+            }
+            Type::Bytes => {
+                out.instruction(&Instruction::Call(host::IMPORT_BYTES_EQ_FUNC));
             }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
@@ -2047,6 +2135,11 @@ fn emit_binary(
                     "string comparison is not supported during wasm emission",
                 ));
             }
+            Type::Bytes => {
+                out.instruction(&Instruction::Call(host::IMPORT_BYTES_COMPARE_FUNC));
+                out.instruction(&Instruction::I32Const(0));
+                out.instruction(&Instruction::I32LtS);
+            }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -2086,6 +2179,11 @@ fn emit_binary(
                 return Err(Diagnostic::new(
                     "string comparison is not supported during wasm emission",
                 ));
+            }
+            Type::Bytes => {
+                out.instruction(&Instruction::Call(host::IMPORT_BYTES_COMPARE_FUNC));
+                out.instruction(&Instruction::I32Const(0));
+                out.instruction(&Instruction::I32GtS);
             }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {

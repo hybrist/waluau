@@ -826,6 +826,50 @@ fn lowers_string_value_to_ir() {
 }
 
 #[test]
+fn lowers_bytes_value_index_and_length_to_ir() {
+    let source = r#"
+        function entry(data: bytes): i32
+            local prefix: bytes = b"AB"
+            local merged: bytes = prefix .. data
+            return merged[0] + #merged
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("ir build should succeed for bytes values");
+    let function = &module.functions[0];
+    assert!(function.blocks.values().any(|block| {
+        block.instructions.iter().any(|(_, instruction)| {
+            matches!(instruction, Instruction::Bytes(bytes) if bytes == &vec![65, 66])
+        })
+    }));
+    assert!(function.blocks.values().any(|block| {
+        block
+            .instructions
+            .iter()
+            .any(|(_, instruction)| matches!(instruction, Instruction::BytesGet { .. }))
+    }));
+    assert!(function.blocks.values().any(|block| {
+        block
+            .instructions
+            .iter()
+            .any(|(_, instruction)| matches!(instruction, Instruction::BytesLen { .. }))
+    }));
+    assert!(function.blocks.values().any(|block| {
+        block.instructions.iter().any(|(_, instruction)| {
+            matches!(
+                instruction,
+                Instruction::Binary {
+                    op: BinaryOp::Concat,
+                    operand_ty: Type::Bytes,
+                    result_ty: Type::Bytes,
+                    ..
+                }
+            )
+        })
+    }));
+}
+
+#[test]
 fn lowers_assertion_failure_message_before_trap() {
     let source = r#"
         function check(): i32

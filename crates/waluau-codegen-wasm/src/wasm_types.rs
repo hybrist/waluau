@@ -42,6 +42,7 @@ pub(crate) fn wasm_type(
             }))
         }
         Type::String => Ok(externref_val_type()),
+        Type::Bytes => Ok(externref_val_type()),
         Type::Unit => Err(Diagnostic::new(
             "unit type has no wasm value representation",
         )),

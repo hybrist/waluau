@@ -426,6 +426,49 @@ fn verify_function(
                         )));
                     }
                 }
+                Instruction::BytesGet { bytes, index } => {
+                    let bytes_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *bytes,
+                    )?;
+                    if bytes_ty != Type::Bytes {
+                        return Err(Diagnostic::new(format!(
+                            "bytes get in block {:?} expects bytes, got {}",
+                            block.id, bytes_ty
+                        )));
+                    }
+                    let index_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *index,
+                    )?;
+                    if index_ty != Type::Numeric(NumericType::I32) {
+                        return Err(Diagnostic::new(format!(
+                            "bytes index in block {:?} must be i32",
+                            block.id
+                        )));
+                    }
+                }
+                Instruction::BytesLen { bytes } => {
+                    let bytes_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *bytes,
+                    )?;
+                    if bytes_ty != Type::Bytes {
+                        return Err(Diagnostic::new(format!(
+                            "bytes.len operand in block {:?} must be bytes",
+                            block.id
+                        )));
+                    }
+                }
                 Instruction::StructNew { struct_ty, fields } => {
                     let Type::Record(record_fields) = struct_ty else {
                         return Err(Diagnostic::new(format!(
@@ -595,7 +638,8 @@ fn verify_function(
                 | Instruction::Number { .. }
                 | Instruction::Unit
                 | Instruction::Bool(_)
-                | Instruction::String(_) => {}
+                | Instruction::String(_)
+                | Instruction::Bytes(_) => {}
                 Instruction::ToString { value, from } => {
                     let value_ty = require_dominating_definition(
                         &definitions,
@@ -748,6 +792,7 @@ fn infer_instruction_type(
         Instruction::Unit => Ok(Type::Unit),
         Instruction::Bool(_) => Ok(Type::Bool),
         Instruction::String(_) => Ok(Type::String),
+        Instruction::Bytes(_) => Ok(Type::Bytes),
         Instruction::Cast { to, .. } => Ok(to.clone()),
         Instruction::Binary { result_ty, .. } => Ok(result_ty.clone()),
         Instruction::MathIntrinsic { result_ty, .. } => Ok(result_ty.clone()),
@@ -776,6 +821,8 @@ fn infer_instruction_type(
         Instruction::ArrayGet { element_ty, .. } => Ok(element_ty.clone()),
         Instruction::ArraySet { .. } => Ok(Type::Numeric(NumericType::I32)),
         Instruction::ArrayLen { .. } => Ok(Type::Numeric(NumericType::I32)),
+        Instruction::BytesGet { .. } => Ok(Type::Numeric(NumericType::I32)),
+        Instruction::BytesLen { .. } => Ok(Type::Numeric(NumericType::I32)),
         Instruction::StructNew { struct_ty, .. } => Ok(struct_ty.clone()),
         Instruction::StructGet { field_ty, .. } => Ok(field_ty.clone()),
         Instruction::StructSet { .. } => Ok(Type::Unit),

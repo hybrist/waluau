@@ -589,7 +589,7 @@ impl Rewriter<'_> {
                     *name = format!("{}{name}", self.prefix);
                 }
             }
-            Expr::Number(..) | Expr::Bool(..) | Expr::String(..) => {}
+            Expr::Number(..) | Expr::Bool(..) | Expr::String(..) | Expr::Bytes(..) => {}
             Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => self.rewrite_expr(expr, bound),
             Expr::Binary { left, right, .. } => {
                 self.rewrite_expr(left, bound);
@@ -775,7 +775,11 @@ fn expr_mentions_name(name: &str, expr: &Expr) -> bool {
         Expr::Index { base, index, .. } => {
             expr_mentions_name(name, base) || expr_mentions_name(name, index)
         }
-        Expr::Require(..) | Expr::Number(..) | Expr::Bool(..) | Expr::String(..) => false,
+        Expr::Require(..)
+        | Expr::Number(..)
+        | Expr::Bool(..)
+        | Expr::String(..)
+        | Expr::Bytes(..) => false,
     }
 }
 
@@ -848,7 +852,8 @@ fn collect_block(stmts: &[Stmt], out: &mut Vec<String>) {
 fn collect_expr(expr: &Expr, out: &mut Vec<String>) {
     match expr {
         Expr::Require(path, _) => out.push(path.clone()),
-        Expr::Name(..) | Expr::Number(..) | Expr::Bool(..) | Expr::String(..) => {}
+        Expr::Name(..) | Expr::Number(..) | Expr::Bool(..) | Expr::String(..) | Expr::Bytes(..) => {
+        }
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => collect_expr(expr, out),
         Expr::Binary { left, right, .. } => {
             collect_expr(left, out);
