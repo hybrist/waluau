@@ -1534,10 +1534,64 @@ impl Builder<'_> {
                     )));
                 }
             }
-            Expr::MethodCall { .. } => {
-                return Err(Diagnostic::new(
-                    "method calls must be desugared before IR lowering",
-                ));
+            Expr::MethodCall {
+                receiver,
+                name,
+                args,
+                ..
+            } => {
+                let receiver_ty = self.infer_expr_type(receiver, types, None)?;
+                let field_ty = receiver_ty
+                    .record_field(name)
+                    .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
+                let Type::Function {
+                    params: param_types,
+                    return_type,
+                } = field_ty
+                else {
+                    return Err(Diagnostic::new("attempt to call non-function value"));
+                };
+                if param_types.is_empty() {
+                    return Err(Diagnostic::new(format!(
+                        "function expects 0 arguments, got {}",
+                        args.len() + 1
+                    )));
+                }
+                if param_types[0] != receiver_ty {
+                    return Err(Diagnostic::new(format!(
+                        "call expected {}, got {}",
+                        param_types[0], receiver_ty
+                    )));
+                }
+                let receiver_value = self.lower_expr(receiver, env, types, Some(receiver_ty))?;
+                let callee_value = self.emit(Instruction::StructGet {
+                    base: receiver_value,
+                    field: name.clone(),
+                    field_ty: Type::Function {
+                        params: param_types.clone(),
+                        return_type: return_type.clone(),
+                    },
+                });
+                let mut lowered_args = Vec::with_capacity(args.len() + 1);
+                lowered_args.push(receiver_value);
+                for (arg, param_ty) in args.iter().zip(param_types.iter().skip(1)) {
+                    lowered_args.push(self.lower_expr(arg, env, types, Some(param_ty.clone()))?);
+                }
+                if param_types.len() != lowered_args.len() {
+                    return Err(Diagnostic::new(format!(
+                        "function expects {} arguments, got {}",
+                        param_types.len(),
+                        lowered_args.len()
+                    )));
+                }
+                let value = self.emit(Instruction::CallValue {
+                    callee: callee_value,
+                    args: lowered_args,
+                    params: param_types.clone(),
+                    return_type: *return_type,
+                });
+                let actual = self.infer_expr_type(expr, types, None)?;
+                self.coerce_value(value, actual, expected)?
             }
             Expr::Unary { op, expr, .. } => {
                 let actual = self.infer_expr_type(expr, types, None)?;
@@ -1923,11 +1977,11 @@ impl Builder<'_> {
         let mut out = Vec::new();
         for expr in exprs {
             let slot_expected = expected.and_then(|types| types.get(out.len()).cloned());
-            let ty = if matches!(expr, Expr::Call { .. }) {
-                self.infer_expr_type(expr, types, None)?
-            } else {
-                self.infer_expr_type(expr, types, slot_expected.clone())?
-            };
+        let ty = if matches!(expr, Expr::Call { .. } | Expr::MethodCall { .. }) {
+            self.infer_expr_type(expr, types, None)?
+        } else {
+            self.infer_expr_type(expr, types, slot_expected.clone())?
+        };
             match ty {
                 Type::Multi(multi_types) => {
                     let tuple = self.lower_expr(expr, env, types, None)?;
@@ -2168,9 +2222,56 @@ impl Builder<'_> {
                     )))
                 }
             }
-            Expr::MethodCall { .. } => Err(Diagnostic::new(
-                "method calls must be desugared before IR lowering",
-            )),
+            Expr::MethodCall {
+                receiver,
+                name,
+                args,
+                ..
+            } => {
+                let receiver_ty = self.infer_expr_type(receiver, types, None)?;
+                let field_ty = receiver_ty
+                    .record_field(name)
+                    .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
+                let Type::Function {
+                    params,
+                    return_type,
+                } = field_ty
+                else {
+                    return Err(Diagnostic::new("attempt to call non-function value"));
+                };
+                if params.is_empty() {
+                    return Err(Diagnostic::new(format!(
+                        "function expects 0 arguments, got {}",
+                        args.len() + 1
+                    )));
+                }
+                if params[0] != receiver_ty {
+                    return Err(Diagnostic::new(format!(
+                        "call expected {}, got {}",
+                        params[0], receiver_ty
+                    )));
+                }
+                let actual_args = args
+                    .iter()
+                    .map(|arg| self.infer_expr_type(arg, types, None))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if params.len() != actual_args.len() + 1 {
+                    return Err(Diagnostic::new(format!(
+                        "function expects {} arguments, got {}",
+                        params.len(),
+                        actual_args.len() + 1
+                    )));
+                }
+                for (expected_param, actual) in params.iter().skip(1).zip(actual_args.iter()) {
+                    if expected_param != actual {
+                        return Err(Diagnostic::new(format!(
+                            "call expected {}, got {}",
+                            expected_param, actual
+                        )));
+                    }
+                }
+                coerce_type(*return_type, expected)
+            }
             Expr::Unary { op, expr, .. } => match op {
                 UnaryOp::Neg => {
                     let actual = self.infer_expr_type(expr, types, expected.clone())?;

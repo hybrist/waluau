@@ -272,9 +272,63 @@ pub(super) fn infer_expr(
             }
             coerce_type(ret, expected)
         }
-        Expr::MethodCall { .. } => Err(Diagnostic::new(
-            "method calls must be desugared before type checking",
-        )),
+        Expr::MethodCall {
+            receiver,
+            name,
+            args,
+            ..
+        } => {
+            let receiver_ty = infer_expr(receiver, vars, fn_signatures, active_type_params, None)?;
+            let field_ty = receiver_ty
+                .record_field(name)
+                .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
+            let (params, ret) = match field_ty {
+                Type::Function {
+                    params,
+                    return_type,
+                } => (params, *return_type),
+                other => {
+                    return Err(Diagnostic::new(format!(
+                        "attempt to call non-function value of type {other}",
+                    )));
+                }
+            };
+            if params.is_empty() {
+                return Err(Diagnostic::new(format!(
+                    "function expects 0 arguments, got {}",
+                    args.len() + 1
+                )));
+            }
+            if params[0] != receiver_ty {
+                return Err(Diagnostic::new(format!(
+                    "call expected {}, got {}",
+                    params[0], receiver_ty
+                )));
+            }
+            let actual_args = infer_expr_list(
+                args,
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(&params[1..]),
+            )?;
+            if params.len() != actual_args.len() + 1 {
+                return Err(Diagnostic::new(format!(
+                    "function expects {} arguments, got {}",
+                    params.len(),
+                    actual_args.len() + 1
+                )));
+            }
+            for (expected_param, actual) in params.iter().skip(1).zip(actual_args.iter()) {
+                if expected_param != actual {
+                    return Err(Diagnostic::new(format!(
+                        "call expected {}, got {}",
+                        expected_param, actual
+                    )));
+                }
+            }
+            coerce_type(ret, expected)
+        }
         Expr::Function(function) => {
             infer_function_expr(function, vars, fn_signatures, active_type_params, expected)
         }
@@ -446,7 +500,7 @@ pub(super) fn infer_expr_list(
     let mut out = Vec::new();
     for expr in exprs {
         let next_expected = expected.and_then(|types| types.get(out.len()).cloned());
-        let ty = if matches!(expr, Expr::Call { .. }) {
+        let ty = if matches!(expr, Expr::Call { .. } | Expr::MethodCall { .. }) {
             infer_expr(expr, vars, fn_signatures, active_type_params, None)?
         } else {
             infer_expr(expr, vars, fn_signatures, active_type_params, next_expected)?

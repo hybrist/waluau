@@ -161,6 +161,28 @@ fn emits_branches_and_returns() {
 }
 
 #[test]
+fn method_calls_reach_ir_call_checking() {
+    let source = r#"
+        function ping(self: { x: f64 }): i32
+            return 1
+        end
+
+        function entry(): i32
+            local obj = { x = 1 }
+            obj.ping = ping
+            return obj:ping()
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = build(&program).expect_err("ir build should fail");
+    assert_eq!(
+        error.to_string(),
+        "call expected {x: f64}, got {ping: ({x: f64}) -> i32, x: f64}"
+    );
+}
+
+#[test]
 fn threads_assert_call_span_to_trap_terminator() {
     let source = r#"
         function entry(): i32

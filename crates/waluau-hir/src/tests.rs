@@ -217,6 +217,29 @@ fn rejects_non_call_expression_statements() {
 }
 
 #[test]
+fn method_call_expression_statements_use_call_type_checking() {
+    let source = r#"
+        function ping(self: { x: f64 }): i32
+            return 1
+        end
+
+        function entry(): i32
+            local obj = { x = 1 }
+            obj.ping = ping
+            obj:ping()
+            return 0
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "call expected {x: f64}, got {ping: ({x: f64}) -> i32, x: f64}"
+    );
+}
+
+#[test]
 fn type_checks_array_literals_indexing_and_length() {
     let source = r#"
         function score_count(): i32
