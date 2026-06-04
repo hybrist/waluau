@@ -41,6 +41,32 @@ fn emits_valid_wasm_for_array_program() {
 }
 
 #[test]
+fn emits_valid_wasm_for_bytes_program() {
+    let source = r#"
+        function entry(data: bytes): i32
+            local prefix: bytes = b"AB"
+            local merged: bytes = prefix .. data
+            if merged == b"AB" then
+                return 0
+            end
+            if merged > b"A" then
+                return merged[0] + #merged
+            end
+            return 0
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let bytes_constants =
+        super::host::parse_bytes_constants_from_wasm(&wasm).expect("bytes section should parse");
+    assert_eq!(bytes_constants, vec![b"AB".to_vec(), b"A".to_vec()]);
+}
+
+#[test]
 fn emits_valid_wasm_for_non_capturing_indirect_call() {
     let source = r#"
         function entry(x: i32): i32

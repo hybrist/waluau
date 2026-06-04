@@ -252,4 +252,19 @@ mod tests {
     fn compiles_array_ops() {
         super::compile_file(&fixture_path("array_ops.walu")).expect("compile should succeed");
     }
+
+    #[test]
+    fn compiles_bytes_ops() {
+        let source = r#"
+            function entry(data: bytes): i32
+                local prefix: bytes = b"AB"
+                local merged: bytes = prefix .. data
+                if merged > b"A" then
+                    return merged[0] + #merged
+                end
+                return 0
+            end
+        "#;
+        super::compile_source(source).expect("compile should succeed");
+    }
 }
