@@ -323,6 +323,14 @@ mod tests {
     }
 
     #[test]
+    fn compile_method_calls_conformance_with_mutation() {
+        let source = include_str!("../../../conformance/method_calls.walu");
+        let result =
+            compile_source(source).expect("method call conformance with mutation should compile");
+        assert!(result.wat.contains("(module"));
+    }
+
+    #[test]
     fn compile_multi_resolves_imports() {
         let mut files = std::collections::HashMap::new();
         files.insert(
