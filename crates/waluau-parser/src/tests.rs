@@ -56,6 +56,30 @@ fn parses_unit_and_void_type_aliases() {
 }
 
 #[test]
+fn parses_type_declarations_and_named_type_references() {
+    let source = r#"
+        type Meters = number
+
+        function scale(x: Meters): Meters
+            return x
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert_eq!(program.type_declarations.len(), 1);
+    assert_eq!(program.type_declarations[0].name, "Meters");
+    assert_eq!(program.type_declarations[0].ty, Type::number());
+    assert_eq!(
+        program.functions[0].params[0].ty,
+        Type::Named("Meters".into())
+    );
+    assert_eq!(
+        program.functions[0].return_type,
+        Some(Type::Named("Meters".into()))
+    );
+}
+
+#[test]
 fn parses_paren_unit_type_alias() {
     let source = r#"
         function f(): ()
@@ -304,7 +328,7 @@ fn rejects_symbolic_logical_operators() {
 }
 
 #[test]
-fn reports_multiple_invalid_type_annotations_in_one_function() {
+fn allows_unresolved_named_type_references_for_later_resolution() {
     let source = r#"
         function add(x: f3, y: f4): f1
             local z: f2 = x + y
@@ -312,9 +336,11 @@ fn reports_multiple_invalid_type_annotations_in_one_function() {
         end
     "#;
 
-    let error = parse(source).expect_err("parse should fail");
-    let message = error.to_string();
-    assert_eq!(message.matches("expected type").count(), 4);
+    let program = parse(source).expect("parse should succeed");
+    let function = &program.functions[0];
+    assert_eq!(function.params[0].ty, Type::Named("f3".into()));
+    assert_eq!(function.params[1].ty, Type::Named("f4".into()));
+    assert_eq!(function.return_type, Some(Type::Named("f1".into())));
 }
 
 #[test]

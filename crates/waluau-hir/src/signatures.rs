@@ -53,6 +53,10 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
             .get(name)
             .cloned()
             .unwrap_or_else(|| Type::TypeParam(name.clone())),
+        Type::Opaque { name, ty } => Type::Opaque {
+            name: name.clone(),
+            ty: Box::new(substitute_type(ty, subst)),
+        },
         Type::Array(inner) => Type::Array(Box::new(substitute_type(inner, subst))),
         Type::Record(fields) => Type::Record(
             fields
@@ -108,6 +112,7 @@ pub(super) fn validate_type_in_scope(
             format!("unknown type parameter '{name}'"),
             "declare the type parameter on the enclosing generic function",
         )),
+        Type::Opaque { ty, .. } => validate_type_in_scope(ty, allowed),
         Type::Array(inner) => validate_type_in_scope(inner, allowed),
         Type::Record(fields) => {
             for ty in fields.values() {
@@ -131,6 +136,7 @@ pub(super) fn validate_type_in_scope(
 fn is_valid_type_argument(ty: &Type, active_type_params: &HashSet<String>) -> bool {
     match ty {
         Type::TypeParam(name) => active_type_params.contains(name),
+        Type::Opaque { ty, .. } => is_valid_type_argument(ty, active_type_params),
         Type::Array(inner) => is_valid_type_argument(inner, active_type_params),
         Type::Record(fields) => fields
             .values()

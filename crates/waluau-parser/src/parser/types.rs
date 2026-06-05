@@ -125,8 +125,9 @@ impl Parser {
             Some(TokenKind::Identifier(name)) if self.type_param_scope.contains(&name) => {
                 Ok(Type::TypeParam(name))
             }
+            Some(TokenKind::Identifier(name)) => Ok(Type::Named(name)),
             _ => Err(self.diagnostic_at_current(
-                "expected type (number, u32, u64, i32, i64, f32, f64, unit, bool, string, bytes, thread, {T}, { x: T }, or (T1, T2) -> R)",
+                "expected type (number, u32, u64, i32, i64, f32, f64, unit, bool, string, bytes, thread, a named type, {T}, { x: T }, or (T1, T2) -> R)",
             )),
         }
     }

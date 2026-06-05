@@ -207,6 +207,12 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             Type::Bytes => Err(Diagnostic::new(format!(
                 "cannot implicitly convert bytes to {expected_numeric}",
             ))),
+            Type::Named(name) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {name} to {expected_numeric}",
+            ))),
+            Type::Opaque { name, .. } => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {name} to {expected_numeric}",
+            ))),
             Type::Array(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert array to {expected_numeric}",
             ))),
@@ -239,11 +245,15 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
 }
 
 pub(super) fn require_numeric_cast(actual: Type, target: Type) -> Result<(), Diagnostic> {
-    match (actual, target) {
-        (Type::Numeric(_), Type::Numeric(_)) => Ok(()),
-        _ => Err(Diagnostic::new(
-            "casts require numeric source and destination types",
-        )),
+    match (&actual, &target) {
+        (Type::Opaque { ty, .. }, target) if ty.as_ref() == target => Ok(()),
+        (actual, Type::Opaque { name: _, ty }) if actual == ty.as_ref() => Ok(()),
+        _ => match (actual, target) {
+            (Type::Numeric(_), Type::Numeric(_)) => Ok(()),
+            _ => Err(Diagnostic::new(
+                "casts require numeric source and destination types",
+            )),
+        },
     }
 }
 
@@ -272,6 +282,12 @@ pub(super) fn resolve_number_literal(
         Some(Type::Bytes) => Err(Diagnostic::new(
             "numeric literal is not assignable to bytes",
         )),
+        Some(Type::Named(name)) => Err(Diagnostic::new(format!(
+            "numeric literal is not assignable to {name}",
+        ))),
+        Some(Type::Opaque { name, .. }) => Err(Diagnostic::new(format!(
+            "numeric literal is not assignable to {name}",
+        ))),
         Some(Type::Array(_)) => Err(Diagnostic::new(
             "numeric literal is not assignable to array",
         )),
