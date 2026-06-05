@@ -138,7 +138,7 @@ impl Parser {
             (
                 Some(TokenKind::Identifier(keyword)),
                 Some(TokenKind::Identifier(_)),
-                Some(TokenKind::Equal)
+                Some(TokenKind::Equal | TokenKind::Less)
             ) if keyword == "type"
         )
     }
@@ -149,9 +149,17 @@ impl Parser {
             return Err(Diagnostic::new("expected 'type'"));
         }
         let name = self.expect_identifier()?;
+        let type_params = self.parse_type_param_list()?;
+        let scope_token = self.type_param_scope.len();
+        self.type_param_scope.extend(type_params.iter().cloned());
         self.expect_simple(TokenKind::Equal, "expected '=' in type declaration")?;
-        let ty = self.parse_type()?;
-        Ok(TypeDeclaration { name, ty })
+        let parsed = self.parse_type().map(|ty| TypeDeclaration {
+            name,
+            type_params,
+            ty,
+        });
+        self.type_param_scope.truncate(scope_token);
+        parsed
     }
 
     pub(super) fn parse_function_expr_tail(

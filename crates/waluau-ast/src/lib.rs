@@ -20,6 +20,7 @@ pub struct Program {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TypeDeclaration {
     pub name: String,
+    pub type_params: Vec<String>,
     pub ty: Type,
 }
 
@@ -98,7 +99,10 @@ pub enum Type {
     Bool,
     String,
     Bytes,
-    Named(String),
+    Named {
+        name: String,
+        type_args: Vec<Type>,
+    },
     Opaque {
         name: String,
         ty: Box<Type>,
@@ -195,7 +199,20 @@ impl std::fmt::Display for Type {
             Self::Bool => f.write_str("bool"),
             Self::String => f.write_str("string"),
             Self::Bytes => f.write_str("bytes"),
-            Self::Named(name) => f.write_str(name),
+            Self::Named { name, type_args } => {
+                f.write_str(name)?;
+                if !type_args.is_empty() {
+                    write!(f, "<")?;
+                    for (index, ty) in type_args.iter().enumerate() {
+                        if index > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{ty}")?;
+                    }
+                    write!(f, ">")?;
+                }
+                Ok(())
+            }
             Self::Opaque { name, .. } => f.write_str(name),
             Self::Array(element) => write!(f, "{{{element}}}"),
             Self::Multi(types) => {

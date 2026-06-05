@@ -1,5 +1,5 @@
 use waluau_ast::{NumericType, Type};
-use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
+use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
 
 use super::Parser;
@@ -113,21 +113,25 @@ impl Parser {
             Some(TokenKind::StringType) => Ok(Type::String),
             Some(TokenKind::BytesType) => Ok(Type::Bytes),
             Some(TokenKind::ThreadType) => Ok(Type::Thread),
-            Some(TokenKind::Identifier(name)) if self.check_simple(&TokenKind::Less) => {
-                if self.type_param_scope.contains(&name) {
+            Some(TokenKind::Identifier(name)) if self.type_param_scope.contains(&name) => {
+                if self.check_simple(&TokenKind::Less) {
                     Err(self.diagnostic_at_current(&format!(
                         "type parameter '{name}' cannot be used with type arguments"
                     )))
                 } else {
-                    self.reject_generic_type_annotation(&name)
+                    Ok(Type::TypeParam(name))
                 }
             }
-            Some(TokenKind::Identifier(name)) if self.type_param_scope.contains(&name) => {
-                Ok(Type::TypeParam(name))
+            Some(TokenKind::Identifier(name)) => {
+                let type_args = if self.check_simple(&TokenKind::Less) {
+                    self.parse_type_arg_list()?
+                } else {
+                    Vec::new()
+                };
+                Ok(Type::Named { name, type_args })
             }
-            Some(TokenKind::Identifier(name)) => Ok(Type::Named(name)),
             _ => Err(self.diagnostic_at_current(
-                "expected type (number, u32, u64, i32, i64, f32, f64, unit, bool, string, bytes, thread, a named type, {T}, { x: T }, or (T1, T2) -> R)",
+                "expected type (number, u32, u64, i32, i64, f32, f64, unit, bool, string, bytes, thread, a named type, Foo<T>, {T}, { x: T }, or (T1, T2) -> R)",
             )),
         }
     }
@@ -170,40 +174,20 @@ impl Parser {
         })
     }
 
-    fn reject_generic_type_annotation(&mut self, type_name: &str) -> Result<Type, Diagnostic> {
-        let angle_start = self.peek().map(|t| t.span.start).unwrap_or(0);
-        self.advance();
-        let mut depth = 1u32;
-        while depth > 0 {
-            match self.peek().map(|t| &t.kind) {
-                Some(TokenKind::Less) => {
-                    depth += 1;
+    fn parse_type_arg_list(&mut self) -> Result<Vec<Type>, Diagnostic> {
+        self.expect_simple(TokenKind::Less, "expected '<' before type arguments")?;
+        let mut type_args = Vec::new();
+        if !self.check_simple(&TokenKind::Greater) {
+            loop {
+                type_args.push(self.parse_type()?);
+                if self.check_simple(&TokenKind::Comma) {
                     self.advance();
-                }
-                Some(TokenKind::Greater) => {
-                    depth -= 1;
-                    self.advance();
-                }
-                None => break,
-                _ => {
-                    self.advance();
+                } else {
+                    break;
                 }
             }
         }
-        let angle_end = self
-            .tokens
-            .get(self.index.saturating_sub(1))
-            .map(|t| t.span.end)
-            .unwrap_or(angle_start + 1);
-        Err(Diagnostic::new_with_code(
-            "generic/unsupported-type",
-            format!("generic types are not supported in this MVP: '{type_name}<...>'"),
-        )
-        .with_category(DiagnosticCategory::Unsupported)
-        .with_span(waluau_ast::Span {
-            start: angle_start,
-            end: angle_end,
-        })
-        .with_action("use a concrete type like {i32} for arrays"))
+        self.expect_simple(TokenKind::Greater, "expected '>' after type arguments")?;
+        Ok(type_args)
     }
 }

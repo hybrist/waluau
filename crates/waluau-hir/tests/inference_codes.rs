@@ -2,25 +2,20 @@ use waluau_diagnostics::DiagnosticCategory;
 use waluau_parser::parse;
 
 #[test]
-fn generic_type_on_alias_still_unsupported_code() {
+fn unknown_generic_type_declaration_reports_code() {
     let source = r#"
+        type Box<T> = {T}
+
         function entry(): i32
-            local xs: Array<i32> = {}
+            local xs: Missing<i32> = {}
             return 0
         end
     "#;
-    let error = parse(source).expect_err("parse should fail");
-    assert_eq!(error.code(), Some("generic/unsupported-type"));
-    assert_eq!(error.category(), Some(DiagnosticCategory::Unsupported));
-    assert!(error.span().is_some(), "diagnostic should have a span");
-    assert_eq!(
-        error.action(),
-        Some("use a concrete type like {i32} for arrays")
-    );
+    let program = parse(source).expect("parse should succeed");
+    let error = waluau_hir::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(error.code(), None);
     assert!(
-        error
-            .to_string()
-            .contains("generic types are not supported"),
+        error.to_string().contains("unknown type 'Missing'"),
         "message was: {}",
         error
     );

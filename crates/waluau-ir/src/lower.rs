@@ -1791,7 +1791,7 @@ impl Builder<'_> {
                             "numeric literal is not assignable to bytes",
                         ));
                     }
-                    Type::Named(name) => {
+                    Type::Named { name, .. } => {
                         return Err(Diagnostic::new(format!(
                             "numeric literal is not assignable to {name}",
                         )));
@@ -1995,7 +1995,7 @@ impl Builder<'_> {
                                     "unary '-' requires a numeric operand",
                                 ));
                             }
-                            Type::Named(_) | Type::Opaque { .. } => {
+                            Type::Named { .. } | Type::Opaque { .. } => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -2605,7 +2605,7 @@ impl Builder<'_> {
                 Some(Type::Bytes) => Err(Diagnostic::new(
                     "numeric literal is not assignable to bytes",
                 )),
-                Some(Type::Named(name)) => Err(Diagnostic::new(format!(
+                Some(Type::Named { name, .. }) => Err(Diagnostic::new(format!(
                     "numeric literal is not assignable to {name}",
                 ))),
                 Some(Type::Opaque { name, .. }) => Err(Diagnostic::new(format!(
@@ -2722,7 +2722,7 @@ impl Builder<'_> {
                         Type::Bytes => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
-                        Type::Named(_) | Type::Opaque { .. } => {
+                        Type::Named { .. } | Type::Opaque { .. } => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                         Type::Array(_) => {
@@ -3673,7 +3673,7 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Bytes => Err(Diagnostic::new(format!(
                 "cannot implicitly convert bytes to {expected_numeric}",
             ))),
-            Type::Named(name) => Err(Diagnostic::new(format!(
+            Type::Named { name, .. } => Err(Diagnostic::new(format!(
                 "cannot implicitly convert {name} to {expected_numeric}",
             ))),
             Type::Opaque { name, .. } => Err(Diagnostic::new(format!(

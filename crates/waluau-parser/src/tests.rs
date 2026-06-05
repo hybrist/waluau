@@ -68,15 +68,40 @@ fn parses_type_declarations_and_named_type_references() {
     let program = parse(source).expect("parse should succeed");
     assert_eq!(program.type_declarations.len(), 1);
     assert_eq!(program.type_declarations[0].name, "Meters");
+    assert!(program.type_declarations[0].type_params.is_empty());
     assert_eq!(program.type_declarations[0].ty, Type::number());
     assert_eq!(
         program.functions[0].params[0].ty,
-        Type::Named("Meters".into())
+        Type::Named {
+            name: "Meters".into(),
+            type_args: vec![],
+        }
     );
     assert_eq!(
         program.functions[0].return_type,
-        Some(Type::Named("Meters".into()))
+        Some(Type::Named {
+            name: "Meters".into(),
+            type_args: vec![],
+        })
     );
+}
+
+#[test]
+fn parses_generic_type_declarations_and_references() {
+    let source = r#"
+        type Pair<A, B> = {first: A, second: B}
+
+        function entry(value: Pair<i32, bool>): Pair<i32, bool>
+            return value
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    assert_eq!(program.type_declarations[0].type_params, vec!["A", "B"]);
+    assert!(matches!(
+        &program.functions[0].params[0].ty,
+        Type::Named { name, type_args }
+        if name == "Pair" && type_args.len() == 2
+    ));
 }
 
 #[test]
@@ -338,9 +363,27 @@ fn allows_unresolved_named_type_references_for_later_resolution() {
 
     let program = parse(source).expect("parse should succeed");
     let function = &program.functions[0];
-    assert_eq!(function.params[0].ty, Type::Named("f3".into()));
-    assert_eq!(function.params[1].ty, Type::Named("f4".into()));
-    assert_eq!(function.return_type, Some(Type::Named("f1".into())));
+    assert_eq!(
+        function.params[0].ty,
+        Type::Named {
+            name: "f3".into(),
+            type_args: vec![]
+        }
+    );
+    assert_eq!(
+        function.params[1].ty,
+        Type::Named {
+            name: "f4".into(),
+            type_args: vec![]
+        }
+    );
+    assert_eq!(
+        function.return_type,
+        Some(Type::Named {
+            name: "f1".into(),
+            type_args: vec![]
+        })
+    );
 }
 
 #[test]
@@ -1067,22 +1110,23 @@ fn parses_generic_call_with_type_arguments() {
 }
 
 #[test]
-fn rejects_generic_type_annotation() {
+fn parses_generic_type_annotation() {
     let source = r#"
+        type Array<T> = {T}
+
         function entry(): i32
             local xs: Array<i32> = {}
             return 0
         end
     "#;
-    let error = parse(source).expect_err("parse should fail");
-    assert_eq!(error.code(), Some("generic/unsupported-type"));
-    assert!(
-        error
-            .to_string()
-            .contains("generic types are not supported"),
-        "message was: {}",
-        error
-    );
+    let program = parse(source).expect("parse should succeed");
+    assert!(matches!(
+        &program.functions[0].body[0],
+        waluau_ast::Stmt::Let {
+            ty: Some(Type::Named { name, type_args }),
+            ..
+        } if name == "Array" && type_args == &vec![Type::Numeric(NumericType::I32)]
+    ));
 }
 
 #[test]

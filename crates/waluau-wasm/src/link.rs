@@ -640,8 +640,13 @@ impl Rewriter<'_> {
 
     fn rewrite_type(&self, ty: &mut Type) {
         match ty {
-            Type::Named(name) if self.type_names.contains(name) => {
-                *name = format!("{}{name}", self.prefix);
+            Type::Named { name, type_args } => {
+                if self.type_names.contains(name) {
+                    *name = format!("{}{name}", self.prefix);
+                }
+                for ty in type_args {
+                    self.rewrite_type(ty);
+                }
             }
             Type::Opaque { ty, .. } => self.rewrite_type(ty),
             Type::Array(inner) => self.rewrite_type(inner),
@@ -670,8 +675,7 @@ impl Rewriter<'_> {
             | Type::String
             | Type::Bytes
             | Type::TypeParam(_)
-            | Type::Thread
-            | Type::Named(_) => {}
+            | Type::Thread => {}
         }
     }
 

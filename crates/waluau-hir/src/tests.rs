@@ -218,6 +218,49 @@ fn opaque_types_reject_implicit_conversion_to_their_representation() {
 }
 
 #[test]
+fn generic_type_declarations_resolve_transparently() {
+    let source = r#"
+        type Pair<A, B> = {first: A, second: B}
+
+        function entry(value: Pair<i32, bool>): Pair<i32, bool>
+            return value
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+    let expected = Type::Record(
+        [
+            ("first".to_string(), Type::Numeric(NumericType::I32)),
+            ("second".to_string(), Type::Bool),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    assert_eq!(typed.functions[0].params[0].ty, expected.clone());
+    assert_eq!(typed.functions[0].return_type, Some(expected));
+}
+
+#[test]
+fn generic_type_declarations_reject_recursive_cycles() {
+    let source = r#"
+        type Loop<T> = Loop<T>
+
+        function entry(value: Loop<i32>): i32
+            return 0
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("cyclic type declaration detected")
+    );
+}
+
+#[test]
 fn accepts_unary_negation_not_and_elseif() {
     let source = r#"
         function entry(flag: bool, x: i32): i32
