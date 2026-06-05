@@ -1890,11 +1890,12 @@ impl Builder<'_> {
                     },
                 });
                 let mut lowered_args = Vec::with_capacity(args.len() + 1);
-                lowered_args.push(self.coerce_method_receiver(
+                let lowered_receiver = self.coerce_method_receiver(
                     receiver_value,
                     &receiver_ty,
                     &param_types[0],
-                )?);
+                )?;
+                lowered_args.push(lowered_receiver);
                 for (arg, param_ty) in args.iter().zip(param_types.iter().skip(1)) {
                     lowered_args.push(self.lower_expr(arg, env, types, Some(param_ty.clone()))?);
                 }
@@ -1911,6 +1912,12 @@ impl Builder<'_> {
                     params: param_types.clone(),
                     return_type: *return_type,
                 });
+                self.write_back_method_receiver_mutations(
+                    receiver_value,
+                    lowered_receiver,
+                    &receiver_ty,
+                    &param_types[0],
+                )?;
                 let actual = self.infer_expr_type(expr, types, None)?;
                 self.coerce_value(value, actual, expected)?
             }
@@ -2976,6 +2983,40 @@ impl Builder<'_> {
                 }))
             }
             _ => self.coerce_value(value, actual.clone(), Some(expected.clone())),
+        }
+    }
+
+    fn write_back_method_receiver_mutations(
+        &mut self,
+        original: ValueId,
+        projected: ValueId,
+        actual: &Type,
+        expected: &Type,
+    ) -> Result<(), Diagnostic> {
+        if actual == expected {
+            return Ok(());
+        }
+        match (actual, expected) {
+            (Type::Record(actual_fields), Type::Record(expected_fields))
+                if expected_fields
+                    .iter()
+                    .all(|(name, expected_ty)| actual_fields.get(name) == Some(expected_ty)) =>
+            {
+                for (field, field_ty) in expected_fields {
+                    let updated = self.emit(Instruction::StructGet {
+                        base: projected,
+                        field: field.clone(),
+                        field_ty: field_ty.clone(),
+                    });
+                    self.emit(Instruction::StructSet {
+                        base: original,
+                        field: field.clone(),
+                        value: updated,
+                    });
+                }
+                Ok(())
+            }
+            _ => Ok(()),
         }
     }
 
