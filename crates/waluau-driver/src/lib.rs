@@ -249,6 +249,30 @@ mod tests {
     }
 
     #[test]
+    fn compile_file_supports_opaque_type_declarations_across_linking() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("types_main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                type Meters = number
+
+                function entry(): number
+                    local len = 10::Meters
+                    return len::number
+                end
+            "#,
+        )
+        .expect("fixture should write");
+
+        let wasm = super::compile_file(&input_path).expect("compile should succeed");
+        assert!(
+            !wasm.is_empty(),
+            "successful compilation should produce a wasm module"
+        );
+    }
+
+    #[test]
     fn compiles_array_ops() {
         super::compile_file(&fixture_path("array_ops.walu")).expect("compile should succeed");
     }

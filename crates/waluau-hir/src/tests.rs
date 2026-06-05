@@ -185,6 +185,39 @@ fn accepts_explicit_numeric_casts() {
 }
 
 #[test]
+fn opaque_types_require_explicit_casts_to_their_representation() {
+    let source = r#"
+        type Meters = number
+
+        function entry(): f64
+            local len = 10::Meters
+            local len_explicit: number = len::number
+            return len_explicit
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn opaque_types_reject_implicit_conversion_to_their_representation() {
+    let source = r#"
+        type Meters = number
+
+        function entry(): f64
+            local len = 10::Meters
+            local len_implicit: number = len
+            return len_implicit
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(error.to_string(), "cannot implicitly convert Meters to f64");
+}
+
+#[test]
 fn accepts_unary_negation_not_and_elseif() {
     let source = r#"
         function entry(flag: bool, x: i32): i32

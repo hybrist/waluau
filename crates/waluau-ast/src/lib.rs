@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Program {
     pub functions: Vec<Function>,
+    pub type_declarations: Vec<TypeDeclaration>,
     pub top_level: Vec<Stmt>,
     /// The value a module exports through a trailing top-level `return`.
     ///
@@ -14,6 +15,12 @@ pub struct Program {
     pub export: Option<Expr>,
     pub sources: BTreeMap<String, String>,
     pub entry_file_path: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TypeDeclaration {
+    pub name: String,
+    pub ty: Type,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -91,6 +98,11 @@ pub enum Type {
     Bool,
     String,
     Bytes,
+    Named(String),
+    Opaque {
+        name: String,
+        ty: Box<Type>,
+    },
     Array(Box<Type>),
     Multi(Vec<Type>),
     Function {
@@ -183,6 +195,8 @@ impl std::fmt::Display for Type {
             Self::Bool => f.write_str("bool"),
             Self::String => f.write_str("string"),
             Self::Bytes => f.write_str("bytes"),
+            Self::Named(name) => f.write_str(name),
+            Self::Opaque { name, .. } => f.write_str(name),
             Self::Array(element) => write!(f, "{{{element}}}"),
             Self::Multi(types) => {
                 for (index, ty) in types.iter().enumerate() {

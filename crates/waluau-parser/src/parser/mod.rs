@@ -1,4 +1,6 @@
-use waluau_ast::{Function, FunctionExpr, FunctionName, Param, Program, Span, Stmt, Type};
+use waluau_ast::{
+    Function, FunctionExpr, FunctionName, Param, Program, Span, Stmt, Type, TypeDeclaration,
+};
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
 
@@ -29,10 +31,19 @@ impl Parser {
 
     pub(super) fn parse_program(&mut self) -> Result<Program, Diagnostic> {
         let mut functions = Vec::new();
+        let mut type_declarations = Vec::new();
         let mut top_level = Vec::new();
         let mut export = None;
         while self.peek().is_some() {
-            if self.check_simple(&TokenKind::Function) {
+            if self.is_type_decl_start() {
+                match self.parse_type_decl() {
+                    Ok(type_decl) => type_declarations.push(type_decl),
+                    Err(error) => {
+                        self.record_error(error);
+                        self.synchronize_statement(&[], self.index);
+                    }
+                }
+            } else if self.check_simple(&TokenKind::Function) {
                 match self.parse_function() {
                     Ok(function) => functions.push(function),
                     Err(error) => {
@@ -74,6 +85,7 @@ impl Parser {
         if self.diagnostics.is_empty() {
             Ok(Program {
                 functions,
+                type_declarations,
                 top_level,
                 export,
                 sources: std::collections::BTreeMap::new(),
@@ -114,6 +126,32 @@ impl Parser {
         } else {
             Ok(FunctionName::Simple(name))
         }
+    }
+
+    fn is_type_decl_start(&self) -> bool {
+        matches!(
+            (
+                self.peek().map(|token| &token.kind),
+                self.peek_n(1).map(|token| &token.kind),
+                self.peek_n(2).map(|token| &token.kind),
+            ),
+            (
+                Some(TokenKind::Identifier(keyword)),
+                Some(TokenKind::Identifier(_)),
+                Some(TokenKind::Equal)
+            ) if keyword == "type"
+        )
+    }
+
+    fn parse_type_decl(&mut self) -> Result<TypeDeclaration, Diagnostic> {
+        let keyword = self.expect_identifier()?;
+        if keyword != "type" {
+            return Err(Diagnostic::new("expected 'type'"));
+        }
+        let name = self.expect_identifier()?;
+        self.expect_simple(TokenKind::Equal, "expected '=' in type declaration")?;
+        let ty = self.parse_type()?;
+        Ok(TypeDeclaration { name, ty })
     }
 
     pub(super) fn parse_function_expr_tail(
