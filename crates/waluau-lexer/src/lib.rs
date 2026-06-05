@@ -11,7 +11,6 @@ pub struct Token {
 #[derive(Clone, Debug, PartialEq)]
 pub enum TokenKind {
     Function,
-    Type,
     Local,
     If,
     Then,
@@ -254,7 +253,6 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                         return Err(Diagnostic::new("unsupported 'let', use 'local'"));
                     }
                     "function" => TokenKind::Function,
-                    "type" => TokenKind::Type,
                     "local" => TokenKind::Local,
                     "if" => TokenKind::If,
                     "then" => TokenKind::Then,

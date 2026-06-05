@@ -49,17 +49,6 @@ pub(super) fn generic_diagnostic(
 
 fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
     match ty {
-        Type::TypeParam(name) => subst
-            .get(name)
-            .cloned()
-            .unwrap_or_else(|| Type::TypeParam(name.clone())),
-        Type::Array(inner) => Type::Array(Box::new(substitute_type(inner, subst))),
-        Type::Record(fields) => Type::Record(
-            fields
-                .iter()
-                .map(|(name, ty)| (name.clone(), substitute_type(ty, subst)))
-                .collect(),
-        ),
         Type::Named { name, type_args } => Type::Named {
             name: name.clone(),
             type_args: type_args
@@ -67,6 +56,21 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
                 .map(|arg| substitute_type(arg, subst))
                 .collect(),
         },
+        Type::TypeParam(name) => subst
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| Type::TypeParam(name.clone())),
+        Type::Opaque { name, ty } => Type::Opaque {
+            name: name.clone(),
+            ty: Box::new(substitute_type(ty, subst)),
+        },
+        Type::Array(inner) => Type::Array(Box::new(substitute_type(inner, subst))),
+        Type::Record(fields) => Type::Record(
+            fields
+                .iter()
+                .map(|(name, ty)| (name.clone(), substitute_type(ty, subst)))
+                .collect(),
+        ),
         Type::Function {
             params,
             return_type,
@@ -115,16 +119,17 @@ pub(super) fn validate_type_in_scope(
             format!("unknown type parameter '{name}'"),
             "declare the type parameter on the enclosing generic function",
         )),
-        Type::Array(inner) => validate_type_in_scope(inner, allowed),
-        Type::Record(fields) => {
-            for ty in fields.values() {
+        Type::Named { type_args, .. } => {
+            for ty in type_args {
                 validate_type_in_scope(ty, allowed)?;
             }
             Ok(())
         }
-        Type::Named { type_args, .. } => {
-            for type_arg in type_args {
-                validate_type_in_scope(type_arg, allowed)?;
+        Type::Opaque { ty, .. } => validate_type_in_scope(ty, allowed),
+        Type::Array(inner) => validate_type_in_scope(inner, allowed),
+        Type::Record(fields) => {
+            for ty in fields.values() {
+                validate_type_in_scope(ty, allowed)?;
             }
             Ok(())
         }
@@ -143,14 +148,15 @@ pub(super) fn validate_type_in_scope(
 
 fn is_valid_type_argument(ty: &Type, active_type_params: &HashSet<String>) -> bool {
     match ty {
+        Type::Named { type_args, .. } => type_args
+            .iter()
+            .all(|arg| is_valid_type_argument(arg, active_type_params)),
         Type::TypeParam(name) => active_type_params.contains(name),
+        Type::Opaque { ty, .. } => is_valid_type_argument(ty, active_type_params),
         Type::Array(inner) => is_valid_type_argument(inner, active_type_params),
         Type::Record(fields) => fields
             .values()
             .all(|field| is_valid_type_argument(field, active_type_params)),
-        Type::Named { type_args, .. } => type_args
-            .iter()
-            .all(|type_arg| is_valid_type_argument(type_arg, active_type_params)),
         Type::Function {
             params,
             return_type,

@@ -185,6 +185,82 @@ fn accepts_explicit_numeric_casts() {
 }
 
 #[test]
+fn opaque_types_require_explicit_casts_to_their_representation() {
+    let source = r#"
+        type Meters = number
+
+        function entry(): f64
+            local len = 10::Meters
+            local len_explicit: number = len::number
+            return len_explicit
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn opaque_types_reject_implicit_conversion_to_their_representation() {
+    let source = r#"
+        type Meters = number
+
+        function entry(): f64
+            local len = 10::Meters
+            local len_implicit: number = len
+            return len_implicit
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(error.to_string(), "cannot implicitly convert Meters to f64");
+}
+
+#[test]
+fn generic_type_declarations_resolve_transparently() {
+    let source = r#"
+        type Pair<A, B> = {first: A, second: B}
+
+        function entry(value: Pair<i32, bool>): Pair<i32, bool>
+            return value
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+    let expected = Type::Record(
+        [
+            ("first".to_string(), Type::Numeric(NumericType::I32)),
+            ("second".to_string(), Type::Bool),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    assert_eq!(typed.functions[0].params[0].ty, expected.clone());
+    assert_eq!(typed.functions[0].return_type, Some(expected));
+}
+
+#[test]
+fn generic_type_declarations_reject_recursive_cycles() {
+    let source = r#"
+        type Loop<T> = Loop<T>
+
+        function entry(value: Loop<i32>): i32
+            return 0
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("cyclic type declaration detected")
+    );
+}
+
+#[test]
 fn accepts_unary_negation_not_and_elseif() {
     let source = r#"
         function entry(flag: bool, x: i32): i32
@@ -898,63 +974,6 @@ fn rejects_generic_method_used_as_value_without_type_arguments() {
     let program = parse(source).expect("parse should succeed");
     let error = super::type_check(&program).expect_err("type check should fail");
     assert_eq!(error.code(), Some("generic/uninstantiated-value"));
-}
-
-#[test]
-fn resolves_simple_type_aliases() {
-    let source = r#"
-        type Score = i32
-
-        function entry(x: Score): Score
-            return x
-        end
-    "#;
-    let program = parse(source).expect("parse should succeed");
-    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
-    assert_eq!(
-        typed.functions[0].params[0].ty,
-        Type::Numeric(NumericType::I32)
-    );
-    assert_eq!(
-        typed.functions[0].return_type,
-        Some(Type::Numeric(NumericType::I32))
-    );
-}
-
-#[test]
-fn resolves_generic_type_aliases() {
-    let source = r#"
-        type Pair<A, B> = {first: A, second: B}
-
-        function entry(value: Pair<i32, bool>): Pair<i32, bool>
-            return value
-        end
-    "#;
-    let program = parse(source).expect("parse should succeed");
-    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
-    let expected = Type::Record(
-        [
-            ("first".to_string(), Type::Numeric(NumericType::I32)),
-            ("second".to_string(), Type::Bool),
-        ]
-        .into_iter()
-        .collect(),
-    );
-    assert_eq!(typed.functions[0].params[0].ty, expected);
-}
-
-#[test]
-fn rejects_recursive_type_aliases() {
-    let source = r#"
-        type Loop = Loop
-
-        function entry(x: Loop): i32
-            return 0
-        end
-    "#;
-    let program = parse(source).expect("parse should succeed");
-    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
-    assert_eq!(error.code(), Some("alias/cycle"));
 }
 
 #[test]

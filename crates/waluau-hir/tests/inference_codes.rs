@@ -2,19 +2,20 @@ use waluau_diagnostics::DiagnosticCategory;
 use waluau_parser::parse;
 
 #[test]
-fn unknown_generic_type_alias_reports_code() {
+fn unknown_generic_type_declaration_reports_code() {
     let source = r#"
+        type Box<T> = {T}
+
         function entry(): i32
-            local xs: Array<i32> = {}
+            local xs: Missing<i32> = {}
             return 0
         end
     "#;
     let program = parse(source).expect("parse should succeed");
     let error = waluau_hir::type_check_and_infer(&program).expect_err("type check should fail");
-    assert_eq!(error.code(), Some("alias/unknown"));
-    assert_eq!(error.category(), Some(DiagnosticCategory::Unsupported));
+    assert_eq!(error.code(), None);
     assert!(
-        error.to_string().contains("unknown type alias 'Array'"),
+        error.to_string().contains("unknown type 'Missing'"),
         "message was: {}",
         error
     );

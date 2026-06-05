@@ -1,5 +1,6 @@
 pub fn build(program: &Program) -> Result<Module, Diagnostic> {
-    let monomorphic = Monomorphizer::new(program).run(program)?;
+    let erased = erase_opaque_types(program);
+    let monomorphic = Monomorphizer::new(&erased).run(&erased)?;
     let signatures: HashMap<_, _> = monomorphic
         .functions
         .iter()
@@ -35,6 +36,270 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
     let module = Module { functions, start };
     verify(&module)?;
     Ok(module)
+}
+
+fn erase_opaque_types(program: &Program) -> Program {
+    Program {
+        functions: program.functions.iter().map(erase_function_opaque_types).collect(),
+        type_declarations: Vec::new(),
+        top_level: program.top_level.iter().map(erase_stmt_opaque_types).collect(),
+        export: program.export.as_ref().map(erase_expr_opaque_types),
+        sources: program.sources.clone(),
+        entry_file_path: program.entry_file_path.clone(),
+    }
+}
+
+fn erase_function_opaque_types(function: &AstFunction) -> AstFunction {
+    AstFunction {
+        name: function.name.clone(),
+        type_params: function.type_params.clone(),
+        params: function
+            .params
+            .iter()
+            .map(|param| waluau_ast::Param {
+                name: param.name.clone(),
+                ty: erase_type_opaque_types(&param.ty),
+            })
+            .collect(),
+        return_type: function
+            .return_type
+            .as_ref()
+            .map(erase_type_opaque_types),
+        body: function.body.iter().map(erase_stmt_opaque_types).collect(),
+        file_path: function.file_path.clone(),
+    }
+}
+
+fn erase_stmt_opaque_types(stmt: &Stmt) -> Stmt {
+    match stmt {
+        Stmt::Let {
+            name,
+            rebindability,
+            ty,
+            value,
+        } => Stmt::Let {
+            name: name.clone(),
+            rebindability: *rebindability,
+            ty: ty.as_ref().map(erase_type_opaque_types),
+            value: erase_expr_opaque_types(value),
+        },
+        Stmt::Assign { op, name, value } => Stmt::Assign {
+            op: *op,
+            name: name.clone(),
+            value: erase_expr_opaque_types(value),
+        },
+        Stmt::IndexAssign {
+            op,
+            base,
+            index,
+            value,
+        } => Stmt::IndexAssign {
+            op: *op,
+            base: Box::new(erase_expr_opaque_types(base)),
+            index: Box::new(erase_expr_opaque_types(index)),
+            value: erase_expr_opaque_types(value),
+        },
+        Stmt::FieldAssign {
+            op,
+            base,
+            name,
+            value,
+        } => Stmt::FieldAssign {
+            op: *op,
+            base: Box::new(erase_expr_opaque_types(base)),
+            name: name.clone(),
+            value: erase_expr_opaque_types(value),
+        },
+        Stmt::If {
+            condition,
+            then_body,
+            else_body,
+        } => Stmt::If {
+            condition: erase_expr_opaque_types(condition),
+            then_body: then_body.iter().map(erase_stmt_opaque_types).collect(),
+            else_body: else_body.iter().map(erase_stmt_opaque_types).collect(),
+        },
+        Stmt::While { condition, body } => Stmt::While {
+            condition: erase_expr_opaque_types(condition),
+            body: body.iter().map(erase_stmt_opaque_types).collect(),
+        },
+        Stmt::Repeat { body, condition } => Stmt::Repeat {
+            body: body.iter().map(erase_stmt_opaque_types).collect(),
+            condition: erase_expr_opaque_types(condition),
+        },
+        Stmt::NumericFor {
+            name,
+            start,
+            stop,
+            step,
+            body,
+        } => Stmt::NumericFor {
+            name: name.clone(),
+            start: erase_expr_opaque_types(start),
+            stop: erase_expr_opaque_types(stop),
+            step: step.as_ref().map(erase_expr_opaque_types),
+            body: body.iter().map(erase_stmt_opaque_types).collect(),
+        },
+        Stmt::ForIn {
+            names,
+            iterator,
+            body,
+        } => Stmt::ForIn {
+            names: names.clone(),
+            iterator: erase_expr_opaque_types(iterator),
+            body: body.iter().map(erase_stmt_opaque_types).collect(),
+        },
+        Stmt::Break => Stmt::Break,
+        Stmt::Continue => Stmt::Continue,
+        Stmt::Return(value) => Stmt::Return(erase_expr_opaque_types(value)),
+        Stmt::ReturnMulti(values) => {
+            Stmt::ReturnMulti(values.iter().map(erase_expr_opaque_types).collect())
+        }
+        Stmt::LetMulti { bindings, values } => Stmt::LetMulti {
+            bindings: bindings
+                .iter()
+                .map(|binding| waluau_ast::Binding {
+                    name: binding.name.clone(),
+                    rebindability: binding.rebindability,
+                    ty: binding.ty.as_ref().map(erase_type_opaque_types),
+                })
+                .collect(),
+            values: values.iter().map(erase_expr_opaque_types).collect(),
+        },
+        Stmt::AssignMulti { targets, values } => Stmt::AssignMulti {
+            targets: targets.clone(),
+            values: values.iter().map(erase_expr_opaque_types).collect(),
+        },
+        Stmt::Expr(expr) => Stmt::Expr(erase_expr_opaque_types(expr)),
+    }
+}
+
+fn erase_expr_opaque_types(expr: &Expr) -> Expr {
+    match expr {
+        Expr::Number(..)
+        | Expr::Bool(..)
+        | Expr::String(..)
+        | Expr::Bytes(..)
+        | Expr::Name(..)
+        | Expr::Require(..) => expr.clone(),
+        Expr::Unary { op, expr, span } => Expr::Unary {
+            op: *op,
+            expr: Box::new(erase_expr_opaque_types(expr)),
+            span: *span,
+        },
+        Expr::Cast { expr, ty, span } => Expr::Cast {
+            expr: Box::new(erase_expr_opaque_types(expr)),
+            ty: erase_type_opaque_types(ty),
+            span: *span,
+        },
+        Expr::Binary {
+            op,
+            left,
+            right,
+            span,
+        } => Expr::Binary {
+            op: *op,
+            left: Box::new(erase_expr_opaque_types(left)),
+            right: Box::new(erase_expr_opaque_types(right)),
+            span: *span,
+        },
+        Expr::If {
+            condition,
+            then_expr,
+            else_expr,
+            span,
+        } => Expr::If {
+            condition: Box::new(erase_expr_opaque_types(condition)),
+            then_expr: Box::new(erase_expr_opaque_types(then_expr)),
+            else_expr: Box::new(erase_expr_opaque_types(else_expr)),
+            span: *span,
+        },
+        Expr::Call {
+            callee,
+            type_args,
+            args,
+            span,
+        } => Expr::Call {
+            callee: Box::new(erase_expr_opaque_types(callee)),
+            type_args: type_args.iter().map(erase_type_opaque_types).collect(),
+            args: args.iter().map(erase_expr_opaque_types).collect(),
+            span: *span,
+        },
+        Expr::MethodCall {
+            receiver,
+            name,
+            args,
+            span,
+        } => Expr::MethodCall {
+            receiver: Box::new(erase_expr_opaque_types(receiver)),
+            name: name.clone(),
+            args: args.iter().map(erase_expr_opaque_types).collect(),
+            span: *span,
+        },
+        Expr::Function(function) => Expr::Function(waluau_ast::FunctionExpr {
+            name: function.name.clone(),
+            implicit_self: function.implicit_self.clone(),
+            type_params: function.type_params.clone(),
+            params: function
+                .params
+                .iter()
+                .map(|param| waluau_ast::Param {
+                    name: param.name.clone(),
+                    ty: erase_type_opaque_types(&param.ty),
+                })
+                .collect(),
+            return_type: function.return_type.as_ref().map(erase_type_opaque_types),
+            body: function.body.iter().map(erase_stmt_opaque_types).collect(),
+            file_path: function.file_path.clone(),
+            span: function.span,
+        }),
+        Expr::ArrayLiteral { elements, span } => Expr::ArrayLiteral {
+            elements: elements.iter().map(erase_expr_opaque_types).collect(),
+            span: *span,
+        },
+        Expr::TableLiteral { fields, span } => Expr::TableLiteral {
+            fields: fields
+                .iter()
+                .map(|field| waluau_ast::TableField {
+                    name: field.name.clone(),
+                    value: erase_expr_opaque_types(&field.value),
+                })
+                .collect(),
+            span: *span,
+        },
+        Expr::Field { base, name, span } => Expr::Field {
+            base: Box::new(erase_expr_opaque_types(base)),
+            name: name.clone(),
+            span: *span,
+        },
+        Expr::Index { base, index, span } => Expr::Index {
+            base: Box::new(erase_expr_opaque_types(base)),
+            index: Box::new(erase_expr_opaque_types(index)),
+            span: *span,
+        },
+    }
+}
+
+fn erase_type_opaque_types(ty: &Type) -> Type {
+    match ty {
+        Type::Opaque { ty, .. } => erase_type_opaque_types(ty),
+        Type::Array(inner) => Type::Array(Box::new(erase_type_opaque_types(inner))),
+        Type::Multi(types) => Type::Multi(types.iter().map(erase_type_opaque_types).collect()),
+        Type::Function {
+            params,
+            return_type,
+        } => Type::Function {
+            params: params.iter().map(erase_type_opaque_types).collect(),
+            return_type: Box::new(erase_type_opaque_types(return_type)),
+        },
+        Type::Record(fields) => Type::Record(
+            fields
+                .iter()
+                .map(|(name, ty)| (name.clone(), erase_type_opaque_types(ty)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
 }
 
 pub(crate) fn build_function(
@@ -197,6 +462,23 @@ fn method_signature(
     signatures.get(&method_signature_name(base, name)).cloned()
 }
 
+fn direct_field_call_name(
+    callee: &Expr,
+    signatures: &HashMap<String, (Vec<Type>, Type)>,
+) -> Option<(String, Vec<Type>, Type)> {
+    let Expr::Field { base, name, .. } = callee else {
+        return None;
+    };
+    let Expr::Name(base, _) = base.as_ref() else {
+        return None;
+    };
+    let direct_name = method_signature_name(base, name);
+    signatures
+        .get(&direct_name)
+        .cloned()
+        .map(|(params, return_type)| (direct_name, params, return_type))
+}
+
 impl Builder<'_> {
     fn function_expr_return_type(function: &waluau_ast::FunctionExpr) -> Result<Type, Diagnostic> {
         function.return_type.clone().ok_or_else(|| {
@@ -226,6 +508,29 @@ impl Builder<'_> {
             .instructions
             .push((value, instruction));
         value
+    }
+
+    fn instruction(&self, value: ValueId) -> Option<&Instruction> {
+        self.function
+            .blocks
+            .values()
+            .flat_map(|block| block.instructions.iter())
+            .find_map(|(id, instruction)| (*id == value).then_some(instruction))
+    }
+
+    fn direct_record_field_closure_name(&self, base: ValueId, field: &str) -> Option<String> {
+        let Instruction::StructNew { struct_ty, fields } = self.instruction(base)? else {
+            return None;
+        };
+        let Type::Record(record_fields) = struct_ty else {
+            return None;
+        };
+        let field_index = record_fields.keys().position(|name| name == field)?;
+        let field_value = *fields.get(field_index)?;
+        let Instruction::Closure { name, captures, .. } = self.instruction(field_value)? else {
+            return None;
+        };
+        captures.is_empty().then(|| name.clone())
     }
 
     fn set_terminator(&mut self, block: BlockId, terminator: Terminator) {
@@ -1486,10 +1791,15 @@ impl Builder<'_> {
                             "numeric literal is not assignable to bytes",
                         ));
                     }
-                    Type::Named { .. } => {
-                        return Err(Diagnostic::new(
-                            "named types must be resolved before IR lowering",
-                        ));
+                    Type::Named { name, .. } => {
+                        return Err(Diagnostic::new(format!(
+                            "numeric literal is not assignable to {name}",
+                        )));
+                    }
+                    Type::Opaque { name, .. } => {
+                        return Err(Diagnostic::new(format!(
+                            "numeric literal is not assignable to {name}",
+                        )));
                     }
                     Type::Array(_) => {
                         return Err(Diagnostic::new(
@@ -1611,20 +1921,14 @@ impl Builder<'_> {
                 }
                 let receiver_value =
                     self.lower_expr(receiver, env, types, Some(receiver_ty.clone()))?;
-                let callee_value = self.emit(Instruction::StructGet {
-                    base: receiver_value,
-                    field: name.clone(),
-                    field_ty: Type::Function {
-                        params: param_types.clone(),
-                        return_type: return_type.clone(),
-                    },
-                });
+                let direct_name = self.direct_record_field_closure_name(receiver_value, name);
                 let mut lowered_args = Vec::with_capacity(args.len() + 1);
-                lowered_args.push(self.coerce_method_receiver(
+                let lowered_receiver = self.coerce_method_receiver(
                     receiver_value,
                     &receiver_ty,
                     &param_types[0],
-                )?);
+                )?;
+                lowered_args.push(lowered_receiver);
                 for (arg, param_ty) in args.iter().zip(param_types.iter().skip(1)) {
                     lowered_args.push(self.lower_expr(arg, env, types, Some(param_ty.clone()))?);
                 }
@@ -1635,12 +1939,33 @@ impl Builder<'_> {
                         lowered_args.len()
                     )));
                 }
-                let value = self.emit(Instruction::CallValue {
-                    callee: callee_value,
-                    args: lowered_args,
-                    params: param_types.clone(),
-                    return_type: *return_type,
-                });
+                let value = if let Some(direct_name) = direct_name {
+                    self.emit(Instruction::Call {
+                        name: direct_name,
+                        args: lowered_args,
+                    })
+                } else {
+                    let callee_value = self.emit(Instruction::StructGet {
+                        base: receiver_value,
+                        field: name.clone(),
+                        field_ty: Type::Function {
+                            params: param_types.clone(),
+                            return_type: return_type.clone(),
+                        },
+                    });
+                    self.emit(Instruction::CallValue {
+                        callee: callee_value,
+                        args: lowered_args,
+                        params: param_types.clone(),
+                        return_type: *return_type,
+                    })
+                };
+                self.write_back_method_receiver_mutations(
+                    receiver_value,
+                    lowered_receiver,
+                    &receiver_ty,
+                    &param_types[0],
+                )?;
                 let actual = self.infer_expr_type(expr, types, None)?;
                 self.coerce_value(value, actual, expected)?
             }
@@ -1670,7 +1995,7 @@ impl Builder<'_> {
                                     "unary '-' requires a numeric operand",
                                 ));
                             }
-                            Type::Named { .. } => {
+                            Type::Named { .. } | Type::Opaque { .. } => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -1908,6 +2233,23 @@ impl Builder<'_> {
                         let actual = self.infer_expr_type(expr, types, None)?;
                         return self.coerce_value(value, actual, expected);
                     }
+                }
+                if let Some((direct_name, param_types, _)) =
+                    direct_field_call_name(callee.as_ref(), self.signatures)
+                {
+                    let args = args
+                        .iter()
+                        .zip(param_types.iter())
+                        .map(|(arg, param_ty)| {
+                            self.lower_expr(arg, env, types, Some(param_ty.clone()))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let value = self.emit(Instruction::Call {
+                        name: direct_name,
+                        args,
+                    });
+                    let actual = self.infer_expr_type(expr, types, None)?;
+                    return self.coerce_value(value, actual, expected);
                 }
                 let callee_ty = self.infer_expr_type(callee, types, None)?;
                 let Type::Function {
@@ -2263,9 +2605,12 @@ impl Builder<'_> {
                 Some(Type::Bytes) => Err(Diagnostic::new(
                     "numeric literal is not assignable to bytes",
                 )),
-                Some(Type::Named { .. }) => Err(Diagnostic::new(
-                    "numeric literal is not assignable to unresolved named type",
-                )),
+                Some(Type::Named { name, .. }) => Err(Diagnostic::new(format!(
+                    "numeric literal is not assignable to {name}",
+                ))),
+                Some(Type::Opaque { name, .. }) => Err(Diagnostic::new(format!(
+                    "numeric literal is not assignable to {name}",
+                ))),
                 Some(Type::Array(_)) => Err(Diagnostic::new(
                     "numeric literal is not assignable to array",
                 )),
@@ -2377,7 +2722,7 @@ impl Builder<'_> {
                         Type::Bytes => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
-                        Type::Named { .. } => {
+                        Type::Named { .. } | Type::Opaque { .. } => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                         Type::Array(_) => {
@@ -2703,6 +3048,40 @@ impl Builder<'_> {
                 }))
             }
             _ => self.coerce_value(value, actual.clone(), Some(expected.clone())),
+        }
+    }
+
+    fn write_back_method_receiver_mutations(
+        &mut self,
+        original: ValueId,
+        projected: ValueId,
+        actual: &Type,
+        expected: &Type,
+    ) -> Result<(), Diagnostic> {
+        if actual == expected {
+            return Ok(());
+        }
+        match (actual, expected) {
+            (Type::Record(actual_fields), Type::Record(expected_fields))
+                if expected_fields
+                    .iter()
+                    .all(|(name, expected_ty)| actual_fields.get(name) == Some(expected_ty)) =>
+            {
+                for (field, field_ty) in expected_fields {
+                    let updated = self.emit(Instruction::StructGet {
+                        base: projected,
+                        field: field.clone(),
+                        field_ty: field_ty.clone(),
+                    });
+                    self.emit(Instruction::StructSet {
+                        base: original,
+                        field: field.clone(),
+                        value: updated,
+                    });
+                }
+                Ok(())
+            }
+            _ => Ok(()),
         }
     }
 
@@ -3294,8 +3673,11 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Bytes => Err(Diagnostic::new(format!(
                 "cannot implicitly convert bytes to {expected_numeric}",
             ))),
-            Type::Named { .. } => Err(Diagnostic::new(format!(
-                "cannot implicitly convert unresolved named type to {expected_numeric}",
+            Type::Named { name, .. } => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {name} to {expected_numeric}",
+            ))),
+            Type::Opaque { name, .. } => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {name} to {expected_numeric}",
             ))),
             Type::Array(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert array to {expected_numeric}",
@@ -3329,11 +3711,15 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
 }
 
 pub(crate) fn require_numeric_cast(actual: Type, target: Type) -> Result<(), Diagnostic> {
-    match (actual, target) {
+    match (&actual, &target) {
+        (Type::Opaque { ty, .. }, target) if ty.as_ref() == target => Ok(()),
+        (actual, Type::Opaque { ty, .. }) if actual == ty.as_ref() => Ok(()),
+        _ => match (actual, target) {
         (Type::Numeric(_), Type::Numeric(_)) => Ok(()),
         _ => Err(Diagnostic::new(
             "casts require numeric source and destination types",
         )),
+        },
     }
 }
 

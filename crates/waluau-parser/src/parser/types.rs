@@ -115,11 +115,12 @@ impl Parser {
             Some(TokenKind::ThreadType) => Ok(Type::Thread),
             Some(TokenKind::Identifier(name)) if self.type_param_scope.contains(&name) => {
                 if self.check_simple(&TokenKind::Less) {
-                    return Err(self.diagnostic_at_current(&format!(
+                    Err(self.diagnostic_at_current(&format!(
                         "type parameter '{name}' cannot be used with type arguments"
-                    )));
+                    )))
+                } else {
+                    Ok(Type::TypeParam(name))
                 }
-                Ok(Type::TypeParam(name))
             }
             Some(TokenKind::Identifier(name)) => {
                 let type_args = if self.check_simple(&TokenKind::Less) {
@@ -130,7 +131,7 @@ impl Parser {
                 Ok(Type::Named { name, type_args })
             }
             _ => Err(self.diagnostic_at_current(
-                "expected type (number, u32, u64, i32, i64, f32, f64, unit, bool, string, bytes, thread, Foo, Foo<T>, {T}, { x: T }, or (T1, T2) -> R)",
+                "expected type (number, u32, u64, i32, i64, f32, f64, unit, bool, string, bytes, thread, a named type, Foo<T>, {T}, { x: T }, or (T1, T2) -> R)",
             )),
         }
     }

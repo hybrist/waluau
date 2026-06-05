@@ -56,6 +56,55 @@ fn parses_unit_and_void_type_aliases() {
 }
 
 #[test]
+fn parses_type_declarations_and_named_type_references() {
+    let source = r#"
+        type Meters = number
+
+        function scale(x: Meters): Meters
+            return x
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert_eq!(program.type_declarations.len(), 1);
+    assert_eq!(program.type_declarations[0].name, "Meters");
+    assert!(program.type_declarations[0].type_params.is_empty());
+    assert_eq!(program.type_declarations[0].ty, Type::number());
+    assert_eq!(
+        program.functions[0].params[0].ty,
+        Type::Named {
+            name: "Meters".into(),
+            type_args: vec![],
+        }
+    );
+    assert_eq!(
+        program.functions[0].return_type,
+        Some(Type::Named {
+            name: "Meters".into(),
+            type_args: vec![],
+        })
+    );
+}
+
+#[test]
+fn parses_generic_type_declarations_and_references() {
+    let source = r#"
+        type Pair<A, B> = {first: A, second: B}
+
+        function entry(value: Pair<i32, bool>): Pair<i32, bool>
+            return value
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    assert_eq!(program.type_declarations[0].type_params, vec!["A", "B"]);
+    assert!(matches!(
+        &program.functions[0].params[0].ty,
+        Type::Named { name, type_args }
+        if name == "Pair" && type_args.len() == 2
+    ));
+}
+
+#[test]
 fn parses_paren_unit_type_alias() {
     let source = r#"
         function f(): ()
@@ -304,7 +353,7 @@ fn rejects_symbolic_logical_operators() {
 }
 
 #[test]
-fn reports_multiple_invalid_type_annotations_in_one_function() {
+fn allows_unresolved_named_type_references_for_later_resolution() {
     let source = r#"
         function add(x: f3, y: f4): f1
             local z: f2 = x + y
@@ -314,9 +363,27 @@ fn reports_multiple_invalid_type_annotations_in_one_function() {
 
     let program = parse(source).expect("parse should succeed");
     let function = &program.functions[0];
-    assert!(matches!(function.params[0].ty, Type::Named { .. }));
-    assert!(matches!(function.params[1].ty, Type::Named { .. }));
-    assert!(matches!(function.return_type, Some(Type::Named { .. })));
+    assert_eq!(
+        function.params[0].ty,
+        Type::Named {
+            name: "f3".into(),
+            type_args: vec![]
+        }
+    );
+    assert_eq!(
+        function.params[1].ty,
+        Type::Named {
+            name: "f4".into(),
+            type_args: vec![]
+        }
+    );
+    assert_eq!(
+        function.return_type,
+        Some(Type::Named {
+            name: "f1".into(),
+            type_args: vec![]
+        })
+    );
 }
 
 #[test]
@@ -1043,40 +1110,23 @@ fn parses_generic_call_with_type_arguments() {
 }
 
 #[test]
-fn parses_type_alias_declaration() {
+fn parses_generic_type_annotation() {
     let source = r#"
-        type Score = i32
+        type Array<T> = {T}
 
-        function entry(x: Score): Score
-            return x
+        function entry(): i32
+            local xs: Array<i32> = {}
+            return 0
         end
     "#;
     let program = parse(source).expect("parse should succeed");
-    assert_eq!(program.type_aliases.len(), 1);
-    assert_eq!(program.type_aliases[0].name, "Score");
-    assert_eq!(program.type_aliases[0].ty, Type::Numeric(NumericType::I32));
     assert!(matches!(
-        program.functions[0].params[0].ty,
-        Type::Named { .. }
+        &program.functions[0].body[0],
+        waluau_ast::Stmt::Let {
+            ty: Some(Type::Named { name, type_args }),
+            ..
+        } if name == "Array" && type_args == &vec![Type::Numeric(NumericType::I32)]
     ));
-}
-
-#[test]
-fn parses_generic_type_alias_declaration() {
-    let source = r#"
-        type Pair<A, B> = {first: A, second: B}
-
-        function entry(value: Pair<i32, bool>): Pair<i32, bool>
-            return value
-        end
-    "#;
-    let program = parse(source).expect("parse should succeed");
-    assert_eq!(program.type_aliases[0].type_params, vec!["A", "B"]);
-    let Type::Named { name, type_args } = &program.functions[0].params[0].ty else {
-        panic!("expected named type");
-    };
-    assert_eq!(name, "Pair");
-    assert_eq!(type_args.len(), 2);
 }
 
 #[test]

@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use waluau_ast::{Expr, Function, FunctionExpr, FunctionName, Program, Stmt, TableField};
+use waluau_ast::{Expr, Function, FunctionExpr, FunctionName, Program, Stmt, TableField, Type};
 use waluau_diagnostics::Diagnostic;
 
 /// Resolve the module graph rooted at `entry` and merge it into one program.
@@ -134,6 +134,7 @@ fn validate_imported_top_level(stmts: &[Stmt]) -> Result<(), Diagnostic> {
 
 fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, Diagnostic> {
     let mut functions = Vec::new();
+    let mut type_declarations = Vec::new();
     let mut top_level = Vec::new();
     let mut export_cache = HashMap::new();
 
@@ -159,6 +160,12 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, Diagnosti
             .iter()
             .map(|function| function.name.to_string())
             .collect();
+        let type_names: HashSet<String> = module
+            .program
+            .type_declarations
+            .iter()
+            .map(|decl| decl.name.clone())
+            .collect();
 
         let mut imports = HashMap::new();
         for (raw, &target_id) in &module.requires {
@@ -168,13 +175,22 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, Diagnosti
         let mut rewriter = Rewriter {
             prefix: &prefix,
             func_names: &func_names,
+            type_names: &type_names,
             imports: &imports,
             re_exports: HashMap::new(),
             namespaces: HashMap::new(),
         };
 
+        for decl in &module.program.type_declarations {
+            let mut lowered = decl.clone();
+            rewriter.rewrite_type(&mut lowered.ty);
+            lowered.name = format!("{prefix}{}", lowered.name);
+            type_declarations.push(lowered);
+        }
+
         for function in &module_functions {
             let mut lowered = function.clone();
+            rewriter.rewrite_function_types(&mut lowered);
             let mut bound: HashSet<String> = lowered
                 .params
                 .iter()
@@ -194,6 +210,9 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, Diagnosti
 
         if id == entry_id {
             let mut lowered = module.program.top_level.clone();
+            for stmt in &mut lowered {
+                rewriter.rewrite_stmt_types(stmt);
+            }
             let mut bound = HashSet::new();
             rewriter.rewrite_block(&mut lowered, &mut bound);
             strip_unused_namespace_lets(&mut lowered);
@@ -208,7 +227,7 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, Diagnosti
 
     Ok(Program {
         functions,
-        type_aliases: modules[entry_id].program.type_aliases.clone(),
+        type_declarations,
         top_level,
         export: None,
         sources,
@@ -312,6 +331,7 @@ fn process_reexport_bindings(
     let mut rewriter = Rewriter {
         prefix: "",
         func_names: &empty,
+        type_names: &empty,
         imports,
         re_exports: HashMap::new(),
         namespaces: HashMap::new(),
@@ -428,12 +448,227 @@ fn export_field_function_name(
 struct Rewriter<'a> {
     prefix: &'a str,
     func_names: &'a HashSet<String>,
+    type_names: &'a HashSet<String>,
     imports: &'a HashMap<String, ResolvedImport>,
     re_exports: HashMap<String, String>,
     namespaces: HashMap<String, BTreeMap<String, String>>,
 }
 
 impl Rewriter<'_> {
+    fn rewrite_function_types(&self, function: &mut Function) {
+        for param in &mut function.params {
+            self.rewrite_type(&mut param.ty);
+        }
+        if let Some(return_type) = &mut function.return_type {
+            self.rewrite_type(return_type);
+        }
+    }
+
+    fn rewrite_stmt_types(&self, stmt: &mut Stmt) {
+        match stmt {
+            Stmt::Let { ty, value, .. } => {
+                if let Some(ty) = ty {
+                    self.rewrite_type(ty);
+                }
+                self.rewrite_expr_types(value);
+            }
+            Stmt::Assign { value, .. } | Stmt::Expr(value) | Stmt::Return(value) => {
+                self.rewrite_expr_types(value);
+            }
+            Stmt::IndexAssign {
+                base, index, value, ..
+            } => {
+                self.rewrite_expr_types(base);
+                self.rewrite_expr_types(index);
+                self.rewrite_expr_types(value);
+            }
+            Stmt::FieldAssign { base, value, .. } => {
+                self.rewrite_expr_types(base);
+                self.rewrite_expr_types(value);
+            }
+            Stmt::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                self.rewrite_expr_types(condition);
+                for stmt in then_body {
+                    self.rewrite_stmt_types(stmt);
+                }
+                for stmt in else_body {
+                    self.rewrite_stmt_types(stmt);
+                }
+            }
+            Stmt::While { condition, body } => {
+                self.rewrite_expr_types(condition);
+                for stmt in body {
+                    self.rewrite_stmt_types(stmt);
+                }
+            }
+            Stmt::Repeat { body, condition } => {
+                for stmt in body {
+                    self.rewrite_stmt_types(stmt);
+                }
+                self.rewrite_expr_types(condition);
+            }
+            Stmt::NumericFor {
+                start,
+                stop,
+                step,
+                body,
+                ..
+            } => {
+                self.rewrite_expr_types(start);
+                self.rewrite_expr_types(stop);
+                if let Some(step) = step {
+                    self.rewrite_expr_types(step);
+                }
+                for stmt in body {
+                    self.rewrite_stmt_types(stmt);
+                }
+            }
+            Stmt::ForIn { iterator, body, .. } => {
+                self.rewrite_expr_types(iterator);
+                for stmt in body {
+                    self.rewrite_stmt_types(stmt);
+                }
+            }
+            Stmt::ReturnMulti(values) | Stmt::AssignMulti { values, .. } => {
+                for value in values {
+                    self.rewrite_expr_types(value);
+                }
+            }
+            Stmt::LetMulti { bindings, values } => {
+                for binding in bindings {
+                    if let Some(ty) = &mut binding.ty {
+                        self.rewrite_type(ty);
+                    }
+                }
+                for value in values {
+                    self.rewrite_expr_types(value);
+                }
+            }
+            Stmt::Break | Stmt::Continue => {}
+        }
+    }
+
+    fn rewrite_expr_types(&self, expr: &mut Expr) {
+        match expr {
+            Expr::Unary { expr, .. } => self.rewrite_expr_types(expr),
+            Expr::Cast { expr, ty, .. } => {
+                self.rewrite_expr_types(expr);
+                self.rewrite_type(ty);
+            }
+            Expr::Binary { left, right, .. } => {
+                self.rewrite_expr_types(left);
+                self.rewrite_expr_types(right);
+            }
+            Expr::If {
+                condition,
+                then_expr,
+                else_expr,
+                ..
+            } => {
+                self.rewrite_expr_types(condition);
+                self.rewrite_expr_types(then_expr);
+                self.rewrite_expr_types(else_expr);
+            }
+            Expr::Call {
+                callee,
+                type_args,
+                args,
+                ..
+            } => {
+                self.rewrite_expr_types(callee);
+                for ty in type_args {
+                    self.rewrite_type(ty);
+                }
+                for arg in args {
+                    self.rewrite_expr_types(arg);
+                }
+            }
+            Expr::MethodCall { receiver, args, .. } => {
+                self.rewrite_expr_types(receiver);
+                for arg in args {
+                    self.rewrite_expr_types(arg);
+                }
+            }
+            Expr::Function(function) => {
+                for param in &mut function.params {
+                    self.rewrite_type(&mut param.ty);
+                }
+                if let Some(return_type) = &mut function.return_type {
+                    self.rewrite_type(return_type);
+                }
+                for stmt in &mut function.body {
+                    self.rewrite_stmt_types(stmt);
+                }
+            }
+            Expr::ArrayLiteral { elements, .. } => {
+                for element in elements {
+                    self.rewrite_expr_types(element);
+                }
+            }
+            Expr::TableLiteral { fields, .. } => {
+                for field in fields {
+                    self.rewrite_expr_types(&mut field.value);
+                }
+            }
+            Expr::Field { base, .. } => self.rewrite_expr_types(base),
+            Expr::Index { base, index, .. } => {
+                self.rewrite_expr_types(base);
+                self.rewrite_expr_types(index);
+            }
+            Expr::Number(..)
+            | Expr::Bool(..)
+            | Expr::String(..)
+            | Expr::Bytes(..)
+            | Expr::Name(..)
+            | Expr::Require(..) => {}
+        }
+    }
+
+    fn rewrite_type(&self, ty: &mut Type) {
+        match ty {
+            Type::Named { name, type_args } => {
+                if self.type_names.contains(name) {
+                    *name = format!("{}{name}", self.prefix);
+                }
+                for ty in type_args {
+                    self.rewrite_type(ty);
+                }
+            }
+            Type::Opaque { ty, .. } => self.rewrite_type(ty),
+            Type::Array(inner) => self.rewrite_type(inner),
+            Type::Multi(types) => {
+                for ty in types {
+                    self.rewrite_type(ty);
+                }
+            }
+            Type::Function {
+                params,
+                return_type,
+            } => {
+                for ty in params {
+                    self.rewrite_type(ty);
+                }
+                self.rewrite_type(return_type);
+            }
+            Type::Record(fields) => {
+                for ty in fields.values_mut() {
+                    self.rewrite_type(ty);
+                }
+            }
+            Type::Numeric(_)
+            | Type::Unit
+            | Type::Bool
+            | Type::String
+            | Type::Bytes
+            | Type::TypeParam(_)
+            | Type::Thread => {}
+        }
+    }
+
     fn rewrite_block(&mut self, stmts: &mut [Stmt], bound: &mut HashSet<String>) {
         for stmt in stmts {
             self.rewrite_stmt(stmt, bound);
@@ -441,6 +676,7 @@ impl Rewriter<'_> {
     }
 
     fn rewrite_stmt(&mut self, stmt: &mut Stmt, bound: &mut HashSet<String>) {
+        self.rewrite_stmt_types(stmt);
         match stmt {
             Stmt::Let { name, value, .. } => {
                 if let Expr::Require(path, _) = &*value {

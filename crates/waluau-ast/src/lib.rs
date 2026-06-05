@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Program {
     pub functions: Vec<Function>,
-    pub type_aliases: Vec<TypeAlias>,
+    pub type_declarations: Vec<TypeDeclaration>,
     pub top_level: Vec<Stmt>,
     /// The value a module exports through a trailing top-level `return`.
     ///
@@ -18,7 +18,7 @@ pub struct Program {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct TypeAlias {
+pub struct TypeDeclaration {
     pub name: String,
     pub type_params: Vec<String>,
     pub ty: Type,
@@ -99,6 +99,14 @@ pub enum Type {
     Bool,
     String,
     Bytes,
+    Named {
+        name: String,
+        type_args: Vec<Type>,
+    },
+    Opaque {
+        name: String,
+        ty: Box<Type>,
+    },
     Array(Box<Type>),
     Multi(Vec<Type>),
     Function {
@@ -107,10 +115,6 @@ pub enum Type {
     },
     /// A fixed-shape record used for module namespaces (`require` results).
     Record(BTreeMap<String, Type>),
-    Named {
-        name: String,
-        type_args: Vec<Type>,
-    },
     /// Reference to an in-scope generic type parameter (e.g. `T` in `function f<T>(x: T)`).
     TypeParam(String),
     /// A coroutine handle. Yield/resume values are always `i32` (see design 0007).
@@ -195,6 +199,21 @@ impl std::fmt::Display for Type {
             Self::Bool => f.write_str("bool"),
             Self::String => f.write_str("string"),
             Self::Bytes => f.write_str("bytes"),
+            Self::Named { name, type_args } => {
+                f.write_str(name)?;
+                if !type_args.is_empty() {
+                    write!(f, "<")?;
+                    for (index, ty) in type_args.iter().enumerate() {
+                        if index > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{ty}")?;
+                    }
+                    write!(f, ">")?;
+                }
+                Ok(())
+            }
+            Self::Opaque { name, .. } => f.write_str(name),
             Self::Array(element) => write!(f, "{{{element}}}"),
             Self::Multi(types) => {
                 for (index, ty) in types.iter().enumerate() {
@@ -227,20 +246,6 @@ impl std::fmt::Display for Type {
                     write!(f, "{name}: {ty}")?;
                 }
                 write!(f, "}}")
-            }
-            Self::Named { name, type_args } => {
-                f.write_str(name)?;
-                if !type_args.is_empty() {
-                    write!(f, "<")?;
-                    for (index, ty) in type_args.iter().enumerate() {
-                        if index > 0 {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "{ty}")?;
-                    }
-                    write!(f, ">")?;
-                }
-                Ok(())
             }
             Self::TypeParam(name) => f.write_str(name),
             Self::Thread => f.write_str("thread"),

@@ -115,13 +115,17 @@ pub(super) fn infer_expr(
                     Type::Unit => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::String => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Bytes => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                    Type::Named { .. } => {
+                        Err(Diagnostic::new("unary '-' requires a numeric operand"))
+                    }
+                    Type::Opaque { .. } => {
+                        Err(Diagnostic::new("unary '-' requires a numeric operand"))
+                    }
                     Type::Array(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Multi(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
-                    Type::Named { .. }
-                    | Type::Function { .. }
-                    | Type::Record(_)
-                    | Type::TypeParam(_)
-                    | Type::Thread => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                    Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
+                        Err(Diagnostic::new("unary '-' requires a numeric operand"))
+                    }
                 }
             }
             UnaryOp::Not => {
