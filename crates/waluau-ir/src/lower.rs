@@ -462,6 +462,23 @@ fn method_signature(
     signatures.get(&method_signature_name(base, name)).cloned()
 }
 
+fn direct_field_call_name(
+    callee: &Expr,
+    signatures: &HashMap<String, (Vec<Type>, Type)>,
+) -> Option<(String, Vec<Type>, Type)> {
+    let Expr::Field { base, name, .. } = callee else {
+        return None;
+    };
+    let Expr::Name(base, _) = base.as_ref() else {
+        return None;
+    };
+    let direct_name = method_signature_name(base, name);
+    signatures
+        .get(&direct_name)
+        .cloned()
+        .map(|(params, return_type)| (direct_name, params, return_type))
+}
+
 impl Builder<'_> {
     fn function_expr_return_type(function: &waluau_ast::FunctionExpr) -> Result<Type, Diagnostic> {
         function.return_type.clone().ok_or_else(|| {
@@ -491,6 +508,29 @@ impl Builder<'_> {
             .instructions
             .push((value, instruction));
         value
+    }
+
+    fn instruction(&self, value: ValueId) -> Option<&Instruction> {
+        self.function
+            .blocks
+            .values()
+            .flat_map(|block| block.instructions.iter())
+            .find_map(|(id, instruction)| (*id == value).then_some(instruction))
+    }
+
+    fn direct_record_field_closure_name(&self, base: ValueId, field: &str) -> Option<String> {
+        let Instruction::StructNew { struct_ty, fields } = self.instruction(base)? else {
+            return None;
+        };
+        let Type::Record(record_fields) = struct_ty else {
+            return None;
+        };
+        let field_index = record_fields.keys().position(|name| name == field)?;
+        let field_value = *fields.get(field_index)?;
+        let Instruction::Closure { name, captures, .. } = self.instruction(field_value)? else {
+            return None;
+        };
+        captures.is_empty().then(|| name.clone())
     }
 
     fn set_terminator(&mut self, block: BlockId, terminator: Terminator) {
@@ -1881,14 +1921,7 @@ impl Builder<'_> {
                 }
                 let receiver_value =
                     self.lower_expr(receiver, env, types, Some(receiver_ty.clone()))?;
-                let callee_value = self.emit(Instruction::StructGet {
-                    base: receiver_value,
-                    field: name.clone(),
-                    field_ty: Type::Function {
-                        params: param_types.clone(),
-                        return_type: return_type.clone(),
-                    },
-                });
+                let direct_name = self.direct_record_field_closure_name(receiver_value, name);
                 let mut lowered_args = Vec::with_capacity(args.len() + 1);
                 let lowered_receiver = self.coerce_method_receiver(
                     receiver_value,
@@ -1906,12 +1939,27 @@ impl Builder<'_> {
                         lowered_args.len()
                     )));
                 }
-                let value = self.emit(Instruction::CallValue {
-                    callee: callee_value,
-                    args: lowered_args,
-                    params: param_types.clone(),
-                    return_type: *return_type,
-                });
+                let value = if let Some(direct_name) = direct_name {
+                    self.emit(Instruction::Call {
+                        name: direct_name,
+                        args: lowered_args,
+                    })
+                } else {
+                    let callee_value = self.emit(Instruction::StructGet {
+                        base: receiver_value,
+                        field: name.clone(),
+                        field_ty: Type::Function {
+                            params: param_types.clone(),
+                            return_type: return_type.clone(),
+                        },
+                    });
+                    self.emit(Instruction::CallValue {
+                        callee: callee_value,
+                        args: lowered_args,
+                        params: param_types.clone(),
+                        return_type: *return_type,
+                    })
+                };
                 self.write_back_method_receiver_mutations(
                     receiver_value,
                     lowered_receiver,
@@ -2185,6 +2233,23 @@ impl Builder<'_> {
                         let actual = self.infer_expr_type(expr, types, None)?;
                         return self.coerce_value(value, actual, expected);
                     }
+                }
+                if let Some((direct_name, param_types, _)) =
+                    direct_field_call_name(callee.as_ref(), self.signatures)
+                {
+                    let args = args
+                        .iter()
+                        .zip(param_types.iter())
+                        .map(|(arg, param_ty)| {
+                            self.lower_expr(arg, env, types, Some(param_ty.clone()))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let value = self.emit(Instruction::Call {
+                        name: direct_name,
+                        args,
+                    });
+                    let actual = self.infer_expr_type(expr, types, None)?;
+                    return self.coerce_value(value, actual, expected);
                 }
                 let callee_ty = self.infer_expr_type(callee, types, None)?;
                 let Type::Function {

@@ -315,6 +315,7 @@ version = "0.1.0"
 dependencies = [
  "waluau-ast",
  "waluau-diagnostics",
+ "waluau-hir",
  "waluau-ir",
  "waluau-parser",
  "wasm-encoder",
