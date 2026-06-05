@@ -405,3 +405,45 @@ fn emits_valid_wasm_for_record_struct_ops() {
         .validate_all(&wasm)
         .expect("emitted module should validate");
 }
+
+#[test]
+fn devirtualized_method_call_avoids_call_indirect() {
+    let source = r#"
+        local point = { x = 41::i32 }
+
+        function point:get_x(): i32
+            return self.x
+        end
+
+        assert(point:get_x() == 41)
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    let mut saw_call_indirect = false;
+    for payload in Parser::new(0).parse_all(&wasm) {
+        let payload = payload.expect("wasm should parse");
+        if let Payload::CodeSectionEntry(body) = payload {
+            let mut reader = body.get_operators_reader().expect("ops should decode");
+            while !reader.eof() {
+                if matches!(
+                    reader.read().expect("op should decode"),
+                    Operator::CallIndirect { .. }
+                ) {
+                    saw_call_indirect = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    assert!(
+        !saw_call_indirect,
+        "expected direct call for method dispatch"
+    );
+}

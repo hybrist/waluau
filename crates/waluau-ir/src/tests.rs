@@ -196,7 +196,88 @@ fn lowers_method_call_via_method_declaration() {
 
     let program = parse(source).expect("parse should succeed");
     let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
-    build(&typed).expect("ir build should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    let init = module
+        .functions
+        .iter()
+        .find(|function| function.name == "__waluau_top_level_init")
+        .expect("top-level init should exist");
+    let direct_targets = init
+        .blocks
+        .values()
+        .flat_map(|block| block.instructions.iter())
+        .filter_map(|(_, instruction)| match instruction {
+            Instruction::Call { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        init.blocks.values().any(|block| {
+            block
+                .instructions
+                .iter()
+                .any(|(_, instruction)| matches!(instruction, Instruction::Call { .. }))
+        }),
+        "expected direct method call in init:\n{}",
+        init.dump()
+    );
+    assert!(
+        !init.blocks.values().any(|block| {
+            block
+                .instructions
+                .iter()
+                .any(|(_, instruction)| matches!(instruction, Instruction::CallValue { .. }))
+        }),
+        "unexpected indirect call in init:\n{}",
+        init.dump()
+    );
+    assert!(
+        direct_targets
+            .iter()
+            .any(|name| name.starts_with("__waluau_top_level_init$lambda")),
+        "expected direct call to lifted method closure, got {direct_targets:?}\n{}",
+        init.dump()
+    );
+}
+
+#[test]
+fn widened_method_receiver_writes_back_mutations() {
+    let source = r#"
+        local point = { x = 41::i32 }
+
+        function point:bump(delta: i32): i32
+            self.x = self.x + delta
+            return self.x
+        end
+
+        assert(point:bump(1::i32) == 42::i32)
+        assert(point.x == 42::i32)
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.name == "__waluau_top_level_init")
+        .expect("expected synthesized top-level init");
+
+    let writeback_after_call = function.blocks.values().any(|block| {
+        let instructions = &block.instructions;
+        instructions.windows(3).any(|window| {
+            matches!(
+                window[0].1,
+                Instruction::Call { .. } | Instruction::CallValue { .. }
+            ) && matches!(&window[1].1, Instruction::StructGet { field, .. } if field == "x")
+                && matches!(&window[2].1, Instruction::StructSet { field, .. } if field == "x")
+        })
+    });
+    assert!(
+        writeback_after_call,
+        "expected method call lowering to write back receiver mutations:\n{}",
+        function.dump()
+    );
 }
 
 #[test]
