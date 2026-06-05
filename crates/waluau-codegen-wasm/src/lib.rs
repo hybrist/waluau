@@ -1934,7 +1934,11 @@ fn emit_binary(
                     "multi-value add is not supported during wasm emission",
                 ));
             }
-            Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
+            Type::Named { .. }
+            | Type::Function { .. }
+            | Type::Record(_)
+            | Type::TypeParam(_)
+            | Type::Thread => {
                 unreachable!()
             }
             Type::Unit => unreachable!(),
@@ -1986,7 +1990,11 @@ fn emit_binary(
                     "multi-value sub is not supported during wasm emission",
                 ));
             }
-            Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
+            Type::Named { .. }
+            | Type::Function { .. }
+            | Type::Record(_)
+            | Type::TypeParam(_)
+            | Type::Thread => {
                 unreachable!()
             }
             Type::Unit => unreachable!(),
@@ -2025,7 +2033,11 @@ fn emit_binary(
                     "multi-value mul is not supported during wasm emission",
                 ));
             }
-            Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
+            Type::Named { .. }
+            | Type::Function { .. }
+            | Type::Record(_)
+            | Type::TypeParam(_)
+            | Type::Thread => {
                 unreachable!()
             }
             Type::Unit => unreachable!(),
@@ -2070,7 +2082,11 @@ fn emit_binary(
                     "multi-value div is not supported during wasm emission",
                 ));
             }
-            Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
+            Type::Named { .. }
+            | Type::Function { .. }
+            | Type::Record(_)
+            | Type::TypeParam(_)
+            | Type::Thread => {
                 unreachable!()
             }
             Type::Unit => unreachable!(),
@@ -2101,7 +2117,11 @@ fn emit_binary(
                     "multi-value equality is not supported during wasm emission",
                 ));
             }
-            Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
+            Type::Named { .. }
+            | Type::Function { .. }
+            | Type::Record(_)
+            | Type::TypeParam(_)
+            | Type::Thread => {
                 unreachable!()
             }
             Type::Unit => unreachable!(),
@@ -2146,7 +2166,11 @@ fn emit_binary(
                     "multi-value comparison is not supported during wasm emission",
                 ));
             }
-            Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
+            Type::Named { .. }
+            | Type::Function { .. }
+            | Type::Record(_)
+            | Type::TypeParam(_)
+            | Type::Thread => {
                 unreachable!()
             }
             Type::Unit => unreachable!(),
@@ -2191,7 +2215,11 @@ fn emit_binary(
                     "multi-value comparison is not supported during wasm emission",
                 ));
             }
-            Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
+            Type::Named { .. }
+            | Type::Function { .. }
+            | Type::Record(_)
+            | Type::TypeParam(_)
+            | Type::Thread => {
                 unreachable!()
             }
             Type::Unit => unreachable!(),

@@ -901,6 +901,63 @@ fn rejects_generic_method_used_as_value_without_type_arguments() {
 }
 
 #[test]
+fn resolves_simple_type_aliases() {
+    let source = r#"
+        type Score = i32
+
+        function entry(x: Score): Score
+            return x
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+    assert_eq!(
+        typed.functions[0].params[0].ty,
+        Type::Numeric(NumericType::I32)
+    );
+    assert_eq!(
+        typed.functions[0].return_type,
+        Some(Type::Numeric(NumericType::I32))
+    );
+}
+
+#[test]
+fn resolves_generic_type_aliases() {
+    let source = r#"
+        type Pair<A, B> = {first: A, second: B}
+
+        function entry(value: Pair<i32, bool>): Pair<i32, bool>
+            return value
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+    let expected = Type::Record(
+        [
+            ("first".to_string(), Type::Numeric(NumericType::I32)),
+            ("second".to_string(), Type::Bool),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    assert_eq!(typed.functions[0].params[0].ty, expected);
+}
+
+#[test]
+fn rejects_recursive_type_aliases() {
+    let source = r#"
+        type Loop = Loop
+
+        function entry(x: Loop): i32
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(error.code(), Some("alias/cycle"));
+}
+
+#[test]
 fn rejects_new_field_after_record_read() {
     let source = r#"
         function entry(): i32

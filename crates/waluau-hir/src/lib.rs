@@ -34,9 +34,421 @@ fn binding_for(ty: Type, rebindability: Rebindability) -> Binding {
     }
 }
 
+#[derive(Clone)]
+struct AliasDecl {
+    type_params: Vec<String>,
+    ty: Type,
+}
+
+fn alias_diagnostic(
+    code: &'static str,
+    message: impl Into<String>,
+    action: impl Into<String>,
+) -> Diagnostic {
+    Diagnostic::new(message)
+        .with_code(code)
+        .with_category(DiagnosticCategory::Unsupported)
+        .with_action(action)
+}
+
+fn substitute_type_params(ty: &Type, subst: &HashMap<String, Type>) -> Type {
+    match ty {
+        Type::TypeParam(name) => subst
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| Type::TypeParam(name.clone())),
+        Type::Array(inner) => Type::Array(Box::new(substitute_type_params(inner, subst))),
+        Type::Multi(types) => Type::Multi(
+            types
+                .iter()
+                .map(|inner| substitute_type_params(inner, subst))
+                .collect(),
+        ),
+        Type::Function {
+            params,
+            return_type,
+        } => Type::Function {
+            params: params
+                .iter()
+                .map(|param| substitute_type_params(param, subst))
+                .collect(),
+            return_type: Box::new(substitute_type_params(return_type, subst)),
+        },
+        Type::Record(fields) => Type::Record(
+            fields
+                .iter()
+                .map(|(name, ty)| (name.clone(), substitute_type_params(ty, subst)))
+                .collect(),
+        ),
+        Type::Named { name, type_args } => Type::Named {
+            name: name.clone(),
+            type_args: type_args
+                .iter()
+                .map(|arg| substitute_type_params(arg, subst))
+                .collect(),
+        },
+        other => other.clone(),
+    }
+}
+
+fn resolve_type_aliases(program: &Program) -> Result<Program, Diagnostic> {
+    let mut aliases = HashMap::new();
+    for alias in &program.type_aliases {
+        if aliases
+            .insert(
+                alias.name.clone(),
+                AliasDecl {
+                    type_params: alias.type_params.clone(),
+                    ty: alias.ty.clone(),
+                },
+            )
+            .is_some()
+        {
+            return Err(alias_diagnostic(
+                "alias/duplicate",
+                format!("duplicate type alias '{}'", alias.name),
+                "rename or remove the duplicate type alias",
+            ));
+        }
+    }
+
+    let mut resolved = program.clone();
+    for alias in &mut resolved.type_aliases {
+        let alias_params = active_type_param_set(&alias.type_params);
+        alias.ty = resolve_type(
+            &alias.ty,
+            &alias_params,
+            &aliases,
+            &mut vec![alias.name.clone()],
+        )?;
+    }
+    for function in &mut resolved.functions {
+        resolve_function_types(function, &aliases, &HashSet::new())?;
+    }
+    for stmt in &mut resolved.top_level {
+        resolve_stmt_types(stmt, &aliases, &HashSet::new())?;
+    }
+    if let Some(export) = &mut resolved.export {
+        resolve_expr_types(export, &aliases, &HashSet::new())?;
+    }
+    Ok(resolved)
+}
+
+fn resolve_type(
+    ty: &Type,
+    active_type_params: &HashSet<String>,
+    aliases: &HashMap<String, AliasDecl>,
+    alias_stack: &mut Vec<String>,
+) -> Result<Type, Diagnostic> {
+    match ty {
+        Type::Array(inner) => Ok(Type::Array(Box::new(resolve_type(
+            inner,
+            active_type_params,
+            aliases,
+            alias_stack,
+        )?))),
+        Type::Multi(types) => Ok(Type::Multi(
+            types
+                .iter()
+                .map(|ty| resolve_type(ty, active_type_params, aliases, alias_stack))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        Type::Function {
+            params,
+            return_type,
+        } => Ok(Type::Function {
+            params: params
+                .iter()
+                .map(|param| resolve_type(param, active_type_params, aliases, alias_stack))
+                .collect::<Result<Vec<_>, _>>()?,
+            return_type: Box::new(resolve_type(
+                return_type,
+                active_type_params,
+                aliases,
+                alias_stack,
+            )?),
+        }),
+        Type::Record(fields) => Ok(Type::Record(
+            fields
+                .iter()
+                .map(|(name, ty)| {
+                    Ok((
+                        name.clone(),
+                        resolve_type(ty, active_type_params, aliases, alias_stack)?,
+                    ))
+                })
+                .collect::<Result<_, Diagnostic>>()?,
+        )),
+        Type::Named { name, type_args } => {
+            let resolved_args = type_args
+                .iter()
+                .map(|arg| resolve_type(arg, active_type_params, aliases, alias_stack))
+                .collect::<Result<Vec<_>, _>>()?;
+            if active_type_params.contains(name) {
+                if resolved_args.is_empty() {
+                    return Ok(Type::TypeParam(name.clone()));
+                }
+                return Err(alias_diagnostic(
+                    "generic/unknown-type-param",
+                    format!("type parameter '{name}' cannot be used with type arguments"),
+                    "remove the type arguments or use a named type alias",
+                ));
+            }
+            let Some(alias) = aliases.get(name) else {
+                return Err(alias_diagnostic(
+                    "alias/unknown",
+                    format!("unknown type alias '{name}'"),
+                    "declare the type alias before using it",
+                ));
+            };
+            if resolved_args.len() != alias.type_params.len() {
+                return Err(alias_diagnostic(
+                    "alias/type-arg-count",
+                    format!(
+                        "type alias '{name}' expects {} type argument{}, got {}",
+                        alias.type_params.len(),
+                        if alias.type_params.len() == 1 {
+                            ""
+                        } else {
+                            "s"
+                        },
+                        resolved_args.len()
+                    ),
+                    "match the number of type parameters declared on the type alias",
+                ));
+            }
+            if alias_stack.contains(name) {
+                return Err(alias_diagnostic(
+                    "alias/cycle",
+                    format!("cyclic type alias involving '{name}' is not supported"),
+                    "rewrite the aliases to avoid recursion in this MVP",
+                ));
+            }
+            let subst = alias
+                .type_params
+                .iter()
+                .cloned()
+                .zip(resolved_args)
+                .collect::<HashMap<_, _>>();
+            alias_stack.push(name.clone());
+            let instantiated = substitute_type_params(&alias.ty, &subst);
+            let resolved = resolve_type(&instantiated, active_type_params, aliases, alias_stack);
+            alias_stack.pop();
+            resolved
+        }
+        other => Ok(other.clone()),
+    }
+}
+
+fn resolve_function_types(
+    function: &mut Function,
+    aliases: &HashMap<String, AliasDecl>,
+    outer_type_params: &HashSet<String>,
+) -> Result<(), Diagnostic> {
+    let mut active_type_params = outer_type_params.clone();
+    active_type_params.extend(active_type_param_set(&function.type_params));
+    for param in &mut function.params {
+        param.ty = resolve_type(&param.ty, &active_type_params, aliases, &mut Vec::new())?;
+    }
+    if let Some(return_type) = &mut function.return_type {
+        *return_type = resolve_type(return_type, &active_type_params, aliases, &mut Vec::new())?;
+    }
+    for stmt in &mut function.body {
+        resolve_stmt_types(stmt, aliases, &active_type_params)?;
+    }
+    Ok(())
+}
+
+fn resolve_stmt_types(
+    stmt: &mut Stmt,
+    aliases: &HashMap<String, AliasDecl>,
+    active_type_params: &HashSet<String>,
+) -> Result<(), Diagnostic> {
+    match stmt {
+        Stmt::Let { ty, value, .. } => {
+            if let Some(ty) = ty {
+                *ty = resolve_type(ty, active_type_params, aliases, &mut Vec::new())?;
+            }
+            resolve_expr_types(value, aliases, active_type_params)
+        }
+        Stmt::Assign { value, .. } | Stmt::Expr(value) | Stmt::Return(value) => {
+            resolve_expr_types(value, aliases, active_type_params)
+        }
+        Stmt::FieldAssign { base, value, .. } => {
+            resolve_expr_types(base, aliases, active_type_params)?;
+            resolve_expr_types(value, aliases, active_type_params)
+        }
+        Stmt::IndexAssign {
+            base, index, value, ..
+        } => {
+            resolve_expr_types(base, aliases, active_type_params)?;
+            resolve_expr_types(index, aliases, active_type_params)?;
+            resolve_expr_types(value, aliases, active_type_params)
+        }
+        Stmt::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
+            resolve_expr_types(condition, aliases, active_type_params)?;
+            for stmt in then_body {
+                resolve_stmt_types(stmt, aliases, active_type_params)?;
+            }
+            for stmt in else_body {
+                resolve_stmt_types(stmt, aliases, active_type_params)?;
+            }
+            Ok(())
+        }
+        Stmt::While { condition, body } => {
+            resolve_expr_types(condition, aliases, active_type_params)?;
+            for stmt in body {
+                resolve_stmt_types(stmt, aliases, active_type_params)?;
+            }
+            Ok(())
+        }
+        Stmt::Repeat { body, condition } => {
+            for stmt in body {
+                resolve_stmt_types(stmt, aliases, active_type_params)?;
+            }
+            resolve_expr_types(condition, aliases, active_type_params)
+        }
+        Stmt::NumericFor {
+            start,
+            stop,
+            step,
+            body,
+            ..
+        } => {
+            resolve_expr_types(start, aliases, active_type_params)?;
+            resolve_expr_types(stop, aliases, active_type_params)?;
+            if let Some(step) = step {
+                resolve_expr_types(step, aliases, active_type_params)?;
+            }
+            for stmt in body {
+                resolve_stmt_types(stmt, aliases, active_type_params)?;
+            }
+            Ok(())
+        }
+        Stmt::ForIn { iterator, body, .. } => {
+            resolve_expr_types(iterator, aliases, active_type_params)?;
+            for stmt in body {
+                resolve_stmt_types(stmt, aliases, active_type_params)?;
+            }
+            Ok(())
+        }
+        Stmt::ReturnMulti(values) | Stmt::AssignMulti { values, .. } => {
+            for value in values {
+                resolve_expr_types(value, aliases, active_type_params)?;
+            }
+            Ok(())
+        }
+        Stmt::LetMulti { bindings, values } => {
+            for binding in bindings {
+                if let Some(ty) = &mut binding.ty {
+                    *ty = resolve_type(ty, active_type_params, aliases, &mut Vec::new())?;
+                }
+            }
+            for value in values {
+                resolve_expr_types(value, aliases, active_type_params)?;
+            }
+            Ok(())
+        }
+        Stmt::Break | Stmt::Continue => Ok(()),
+    }
+}
+
+fn resolve_expr_types(
+    expr: &mut Expr,
+    aliases: &HashMap<String, AliasDecl>,
+    active_type_params: &HashSet<String>,
+) -> Result<(), Diagnostic> {
+    match expr {
+        Expr::Unary { expr, .. } => resolve_expr_types(expr, aliases, active_type_params),
+        Expr::Cast { expr, ty, .. } => {
+            resolve_expr_types(expr, aliases, active_type_params)?;
+            *ty = resolve_type(ty, active_type_params, aliases, &mut Vec::new())?;
+            Ok(())
+        }
+        Expr::Binary { left, right, .. } => {
+            resolve_expr_types(left, aliases, active_type_params)?;
+            resolve_expr_types(right, aliases, active_type_params)
+        }
+        Expr::If {
+            condition,
+            then_expr,
+            else_expr,
+            ..
+        } => {
+            resolve_expr_types(condition, aliases, active_type_params)?;
+            resolve_expr_types(then_expr, aliases, active_type_params)?;
+            resolve_expr_types(else_expr, aliases, active_type_params)
+        }
+        Expr::Call {
+            callee,
+            type_args,
+            args,
+            ..
+        } => {
+            resolve_expr_types(callee, aliases, active_type_params)?;
+            for type_arg in type_args {
+                *type_arg = resolve_type(type_arg, active_type_params, aliases, &mut Vec::new())?;
+            }
+            for arg in args {
+                resolve_expr_types(arg, aliases, active_type_params)?;
+            }
+            Ok(())
+        }
+        Expr::MethodCall { receiver, args, .. } => {
+            resolve_expr_types(receiver, aliases, active_type_params)?;
+            for arg in args {
+                resolve_expr_types(arg, aliases, active_type_params)?;
+            }
+            Ok(())
+        }
+        Expr::Function(function) => {
+            let mut active = active_type_params.clone();
+            active.extend(active_type_param_set(&function.type_params));
+            for param in &mut function.params {
+                param.ty = resolve_type(&param.ty, &active, aliases, &mut Vec::new())?;
+            }
+            if let Some(return_type) = &mut function.return_type {
+                *return_type = resolve_type(return_type, &active, aliases, &mut Vec::new())?;
+            }
+            for stmt in &mut function.body {
+                resolve_stmt_types(stmt, aliases, &active)?;
+            }
+            Ok(())
+        }
+        Expr::ArrayLiteral { elements, .. } => {
+            for element in elements {
+                resolve_expr_types(element, aliases, active_type_params)?;
+            }
+            Ok(())
+        }
+        Expr::TableLiteral { fields, .. } => {
+            for field in fields {
+                resolve_expr_types(&mut field.value, aliases, active_type_params)?;
+            }
+            Ok(())
+        }
+        Expr::Field { base, .. } => resolve_expr_types(base, aliases, active_type_params),
+        Expr::Index { base, index, .. } => {
+            resolve_expr_types(base, aliases, active_type_params)?;
+            resolve_expr_types(index, aliases, active_type_params)
+        }
+        Expr::Name(..)
+        | Expr::Number(..)
+        | Expr::Bool(..)
+        | Expr::String(..)
+        | Expr::Bytes(..)
+        | Expr::Require(..) => Ok(()),
+    }
+}
+
 fn desugar_method_declarations(program: &Program) -> Result<Program, Diagnostic> {
     let mut rewritten = program.clone();
     rewritten.functions.clear();
+    rewritten.type_aliases = program.type_aliases.clone();
     rewritten.top_level.clear();
     let mut pending_methods: Vec<(String, Stmt)> = Vec::new();
 
@@ -342,7 +754,8 @@ pub fn type_check(program: &Program) -> Result<(), Diagnostic> {
 }
 
 pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
-    let mut typed = desugar_method_declarations(program)?;
+    let resolved = resolve_type_aliases(program)?;
+    let mut typed = desugar_method_declarations(&resolved)?;
     if !typed.top_level.is_empty() {
         typed.functions.push(Function {
             name: FunctionName::Simple("__waluau_top_level_init".to_string()),

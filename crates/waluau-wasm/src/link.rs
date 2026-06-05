@@ -222,6 +222,7 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, String> {
 
     Ok(Program {
         functions,
+        type_aliases: modules[entry_id].program.type_aliases.clone(),
         top_level,
         export: None,
         sources,

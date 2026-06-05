@@ -60,6 +60,13 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
                 .map(|(name, ty)| (name.clone(), substitute_type(ty, subst)))
                 .collect(),
         ),
+        Type::Named { name, type_args } => Type::Named {
+            name: name.clone(),
+            type_args: type_args
+                .iter()
+                .map(|arg| substitute_type(arg, subst))
+                .collect(),
+        },
         Type::Function {
             params,
             return_type,
@@ -115,6 +122,12 @@ pub(super) fn validate_type_in_scope(
             }
             Ok(())
         }
+        Type::Named { type_args, .. } => {
+            for type_arg in type_args {
+                validate_type_in_scope(type_arg, allowed)?;
+            }
+            Ok(())
+        }
         Type::Function {
             params,
             return_type,
@@ -135,6 +148,9 @@ fn is_valid_type_argument(ty: &Type, active_type_params: &HashSet<String>) -> bo
         Type::Record(fields) => fields
             .values()
             .all(|field| is_valid_type_argument(field, active_type_params)),
+        Type::Named { type_args, .. } => type_args
+            .iter()
+            .all(|type_arg| is_valid_type_argument(type_arg, active_type_params)),
         Type::Function {
             params,
             return_type,

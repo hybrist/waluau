@@ -129,6 +129,7 @@ impl<'a> Monomorphizer<'a> {
 
         Ok(Program {
             functions,
+            type_aliases: program.type_aliases.clone(),
             top_level: program.top_level.clone(),
             export: program.export.clone(),
             sources: program.sources.clone(),

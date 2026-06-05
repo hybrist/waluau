@@ -63,6 +63,9 @@ pub(crate) fn wasm_type(
                 heap_type: HeapType::Concrete(index),
             }))
         }
+        Type::Named { .. } => {
+            unreachable!("named types must be resolved before codegen")
+        }
         Type::TypeParam(_) => {
             unreachable!("generic type parameters must be specialized before codegen")
         }

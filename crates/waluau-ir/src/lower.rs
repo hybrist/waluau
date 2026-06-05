@@ -1486,6 +1486,11 @@ impl Builder<'_> {
                             "numeric literal is not assignable to bytes",
                         ));
                     }
+                    Type::Named { .. } => {
+                        return Err(Diagnostic::new(
+                            "named types must be resolved before IR lowering",
+                        ));
+                    }
                     Type::Array(_) => {
                         return Err(Diagnostic::new(
                             "numeric literal is not assignable to array",
@@ -1661,6 +1666,11 @@ impl Builder<'_> {
                                 ));
                             }
                             Type::Bytes => {
+                                return Err(Diagnostic::new(
+                                    "unary '-' requires a numeric operand",
+                                ));
+                            }
+                            Type::Named { .. } => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -2253,6 +2263,9 @@ impl Builder<'_> {
                 Some(Type::Bytes) => Err(Diagnostic::new(
                     "numeric literal is not assignable to bytes",
                 )),
+                Some(Type::Named { .. }) => Err(Diagnostic::new(
+                    "numeric literal is not assignable to unresolved named type",
+                )),
                 Some(Type::Array(_)) => Err(Diagnostic::new(
                     "numeric literal is not assignable to array",
                 )),
@@ -2362,6 +2375,9 @@ impl Builder<'_> {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                         Type::Bytes => {
+                            Err(Diagnostic::new("unary '-' requires a numeric operand"))
+                        }
+                        Type::Named { .. } => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                         Type::Array(_) => {
@@ -3277,6 +3293,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             ))),
             Type::Bytes => Err(Diagnostic::new(format!(
                 "cannot implicitly convert bytes to {expected_numeric}",
+            ))),
+            Type::Named { .. } => Err(Diagnostic::new(format!(
+                "cannot implicitly convert unresolved named type to {expected_numeric}",
             ))),
             Type::Array(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert array to {expected_numeric}",

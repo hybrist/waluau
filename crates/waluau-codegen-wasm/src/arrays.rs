@@ -285,7 +285,11 @@ pub(crate) fn array_storage_type(
         Type::Multi(_) => Err(Diagnostic::new(
             "multi-value types are not supported in array storage yet",
         )),
-        Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
+        Type::Named { .. }
+        | Type::Function { .. }
+        | Type::Record(_)
+        | Type::TypeParam(_)
+        | Type::Thread => {
             unreachable!()
         }
         Type::Unit => unreachable!(),
@@ -328,7 +332,7 @@ pub(crate) fn record_storage_type(
         Type::Multi(_) => Err(Diagnostic::new(
             "multi-value types are not supported in record fields",
         )),
-        Type::TypeParam(_) => unreachable!(),
+        Type::Named { .. } | Type::TypeParam(_) => unreachable!(),
         Type::Unit => unreachable!(),
     }
 }

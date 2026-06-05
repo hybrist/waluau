@@ -1,4 +1,6 @@
-use waluau_ast::{Function, FunctionExpr, FunctionName, Param, Program, Span, Stmt, Type};
+use waluau_ast::{
+    Function, FunctionExpr, FunctionName, Param, Program, Span, Stmt, Type, TypeAlias,
+};
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
 
@@ -29,10 +31,19 @@ impl Parser {
 
     pub(super) fn parse_program(&mut self) -> Result<Program, Diagnostic> {
         let mut functions = Vec::new();
+        let mut type_aliases = Vec::new();
         let mut top_level = Vec::new();
         let mut export = None;
         while self.peek().is_some() {
-            if self.check_simple(&TokenKind::Function) {
+            if self.check_simple(&TokenKind::Type) {
+                match self.parse_type_alias() {
+                    Ok(alias) => type_aliases.push(alias),
+                    Err(error) => {
+                        self.record_error(error);
+                        self.synchronize_statement(&[], self.index);
+                    }
+                }
+            } else if self.check_simple(&TokenKind::Function) {
                 match self.parse_function() {
                     Ok(function) => functions.push(function),
                     Err(error) => {
@@ -74,6 +85,7 @@ impl Parser {
         if self.diagnostics.is_empty() {
             Ok(Program {
                 functions,
+                type_aliases,
                 top_level,
                 export,
                 sources: std::collections::BTreeMap::new(),
@@ -114,6 +126,22 @@ impl Parser {
         } else {
             Ok(FunctionName::Simple(name))
         }
+    }
+
+    fn parse_type_alias(&mut self) -> Result<TypeAlias, Diagnostic> {
+        self.expect_simple(TokenKind::Type, "expected 'type'")?;
+        let name = self.expect_identifier()?;
+        let type_params = self.parse_type_param_list()?;
+        let scope_token = self.type_param_scope.len();
+        self.type_param_scope.extend(type_params.iter().cloned());
+        self.expect_simple(TokenKind::Equal, "expected '=' in type alias declaration")?;
+        let parsed = self.parse_type().map(|ty| TypeAlias {
+            name,
+            type_params,
+            ty,
+        });
+        self.type_param_scope.truncate(scope_token);
+        parsed
     }
 
     pub(super) fn parse_function_expr_tail(

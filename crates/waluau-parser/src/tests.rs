@@ -312,9 +312,11 @@ fn reports_multiple_invalid_type_annotations_in_one_function() {
         end
     "#;
 
-    let error = parse(source).expect_err("parse should fail");
-    let message = error.to_string();
-    assert_eq!(message.matches("expected type").count(), 4);
+    let program = parse(source).expect("parse should succeed");
+    let function = &program.functions[0];
+    assert!(matches!(function.params[0].ty, Type::Named { .. }));
+    assert!(matches!(function.params[1].ty, Type::Named { .. }));
+    assert!(matches!(function.return_type, Some(Type::Named { .. })));
 }
 
 #[test]
@@ -1041,22 +1043,40 @@ fn parses_generic_call_with_type_arguments() {
 }
 
 #[test]
-fn rejects_generic_type_annotation() {
+fn parses_type_alias_declaration() {
     let source = r#"
-        function entry(): i32
-            local xs: Array<i32> = {}
-            return 0
+        type Score = i32
+
+        function entry(x: Score): Score
+            return x
         end
     "#;
-    let error = parse(source).expect_err("parse should fail");
-    assert_eq!(error.code(), Some("generic/unsupported-type"));
-    assert!(
-        error
-            .to_string()
-            .contains("generic types are not supported"),
-        "message was: {}",
-        error
-    );
+    let program = parse(source).expect("parse should succeed");
+    assert_eq!(program.type_aliases.len(), 1);
+    assert_eq!(program.type_aliases[0].name, "Score");
+    assert_eq!(program.type_aliases[0].ty, Type::Numeric(NumericType::I32));
+    assert!(matches!(
+        program.functions[0].params[0].ty,
+        Type::Named { .. }
+    ));
+}
+
+#[test]
+fn parses_generic_type_alias_declaration() {
+    let source = r#"
+        type Pair<A, B> = {first: A, second: B}
+
+        function entry(value: Pair<i32, bool>): Pair<i32, bool>
+            return value
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    assert_eq!(program.type_aliases[0].type_params, vec!["A", "B"]);
+    let Type::Named { name, type_args } = &program.functions[0].params[0].ty else {
+        panic!("expected named type");
+    };
+    assert_eq!(name, "Pair");
+    assert_eq!(type_args.len(), 2);
 }
 
 #[test]
