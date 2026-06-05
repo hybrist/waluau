@@ -282,6 +282,7 @@ pub(crate) fn array_storage_type(
                 heap_type: HeapType::Concrete(index),
             })))
         }
+        Type::Named(_) | Type::Opaque { .. } => unreachable!(),
         Type::Multi(_) => Err(Diagnostic::new(
             "multi-value types are not supported in array storage yet",
         )),
@@ -325,6 +326,7 @@ pub(crate) fn record_storage_type(
         Type::Thread => Ok(StorageType::Val(coroutine_state_ref_type(
             registry.coroutine_state_type()?,
         ))),
+        Type::Named(_) | Type::Opaque { .. } => unreachable!(),
         Type::Multi(_) => Err(Diagnostic::new(
             "multi-value types are not supported in record fields",
         )),

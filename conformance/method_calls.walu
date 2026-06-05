@@ -8,6 +8,11 @@ function point:scaled_sum(scale: i32): i32
     return (self.x + self.y) * scale
 end
 
+function point:bump_x(delta: i32): i32
+    self.x = self.x + delta
+    return self.x
+end
+
 function point:identity<T>(value: T): T
     local _sum: i32 = self.x + self.y
     return value
@@ -16,6 +21,9 @@ end
 assert(point:sum_with(5::i32) == 18::i32)
 assert(point:scaled_sum(2::i32) == 26::i32)
 assert(point:sum_with(1::i32) == 14::i32)
+assert(point:bump_x(4::i32) == 14::i32)
+assert(point.x == 14::i32)
+assert(point:sum_with(1::i32) == 18::i32)
 
 local n: i32 = point.identity<i32>(point, 41::i32)
 local b: bool = point.identity<bool>(point, true)
