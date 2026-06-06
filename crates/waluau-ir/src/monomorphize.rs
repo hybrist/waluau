@@ -377,6 +377,7 @@ impl<'a> Monomorphizer<'a> {
                 name,
                 args,
                 span,
+                type_args,
             } => Expr::MethodCall {
                 receiver: Box::new(self.rewrite_expr(receiver, subst, active)?),
                 name: name.clone(),
@@ -385,6 +386,7 @@ impl<'a> Monomorphizer<'a> {
                     .map(|expr| self.rewrite_expr(expr, subst, active))
                     .collect::<Result<Vec<_>, _>>()?,
                 span: *span,
+                type_args: type_args.clone(),
             },
             Expr::Function(function) => {
                 Expr::Function(self.rewrite_function_expr(function, subst, active)?)

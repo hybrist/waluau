@@ -332,6 +332,7 @@ pub(super) fn infer_expr(
         Expr::MethodCall {
             receiver,
             name,
+            type_args,
             args,
             ..
         } => {
@@ -343,18 +344,49 @@ pub(super) fn infer_expr(
                     FnSignature::Mono {
                         params,
                         return_type,
-                    } => (params.clone(), return_type.clone()),
-                    FnSignature::Generic(_) => {
-                        return Err(generic_diagnostic(
-                            "generic/missing-type-args",
-                            format!(
-                                "generic method '{method_name}' requires explicit type arguments"
-                            ),
-                            "call the generic method with field syntax and explicit type arguments",
-                        ));
+                    } => {
+                        if !type_args.is_empty() {
+                            return Err(generic_diagnostic(
+                                "generic/extra-type-args",
+                                "type arguments are only allowed when calling a generic method",
+                                "remove the type argument list or call a generic method",
+                            ));
+                        }
+                        (params.clone(), return_type.clone())
+                    }
+                    FnSignature::Generic(scheme) => {
+                        if type_args.is_empty() {
+                            return Err(generic_diagnostic(
+                                "generic/missing-type-args",
+                                format!(
+                                    "generic method '{method_name}' requires explicit type arguments"
+                                ),
+                                "provide type arguments between the method name and argument list, e.g. obj:method<T>(args)",
+                            ));
+                        }
+                        // Create a modified args list with the receiver as the first argument
+                        let mut method_args = vec![(**receiver).clone()];
+                        method_args.extend_from_slice(args);
+
+                        return infer_generic_call(
+                            scheme,
+                            type_args,
+                            &method_args,
+                            vars,
+                            fn_signatures,
+                            active_type_params,
+                            expected,
+                        );
                     }
                 }
             } else {
+                if !type_args.is_empty() {
+                    return Err(generic_diagnostic(
+                        "generic/extra-type-args",
+                        "type arguments are only allowed when calling a generic method",
+                        "remove the type argument list or call a generic method",
+                    ));
+                }
                 let field_ty = receiver_ty
                     .record_field(name)
                     .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
@@ -548,6 +580,19 @@ pub(super) fn infer_expr(
                         Some(Type::Bytes),
                     )?;
                     if right_ty != Type::Bytes {
+                        return Err(Diagnostic::new(
+                            "< and > require both sides to have same type",
+                        ));
+                    }
+                } else if left_ty == Type::String {
+                    let right_ty = infer_expr(
+                        right,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        Some(Type::String),
+                    )?;
+                    if right_ty != Type::String {
                         return Err(Diagnostic::new(
                             "< and > require both sides to have same type",
                         ));

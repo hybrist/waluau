@@ -376,6 +376,7 @@ pub enum Expr {
     MethodCall {
         receiver: Box<Expr>,
         name: String,
+        type_args: Vec<Type>,
         args: Vec<Expr>,
         span: Option<Span>,
     },

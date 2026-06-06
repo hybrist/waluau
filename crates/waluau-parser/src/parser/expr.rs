@@ -10,14 +10,12 @@ impl Parser {
             (
                 self.peek().map(|token| &token.kind),
                 self.peek_n(1).map(|token| &token.kind),
-                self.peek_n(2).map(|token| &token.kind),
             ),
-            (
-                Some(TokenKind::Colon),
-                Some(TokenKind::Identifier(_)),
-                Some(TokenKind::LParen)
-            )
-        )
+            (Some(TokenKind::Colon), Some(TokenKind::Identifier(_)),)
+        ) && (matches!(
+            self.peek_n(2).map(|token| &token.kind),
+            Some(TokenKind::LParen) | Some(TokenKind::Less)
+        ))
     }
 
     fn parse_call_args(&mut self) -> Result<(Vec<Expr>, u32, u32), Diagnostic> {
@@ -265,10 +263,16 @@ impl Parser {
             if self.check_method_call_start() {
                 self.advance();
                 let name = self.expect_identifier()?;
+                let type_args = if self.check_simple(&TokenKind::Less) {
+                    self.try_parse_type_arg_list().unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
                 let (args, _, call_end) = self.parse_call_args()?;
                 expr = Expr::MethodCall {
                     receiver: Box::new(expr),
                     name,
+                    type_args,
                     args,
                     span: Some(Span {
                         start: start_pos,

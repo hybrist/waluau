@@ -977,6 +977,53 @@ fn rejects_generic_method_used_as_value_without_type_arguments() {
 }
 
 #[test]
+fn type_checks_generic_method_call_with_type_arguments() {
+    let source = r#"
+        local point = { x = 41::i32 }
+
+        function point:identity<T>(value: T): T
+            return value
+        end
+
+        assert(point:identity<i32>(42::i32) == 42)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_generic_method_call_without_type_arguments() {
+    let source = r#"
+        local point = { x = 41::i32 }
+
+        function point:identity<T>(value: T): T
+            return value
+        end
+
+        assert(point:identity(42::i32) == 42)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(error.code(), Some("generic/missing-type-args"));
+}
+
+#[test]
+fn rejects_non_generic_method_call_with_type_arguments() {
+    let source = r#"
+        local point = { x = 41::i32 }
+
+        function point:get_x(): i32
+            return self.x
+        end
+
+        assert(point:get_x<i32>() == 41)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(error.code(), Some("generic/extra-type-args"));
+}
+
+#[test]
 fn rejects_new_field_after_record_read() {
     let source = r#"
         function entry(): i32

@@ -115,6 +115,7 @@ mod tests {
             "add" => include_str!("../../../fixtures/add.walu"),
             "mismatch" => include_str!("../../../fixtures/mismatch.walu"),
             "array_ops" => include_str!("../../../fixtures/array_ops.walu"),
+            "string_ops" => include_str!("../../../fixtures/string-ops.walu"),
             other => panic!("unknown fixture: {other}"),
         }
     }
@@ -315,5 +316,35 @@ mod tests {
             end
         "#;
         super::compile_source(source).expect("compile should succeed");
+    }
+
+    #[test]
+    fn compiles_string_ops() {
+        let source = r#"
+            function compare_strings(a: string, b: string): bool
+                if a < b then
+                    return true
+                elseif a > b then
+                    return false
+                else
+                    return a == b
+                end
+            end
+
+            function test_strings(): string
+                local greeting: string = "Hello, " .. "world"
+                if greeting > "H" then
+                    return greeting
+                else
+                    return "Empty"
+                end
+            end
+        "#;
+        super::compile_source(source).expect("compile should succeed");
+    }
+
+    #[test]
+    fn compiles_string_ops_fixture() {
+        super::compile_file(&fixture_path("string-ops.walu")).expect("compile should succeed");
     }
 }
