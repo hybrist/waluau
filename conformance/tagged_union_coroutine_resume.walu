@@ -1,0 +1,30 @@
+-- Tagged-union coroutine resume: coroutine.resume with a tagged-union result type
+-- produces a canonical { tag: i32, value: unknown } record.
+-- `is Variant` checks read the tag; `.value` unboxes the payload.
+
+function counter_job(): i32
+    coroutine.yield(10)
+    coroutine.yield(20)
+    return 30
+end
+
+local co: thread = coroutine.create(counter_job)
+
+-- First resume: coroutine yields, so we get the Yielded variant.
+local r1: Yielded(unknown) | Finished(i32) | Error(string) = coroutine.resume(co)
+assert(r1 is Yielded)
+
+-- Second resume: another yield.
+local r2: Yielded(unknown) | Finished(i32) | Error(string) = coroutine.resume(co)
+assert(r2 is Yielded)
+
+-- Third resume: coroutine returns, so we get the Finished variant with the return value.
+local r3: Yielded(unknown) | Finished(i32) | Error(string) = coroutine.resume(co)
+assert(r3 is Finished)
+if r3 is Finished then
+    assert(r3.value == 30)
+end
+
+-- Resuming a dead coroutine produces the Error variant.
+local r4: Yielded(unknown) | Finished(i32) | Error(string) = coroutine.resume(co)
+assert(r4 is Error)

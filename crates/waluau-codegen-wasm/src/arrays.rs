@@ -181,6 +181,9 @@ fn insert_record_type(ty: &Type, seen: &mut BTreeSet<String>, out: &mut Vec<Type
             }
             insert_record_type(return_type, seen, out);
         }
+        Type::TaggedVariant(_) | Type::TaggedUnion(_) => {
+            insert_record_type(&Type::canonical_tagged_union_record(), seen, out);
+        }
         _ => {}
     }
 }
@@ -245,6 +248,9 @@ fn collect_record_types_from_instruction(
             insert_record_type(from, seen, out);
             insert_record_type(to, seen, out);
         }
+        IrInstruction::CoroutineResumeTagged { .. } => {
+            insert_record_type(&Type::canonical_tagged_union_record(), seen, out);
+        }
         IrInstruction::Phi(_)
         | IrInstruction::Param(_)
         | IrInstruction::Unit
@@ -292,9 +298,14 @@ pub(crate) fn array_storage_type(
         Type::Multi(_) => Err(Diagnostic::new(
             "multi-value types are not supported in array storage yet",
         )),
-        Type::TaggedVariant(_) | Type::TaggedUnion(_) => Err(Diagnostic::new(
-            "tagged unions are not yet supported in wasm array storage",
-        )),
+        Type::TaggedVariant(_) | Type::TaggedUnion(_) => {
+            let canonical = Type::canonical_tagged_union_record();
+            let index = registry.record_index(&canonical)?;
+            Ok(StorageType::Val(ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(index),
+            })))
+        }
         Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
             unreachable!()
         }
@@ -340,9 +351,14 @@ pub(crate) fn record_storage_type(
         Type::Multi(_) => Err(Diagnostic::new(
             "multi-value types are not supported in record fields",
         )),
-        Type::TaggedVariant(_) | Type::TaggedUnion(_) => Err(Diagnostic::new(
-            "tagged unions are not yet supported in wasm record fields",
-        )),
+        Type::TaggedVariant(_) | Type::TaggedUnion(_) => {
+            let canonical = Type::canonical_tagged_union_record();
+            let index = registry.record_index(&canonical)?;
+            Ok(StorageType::Val(ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(index),
+            })))
+        }
         Type::TypeParam(_) => unreachable!(),
         Type::Unit => unreachable!(),
     }

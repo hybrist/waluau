@@ -35,7 +35,9 @@ use locals::{
     infer_value_types, local,
 };
 use signatures::{SignatureRegistry, collect_user_signatures};
-use wasm_types::{compress_locals, externref_nonnull_val_type, externref_val_type, wasm_type};
+use wasm_types::{
+    anyref_val_type, compress_locals, externref_nonnull_val_type, externref_val_type, wasm_type,
+};
 
 /// Collect the ordered set of function names that appear as `Closure` targets in the module.
 /// These each need a wrapper function with the env-based calling convention.
@@ -1701,6 +1703,121 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::I32Const(0));
                 out.instruction(&Instruction::LocalSet(value_slot));
                 out.instruction(&Instruction::End);
+            }
+            IrInstruction::CoroutineResumeTagged {
+                coroutine,
+                yielded_tag,
+                finished_tag,
+                error_tag,
+            } => {
+                let state_ty = ctx.coroutine_state_type()?;
+                let body_sig = ctx.coroutine_body_sig_type()?;
+                let active = ctx.coroutine_plan.active_global()?;
+                let save_local = local_plan.coroutine_save_local.ok_or_else(|| {
+                    Diagnostic::new("missing coroutine save local for tagged resume")
+                })?;
+                let value_tmp = local_plan.tagged_resume_value_tmp.ok_or_else(|| {
+                    Diagnostic::new("missing tagged_resume_value_tmp for tagged resume")
+                })?;
+                let state_tmp = local_plan.tagged_resume_state_tmp.ok_or_else(|| {
+                    Diagnostic::new("missing tagged_resume_state_tmp for tagged resume")
+                })?;
+
+                let canonical = Type::canonical_tagged_union_record();
+                let record_ty = ctx.array_registry.record_index(&canonical)?;
+                let record_val_type = ValType::Ref(RefType {
+                    nullable: true,
+                    heap_type: HeapType::Concrete(record_ty),
+                });
+
+                // Outer if: suspended? else emit error record.
+                emit_value_operand(out, local_plan, *coroutine)?;
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: state_ty,
+                    field_index: STATE_TAG_FIELD,
+                });
+                out.instruction(&Instruction::I32Const(TAG_SUSPENDED));
+                out.instruction(&Instruction::I32Eq);
+                out.instruction(&Instruction::If(BlockType::Result(record_val_type)));
+
+                // Tentatively mark as finished; yield flips it back to suspended.
+                emit_value_operand(out, local_plan, *coroutine)?;
+                out.instruction(&Instruction::I32Const(TAG_FINISHED));
+                out.instruction(&Instruction::StructSet {
+                    struct_type_index: state_ty,
+                    field_index: STATE_TAG_FIELD,
+                });
+                // Save outer active instance, switch to this coroutine.
+                out.instruction(&Instruction::GlobalGet(active));
+                out.instruction(&Instruction::LocalSet(save_local));
+                emit_value_operand(out, local_plan, *coroutine)?;
+                out.instruction(&Instruction::GlobalSet(active));
+                // Run the continuation; i32 result is the yielded or returned value.
+                emit_value_operand(out, local_plan, *coroutine)?;
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: state_ty,
+                    field_index: STATE_CONT_FIELD,
+                });
+                out.instruction(&Instruction::CallRef(body_sig));
+                out.instruction(&Instruction::LocalSet(value_tmp));
+                // Restore outer active.
+                out.instruction(&Instruction::LocalGet(save_local));
+                out.instruction(&Instruction::GlobalSet(active));
+                // Snapshot post-continuation state tag.
+                emit_value_operand(out, local_plan, *coroutine)?;
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: state_ty,
+                    field_index: STATE_TAG_FIELD,
+                });
+                out.instruction(&Instruction::LocalSet(state_tmp));
+
+                // Compute tag discriminant: suspended→yielded, finished→finished, else→error.
+                out.instruction(&Instruction::LocalGet(state_tmp));
+                out.instruction(&Instruction::I32Const(TAG_SUSPENDED));
+                out.instruction(&Instruction::I32Eq);
+                out.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+                out.instruction(&Instruction::I32Const(*yielded_tag));
+                out.instruction(&Instruction::Else);
+                out.instruction(&Instruction::LocalGet(state_tmp));
+                out.instruction(&Instruction::I32Const(TAG_FINISHED));
+                out.instruction(&Instruction::I32Eq);
+                out.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+                out.instruction(&Instruction::I32Const(*finished_tag));
+                out.instruction(&Instruction::Else);
+                out.instruction(&Instruction::I32Const(*error_tag));
+                out.instruction(&Instruction::End);
+                out.instruction(&Instruction::End);
+                // stack: [i32: tag_discriminant]
+
+                // Compute boxed value: error → null anyref; else → box i32 as i31ref.
+                out.instruction(&Instruction::LocalGet(state_tmp));
+                out.instruction(&Instruction::I32Const(TAG_ERROR));
+                out.instruction(&Instruction::I32Eq);
+                out.instruction(&Instruction::If(BlockType::Result(anyref_val_type())));
+                out.instruction(&Instruction::RefNull(HeapType::Abstract {
+                    shared: false,
+                    ty: AbstractHeapType::Any,
+                }));
+                out.instruction(&Instruction::Else);
+                out.instruction(&Instruction::LocalGet(value_tmp));
+                out.instruction(&Instruction::RefI31);
+                out.instruction(&Instruction::End);
+                // stack: [i32: tag_discriminant, anyref: value]
+
+                // struct.new; field order: "tag" (field 0) then "value" (field 1) — alphabetical.
+                out.instruction(&Instruction::StructNew(record_ty));
+
+                // Else branch: coroutine was dead/errored → return error record directly.
+                out.instruction(&Instruction::Else);
+                out.instruction(&Instruction::I32Const(*error_tag));
+                out.instruction(&Instruction::RefNull(HeapType::Abstract {
+                    shared: false,
+                    ty: AbstractHeapType::Any,
+                }));
+                out.instruction(&Instruction::StructNew(record_ty));
+
+                out.instruction(&Instruction::End);
+                emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::CoroutineClose { coroutine } => {
                 let state_ty = ctx.coroutine_state_type()?;
