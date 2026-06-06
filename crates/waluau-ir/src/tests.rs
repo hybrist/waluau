@@ -891,11 +891,13 @@ fn verifies_loop_with_break_and_continue() {
         field_call_signatures.insert(function.name.to_string(), sig);
     }
 
+    let tag_ids = std::collections::BTreeMap::new();
     let mut lowered = super::build_function(
         &program.functions[0],
         &signatures,
         &field_call_signatures,
         &program.sources,
+        &tag_ids,
     )
     .expect("ir lowering should succeed");
     let mut functions = Vec::new();
