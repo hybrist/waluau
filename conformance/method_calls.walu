@@ -25,8 +25,8 @@ assert(point:bump_x(4::i32) == 14::i32)
 assert(point.x == 14::i32)
 assert(point:sum_with(1::i32) == 18::i32)
 
-local n: i32 = point.identity<i32>(point, 41::i32)
-local b: bool = point.identity<bool>(point, true)
+local n: i32 = point:identity<i32>(41::i32)
+local b: bool = point:identity<bool>(true)
 
 assert(n == 41::i32)
 assert(b == true)
