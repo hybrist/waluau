@@ -1098,7 +1098,10 @@ fn rejects_record_field_type_mismatch_on_annotation() {
     "#;
     let program = parse(source).expect("parse should succeed");
     let error = super::type_check(&program).expect_err("type check should fail");
-    assert_eq!(error.to_string(), "record field 'x' expects i32, got f64");
+    assert_eq!(
+        error.to_string(),
+        "numeric literal must be an integer for i32"
+    );
 }
 
 #[test]

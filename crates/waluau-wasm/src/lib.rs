@@ -315,6 +315,14 @@ mod tests {
     }
 
     #[test]
+    fn compile_generic_type_declarations_conformance() {
+        let source = include_str!("../../../conformance/generic_type_declarations.walu");
+        let result =
+            compile_source(source).expect("generic type declarations conformance should compile");
+        assert!(result.wat.contains("(module"));
+    }
+
+    #[test]
     fn compile_records_conformance_with_alias_mutation() {
         let source = include_str!("../../../conformance/records_sealed_tables.walu");
         let result =

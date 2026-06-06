@@ -103,3 +103,38 @@ fn rejects_wrong_type_argument_count() {
     let error = waluau_hir::type_check(&program).expect_err("type check should fail");
     assert_eq!(error.code(), Some("generic/type-arg-count"));
 }
+
+#[test]
+fn type_checks_swap_pair_generic_alias() {
+    let source = r#"
+        type Pair<A, B> = { first: A, second: B }
+
+        function swap_pair(pair: Pair<i32, bool>): Pair<bool, i32>
+            return { first = pair.second, second = pair.first }
+        end
+
+        function main(): i32
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    waluau_hir::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn type_checks_record_literal_construction_against_generic_alias() {
+    let source = r#"
+        type Pair<A, B> = { first: A, second: B }
+
+        function make_pair(): Pair<bool, i32>
+            local result: Pair<bool, i32> = { first = true, second = 42::i32 }
+            return result
+        end
+
+        function main(): i32
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    waluau_hir::type_check(&program).expect("type check should succeed");
+}

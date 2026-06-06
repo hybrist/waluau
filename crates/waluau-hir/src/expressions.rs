@@ -413,10 +413,24 @@ pub(super) fn infer_expr(
             infer_array_literal(elements, vars, fn_signatures, active_type_params, expected)
         }
         Expr::TableLiteral { fields, .. } => {
+            let expected_fields = if let Some(Type::Record(fields)) = expected.as_ref() {
+                Some(fields.clone())
+            } else {
+                None
+            };
             let mut record_fields = BTreeMap::new();
             for field in fields {
-                let field_ty =
-                    infer_expr(&field.value, vars, fn_signatures, active_type_params, None)?;
+                let expected_field_ty = expected_fields
+                    .as_ref()
+                    .and_then(|ef| ef.get(&field.name))
+                    .cloned();
+                let field_ty = infer_expr(
+                    &field.value,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    expected_field_ty,
+                )?;
                 record_fields.insert(field.name.clone(), field_ty);
             }
             coerce_type(Type::Record(record_fields), expected)
