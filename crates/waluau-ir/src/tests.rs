@@ -1285,3 +1285,69 @@ fn lowers_record_field_assignment() {
         })
     }));
 }
+
+#[test]
+fn lowers_tagged_union_resume_to_coroutine_resume_tagged() {
+    let source = r#"
+        function run(): i32
+            local co: thread = coroutine.create(function(): i32
+                coroutine.yield(1)
+                return 2
+            end)
+            local result: Finished(i32) | Yielded(i32) | Error(string) = coroutine.resume(co)
+            if result is Finished then
+                return result.value
+            else
+                return 0
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+
+    let mut saw_tagged_resume = false;
+    let mut saw_is_variant = false;
+    for function in &module.functions {
+        for block in function.blocks.values() {
+            for (_, instruction) in &block.instructions {
+                match instruction {
+                    Instruction::CoroutineResumeTagged { .. } => saw_tagged_resume = true,
+                    Instruction::Binary {
+                        op: BinaryOp::Eq, ..
+                    } => saw_is_variant = true,
+                    _ => {}
+                }
+            }
+        }
+    }
+    assert!(
+        saw_tagged_resume,
+        "expected CoroutineResumeTagged instruction"
+    );
+    assert!(saw_is_variant, "expected binary Eq for IsVariant check");
+}
+
+#[test]
+fn rejects_error_variant_value_access_for_string_payload() {
+    let source = r#"
+        function run(): i32
+            local co: thread = coroutine.create(function(): i32
+                return 42
+            end)
+            local result: Finished(i32) | Error(string) = coroutine.resume(co)
+            if result is Error then
+                local msg: string = result.value
+                return 0
+            end
+            return 1
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = build(&program).expect_err("ir build should fail for string payload");
+    assert!(
+        error.to_string().contains("string"),
+        "error should mention string payload, got: {}",
+        error
+    );
+}
