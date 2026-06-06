@@ -27,9 +27,13 @@ assert(point:sum_with(1::i32) == 18::i32)
 
 local n: i32 = point:identity<i32>(41::i32)
 local b: bool = point:identity<bool>(true)
+local n_inferred: i32 = point:identity(100::i32)
+local b_inferred: bool = point:identity(false)
 
 assert(n == 41::i32)
 assert(b == true)
+assert(n_inferred == 100::i32)
+assert(b_inferred == false)
 
 type Point = { x: i32, y: i32 }
 
