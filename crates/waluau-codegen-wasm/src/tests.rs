@@ -525,3 +525,56 @@ fn rejects_implicit_unbox_from_unknown() {
         "implicit unbox from unknown should be a type error"
     );
 }
+
+#[test]
+fn omits_unused_host_imports() {
+    // A purely scalar program should not import any host functions at all.
+    let source = r#"
+        function add(a: i32, b: i32): i32
+            return a + b
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    // None of the host import module names should appear for a plain arithmetic function.
+    assert!(
+        !wat.contains("\"waluau\""),
+        "scalar program should not import from 'waluau'"
+    );
+    assert!(
+        !wat.contains("\"wasm:js-string\""),
+        "scalar program should not import from 'wasm:js-string'"
+    );
+}
+
+#[test]
+fn only_imports_used_host_functions() {
+    // A program using only print should import exactly 'print', not all host functions.
+    let source = r#"
+        function greet(msg: string): i32
+            print(msg)
+            return 0
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(wat.contains("\"print\""), "should import 'print'");
+    assert!(
+        !wat.contains("\"bytes_literal\""),
+        "should not import 'bytes_literal' when bytes are unused"
+    );
+    assert!(
+        !wat.contains("\"js_tostring_i32\""),
+        "should not import 'js_tostring_i32' when tostring(i32) is unused"
+    );
+    assert!(
+        !wat.contains("\"wasm:js-string\""),
+        "should not import from 'wasm:js-string' when string ops are unused"
+    );
+}

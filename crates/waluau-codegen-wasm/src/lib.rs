@@ -99,6 +99,11 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     );
     array_registry.coroutine_state_type = coroutine_state_type;
 
+    // Determine which host imports the module actually uses, and build the
+    // index remapping so callers can use canonical slot numbers.
+    let used_imports = host::collect_used_host_imports(module);
+    let import_map = used_imports.to_import_map();
+
     let signature_registry = collect_user_signatures(module, start_thunk.is_some());
 
     let signatures = module
@@ -333,51 +338,70 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     }
 
     let mut imports = ImportSection::new();
-    imports.import(
-        host::JS_STRING_BUILTINS_MODULE,
-        host::IMPORT_JS_STRING_EQ,
-        EntityType::Function(host_type_base),
-    );
-    imports.import(
-        host::JS_STRING_BUILTINS_MODULE,
-        host::IMPORT_JS_STRING_CONCAT,
-        EntityType::Function(host_type_base + 1),
-    );
-    imports.import(
-        host::JS_STRING_BUILTINS_MODULE,
-        host::IMPORT_JS_STRING_COMPARE,
-        EntityType::Function(host_type_base),
-    );
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_BYTES_LITERAL,
-        EntityType::Function(host_type_base + 2),
-    );
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_BYTES_GET,
-        EntityType::Function(host_type_base + 7),
-    );
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_BYTES_LEN,
-        EntityType::Function(host_type_base + 8),
-    );
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_BYTES_CONCAT,
-        EntityType::Function(host_type_base + 1),
-    );
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_BYTES_EQ,
-        EntityType::Function(host_type_base),
-    );
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_BYTES_COMPARE,
-        EntityType::Function(host_type_base),
-    );
+    // Emit only the host function imports that the module actually uses.
+    if used_imports.js_string_eq {
+        imports.import(
+            host::JS_STRING_BUILTINS_MODULE,
+            host::IMPORT_JS_STRING_EQ,
+            EntityType::Function(host_type_base),
+        );
+    }
+    if used_imports.js_string_concat {
+        imports.import(
+            host::JS_STRING_BUILTINS_MODULE,
+            host::IMPORT_JS_STRING_CONCAT,
+            EntityType::Function(host_type_base + 1),
+        );
+    }
+    if used_imports.js_string_compare {
+        imports.import(
+            host::JS_STRING_BUILTINS_MODULE,
+            host::IMPORT_JS_STRING_COMPARE,
+            EntityType::Function(host_type_base),
+        );
+    }
+    if used_imports.bytes_literal {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_BYTES_LITERAL,
+            EntityType::Function(host_type_base + 2),
+        );
+    }
+    if used_imports.bytes_get {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_BYTES_GET,
+            EntityType::Function(host_type_base + 7),
+        );
+    }
+    if used_imports.bytes_len {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_BYTES_LEN,
+            EntityType::Function(host_type_base + 8),
+        );
+    }
+    if used_imports.bytes_concat {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_BYTES_CONCAT,
+            EntityType::Function(host_type_base + 1),
+        );
+    }
+    if used_imports.bytes_eq {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_BYTES_EQ,
+            EntityType::Function(host_type_base),
+        );
+    }
+    if used_imports.bytes_compare {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_BYTES_COMPARE,
+            EntityType::Function(host_type_base),
+        );
+    }
     for string in &string_constants {
         imports.import(
             host::IMPORTED_STRING_CONSTANTS_MODULE,
@@ -389,46 +413,62 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             }),
         );
     }
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_PRINT,
-        EntityType::Function(host_type_base + 6),
-    );
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_JS_TOSTRING_I32,
-        EntityType::Function(host_type_base + 2),
-    );
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_JS_TOSTRING_U32,
-        EntityType::Function(host_type_base + 2),
-    );
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_JS_TOSTRING_I64,
-        EntityType::Function(host_type_base + 3),
-    );
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_JS_TOSTRING_U64,
-        EntityType::Function(host_type_base + 3),
-    );
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_JS_TOSTRING_F32,
-        EntityType::Function(host_type_base + 4),
-    );
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_JS_TOSTRING_F64,
-        EntityType::Function(host_type_base + 5),
-    );
-    imports.import(
-        host::IMPORT_MODULE,
-        host::IMPORT_JS_TOSTRING_BOOL,
-        EntityType::Function(host_type_base + 2),
-    );
+    if used_imports.print {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_PRINT,
+            EntityType::Function(host_type_base + 6),
+        );
+    }
+    if used_imports.js_tostring_i32 {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_JS_TOSTRING_I32,
+            EntityType::Function(host_type_base + 2),
+        );
+    }
+    if used_imports.js_tostring_u32 {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_JS_TOSTRING_U32,
+            EntityType::Function(host_type_base + 2),
+        );
+    }
+    if used_imports.js_tostring_i64 {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_JS_TOSTRING_I64,
+            EntityType::Function(host_type_base + 3),
+        );
+    }
+    if used_imports.js_tostring_u64 {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_JS_TOSTRING_U64,
+            EntityType::Function(host_type_base + 3),
+        );
+    }
+    if used_imports.js_tostring_f32 {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_JS_TOSTRING_F32,
+            EntityType::Function(host_type_base + 4),
+        );
+    }
+    if used_imports.js_tostring_f64 {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_JS_TOSTRING_F64,
+            EntityType::Function(host_type_base + 5),
+        );
+    }
+    if used_imports.js_tostring_bool {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_JS_TOSTRING_BOOL,
+            EntityType::Function(host_type_base + 2),
+        );
+    }
 
     // Build wrapper slot map: function name → table slot index for its wrapper.
     // Wrappers are placed in table slots N..N+W-1 (after the N user-defined functions).
@@ -463,7 +503,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             exports.export(
                 &function.name,
                 ExportKind::Func,
-                host::defined_func_index(index as u32),
+                import_map.count + index as u32,
             );
         }
         codes.function(&emit_function(
@@ -477,13 +517,14 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             &coroutine_plan,
             coroutine_body_sig_type,
             &closure_wrapper_slots,
+            &import_map,
         )?);
     }
     if let Some(start) = start_thunk {
         let thunk_sig_index = signature_registry.get(&[], &Type::Unit).unwrap();
         functions.function(user_type_base + thunk_sig_index);
         let mut thunk = Function::new(Vec::new());
-        thunk.instruction(&Instruction::Call(host::defined_func_index(start as u32)));
+        thunk.instruction(&Instruction::Call(import_map.count + start as u32));
         let n_returns = match &module.functions[start].return_type {
             Type::Multi(types) => types.len(),
             Type::Unit => 0,
@@ -518,8 +559,13 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             .get_wrapper_type_index(user_type_base, &logical_params, &target_fn.return_type)
             .ok_or_else(|| Diagnostic::new(format!("missing wrapper type for closure '{name}'")))?;
         functions.function(wrapper_type_idx);
-        let wrapper_fn =
-            emit_closure_wrapper(target_fn, target_sig, &logical_params, &array_registry)?;
+        let wrapper_fn = emit_closure_wrapper(
+            target_fn,
+            target_sig,
+            &logical_params,
+            &array_registry,
+            import_map.count,
+        )?;
         codes.function(&wrapper_fn);
         let _ = wrapper_idx;
     }
@@ -540,7 +586,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         exports.export(
             &format!("__waluau_new_record_{}", info.record_idx),
             ExportKind::Func,
-            host::defined_func_index(helper_func_idx_counter),
+            import_map.count + helper_func_idx_counter,
         );
         helper_func_idx_counter += 1;
 
@@ -558,7 +604,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             exports.export(
                 &format!("__waluau_get_record_{}_{}", info.record_idx, field_idx),
                 ExportKind::Func,
-                host::defined_func_index(helper_func_idx_counter),
+                import_map.count + helper_func_idx_counter,
             );
             helper_func_idx_counter += 1;
 
@@ -575,7 +621,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
 
     let defined_func_count = module.functions.len() as u64;
     let wrapper_count = closure_targets.len() as u64;
-    let table_size = host::HOST_IMPORT_COUNT as u64 + defined_func_count + wrapper_count;
+    let table_size = import_map.count as u64 + defined_func_count + wrapper_count;
     tables.table(TableType {
         element_type: RefType::FUNCREF,
         table64: false,
@@ -585,11 +631,11 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     });
     // Element segment: user functions at slots 0..N-1, wrappers at slots N..N+W-1.
     let mut table_inits: Vec<u32> = (0..module.functions.len() as u32)
-        .map(host::defined_func_index)
+        .map(|i| import_map.count + i)
         .collect();
     for i in 0..closure_targets.len() as u32 {
         let wrapper_module_idx =
-            host::defined_func_index(module.functions.len() as u32 + thunk_offset + i);
+            import_map.count + module.functions.len() as u32 + thunk_offset + i;
         table_inits.push(wrapper_module_idx);
     }
     elements.active(
@@ -608,7 +654,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     wasm.section(&exports);
     if start_thunk.is_some() {
         wasm.section(&StartSection {
-            function_index: host::defined_func_index(module.functions.len() as u32),
+            function_index: import_map.count + module.functions.len() as u32,
         });
     }
     wasm.section(&elements);
@@ -659,11 +705,19 @@ struct EmissionContext<'a> {
     coroutine_body_sig_type: Option<u32>,
     /// Map from closure-target function name to its wrapper table slot index.
     closure_wrapper_slots: &'a HashMap<String, u32>,
+    /// Remapping from canonical host-import slots to actual Wasm function indices.
+    import_map: &'a host::HostImportMap,
 }
 
 impl EmissionContext<'_> {
+    /// Wasm function index for a user-defined function (0-based user index).
     fn wasm_func_index(&self, user_index: u32) -> u32 {
-        host::defined_func_index(user_index)
+        self.import_map.count + user_index
+    }
+
+    /// Wasm function index for a host import identified by its canonical slot.
+    fn host_func_index(&self, canonical: u32) -> Result<u32, Diagnostic> {
+        self.import_map.func_index(canonical)
     }
 
     fn coroutine_state_type(&self) -> Result<u32, Diagnostic> {
@@ -688,6 +742,7 @@ fn emit_function(
     coroutine_plan: &CoroutinePlan,
     coroutine_body_sig_type: Option<u32>,
     closure_wrapper_slots: &HashMap<String, u32>,
+    import_map: &host::HostImportMap,
 ) -> Result<Function, Diagnostic> {
     let ctx = EmissionContext {
         signatures,
@@ -699,6 +754,7 @@ fn emit_function(
         coroutine_plan,
         coroutine_body_sig_type,
         closure_wrapper_slots,
+        import_map,
     };
     let value_types = infer_value_types(function, signatures)?;
     let local_plan = build_local_plan(function, &value_types, array_registry)?;
@@ -762,6 +818,7 @@ fn emit_closure_wrapper(
     target_sig: &FunctionSignature,
     logical_params: &[Type],
     array_registry: &ArrayTypeRegistry,
+    import_count: u32,
 ) -> Result<Function, Diagnostic> {
     let capture_count = target_fn.capture_count;
     // Wrapper has no extra locals (all work is done via params and the stack).
@@ -785,9 +842,7 @@ fn emit_closure_wrapper(
     }
 
     // Call the original function (which takes capture_cells... + logical_params...).
-    out.instruction(&Instruction::Call(host::defined_func_index(
-        target_sig.index,
-    )));
+    out.instruction(&Instruction::Call(import_count + target_sig.index));
     out.instruction(&Instruction::End);
     Ok(out)
 }
@@ -1195,7 +1250,9 @@ fn emit_block_instructions(
             IrInstruction::Bytes(literal) => {
                 let index = host::bytes_constant_index(ctx.bytes_constants, literal)?;
                 out.instruction(&Instruction::I32Const(index as i32));
-                out.instruction(&Instruction::Call(host::IMPORT_BYTES_LITERAL_FUNC));
+                out.instruction(&Instruction::Call(
+                    ctx.host_func_index(host::IMPORT_BYTES_LITERAL_FUNC)?,
+                ));
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::Cast {
@@ -1239,7 +1296,9 @@ fn emit_block_instructions(
             }
             IrInstruction::Print { value: printed } => {
                 emit_value_operand(out, local_plan, *printed)?;
-                out.instruction(&Instruction::Call(host::IMPORT_PRINT_FUNC));
+                out.instruction(&Instruction::Call(
+                    ctx.host_func_index(host::IMPORT_PRINT_FUNC)?,
+                ));
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::ToString {
@@ -1249,25 +1308,39 @@ fn emit_block_instructions(
                 emit_value_operand(out, local_plan, *source)?;
                 match from {
                     Type::Numeric(NumericType::I32) => {
-                        out.instruction(&Instruction::Call(host::IMPORT_JS_TOSTRING_I32_FUNC));
+                        out.instruction(&Instruction::Call(
+                            ctx.host_func_index(host::IMPORT_JS_TOSTRING_I32_FUNC)?,
+                        ));
                     }
                     Type::Numeric(NumericType::U32) => {
-                        out.instruction(&Instruction::Call(host::IMPORT_JS_TOSTRING_U32_FUNC));
+                        out.instruction(&Instruction::Call(
+                            ctx.host_func_index(host::IMPORT_JS_TOSTRING_U32_FUNC)?,
+                        ));
                     }
                     Type::Numeric(NumericType::I64) => {
-                        out.instruction(&Instruction::Call(host::IMPORT_JS_TOSTRING_I64_FUNC));
+                        out.instruction(&Instruction::Call(
+                            ctx.host_func_index(host::IMPORT_JS_TOSTRING_I64_FUNC)?,
+                        ));
                     }
                     Type::Numeric(NumericType::U64) => {
-                        out.instruction(&Instruction::Call(host::IMPORT_JS_TOSTRING_U64_FUNC));
+                        out.instruction(&Instruction::Call(
+                            ctx.host_func_index(host::IMPORT_JS_TOSTRING_U64_FUNC)?,
+                        ));
                     }
                     Type::Numeric(NumericType::F32) => {
-                        out.instruction(&Instruction::Call(host::IMPORT_JS_TOSTRING_F32_FUNC));
+                        out.instruction(&Instruction::Call(
+                            ctx.host_func_index(host::IMPORT_JS_TOSTRING_F32_FUNC)?,
+                        ));
                     }
                     Type::Numeric(NumericType::F64) => {
-                        out.instruction(&Instruction::Call(host::IMPORT_JS_TOSTRING_F64_FUNC));
+                        out.instruction(&Instruction::Call(
+                            ctx.host_func_index(host::IMPORT_JS_TOSTRING_F64_FUNC)?,
+                        ));
                     }
                     Type::Bool => {
-                        out.instruction(&Instruction::Call(host::IMPORT_JS_TOSTRING_BOOL_FUNC));
+                        out.instruction(&Instruction::Call(
+                            ctx.host_func_index(host::IMPORT_JS_TOSTRING_BOOL_FUNC)?,
+                        ));
                     }
                     Type::String => {}
                     other => {
@@ -1596,12 +1669,16 @@ fn emit_block_instructions(
             IrInstruction::BytesGet { bytes, index } => {
                 emit_value_operand(out, local_plan, *bytes)?;
                 emit_value_operand(out, local_plan, *index)?;
-                out.instruction(&Instruction::Call(host::IMPORT_BYTES_GET_FUNC));
+                out.instruction(&Instruction::Call(
+                    ctx.host_func_index(host::IMPORT_BYTES_GET_FUNC)?,
+                ));
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::BytesLen { bytes } => {
                 emit_value_operand(out, local_plan, *bytes)?;
-                out.instruction(&Instruction::Call(host::IMPORT_BYTES_LEN_FUNC));
+                out.instruction(&Instruction::Call(
+                    ctx.host_func_index(host::IMPORT_BYTES_LEN_FUNC)?,
+                ));
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::StructNew { struct_ty, fields } => {
@@ -1988,7 +2065,7 @@ fn emit_unbox(
 
 fn emit_binary(
     out: &mut Function,
-    _ctx: &EmissionContext<'_>,
+    ctx: &EmissionContext<'_>,
     op: BinaryOp,
     operand_ty: Type,
     _result_ty: Type,
@@ -2045,10 +2122,14 @@ fn emit_binary(
         },
         BinaryOp::Concat => match operand_ty {
             Type::String => {
-                out.instruction(&Instruction::Call(host::IMPORT_JS_STRING_CONCAT_FUNC));
+                out.instruction(&Instruction::Call(
+                    ctx.host_func_index(host::IMPORT_JS_STRING_CONCAT_FUNC)?,
+                ));
             }
             Type::Bytes => {
-                out.instruction(&Instruction::Call(host::IMPORT_BYTES_CONCAT_FUNC));
+                out.instruction(&Instruction::Call(
+                    ctx.host_func_index(host::IMPORT_BYTES_CONCAT_FUNC)?,
+                ));
             }
             _ => {
                 return Err(Diagnostic::new(
@@ -2224,10 +2305,14 @@ fn emit_binary(
                 out.instruction(&Instruction::F64Eq);
             }
             Type::String => {
-                out.instruction(&Instruction::Call(host::IMPORT_JS_STRING_EQ_FUNC));
+                out.instruction(&Instruction::Call(
+                    ctx.host_func_index(host::IMPORT_JS_STRING_EQ_FUNC)?,
+                ));
             }
             Type::Bytes => {
-                out.instruction(&Instruction::Call(host::IMPORT_BYTES_EQ_FUNC));
+                out.instruction(&Instruction::Call(
+                    ctx.host_func_index(host::IMPORT_BYTES_EQ_FUNC)?,
+                ));
             }
             Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
             Type::Array(_) => unreachable!(),
@@ -2275,12 +2360,16 @@ fn emit_binary(
                 ));
             }
             Type::String => {
-                out.instruction(&Instruction::Call(host::IMPORT_JS_STRING_COMPARE_FUNC));
+                out.instruction(&Instruction::Call(
+                    ctx.host_func_index(host::IMPORT_JS_STRING_COMPARE_FUNC)?,
+                ));
                 out.instruction(&Instruction::I32Const(0));
                 out.instruction(&Instruction::I32LtS);
             }
             Type::Bytes => {
-                out.instruction(&Instruction::Call(host::IMPORT_BYTES_COMPARE_FUNC));
+                out.instruction(&Instruction::Call(
+                    ctx.host_func_index(host::IMPORT_BYTES_COMPARE_FUNC)?,
+                ));
                 out.instruction(&Instruction::I32Const(0));
                 out.instruction(&Instruction::I32LtS);
             }
@@ -2330,12 +2419,16 @@ fn emit_binary(
                 ));
             }
             Type::String => {
-                out.instruction(&Instruction::Call(host::IMPORT_JS_STRING_COMPARE_FUNC));
+                out.instruction(&Instruction::Call(
+                    ctx.host_func_index(host::IMPORT_JS_STRING_COMPARE_FUNC)?,
+                ));
                 out.instruction(&Instruction::I32Const(0));
                 out.instruction(&Instruction::I32GtS);
             }
             Type::Bytes => {
-                out.instruction(&Instruction::Call(host::IMPORT_BYTES_COMPARE_FUNC));
+                out.instruction(&Instruction::Call(
+                    ctx.host_func_index(host::IMPORT_BYTES_COMPARE_FUNC)?,
+                ));
                 out.instruction(&Instruction::I32Const(0));
                 out.instruction(&Instruction::I32GtS);
             }
