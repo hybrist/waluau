@@ -527,6 +527,133 @@ fn rejects_implicit_unbox_from_unknown() {
 }
 
 #[test]
+fn omits_unused_host_imports() {
+    // A purely scalar program should not import any host functions at all.
+    let source = r#"
+        function add(a: i32, b: i32): i32
+            return a + b
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    // None of the host import module names should appear for a plain arithmetic function.
+    assert!(
+        !wat.contains("\"waluau\""),
+        "scalar program should not import from 'waluau'"
+    );
+    assert!(
+        !wat.contains("\"wasm:js-string\""),
+        "scalar program should not import from 'wasm:js-string'"
+    );
+}
+
+#[test]
+fn only_imports_used_host_functions() {
+    // A program using only print should import exactly 'print', not all host functions.
+    let source = r#"
+        function greet(msg: string): i32
+            print(msg)
+            return 0
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(wat.contains("\"print\""), "should import 'print'");
+    assert!(
+        !wat.contains("\"bytes_literal\""),
+        "should not import 'bytes_literal' when bytes are unused"
+    );
+    assert!(
+        !wat.contains("\"js_tostring_i32\""),
+        "should not import 'js_tostring_i32' when tostring(i32) is unused"
+    );
+    assert!(
+        !wat.contains("\"wasm:js-string\""),
+        "should not import from 'wasm:js-string' when string ops are unused"
+    );
+}
+
+#[test]
+fn scalar_program_has_no_externref_types() {
+    // A plain arithmetic program should not declare any externref types in its
+    // type section — there is no string/bytes/print usage that needs them.
+    let source = r#"
+        function add(x: number, y: number): number
+            local z: number = x + y
+            return z
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        !wat.contains("externref"),
+        "scalar program type section should not contain externref types"
+    );
+}
+
+#[test]
+fn scalar_program_has_no_closure_gc_types() {
+    // A program with no closures or function values should not emit the
+    // $anyref_array, $func_val, or $boxed_f64 GC struct/array types.
+    let source = r#"
+        function add(x: i32, y: i32): i32
+            return x + y
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        !wat.contains("(array"),
+        "scalar program should not emit GC array types"
+    );
+    assert!(
+        !wat.contains("(struct"),
+        "scalar program should not emit GC struct types"
+    );
+}
+
+#[test]
+fn closure_program_still_emits_closure_gc_types() {
+    // Programs that use closures must still emit the closure GC types.
+    let source = r#"
+        function entry(x: i32): i32
+            local f: (i32) -> i32 = function(y: i32): i32
+                return x + y
+            end
+            return f(1)
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        wat.contains("(array"),
+        "closure program should emit $anyref_array GC type"
+    );
+    assert!(
+        wat.contains("(struct"),
+        "closure program should emit $func_val GC struct type"
+    );
+}
+
+#[test]
 fn emits_no_loop_for_straight_line_function() {
     // A simple straight-line function (single basic block) must not be wrapped in
     // the PC-dispatch loop.

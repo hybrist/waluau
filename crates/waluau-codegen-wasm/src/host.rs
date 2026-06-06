@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use waluau_ast::{BinaryOp, NumericType, Type};
 use waluau_diagnostics::Diagnostic;
 use waluau_ir::{Function as IrFunction, Instruction as IrInstruction, Module};
 
@@ -29,19 +30,13 @@ pub const IMPORT_JS_TOSTRING_F64: &str = "js_tostring_f64";
 pub const IMPORT_JS_TOSTRING_BOOL: &str = "js_tostring_bool";
 pub const IMPORT_PRINT: &str = "print";
 
-/// Number of imported host functions emitted before user-defined functions.
+/// Maximum number of host function imports (when all are used).
 pub const HOST_IMPORT_COUNT: u32 = 17;
 
-/// Function index of the first user-defined function in the combined import+defined index space.
-pub const fn defined_func_index(user_index: u32) -> u32 {
-    HOST_IMPORT_COUNT + user_index
-}
-
-/// Index of `IMPORT_JS_STRING_EQ` in the combined function index space.
+/// Canonical function-index slot for each host import.
+/// These are stable identifiers used as keys into [`HostImportMap`].
 pub const IMPORT_JS_STRING_EQ_FUNC: u32 = 0;
-/// Index of `IMPORT_JS_STRING_CONCAT` in the combined function index space.
 pub const IMPORT_JS_STRING_CONCAT_FUNC: u32 = 1;
-/// Index of `IMPORT_JS_STRING_COMPARE` in the combined function index space.
 pub const IMPORT_JS_STRING_COMPARE_FUNC: u32 = 2;
 pub const IMPORT_BYTES_LITERAL_FUNC: u32 = 3;
 pub const IMPORT_BYTES_GET_FUNC: u32 = 4;
@@ -49,7 +44,6 @@ pub const IMPORT_BYTES_LEN_FUNC: u32 = 5;
 pub const IMPORT_BYTES_CONCAT_FUNC: u32 = 6;
 pub const IMPORT_BYTES_EQ_FUNC: u32 = 7;
 pub const IMPORT_BYTES_COMPARE_FUNC: u32 = 8;
-/// Index of `IMPORT_PRINT` in the combined function index space.
 pub const IMPORT_PRINT_FUNC: u32 = 9;
 pub const IMPORT_JS_TOSTRING_I32_FUNC: u32 = 10;
 pub const IMPORT_JS_TOSTRING_U32_FUNC: u32 = 11;
@@ -59,8 +53,195 @@ pub const IMPORT_JS_TOSTRING_F32_FUNC: u32 = 14;
 pub const IMPORT_JS_TOSTRING_F64_FUNC: u32 = 15;
 pub const IMPORT_JS_TOSTRING_BOOL_FUNC: u32 = 16;
 
-/// Number of host function types emitted after array types in the type section.
+/// Number of host function types in the canonical type-slot table.
+/// The actual number emitted in a given module may be less if some slots are unused.
 pub const HOST_TYPE_COUNT: u32 = 9;
+
+/// Records which host functions are actually referenced by a module.
+#[derive(Clone, Debug, Default)]
+pub struct UsedHostImports {
+    pub js_string_eq: bool,
+    pub js_string_concat: bool,
+    pub js_string_compare: bool,
+    pub bytes_literal: bool,
+    pub bytes_get: bool,
+    pub bytes_len: bool,
+    pub bytes_concat: bool,
+    pub bytes_eq: bool,
+    pub bytes_compare: bool,
+    pub print: bool,
+    pub js_tostring_i32: bool,
+    pub js_tostring_u32: bool,
+    pub js_tostring_i64: bool,
+    pub js_tostring_u64: bool,
+    pub js_tostring_f32: bool,
+    pub js_tostring_f64: bool,
+    pub js_tostring_bool: bool,
+}
+
+/// Maps canonical host-import slot indices (0–16) to the actual Wasm function
+/// indices they occupy in the output module's import section.
+///
+/// Slots whose corresponding import was not used hold `None`.
+pub struct HostImportMap {
+    /// `indices[canonical]` is `Some(actual_func_idx)` when the import is present.
+    indices: [Option<u32>; HOST_IMPORT_COUNT as usize],
+    /// Total number of host function imports actually emitted.
+    pub count: u32,
+}
+
+impl HostImportMap {
+    /// Look up the actual Wasm function index for a canonical slot.
+    ///
+    /// Returns an error if the import was not emitted (i.e., the module tries
+    /// to call a host function it never declared a dependency on).
+    pub fn func_index(&self, canonical: u32) -> Result<u32, Diagnostic> {
+        self.indices[canonical as usize].ok_or_else(|| {
+            Diagnostic::new(format!(
+                "internal error: host import slot {canonical} used but not emitted"
+            ))
+        })
+    }
+}
+
+impl UsedHostImports {
+    /// Build the ordered import map: only used imports get consecutive indices.
+    pub fn to_import_map(&self) -> HostImportMap {
+        let ordered: [(u32, bool); HOST_IMPORT_COUNT as usize] = [
+            (IMPORT_JS_STRING_EQ_FUNC, self.js_string_eq),
+            (IMPORT_JS_STRING_CONCAT_FUNC, self.js_string_concat),
+            (IMPORT_JS_STRING_COMPARE_FUNC, self.js_string_compare),
+            (IMPORT_BYTES_LITERAL_FUNC, self.bytes_literal),
+            (IMPORT_BYTES_GET_FUNC, self.bytes_get),
+            (IMPORT_BYTES_LEN_FUNC, self.bytes_len),
+            (IMPORT_BYTES_CONCAT_FUNC, self.bytes_concat),
+            (IMPORT_BYTES_EQ_FUNC, self.bytes_eq),
+            (IMPORT_BYTES_COMPARE_FUNC, self.bytes_compare),
+            (IMPORT_PRINT_FUNC, self.print),
+            (IMPORT_JS_TOSTRING_I32_FUNC, self.js_tostring_i32),
+            (IMPORT_JS_TOSTRING_U32_FUNC, self.js_tostring_u32),
+            (IMPORT_JS_TOSTRING_I64_FUNC, self.js_tostring_i64),
+            (IMPORT_JS_TOSTRING_U64_FUNC, self.js_tostring_u64),
+            (IMPORT_JS_TOSTRING_F32_FUNC, self.js_tostring_f32),
+            (IMPORT_JS_TOSTRING_F64_FUNC, self.js_tostring_f64),
+            (IMPORT_JS_TOSTRING_BOOL_FUNC, self.js_tostring_bool),
+        ];
+        let mut indices = [None; HOST_IMPORT_COUNT as usize];
+        let mut next = 0u32;
+        for (canonical, used) in ordered {
+            if used {
+                indices[canonical as usize] = Some(next);
+                next += 1;
+            }
+        }
+        HostImportMap {
+            indices,
+            count: next,
+        }
+    }
+}
+
+/// Returns a bitmask of which host type slots (0–8) are needed by `used`.
+///
+/// The 9 canonical host type slots correspond to the function signatures used
+/// by host imports (in the order they appear in the type section):
+///
+/// | Slot | Signature                             | Used by                                      |
+/// |------|---------------------------------------|----------------------------------------------|
+/// | 0    | (externref, externref) → i32          | js_string_eq, js_string_compare, bytes_eq, bytes_compare |
+/// | 1    | (externref, externref) → externref_nn | js_string_concat, bytes_concat               |
+/// | 2    | (i32) → externref                     | bytes_literal, js_tostring_i32/u32/bool      |
+/// | 3    | (i64) → externref                     | js_tostring_i64, js_tostring_u64             |
+/// | 4    | (f32) → externref                     | js_tostring_f32                              |
+/// | 5    | (f64) → externref                     | js_tostring_f64                              |
+/// | 6    | (externref) → []                      | print                                        |
+/// | 7    | (externref, i32) → i32                | bytes_get                                    |
+/// | 8    | (externref) → i32                     | bytes_len                                    |
+pub fn needed_host_type_slots(used: &UsedHostImports) -> [bool; HOST_TYPE_COUNT as usize] {
+    let mut slots = [false; HOST_TYPE_COUNT as usize];
+    if used.js_string_eq || used.js_string_compare || used.bytes_eq || used.bytes_compare {
+        slots[0] = true;
+    }
+    if used.js_string_concat || used.bytes_concat {
+        slots[1] = true;
+    }
+    if used.bytes_literal || used.js_tostring_i32 || used.js_tostring_u32 || used.js_tostring_bool {
+        slots[2] = true;
+    }
+    if used.js_tostring_i64 || used.js_tostring_u64 {
+        slots[3] = true;
+    }
+    if used.js_tostring_f32 {
+        slots[4] = true;
+    }
+    if used.js_tostring_f64 {
+        slots[5] = true;
+    }
+    if used.print {
+        slots[6] = true;
+    }
+    if used.bytes_get {
+        slots[7] = true;
+    }
+    if used.bytes_len {
+        slots[8] = true;
+    }
+    slots
+}
+
+/// Scan `module` and return the set of host functions it actually references.
+pub fn collect_used_host_imports(module: &Module) -> UsedHostImports {
+    let mut used = UsedHostImports::default();
+    for function in &module.functions {
+        for block in function.blocks.values() {
+            for (_, instruction) in &block.instructions {
+                mark_used_by_instruction(instruction, &mut used);
+            }
+        }
+    }
+    used
+}
+
+fn mark_used_by_instruction(instruction: &IrInstruction, used: &mut UsedHostImports) {
+    match instruction {
+        IrInstruction::Bytes(_) => {
+            used.bytes_literal = true;
+        }
+        IrInstruction::BytesGet { .. } => {
+            used.bytes_get = true;
+        }
+        IrInstruction::BytesLen { .. } => {
+            used.bytes_len = true;
+        }
+        IrInstruction::Print { .. } => {
+            used.print = true;
+        }
+        IrInstruction::ToString { from, .. } => match from {
+            Type::Numeric(NumericType::I32) => used.js_tostring_i32 = true,
+            Type::Numeric(NumericType::U32) => used.js_tostring_u32 = true,
+            Type::Numeric(NumericType::I64) => used.js_tostring_i64 = true,
+            Type::Numeric(NumericType::U64) => used.js_tostring_u64 = true,
+            Type::Numeric(NumericType::F32) => used.js_tostring_f32 = true,
+            Type::Numeric(NumericType::F64) => used.js_tostring_f64 = true,
+            Type::Bool => used.js_tostring_bool = true,
+            _ => {}
+        },
+        IrInstruction::Binary { op, operand_ty, .. } => match (op, operand_ty) {
+            (BinaryOp::Eq, Type::String) => used.js_string_eq = true,
+            (BinaryOp::Eq, Type::Bytes) => used.bytes_eq = true,
+            (BinaryOp::Concat, Type::String) => used.js_string_concat = true,
+            (BinaryOp::Concat, Type::Bytes) => used.bytes_concat = true,
+            (BinaryOp::Less | BinaryOp::Greater, Type::String) => {
+                used.js_string_compare = true;
+            }
+            (BinaryOp::Less | BinaryOp::Greater, Type::Bytes) => {
+                used.bytes_compare = true;
+            }
+            _ => {}
+        },
+        _ => {}
+    }
+}
 
 pub fn encode_string_constants_section(strings: &[String]) -> Vec<u8> {
     let mut out = Vec::new();
