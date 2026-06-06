@@ -493,6 +493,34 @@ fn method_signature(
     signatures.get(&method_signature_name(base, name)).cloned()
 }
 
+fn type_method_signature(
+    receiver_ty: &Type,
+    name: &str,
+    signatures: &HashMap<String, (Vec<Type>, Type)>,
+) -> Option<(String, Vec<Type>, Type)> {
+    if let Type::Opaque { name: type_name, .. } = receiver_ty {
+        let direct_name = method_signature_name(type_name, name);
+        return signatures
+            .get(&direct_name)
+            .cloned()
+            .map(|(params, return_type)| (direct_name, params, return_type));
+    }
+
+    let suffix = format!(".{name}");
+    let mut matches = signatures
+        .iter()
+        .filter_map(|(direct_name, (params, return_type))| {
+            if !direct_name.ends_with(&suffix) {
+                return None;
+            }
+            let receiver_param = params.first()?;
+            method_receiver_matches(receiver_param, receiver_ty)
+                .then(|| (direct_name.clone(), params.clone(), return_type.clone()))
+        })
+        .collect::<Vec<_>>();
+    (matches.len() == 1).then(|| matches.remove(0))
+}
+
 fn direct_field_call_name(
     callee: &Expr,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
@@ -2030,7 +2058,13 @@ impl Builder<'_> {
                 ..
             } => {
                 let receiver_ty = self.infer_expr_type(receiver, types, None)?;
-                let (param_types, return_type) = if let Some(signature) =
+                let type_method =
+                    type_method_signature(&receiver_ty, name, self.field_call_signatures);
+                let (param_types, return_type) = if let Some((_, params, return_type)) =
+                    type_method.clone()
+                {
+                    (params, Box::new(return_type))
+                } else if let Some(signature) =
                     method_signature(receiver, name, self.field_call_signatures)
                 {
                     let (params, return_type) = signature;
@@ -2080,7 +2114,12 @@ impl Builder<'_> {
                         lowered_args.len()
                     )));
                 }
-                let value = if let Some(direct_name) = direct_name {
+                let value = if let Some((direct_name, _, _)) = type_method {
+                    self.emit(Instruction::Call {
+                        name: direct_name,
+                        args: lowered_args,
+                    })
+                } else if let Some(direct_name) = direct_name {
                     self.emit(Instruction::Call {
                         name: direct_name,
                         symbol_id: None,
@@ -2918,7 +2957,11 @@ impl Builder<'_> {
                 ..
             } => {
                 let receiver_ty = self.infer_expr_type(receiver, types, None)?;
-                let (params, return_type) = if let Some(signature) =
+                let (params, return_type) = if let Some((_, params, return_type)) =
+                    type_method_signature(&receiver_ty, name, self.field_call_signatures)
+                {
+                    (params, Box::new(return_type))
+                } else if let Some(signature) =
                     method_signature(receiver, name, self.field_call_signatures)
                 {
                     let (params, return_type) = signature;
