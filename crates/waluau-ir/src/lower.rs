@@ -1810,6 +1810,7 @@ impl Builder<'_> {
         let call = if let Some(name) = direct_iterator_name {
             self.emit(Instruction::Call {
                 name,
+                symbol_id: None,
                 args: Vec::new(),
             })
         } else {
@@ -2082,6 +2083,7 @@ impl Builder<'_> {
                 let value = if let Some(direct_name) = direct_name {
                     self.emit(Instruction::Call {
                         name: direct_name,
+                        symbol_id: None,
                         args: lowered_args,
                     })
                 } else {
@@ -2403,6 +2405,7 @@ impl Builder<'_> {
                             .collect::<Result<Vec<_>, _>>()?;
                         let value = self.emit(Instruction::Call {
                             name: name.clone(),
+                            symbol_id: Some(*symbol_id),
                             args,
                         });
                         let actual = self.infer_expr_type(expr, types, None)?;
@@ -2421,6 +2424,7 @@ impl Builder<'_> {
                         .collect::<Result<Vec<_>, _>>()?;
                     let value = self.emit(Instruction::Call {
                         name: direct_name,
+                        symbol_id: None,
                         args,
                     });
                     let actual = self.infer_expr_type(expr, types, None)?;

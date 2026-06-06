@@ -1382,3 +1382,29 @@ fn includes_symbol_ids_in_ir_dump() {
         dump
     );
 }
+
+#[test]
+fn includes_call_symbol_ids_in_ir_dump() {
+    let source = r#"
+        function helper(x: i32): i32
+            return x + 1
+        end
+        function entry(x: i32): i32
+            return helper(x)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("ir build should succeed");
+    let entry = module
+        .functions
+        .iter()
+        .find(|f| f.name == "entry")
+        .expect("entry function should exist");
+    let dump = entry.dump();
+
+    assert!(
+        dump.contains("Call { name: \"helper\", symbol_id: Some(SymbolId("),
+        "expected helper call with symbol ID in dump:\n{}",
+        dump
+    );
+}

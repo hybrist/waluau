@@ -1513,7 +1513,7 @@ fn emit_block_instructions(
                 }
                 emit_value_store(out, local_plan, *value)?;
             }
-            IrInstruction::Call { name, args } => {
+            IrInstruction::Call { name, args, .. } => {
                 for arg in args {
                     emit_value_operand(out, local_plan, *arg)?;
                 }

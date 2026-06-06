@@ -70,6 +70,7 @@ pub enum Instruction {
     },
     Call {
         name: String,
+        symbol_id: Option<SymbolId>,
         args: Vec<ValueId>,
     },
     CallValue {
