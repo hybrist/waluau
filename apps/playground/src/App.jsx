@@ -1400,16 +1400,18 @@ export default function App() {
       }
       const wasmBuffer = new Uint8Array(outputWasmBytes);
       const richSigs = output?.signatures || {};
-      const list = getWasmExports(wasmBuffer).map(func => {
-        const richSig = (richSigs instanceof Map || (richSigs && typeof richSigs.get === 'function'))
-          ? richSigs.get(func.name)
-          : richSigs[func.name];
-        return {
-          ...func,
-          richParams: richSig ? richSig.params : null,
-          richReturns: richSig ? richSig.returns : null,
-        };
-      });
+      const list = getWasmExports(wasmBuffer)
+        .filter(func => !func.name.startsWith('__waluau'))
+        .map(func => {
+          const richSig = (richSigs instanceof Map || (richSigs && typeof richSigs.get === 'function'))
+            ? richSigs.get(func.name)
+            : richSigs[func.name];
+          return {
+            ...func,
+            richParams: richSig ? richSig.params : null,
+            richReturns: richSig ? richSig.returns : null,
+          };
+        });
       if (active) {
         setExportsList(list);
         setFuncInputs(prev => {
