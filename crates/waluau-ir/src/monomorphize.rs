@@ -416,6 +416,7 @@ impl<'a> Monomorphizer<'a> {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn rewrite_call_expr(
         &mut self,
         callee: &Expr,
