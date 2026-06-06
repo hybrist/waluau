@@ -177,6 +177,7 @@ impl Type {
             Self::TaggedUnion(variants) => {
                 variants.iter().find(|variant| variant.tag == tag).cloned()
             }
+            Self::Opaque { ty, .. } => ty.tagged_variant(tag),
             _ => None,
         }
     }
@@ -208,6 +209,10 @@ impl Type {
                     _ => Some(Self::TaggedUnion(remaining)),
                 }
             }
+            Self::Opaque { name, ty } => ty.remove_tagged_variant(tag).map(|inner| Self::Opaque {
+                name: name.clone(),
+                ty: Box::new(inner),
+            }),
             _ => None,
         }
     }

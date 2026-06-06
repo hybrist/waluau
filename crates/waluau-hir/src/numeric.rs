@@ -232,6 +232,21 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 name: expected_name,
                 ty: expected_ty,
             }),
+            // A tagged-union constructor produces a TaggedVariant; allow it to be
+            // assigned to an Opaque alias whose inner type is a TaggedUnion or TaggedVariant.
+            Type::TaggedVariant(ref actual_variant) => match expected_ty.as_ref() {
+                Type::TaggedUnion(_) | Type::TaggedVariant(_) => {
+                    let inner = coerce_type(actual, Some(*expected_ty))?;
+                    Ok(Type::Opaque {
+                        name: expected_name,
+                        ty: Box::new(inner),
+                    })
+                }
+                _ => Err(Diagnostic::new(format!(
+                    "cannot implicitly convert {} to {}",
+                    actual_variant.tag, expected_name
+                ))),
+            },
             _ => Err(Diagnostic::new(format!(
                 "cannot implicitly convert {} to {}",
                 actual, expected_name

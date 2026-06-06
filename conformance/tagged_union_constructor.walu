@@ -1,0 +1,24 @@
+-- Tagged-union constructor expressions: Tag(expr) syntax produces a canonical
+-- { tag: i32, value: unknown } record with the appropriate discriminant and boxed payload.
+
+type Value = Num(i32) | Flag(i32)
+
+function process(v: Value): i32
+    if v is Num then
+        return v.value
+    end
+    if v is Flag then
+        return v.value + 100
+    end
+    return 0
+end
+
+local a: Value = Num(42)
+local b: Value = Flag(7)
+
+assert(process(a) == 42)
+assert(process(b) == 107)
+
+-- Constructor used directly as a function argument
+assert(process(Num(99)) == 99)
+assert(process(Flag(3)) == 103)

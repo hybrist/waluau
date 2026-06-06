@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use waluau_ast::{
     AssignOp, BinaryOp, Expr, Function as AstFunction, MethodCallOrigin, NumberLiteral,
-    NumericType, Program, Stmt, Type, UnaryOp,
+    NumericType, Program, Stmt, TaggedVariant, Type, UnaryOp,
 };
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 

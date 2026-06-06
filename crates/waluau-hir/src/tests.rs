@@ -1423,6 +1423,55 @@ fn rejects_coroutine_resume_for_non_thread() {
 }
 
 #[test]
+fn type_checks_tagged_union_constructor_inline_union() {
+    let source = r#"
+        function test(): i32
+            local a: Num(i32) | Flag(i32) = Num(42)
+            local b: Num(i32) | Flag(i32) = Flag(7)
+            if a is Num then
+                return a.value
+            end
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn type_checks_tagged_union_constructor_named_alias() {
+    let source = r#"
+        type Value = Num(i32) | Flag(i32)
+
+        function process(v: Value): i32
+            if v is Num then
+                return v.value
+            end
+            return 0
+        end
+
+        function test(): i32
+            local a: Value = Num(42)
+            return process(a)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_tagged_union_constructor_for_unknown_variant() {
+    let source = r#"
+        function test(): i32
+            local a: Num(i32) | Flag(i32) = Other(42)
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect_err("type check should fail");
+}
+
+#[test]
 fn type_checks_tagged_union_narrowing_and_value_access() {
     let source = r#"
         type Resume<R> = Yielded(unknown) | Finished(R) | Error(string)
