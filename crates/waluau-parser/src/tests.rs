@@ -514,6 +514,32 @@ fn parses_method_call_syntax() {
 }
 
 #[test]
+fn parses_generic_method_call_syntax() {
+    let source = r#"
+        function main(obj: { value: i32 }): i32
+            return obj:identity<i32>(42)
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert!(matches!(
+        &program.functions[0].body[0],
+        Stmt::Return(waluau_ast::Expr::MethodCall {
+            receiver,
+            name,
+            type_args,
+            args,
+            ..
+        }) if name == "identity"
+            && type_args.len() == 1
+            && matches!(&type_args[0], waluau_ast::Type::Numeric(waluau_ast::NumericType::I32))
+            && args.len() == 1
+            && matches!(receiver.as_ref(), waluau_ast::Expr::Name(base, _) if base == "obj")
+            && matches!(&args[0], waluau_ast::Expr::Number(_, _))
+    ));
+}
+
+#[test]
 fn records_call_span() {
     let source = r#"
         function main(): i32

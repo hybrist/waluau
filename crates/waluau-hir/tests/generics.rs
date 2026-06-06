@@ -105,6 +105,25 @@ fn rejects_wrong_type_argument_count() {
 }
 
 #[test]
+fn type_checks_nested_field_assignment_through_generic_record() {
+    let source = r#"
+        type Pair<A, B> = { first: A, second: B }
+        type Box<T> = { value: T }
+
+        function entry(seed: i32): i32
+            local boxed: Box<Pair<i32, i32>> = {
+                value = { first = seed, second = (seed + 1) :: i32 },
+            }
+            boxed.value.first = (boxed.value.first + 4) :: i32
+            return boxed.value.first
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    waluau_hir::type_check(&program)
+        .expect("nested field assignment through generic record should type-check");
+}
+
+#[test]
 fn type_checks_swap_pair_generic_alias() {
     let source = r#"
         type Pair<A, B> = { first: A, second: B }

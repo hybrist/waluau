@@ -745,13 +745,20 @@ function executeCall(instance, funcName, paramsInfo, richParamsInfo, richReturns
 
 function classifyWasmInstantiationError(err, requiresWasmGc) {
   const message = err?.message || String(err);
-  if (!requiresWasmGc) {
-    return `Failed to instantiate WASM module: ${message}`;
+  const isCompileError =
+    (typeof WebAssembly !== 'undefined' &&
+      (err instanceof WebAssembly.CompileError ||
+       err instanceof WebAssembly.LinkError)) ||
+    err?.name === 'CompileError' ||
+    err?.name === 'LinkError';
+
+  if (requiresWasmGc && isCompileError) {
+    return [
+      'This module requires Wasm GC (array reference types), which may not be supported or enabled in this browser.',
+      `Instantiation error: ${message}`
+    ].join('\n');
   }
-  return [
-    'This module requires Wasm GC (array reference types), but this browser runtime does not support it yet.',
-    `Runtime error: ${message}`
-  ].join('\n');
+  return `Failed to instantiate WASM module: ${message}`;
 }
 
 export default function App() {

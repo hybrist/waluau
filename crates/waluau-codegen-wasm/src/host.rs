@@ -13,6 +13,7 @@ pub const BYTES_CUSTOM_SECTION_NAME: &str = "waluau.bytc";
 
 pub const IMPORT_JS_STRING_EQ: &str = "equals";
 pub const IMPORT_JS_STRING_CONCAT: &str = "concat";
+pub const IMPORT_JS_STRING_COMPARE: &str = "compare";
 pub const IMPORT_BYTES_LITERAL: &str = "bytes_literal";
 pub const IMPORT_BYTES_GET: &str = "bytes_get";
 pub const IMPORT_BYTES_LEN: &str = "bytes_len";
@@ -29,7 +30,7 @@ pub const IMPORT_JS_TOSTRING_BOOL: &str = "js_tostring_bool";
 pub const IMPORT_PRINT: &str = "print";
 
 /// Number of imported host functions emitted before user-defined functions.
-pub const HOST_IMPORT_COUNT: u32 = 16;
+pub const HOST_IMPORT_COUNT: u32 = 17;
 
 /// Function index of the first user-defined function in the combined import+defined index space.
 pub const fn defined_func_index(user_index: u32) -> u32 {
@@ -40,21 +41,23 @@ pub const fn defined_func_index(user_index: u32) -> u32 {
 pub const IMPORT_JS_STRING_EQ_FUNC: u32 = 0;
 /// Index of `IMPORT_JS_STRING_CONCAT` in the combined function index space.
 pub const IMPORT_JS_STRING_CONCAT_FUNC: u32 = 1;
-pub const IMPORT_BYTES_LITERAL_FUNC: u32 = 2;
-pub const IMPORT_BYTES_GET_FUNC: u32 = 3;
-pub const IMPORT_BYTES_LEN_FUNC: u32 = 4;
-pub const IMPORT_BYTES_CONCAT_FUNC: u32 = 5;
-pub const IMPORT_BYTES_EQ_FUNC: u32 = 6;
-pub const IMPORT_BYTES_COMPARE_FUNC: u32 = 7;
+/// Index of `IMPORT_JS_STRING_COMPARE` in the combined function index space.
+pub const IMPORT_JS_STRING_COMPARE_FUNC: u32 = 2;
+pub const IMPORT_BYTES_LITERAL_FUNC: u32 = 3;
+pub const IMPORT_BYTES_GET_FUNC: u32 = 4;
+pub const IMPORT_BYTES_LEN_FUNC: u32 = 5;
+pub const IMPORT_BYTES_CONCAT_FUNC: u32 = 6;
+pub const IMPORT_BYTES_EQ_FUNC: u32 = 7;
+pub const IMPORT_BYTES_COMPARE_FUNC: u32 = 8;
 /// Index of `IMPORT_PRINT` in the combined function index space.
-pub const IMPORT_PRINT_FUNC: u32 = 8;
-pub const IMPORT_JS_TOSTRING_I32_FUNC: u32 = 9;
-pub const IMPORT_JS_TOSTRING_U32_FUNC: u32 = 10;
-pub const IMPORT_JS_TOSTRING_I64_FUNC: u32 = 11;
-pub const IMPORT_JS_TOSTRING_U64_FUNC: u32 = 12;
-pub const IMPORT_JS_TOSTRING_F32_FUNC: u32 = 13;
-pub const IMPORT_JS_TOSTRING_F64_FUNC: u32 = 14;
-pub const IMPORT_JS_TOSTRING_BOOL_FUNC: u32 = 15;
+pub const IMPORT_PRINT_FUNC: u32 = 9;
+pub const IMPORT_JS_TOSTRING_I32_FUNC: u32 = 10;
+pub const IMPORT_JS_TOSTRING_U32_FUNC: u32 = 11;
+pub const IMPORT_JS_TOSTRING_I64_FUNC: u32 = 12;
+pub const IMPORT_JS_TOSTRING_U64_FUNC: u32 = 13;
+pub const IMPORT_JS_TOSTRING_F32_FUNC: u32 = 14;
+pub const IMPORT_JS_TOSTRING_F64_FUNC: u32 = 15;
+pub const IMPORT_JS_TOSTRING_BOOL_FUNC: u32 = 16;
 
 /// Number of host function types emitted after array types in the type section.
 pub const HOST_TYPE_COUNT: u32 = 9;
