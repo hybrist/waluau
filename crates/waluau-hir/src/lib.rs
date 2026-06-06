@@ -1096,10 +1096,36 @@ fn desugar_method_declarations(program: &Program) -> Result<Program, Diagnostic>
     rewritten.functions.clear();
     rewritten.top_level.clear();
     let mut pending_methods: Vec<(String, Stmt)> = Vec::new();
+    let type_names = program
+        .type_declarations
+        .iter()
+        .map(|decl| decl.name.clone())
+        .collect::<HashSet<_>>();
 
     for function in &program.functions {
         match &function.name {
             FunctionName::Simple(_) => rewritten.functions.push(function.clone()),
+            FunctionName::Method { table, method } if type_names.contains(table) => {
+                let mut params = Vec::with_capacity(function.params.len() + 1);
+                params.push(Param {
+                    name: "self".to_string(),
+                    symbol_id: None,
+                    ty: Type::Named {
+                        name: table.clone(),
+                        type_args: Vec::new(),
+                    },
+                });
+                params.extend(function.params.clone());
+                rewritten.functions.push(Function {
+                    name: FunctionName::Simple(method_signature_name(table, method)),
+                    symbol_id: None,
+                    type_params: function.type_params.clone(),
+                    params,
+                    return_type: function.return_type.clone(),
+                    body: function.body.clone(),
+                    file_path: function.file_path.clone(),
+                });
+            }
             FunctionName::Method { table, method } => {
                 let mut params = Vec::with_capacity(function.params.len() + 1);
                 params.push(Param {

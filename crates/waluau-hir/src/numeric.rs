@@ -232,6 +232,13 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 name: expected_name,
                 ty: expected_ty,
             }),
+            Type::Record(_) if matches!(expected_ty.as_ref(), Type::Record(_)) => {
+                let _ = coerce_type(actual, Some(*expected_ty.clone()))?;
+                Ok(Type::Opaque {
+                    name: expected_name,
+                    ty: expected_ty,
+                })
+            }
             _ => Err(Diagnostic::new(format!(
                 "cannot implicitly convert {} to {}",
                 actual, expected_name
