@@ -2408,6 +2408,53 @@ impl Builder<'_> {
                 method_call_origin,
                 ..
             } => {
+                // Tagged-union constructor: Tag(expr) — emit StructNew for the canonical record.
+                if let (Expr::Name(tag, symbol_id, _), [arg]) = (callee.as_ref(), args.as_slice())
+                {
+                    // symbol_id is None for names that are not resolved to a local or function,
+                    // i.e. potential tagged-union constructor names like `Num` or `Flag`.
+                    if symbol_id.is_none() {
+                        if let Some(variant) =
+                            expected.as_ref().and_then(|e| e.tagged_variant(tag))
+                        {
+                            let payload_ty = *variant.payload;
+                            if matches!(&payload_ty, Type::String | Type::Bytes) {
+                                return Err(Diagnostic::new(format!(
+                                    "tagged union constructor {}({}) is not yet supported: \
+                                     string/bytes payloads cannot be boxed into anyref",
+                                    tag, payload_ty
+                                )));
+                            }
+                            let payload_val =
+                                self.lower_expr(arg, env, types, Some(payload_ty.clone()))?;
+                            let boxed_val = self.emit(Instruction::Cast {
+                                value: payload_val,
+                                from: payload_ty,
+                                to: Type::Unknown,
+                            });
+                            let tag_id = self.variant_tag_id(tag);
+                            let tag_val = self.emit(Instruction::Number {
+                                ty: NumericType::I32,
+                                literal: NumberLiteral {
+                                    raw: tag_id.to_string(),
+                                },
+                            });
+                            let record_ty = Type::canonical_tagged_union_record();
+                            let value = self.emit(Instruction::StructNew {
+                                struct_ty: record_ty.clone(),
+                                fields: vec![tag_val, boxed_val],
+                            });
+                            // The canonical record IS the runtime representation of any
+                            // tagged-union value, so TaggedUnion/TaggedVariant expected types
+                            // are satisfied directly.  Only coerce for other targets (e.g. unknown).
+                            let coerce_target = match &expected {
+                                Some(Type::TaggedUnion(_) | Type::TaggedVariant(_)) => None,
+                                other => other.clone(),
+                            };
+                            return self.coerce_value(value, record_ty, coerce_target);
+                        }
+                    }
+                }
                 if let Some(name) = builtin_name(callee.as_ref()) {
                     if let Some(result) =
                         self.lower_math_builtin_call(&name, args, env, types, expected.clone())
@@ -3094,7 +3141,22 @@ impl Builder<'_> {
                     ))
                 }
             }
-            Expr::Call { callee, .. } => {
+            Expr::Call { callee, args, .. } => {
+                // Tagged-union constructor type inference mirrors lower_expr detection.
+                if let (Expr::Name(tag, symbol_id, _), [_arg]) = (callee.as_ref(), args.as_slice())
+                {
+                    if symbol_id.is_none() {
+                        if let Some(variant) =
+                            expected.as_ref().and_then(|e| e.tagged_variant(tag))
+                        {
+                            let result_ty = Type::TaggedVariant(TaggedVariant {
+                                tag: variant.tag.clone(),
+                                payload: variant.payload.clone(),
+                            });
+                            return coerce_type(result_ty, expected);
+                        }
+                    }
+                }
                 if let Some(name) = builtin_name(callee.as_ref()) {
                     if let Some(result) = self.infer_math_builtin_call_type(&name, expr, types) {
                         return result;

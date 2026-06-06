@@ -234,6 +234,25 @@ pub(super) fn infer_expr(
             args,
             ..
         } => {
+            // Tagged-union constructor: Tag(expr) when Tag is a variant in the expected type.
+            // The inferred type is the full expected type (union or variant) so that
+            // Stmt::Let's exact-equality check passes and the variable carries the union type.
+            if let (Expr::Name(tag, _, _), [arg]) = (callee.as_ref(), args.as_slice()) {
+                if !fn_signatures.contains_key(tag.as_str()) && !vars.contains_key(tag.as_str()) {
+                    if let Some(variant) = expected.as_ref().and_then(|e| e.tagged_variant(tag)) {
+                        let payload_ty = *variant.payload.clone();
+                        let arg_ty = infer_expr(
+                            arg,
+                            vars,
+                            fn_signatures,
+                            active_type_params,
+                            Some(payload_ty.clone()),
+                        )?;
+                        coerce_type(arg_ty, Some(payload_ty))?;
+                        return Ok(expected.clone().expect("variant lookup requires Some"));
+                    }
+                }
+            }
             if let Some(name) = builtin_name(callee.as_ref()) {
                 if let Some(result) = infer_math_builtin_call(
                     &name,
@@ -742,11 +761,23 @@ pub(super) fn infer_expr_list(
             .and_then(|types| (!types[out.len()..].is_empty()).then(|| &types[out.len()..]));
         let next_expected = remaining_expected.and_then(|types| types.first().cloned());
         let ty = if let Expr::Call { callee, .. } = expr {
-            let call_expected = builtin_name(callee.as_ref()).and_then(|name| {
-                (name == "coroutine.resume")
-                    .then(|| remaining_expected.map(|types| Type::Multi(types.to_vec())))
-                    .flatten()
-            });
+            let is_resume =
+                builtin_name(callee.as_ref()).is_some_and(|name| name == "coroutine.resume");
+            // A Name not found in fn_signatures or vars may be a tagged-union constructor
+            // (e.g. `Num(42)`). Pass next_expected so the constructor intercept in
+            // infer_expr can see the expected union type and fire correctly.
+            let is_potential_constructor = matches!(callee.as_ref(), Expr::Name(tag, _, _)
+                    if !fn_signatures.contains_key(tag.as_str())
+                        && !vars.contains_key(tag.as_str()));
+            let call_expected = if is_resume {
+                // coroutine.resume returns Multi; pass the full expected slice so the
+                // return-type inference captures all slots rather than just the first.
+                remaining_expected.map(|types| Type::Multi(types.to_vec()))
+            } else if is_potential_constructor {
+                next_expected
+            } else {
+                None
+            };
             infer_expr(expr, vars, fn_signatures, active_type_params, call_expected)?
         } else if matches!(expr, Expr::MethodCall { .. }) {
             infer_expr(expr, vars, fn_signatures, active_type_params, None)?

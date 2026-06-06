@@ -184,6 +184,7 @@ impl Type {
             Self::TaggedUnion(variants) => {
                 variants.iter().find(|variant| variant.tag == tag).cloned()
             }
+            Self::Opaque { ty, .. } => ty.tagged_variant(tag),
             _ => None,
         }
     }
@@ -215,6 +216,10 @@ impl Type {
                     _ => Some(Self::TaggedUnion(remaining)),
                 }
             }
+            Self::Opaque { name, ty } => ty.remove_tagged_variant(tag).map(|inner| Self::Opaque {
+                name: name.clone(),
+                ty: Box::new(inner),
+            }),
             _ => None,
         }
     }
@@ -813,7 +818,18 @@ impl Resolver {
                 method_call_origin,
                 ..
             } => {
-                self.resolve_expr(callee)?;
+                // `Tag(expr)` may be a tagged-union constructor rather than a call to a
+                // known function/local. HIR has already validated such names (rejecting
+                // genuinely unknown names with "unknown name '...'"), so here we simply
+                // leave the callee's symbol_id as `None` and let IR lowering recognize it
+                // as a constructor via the expected tagged-union type.
+                let is_potential_constructor = matches!(
+                    (callee.as_ref(), args.as_slice()),
+                    (Expr::Name(name, _, _), [_]) if self.lookup(name).is_none()
+                );
+                if !is_potential_constructor {
+                    self.resolve_expr(callee)?;
+                }
                 for arg in args {
                     self.resolve_expr(arg)?;
                 }

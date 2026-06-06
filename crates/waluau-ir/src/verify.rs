@@ -164,7 +164,7 @@ fn verify_function(
                             block.id,
                             *arg,
                         )?;
-                        if arg_ty != *param_ty {
+                        if !types_match(&arg_ty, param_ty) {
                             return Err(Diagnostic::new(format!(
                                 "call argument in block {:?} has type {}, expected {}",
                                 block.id, arg_ty, param_ty
@@ -211,7 +211,7 @@ fn verify_function(
                             block.id,
                             *arg,
                         )?;
-                        if arg_ty != *param_ty {
+                        if !types_match(&arg_ty, param_ty) {
                             return Err(Diagnostic::new(format!(
                                 "indirect call argument in block {:?} has type {}, expected {}",
                                 block.id, arg_ty, param_ty
@@ -792,6 +792,20 @@ fn require_block(function: &Function, block: BlockId) -> Result<(), Diagnostic> 
     }
 }
 
+/// At the Wasm/IR level, `TaggedUnion`, `TaggedVariant`, and the canonical record
+/// `{ tag: i32, value: unknown }` all share the same runtime representation.
+/// Return true when two types are compatible for call-argument and return-type checks.
+fn types_match(a: &Type, b: &Type) -> bool {
+    if a == b {
+        return true;
+    }
+    let is_tagged = |t: &Type| {
+        matches!(t, Type::TaggedUnion(_) | Type::TaggedVariant(_))
+            || t == &Type::canonical_tagged_union_record()
+    };
+    is_tagged(a) && is_tagged(b)
+}
+
 fn infer_instruction_type(
     function: &Function,
     instruction: &Instruction,
@@ -801,7 +815,14 @@ fn infer_instruction_type(
         Instruction::Param(index) => function
             .params
             .get(*index)
-            .map(|(_, ty)| ty.clone())
+            .map(|(_, ty)| {
+                // TaggedUnion/TaggedVariant values are canonical records at the IR level.
+                if matches!(ty, Type::TaggedUnion(_) | Type::TaggedVariant(_)) {
+                    Type::canonical_tagged_union_record()
+                } else {
+                    ty.clone()
+                }
+            })
             .ok_or_else(|| Diagnostic::new(format!("param index {} out of bounds", index))),
         Instruction::Number { ty, .. } => Ok(Type::Numeric(*ty)),
         Instruction::Unit => Ok(Type::Unit),

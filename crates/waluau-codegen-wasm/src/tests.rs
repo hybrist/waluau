@@ -792,3 +792,24 @@ fn emits_valid_wasm_for_tagged_union_coroutine_resume() {
         "should emit struct.new for tagged-union record"
     );
 }
+
+#[test]
+fn emits_valid_wasm_for_tagged_union_constructor() {
+    let source = include_str!("../../../conformance/tagged_union_constructor.walu");
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    let wat = print_bytes(&wasm).expect("wat should print");
+    // Constructor should emit struct.new for the canonical tagged-union record.
+    assert!(
+        wat.contains("struct.new"),
+        "should emit struct.new for tagged-union constructor"
+    );
+}

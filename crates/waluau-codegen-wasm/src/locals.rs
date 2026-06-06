@@ -202,7 +202,14 @@ pub(crate) fn infer_value_types(
     for block in function.blocks.values() {
         for (value, instruction) in &block.instructions {
             let ty = match instruction {
-                IrInstruction::Param(index) => function.params[*index].1.clone(),
+                IrInstruction::Param(index) => {
+                    let ty = &function.params[*index].1;
+                    if matches!(ty, Type::TaggedUnion(_) | Type::TaggedVariant(_)) {
+                        Type::canonical_tagged_union_record()
+                    } else {
+                        ty.clone()
+                    }
+                }
                 IrInstruction::Number { ty, .. } => Type::Numeric(*ty),
                 IrInstruction::Unit => Type::Unit,
                 IrInstruction::Bool(_) => Type::Bool,
