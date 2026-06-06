@@ -620,23 +620,23 @@ impl<'a> Monomorphizer<'a> {
                     .iter()
                     .map(|expr| self.rewrite_expr(expr, subst, active, types))
                     .collect::<Result<Vec<_>, _>>()?;
+                let mut value_types = Vec::new();
+                for expr in &rewritten_values {
+                    if matches!(expr, Expr::ArrayLiteral { elements, .. } if elements.is_empty()) {
+                        value_types.push(Type::Record(std::collections::BTreeMap::new()));
+                    } else {
+                        match self.infer_expr_type(expr, subst, types)? {
+                            Type::Multi(tys) => value_types.extend(tys),
+                            other => value_types.push(other),
+                        }
+                    }
+                }
                 let mut rewritten_bindings = Vec::with_capacity(bindings.len());
                 for (i, binding) in bindings.iter().enumerate() {
                     let inferred_ty = if let Some(ty) = &binding.ty {
                         substitute_type(ty, subst)
                     } else {
-                        if i < values.len() {
-                            if matches!(&values[i], Expr::ArrayLiteral { elements, .. } if elements.is_empty()) {
-                                Type::Record(std::collections::BTreeMap::new())
-                            } else {
-                                match self.infer_expr_type(&values[i], subst, types)? {
-                                    Type::Multi(tys) => tys.first().cloned().unwrap_or(Type::Unit),
-                                    other => other,
-                                }
-                            }
-                        } else {
-                            Type::Unit
-                        }
+                        value_types.get(i).cloned().unwrap_or(Type::Unit)
                     };
                     if let Some(symbol_id) = binding.symbol_id {
                         types.insert(symbol_id, inferred_ty.clone());
@@ -1262,6 +1262,11 @@ impl<'a> Monomorphizer<'a> {
                 args,
                 ..
             } => {
+                if let Some(name) = builtin_name(callee) {
+                    if let Some(ty) = self.infer_builtin_call_type(&name, args, subst, types)? {
+                        return Ok(ty);
+                    }
+                }
                 if let Expr::Name(_, Some(symbol_id), _) = callee.as_ref() {
                     if let Some(function) = self.generic_functions.get(symbol_id) {
                         let params = function
@@ -1531,6 +1536,39 @@ impl<'a> Monomorphizer<'a> {
         }
         Ok(inferred_type_args)
     }
+
+    fn infer_builtin_call_type(
+        &self,
+        name: &str,
+        args: &[Expr],
+        subst: &HashMap<String, Type>,
+        types: &HashMap<SymbolId, Type>,
+    ) -> Result<Option<Type>, Diagnostic> {
+        match name {
+            "print" | "assert" => Ok(Some(Type::Unit)),
+            "tostring" => Ok(Some(Type::String)),
+            "coroutine.create" => Ok(Some(Type::Thread)),
+            "coroutine.resume" => Ok(Some(Type::Multi(vec![
+                Type::Bool,
+                Type::Numeric(waluau_ast::NumericType::I32),
+            ]))),
+            "coroutine.close" => Ok(Some(Type::Bool)),
+            "math.abs" | "math.min" | "math.max" | "math.sqrt" | "math.floor" | "math.ceil"
+            | "math.trunc" | "math.nearest" | "math.copysign" => {
+                if let Some(first) = args.first() {
+                    let first_ty = self.infer_expr_type(first, subst, types)?;
+                    if let Type::Numeric(num) = first_ty {
+                        Ok(Some(Type::Numeric(num)))
+                    } else {
+                        Ok(Some(Type::number()))
+                    }
+                } else {
+                    Ok(Some(Type::number()))
+                }
+            }
+            _ => Ok(None),
+        }
+    }
 }
 
 fn mangle_type(ty: &Type) -> String {
@@ -1569,4 +1607,15 @@ fn generic_diagnostic(code: &'static str, message: impl Into<String>) -> Diagnos
     Diagnostic::new(format!("[{code}] {}", message.into()))
         .with_code(code)
         .with_category(DiagnosticCategory::Unsupported)
+}
+
+fn builtin_name(callee: &Expr) -> Option<String> {
+    match callee {
+        Expr::Name(name, _, _) => Some(name.clone()),
+        Expr::Field { base, name, .. } => match base.as_ref() {
+            Expr::Name(namespace, _, _) => Some(format!("{namespace}.{name}")),
+            _ => None,
+        },
+        _ => None,
+    }
 }
