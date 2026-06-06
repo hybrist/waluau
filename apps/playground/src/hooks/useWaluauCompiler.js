@@ -1,0 +1,230 @@
+import { useState, useEffect, useMemo } from 'react';
+import {
+  WALUAU_STRING_CONSTANTS_MODULE,
+  buildWaluauImports,
+  getWasmExports,
+  getDefaultParamValue,
+  executeCall,
+  classifyWasmInstantiationError
+} from '../utils/wasm.js';
+
+export default function useWaluauCompiler({ files, entryFile }) {
+  const [status, setStatus] = useState('loading'); // 'loading', 'ready', 'success', 'error'
+  const [loadErrorMsg, setLoadErrorMsg] = useState('');
+  const [compilerReady, setCompilerReady] = useState(false);
+  const [compileSource, setCompileSource] = useState(null);
+  const [runInstance, setRunInstance] = useState(null);
+  const [runError, setRunError] = useState(null);
+  const [exportsList, setExportsList] = useState([]);
+  const [initLogs, setInitLogs] = useState([]);
+  const [funcInputs, setFuncInputs] = useState({});
+  const [autoRun, setAutoRun] = useState(true);
+  const [manualResults, setManualResults] = useState({});
+
+  // Load compiler module
+  useEffect(() => {
+    let cancelled = false;
+
+    import('../waluau-wasm/waluau_wasm.js')
+      .then(async (module) => {
+        await module.default();
+        if (cancelled) {
+          return;
+        }
+        setCompileSource(() => module.compile_multi);
+        setCompilerReady(true);
+        setStatus('ready');
+        setLoadErrorMsg('');
+      })
+      .catch((err) => {
+        if (cancelled) {
+          return;
+        }
+        console.error('WASM load error:', err);
+        setStatus('error');
+        setLoadErrorMsg(`Failed to load WASM compiler: ${err.message}`);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Run compilation
+  const compilation = useMemo(() => {
+    if (!compilerReady || !compileSource) {
+      return {
+        output: '',
+        errorMsg: status === 'error' ? loadErrorMsg : '',
+      };
+    }
+
+    try {
+      const parsed = compileSource(files, entryFile);
+      return {
+        output: parsed,
+        errorMsg: '',
+      };
+    } catch (err) {
+      const message = typeof err === 'string' ? err : err?.message || String(err);
+      return {
+        output: '',
+        errorMsg: message,
+      };
+    }
+  }, [files, entryFile, compileSource, compilerReady, loadErrorMsg, status]);
+
+  const output = compilation.output;
+  const errorMsg = compilation.errorMsg;
+  const outputIr = typeof output === 'object' ? output.ir : '';
+  const outputWat = typeof output === 'object' ? output.wat : '';
+  const outputWasmBytes = typeof output === 'object' ? output.wasm : null;
+  const requiresWasmGc = typeof output === 'object' ? Boolean(output.requiresWasmGc) : false;
+  const displayStatus = compilerReady
+    ? errorMsg
+      ? 'error'
+      : output
+        ? 'success'
+        : 'ready'
+    : status;
+
+  // Sync runInstance, exportsList, inputs and results when Wasm changes
+  useEffect(() => {
+    let active = true;
+    async function loadModule() {
+      await Promise.resolve(); // Yield to prevent synchronous setState warnings
+      if (!outputWasmBytes) {
+        if (active) {
+          setRunInstance(null);
+          setRunError(null);
+          setExportsList([]);
+          setManualResults({});
+          setInitLogs([]);
+        }
+        return;
+      }
+      const wasmBuffer = new Uint8Array(outputWasmBytes);
+      const richSigs = output?.signatures || {};
+      const list = getWasmExports(wasmBuffer)
+        .filter(func => !func.name.startsWith('__waluau'))
+        .map(func => {
+          const richSig = (richSigs instanceof Map || (richSigs && typeof richSigs.get === 'function'))
+            ? richSigs.get(func.name)
+            : richSigs[func.name];
+          return {
+            ...func,
+            richParams: richSig ? richSig.params : null,
+            richReturns: richSig ? richSig.returns : null,
+          };
+        });
+      if (active) {
+        setExportsList(list);
+        setFuncInputs(prev => {
+          const next = { ...prev };
+          let changed = false;
+          for (const func of list) {
+            if (!next[func.name] || next[func.name].length !== func.params.length) {
+              const defaultVals = func.richParams
+                ? func.richParams.map(getDefaultParamValue)
+                : func.params.map(getDefaultParamValue);
+              next[func.name] = defaultVals;
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+      }
+      const capturedInitLogs = [];
+      try {
+        const imports = buildWaluauImports(wasmBuffer, (msg) => {
+          capturedInitLogs.push(msg);
+        });
+        const obj = await WebAssembly.instantiate(wasmBuffer, imports, {
+          builtins: ["js-string"],
+          importedStringConstants: WALUAU_STRING_CONSTANTS_MODULE,
+        });
+
+        if (active) {
+          setRunInstance(obj.instance);
+          setRunError(null);
+          setManualResults({});
+          setInitLogs(capturedInitLogs);
+        }
+      } catch (err) {
+        if (active) {
+          console.error("Instantiation failed:", err);
+          setRunInstance(null);
+          setRunError(classifyWasmInstantiationError(err, requiresWasmGc));
+          setManualResults({});
+          setInitLogs(capturedInitLogs);
+        }
+      }
+    }
+
+    loadModule();
+
+    return () => {
+      active = false;
+    };
+  }, [outputWasmBytes, requiresWasmGc, output]);
+
+  const handleInputChange = (funcName, paramIndex, value) => {
+    setFuncInputs(prev => {
+      const funcParams = prev[funcName] ? [...prev[funcName]] : [];
+      funcParams[paramIndex] = value;
+      return { ...prev, [funcName]: funcParams };
+    });
+  };
+
+  const handleRecordFieldChange = (funcName, paramIndex, fieldPath, value) => {
+    setFuncInputs(prev => {
+      const funcParams = prev[funcName] ? [...prev[funcName]] : [];
+      let current = { ...funcParams[paramIndex] };
+      funcParams[paramIndex] = current;
+
+      for (let i = 0; i < fieldPath.length - 1; i++) {
+        const key = fieldPath[i];
+        current[key] = { ...current[key] };
+        current = current[key];
+      }
+      current[fieldPath[fieldPath.length - 1]] = value;
+
+      return { ...prev, [funcName]: funcParams };
+    });
+  };
+
+  const handleManualRun = (funcName, params, richParams, richReturns) => {
+    const inputs = funcInputs[funcName] || (richParams || params).map(getDefaultParamValue);
+    const res = executeCall(runInstance, funcName, params, richParams, richReturns, inputs);
+    setManualResults(prev => ({ ...prev, [funcName]: res }));
+  };
+
+  const getResult = (funcName, params, richParams, richReturns) => {
+    if (autoRun) {
+      const inputs = funcInputs[funcName] || (richParams || params).map(getDefaultParamValue);
+      return executeCall(runInstance, funcName, params, richParams, richReturns, inputs);
+    } else {
+      return manualResults[funcName] || { isIdle: true };
+    }
+  };
+
+  return {
+    status,
+    loadErrorMsg,
+    outputIr,
+    outputWat,
+    outputWasmBytes,
+    displayStatus,
+    errorMsg,
+    runError,
+    exportsList,
+    initLogs,
+    funcInputs,
+    autoRun,
+    setAutoRun,
+    handleInputChange,
+    handleRecordFieldChange,
+    handleManualRun,
+    getResult
+  };
+}
