@@ -80,13 +80,8 @@ fn needs_closure_gc_types(module: &Module) -> bool {
                     IrInstruction::Cast { from, to, .. } => {
                         if matches!(
                             (from, to),
-                            (
-                                Type::Numeric(waluau_ast::NumericType::F64),
-                                Type::Unknown
-                            ) | (
-                                Type::Unknown,
-                                Type::Numeric(waluau_ast::NumericType::F64)
-                            )
+                            (Type::Numeric(waluau_ast::NumericType::F64), Type::Unknown)
+                                | (Type::Unknown, Type::Numeric(waluau_ast::NumericType::F64))
                         ) {
                             return true;
                         }

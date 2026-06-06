@@ -165,8 +165,7 @@ pub fn needed_host_type_slots(used: &UsedHostImports) -> [bool; HOST_TYPE_COUNT 
     if used.js_string_concat || used.bytes_concat {
         slots[1] = true;
     }
-    if used.bytes_literal || used.js_tostring_i32 || used.js_tostring_u32 || used.js_tostring_bool
-    {
+    if used.bytes_literal || used.js_tostring_i32 || used.js_tostring_u32 || used.js_tostring_bool {
         slots[2] = true;
     }
     if used.js_tostring_i64 || used.js_tostring_u64 {
