@@ -124,6 +124,7 @@ pub(super) fn infer_expr(
                     Type::Unit => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::String => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Bytes => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                    Type::Extern => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Named { .. } => {
                         Err(Diagnostic::new("unary '-' requires a numeric operand"))
                     }

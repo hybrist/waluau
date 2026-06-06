@@ -218,6 +218,49 @@ fn opaque_types_reject_implicit_conversion_to_their_representation() {
 }
 
 #[test]
+fn extern_type_aliases_are_nominal_and_lower_to_extern() {
+    let source = r#"
+        type Element = extern
+
+        function identity(value: Element): Element
+            return value
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+
+    assert_eq!(typed.type_declarations[0].ty, Type::Extern);
+    assert!(matches!(
+        &typed.functions[0].params[0].ty,
+        Type::Opaque { name, ty } if name == "Element" && **ty == Type::Extern
+    ));
+}
+
+#[test]
+fn distinct_extern_type_aliases_do_not_implicitly_convert() {
+    let source = r#"
+        type Element = extern
+        type Node = extern
+
+        function take_node(value: Node): Node
+            return value
+        end
+
+        function entry(value: Element): Node
+            return take_node(value)
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "cannot implicitly convert Element to Node"
+    );
+}
+
+#[test]
 fn generic_type_declarations_resolve_transparently() {
     let source = r#"
         type Pair<A, B> = {first: A, second: B}

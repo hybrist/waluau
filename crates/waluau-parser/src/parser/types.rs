@@ -142,6 +142,7 @@ impl Parser {
             Some(TokenKind::BoolType) => Ok(Type::Bool),
             Some(TokenKind::StringType) => Ok(Type::String),
             Some(TokenKind::BytesType) => Ok(Type::Bytes),
+            Some(TokenKind::ExternType) => Ok(Type::Extern),
             Some(TokenKind::ThreadType) => Ok(Type::Thread),
             Some(TokenKind::UnknownType) => Ok(Type::Unknown),
             Some(TokenKind::Identifier(name)) if self.check_simple(&TokenKind::LParen) => {
@@ -171,7 +172,7 @@ impl Parser {
                 Ok(Type::Named { name, type_args })
             }
             _ => Err(self.diagnostic_at_current(
-                "expected type (number, u32, u64, i32, i64, f32, f64, unit, bool, unknown, string, bytes, thread, Tag(T), a named type, Foo<T>, {T}, { x: T }, or (T1, T2) -> R)",
+                "expected type (number, u32, u64, i32, i64, f32, f64, unit, bool, unknown, string, bytes, extern, thread, Tag(T), a named type, Foo<T>, {T}, { x: T }, or (T1, T2) -> R)",
             )),
         }
     }

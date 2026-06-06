@@ -601,6 +601,31 @@ fn scalar_program_has_no_externref_types() {
 }
 
 #[test]
+fn extern_type_alias_lowers_to_externref() {
+    let source = r#"
+        type Element = extern
+
+        function identity(value: Element): Element
+            return value
+        end
+
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    assert!(
+        wat.contains("externref"),
+        "extern alias should lower to externref in Wasm signatures"
+    );
+}
+
+#[test]
 fn scalar_program_has_no_closure_gc_types() {
     // A program with no closures or function values should not emit the
     // $anyref_array, $func_val, or $boxed_f64 GC struct/array types.

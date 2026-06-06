@@ -113,6 +113,7 @@ pub enum Type {
     Bool,
     String,
     Bytes,
+    Extern,
     TaggedVariant(TaggedVariant),
     TaggedUnion(Vec<TaggedVariant>),
     Named {
@@ -260,6 +261,7 @@ impl std::fmt::Display for Type {
             Self::Unknown => f.write_str("unknown"),
             Self::String => f.write_str("string"),
             Self::Bytes => f.write_str("bytes"),
+            Self::Extern => f.write_str("extern"),
             Self::TaggedVariant(variant) => write!(f, "{}({})", variant.tag, variant.payload),
             Self::TaggedUnion(variants) => {
                 for (index, variant) in variants.iter().enumerate() {
