@@ -404,6 +404,7 @@ pub(crate) fn build_function(
         cell_names: captured_symbols,
         sources,
         file_path: function.file_path.clone(),
+        tag_ids: BTreeMap::new(),
     };
     for stmt in &function.body {
         if builder.current_block == DEAD_BLOCK {
@@ -436,6 +437,10 @@ struct Builder<'a> {
     cell_names: HashSet<SymbolId>,
     sources: &'a BTreeMap<String, String>,
     file_path: String,
+    /// Stable discriminant IDs for tagged-union variant names, assigned lazily in
+    /// encounter order.  Both producers and consumers within the same function share
+    /// this map so IDs are always consistent.
+    tag_ids: BTreeMap<String, i32>,
 }
 
 #[derive(Clone)]
@@ -530,6 +535,12 @@ impl Builder<'_> {
             .instructions
             .push((value, instruction));
         value
+    }
+
+    /// Return (and lazily assign) the stable i32 discriminant for a tagged-union variant name.
+    fn variant_tag_id(&mut self, name: &str) -> i32 {
+        let next = self.tag_ids.len() as i32;
+        *self.tag_ids.entry(name.to_string()).or_insert(next)
     }
 
     fn instruction(&self, value: ValueId) -> Option<&Instruction> {
@@ -1058,6 +1069,33 @@ impl Builder<'_> {
         Ok(())
     }
 
+    /// Compute narrowed type scopes for `if result is Variant then ... else ... end`.
+    /// Returns `(then_types, else_types)` — clones of `types` with the narrowed type
+    /// applied to the named variable in each branch.
+    fn narrowed_variant_type_scopes(
+        condition: &Expr,
+        types: &HashMap<SymbolId, Type>,
+    ) -> (HashMap<SymbolId, Type>, HashMap<SymbolId, Type>) {
+        let mut then_types = types.clone();
+        let mut else_types = types.clone();
+        let Expr::IsVariant { expr, tag, .. } = condition else {
+            return (then_types, else_types);
+        };
+        let Expr::Name(_, Some(symbol_id), _) = expr.as_ref() else {
+            return (then_types, else_types);
+        };
+        let Some(ty) = types.get(symbol_id) else {
+            return (then_types, else_types);
+        };
+        if let Some(variant) = ty.tagged_variant(tag) {
+            then_types.insert(*symbol_id, Type::TaggedVariant(variant));
+        }
+        if let Some(remaining) = ty.remove_tagged_variant(tag) {
+            else_types.insert(*symbol_id, remaining);
+        }
+        (then_types, else_types)
+    }
+
     fn lower_if(
         &mut self,
         condition: &Expr,
@@ -1066,6 +1104,8 @@ impl Builder<'_> {
         env: &mut HashMap<SymbolId, ValueId>,
         types: &mut HashMap<SymbolId, Type>,
     ) -> Result<(), Diagnostic> {
+        let (then_types_init, else_types_init) =
+            Self::narrowed_variant_type_scopes(condition, types);
         let condition = self.lower_expr(condition, env, types, Some(Type::Bool))?;
         let then_block = self.new_block();
         let else_block = self.new_block();
@@ -1080,7 +1120,7 @@ impl Builder<'_> {
         );
 
         let mut then_env = env.clone();
-        let mut then_types = types.clone();
+        let mut then_types = then_types_init;
         self.current_block = then_block;
         for stmt in then_body {
             if self.current_block == DEAD_BLOCK {
@@ -1094,7 +1134,7 @@ impl Builder<'_> {
         }
 
         let mut else_env = env.clone();
-        let mut else_types = types.clone();
+        let mut else_types = else_types_init;
         self.current_block = else_block;
         for stmt in else_body {
             if self.current_block == DEAD_BLOCK {
@@ -1133,6 +1173,21 @@ impl Builder<'_> {
                     }
                     let phi = self.emit(Instruction::Phi(incoming));
                     env.insert(name, phi);
+                }
+            }
+        }
+        // Propagate narrowed types from the surviving branch when one side diverges.
+        // This enables narrowing to persist after `if result is X then return ... end`.
+        if then_exit == DEAD_BLOCK {
+            for name in types.keys().cloned().collect::<Vec<_>>() {
+                if let Some(narrowed) = else_types.get(&name) {
+                    types.insert(name, narrowed.clone());
+                }
+            }
+        } else if else_exit == DEAD_BLOCK {
+            for name in types.keys().cloned().collect::<Vec<_>>() {
+                if let Some(narrowed) = then_types.get(&name) {
+                    types.insert(name, narrowed.clone());
                 }
             }
         }
@@ -2132,10 +2187,31 @@ impl Builder<'_> {
                 let cast = self.explicit_cast(value, actual, ty.clone())?;
                 self.coerce_value(cast, ty.clone(), expected)?
             }
-            Expr::IsVariant { .. } => {
-                return Err(Diagnostic::new(
-                    "tagged unions are not yet supported in IR lowering",
-                ));
+            Expr::IsVariant { expr, tag, .. } => {
+                // Lower the base expression as-is (the underlying IR value is the canonical record).
+                let base = self.lower_expr(expr, env, types, None)?;
+                let tag_id = self.variant_tag_id(tag);
+                let tag_field_ty = Type::Numeric(NumericType::I32);
+                // StructGet "tag" field from the canonical record
+                let tag_val = self.emit(Instruction::StructGet {
+                    base,
+                    field: "tag".to_string(),
+                    field_ty: tag_field_ty.clone(),
+                });
+                let expected_tag = self.emit(Instruction::Number {
+                    ty: NumericType::I32,
+                    literal: NumberLiteral {
+                        raw: tag_id.to_string(),
+                    },
+                });
+                let result = self.emit(Instruction::Binary {
+                    op: BinaryOp::Eq,
+                    left: tag_val,
+                    right: expected_tag,
+                    operand_ty: tag_field_ty,
+                    result_ty: Type::Bool,
+                });
+                self.coerce_value(result, Type::Bool, expected)?
             }
             Expr::If {
                 condition,
@@ -2455,6 +2531,31 @@ impl Builder<'_> {
             }
             Expr::Field { base, name, .. } => {
                 let base_ty = self.infer_expr_type(base, types, None)?;
+                // Special case: `.value` on a narrowed tagged variant — the IR value is a
+                // canonical record, so we must StructGet the `unknown` value field and then
+                // Cast (unbox) to the payload type.
+                if matches!(&base_ty, Type::TaggedVariant(_)) && name == "value" {
+                    let payload_ty = base_ty.record_field(name).expect("TaggedVariant has value field");
+                    if matches!(&payload_ty, Type::String | Type::Bytes) {
+                        return Err(Diagnostic::new(format!(
+                            "reading .value of type {payload_ty} is not yet supported \
+                             (string/bytes payloads cannot be unboxed from anyref)"
+                        )));
+                    }
+                    // Lower base without expected (avoids Record<->TaggedVariant coerce mismatch).
+                    let base_val = self.lower_expr(base, env, types, None)?;
+                    let unknown_val = self.emit(Instruction::StructGet {
+                        base: base_val,
+                        field: "value".to_string(),
+                        field_ty: Type::Unknown,
+                    });
+                    let cast_val = self.emit(Instruction::Cast {
+                        value: unknown_val,
+                        from: Type::Unknown,
+                        to: payload_ty.clone(),
+                    });
+                    return self.coerce_value(cast_val, payload_ty, expected);
+                }
                 let field_ty = base_ty
                     .record_field(name)
                     .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
@@ -2623,6 +2724,7 @@ impl Builder<'_> {
             cell_names: capture_param_symbols,
             sources: self.sources,
             file_path: function.file_path.clone(),
+            tag_ids: BTreeMap::new(),
         };
         if let Some(_name) = &function.name {
             let symbol_id = function.symbol_id.expect("resolved symbol_id");
@@ -2733,9 +2835,7 @@ impl Builder<'_> {
                 Some(Type::Unknown) => Ok(Type::Unknown),
                 None => Ok(Type::number()),
             },
-            Expr::IsVariant { .. } => Err(Diagnostic::new(
-                "tagged unions are not yet supported in IR lowering",
-            )),
+            Expr::IsVariant { .. } => coerce_type(Type::Bool, expected),
             Expr::Bool(..) => Ok(Type::Bool),
             Expr::String(..) => Ok(Type::String),
             Expr::Bytes(..) => Ok(Type::Bytes),
@@ -2899,7 +2999,7 @@ impl Builder<'_> {
                         return result;
                     }
                     if let Some(result) =
-                        self.infer_coroutine_builtin_call_type(&name, expr, types)
+                        self.infer_coroutine_builtin_call_type(&name, expr, types, expected.clone())
                     {
                         return result;
                     }
@@ -3288,6 +3388,22 @@ impl Builder<'_> {
                     Ok(value) => value,
                     Err(error) => return Some(Err(error)),
                 };
+                // When the expected type is a tagged union, emit the tagged-resume instruction
+                // that returns a canonical `{ tag: i32, value: unknown }` record.
+                if matches!(&expected, Some(Type::TaggedUnion(_)) | Some(Type::TaggedVariant(_))) {
+                    let yielded_tag = self.variant_tag_id("Yielded");
+                    let finished_tag = self.variant_tag_id("Finished");
+                    let error_tag = self.variant_tag_id("Error");
+                    let value = self.emit(Instruction::CoroutineResumeTagged {
+                        coroutine,
+                        yielded_tag,
+                        finished_tag,
+                        error_tag,
+                    });
+                    // Return the canonical record value; the source-level TaggedUnion type is
+                    // maintained by the caller via the explicit annotation in types[name].
+                    return Some(Ok(value));
+                }
                 let value = self.emit(Instruction::CoroutineResume { coroutine });
                 Some(self.coerce_value(value, Type::Multi(vec![Type::Bool, i32_ty]), expected))
             }
@@ -3337,6 +3453,7 @@ impl Builder<'_> {
         name: &str,
         call: &Expr,
         types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
     ) -> Option<Result<Type, Diagnostic>> {
         let Expr::Call { args, .. } = call else {
             return None;
@@ -3377,10 +3494,16 @@ impl Builder<'_> {
                     Err(error) => return Some(Err(error)),
                 };
                 match coroutine_ty {
-                    Type::Thread => Some(Ok(Type::Multi(vec![
-                        Type::Bool,
-                        Type::Numeric(NumericType::I32),
-                    ]))),
+                    Type::Thread => {
+                        // Tagged-union expected type → result is canonical record (IR level).
+                        if matches!(&expected, Some(Type::TaggedUnion(_)) | Some(Type::TaggedVariant(_))) {
+                            return Some(Ok(Type::canonical_tagged_union_record()));
+                        }
+                        Some(Ok(Type::Multi(vec![
+                            Type::Bool,
+                            Type::Numeric(NumericType::I32),
+                        ])))
+                    }
                     _ => Some(Err(Diagnostic::new("coroutine.resume expects a thread"))),
                 }
             }

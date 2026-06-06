@@ -254,6 +254,21 @@ fn verify_function(
                         )));
                     }
                 }
+                Instruction::CoroutineResumeTagged { coroutine, .. } => {
+                    let coroutine_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *coroutine,
+                    )?;
+                    if coroutine_ty != Type::Thread {
+                        return Err(Diagnostic::new(format!(
+                            "coroutine resume-tagged in block {:?} expects thread, got {}",
+                            block.id, coroutine_ty
+                        )));
+                    }
+                }
                 Instruction::Closure {
                     name,
                     captures,
@@ -808,6 +823,7 @@ fn infer_instruction_type(
             Type::Bool,
             Type::Numeric(NumericType::I32),
         ])),
+        Instruction::CoroutineResumeTagged { .. } => Ok(Type::canonical_tagged_union_record()),
         Instruction::CoroutineClose { .. } => Ok(Type::Bool),
         Instruction::Closure {
             params,

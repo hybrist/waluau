@@ -311,15 +311,15 @@ multiple arguments.
 
 ## Priority Order
 
-| # | Feature | Depends on | Priority |
-|---|---------|-----------|---------|
-| 1 | `declare function` | — | High |
-| 2 | `type T = extern` | — | High |
-| 3 | Nullable `T?` on extern types | 2 | High |
-| 4 | User-visible discriminated unions + `match` | — | Medium |
-| 5 | Generic type constructors | 2, 4 | Medium |
-| 6 | Method dispatch on host objects | 1, 2 | Medium |
-| 7 | Variadic arguments | 1 | Low |
+| # | Feature | Issue | Depends on | Priority |
+|--:|---------|-------|-----------|---------|
+| 1 | `declare function` | [waluau-rw8e](../../../bd/issues/waluau-rw8e) | — | High |
+| 2 | `type T = extern` | [waluau-oeb5](../../../bd/issues/waluau-oeb5) | — | High |
+| 3 | Nullable `T?` on extern types | [waluau-s21a](../../../bd/issues/waluau-s21a) | 2 | High |
+| 4 | User-visible discriminated unions + `match` | [waluau-ngdl](../../../bd/issues/waluau-ngdl) | — | Medium |
+| 5 | Generic type constructors | [waluau-xzbg](../../../bd/issues/waluau-xzbg) | 2, 4 | Medium |
+| 6 | Method dispatch on host objects | [waluau-6mcb](../../../bd/issues/waluau-6mcb) | 1, 2 | Medium |
+| 7 | Variadic arguments | [waluau-s2ui](../../../bd/issues/waluau-s2ui) | 1 | Low |
 
 Items 1–3 are the minimum viable set: they let you write a thin DOM shim, handle
 nullable returns from `getElementById`-style APIs, and pass typed objects

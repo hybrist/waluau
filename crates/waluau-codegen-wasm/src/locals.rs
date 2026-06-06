@@ -24,6 +24,10 @@ pub(crate) struct LocalPlan {
     pub(crate) coroutine_save_local: Option<u32>,
     /// Scratch i32 local for spilling a yielded value before mutating the state struct.
     pub(crate) coroutine_yield_tmp: Option<u32>,
+    /// Scratch i32 local for spilling the i32 continuation result in tagged resume.
+    pub(crate) tagged_resume_value_tmp: Option<u32>,
+    /// Scratch i32 local for reading the post-continuation state tag in tagged resume.
+    pub(crate) tagged_resume_state_tmp: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -116,10 +120,17 @@ pub(crate) fn build_local_plan(
     extra_locals.push(ValType::I32);
 
     let has_resume = function.blocks.values().any(|block| {
-        block
-            .instructions
-            .iter()
-            .any(|(_, instruction)| matches!(instruction, IrInstruction::CoroutineResume { .. }))
+        block.instructions.iter().any(|(_, instruction)| {
+            matches!(
+                instruction,
+                IrInstruction::CoroutineResume { .. } | IrInstruction::CoroutineResumeTagged { .. }
+            )
+        })
+    });
+    let has_tagged_resume = function.blocks.values().any(|block| {
+        block.instructions.iter().any(|(_, instruction)| {
+            matches!(instruction, IrInstruction::CoroutineResumeTagged { .. })
+        })
     });
     let coroutine_save_local = if has_resume {
         let slot = function.params.len() as u32 + extra_locals.len() as u32;
@@ -143,6 +154,21 @@ pub(crate) fn build_local_plan(
         None
     };
 
+    let tagged_resume_value_tmp = if has_tagged_resume {
+        let slot = function.params.len() as u32 + extra_locals.len() as u32;
+        extra_locals.push(ValType::I32);
+        Some(slot)
+    } else {
+        None
+    };
+    let tagged_resume_state_tmp = if has_tagged_resume {
+        let slot = function.params.len() as u32 + extra_locals.len() as u32;
+        extra_locals.push(ValType::I32);
+        Some(slot)
+    } else {
+        None
+    };
+
     Ok(LocalPlan {
         slots,
         multi_slots,
@@ -152,6 +178,8 @@ pub(crate) fn build_local_plan(
         pc_local,
         coroutine_save_local,
         coroutine_yield_tmp,
+        tagged_resume_value_tmp,
+        tagged_resume_state_tmp,
     })
 }
 
@@ -196,6 +224,9 @@ pub(crate) fn infer_value_types(
                 IrInstruction::CoroutineCreate { .. } => Type::Thread,
                 IrInstruction::CoroutineResume { .. } => {
                     Type::Multi(vec![Type::Bool, Type::Numeric(NumericType::I32)])
+                }
+                IrInstruction::CoroutineResumeTagged { .. } => {
+                    Type::canonical_tagged_union_record()
                 }
                 IrInstruction::CoroutineClose { .. } => Type::Bool,
                 IrInstruction::Closure {
@@ -546,6 +577,7 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
         }
         IrInstruction::CoroutineCreate { callee, .. } => vec![*callee],
         IrInstruction::CoroutineResume { coroutine, .. }
+        | IrInstruction::CoroutineResumeTagged { coroutine, .. }
         | IrInstruction::CoroutineClose { coroutine, .. } => vec![*coroutine],
         IrInstruction::Closure { captures, .. } => captures.clone(),
         IrInstruction::ArrayNew { elements, .. } => elements.clone(),
@@ -607,6 +639,7 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         IrInstruction::CallValue { .. } => false,
         IrInstruction::CoroutineCreate { .. } => false,
         IrInstruction::CoroutineResume { coroutine, .. }
+        | IrInstruction::CoroutineResumeTagged { coroutine, .. }
         | IrInstruction::CoroutineClose { coroutine, .. } => *coroutine == value,
         IrInstruction::Closure { captures, .. } => captures.first().copied() == Some(value),
         IrInstruction::ArrayNew { elements, .. } => elements.first().copied() == Some(value),

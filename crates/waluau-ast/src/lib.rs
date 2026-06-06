@@ -187,6 +187,16 @@ impl Type {
         }
     }
 
+    /// The canonical GC record used at runtime to represent any tagged-union value.
+    /// Layout: `{ tag: i32, value: unknown }` where `tag` is the variant discriminant
+    /// and `value` holds the boxed payload (anyref / i31ref).
+    pub fn canonical_tagged_union_record() -> Self {
+        let mut fields = BTreeMap::new();
+        fields.insert("tag".to_string(), Type::Numeric(NumericType::I32));
+        fields.insert("value".to_string(), Type::Unknown);
+        Type::Record(fields)
+    }
+
     pub fn remove_tagged_variant(&self, tag: &str) -> Option<Type> {
         match self {
             Self::TaggedVariant(variant) if variant.tag == tag => None,

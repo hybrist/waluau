@@ -86,6 +86,15 @@ pub enum Instruction {
     CoroutineResume {
         coroutine: ValueId,
     },
+    /// Advance the coroutine and return a canonical tagged-union record `{ tag: i32, value: unknown }`.
+    /// `yielded_tag`/`finished_tag`/`error_tag` are the stable i32 discriminants for each variant.
+    /// Result type: `Type::canonical_tagged_union_record()`.
+    CoroutineResumeTagged {
+        coroutine: ValueId,
+        yielded_tag: i32,
+        finished_tag: i32,
+        error_tag: i32,
+    },
     /// Transition a suspended or dead coroutine to the dead state.
     /// Result type: Bool — true if closed cleanly or already dead, false if errored.
     CoroutineClose {

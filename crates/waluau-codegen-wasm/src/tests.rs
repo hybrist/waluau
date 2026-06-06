@@ -734,3 +734,36 @@ fn emits_structured_if_for_early_return() {
     );
     assert!(!wat.contains("i32.eq"), "should not use pc dispatch");
 }
+
+#[test]
+fn emits_valid_wasm_for_tagged_union_coroutine_resume() {
+    let source = r#"
+        function run(): i32
+            local co: thread = coroutine.create(function(): i32
+                coroutine.yield(10)
+                return 42
+            end)
+            local result: Finished(i32) | Yielded(i32) | Error(string) = coroutine.resume(co)
+            if result is Finished then
+                return result.value
+            else
+                return 0
+            end
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    let wat = print_bytes(&wasm).expect("wat should print");
+    // Tagged resume should produce a struct.new with the canonical record type.
+    assert!(
+        wat.contains("struct.new"),
+        "should emit struct.new for tagged-union record"
+    );
+}
