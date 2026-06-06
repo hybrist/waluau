@@ -805,10 +805,18 @@ impl Resolver {
                 self.resolve_expr(then_expr)?;
                 self.resolve_expr(else_expr)?;
             }
-            Expr::Call { callee, args, .. } => {
+            Expr::Call {
+                callee,
+                args,
+                method_call_origin,
+                ..
+            } => {
                 self.resolve_expr(callee)?;
                 for arg in args {
                     self.resolve_expr(arg)?;
+                }
+                if let Some(origin) = method_call_origin {
+                    self.resolve_expr(&mut origin.original_receiver)?;
                 }
             }
             Expr::MethodCall { receiver, args, .. } => {

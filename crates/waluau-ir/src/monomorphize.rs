@@ -351,7 +351,7 @@ impl<'a> Monomorphizer<'a> {
             | Expr::String(..)
             | Expr::Bytes(..)
             | Expr::Require(..) => expr.clone(),
-            Expr::Name(name, _, span) => Expr::Name(name.clone(), None, *span),
+            Expr::Name(name, symbol_id, span) => Expr::Name(name.clone(), *symbol_id, *span),
             Expr::Unary { op, expr, span } => Expr::Unary {
                 op: *op,
                 expr: Box::new(self.rewrite_expr(expr, subst, active)?),
