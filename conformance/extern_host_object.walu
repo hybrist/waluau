@@ -1,0 +1,11 @@
+-- User-declared extern aliases are opaque source types backed by host externref values.
+
+type Element = extern
+
+function identity(value: Element): Element
+    return value
+end
+
+function pass_back(value: Element): Element
+    return value
+end

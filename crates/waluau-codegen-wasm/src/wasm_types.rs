@@ -56,8 +56,7 @@ pub(crate) fn wasm_type(
                 heap_type: HeapType::Concrete(index),
             }))
         }
-        Type::String => Ok(externref_val_type()),
-        Type::Bytes => Ok(externref_val_type()),
+        Type::String | Type::Bytes | Type::Extern => Ok(externref_val_type()),
         Type::Unknown => Ok(anyref_val_type()),
         Type::Unit => Err(Diagnostic::new(
             "unit type has no wasm value representation",

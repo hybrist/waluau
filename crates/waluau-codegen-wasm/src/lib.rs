@@ -2258,7 +2258,7 @@ fn emit_binary(
                     "bytes add is not supported during wasm emission",
                 ));
             }
-            Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
+            Type::Extern | Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -2324,7 +2324,7 @@ fn emit_binary(
                     "bytes sub is not supported during wasm emission",
                 ));
             }
-            Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
+            Type::Extern | Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -2373,7 +2373,7 @@ fn emit_binary(
                     "bytes mul is not supported during wasm emission",
                 ));
             }
-            Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
+            Type::Extern | Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -2428,7 +2428,7 @@ fn emit_binary(
                     "bytes div is not supported during wasm emission",
                 ));
             }
-            Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
+            Type::Extern | Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -2473,7 +2473,7 @@ fn emit_binary(
                     ctx.host_func_index(host::IMPORT_BYTES_EQ_FUNC)?,
                 ));
             }
-            Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
+            Type::Extern | Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -2532,7 +2532,7 @@ fn emit_binary(
                 out.instruction(&Instruction::I32Const(0));
                 out.instruction(&Instruction::I32LtS);
             }
-            Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
+            Type::Extern | Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -2591,7 +2591,7 @@ fn emit_binary(
                 out.instruction(&Instruction::I32Const(0));
                 out.instruction(&Instruction::I32GtS);
             }
-            Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
+            Type::Extern | Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(

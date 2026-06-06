@@ -1801,6 +1801,11 @@ impl Builder<'_> {
                             "numeric literal is not assignable to bytes",
                         ));
                     }
+                    Type::Extern => {
+                        return Err(Diagnostic::new(
+                            "numeric literal is not assignable to extern",
+                        ));
+                    }
                     Type::Named { name, .. } => {
                         return Err(Diagnostic::new(format!(
                             "numeric literal is not assignable to {name}",
@@ -2023,6 +2028,11 @@ impl Builder<'_> {
                                 ));
                             }
                             Type::Bytes => {
+                                return Err(Diagnostic::new(
+                                    "unary '-' requires a numeric operand",
+                                ));
+                            }
+                            Type::Extern => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -2673,6 +2683,9 @@ impl Builder<'_> {
                 Some(Type::Bytes) => Err(Diagnostic::new(
                     "numeric literal is not assignable to bytes",
                 )),
+                Some(Type::Extern) => Err(Diagnostic::new(
+                    "numeric literal is not assignable to extern",
+                )),
                 Some(Type::Named { name, .. }) => Err(Diagnostic::new(format!(
                     "numeric literal is not assignable to {name}",
                 ))),
@@ -2796,6 +2809,9 @@ impl Builder<'_> {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                         Type::Bytes => {
+                            Err(Diagnostic::new("unary '-' requires a numeric operand"))
+                        }
+                        Type::Extern => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                         Type::Named { .. } | Type::Opaque { .. } => {
@@ -3780,6 +3796,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             ))),
             Type::Bytes => Err(Diagnostic::new(format!(
                 "cannot implicitly convert bytes to {expected_numeric}",
+            ))),
+            Type::Extern => Err(Diagnostic::new(format!(
+                "cannot implicitly convert extern to {expected_numeric}",
             ))),
             Type::Named { name, .. } => Err(Diagnostic::new(format!(
                 "cannot implicitly convert {name} to {expected_numeric}",

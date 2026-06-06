@@ -138,13 +138,18 @@ function buildWaluauImports(wasmBuffer) {
 }
 
 export async function compileAndInstantiate(files, entryFile = '/main.walu') {
+  await compileAndInstantiateWithExports(files, entryFile);
+}
+
+export async function compileAndInstantiateWithExports(files, entryFile = '/main.walu') {
   const module = await import('./waluau-wasm/waluau_wasm.js');
   await module.default();
   const output = module.compile_multi(files, entryFile);
   const wasmBuffer = new Uint8Array(output.wasm);
   const imports = buildWaluauImports(wasmBuffer);
-  await WebAssembly.instantiate(wasmBuffer, imports, {
+  const result = await WebAssembly.instantiate(wasmBuffer, imports, {
     builtins: ['js-string'],
     importedStringConstants: WALUAU_STRING_CONSTANTS_MODULE,
   });
+  return result.instance.exports;
 }

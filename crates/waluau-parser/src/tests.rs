@@ -87,6 +87,29 @@ fn parses_type_declarations_and_named_type_references() {
 }
 
 #[test]
+fn parses_extern_type_declaration() {
+    let source = r#"
+        type Element = extern
+
+        function identity(value: Element): Element
+            return value
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert_eq!(program.type_declarations.len(), 1);
+    assert_eq!(program.type_declarations[0].name, "Element");
+    assert_eq!(program.type_declarations[0].ty, Type::Extern);
+    assert_eq!(
+        program.functions[0].params[0].ty,
+        Type::Named {
+            name: "Element".into(),
+            type_args: vec![],
+        }
+    );
+}
+
+#[test]
 fn parses_generic_type_declarations_and_references() {
     let source = r#"
         type Pair<A, B> = {first: A, second: B}

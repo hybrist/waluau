@@ -278,8 +278,7 @@ pub(crate) fn array_storage_type(
         Type::Numeric(NumericType::F32) => Ok(StorageType::Val(ValType::F32)),
         Type::Numeric(NumericType::F64) => Ok(StorageType::Val(ValType::F64)),
         Type::Bool => Ok(StorageType::Val(ValType::I32)),
-        Type::String => Ok(StorageType::Val(externref_val_type())),
-        Type::Bytes => Ok(StorageType::Val(externref_val_type())),
+        Type::String | Type::Bytes | Type::Extern => Ok(StorageType::Val(externref_val_type())),
         Type::Unknown => Ok(StorageType::Val(crate::wasm_types::anyref_val_type())),
         Type::Array(_) => {
             let index = registry.index(element_ty)?;
@@ -312,8 +311,7 @@ pub(crate) fn record_storage_type(
         Type::Numeric(NumericType::F32) => Ok(StorageType::Val(ValType::F32)),
         Type::Numeric(NumericType::F64) => Ok(StorageType::Val(ValType::F64)),
         Type::Bool => Ok(StorageType::Val(ValType::I32)),
-        Type::String => Ok(StorageType::Val(externref_val_type())),
-        Type::Bytes => Ok(StorageType::Val(externref_val_type())),
+        Type::String | Type::Bytes | Type::Extern => Ok(StorageType::Val(externref_val_type())),
         Type::Array(_) => {
             let index = registry.index(field_ty)?;
             Ok(StorageType::Val(ValType::Ref(RefType {
