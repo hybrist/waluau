@@ -828,6 +828,14 @@ fn emit_active_state_field_set_const(
     Ok(())
 }
 
+/// Returns `true` if the block is trivially dead: it has no instructions and is unreachable.
+/// The IR builder creates such blocks as placeholders (e.g., dead merge blocks after both
+/// branches of an if/else both return), so they can appear in the block map but are never
+/// actually reached.
+fn is_trivially_dead(block: &BasicBlock) -> bool {
+    block.instructions.is_empty() && matches!(block.terminator, Terminator::Unreachable { .. })
+}
+
 fn try_emit_structured_fast_path(
     out: &mut Function,
     function: &IrFunction,
@@ -840,23 +848,55 @@ fn try_emit_structured_fast_path(
         return Ok(false);
     }
 
-    if function.blocks.len() == 3 {
+    // Single-block straight-line function: just emit it directly without any loop wrapper.
+    if function.blocks.len() == 1 {
         let entry = function
             .blocks
             .get(&function.entry)
             .ok_or_else(|| Diagnostic::new("missing entry block"))?;
-        let Terminator::Branch {
-            condition,
-            then_block,
-            else_block,
-        } = entry.terminator
-        else {
-            return Ok(false);
-        };
+        if matches!(
+            entry.terminator,
+            Terminator::Return(_) | Terminator::Unreachable { .. }
+        ) {
+            emit_block(
+                out,
+                function,
+                entry,
+                ctx,
+                value_types,
+                local_plan,
+                value_defs,
+            )?;
+            return Ok(true);
+        }
+    }
+
+    let entry = function
+        .blocks
+        .get(&function.entry)
+        .ok_or_else(|| Diagnostic::new("missing entry block"))?;
+
+    // If/else where both branches return: emit a structured `if/else/end` with no loop wrapper.
+    // The IR builder always creates a (dead) merge block even when both arms return, so we use
+    // `is_trivially_dead` to allow any number of such placeholder blocks alongside the three
+    // real blocks (entry, then, else).
+    if let Terminator::Branch {
+        condition,
+        then_block,
+        else_block,
+    } = entry.terminator
+    {
         let then_bb = function.blocks.get(&then_block);
         let else_bb = function.blocks.get(&else_block);
+
+        // Both branches return → structured if/else.
         if then_bb.is_some_and(|b| matches!(b.terminator, Terminator::Return(_)))
             && else_bb.is_some_and(|b| matches!(b.terminator, Terminator::Return(_)))
+            && function
+                .blocks
+                .values()
+                .filter(|b| b.id != function.entry && b.id != then_block && b.id != else_block)
+                .all(is_trivially_dead)
         {
             emit_block_instructions(
                 out,
@@ -891,15 +931,85 @@ fn try_emit_structured_fast_path(
                 value_defs,
             )?;
             out.instruction(&Instruction::End);
+            // Both branches executed `return`, so the code here is unreachable.
+            // Emit `unreachable` so the wasm validator accepts the empty stack even
+            // for non-void functions.
+            out.instruction(&Instruction::Unreachable);
             return Ok(true);
+        }
+
+        // One-sided if with early return: the then branch returns immediately while the else
+        // branch falls through to a single merge block that itself returns.
+        //   entry: Branch(cond, then=Return, else=Jump(merge))
+        //   merge: Return
+        // Any additional placeholder blocks must be trivially dead.
+        if let (Some(then_bb), Some(else_bb)) = (then_bb, else_bb) {
+            if matches!(then_bb.terminator, Terminator::Return(_)) {
+                if let Terminator::Jump(merge_id) = else_bb.terminator {
+                    if let Some(merge_bb) = function.blocks.get(&merge_id) {
+                        if matches!(merge_bb.terminator, Terminator::Return(_))
+                            && function
+                                .blocks
+                                .values()
+                                .filter(|b| {
+                                    b.id != function.entry
+                                        && b.id != then_block
+                                        && b.id != else_block
+                                        && b.id != merge_id
+                                })
+                                .all(is_trivially_dead)
+                        {
+                            emit_block_instructions(
+                                out,
+                                function,
+                                entry,
+                                ctx,
+                                value_types,
+                                local_plan,
+                                value_defs,
+                            )?;
+                            emit_value_operand(out, local_plan, condition)?;
+                            out.instruction(&Instruction::If(BlockType::Empty));
+                            emit_phi_copies(out, function, entry.id, then_block, local_plan)?;
+                            emit_block(
+                                out,
+                                function,
+                                then_bb,
+                                ctx,
+                                value_types,
+                                local_plan,
+                                value_defs,
+                            )?;
+                            out.instruction(&Instruction::End);
+                            emit_phi_copies(out, function, entry.id, else_block, local_plan)?;
+                            emit_block_instructions(
+                                out,
+                                function,
+                                else_bb,
+                                ctx,
+                                value_types,
+                                local_plan,
+                                value_defs,
+                            )?;
+                            emit_phi_copies(out, function, else_block, merge_id, local_plan)?;
+                            emit_block(
+                                out,
+                                function,
+                                merge_bb,
+                                ctx,
+                                value_types,
+                                local_plan,
+                                value_defs,
+                            )?;
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
         }
     }
 
     if function.blocks.len() == 4 {
-        let entry = function
-            .blocks
-            .get(&function.entry)
-            .ok_or_else(|| Diagnostic::new("missing entry block"))?;
         let Terminator::Jump(first_target) = entry.terminator else {
             return Ok(false);
         };
