@@ -993,11 +993,18 @@ fn type_checks_method_declaration_on_named_record_type() {
             return self.x + self.y + delta
         end
 
+        function Point:add(other: Point): Point
+            return { x = (self.x + other.x)::i32, y = (self.y + other.y)::i32 }
+        end
+
         local a: Point = { x = 2::i32, y = 4::i32 }
         local b: Point = { x = 10::i32, y = 1::i32 }
+        local c: Point = a:add(b)
 
         assert(a:sum_with(3::i32) == 9::i32)
         assert(b:sum_with(3::i32) == 14::i32)
+        assert(c.x == 12::i32)
+        assert(c.y == 5::i32)
     "#;
     let program = parse(source).expect("parse should succeed");
     super::type_check(&program).expect("type check should succeed");
