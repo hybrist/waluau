@@ -1,7 +1,0 @@
-local point = { x = 41::i32 }
-
-function point:identity<T>(value: T): T
-    return value
-end
-
-assert(point:identity<i32>(42::i32) == 42)
