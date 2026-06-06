@@ -985,6 +985,56 @@ fn type_checks_method_call_via_method_declaration() {
 }
 
 #[test]
+fn type_checks_method_declaration_on_named_record_type() {
+    let source = r#"
+        type Point = { x: i32, y: i32 }
+
+        function Point:sum_with(delta: i32): i32
+            return self.x + self.y + delta
+        end
+
+        local a: Point = { x = 2::i32, y = 4::i32 }
+        local b: Point = { x = 10::i32, y = 1::i32 }
+
+        assert(a:sum_with(3::i32) == 9::i32)
+        assert(b:sum_with(3::i32) == 14::i32)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn preserves_type_method_declarations_as_direct_functions() {
+    let source = r#"
+        type Point = { x: i32, y: i32 }
+
+        function Point:sum_with(delta: i32): i32
+            return self.x + self.y + delta
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+
+    let function = typed
+        .functions
+        .iter()
+        .find(|function| function.name == FunctionName::Simple("Point.sum_with".to_string()))
+        .expect("expected type method to lower to direct function");
+    assert_eq!(function.params[0].name, "self");
+    assert!(matches!(
+        &function.params[0].ty,
+        Type::Opaque { name, ty } if name == "Point" && matches!(ty.as_ref(), Type::Record(_))
+    ));
+    assert!(
+        typed
+            .top_level
+            .iter()
+            .all(|stmt| !matches!(stmt, Stmt::FieldAssign { .. })),
+        "type method declarations should not become top-level field assignments"
+    );
+}
+
+#[test]
 fn desugars_method_declaration_into_field_assignment_with_resolved_self_type() {
     let source = r#"
         local point = { x = 41::i32 }
