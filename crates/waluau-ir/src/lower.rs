@@ -182,6 +182,11 @@ fn erase_expr_opaque_types(expr: &Expr) -> Expr {
         | Expr::Bytes(..)
         | Expr::Name(..)
         | Expr::Require(..) => expr.clone(),
+        Expr::IsVariant { expr, tag, span } => Expr::IsVariant {
+            expr: Box::new(erase_expr_opaque_types(expr)),
+            tag: tag.clone(),
+            span: *span,
+        },
         Expr::Unary { op, expr, span } => Expr::Unary {
             op: *op,
             expr: Box::new(erase_expr_opaque_types(expr)),
@@ -2044,7 +2049,10 @@ impl Builder<'_> {
                                     "unary '-' requires a numeric operand",
                                 ));
                             }
-                            Type::Thread | Type::Unknown => {
+                            Type::Thread
+                            | Type::Unknown
+                            | Type::TaggedVariant(_)
+                            | Type::TaggedUnion(_) => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -2104,6 +2112,11 @@ impl Builder<'_> {
                 let actual = self.infer_expr_type(expr, types, None)?;
                 let cast = self.explicit_cast(value, actual, ty.clone())?;
                 self.coerce_value(cast, ty.clone(), expected)?
+            }
+            Expr::IsVariant { .. } => {
+                return Err(Diagnostic::new(
+                    "tagged unions are not yet supported in IR lowering",
+                ));
             }
             Expr::If {
                 condition,
@@ -2769,7 +2782,10 @@ impl Builder<'_> {
                         Type::TypeParam(_) => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
-                        Type::Thread | Type::Unknown => {
+                        Type::Thread
+                        | Type::Unknown
+                        | Type::TaggedVariant(_)
+                        | Type::TaggedUnion(_) => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                     }

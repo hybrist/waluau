@@ -68,6 +68,15 @@ pub(super) fn infer_expr(
     match expr {
         Expr::Number(value, _) => resolve_number_literal(value, expected),
         Expr::Bool(..) => Ok(Type::Bool),
+        Expr::IsVariant { expr, tag, .. } => {
+            let actual = infer_expr(expr, vars, fn_signatures, active_type_params, None)?;
+            if actual.tagged_variant(tag).is_none() {
+                return Err(Diagnostic::new(format!(
+                    "type {actual} has no tagged variant '{tag}'"
+                )));
+            }
+            Ok(Type::Bool)
+        }
         Expr::String(..) => coerce_type(Type::String, expected),
         Expr::Bytes(..) => coerce_type(Type::Bytes, expected),
         Expr::Require(path, _) => Err(Diagnostic::new(format!(
@@ -499,13 +508,21 @@ pub(super) fn infer_expr(
                 }
             }
             let base_ty = infer_expr(base, vars, fn_signatures, active_type_params, None)?;
-            let Type::Record(fields) = base_ty else {
+            if matches!(base_ty, Type::TaggedUnion(_)) {
+                return Err(Diagnostic::new(format!(
+                    "field access on tagged union requires narrowing before reading '{name}'"
+                )));
+            }
+            let Some(field_ty) = base_ty.record_field(name) else {
+                if matches!(
+                    base_ty,
+                    Type::Record(_) | Type::Opaque { .. } | Type::TaggedVariant(_)
+                ) {
+                    return Err(Diagnostic::new(format!("unknown record field '{name}'")));
+                }
                 return Err(Diagnostic::new("field access requires a record base"));
             };
-            let Some(field_ty) = fields.get(name) else {
-                return Err(Diagnostic::new(format!("unknown record field '{name}'")));
-            };
-            coerce_type(field_ty.clone(), expected)
+            coerce_type(field_ty, expected)
         }
         Expr::Index { base, index, .. } => {
             let base_ty = infer_expr(base, vars, fn_signatures, active_type_params, None)?;

@@ -1,4 +1,4 @@
-use waluau_ast::{NumericType, Type};
+use waluau_ast::{NumericType, TaggedVariant, Type};
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
 
@@ -39,6 +39,36 @@ impl Parser {
     }
 
     pub(super) fn parse_type(&mut self) -> Result<Type, Diagnostic> {
+        let first = self.parse_type_atom()?;
+        if !self.check_simple(&TokenKind::Pipe) {
+            return Ok(first);
+        }
+
+        let mut variants = vec![match first {
+            Type::TaggedVariant(variant) => variant,
+            other => {
+                return Err(Diagnostic::new(format!(
+                    "tagged union member must be a tagged variant, got {other}"
+                )));
+            }
+        }];
+
+        while self.check_simple(&TokenKind::Pipe) {
+            self.advance();
+            match self.parse_type_atom()? {
+                Type::TaggedVariant(variant) => variants.push(variant),
+                other => {
+                    return Err(Diagnostic::new(format!(
+                        "tagged union member must be a tagged variant, got {other}"
+                    )));
+                }
+            }
+        }
+
+        Ok(Type::TaggedUnion(variants))
+    }
+
+    fn parse_type_atom(&mut self) -> Result<Type, Diagnostic> {
         if self.check_simple(&TokenKind::LBrace) {
             self.advance();
             let is_record_type = matches!(
@@ -114,6 +144,15 @@ impl Parser {
             Some(TokenKind::BytesType) => Ok(Type::Bytes),
             Some(TokenKind::ThreadType) => Ok(Type::Thread),
             Some(TokenKind::UnknownType) => Ok(Type::Unknown),
+            Some(TokenKind::Identifier(name)) if self.check_simple(&TokenKind::LParen) => {
+                self.advance();
+                let payload = self.parse_type()?;
+                self.expect_simple(TokenKind::RParen, "expected ')' after tagged variant payload")?;
+                Ok(Type::TaggedVariant(TaggedVariant {
+                    tag: name,
+                    payload: Box::new(payload),
+                }))
+            }
             Some(TokenKind::Identifier(name)) if self.type_param_scope.contains(&name) => {
                 if self.check_simple(&TokenKind::Less) {
                     Err(self.diagnostic_at_current(&format!(

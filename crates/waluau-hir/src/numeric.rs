@@ -222,6 +222,21 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 Type::TaggedUnion(expected_variants)
             ))),
         },
+        Some(Type::Opaque {
+            name: expected_name,
+            ty: expected_ty,
+        }) => match actual {
+            Type::Opaque {
+                name: actual_name, ..
+            } if actual_name == expected_name => Ok(Type::Opaque {
+                name: expected_name,
+                ty: expected_ty,
+            }),
+            _ => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {} to {}",
+                actual, expected_name
+            ))),
+        },
         Some(Type::Record(expected_fields)) => {
             let Type::Record(actual_fields) = actual else {
                 let expected_record = Type::Record(expected_fields.clone());
