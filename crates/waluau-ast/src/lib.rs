@@ -88,6 +88,14 @@ pub struct TaggedVariant {
     pub payload: Box<Type>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct MethodCallOrigin {
+    /// The original receiver expression from the method call
+    pub original_receiver: Box<Expr>,
+    /// The method name that was called
+    pub method_name: String,
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum NumericType {
     U32,
@@ -430,6 +438,10 @@ pub enum Expr {
         type_args: Vec<Type>,
         args: Vec<Expr>,
         span: Option<Span>,
+        /// If this call originated from a generic method call, this contains
+        /// information needed to perform receiver mutation writeback.
+        /// The receiver is always the first argument when this is Some.
+        method_call_origin: Option<MethodCallOrigin>,
     },
     MethodCall {
         receiver: Box<Expr>,

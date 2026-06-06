@@ -376,7 +376,8 @@ impl<'a> Monomorphizer<'a> {
                 type_args,
                 args,
                 span,
-            } => self.rewrite_call_expr(callee, type_args, args, *span, subst, active)?,
+                method_call_origin,
+            } => self.rewrite_call_expr(callee, type_args, args, *span, method_call_origin, subst, active)?,
             method_call @ Expr::MethodCall { .. } => {
                 self.rewrite_method_call(method_call, subst, active)?
             }
@@ -415,12 +416,14 @@ impl<'a> Monomorphizer<'a> {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn rewrite_call_expr(
         &mut self,
         callee: &Expr,
         type_args: &[Type],
         args: &[Expr],
         span: Option<waluau_ast::Span>,
+        method_call_origin: &Option<MethodCallOrigin>,
         subst: &HashMap<String, Type>,
         active: Option<&ActiveSpecialization>,
     ) -> Result<Expr, Diagnostic> {
@@ -443,6 +446,7 @@ impl<'a> Monomorphizer<'a> {
                     type_args: Vec::new(),
                     args,
                     span,
+                    method_call_origin: method_call_origin.clone(),
                 });
             }
         }
@@ -453,11 +457,23 @@ impl<'a> Monomorphizer<'a> {
                 if let Some(function) = self.generic_methods.get(&method_name).copied() {
                     let specialized =
                         self.specialize_function_expr(function, type_args, subst, active)?;
+                    
+                    // For dot-call form, the first argument is the receiver
+                    let receiver_expr = if !args.is_empty() {
+                        Some(MethodCallOrigin {
+                            original_receiver: Box::new(self.rewrite_expr(&args[0], subst, active)?),
+                            method_name: name.clone(),
+                        })
+                    } else {
+                        None
+                    };
+                    
                     return Ok(Expr::Call {
                         callee: Box::new(Expr::Function(specialized)),
                         type_args: Vec::new(),
                         args,
                         span: *span,
+                        method_call_origin: receiver_expr,
                     });
                 }
             }
@@ -472,6 +488,7 @@ impl<'a> Monomorphizer<'a> {
                     type_args: Vec::new(),
                     args,
                     span,
+                    method_call_origin: method_call_origin.clone(),
                 });
             }
         }
@@ -484,6 +501,7 @@ impl<'a> Monomorphizer<'a> {
                 .collect(),
             args,
             span,
+            method_call_origin: method_call_origin.clone(),
         })
     }
 
@@ -528,6 +546,10 @@ impl<'a> Monomorphizer<'a> {
                         type_args: Vec::new(),
                         args: call_args,
                         span,
+                        method_call_origin: Some(MethodCallOrigin {
+                            original_receiver: receiver.clone(),
+                            method_name: name.clone(),
+                        }),
                     });
                 }
             }

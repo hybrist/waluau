@@ -335,6 +335,7 @@ impl Parser {
                         start: call_start,
                         end: call_end,
                     }),
+                    method_call_origin: None,
                 };
                 continue;
             }
