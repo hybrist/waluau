@@ -1,5 +1,8 @@
 pub use waluau_span::Span;
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct SymbolId(pub usize);
+
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -33,6 +36,7 @@ pub struct TableField {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Function {
     pub name: FunctionName,
+    pub symbol_id: Option<SymbolId>,
     pub type_params: Vec<String>,
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
@@ -49,6 +53,7 @@ pub enum FunctionName {
 #[derive(Clone, Debug, PartialEq)]
 pub struct FunctionExpr {
     pub name: Option<String>,
+    pub symbol_id: Option<SymbolId>,
     pub implicit_self: Option<String>,
     pub type_params: Vec<String>,
     pub params: Vec<Param>,
@@ -79,6 +84,7 @@ impl std::fmt::Display for FunctionName {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Param {
     pub name: String,
+    pub symbol_id: Option<SymbolId>,
     pub ty: Type,
 }
 
@@ -319,6 +325,7 @@ impl std::fmt::Display for Type {
 pub enum Stmt {
     Let {
         name: String,
+        symbol_id: Option<SymbolId>,
         rebindability: Rebindability,
         ty: Option<Type>,
         value: Expr,
@@ -326,6 +333,7 @@ pub enum Stmt {
     Assign {
         op: AssignOp,
         name: String,
+        symbol_id: Option<SymbolId>,
         value: Expr,
     },
     IndexAssign {
@@ -355,6 +363,7 @@ pub enum Stmt {
     },
     NumericFor {
         name: String,
+        symbol_id: Option<SymbolId>,
         start: Expr,
         stop: Expr,
         step: Option<Expr>,
@@ -362,6 +371,7 @@ pub enum Stmt {
     },
     ForIn {
         names: Vec<String>,
+        symbol_ids: Option<Vec<SymbolId>>,
         iterator: Expr,
         body: Vec<Stmt>,
     },
@@ -375,6 +385,7 @@ pub enum Stmt {
     },
     AssignMulti {
         targets: Vec<String>,
+        symbol_ids: Option<Vec<SymbolId>>,
         values: Vec<Expr>,
     },
     Expr(Expr),
@@ -383,6 +394,7 @@ pub enum Stmt {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Binding {
     pub name: String,
+    pub symbol_id: Option<SymbolId>,
     pub rebindability: Rebindability,
     pub ty: Option<Type>,
 }
@@ -405,7 +417,7 @@ pub enum Expr {
     Bool(bool, Option<Span>),
     String(String, Option<Span>),
     Bytes(Vec<u8>, Option<Span>),
-    Name(String, Option<Span>),
+    Name(String, Option<SymbolId>, Option<Span>),
     Unary {
         op: UnaryOp,
         expr: Box<Expr>,
@@ -487,7 +499,7 @@ impl Expr {
             Expr::Bool(_, span) => *span,
             Expr::String(_, span) => *span,
             Expr::Bytes(_, span) => *span,
-            Expr::Name(_, span) => *span,
+            Expr::Name(_, _, span) => *span,
             Expr::Unary { span, .. } => *span,
             Expr::Cast { span, .. } => *span,
             Expr::Binary { span, .. } => *span,
@@ -531,4 +543,333 @@ pub enum UnaryOp {
     Neg,
     Not,
     Len,
+}
+
+use std::collections::HashMap;
+use waluau_diagnostics::Diagnostic;
+
+struct Resolver {
+    scopes: Vec<HashMap<String, SymbolId>>,
+    next_symbol_id: usize,
+}
+
+impl Resolver {
+    fn new() -> Self {
+        let mut global_bindings = HashMap::new();
+        let mut resolver = Self {
+            scopes: Vec::new(),
+            next_symbol_id: 1,
+        };
+
+        // Populate builtins
+        for builtin in &["print", "assert", "tostring", "math", "coroutine"] {
+            let id = resolver.next_id();
+            global_bindings.insert(builtin.to_string(), id);
+        }
+
+        resolver.scopes.push(global_bindings);
+        resolver
+    }
+
+    fn next_id(&mut self) -> SymbolId {
+        let id = SymbolId(self.next_symbol_id);
+        self.next_symbol_id += 1;
+        id
+    }
+
+    fn enter_scope(&mut self) {
+        self.scopes.push(HashMap::new());
+    }
+
+    fn exit_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    fn declare(&mut self, name: &str) -> SymbolId {
+        let id = self.next_id();
+        if let Some(current) = self.scopes.last_mut() {
+            current.insert(name.to_string(), id);
+        }
+        id
+    }
+
+    fn lookup(&self, name: &str) -> Option<SymbolId> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(id) = scope.get(name) {
+                return Some(*id);
+            }
+        }
+        None
+    }
+
+    fn resolve_function(&mut self, function: &mut Function) -> Result<(), Diagnostic> {
+        self.enter_scope();
+        for param in &mut function.params {
+            let id = self.declare(&param.name);
+            param.symbol_id = Some(id);
+        }
+        for stmt in &mut function.body {
+            self.resolve_stmt(stmt)?;
+        }
+        self.exit_scope();
+        Ok(())
+    }
+
+    fn resolve_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Diagnostic> {
+        match stmt {
+            Stmt::Let {
+                name,
+                symbol_id,
+                value,
+                ..
+            } => {
+                self.resolve_expr(value)?;
+                let id = self.declare(name);
+                *symbol_id = Some(id);
+            }
+            Stmt::Assign {
+                name,
+                symbol_id,
+                value,
+                ..
+            } => {
+                self.resolve_expr(value)?;
+                let id = self
+                    .lookup(name)
+                    .ok_or_else(|| Diagnostic::new(format!("unknown local/global '{name}'")))?;
+                *symbol_id = Some(id);
+            }
+            Stmt::LetMulti { bindings, values } => {
+                for value in values {
+                    self.resolve_expr(value)?;
+                }
+                for binding in bindings {
+                    let id = self.declare(&binding.name);
+                    binding.symbol_id = Some(id);
+                }
+            }
+            Stmt::AssignMulti {
+                targets,
+                symbol_ids,
+                values,
+            } => {
+                for value in values {
+                    self.resolve_expr(value)?;
+                }
+                let mut ids = Vec::new();
+                for target in targets {
+                    let id = self.lookup(target).ok_or_else(|| {
+                        Diagnostic::new(format!("unknown local/global '{target}'"))
+                    })?;
+                    ids.push(id);
+                }
+                *symbol_ids = Some(ids);
+            }
+            Stmt::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                self.resolve_expr(condition)?;
+                self.enter_scope();
+                for s in then_body {
+                    self.resolve_stmt(s)?;
+                }
+                self.exit_scope();
+                self.enter_scope();
+                for s in else_body {
+                    self.resolve_stmt(s)?;
+                }
+                self.exit_scope();
+            }
+            Stmt::While { condition, body } => {
+                self.resolve_expr(condition)?;
+                self.enter_scope();
+                for s in body {
+                    self.resolve_stmt(s)?;
+                }
+                self.exit_scope();
+            }
+            Stmt::Repeat { body, condition } => {
+                self.enter_scope();
+                for s in body {
+                    self.resolve_stmt(s)?;
+                }
+                self.resolve_expr(condition)?;
+                self.exit_scope();
+            }
+            Stmt::NumericFor {
+                name,
+                symbol_id,
+                start,
+                stop,
+                step,
+                body,
+            } => {
+                self.resolve_expr(start)?;
+                self.resolve_expr(stop)?;
+                if let Some(s) = step {
+                    self.resolve_expr(s)?;
+                }
+                self.enter_scope();
+                let id = self.declare(name);
+                *symbol_id = Some(id);
+                for s in body {
+                    self.resolve_stmt(s)?;
+                }
+                self.exit_scope();
+            }
+            Stmt::ForIn {
+                names,
+                symbol_ids,
+                iterator,
+                body,
+            } => {
+                self.resolve_expr(iterator)?;
+                self.enter_scope();
+                let mut ids = Vec::new();
+                for name in names {
+                    let id = self.declare(name);
+                    ids.push(id);
+                }
+                *symbol_ids = Some(ids);
+                for s in body {
+                    self.resolve_stmt(s)?;
+                }
+                self.exit_scope();
+            }
+            Stmt::Return(expr) => {
+                self.resolve_expr(expr)?;
+            }
+            Stmt::ReturnMulti(exprs) => {
+                for expr in exprs {
+                    self.resolve_expr(expr)?;
+                }
+            }
+            Stmt::Expr(expr) => {
+                self.resolve_expr(expr)?;
+            }
+            Stmt::IndexAssign {
+                base, index, value, ..
+            } => {
+                self.resolve_expr(base)?;
+                self.resolve_expr(index)?;
+                self.resolve_expr(value)?;
+            }
+            Stmt::FieldAssign { base, value, .. } => {
+                self.resolve_expr(base)?;
+                self.resolve_expr(value)?;
+            }
+            Stmt::Break | Stmt::Continue => {}
+        }
+        Ok(())
+    }
+
+    fn resolve_expr(&mut self, expr: &mut Expr) -> Result<(), Diagnostic> {
+        match expr {
+            Expr::Name(name, symbol_id, _) => {
+                let id = self
+                    .lookup(name)
+                    .ok_or_else(|| Diagnostic::new(format!("unknown local/global '{name}'")))?;
+                *symbol_id = Some(id);
+            }
+            Expr::Unary { expr, .. } | Expr::Cast { expr, .. } | Expr::IsVariant { expr, .. } => {
+                self.resolve_expr(expr)?;
+            }
+            Expr::Binary { left, right, .. }
+            | Expr::Index {
+                base: left,
+                index: right,
+                ..
+            } => {
+                self.resolve_expr(left)?;
+                self.resolve_expr(right)?;
+            }
+            Expr::If {
+                condition,
+                then_expr,
+                else_expr,
+                ..
+            } => {
+                self.resolve_expr(condition)?;
+                self.resolve_expr(then_expr)?;
+                self.resolve_expr(else_expr)?;
+            }
+            Expr::Call { callee, args, .. } => {
+                self.resolve_expr(callee)?;
+                for arg in args {
+                    self.resolve_expr(arg)?;
+                }
+            }
+            Expr::MethodCall { receiver, args, .. } => {
+                self.resolve_expr(receiver)?;
+                for arg in args {
+                    self.resolve_expr(arg)?;
+                }
+            }
+            Expr::Function(function) => {
+                self.enter_scope();
+                if let Some(name) = &function.name {
+                    let id = self.declare(name);
+                    function.symbol_id = Some(id);
+                }
+                for param in &mut function.params {
+                    let id = self.declare(&param.name);
+                    param.symbol_id = Some(id);
+                }
+                for s in &mut function.body {
+                    self.resolve_stmt(s)?;
+                }
+                self.exit_scope();
+            }
+            Expr::ArrayLiteral { elements, .. } => {
+                for element in elements {
+                    self.resolve_expr(element)?;
+                }
+            }
+            Expr::TableLiteral { fields, .. } => {
+                for field in fields {
+                    self.resolve_expr(&mut field.value)?;
+                }
+            }
+            Expr::Field { base, .. } => {
+                self.resolve_expr(base)?;
+            }
+            Expr::Number(..)
+            | Expr::Bool(..)
+            | Expr::String(..)
+            | Expr::Bytes(..)
+            | Expr::Require(..) => {}
+        }
+        Ok(())
+    }
+}
+
+pub fn resolve_symbols(program: &mut Program) -> Result<(), Diagnostic> {
+    let mut resolver = Resolver::new();
+
+    // Declare all top-level functions first
+    for function in &mut program.functions {
+        if let FunctionName::Simple(name) = &function.name {
+            let id = resolver.declare(name);
+            function.symbol_id = Some(id);
+        }
+    }
+
+    // Resolve top-level statements
+    for stmt in &mut program.top_level {
+        resolver.resolve_stmt(stmt)?;
+    }
+
+    // Resolve export expression
+    if let Some(export) = &mut program.export {
+        resolver.resolve_expr(export)?;
+    }
+
+    // Resolve each function's body
+    for function in &mut program.functions {
+        resolver.resolve_function(function)?;
+    }
+
+    Ok(())
 }

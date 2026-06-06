@@ -972,7 +972,7 @@ fn desugars_method_declaration_into_field_assignment_with_resolved_self_type() {
         .find_map(|stmt| match stmt {
             Stmt::FieldAssign {
                 base, name, value, ..
-            } if matches!(base.as_ref(), Expr::Name(base_name, _) if base_name == "point")
+            } if matches!(base.as_ref(), Expr::Name(base_name, _, _) if base_name == "point")
                 && name == "get_x" =>
             {
                 Some(value)
@@ -1016,7 +1016,7 @@ fn type_checks_generic_method_declaration() {
         .find_map(|stmt| match stmt {
             Stmt::FieldAssign {
                 base, name, value, ..
-            } if matches!(base.as_ref(), Expr::Name(base_name, _) if base_name == "point")
+            } if matches!(base.as_ref(), Expr::Name(base_name, _, _) if base_name == "point")
                 && name == "identity" =>
             {
                 Some(value)

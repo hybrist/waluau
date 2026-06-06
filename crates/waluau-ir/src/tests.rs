@@ -842,36 +842,33 @@ fn verifies_loop_with_break_and_continue() {
             return acc
         end
     "#;
-    let program = parse(source).expect("parse should succeed");
+    let mut program = parse(source).expect("parse should succeed");
+    waluau_ast::resolve_symbols(&mut program).expect("resolve symbols should succeed");
 
-    let signatures: std::collections::HashMap<_, (Vec<waluau_ast::Type>, waluau_ast::Type)> =
-        program
-            .functions
-            .iter()
-            .map(|function| {
-                let return_type = function.return_type.clone().ok_or_else(|| {
-                    waluau_diagnostics::Diagnostic::new(format!(
-                        "function '{}' must have a concrete return type before IR lowering",
-                        function.name
-                    ))
-                })?;
-                Ok((
-                    function.name.to_string(),
-                    (
-                        function
-                            .params
-                            .iter()
-                            .map(|param| param.ty.clone())
-                            .collect(),
-                        return_type,
-                    ),
-                ))
-            })
-            .collect::<Result<_, waluau_diagnostics::Diagnostic>>()
-            .expect("signatures should build");
+    let mut signatures = std::collections::HashMap::new();
+    let mut field_call_signatures = std::collections::HashMap::new();
+    for function in &program.functions {
+        let symbol_id = function.symbol_id.expect("symbol_id resolved");
+        let return_type = function.return_type.clone().unwrap();
+        let sig = (
+            function
+                .params
+                .iter()
+                .map(|param| param.ty.clone())
+                .collect(),
+            return_type,
+        );
+        signatures.insert(symbol_id, sig.clone());
+        field_call_signatures.insert(function.name.to_string(), sig);
+    }
 
-    let mut lowered = super::build_function(&program.functions[0], &signatures, &program.sources)
-        .expect("ir lowering should succeed");
+    let mut lowered = super::build_function(
+        &program.functions[0],
+        &signatures,
+        &field_call_signatures,
+        &program.sources,
+    )
+    .expect("ir lowering should succeed");
     let mut functions = Vec::new();
     functions.push(lowered.remove(0));
     functions.extend(lowered);

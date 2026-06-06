@@ -404,7 +404,7 @@ impl Parser {
                 {
                     return self.parse_require(token.span.start);
                 }
-                Ok(Expr::Name(name, span))
+                Ok(Expr::Name(name, None, span))
             }
             TokenKind::Str(value) => Ok(Expr::String(value, span)),
             TokenKind::Bytes(value) => Ok(Expr::Bytes(value, span)),
