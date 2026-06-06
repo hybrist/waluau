@@ -711,8 +711,17 @@ pub(super) fn infer_expr_list(
 ) -> Result<Vec<Type>, Diagnostic> {
     let mut out = Vec::new();
     for expr in exprs {
-        let next_expected = expected.and_then(|types| types.get(out.len()).cloned());
-        let ty = if matches!(expr, Expr::Call { .. } | Expr::MethodCall { .. }) {
+        let remaining_expected = expected
+            .and_then(|types| (!types[out.len()..].is_empty()).then(|| &types[out.len()..]));
+        let next_expected = remaining_expected.and_then(|types| types.first().cloned());
+        let ty = if let Expr::Call { callee, .. } = expr {
+            let call_expected = builtin_name(callee.as_ref()).and_then(|name| {
+                (name == "coroutine.resume")
+                    .then(|| remaining_expected.map(|types| Type::Multi(types.to_vec())))
+                    .flatten()
+            });
+            infer_expr(expr, vars, fn_signatures, active_type_params, call_expected)?
+        } else if matches!(expr, Expr::MethodCall { .. }) {
             infer_expr(expr, vars, fn_signatures, active_type_params, None)?
         } else {
             infer_expr(expr, vars, fn_signatures, active_type_params, next_expected)?

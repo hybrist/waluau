@@ -81,23 +81,34 @@ pub(super) fn infer_coroutine_builtin_call(
                 Err(error) => return Some(Err(error)),
             };
             match coroutine_ty {
-                Type::Thread => Some(coerce_type(
-                    Type::TaggedUnion(vec![
-                        TaggedVariant {
-                            tag: "Error".to_string(),
-                            payload: Box::new(Type::String),
-                        },
-                        TaggedVariant {
-                            tag: "Finished".to_string(),
-                            payload: Box::new(i32_ty.clone()),
-                        },
-                        TaggedVariant {
-                            tag: "Yielded".to_string(),
-                            payload: Box::new(Type::Unknown),
-                        },
-                    ]),
-                    expected,
-                )),
+                Type::Thread => {
+                    if matches!(
+                        expected.as_ref(),
+                        Some(Type::Multi(types))
+                            if types.len() == 2
+                                && types[0] == Type::Bool
+                                && types[1] == i32_ty
+                    ) {
+                        return Some(Ok(Type::Multi(vec![Type::Bool, i32_ty])));
+                    }
+                    Some(coerce_type(
+                        Type::TaggedUnion(vec![
+                            TaggedVariant {
+                                tag: "Error".to_string(),
+                                payload: Box::new(Type::String),
+                            },
+                            TaggedVariant {
+                                tag: "Finished".to_string(),
+                                payload: Box::new(i32_ty.clone()),
+                            },
+                            TaggedVariant {
+                                tag: "Yielded".to_string(),
+                                payload: Box::new(Type::Unknown),
+                            },
+                        ]),
+                        expected,
+                    ))
+                }
                 _ => Some(Err(Diagnostic::new("coroutine.resume expects a thread"))),
             }
         }

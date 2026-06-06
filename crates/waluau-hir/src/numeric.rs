@@ -196,7 +196,25 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                     payload: Box::new(payload),
                 }))
             }
-            Type::TaggedUnion(actual_variants) if actual_variants == expected_variants => {
+            Type::TaggedUnion(actual_variants)
+                if actual_variants.len() == expected_variants.len() =>
+            {
+                for expected_variant in &expected_variants {
+                    let Some(actual_variant) = actual_variants
+                        .iter()
+                        .find(|variant| variant.tag == expected_variant.tag)
+                    else {
+                        return Err(Diagnostic::new(format!(
+                            "cannot implicitly convert {} to {}",
+                            Type::TaggedUnion(actual_variants),
+                            Type::TaggedUnion(expected_variants)
+                        )));
+                    };
+                    let _ = coerce_type(
+                        Type::TaggedVariant(actual_variant.clone()),
+                        Some(Type::TaggedVariant(expected_variant.clone())),
+                    )?;
+                }
                 Ok(Type::TaggedUnion(expected_variants))
             }
             other => Err(Diagnostic::new(format!(
