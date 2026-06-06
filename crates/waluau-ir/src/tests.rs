@@ -1064,6 +1064,44 @@ fn monomorphizes_generic_calls_once_per_type_arguments() {
 }
 
 #[test]
+fn monomorphizes_generic_calls_with_inferred_type_arguments() {
+    let source = r#"
+        function identity<T>(value: T): T
+            return value
+        end
+
+        function main(): i32
+            local a: i32 = identity(41::i32)
+            local b: f64 = identity(1.0)
+            return a + b :: i32
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+
+    let identity_i32 = module
+        .functions
+        .iter()
+        .find(|function| {
+            function.name.starts_with("__waluau_generic$identity")
+                && function.return_type == Type::Numeric(NumericType::I32)
+        })
+        .expect("identity<i32> specialization should exist");
+
+    let identity_f64 = module
+        .functions
+        .iter()
+        .find(|function| {
+            function.name.starts_with("__waluau_generic$identity")
+                && function.return_type == Type::Numeric(NumericType::F64)
+        })
+        .expect("identity<f64> specialization should exist");
+
+    assert_ne!(identity_i32.name, identity_f64.name);
+}
+
+#[test]
 fn lowers_generic_method_declaration_after_hir_desugaring() {
     let source = r#"
         local point = { x = 41::i32 }
