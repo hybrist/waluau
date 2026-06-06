@@ -113,6 +113,7 @@ impl Parser {
             Some(TokenKind::StringType) => Ok(Type::String),
             Some(TokenKind::BytesType) => Ok(Type::Bytes),
             Some(TokenKind::ThreadType) => Ok(Type::Thread),
+            Some(TokenKind::UnknownType) => Ok(Type::Unknown),
             Some(TokenKind::Identifier(name)) if self.type_param_scope.contains(&name) => {
                 if self.check_simple(&TokenKind::Less) {
                     Err(self.diagnostic_at_current(&format!(
@@ -131,7 +132,7 @@ impl Parser {
                 Ok(Type::Named { name, type_args })
             }
             _ => Err(self.diagnostic_at_current(
-                "expected type (number, u32, u64, i32, i64, f32, f64, unit, bool, string, bytes, thread, a named type, Foo<T>, {T}, { x: T }, or (T1, T2) -> R)",
+                "expected type (number, u32, u64, i32, i64, f32, f64, unit, bool, string, bytes, thread, unknown, a named type, Foo<T>, {T}, { x: T }, or (T1, T2) -> R)",
             )),
         }
     }

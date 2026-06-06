@@ -123,9 +123,11 @@ pub(super) fn infer_expr(
                     }
                     Type::Array(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Multi(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
-                    Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
-                        Err(Diagnostic::new("unary '-' requires a numeric operand"))
-                    }
+                    Type::Function { .. }
+                    | Type::Record(_)
+                    | Type::TypeParam(_)
+                    | Type::Thread
+                    | Type::Unknown => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                 }
             }
             UnaryOp::Not => {

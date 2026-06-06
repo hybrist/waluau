@@ -119,6 +119,10 @@ pub enum Type {
     TypeParam(String),
     /// A coroutine handle. Yield/resume values are always `i32` (see design 0007).
     Thread,
+    /// A dynamically-typed value of unknown static type. Lowers to wasm `anyref`.
+    /// Primitives are boxed into a heap reference when coerced to `unknown` and
+    /// must be unboxed with an explicit cast before use.
+    Unknown,
 }
 
 impl Type {
@@ -249,6 +253,7 @@ impl std::fmt::Display for Type {
             }
             Self::TypeParam(name) => f.write_str(name),
             Self::Thread => f.write_str("thread"),
+            Self::Unknown => f.write_str("unknown"),
         }
     }
 }

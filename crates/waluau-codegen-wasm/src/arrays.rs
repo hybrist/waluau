@@ -17,6 +17,9 @@ pub(crate) struct ArrayTypeRegistry {
     pub(crate) anyref_array_type: u32,
     /// Type index of `$func_val = (struct { orig_idx: i32, env: ref null $anyref_array, wrapper_idx: i32 })`.
     pub(crate) func_val_struct_type: u32,
+    /// Type index of `$boxed_f64 = (struct (field f64))`, used to box `f64` values
+    /// into `anyref` (`unknown`). `i32`/`bool` use `i31ref` and need no struct.
+    pub(crate) boxed_f64_struct_type: u32,
 }
 
 impl ArrayTypeRegistry {
@@ -27,6 +30,7 @@ impl ArrayTypeRegistry {
         record_type_offset: u32,
         anyref_array_type: u32,
         func_val_struct_type: u32,
+        boxed_f64_struct_type: u32,
     ) -> Self {
         let indices = array_types
             .iter()
@@ -56,6 +60,7 @@ impl ArrayTypeRegistry {
             coroutine_state_type: None,
             anyref_array_type,
             func_val_struct_type,
+            boxed_f64_struct_type,
         }
     }
 
@@ -275,6 +280,7 @@ pub(crate) fn array_storage_type(
         Type::Bool => Ok(StorageType::Val(ValType::I32)),
         Type::String => Ok(StorageType::Val(externref_val_type())),
         Type::Bytes => Ok(StorageType::Val(externref_val_type())),
+        Type::Unknown => Ok(StorageType::Val(crate::wasm_types::anyref_val_type())),
         Type::Array(_) => {
             let index = registry.index(element_ty)?;
             Ok(StorageType::Val(ValType::Ref(RefType {
@@ -326,6 +332,7 @@ pub(crate) fn record_storage_type(
         Type::Thread => Ok(StorageType::Val(coroutine_state_ref_type(
             registry.coroutine_state_type()?,
         ))),
+        Type::Unknown => Ok(StorageType::Val(crate::wasm_types::anyref_val_type())),
         Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
         Type::Multi(_) => Err(Diagnostic::new(
             "multi-value types are not supported in record fields",
