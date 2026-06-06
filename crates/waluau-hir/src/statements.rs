@@ -491,6 +491,37 @@ pub(super) fn collect_return_types(
                 }
             }
             Stmt::Expr(expr) => {
+                if let Expr::Call {
+                    callee,
+                    type_args: _,
+                    args,
+                    ..
+                } = expr
+                {
+                    if let Expr::Name(name, _) = callee.as_ref() {
+                        if name == ASSERT {
+                            if args.len() != 1 {
+                                return Err(Diagnostic::new(format!(
+                                    "{ASSERT} expects 1 argument, got {}",
+                                    args.len()
+                                )));
+                            }
+                            let actual = infer_expr(
+                                &args[0],
+                                &scope,
+                                fn_signatures,
+                                active_type_params,
+                                Some(Type::Bool),
+                            )?;
+                            if actual != Type::Bool {
+                                return Err(Diagnostic::new(format!(
+                                    "{ASSERT} expects bool, got {actual}"
+                                )));
+                            }
+                            continue;
+                        }
+                    }
+                }
                 let _ = infer_expr(expr, &scope, fn_signatures, active_type_params, None)?;
                 seal_record_locals_in_expr(expr, &mut scope);
             }

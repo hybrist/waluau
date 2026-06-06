@@ -27,3 +27,13 @@ assert(add_u64(40, 2) == 42)
 
 assert(i64_max() == 9223372036854775807)
 assert(u64_max() == 18446744073709551615)
+
+function arithmetic_type_inference()
+    local n: i32 = 10 - 3
+    assert(n == 7)
+
+    local m: i32 = 10 + 3
+    assert(m == 13)
+end
+arithmetic_type_inference()
+
