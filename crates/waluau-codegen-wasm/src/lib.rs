@@ -713,10 +713,6 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     wasm.section(&elements);
     wasm.section(&codes);
     wasm.section(&CustomSection {
-        name: host::STRING_CUSTOM_SECTION_NAME.into(),
-        data: Cow::Owned(host::encode_string_constants_section(&string_constants)),
-    });
-    wasm.section(&CustomSection {
         name: host::BYTES_CUSTOM_SECTION_NAME.into(),
         data: Cow::Owned(host::encode_bytes_constants_section(&bytes_constants)),
     });
