@@ -570,6 +570,7 @@ fn rejects_non_bool_branch_condition() {
         entry: BlockId(0),
         next_value: 2,
         capture_count: 0,
+        value_symbols: BTreeMap::new(),
         blocks: BTreeMap::from([
             (
                 BlockId(0),
@@ -622,6 +623,7 @@ fn rejects_return_type_mismatch() {
         entry: BlockId(0),
         next_value: 1,
         capture_count: 0,
+        value_symbols: BTreeMap::new(),
         blocks: BTreeMap::from([(
             BlockId(0),
             BasicBlock {
@@ -693,6 +695,7 @@ fn rejects_phi_predecessor_order_mismatch() {
         entry: BlockId(0),
         next_value: 5,
         capture_count: 0,
+        value_symbols: BTreeMap::new(),
         blocks: BTreeMap::from([
             (
                 BlockId(0),
@@ -1346,5 +1349,27 @@ fn rejects_error_variant_value_access_for_string_payload() {
         error.to_string().contains("string"),
         "error should mention string payload, got: {}",
         error
+    );
+}
+
+#[test]
+fn includes_symbol_ids_in_ir_dump() {
+    let source = r#"
+        function entry(x: i32): i32
+            local y: i32 = x + 1
+            return y
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("ir build should succeed");
+    let function = &module.functions[0];
+    let dump = function.dump();
+
+    // The parameter and local variables should be mapped to symbol IDs in the IR dump.
+    // e.g., `v0 = Param(0) ; @1`
+    assert!(
+        dump.contains("; @"),
+        "expected symbol IDs in dump:\n{}",
+        dump
     );
 }

@@ -21,6 +21,7 @@ pub struct Function {
     /// Number of leading `params` entries that are capture-cell arrays passed by the caller.
     /// Zero for top-level functions; equal to the number of captured variables for lifted closures.
     pub capture_count: usize,
+    pub value_symbols: BTreeMap<ValueId, SymbolId>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -195,7 +196,12 @@ impl Function {
         for (id, block) in &self.blocks {
             out.push_str(&format!("  b{}:\n", id.0));
             for (value, instruction) in &block.instructions {
-                out.push_str(&format!("    v{} = {:?}\n", value.0, instruction));
+                let sym_str = if let Some(sym_id) = self.value_symbols.get(value) {
+                    format!(" ; @{}", sym_id.0)
+                } else {
+                    "".to_string()
+                };
+                out.push_str(&format!("    v{} = {:?}{}\n", value.0, instruction, sym_str));
             }
             out.push_str(&format!("    {:?}\n", block.terminator));
         }
