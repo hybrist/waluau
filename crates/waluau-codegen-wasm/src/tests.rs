@@ -652,3 +652,85 @@ fn closure_program_still_emits_closure_gc_types() {
         "closure program should emit $func_val GC struct type"
     );
 }
+
+#[test]
+fn emits_no_loop_for_straight_line_function() {
+    // A simple straight-line function (single basic block) must not be wrapped in
+    // the PC-dispatch loop.
+    let source = r#"
+        function add(x: i32, y: i32): i32
+            return x + y
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        !wat.contains(" loop"),
+        "straight-line function should not contain a loop"
+    );
+    assert!(
+        !wat.contains("i32.eq"),
+        "straight-line function should not use pc dispatch"
+    );
+}
+
+#[test]
+fn emits_structured_if_for_if_else_both_return() {
+    // An if/else where both branches return should produce a structured if/else,
+    // not a PC-dispatch loop.  The IR builder always creates a dead merge block,
+    // which previously caused the function to fall through to the loop path.
+    let source = r#"
+        function choose(x: i32, y: i32): i32
+            if x > y then
+                return x
+            else
+                return y
+            end
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(wat.contains(" if"), "should emit structured if");
+    assert!(
+        !wat.contains(" loop"),
+        "if/else function should not contain a loop"
+    );
+    assert!(!wat.contains("i32.eq"), "should not use pc dispatch");
+}
+
+#[test]
+fn emits_structured_if_for_early_return() {
+    // A one-sided if with an early return followed by a fallthrough should produce
+    // a structured `if (then ...) end; ...` without a PC-dispatch loop.
+    let source = r#"
+        function abs_val(x: i32): i32
+            if x < 0 then
+                return 0 - x
+            end
+            return x
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(wat.contains(" if"), "should emit structured if");
+    assert!(
+        !wat.contains(" loop"),
+        "early-return function should not contain a loop"
+    );
+    assert!(!wat.contains("i32.eq"), "should not use pc dispatch");
+}
