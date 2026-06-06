@@ -858,7 +858,15 @@ fn try_emit_structured_fast_path(
             entry.terminator,
             Terminator::Return(_) | Terminator::Unreachable { .. }
         ) {
-            emit_block(out, function, entry, ctx, value_types, local_plan, value_defs)?;
+            emit_block(
+                out,
+                function,
+                entry,
+                ctx,
+                value_types,
+                local_plan,
+                value_defs,
+            )?;
             return Ok(true);
         }
     }
@@ -887,9 +895,7 @@ fn try_emit_structured_fast_path(
             && function
                 .blocks
                 .values()
-                .filter(|b| {
-                    b.id != function.entry && b.id != then_block && b.id != else_block
-                })
+                .filter(|b| b.id != function.entry && b.id != then_block && b.id != else_block)
                 .all(is_trivially_dead)
         {
             emit_block_instructions(

@@ -542,8 +542,14 @@ fn emits_no_loop_for_straight_line_function() {
         .validate_all(&wasm)
         .expect("emitted module should validate");
     let wat = print_bytes(&wasm).expect("wat should print");
-    assert!(!wat.contains(" loop"), "straight-line function should not contain a loop");
-    assert!(!wat.contains("i32.eq"), "straight-line function should not use pc dispatch");
+    assert!(
+        !wat.contains(" loop"),
+        "straight-line function should not contain a loop"
+    );
+    assert!(
+        !wat.contains("i32.eq"),
+        "straight-line function should not use pc dispatch"
+    );
 }
 
 #[test]
@@ -568,7 +574,10 @@ fn emits_structured_if_for_if_else_both_return() {
         .expect("emitted module should validate");
     let wat = print_bytes(&wasm).expect("wat should print");
     assert!(wat.contains(" if"), "should emit structured if");
-    assert!(!wat.contains(" loop"), "if/else function should not contain a loop");
+    assert!(
+        !wat.contains(" loop"),
+        "if/else function should not contain a loop"
+    );
     assert!(!wat.contains("i32.eq"), "should not use pc dispatch");
 }
 
@@ -592,6 +601,9 @@ fn emits_structured_if_for_early_return() {
         .expect("emitted module should validate");
     let wat = print_bytes(&wasm).expect("wat should print");
     assert!(wat.contains(" if"), "should emit structured if");
-    assert!(!wat.contains(" loop"), "early-return function should not contain a loop");
+    assert!(
+        !wat.contains(" loop"),
+        "early-return function should not contain a loop"
+    );
     assert!(!wat.contains("i32.eq"), "should not use pc dispatch");
 }
