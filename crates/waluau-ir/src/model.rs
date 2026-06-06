@@ -22,6 +22,7 @@ pub struct Function {
     /// Zero for top-level functions; equal to the number of captured variables for lifted closures.
     pub capture_count: usize,
     pub value_symbols: BTreeMap<ValueId, SymbolId>,
+    pub symbol_id: Option<SymbolId>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -192,7 +193,11 @@ pub enum Terminator {
 impl Function {
     pub fn dump(&self) -> String {
         let mut out = String::new();
-        out.push_str(&format!("fn {}:\n", self.name));
+        if let Some(sym_id) = self.symbol_id {
+            out.push_str(&format!("fn {} ; @{}:\n", self.name, sym_id.0));
+        } else {
+            out.push_str(&format!("fn {}:\n", self.name));
+        }
         for (id, block) in &self.blocks {
             out.push_str(&format!("  b{}:\n", id.0));
             for (value, instruction) in &block.instructions {

@@ -571,6 +571,7 @@ fn rejects_non_bool_branch_condition() {
         next_value: 2,
         capture_count: 0,
         value_symbols: BTreeMap::new(),
+        symbol_id: None,
         blocks: BTreeMap::from([
             (
                 BlockId(0),
@@ -624,6 +625,7 @@ fn rejects_return_type_mismatch() {
         next_value: 1,
         capture_count: 0,
         value_symbols: BTreeMap::new(),
+        symbol_id: None,
         blocks: BTreeMap::from([(
             BlockId(0),
             BasicBlock {
@@ -696,6 +698,7 @@ fn rejects_phi_predecessor_order_mismatch() {
         next_value: 5,
         capture_count: 0,
         value_symbols: BTreeMap::new(),
+        symbol_id: None,
         blocks: BTreeMap::from([
             (
                 BlockId(0),
@@ -1370,6 +1373,12 @@ fn includes_symbol_ids_in_ir_dump() {
     assert!(
         dump.contains("; @"),
         "expected symbol IDs in dump:\n{}",
+        dump
+    );
+    // The function header itself should have a symbol ID comment.
+    assert!(
+        dump.contains("fn entry ; @"),
+        "expected function symbol ID in dump:\n{}",
         dump
     );
 }

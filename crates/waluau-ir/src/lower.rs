@@ -355,6 +355,7 @@ pub(crate) fn build_function(
         next_value: 0,
         capture_count: 0,
         value_symbols: BTreeMap::new(),
+        symbol_id: function.symbol_id,
     };
 
     out.blocks.insert(
@@ -2689,6 +2690,7 @@ impl Builder<'_> {
             next_value: 0,
             capture_count,
             value_symbols: BTreeMap::new(),
+            symbol_id: function.symbol_id,
         };
         lifted.blocks.insert(
             lifted.entry,
