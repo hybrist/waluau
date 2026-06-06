@@ -224,11 +224,13 @@ fn erase_expr_opaque_types(expr: &Expr) -> Expr {
             type_args,
             args,
             span,
+            method_call_origin,
         } => Expr::Call {
             callee: Box::new(erase_expr_opaque_types(callee)),
             type_args: type_args.iter().map(erase_type_opaque_types).collect(),
             args: args.iter().map(erase_expr_opaque_types).collect(),
             span: *span,
+            method_call_origin: method_call_origin.clone(),
         },
         Expr::MethodCall {
             receiver,
@@ -833,6 +835,7 @@ impl Builder<'_> {
                     type_args: _,
                     args,
                     span,
+                    ..
                 } = expr
                 {
                     if let Expr::Name(name, _) = callee.as_ref() {
@@ -2226,6 +2229,7 @@ impl Builder<'_> {
                 callee,
                 type_args: _,
                 args,
+                method_call_origin,
                 ..
             } => {
                 if let Some(name) = builtin_name(callee.as_ref()) {
@@ -2312,10 +2316,37 @@ impl Builder<'_> {
                     .collect::<Result<Vec<_>, _>>()?;
                 let value = self.emit(Instruction::CallValue {
                     callee: callee_value,
-                    args,
+                    args: args.clone(),
                     params: param_types.clone(),
                     return_type: *return_type,
                 });
+
+                // Handle method call writeback if this call originated from a generic method
+                if let Some(method_call_origin) = method_call_origin {
+                    if !args.is_empty() && !param_types.is_empty() {
+                        // Lower the original receiver expression to get the "before coercion" value  
+                        let original_receiver_type = self.infer_expr_type(&method_call_origin.original_receiver, types, None)?;
+                        let original_receiver_value = self.lower_expr(
+                            &method_call_origin.original_receiver,
+                            env,
+                            types,
+                            Some(original_receiver_type.clone()),
+                        )?;
+                        
+                        // The first argument is the coerced receiver that was passed to the method
+                        let coerced_receiver_value = args[0];
+                        let expected_receiver_type = &param_types[0];
+                        
+                        // Apply the same writeback logic as used in MethodCall
+                        self.write_back_method_receiver_mutations(
+                            original_receiver_value,
+                            coerced_receiver_value,
+                            &original_receiver_type,
+                            expected_receiver_type,
+                        )?;
+                    }
+                }
+
                 let actual = self.infer_expr_type(expr, types, None)?;
                 self.coerce_value(value, actual, expected)?
             }
@@ -3390,6 +3421,7 @@ impl Builder<'_> {
                 type_args: Vec::new(),
                 args: args.to_vec(),
                 span: None,
+                method_call_origin: None,
             },
             types,
         ) {

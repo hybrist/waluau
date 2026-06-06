@@ -1,0 +1,22 @@
+local counter = { value = 0::i32 }
+
+-- Generic method that mutates self
+function counter:increment_by<T>(amount: T): T
+    self.value = self.value + 1::i32
+    return amount
+end
+
+-- Test 1: Regular colon-call form (should work with our fix)
+assert(counter.value == 0::i32)
+local result1: i32 = counter:increment_by<i32>(10::i32)
+assert(result1 == 10::i32)
+assert(counter.value == 1::i32)
+
+-- Reset
+counter.value = 0::i32
+
+-- Test 2: Dot-call form (should also work with our fix)
+assert(counter.value == 0::i32)
+local result2: i32 = counter.increment_by<i32>(counter, 20::i32)
+assert(result2 == 20::i32)
+assert(counter.value == 1::i32)  -- Should work with the fix
