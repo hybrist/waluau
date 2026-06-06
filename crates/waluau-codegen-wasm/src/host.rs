@@ -9,7 +9,6 @@ use waluau_ir::{Function as IrFunction, Instruction as IrInstruction, Module};
 pub const IMPORTED_STRING_CONSTANTS_MODULE: &str = "string_constants";
 pub const JS_STRING_BUILTINS_MODULE: &str = "wasm:js-string";
 pub const IMPORT_MODULE: &str = "waluau";
-pub const STRING_CUSTOM_SECTION_NAME: &str = "waluau.strc";
 pub const BYTES_CUSTOM_SECTION_NAME: &str = "waluau.bytc";
 
 pub const IMPORT_JS_STRING_EQ: &str = "equals";
@@ -243,17 +242,6 @@ fn mark_used_by_instruction(instruction: &IrInstruction, used: &mut UsedHostImpo
     }
 }
 
-pub fn encode_string_constants_section(strings: &[String]) -> Vec<u8> {
-    let mut out = Vec::new();
-    push_u32(&mut out, strings.len() as u32);
-    for string in strings {
-        let bytes = string.as_bytes();
-        push_u32(&mut out, bytes.len() as u32);
-        out.extend_from_slice(bytes);
-    }
-    out
-}
-
 pub fn encode_bytes_constants_section(values: &[Vec<u8>]) -> Vec<u8> {
     let mut out = Vec::new();
     push_u32(&mut out, values.len() as u32);
@@ -262,30 +250,6 @@ pub fn encode_bytes_constants_section(values: &[Vec<u8>]) -> Vec<u8> {
         out.extend_from_slice(value);
     }
     out
-}
-
-pub fn decode_string_constants_section(data: &[u8]) -> Result<Vec<String>, Diagnostic> {
-    let mut offset = 0usize;
-    let count = read_u32(data, &mut offset)?;
-    let mut strings = Vec::with_capacity(count as usize);
-    for _ in 0..count {
-        let len = read_u32(data, &mut offset)? as usize;
-        let end = offset
-            .checked_add(len)
-            .ok_or_else(|| Diagnostic::new("waluau.strc section length overflow"))?;
-        if end > data.len() {
-            return Err(Diagnostic::new("waluau.strc section truncated"));
-        }
-        let value = std::str::from_utf8(&data[offset..end])
-            .map_err(|_| Diagnostic::new("waluau.strc section contains invalid UTF-8"))?
-            .to_string();
-        offset = end;
-        strings.push(value);
-    }
-    if offset != data.len() {
-        return Err(Diagnostic::new("waluau.strc section has trailing bytes"));
-    }
-    Ok(strings)
 }
 
 pub fn decode_bytes_constants_section(data: &[u8]) -> Result<Vec<Vec<u8>>, Diagnostic> {
@@ -384,14 +348,6 @@ pub fn bytes_constant_index(values: &[Vec<u8>], literal: &[u8]) -> Result<u32, D
         .ok_or_else(|| Diagnostic::new("missing bytes literal in wasm bytes constants"))
 }
 
-/// Parse the `waluau.strc` custom section from a compiled Wasm module.
-pub fn parse_string_constants_from_wasm(wasm: &[u8]) -> Result<Vec<String>, Diagnostic> {
-    match find_named_custom_section(wasm, STRING_CUSTOM_SECTION_NAME)? {
-        Some(data) => decode_string_constants_section(data),
-        None => Ok(Vec::new()),
-    }
-}
-
 /// Parse the `waluau.bytc` custom section from a compiled Wasm module.
 pub fn parse_bytes_constants_from_wasm(wasm: &[u8]) -> Result<Vec<Vec<u8>>, Diagnostic> {
     match find_named_custom_section(wasm, BYTES_CUSTOM_SECTION_NAME)? {
@@ -476,14 +432,6 @@ fn read_varu32(data: &[u8], mut offset: usize) -> Result<(u32, usize), Diagnosti
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn round_trips_string_constants_section() {
-        let strings = vec!["hello".to_string(), "world".to_string(), "".to_string()];
-        let encoded = encode_string_constants_section(&strings);
-        let decoded = decode_string_constants_section(&encoded).expect("decode should succeed");
-        assert_eq!(decoded, strings);
-    }
 
     #[test]
     fn round_trips_bytes_constants_section() {
