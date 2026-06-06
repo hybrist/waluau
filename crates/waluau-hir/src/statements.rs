@@ -149,50 +149,66 @@ pub(super) fn collect_return_types(
             Stmt::FieldAssign {
                 base, name, value, ..
             } => {
-                let base_name = match base.as_ref() {
-                    Expr::Name(local, _) => local,
-                    _ => {
-                        return Err(Diagnostic::new(
-                            "field assignment base must be a local name",
-                        ));
-                    }
-                };
-                let binding = scope
-                    .get(base_name)
-                    .cloned()
-                    .ok_or_else(|| Diagnostic::new(format!("unknown local '{base_name}'")))?;
-                let Type::Record(mut fields) = binding.ty else {
-                    return Err(Diagnostic::new("field assignment requires a record base"));
-                };
-                let existing = fields.get(name).cloned();
-                let value_ty = infer_expr(
-                    value,
-                    &scope,
-                    fn_signatures,
-                    active_type_params,
-                    existing.clone(),
-                )?;
-                if let Some(ty) = fields.get(name) {
-                    if *ty != value_ty {
+                if let Expr::Name(base_name, _) = base.as_ref() {
+                    let binding = scope
+                        .get(base_name)
+                        .cloned()
+                        .ok_or_else(|| Diagnostic::new(format!("unknown local '{base_name}'")))?;
+                    let Type::Record(mut fields) = binding.ty else {
+                        return Err(Diagnostic::new("field assignment requires a record base"));
+                    };
+                    let existing = fields.get(name).cloned();
+                    let value_ty = infer_expr(
+                        value,
+                        &scope,
+                        fn_signatures,
+                        active_type_params,
+                        existing.clone(),
+                    )?;
+                    if let Some(ty) = fields.get(name) {
+                        if *ty != value_ty {
+                            return Err(Diagnostic::new(format!(
+                                "field assignment to '{}.{}' expects {}, got {}",
+                                base_name, name, ty, value_ty
+                            )));
+                        }
+                    } else if binding.record_open {
+                        fields.insert(name.clone(), value_ty);
+                    } else {
                         return Err(Diagnostic::new(format!(
-                            "field assignment to '{}.{}' expects {}, got {}",
-                            base_name, name, ty, value_ty
+                            "cannot add new field '{}.{}' after record was sealed",
+                            base_name, name
                         )));
                     }
-                } else if binding.record_open {
-                    fields.insert(name.clone(), value_ty);
+                    seal_record_locals_in_expr(value, &mut scope);
+                    let mut updated = binding_for(Type::Record(fields), binding.rebindability);
+                    if !binding.record_open {
+                        updated.record_open = false;
+                    }
+                    scope.insert(base_name.clone(), updated);
                 } else {
-                    return Err(Diagnostic::new(format!(
-                        "cannot add new field '{}.{}' after record was sealed",
-                        base_name, name
-                    )));
+                    let base_ty =
+                        infer_expr(base, &scope, fn_signatures, active_type_params, None)?;
+                    let Type::Record(fields) = base_ty else {
+                        return Err(Diagnostic::new("field assignment requires a record base"));
+                    };
+                    let field_ty = fields
+                        .get(name)
+                        .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
+                    let value_ty = infer_expr(
+                        value,
+                        &scope,
+                        fn_signatures,
+                        active_type_params,
+                        Some(field_ty.clone()),
+                    )?;
+                    if value_ty != *field_ty {
+                        return Err(Diagnostic::new(format!(
+                            "field assignment to '{name}' expects {field_ty}, got {value_ty}"
+                        )));
+                    }
+                    seal_record_locals_in_expr(value, &mut scope);
                 }
-                seal_record_locals_in_expr(value, &mut scope);
-                let mut updated = binding_for(Type::Record(fields), binding.rebindability);
-                if !binding.record_open {
-                    updated.record_open = false;
-                }
-                scope.insert(base_name.clone(), updated);
             }
             Stmt::If {
                 condition,
@@ -597,93 +613,117 @@ pub(super) fn check_stmt(
             name,
             value,
         } => {
-            let base_name = match base.as_ref() {
-                Expr::Name(local, _) => local,
-                _ => {
-                    return Err(Diagnostic::new(
-                        "field assignment base must be a local name",
-                    ));
+            if let Expr::Name(base_name, _) = base.as_ref() {
+                let binding = vars
+                    .get(base_name)
+                    .cloned()
+                    .ok_or_else(|| Diagnostic::new(format!("unknown local '{base_name}'")))?;
+                let Type::Record(mut fields) = binding.ty else {
+                    return Err(Diagnostic::new("field assignment requires a record base"));
+                };
+                let method_name = method_signature_name(base_name, name);
+                if let Expr::Function(function) = value {
+                    if !function.type_params.is_empty() && fn_signatures.contains_key(&method_name)
+                    {
+                        if *op != AssignOp::Set {
+                            return Err(Diagnostic::new(
+                                "compound field assignment requires a numeric field",
+                            ));
+                        }
+                        if !fields.contains_key(name) && !binding.record_open {
+                            return Err(Diagnostic::new(format!(
+                                "cannot add new field '{}.{}' after record was sealed",
+                                base_name, name
+                            )));
+                        }
+                        let synthetic = Function {
+                            name: waluau_ast::FunctionName::Simple(method_name),
+                            type_params: function.type_params.clone(),
+                            params: function.params.clone(),
+                            return_type: function.return_type.clone(),
+                            body: function.body.clone(),
+                            file_path: function.file_path.clone(),
+                        };
+                        check_function(&synthetic, fn_signatures, active_type_params)?;
+                        seal_record_locals_in_expr(value, vars);
+                        let mut updated = binding_for(Type::Record(fields), binding.rebindability);
+                        if !binding.record_open {
+                            updated.record_open = false;
+                        }
+                        vars.insert(base_name.clone(), updated);
+                        return Ok(false);
+                    }
                 }
-            };
-            let binding = vars
-                .get(base_name)
-                .cloned()
-                .ok_or_else(|| Diagnostic::new(format!("unknown local '{base_name}'")))?;
-            let Type::Record(mut fields) = binding.ty else {
-                return Err(Diagnostic::new("field assignment requires a record base"));
-            };
-            let method_name = method_signature_name(base_name, name);
-            if let Expr::Function(function) = value {
-                if !function.type_params.is_empty() && fn_signatures.contains_key(&method_name) {
-                    if *op != AssignOp::Set {
+                let existing_field = fields.get(name).cloned();
+                let value_ty = infer_expr(
+                    value,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    existing_field.clone(),
+                )?;
+                if *op == AssignOp::Add {
+                    let field_ty = existing_field.clone().ok_or_else(|| {
+                        Diagnostic::new(
+                            "compound field assignment requires an existing numeric field",
+                        )
+                    })?;
+                    if !field_ty.is_numeric() || value_ty != field_ty {
                         return Err(Diagnostic::new(
                             "compound field assignment requires a numeric field",
                         ));
                     }
-                    if !fields.contains_key(name) && !binding.record_open {
+                }
+                if let Some(ty) = fields.get(name) {
+                    if *ty != value_ty {
                         return Err(Diagnostic::new(format!(
-                            "cannot add new field '{}.{}' after record was sealed",
-                            base_name, name
+                            "field assignment to '{}.{}' expects {}, got {}",
+                            base_name, name, ty, value_ty
                         )));
                     }
-                    let synthetic = Function {
-                        name: waluau_ast::FunctionName::Simple(method_name),
-                        type_params: function.type_params.clone(),
-                        params: function.params.clone(),
-                        return_type: function.return_type.clone(),
-                        body: function.body.clone(),
-                        file_path: function.file_path.clone(),
-                    };
-                    check_function(&synthetic, fn_signatures, active_type_params)?;
-                    seal_record_locals_in_expr(value, vars);
-                    let mut updated = binding_for(Type::Record(fields), binding.rebindability);
-                    if !binding.record_open {
-                        updated.record_open = false;
-                    }
-                    vars.insert(base_name.clone(), updated);
-                    return Ok(false);
+                } else if binding.record_open {
+                    fields.insert(name.clone(), value_ty);
+                } else {
+                    return Err(Diagnostic::new(format!(
+                        "cannot add new field '{}.{}' after record was sealed",
+                        base_name, name
+                    )));
                 }
-            }
-            let existing_field = fields.get(name).cloned();
-            let value_ty = infer_expr(
-                value,
-                vars,
-                fn_signatures,
-                active_type_params,
-                existing_field.clone(),
-            )?;
-            if *op == AssignOp::Add {
-                let field_ty = existing_field.clone().ok_or_else(|| {
-                    Diagnostic::new("compound field assignment requires an existing numeric field")
-                })?;
-                if !field_ty.is_numeric() || value_ty != field_ty {
+                seal_record_locals_in_expr(value, vars);
+                let mut updated = binding_for(Type::Record(fields), binding.rebindability);
+                if !binding.record_open {
+                    updated.record_open = false;
+                }
+                vars.insert(base_name.clone(), updated);
+                Ok(false)
+            } else {
+                let base_ty = infer_expr(base, vars, fn_signatures, active_type_params, None)?;
+                let Type::Record(fields) = base_ty else {
+                    return Err(Diagnostic::new("field assignment requires a record base"));
+                };
+                let field_ty = fields
+                    .get(name)
+                    .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
+                if *op == AssignOp::Add && !field_ty.is_numeric() {
                     return Err(Diagnostic::new(
                         "compound field assignment requires a numeric field",
                     ));
                 }
-            }
-            if let Some(ty) = fields.get(name) {
-                if *ty != value_ty {
+                let value_ty = infer_expr(
+                    value,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    Some(field_ty.clone()),
+                )?;
+                if value_ty != *field_ty {
                     return Err(Diagnostic::new(format!(
-                        "field assignment to '{}.{}' expects {}, got {}",
-                        base_name, name, ty, value_ty
+                        "field assignment to '{name}' expects {field_ty}, got {value_ty}",
                     )));
                 }
-            } else if binding.record_open {
-                fields.insert(name.clone(), value_ty);
-            } else {
-                return Err(Diagnostic::new(format!(
-                    "cannot add new field '{}.{}' after record was sealed",
-                    base_name, name
-                )));
+                seal_record_locals_in_expr(value, vars);
+                Ok(false)
             }
-            seal_record_locals_in_expr(value, vars);
-            let mut updated = binding_for(Type::Record(fields), binding.rebindability);
-            if !binding.record_open {
-                updated.record_open = false;
-            }
-            vars.insert(base_name.clone(), updated);
-            Ok(false)
         }
         Stmt::If {
             condition,
