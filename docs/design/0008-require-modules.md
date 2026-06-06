@@ -132,14 +132,13 @@ The merged `Program` then flows through the existing pipeline unchanged.
 
 These keep the first slice small; each can be lifted later.
 
-- An imported module may contain only functions, top-level `local ... = require(...)`
-  bindings used for re-export, and the trailing `return`. It may not run other
-  top-level statements, which sidesteps cross-module initialization ordering
-  for now.
+- Imported modules now contribute their top-level statements to a single
+  synthesized init sequence. Dependencies initialize before the modules that
+  require them, and the entry module initializes last.
 - Table exports are limited to fixed named fields mapping to functions (no
   arbitrary table types or non-function values). General table support remains M4.
-- All linked functions, including mangled ones, are still emitted as Wasm
-  exports. Restricting exports to the entry module is a later refinement.
+- Wasm exports are limited to the entry-facing function surface; mangled module
+  internals and synthesized helper functions stay internal.
 
 ## Alternatives Considered
 

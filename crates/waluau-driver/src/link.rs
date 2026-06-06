@@ -116,33 +116,11 @@ fn module_prefix(id: usize, entry_id: usize) -> String {
     }
 }
 
-fn validate_imported_top_level(stmts: &[Stmt]) -> Result<(), Diagnostic> {
-    for stmt in stmts {
-        let Stmt::Let { value, .. } = stmt else {
-            return Err(Diagnostic::new(
-                "imported module top-level statements may only bind `require` imports",
-            ));
-        };
-        if !matches!(value, Expr::Require(..)) {
-            return Err(Diagnostic::new(
-                "imported module top-level statements may only bind `require` imports",
-            ));
-        }
-    }
-    Ok(())
-}
-
 fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, Diagnostic> {
     let mut functions = Vec::new();
     let mut type_declarations = Vec::new();
     let mut top_level = Vec::new();
     let mut export_cache = HashMap::new();
-
-    for (id, module) in modules.iter().enumerate() {
-        if id != entry_id {
-            validate_imported_top_level(&module.program.top_level)?;
-        }
-    }
 
     for (id, _) in modules.iter().enumerate() {
         if id != entry_id {
@@ -208,16 +186,17 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, Diagnosti
             functions.push(lowered);
         }
 
-        if id == entry_id {
-            let mut lowered = module.program.top_level.clone();
-            for stmt in &mut lowered {
-                rewriter.rewrite_stmt_types(stmt);
-            }
-            let mut bound = HashSet::new();
-            rewriter.rewrite_block(&mut lowered, &mut bound);
-            strip_unused_namespace_lets(&mut lowered);
-            top_level = lowered;
+        let mut lowered = module.program.top_level.clone();
+        for stmt in &mut lowered {
+            rewriter.rewrite_stmt_types(stmt);
         }
+        let mut bound = HashSet::new();
+        rewriter.rewrite_block(&mut lowered, &mut bound);
+        if id != entry_id {
+            rename_imported_top_level_locals(&mut lowered, &prefix);
+        }
+        strip_unused_namespace_lets(&mut lowered);
+        top_level.extend(lowered);
     }
     let entry_file_path = modules[entry_id].program.entry_file_path.clone();
     let mut sources = BTreeMap::new();
@@ -906,6 +885,245 @@ fn strip_unused_namespace_lets(stmts: &mut Vec<Stmt>) {
     stmts.retain(|stmt| !matches!(stmt, Stmt::Let { name, .. } if unused.contains(name)));
 }
 
+fn rename_imported_top_level_locals(stmts: &mut [Stmt], prefix: &str) {
+    let renames = collect_top_level_local_renames(stmts, prefix);
+    if renames.is_empty() {
+        return;
+    }
+
+    let mut available = HashSet::new();
+    let mut shadowed = HashSet::new();
+    rename_stmt_block(stmts, &renames, &mut available, &mut shadowed);
+}
+
+fn collect_top_level_local_renames(stmts: &[Stmt], prefix: &str) -> HashMap<String, String> {
+    let mut renames = HashMap::new();
+    for stmt in stmts {
+        match stmt {
+            Stmt::Let { name, .. } => {
+                renames.insert(name.clone(), format!("{prefix}{name}"));
+            }
+            Stmt::LetMulti { bindings, .. } => {
+                for binding in bindings {
+                    renames.insert(binding.name.clone(), format!("{prefix}{}", binding.name));
+                }
+            }
+            _ => {}
+        }
+    }
+    renames
+}
+
+fn rename_stmt_block(
+    stmts: &mut [Stmt],
+    renames: &HashMap<String, String>,
+    available: &mut HashSet<String>,
+    shadowed: &mut HashSet<String>,
+) {
+    for stmt in stmts {
+        rename_stmt(stmt, renames, available, shadowed);
+    }
+}
+
+fn rename_stmt(
+    stmt: &mut Stmt,
+    renames: &HashMap<String, String>,
+    available: &mut HashSet<String>,
+    shadowed: &mut HashSet<String>,
+) {
+    match stmt {
+        Stmt::Let { name, value, .. } => {
+            let original_name = name.clone();
+            rename_expr(value, renames, available, shadowed);
+            if let Some(renamed) = renames.get(&original_name) {
+                *name = renamed.clone();
+            }
+            available.insert(original_name);
+        }
+        Stmt::Assign { value, .. } | Stmt::Expr(value) | Stmt::Return(value) => {
+            rename_expr(value, renames, available, shadowed);
+        }
+        Stmt::IndexAssign {
+            base, index, value, ..
+        } => {
+            rename_expr(base, renames, available, shadowed);
+            rename_expr(index, renames, available, shadowed);
+            rename_expr(value, renames, available, shadowed);
+        }
+        Stmt::FieldAssign { base, value, .. } => {
+            rename_expr(base, renames, available, shadowed);
+            rename_expr(value, renames, available, shadowed);
+        }
+        Stmt::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
+            rename_expr(condition, renames, available, shadowed);
+            rename_stmt_block(
+                then_body,
+                renames,
+                &mut available.clone(),
+                &mut shadowed.clone(),
+            );
+            rename_stmt_block(
+                else_body,
+                renames,
+                &mut available.clone(),
+                &mut shadowed.clone(),
+            );
+        }
+        Stmt::While { condition, body } => {
+            rename_expr(condition, renames, available, shadowed);
+            rename_stmt_block(body, renames, &mut available.clone(), &mut shadowed.clone());
+        }
+        Stmt::Repeat { body, condition } => {
+            let mut body_available = available.clone();
+            let mut body_shadowed = shadowed.clone();
+            rename_stmt_block(body, renames, &mut body_available, &mut body_shadowed);
+            rename_expr(condition, renames, &body_available, &body_shadowed);
+        }
+        Stmt::NumericFor {
+            name,
+            start,
+            stop,
+            step,
+            body,
+        } => {
+            rename_expr(start, renames, available, shadowed);
+            rename_expr(stop, renames, available, shadowed);
+            if let Some(step) = step {
+                rename_expr(step, renames, available, shadowed);
+            }
+            let mut inner_available = available.clone();
+            let mut inner_shadowed = shadowed.clone();
+            if renames.contains_key(name) {
+                inner_shadowed.insert(name.clone());
+            }
+            rename_stmt_block(body, renames, &mut inner_available, &mut inner_shadowed);
+        }
+        Stmt::ForIn {
+            names,
+            iterator,
+            body,
+        } => {
+            rename_expr(iterator, renames, available, shadowed);
+            let mut inner_available = available.clone();
+            let mut inner_shadowed = shadowed.clone();
+            for name in names {
+                if renames.contains_key(name) {
+                    inner_shadowed.insert(name.clone());
+                }
+            }
+            rename_stmt_block(body, renames, &mut inner_available, &mut inner_shadowed);
+        }
+        Stmt::ReturnMulti(values) | Stmt::AssignMulti { values, .. } => {
+            for value in values {
+                rename_expr(value, renames, available, shadowed);
+            }
+        }
+        Stmt::LetMulti { bindings, values } => {
+            for value in values {
+                rename_expr(value, renames, available, shadowed);
+            }
+            for binding in bindings {
+                let original_name = binding.name.clone();
+                if let Some(renamed) = renames.get(&original_name) {
+                    binding.name = renamed.clone();
+                }
+                available.insert(original_name);
+            }
+        }
+        Stmt::Break | Stmt::Continue => {}
+    }
+}
+
+fn rename_expr(
+    expr: &mut Expr,
+    renames: &HashMap<String, String>,
+    available: &HashSet<String>,
+    shadowed: &HashSet<String>,
+) {
+    match expr {
+        Expr::Name(name, _) => {
+            if available.contains(name) && !shadowed.contains(name) {
+                if let Some(renamed) = renames.get(name) {
+                    *name = renamed.clone();
+                }
+            }
+        }
+        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => {
+            rename_expr(expr, renames, available, shadowed)
+        }
+        Expr::Binary { left, right, .. } => {
+            rename_expr(left, renames, available, shadowed);
+            rename_expr(right, renames, available, shadowed);
+        }
+        Expr::If {
+            condition,
+            then_expr,
+            else_expr,
+            ..
+        } => {
+            rename_expr(condition, renames, available, shadowed);
+            rename_expr(then_expr, renames, available, shadowed);
+            rename_expr(else_expr, renames, available, shadowed);
+        }
+        Expr::Call { callee, args, .. } => {
+            rename_expr(callee, renames, available, shadowed);
+            for arg in args {
+                rename_expr(arg, renames, available, shadowed);
+            }
+        }
+        Expr::MethodCall { receiver, args, .. } => {
+            rename_expr(receiver, renames, available, shadowed);
+            for arg in args {
+                rename_expr(arg, renames, available, shadowed);
+            }
+        }
+        Expr::Function(function) => {
+            let mut inner_available = available.clone();
+            let mut inner_shadowed = shadowed.clone();
+            if let Some(name) = &function.name {
+                if renames.contains_key(name) {
+                    inner_shadowed.insert(name.clone());
+                }
+            }
+            for param in &function.params {
+                if renames.contains_key(&param.name) {
+                    inner_shadowed.insert(param.name.clone());
+                }
+            }
+            rename_stmt_block(
+                &mut function.body,
+                renames,
+                &mut inner_available,
+                &mut inner_shadowed,
+            );
+        }
+        Expr::ArrayLiteral { elements, .. } => {
+            for element in elements {
+                rename_expr(element, renames, available, shadowed);
+            }
+        }
+        Expr::TableLiteral { fields, .. } => {
+            for field in fields {
+                rename_expr(&mut field.value, renames, available, shadowed);
+            }
+        }
+        Expr::Field { base, .. } => rename_expr(base, renames, available, shadowed),
+        Expr::Index { base, index, .. } => {
+            rename_expr(base, renames, available, shadowed);
+            rename_expr(index, renames, available, shadowed);
+        }
+        Expr::Number(..)
+        | Expr::Bool(..)
+        | Expr::String(..)
+        | Expr::Bytes(..)
+        | Expr::Require(..) => {}
+    }
+}
+
 fn stmt_mentions_name(name: &str, stmts: &[Stmt]) -> bool {
     stmts
         .iter()
@@ -1139,5 +1357,57 @@ fn collect_expr(expr: &Expr, out: &mut Vec<String>) {
             collect_expr(base, out);
             collect_expr(index, out);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::link_program;
+    use std::fs;
+    use tempfile::tempdir;
+    use waluau_ast::{Expr, Stmt};
+
+    #[test]
+    fn imported_top_level_statements_are_merged_and_mangled() {
+        let dir = tempdir().expect("tempdir should exist");
+        fs::write(
+            dir.path().join("lib.walu"),
+            r#"
+                local value: i32 = 41
+                assert(value == 41)
+
+                return {
+                    add_one = function(x: i32): i32
+                        return x + 1
+                    end,
+                }
+            "#,
+        )
+        .expect("lib should write");
+        fs::write(
+            dir.path().join("main.walu"),
+            r#"
+                function main(): i32
+                    local lib = require("./lib")
+                    return lib.add_one(1)
+                end
+            "#,
+        )
+        .expect("main should write");
+
+        let program = link_program(&dir.path().join("main.walu")).expect("link should succeed");
+        assert!(
+            matches!(
+                &program.top_level[0],
+                Stmt::Let { name, .. } if name.starts_with("__waluau_m0_")
+            ),
+            "expected imported locals to be mangled: {:?}",
+            program.top_level
+        );
+        assert!(
+            matches!(&program.top_level[1], Stmt::Expr(Expr::Call { .. })),
+            "expected imported assert to remain in merged top-level init: {:?}",
+            program.top_level
+        );
     }
 }
