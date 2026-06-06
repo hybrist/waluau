@@ -525,3 +525,36 @@ fn rejects_implicit_unbox_from_unknown() {
         "implicit unbox from unknown should be a type error"
     );
 }
+
+#[test]
+fn debug_block_count() {
+    let source = r#"
+        function choose(x: i32, y: i32): i32
+            if x > y then
+                return x
+            else
+                return y
+            end
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let function = &ir.functions[0];
+    println!("choose blocks.len() = {}", function.blocks.len());
+    for (id, block) in &function.blocks {
+        println!("  block {}: {:?}", id.0, block.terminator);
+    }
+
+    let source2 = r#"
+        function entry(x: i32): i32
+            return x + 1
+        end
+    "#;
+    let program2 = waluau_parser::parse(source2).expect("parse2 should succeed");
+    let ir2 = waluau_ir::build(&program2).expect("ir2 should succeed");
+    let function2 = &ir2.functions[0];
+    println!("entry blocks.len() = {}", function2.blocks.len());
+    for (id, block) in &function2.blocks {
+        println!("  block {}: {:?}", id.0, block.terminator);
+    }
+}
