@@ -50,7 +50,7 @@ function Point:add(other: Point): Point
 end
 
 local a: Point = { x = 2::i32, y = 4::i32 }
-local c: Point = { x = 10::i32, y = 1::i32 }
+local c = { x = 10::i32, y = 1::i32 }::Point
 local moved: Point = a:translated(5::i32, 7::i32)
 local added: Point = a:add(c)
 

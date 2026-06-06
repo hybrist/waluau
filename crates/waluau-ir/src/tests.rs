@@ -562,6 +562,29 @@ fn inserts_casts_for_implicit_and_explicit_conversions() {
 }
 
 #[test]
+fn lowers_cast_style_initialization_of_named_record_types() {
+    let source = r#"
+        type MyType = { pos: number }
+
+        function entry(): number
+            local t = { pos = 20 }::MyType
+            return t.pos
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    let function = &module.functions[0];
+    assert!(function.blocks.values().any(|block| {
+        block
+            .instructions
+            .iter()
+            .any(|(_, instruction)| matches!(instruction, Instruction::StructNew { .. }))
+    }));
+}
+
+#[test]
 fn rejects_non_bool_branch_condition() {
     let function = Function {
         name: "entry".into(),
@@ -868,11 +891,13 @@ fn verifies_loop_with_break_and_continue() {
         field_call_signatures.insert(function.name.to_string(), sig);
     }
 
+    let tag_ids = std::collections::BTreeMap::new();
     let mut lowered = super::build_function(
         &program.functions[0],
         &signatures,
         &field_call_signatures,
         &program.sources,
+        &tag_ids,
     )
     .expect("ir lowering should succeed");
     let mut functions = Vec::new();

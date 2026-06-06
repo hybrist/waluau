@@ -185,6 +185,22 @@ fn accepts_explicit_numeric_casts() {
 }
 
 #[test]
+fn accepts_cast_style_initialization_of_named_record_types() {
+    let source = r#"
+        type MyType = { pos: number }
+
+        function entry(): number
+            local t1: MyType = { pos = 20 }
+            local t2 = { pos = 20 }::MyType
+            return t1.pos + t2.pos
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
 fn opaque_types_require_explicit_casts_to_their_representation() {
     let source = r#"
         type Meters = number

@@ -3,6 +3,7 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
     waluau_ast::resolve_symbols(&mut resolved)?;
     let erased = erase_opaque_types(&resolved);
     let monomorphic = Monomorphizer::new(&erased).run(&erased)?;
+    let tag_ids = collect_variant_tag_ids(&monomorphic);
     let mut signatures = HashMap::new();
     let mut field_call_signatures = HashMap::new();
     for function in &monomorphic.functions {
@@ -27,7 +28,13 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
     }
     let mut functions = Vec::new();
     for function in &monomorphic.functions {
-        let mut lowered = build_function(function, &signatures, &field_call_signatures, &monomorphic.sources)?;
+        let mut lowered = build_function(
+            function,
+            &signatures,
+            &field_call_signatures,
+            &monomorphic.sources,
+            &tag_ids,
+        )?;
         functions.push(lowered.remove(0));
         functions.extend(lowered);
     }
@@ -37,6 +44,268 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
     let module = Module { functions, start };
     verify(&module)?;
     Ok(module)
+}
+
+fn collect_variant_tag_ids(program: &Program) -> BTreeMap<String, i32> {
+    let mut tag_ids = BTreeMap::new();
+    for function in &program.functions {
+        for param in &function.params {
+            collect_type_variant_tags(&param.ty, &mut tag_ids);
+        }
+        if let Some(return_type) = &function.return_type {
+            collect_type_variant_tags(return_type, &mut tag_ids);
+        }
+        for stmt in &function.body {
+            collect_stmt_variant_tags(stmt, &mut tag_ids);
+        }
+    }
+    for stmt in &program.top_level {
+        collect_stmt_variant_tags(stmt, &mut tag_ids);
+    }
+    // Tagged coroutine resume can produce all three runtime variants even when
+    // a source annotation only models a subset such as `Finished | Error`.
+    insert_variant_tag(&mut tag_ids, "Yielded");
+    insert_variant_tag(&mut tag_ids, "Finished");
+    insert_variant_tag(&mut tag_ids, "Error");
+    tag_ids
+}
+
+fn insert_variant_tag(tag_ids: &mut BTreeMap<String, i32>, tag: &str) {
+    if !tag_ids.contains_key(tag) {
+        tag_ids.insert(tag.to_string(), tag_ids.len() as i32);
+    }
+}
+
+fn collect_type_variant_tags(ty: &Type, tag_ids: &mut BTreeMap<String, i32>) {
+    match ty {
+        Type::TaggedVariant(variant) => {
+            insert_variant_tag(tag_ids, &variant.tag);
+            collect_type_variant_tags(variant.payload.as_ref(), tag_ids);
+        }
+        Type::TaggedUnion(variants) => {
+            for variant in variants {
+                insert_variant_tag(tag_ids, &variant.tag);
+                collect_type_variant_tags(variant.payload.as_ref(), tag_ids);
+            }
+        }
+        Type::Opaque { ty, .. } | Type::Array(ty) => collect_type_variant_tags(ty, tag_ids),
+        Type::Multi(types) => {
+            for ty in types {
+                collect_type_variant_tags(ty, tag_ids);
+            }
+        }
+        Type::Function {
+            params,
+            return_type,
+        } => {
+            for param in params {
+                collect_type_variant_tags(param, tag_ids);
+            }
+            collect_type_variant_tags(return_type, tag_ids);
+        }
+        Type::Record(fields) => {
+            for ty in fields.values() {
+                collect_type_variant_tags(ty, tag_ids);
+            }
+        }
+        Type::Named { type_args, .. } => {
+            for ty in type_args {
+                collect_type_variant_tags(ty, tag_ids);
+            }
+        }
+        Type::Unit
+        | Type::Bool
+        | Type::Numeric(_)
+        | Type::String
+        | Type::Bytes
+        | Type::Extern
+        | Type::Unknown
+        | Type::Thread
+        | Type::TypeParam(_) => {}
+    }
+}
+
+fn collect_stmt_variant_tags(stmt: &Stmt, tag_ids: &mut BTreeMap<String, i32>) {
+    match stmt {
+        Stmt::Let { ty, value, .. } => {
+            if let Some(ty) = ty {
+                collect_type_variant_tags(ty, tag_ids);
+            }
+            collect_expr_variant_tags(value, tag_ids);
+        }
+        Stmt::Assign { value, .. } | Stmt::Return(value) | Stmt::Expr(value) => {
+            collect_expr_variant_tags(value, tag_ids);
+        }
+        Stmt::IndexAssign {
+            base,
+            index,
+            value,
+            ..
+        } => {
+            collect_expr_variant_tags(base, tag_ids);
+            collect_expr_variant_tags(index, tag_ids);
+            collect_expr_variant_tags(value, tag_ids);
+        }
+        Stmt::FieldAssign { base, value, .. } => {
+            collect_expr_variant_tags(base, tag_ids);
+            collect_expr_variant_tags(value, tag_ids);
+        }
+        Stmt::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
+            collect_expr_variant_tags(condition, tag_ids);
+            for stmt in then_body {
+                collect_stmt_variant_tags(stmt, tag_ids);
+            }
+            for stmt in else_body {
+                collect_stmt_variant_tags(stmt, tag_ids);
+            }
+        }
+        Stmt::While { condition, body } => {
+            collect_expr_variant_tags(condition, tag_ids);
+            for stmt in body {
+                collect_stmt_variant_tags(stmt, tag_ids);
+            }
+        }
+        Stmt::Repeat { body, condition } => {
+            for stmt in body {
+                collect_stmt_variant_tags(stmt, tag_ids);
+            }
+            collect_expr_variant_tags(condition, tag_ids);
+        }
+        Stmt::NumericFor {
+            start,
+            stop,
+            step,
+            body,
+            ..
+        } => {
+            collect_expr_variant_tags(start, tag_ids);
+            collect_expr_variant_tags(stop, tag_ids);
+            if let Some(step) = step {
+                collect_expr_variant_tags(step, tag_ids);
+            }
+            for stmt in body {
+                collect_stmt_variant_tags(stmt, tag_ids);
+            }
+        }
+        Stmt::ForIn { iterator, body, .. } => {
+            collect_expr_variant_tags(iterator, tag_ids);
+            for stmt in body {
+                collect_stmt_variant_tags(stmt, tag_ids);
+            }
+        }
+        Stmt::ReturnMulti(values) => {
+            for value in values {
+                collect_expr_variant_tags(value, tag_ids);
+            }
+        }
+        Stmt::LetMulti { bindings, values } => {
+            for binding in bindings {
+                if let Some(ty) = &binding.ty {
+                    collect_type_variant_tags(ty, tag_ids);
+                }
+            }
+            for value in values {
+                collect_expr_variant_tags(value, tag_ids);
+            }
+        }
+        Stmt::AssignMulti { values, .. } => {
+            for value in values {
+                collect_expr_variant_tags(value, tag_ids);
+            }
+        }
+        Stmt::Break | Stmt::Continue => {}
+    }
+}
+
+fn collect_expr_variant_tags(expr: &Expr, tag_ids: &mut BTreeMap<String, i32>) {
+    match expr {
+        Expr::Unary { expr, .. } => {
+            collect_expr_variant_tags(expr, tag_ids);
+        }
+        Expr::Cast { expr, ty, .. } => {
+            collect_expr_variant_tags(expr, tag_ids);
+            collect_type_variant_tags(ty, tag_ids);
+        }
+        Expr::IsVariant { expr, .. } => collect_expr_variant_tags(expr, tag_ids),
+        Expr::Binary { left, right, .. } => {
+            collect_expr_variant_tags(left, tag_ids);
+            collect_expr_variant_tags(right, tag_ids);
+        }
+        Expr::If {
+            condition,
+            then_expr,
+            else_expr,
+            ..
+        } => {
+            collect_expr_variant_tags(condition, tag_ids);
+            collect_expr_variant_tags(then_expr, tag_ids);
+            collect_expr_variant_tags(else_expr, tag_ids);
+        }
+        Expr::Call {
+            callee,
+            type_args,
+            args,
+            ..
+        } => {
+            collect_expr_variant_tags(callee, tag_ids);
+            for ty in type_args {
+                collect_type_variant_tags(ty, tag_ids);
+            }
+            for arg in args {
+                collect_expr_variant_tags(arg, tag_ids);
+            }
+        }
+        Expr::MethodCall {
+            receiver,
+            args,
+            type_args,
+            ..
+        } => {
+            collect_expr_variant_tags(receiver, tag_ids);
+            for ty in type_args {
+                collect_type_variant_tags(ty, tag_ids);
+            }
+            for arg in args {
+                collect_expr_variant_tags(arg, tag_ids);
+            }
+        }
+        Expr::Function(function) => {
+            for param in &function.params {
+                collect_type_variant_tags(&param.ty, tag_ids);
+            }
+            if let Some(return_type) = &function.return_type {
+                collect_type_variant_tags(return_type, tag_ids);
+            }
+            for stmt in &function.body {
+                collect_stmt_variant_tags(stmt, tag_ids);
+            }
+        }
+        Expr::ArrayLiteral { elements, .. } => {
+            for element in elements {
+                collect_expr_variant_tags(element, tag_ids);
+            }
+        }
+        Expr::TableLiteral { fields, .. } => {
+            for field in fields {
+                collect_expr_variant_tags(&field.value, tag_ids);
+            }
+        }
+        Expr::Field { base, .. } => collect_expr_variant_tags(base, tag_ids),
+        Expr::Index { base, index, .. } => {
+            collect_expr_variant_tags(base, tag_ids);
+            collect_expr_variant_tags(index, tag_ids);
+        }
+        Expr::Number(..)
+        | Expr::Bool(..)
+        | Expr::String(..)
+        | Expr::Bytes(..)
+        | Expr::Name(..)
+        | Expr::Require(..) => {}
+    }
 }
 
 fn erase_opaque_types(program: &Program) -> Program {
@@ -330,6 +599,7 @@ pub(crate) fn build_function(
     signatures: &HashMap<SymbolId, (Vec<Type>, Type)>,
     field_call_signatures: &HashMap<String, (Vec<Type>, Type)>,
     sources: &BTreeMap<String, String>,
+    tag_ids: &BTreeMap<String, i32>,
 ) -> Result<Vec<Function>, Diagnostic> {
     let return_type = function.return_type.clone().ok_or_else(|| {
         inference_diagnostic(
@@ -408,7 +678,7 @@ pub(crate) fn build_function(
         cell_names: captured_symbols,
         sources,
         file_path: function.file_path.clone(),
-        tag_ids: BTreeMap::new(),
+        tag_ids,
     };
     for stmt in &function.body {
         if builder.current_block == DEAD_BLOCK {
@@ -441,10 +711,9 @@ struct Builder<'a> {
     cell_names: HashSet<SymbolId>,
     sources: &'a BTreeMap<String, String>,
     file_path: String,
-    /// Stable discriminant IDs for tagged-union variant names, assigned lazily in
-    /// encounter order.  Both producers and consumers within the same function share
-    /// this map so IDs are always consistent.
-    tag_ids: BTreeMap<String, i32>,
+    /// Stable discriminant IDs for tagged-union variant names, shared across the
+    /// whole module so constructors and checks in different functions agree.
+    tag_ids: &'a BTreeMap<String, i32>,
 }
 
 #[derive(Clone)]
@@ -569,10 +838,12 @@ impl Builder<'_> {
         value
     }
 
-    /// Return (and lazily assign) the stable i32 discriminant for a tagged-union variant name.
-    fn variant_tag_id(&mut self, name: &str) -> i32 {
-        let next = self.tag_ids.len() as i32;
-        *self.tag_ids.entry(name.to_string()).or_insert(next)
+    /// Return the stable i32 discriminant for a tagged-union variant name.
+    fn variant_tag_id(&self, name: &str) -> Result<i32, Diagnostic> {
+        self.tag_ids
+            .get(name)
+            .copied()
+            .ok_or_else(|| Diagnostic::new(format!("unknown tagged-union variant '{name}'")))
     }
 
     fn instruction(&self, value: ValueId) -> Option<&Instruction> {
@@ -2266,15 +2537,21 @@ impl Builder<'_> {
                 }
             }
             Expr::Cast { expr, ty, .. } => {
-                let value = self.lower_expr(expr, env, types, None)?;
                 let actual = self.infer_expr_type(expr, types, None)?;
-                let cast = self.explicit_cast(value, actual, ty.clone())?;
+                let cast = if require_numeric_cast(actual.clone(), ty.clone()).is_ok() {
+                    let value = self.lower_expr(expr, env, types, None)?;
+                    self.explicit_cast(value, actual, ty.clone())?
+                } else {
+                    let typed_actual = self.infer_expr_type(expr, types, Some(ty.clone()))?;
+                    let value = self.lower_expr(expr, env, types, Some(ty.clone()))?;
+                    self.coerce_value(value, typed_actual, Some(ty.clone()))?
+                };
                 self.coerce_value(cast, ty.clone(), expected)?
             }
             Expr::IsVariant { expr, tag, .. } => {
                 // Lower the base expression as-is (the underlying IR value is the canonical record).
                 let base = self.lower_expr(expr, env, types, None)?;
-                let tag_id = self.variant_tag_id(tag);
+                let tag_id = self.variant_tag_id(tag)?;
                 let tag_field_ty = Type::Numeric(NumericType::I32);
                 // StructGet "tag" field from the canonical record
                 let tag_val = self.emit(Instruction::StructGet {
@@ -2432,7 +2709,7 @@ impl Builder<'_> {
                                 from: payload_ty,
                                 to: Type::Unknown,
                             });
-                            let tag_id = self.variant_tag_id(tag);
+                            let tag_id = self.variant_tag_id(tag)?;
                             let tag_val = self.emit(Instruction::Number {
                                 ty: NumericType::I32,
                                 literal: NumberLiteral {
@@ -2861,7 +3138,7 @@ impl Builder<'_> {
             cell_names: capture_param_symbols,
             sources: self.sources,
             file_path: function.file_path.clone(),
-            tag_ids: BTreeMap::new(),
+            tag_ids: self.tag_ids,
         };
         if let Some(_name) = &function.name {
             let symbol_id = function.symbol_id.expect("resolved symbol_id");
@@ -3118,7 +3395,9 @@ impl Builder<'_> {
             },
             Expr::Cast { expr, ty, .. } => {
                 let actual = self.infer_expr_type(expr, types, None)?;
-                require_numeric_cast(actual, ty.clone())?;
+                if require_numeric_cast(actual, ty.clone()).is_err() {
+                    self.infer_expr_type(expr, types, Some(ty.clone()))?;
+                }
                 Ok(ty.clone())
             }
             Expr::If {
@@ -3195,8 +3474,15 @@ impl Builder<'_> {
             }
             Expr::TableLiteral { fields, .. } => {
                 let mut record_fields = BTreeMap::new();
+                let expected_fields = match &expected {
+                    Some(Type::Record(fields)) => Some(fields),
+                    _ => None,
+                };
                 for field in fields {
-                    let field_ty = self.infer_expr_type(&field.value, types, None)?;
+                    let expected_field_ty = expected_fields
+                        .and_then(|fields| fields.get(&field.name))
+                        .cloned();
+                    let field_ty = self.infer_expr_type(&field.value, types, expected_field_ty)?;
                     record_fields.insert(field.name.clone(), field_ty);
                 }
                 coerce_type(Type::Record(record_fields), expected)
@@ -3554,9 +3840,18 @@ impl Builder<'_> {
                 // When the expected type is a tagged union, emit the tagged-resume instruction
                 // that returns a canonical `{ tag: i32, value: unknown }` record.
                 if matches!(&expected, Some(Type::TaggedUnion(_)) | Some(Type::TaggedVariant(_))) {
-                    let yielded_tag = self.variant_tag_id("Yielded");
-                    let finished_tag = self.variant_tag_id("Finished");
-                    let error_tag = self.variant_tag_id("Error");
+                    let yielded_tag = match self.variant_tag_id("Yielded") {
+                        Ok(tag) => tag,
+                        Err(error) => return Some(Err(error)),
+                    };
+                    let finished_tag = match self.variant_tag_id("Finished") {
+                        Ok(tag) => tag,
+                        Err(error) => return Some(Err(error)),
+                    };
+                    let error_tag = match self.variant_tag_id("Error") {
+                        Ok(tag) => tag,
+                        Err(error) => return Some(Err(error)),
+                    };
                     let value = self.emit(Instruction::CoroutineResumeTagged {
                         coroutine,
                         yielded_tag,
