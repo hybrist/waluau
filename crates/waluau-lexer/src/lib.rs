@@ -485,7 +485,7 @@ mod tests {
         assert_eq!(err("&&").to_string(), "unsupported '&&', use 'and'");
         assert_eq!(err("||").to_string(), "unsupported '||', use 'or'");
         assert_eq!(err("&").to_string(), "unexpected '&', expected '&&'");
-        assert_eq!(err("|").to_string(), "unexpected '|', expected '||'");
+        assert_eq!(kinds("|"), vec![TokenKind::Pipe]);
     }
 
     #[test]
