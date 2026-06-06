@@ -50,4 +50,14 @@ test.describe('editor', () => {
     });
     expect(languageId).toBe('waluau');
   });
+
+  test('instantiation error message appears in the run tab when startup code traps', async ({ page }) => {
+    await page.locator('.code-textarea').fill('assert(false)');
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+    // The Run tab should show the "Instantiation Error" message
+    await expect(page.locator('.diagnostic-output')).toContainText('Failed to instantiate WASM module:');
+    await expect(page.locator('.diagnostic-output')).not.toContainText('This module requires Wasm GC');
+  });
 });
