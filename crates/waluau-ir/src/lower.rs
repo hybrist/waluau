@@ -1,32 +1,33 @@
 pub fn build(program: &Program) -> Result<Module, Diagnostic> {
-    let erased = erase_opaque_types(program);
+    let mut resolved = program.clone();
+    waluau_ast::resolve_symbols(&mut resolved)?;
+    let erased = erase_opaque_types(&resolved);
     let monomorphic = Monomorphizer::new(&erased).run(&erased)?;
-    let signatures: HashMap<_, _> = monomorphic
-        .functions
-        .iter()
-        .map(|function| {
-            let return_type = function.return_type.clone().ok_or_else(|| {
-                Diagnostic::new(format!(
-                    "function '{}' must have a concrete return type before IR lowering",
-                    function.name
-                ))
-            })?;
-            Ok((
-                function.name.to_string(),
-                (
-                    function
-                        .params
-                        .iter()
-                        .map(|param| param.ty.clone())
-                        .collect(),
-                    return_type,
-                ),
+    let mut signatures = HashMap::new();
+    let mut field_call_signatures = HashMap::new();
+    for function in &monomorphic.functions {
+        let symbol_id = function.symbol_id.ok_or_else(|| {
+            Diagnostic::new(format!(
+                "function '{}' must have a symbol ID resolved",
+                function.name
             ))
-        })
-        .collect::<Result<HashMap<_, _>, _>>()?;
+        })?;
+        let return_type = function.return_type.clone().ok_or_else(|| {
+            Diagnostic::new(format!(
+                "function '{}' must have a concrete return type before IR lowering",
+                function.name
+            ))
+        })?;
+        let sig = (
+            function.params.iter().map(|param| param.ty.clone()).collect::<Vec<_>>(),
+            return_type,
+        );
+        signatures.insert(symbol_id, sig.clone());
+        field_call_signatures.insert(function.name.to_string(), sig);
+    }
     let mut functions = Vec::new();
     for function in &monomorphic.functions {
-        let mut lowered = build_function(function, &signatures, &monomorphic.sources)?;
+        let mut lowered = build_function(function, &signatures, &field_call_signatures, &monomorphic.sources)?;
         functions.push(lowered.remove(0));
         functions.extend(lowered);
     }
@@ -52,12 +53,14 @@ fn erase_opaque_types(program: &Program) -> Program {
 fn erase_function_opaque_types(function: &AstFunction) -> AstFunction {
     AstFunction {
         name: function.name.clone(),
+        symbol_id: function.symbol_id,
         type_params: function.type_params.clone(),
         params: function
             .params
             .iter()
             .map(|param| waluau_ast::Param {
                 name: param.name.clone(),
+                symbol_id: param.symbol_id,
                 ty: erase_type_opaque_types(&param.ty),
             })
             .collect(),
@@ -74,18 +77,21 @@ fn erase_stmt_opaque_types(stmt: &Stmt) -> Stmt {
     match stmt {
         Stmt::Let {
             name,
+            symbol_id,
             rebindability,
             ty,
             value,
         } => Stmt::Let {
             name: name.clone(),
+            symbol_id: *symbol_id,
             rebindability: *rebindability,
             ty: ty.as_ref().map(erase_type_opaque_types),
             value: erase_expr_opaque_types(value),
         },
-        Stmt::Assign { op, name, value } => Stmt::Assign {
+        Stmt::Assign { op, name, symbol_id, value } => Stmt::Assign {
             op: *op,
             name: name.clone(),
+            symbol_id: *symbol_id,
             value: erase_expr_opaque_types(value),
         },
         Stmt::IndexAssign {
@@ -129,12 +135,14 @@ fn erase_stmt_opaque_types(stmt: &Stmt) -> Stmt {
         },
         Stmt::NumericFor {
             name,
+            symbol_id,
             start,
             stop,
             step,
             body,
         } => Stmt::NumericFor {
             name: name.clone(),
+            symbol_id: *symbol_id,
             start: erase_expr_opaque_types(start),
             stop: erase_expr_opaque_types(stop),
             step: step.as_ref().map(erase_expr_opaque_types),
@@ -142,10 +150,12 @@ fn erase_stmt_opaque_types(stmt: &Stmt) -> Stmt {
         },
         Stmt::ForIn {
             names,
+            symbol_ids,
             iterator,
             body,
         } => Stmt::ForIn {
             names: names.clone(),
+            symbol_ids: symbol_ids.clone(),
             iterator: erase_expr_opaque_types(iterator),
             body: body.iter().map(erase_stmt_opaque_types).collect(),
         },
@@ -160,14 +170,16 @@ fn erase_stmt_opaque_types(stmt: &Stmt) -> Stmt {
                 .iter()
                 .map(|binding| waluau_ast::Binding {
                     name: binding.name.clone(),
+                    symbol_id: binding.symbol_id,
                     rebindability: binding.rebindability,
                     ty: binding.ty.as_ref().map(erase_type_opaque_types),
                 })
                 .collect(),
             values: values.iter().map(erase_expr_opaque_types).collect(),
         },
-        Stmt::AssignMulti { targets, values } => Stmt::AssignMulti {
+        Stmt::AssignMulti { targets, symbol_ids, values } => Stmt::AssignMulti {
             targets: targets.clone(),
+            symbol_ids: symbol_ids.clone(),
             values: values.iter().map(erase_expr_opaque_types).collect(),
         },
         Stmt::Expr(expr) => Stmt::Expr(erase_expr_opaque_types(expr)),
@@ -247,6 +259,7 @@ fn erase_expr_opaque_types(expr: &Expr) -> Expr {
         },
         Expr::Function(function) => Expr::Function(waluau_ast::FunctionExpr {
             name: function.name.clone(),
+            symbol_id: function.symbol_id,
             implicit_self: function.implicit_self.clone(),
             type_params: function.type_params.clone(),
             params: function
@@ -254,6 +267,7 @@ fn erase_expr_opaque_types(expr: &Expr) -> Expr {
                 .iter()
                 .map(|param| waluau_ast::Param {
                     name: param.name.clone(),
+                    symbol_id: param.symbol_id,
                     ty: erase_type_opaque_types(&param.ty),
                 })
                 .collect(),
@@ -313,7 +327,8 @@ fn erase_type_opaque_types(ty: &Type) -> Type {
 
 pub(crate) fn build_function(
     function: &AstFunction,
-    signatures: &HashMap<String, (Vec<Type>, Type)>,
+    signatures: &HashMap<SymbolId, (Vec<Type>, Type)>,
+    field_call_signatures: &HashMap<String, (Vec<Type>, Type)>,
     sources: &BTreeMap<String, String>,
 ) -> Result<Vec<Function>, Diagnostic> {
     let return_type = function.return_type.clone().ok_or_else(|| {
@@ -353,32 +368,28 @@ pub(crate) fn build_function(
     let mut env = HashMap::new();
     let mut type_env = HashMap::new();
     let entry = out.entry;
-    // Precompute names that are referenced by any nested function so we can
-    // represent them as cell-backed storage (1-element arrays) to support
-    // mutable closure capture semantics.
-    let captured_names: HashSet<String> = collect_nested_function_capture_names(function);
+    let captured_symbols: HashSet<SymbolId> = collect_nested_function_capture_names(function);
 
-    for (index, (name, ty)) in out.params.clone().into_iter().enumerate() {
+    for (index, param) in function.params.iter().enumerate() {
+        let symbol_id = param.symbol_id.expect("param has resolved symbol_id");
         let value = out.next_value();
         block_mut(&mut out, entry)
             .instructions
             .push((value, Instruction::Param(index)));
-        // If this parameter is captured by a nested function, wrap it in a 1-element
-        // array cell so closures share mutable storage. Otherwise keep the raw value.
-        if captured_names.contains(&name) {
+        if captured_symbols.contains(&symbol_id) {
             let cell = out.next_value();
             block_mut(&mut out, entry).instructions.push((
                 cell,
                 Instruction::ArrayNew {
-                    element_ty: ty.clone(),
+                    element_ty: param.ty.clone(),
                     elements: vec![value],
                 },
             ));
-            env.insert(name, cell);
+            env.insert(symbol_id, cell);
         } else {
-            env.insert(name, value);
+            env.insert(symbol_id, value);
         }
-        type_env.insert(out.params[index].0.clone(), ty);
+        type_env.insert(symbol_id, param.ty.clone());
     }
 
     let mut builder = Builder {
@@ -386,10 +397,11 @@ pub(crate) fn build_function(
         current_block: BlockId(0),
         next_block: 1,
         signatures,
+        field_call_signatures,
         lifted_functions: Vec::new(),
         lambda_counter: 0,
         loop_stack: Vec::new(),
-        cell_names: captured_names,
+        cell_names: captured_symbols,
         sources,
         file_path: function.file_path.clone(),
         tag_ids: BTreeMap::new(),
@@ -416,12 +428,13 @@ struct Builder<'a> {
     function: Function,
     current_block: BlockId,
     next_block: usize,
-    signatures: &'a HashMap<String, (Vec<Type>, Type)>,
+    signatures: &'a HashMap<SymbolId, (Vec<Type>, Type)>,
+    field_call_signatures: &'a HashMap<String, (Vec<Type>, Type)>,
     lifted_functions: Vec<Function>,
     lambda_counter: usize,
     loop_stack: Vec<LoopContext>,
-    /// Names that are represented as 1-element array "cells" to support mutable capture.
-    cell_names: HashSet<String>,
+    /// SymbolIds that are represented as 1-element array "cells" to support mutable capture.
+    cell_names: HashSet<SymbolId>,
     sources: &'a BTreeMap<String, String>,
     file_path: String,
     /// Stable discriminant IDs for tagged-union variant names, assigned lazily in
@@ -435,14 +448,14 @@ struct LoopContext {
     header: BlockId,
     continue_target: BlockId,
     break_target: BlockId,
-    phis: HashMap<String, ValueId>,
+    phis: HashMap<SymbolId, ValueId>,
 }
 
 fn builtin_name(callee: &Expr) -> Option<String> {
     match callee {
-        Expr::Name(name, _) => Some(name.clone()),
+        Expr::Name(name, _, _) => Some(name.clone()),
         Expr::Field { base, name, .. } => match base.as_ref() {
-            Expr::Name(namespace, _) => Some(format!("{namespace}.{name}")),
+            Expr::Name(namespace, _, _) => Some(format!("{namespace}.{name}")),
             _ => None,
         },
         _ => None,
@@ -470,7 +483,7 @@ fn method_signature(
     name: &str,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
 ) -> Option<(Vec<Type>, Type)> {
-    let Expr::Name(base, _) = receiver else {
+    let Expr::Name(base, _, _) = receiver else {
         return None;
     };
     signatures.get(&method_signature_name(base, name)).cloned()
@@ -483,7 +496,7 @@ fn direct_field_call_name(
     let Expr::Field { base, name, .. } = callee else {
         return None;
     };
-    let Expr::Name(base, _) = base.as_ref() else {
+    let Expr::Name(base, _, _) = base.as_ref() else {
         return None;
     };
     let direct_name = method_signature_name(base, name);
@@ -557,7 +570,7 @@ impl Builder<'_> {
         block_mut(&mut self.function, block).terminator = terminator;
     }
 
-    fn lower_break(&mut self, _env: &HashMap<String, ValueId>) -> Result<(), Diagnostic> {
+    fn lower_break(&mut self, _env: &HashMap<SymbolId, ValueId>) -> Result<(), Diagnostic> {
         let Some(loop_ctx) = self.loop_stack.last() else {
             return Err(Diagnostic::new("break is only allowed inside loops"));
         };
@@ -570,7 +583,7 @@ impl Builder<'_> {
         Ok(())
     }
 
-    fn lower_continue(&mut self, env: &HashMap<String, ValueId>) -> Result<(), Diagnostic> {
+    fn lower_continue(&mut self, env: &HashMap<SymbolId, ValueId>) -> Result<(), Diagnostic> {
         let Some(loop_ctx) = self.loop_stack.last() else {
             return Err(Diagnostic::new("continue is only allowed inside loops"));
         };
@@ -578,8 +591,8 @@ impl Builder<'_> {
             return Ok(());
         }
         let current = self.current_block;
-        for (name, phi) in &loop_ctx.phis {
-            if let Some(value) = env.get(name).copied() {
+        for (id, phi) in &loop_ctx.phis {
+            if let Some(value) = env.get(id).copied() {
                 add_phi_incoming(&mut self.function, loop_ctx.header, *phi, (current, value));
             }
         }
@@ -591,16 +604,18 @@ impl Builder<'_> {
     fn lower_stmt(
         &mut self,
         stmt: &Stmt,
-        env: &mut HashMap<String, ValueId>,
-        types: &mut HashMap<String, Type>,
+        env: &mut HashMap<SymbolId, ValueId>,
+        types: &mut HashMap<SymbolId, Type>,
     ) -> Result<(), Diagnostic> {
         match stmt {
             Stmt::Let {
-                name,
+                name: _,
+                symbol_id,
                 rebindability: _,
                 ty,
                 value,
             } => {
+                let symbol_id = symbol_id.expect("symbol_id should be resolved");
                 let inferred_ty = if let Some(ty) = ty.clone() {
                     ty
                 } else if matches!(value, Expr::ArrayLiteral { elements, .. } if elements.is_empty()) {
@@ -613,27 +628,28 @@ impl Builder<'_> {
                 let value = self.lower_expr(value, env, types, Some(inferred_ty.clone()))?;
                 // If this local is captured by any nested function, represent it as a 1-element
                 // array cell so closures can observe and mutate the same storage location.
-                if self.cell_names.contains(name) {
+                if self.cell_names.contains(&symbol_id) {
                     let cell = self.emit(Instruction::ArrayNew {
                         element_ty: inferred_ty.clone(),
                         elements: vec![value],
                     });
-                    env.insert(name.clone(), cell);
+                    env.insert(symbol_id, cell);
                     // Keep the declared type as the inner element type for type checking.
-                    types.insert(name.clone(), inferred_ty);
+                    types.insert(symbol_id, inferred_ty);
                 } else {
-                    env.insert(name.clone(), value);
-                    types.insert(name.clone(), inferred_ty);
+                    env.insert(symbol_id, value);
+                    types.insert(symbol_id, inferred_ty);
                 }
             }
-            Stmt::Assign { op, name, value } => {
-                let ty = types.get(name).cloned().ok_or_else(|| {
+            Stmt::Assign { op, name, symbol_id, value } => {
+                let symbol_id = symbol_id.expect("symbol_id should be resolved");
+                let ty = types.get(&symbol_id).cloned().ok_or_else(|| {
                     Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
                 })?;
-                if self.cell_names.contains(name) {
+                if self.cell_names.contains(&symbol_id) {
                     // Captured local: stored in a 1-element array (cell). Perform ArraySet
                     // rather than rebinding the env entry.
-                    let cell = env.get(name).copied().ok_or_else(|| {
+                    let cell = env.get(&symbol_id).copied().ok_or_else(|| {
                         Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
                     })?;
                     let index0 = self.emit(Instruction::Number {
@@ -690,7 +706,7 @@ impl Builder<'_> {
                                     name
                                 )));
                             }
-                            let current = *env.get(name).ok_or_else(|| {
+                            let current = *env.get(&symbol_id).ok_or_else(|| {
                                 Diagnostic::new(format!(
                                     "unknown local '{name}' during IR lowering"
                                 ))
@@ -705,7 +721,7 @@ impl Builder<'_> {
                             })
                         }
                     };
-                    env.insert(name.clone(), value);
+                    env.insert(symbol_id, value);
                 }
             }
             Stmt::IndexAssign {
@@ -764,8 +780,8 @@ impl Builder<'_> {
                     unreachable!();
                 };
                 let base_ty = self.infer_expr_type(base, types, None)?;
-                let (base_ty, field_ty) = if let Expr::Name(base_name, _) = base.as_ref() {
-                    let Some(Type::Record(mut fields)) = types.get(base_name).cloned() else {
+                let (base_ty, field_ty) = if let Expr::Name(_base_name, Some(base_symbol_id), _) = base.as_ref() {
+                    let Some(Type::Record(mut fields)) = types.get(base_symbol_id).cloned() else {
                         return Err(Diagnostic::new("field assignment requires a record base"));
                     };
                     let existing_field = fields.get(name).cloned();
@@ -781,8 +797,6 @@ impl Builder<'_> {
                             let new_field_value =
                                 self.lower_expr(value, env, types, Some(inferred.clone()))?;
 
-                            // Shape transition for incremental record initialization: rebuild
-                            // the struct with existing fields + the newly introduced field.
                             let mut lowered_fields = Vec::with_capacity(fields.len());
                             for (field_name, field_ty) in &fields {
                                 if field_name == name {
@@ -799,8 +813,8 @@ impl Builder<'_> {
                                 struct_ty: updated_ty.clone(),
                                 fields: lowered_fields,
                             });
-                            env.insert(base_name.clone(), rebuilt);
-                            types.insert(base_name.clone(), updated_ty);
+                            env.insert(*base_symbol_id, rebuilt);
+                            types.insert(*base_symbol_id, updated_ty);
                             return Ok(());
                         }
                     }
@@ -849,7 +863,7 @@ impl Builder<'_> {
                     ..
                 } = expr
                 {
-                    if let Expr::Name(name, _) = callee.as_ref() {
+                    if let Expr::Name(name, _, _) = callee.as_ref() {
                         if name == ASSERT {
                             self.lower_assert_call(args, *span, env, types)?;
                             return Ok(());
@@ -914,11 +928,11 @@ impl Builder<'_> {
                     for ((binding, value), expected_ty) in
                         bindings.iter().zip(lowered).zip(expected)
                     {
-                        env.insert(binding.name.clone(), value);
-                        types.insert(binding.name.clone(), expected_ty);
+                        let symbol_id = binding.symbol_id.expect("resolved symbol_id");
+                        env.insert(symbol_id, value);
+                        types.insert(symbol_id, expected_ty);
                     }
                 } else {
-                    // No explicit type annotations: infer types from the RHS expressions.
                     let mut inferred_types = Vec::new();
                     for expr in values {
                         let ty = self.infer_expr_type(expr, types, None)?;
@@ -945,15 +959,17 @@ impl Builder<'_> {
                         )));
                     }
                     for ((binding, value), ty) in bindings.iter().zip(lowered).zip(inferred_types) {
-                        env.insert(binding.name.clone(), value);
-                        types.insert(binding.name.clone(), ty);
+                        let symbol_id = binding.symbol_id.expect("resolved symbol_id");
+                        env.insert(symbol_id, value);
+                        types.insert(symbol_id, ty);
                     }
                 }
             }
-            Stmt::AssignMulti { targets, values } => {
+            Stmt::AssignMulti { targets, symbol_ids, values } => {
+                let ids = symbol_ids.as_ref().expect("symbol_ids should be resolved");
                 let mut expected = Vec::new();
-                for target in targets {
-                    let ty = types.get(target).cloned().ok_or_else(|| {
+                for (target, id) in targets.iter().zip(ids) {
+                    let ty = types.get(id).cloned().ok_or_else(|| {
                         Diagnostic::new(format!("unknown local '{target}' during IR lowering"))
                     })?;
                     expected.push(ty);
@@ -966,8 +982,8 @@ impl Builder<'_> {
                         lowered.len()
                     )));
                 }
-                for (target, value) in targets.iter().zip(lowered) {
-                    env.insert(target.clone(), value);
+                for (id, value) in ids.iter().zip(lowered) {
+                    env.insert(*id, value);
                 }
             }
             Stmt::If {
@@ -984,20 +1000,22 @@ impl Builder<'_> {
                 self.lower_repeat(body, condition, env, types)?;
             }
             Stmt::NumericFor {
-                name,
+                symbol_id,
                 start,
                 stop,
                 step,
                 body,
+                ..
             } => {
-                self.lower_numeric_for(name, start, stop, step.as_ref(), body, env, types)?;
+                self.lower_numeric_for(symbol_id, start, stop, step.as_ref(), body, env, types)?;
             }
             Stmt::ForIn {
-                names,
+                symbol_ids,
                 iterator,
                 body,
+                ..
             } => {
-                self.lower_for_in(names, iterator, body, env, types)?;
+                self.lower_for_in(symbol_ids, iterator, body, env, types)?;
             }
         }
         Ok(())
@@ -1007,8 +1025,8 @@ impl Builder<'_> {
         &mut self,
         args: &[Expr],
         span: Option<waluau_ast::Span>,
-        env: &mut HashMap<String, ValueId>,
-        types: &mut HashMap<String, Type>,
+        env: &mut HashMap<SymbolId, ValueId>,
+        types: &mut HashMap<SymbolId, Type>,
     ) -> Result<(), Diagnostic> {
         if args.len() != 1 {
             return Err(Diagnostic::new(format!(
@@ -1056,24 +1074,24 @@ impl Builder<'_> {
     /// applied to the named variable in each branch.
     fn narrowed_variant_type_scopes(
         condition: &Expr,
-        types: &HashMap<String, Type>,
-    ) -> (HashMap<String, Type>, HashMap<String, Type>) {
+        types: &HashMap<SymbolId, Type>,
+    ) -> (HashMap<SymbolId, Type>, HashMap<SymbolId, Type>) {
         let mut then_types = types.clone();
         let mut else_types = types.clone();
         let Expr::IsVariant { expr, tag, .. } = condition else {
             return (then_types, else_types);
         };
-        let Expr::Name(name, _) = expr.as_ref() else {
+        let Expr::Name(_, Some(symbol_id), _) = expr.as_ref() else {
             return (then_types, else_types);
         };
-        let Some(ty) = types.get(name) else {
+        let Some(ty) = types.get(symbol_id) else {
             return (then_types, else_types);
         };
         if let Some(variant) = ty.tagged_variant(tag) {
-            then_types.insert(name.clone(), Type::TaggedVariant(variant));
+            then_types.insert(*symbol_id, Type::TaggedVariant(variant));
         }
         if let Some(remaining) = ty.remove_tagged_variant(tag) {
-            else_types.insert(name.clone(), remaining);
+            else_types.insert(*symbol_id, remaining);
         }
         (then_types, else_types)
     }
@@ -1083,8 +1101,8 @@ impl Builder<'_> {
         condition: &Expr,
         then_body: &[Stmt],
         else_body: &[Stmt],
-        env: &mut HashMap<String, ValueId>,
-        types: &mut HashMap<String, Type>,
+        env: &mut HashMap<SymbolId, ValueId>,
+        types: &mut HashMap<SymbolId, Type>,
     ) -> Result<(), Diagnostic> {
         let (then_types_init, else_types_init) =
             Self::narrowed_variant_type_scopes(condition, types);
@@ -1180,8 +1198,8 @@ impl Builder<'_> {
         &mut self,
         condition: &Expr,
         body: &[Stmt],
-        env: &mut HashMap<String, ValueId>,
-        types: &mut HashMap<String, Type>,
+        env: &mut HashMap<SymbolId, ValueId>,
+        types: &mut HashMap<SymbolId, Type>,
     ) -> Result<(), Diagnostic> {
         let preheader = self.current_block;
         let header = self.new_block();
@@ -1194,11 +1212,11 @@ impl Builder<'_> {
         let mut loop_env = env.clone();
         let loop_types = types.clone();
         let mut phis = HashMap::new();
-        for name in &mutated {
-            if let Some(initial) = env.get(name).copied() {
+        for id in &mutated {
+            if let Some(initial) = env.get(id).copied() {
                 let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
-                loop_env.insert(name.clone(), phi);
-                phis.insert(name.clone(), phi);
+                loop_env.insert(*id, phi);
+                phis.insert(*id, phi);
             }
         }
 
@@ -1236,15 +1254,15 @@ impl Builder<'_> {
         let body_exit = self.current_block;
         if body_exit != DEAD_BLOCK {
             self.set_terminator(body_exit, Terminator::Jump(header));
-            for (name, phi) in &phis {
-                if let Some(next_value) = body_env.get(name).copied() {
+            for (id, phi) in &phis {
+                if let Some(next_value) = body_env.get(id).copied() {
                     add_phi_incoming(&mut self.function, header, *phi, (body_exit, next_value));
                 }
             }
         }
 
-        for (name, phi) in phis {
-            env.insert(name, phi);
+        for (id, phi) in phis {
+            env.insert(id, phi);
         }
         self.current_block = exit;
         Ok(())
@@ -1254,8 +1272,8 @@ impl Builder<'_> {
         &mut self,
         body: &[Stmt],
         condition: &Expr,
-        env: &mut HashMap<String, ValueId>,
-        types: &mut HashMap<String, Type>,
+        env: &mut HashMap<SymbolId, ValueId>,
+        types: &mut HashMap<SymbolId, Type>,
     ) -> Result<(), Diagnostic> {
         let preheader = self.current_block;
         let loop_body = self.new_block();
@@ -1271,8 +1289,8 @@ impl Builder<'_> {
         for name in &mutated {
             if let Some(initial) = env.get(name).copied() {
                 let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
-                loop_env.insert(name.clone(), phi);
-                phis.insert(name.clone(), phi);
+                loop_env.insert(*name, phi);
+                phis.insert(*name, phi);
             }
         }
 
@@ -1324,7 +1342,7 @@ impl Builder<'_> {
         }
 
         for (name, phi) in phis {
-            env.insert(name.clone(), body_env.get(&name).copied().unwrap_or(phi));
+            env.insert(name, body_env.get(&name).copied().unwrap_or(phi));
         }
         self.current_block = exit;
         Ok(())
@@ -1333,14 +1351,15 @@ impl Builder<'_> {
     #[allow(clippy::too_many_arguments)]
     fn lower_numeric_for(
         &mut self,
-        name: &str,
+        symbol_id: &Option<SymbolId>,
         start: &Expr,
         stop: &Expr,
         step: Option<&Expr>,
         body: &[Stmt],
-        env: &mut HashMap<String, ValueId>,
-        types: &mut HashMap<String, Type>,
+        env: &mut HashMap<SymbolId, ValueId>,
+        types: &mut HashMap<SymbolId, Type>,
     ) -> Result<(), Diagnostic> {
+        let symbol_id = symbol_id.expect("symbol_id should be resolved");
         let start_ty = self.infer_expr_type(start, types, None)?;
         let stop_ty = self.infer_expr_type(stop, types, None)?;
         let mut loop_ty = common_numeric_type(start_ty, stop_ty)?;
@@ -1380,11 +1399,11 @@ impl Builder<'_> {
         let mut loop_env = env.clone();
         let loop_types = types.clone();
         let mut phis = HashMap::new();
-        for name in &mutated {
-            if let Some(initial) = env.get(name).copied() {
+        for id in &mutated {
+            if let Some(initial) = env.get(id).copied() {
                 let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
-                loop_env.insert(name.clone(), phi);
-                phis.insert(name.clone(), phi);
+                loop_env.insert(*id, phi);
+                phis.insert(*id, phi);
             }
         }
         let stop_phi = self.emit(Instruction::Phi(vec![(preheader, stop_init)]));
@@ -1491,8 +1510,8 @@ impl Builder<'_> {
         self.current_block = loop_body;
         let mut body_env = loop_env.clone();
         let mut body_types = loop_types.clone();
-        body_env.insert(name.to_string(), index_phi);
-        body_types.insert(name.to_string(), loop_ty.clone());
+        body_env.insert(symbol_id, index_phi);
+        body_types.insert(symbol_id, loop_ty.clone());
         for stmt in body {
             if self.current_block == DEAD_BLOCK {
                 break;
@@ -1528,15 +1547,15 @@ impl Builder<'_> {
                 index_phi,
                 (body_exit, next_index),
             );
-            for (name, phi) in &phis {
-                if let Some(next_value) = body_env.get(name).copied() {
+            for (id, phi) in &phis {
+                if let Some(next_value) = body_env.get(id).copied() {
                     add_phi_incoming(&mut self.function, header, *phi, (body_exit, next_value));
                 }
             }
         }
 
-        for (name, phi) in phis {
-            env.insert(name, phi);
+        for (id, phi) in phis {
+            env.insert(id, phi);
         }
         self.current_block = exit;
         Ok(())
@@ -1544,18 +1563,19 @@ impl Builder<'_> {
 
     fn lower_for_in(
         &mut self,
-        names: &[String],
+        symbol_ids: &Option<Vec<SymbolId>>,
         iterator: &Expr,
         body: &[Stmt],
-        env: &mut HashMap<String, ValueId>,
-        types: &mut HashMap<String, Type>,
+        env: &mut HashMap<SymbolId, ValueId>,
+        types: &mut HashMap<SymbolId, Type>,
     ) -> Result<(), Diagnostic> {
+        let ids = symbol_ids.as_ref().expect("symbol_ids should be resolved");
         let iterator_ty = self.infer_expr_type(iterator, types, None)?;
         if let Type::Array(element_ty) = &iterator_ty {
-            if names.len() != 1 && names.len() != 2 {
+            if ids.len() != 1 && ids.len() != 2 {
                 return Err(Diagnostic::new(format!(
                     "array for-in loop expects 1 or 2 loop variables, got {}",
-                    names.len()
+                    ids.len()
                 )));
             }
             let array_val = self.lower_expr(iterator, env, types, Some(iterator_ty.clone()))?;
@@ -1580,11 +1600,11 @@ impl Builder<'_> {
             let mut loop_env = env.clone();
             let loop_types = types.clone();
             let mut phis = HashMap::new();
-            for name in &mutated {
-                if let Some(initial) = env.get(name).copied() {
+            for id in &mutated {
+                if let Some(initial) = env.get(id).copied() {
                     let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
-                    loop_env.insert(name.clone(), phi);
-                    phis.insert(name.clone(), phi);
+                    loop_env.insert(*id, phi);
+                    phis.insert(*id, phi);
                 }
             }
             let array_len_phi = self.emit(Instruction::Phi(vec![(preheader, array_len_init)]));
@@ -1622,14 +1642,14 @@ impl Builder<'_> {
                 element_ty: *element_ty.clone(),
             });
 
-            if names.len() == 1 {
-                body_env.insert(names[0].clone(), element_val);
-                body_types.insert(names[0].clone(), *element_ty.clone());
+            if ids.len() == 1 {
+                body_env.insert(ids[0], element_val);
+                body_types.insert(ids[0], *element_ty.clone());
             } else {
-                body_env.insert(names[0].clone(), index_phi);
-                body_types.insert(names[0].clone(), Type::Numeric(NumericType::I32));
-                body_env.insert(names[1].clone(), element_val);
-                body_types.insert(names[1].clone(), *element_ty.clone());
+                body_env.insert(ids[0], index_phi);
+                body_types.insert(ids[0], Type::Numeric(NumericType::I32));
+                body_env.insert(ids[1], element_val);
+                body_types.insert(ids[1], *element_ty.clone());
             }
 
             for stmt in body {
@@ -1703,11 +1723,11 @@ impl Builder<'_> {
             Type::Multi(values) => values,
             other => vec![other],
         };
-        if return_values.len() != names.len() + 1 {
+        if return_values.len() != ids.len() + 1 {
             return Err(Diagnostic::new(format!(
                 "for-in iterator expects {} return values (bool + {} loop values), got {}",
-                names.len() + 1,
-                names.len(),
+                ids.len() + 1,
+                ids.len(),
                 return_values.len()
             )));
         }
@@ -1723,7 +1743,7 @@ impl Builder<'_> {
                 .collect(),
         );
         let direct_iterator_name = match iterator {
-            Expr::Name(name, _) => self.signatures.get(name).and_then(|(params, ret)| {
+            Expr::Name(name, Some(symbol_id), _) => self.signatures.get(symbol_id).and_then(|(params, ret)| {
                 if params.is_empty() && *ret == return_ty {
                     Some(name.clone())
                 } else {
@@ -1749,11 +1769,11 @@ impl Builder<'_> {
         let mut loop_env = env.clone();
         let loop_types = types.clone();
         let mut phis = HashMap::new();
-        for name in &mutated {
-            if let Some(initial) = env.get(name).copied() {
+        for id in &mutated {
+            if let Some(initial) = env.get(id).copied() {
                 let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
-                loop_env.insert(name.clone(), phi);
-                phis.insert(name.clone(), phi);
+                loop_env.insert(*id, phi);
+                phis.insert(*id, phi);
             }
         }
 
@@ -1793,14 +1813,14 @@ impl Builder<'_> {
         self.current_block = loop_body;
         let mut body_env = loop_env.clone();
         let mut body_types = loop_types.clone();
-        for (index, (name, ty)) in names.iter().zip(loop_value_types.iter()).enumerate() {
+        for (index, (id, ty)) in ids.iter().zip(loop_value_types.iter()).enumerate() {
             let value = self.emit(Instruction::MultiGet {
                 value: call,
                 index: index + 1,
                 ty: ty.clone(),
             });
-            body_env.insert(name.clone(), value);
-            body_types.insert(name.clone(), ty.clone());
+            body_env.insert(*id, value);
+            body_types.insert(*id, ty.clone());
         }
         for stmt in body {
             if self.current_block == DEAD_BLOCK {
@@ -1817,15 +1837,15 @@ impl Builder<'_> {
         let body_exit = self.current_block;
         if body_exit != DEAD_BLOCK {
             self.set_terminator(body_exit, Terminator::Jump(header));
-            for (name, phi) in &phis {
-                if let Some(next_value) = body_env.get(name).copied() {
+            for (id, phi) in &phis {
+                if let Some(next_value) = body_env.get(id).copied() {
                     add_phi_incoming(&mut self.function, header, *phi, (body_exit, next_value));
                 }
             }
         }
 
-        for (name, phi) in phis {
-            env.insert(name, phi);
+        for (id, phi) in phis {
+            env.insert(id, phi);
         }
         self.current_block = exit;
         Ok(())
@@ -1834,8 +1854,8 @@ impl Builder<'_> {
     fn lower_expr(
         &mut self,
         expr: &Expr,
-        env: &HashMap<String, ValueId>,
-        types: &HashMap<String, Type>,
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
         expected: Option<Type>,
     ) -> Result<ValueId, Diagnostic> {
         let value = match expr {
@@ -1932,14 +1952,13 @@ impl Builder<'_> {
             Expr::Bool(value, _) => self.emit(Instruction::Bool(*value)),
             Expr::String(value, _) => self.emit(Instruction::String(value.clone())),
             Expr::Bytes(value, _) => self.emit(Instruction::Bytes(value.clone())),
-            Expr::Name(name, _) => {
-                if let Some(value) = env.get(name).copied() {
-                    let actual = types.get(name).cloned().ok_or_else(|| {
+            Expr::Name(name, symbol_id, _) => {
+                let symbol_id = symbol_id.expect("symbol_id should be resolved");
+                if let Some(value) = env.get(&symbol_id).copied() {
+                    let actual = types.get(&symbol_id).cloned().ok_or_else(|| {
                         Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
                     })?;
-                    // If this name is represented as a cell (1-element array) then
-                    // load the element before coercion so the value reflects mutations.
-                    if self.cell_names.contains(name) {
+                    if self.cell_names.contains(&symbol_id) {
                         let index0 = self.emit(Instruction::Number {
                             ty: NumericType::I32,
                             literal: NumberLiteral { raw: "0".into() },
@@ -1953,10 +1972,7 @@ impl Builder<'_> {
                     } else {
                         self.coerce_value(value, actual, expected)?
                     }
-                } else if let Some((params, return_type)) = self.signatures.get(name).cloned() {
-                    // A bare top-level function name used as a value becomes a
-                    // capture-free function reference (funcref), enabling it to
-                    // be stored, returned, and called indirectly.
+                } else if let Some((params, return_type)) = self.signatures.get(&symbol_id).cloned() {
                     let value = self.emit(Instruction::Closure {
                         name: name.clone(),
                         captures: Vec::new(),
@@ -1982,7 +1998,7 @@ impl Builder<'_> {
             } => {
                 let receiver_ty = self.infer_expr_type(receiver, types, None)?;
                 let (param_types, return_type) = if let Some(signature) =
-                    method_signature(receiver, name, self.signatures)
+                    method_signature(receiver, name, self.field_call_signatures)
                 {
                     let (params, return_type) = signature;
                     (params, Box::new(return_type))
@@ -2344,8 +2360,8 @@ impl Builder<'_> {
                         return result;
                     }
                 }
-                if let Expr::Name(name, _) = callee.as_ref() {
-                    if let Some((param_types, _)) = self.signatures.get(name) {
+                if let Expr::Name(name, Some(symbol_id), _) = callee.as_ref() {
+                    if let Some((param_types, _)) = self.signatures.get(symbol_id) {
                         let args = args
                             .iter()
                             .zip(param_types.iter())
@@ -2362,7 +2378,7 @@ impl Builder<'_> {
                     }
                 }
                 if let Some((direct_name, param_types, _)) =
-                    direct_field_call_name(callee.as_ref(), self.signatures)
+                    direct_field_call_name(callee.as_ref(), self.field_call_signatures)
                 {
                     let args = args
                         .iter()
@@ -2568,8 +2584,8 @@ impl Builder<'_> {
     fn lower_expr_list(
         &mut self,
         exprs: &[Expr],
-        env: &HashMap<String, ValueId>,
-        types: &HashMap<String, Type>,
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
         expected: Option<&[Type]>,
     ) -> Result<Vec<ValueId>, Diagnostic> {
         let mut out = Vec::new();
@@ -2616,16 +2632,16 @@ impl Builder<'_> {
     fn lower_function_expr(
         &mut self,
         function: &waluau_ast::FunctionExpr,
-        env: &HashMap<String, ValueId>,
-        types: &HashMap<String, Type>,
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
     ) -> Result<ValueId, Diagnostic> {
         let return_ty = Self::function_expr_return_type(function)?;
         let captures = collect_captures(function, env, types, self.signatures);
         let capture_values = captures
             .iter()
-            .map(|(name, _)| {
-                env.get(name).copied().ok_or_else(|| {
-                    Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
+            .map(|(symbol_id, _)| {
+                env.get(symbol_id).copied().ok_or_else(|| {
+                    Diagnostic::new(format!("unknown local symbol ID {:?} during IR lowering", symbol_id))
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -2650,12 +2666,12 @@ impl Builder<'_> {
                 terminator: Terminator::Unreachable { span: None },
             },
         );
-        for (name, ty) in &captures {
+        for (symbol_id, ty) in &captures {
             // Captured variables are passed as 1-element array "cells" to nested
             // (lifted) functions so they can observe/mutate shared storage.
             lifted
                 .params
-                .push((name.clone(), Type::Array(Box::new(ty.clone()))));
+                .push((format!("capture_{}", symbol_id.0), Type::Array(Box::new(ty.clone()))));
         }
         for param in &function.params {
             lifted.params.push((param.name.clone(), param.ty.clone()));
@@ -2664,58 +2680,71 @@ impl Builder<'_> {
         let mut nested_env = HashMap::new();
         let mut nested_types = HashMap::new();
         let lifted_entry = lifted.entry;
-        for (index, (name, ty)) in lifted.params.clone().into_iter().enumerate() {
+        for (index, (symbol_id, ty)) in captures.iter().cloned().enumerate() {
             let value = lifted.next_value();
             block_mut(&mut lifted, lifted_entry)
                 .instructions
                 .push((value, Instruction::Param(index)));
-            nested_env.insert(name.clone(), value);
+            nested_env.insert(symbol_id, value);
             // If the lifted param is an array cell for a captured variable, expose
             // the inner element type within the nested function's type map so that
             // expressions using the name are treated as the element type during lowering.
             if let Some(elem) = ty.element_type() {
-                nested_types.insert(name, elem);
+                nested_types.insert(symbol_id, elem);
             } else {
-                nested_types.insert(name, ty);
+                nested_types.insert(symbol_id, ty);
             }
+        }
+        let captures_count = captures.len();
+        for (index, param) in function.params.iter().enumerate() {
+            let symbol_id = param.symbol_id.expect("param has resolved symbol_id");
+            let value = lifted.next_value();
+            block_mut(&mut lifted, lifted_entry)
+                .instructions
+                .push((value, Instruction::Param(captures_count + index)));
+            nested_env.insert(symbol_id, value);
+            nested_types.insert(symbol_id, param.ty.clone());
         }
 
         // nested builder should treat the capture parameters as cell-backed names
         // so the nested function will access them via ArrayGet/ArraySet.
-        let mut capture_param_names: HashSet<String> =
-            captures.iter().map(|(n, _)| n.clone()).collect();
+        let mut capture_param_symbols: HashSet<SymbolId> =
+            captures.iter().map(|(id, _)| *id).collect();
         // Also include any names that the nested function's inner nested functions capture.
         let nested_inner_captures = collect_nested_function_capture_names(&waluau_ast::Function {
             name: waluau_ast::FunctionName::Simple(function.name.clone().unwrap_or_default()),
+            symbol_id: function.symbol_id,
             type_params: function.type_params.clone(),
             params: function.params.clone(),
             return_type: Some(return_ty.clone()),
             body: function.body.clone(),
             file_path: function.file_path.clone(),
         });
-        capture_param_names.extend(nested_inner_captures);
+        capture_param_symbols.extend(nested_inner_captures);
 
         let mut nested = Builder {
             function: lifted,
             current_block: BlockId(0),
             next_block: 1,
             signatures: self.signatures,
+            field_call_signatures: self.field_call_signatures,
             lifted_functions: Vec::new(),
             lambda_counter: 0,
             loop_stack: Vec::new(),
-            cell_names: capture_param_names,
+            cell_names: capture_param_symbols,
             sources: self.sources,
             file_path: function.file_path.clone(),
             tag_ids: BTreeMap::new(),
         };
-        if let Some(name) = &function.name {
+        if let Some(_name) = &function.name {
+            let symbol_id = function.symbol_id.expect("resolved symbol_id");
             let capture_param_values = captures
                 .iter()
-                .map(|(capture_name, _)| {
-                    nested_env.get(capture_name).copied().ok_or_else(|| {
+                .map(|(capture_symbol_id, _)| {
+                    nested_env.get(capture_symbol_id).copied().ok_or_else(|| {
                         Diagnostic::new(format!(
-                            "missing capture '{}' in nested function lowering",
-                            capture_name
+                            "missing capture symbol ID {:?} in nested function lowering",
+                            capture_symbol_id
                         ))
                     })
                 })
@@ -2730,9 +2759,9 @@ impl Builder<'_> {
                     .collect(),
                 return_type: return_ty.clone(),
             });
-            nested_env.insert(name.clone(), self_callee);
+            nested_env.insert(symbol_id, self_callee);
             nested_types.insert(
-                name.clone(),
+                symbol_id,
                 Type::Function {
                     params: function
                         .params
@@ -2767,7 +2796,7 @@ impl Builder<'_> {
     fn infer_expr_type(
         &self,
         expr: &Expr,
-        types: &HashMap<String, Type>,
+        types: &HashMap<SymbolId, Type>,
         expected: Option<Type>,
     ) -> Result<Type, Diagnostic> {
         match expr {
@@ -2826,10 +2855,11 @@ impl Builder<'_> {
             Expr::Require(path, _) => Err(Diagnostic::new(format!(
                 "unresolved require(\"{path}\") reached IR lowering"
             ))),
-            Expr::Name(name, _) => {
-                if let Some(ty) = types.get(name) {
+            Expr::Name(name, symbol_id, _) => {
+                let symbol_id = symbol_id.expect("symbol_id should be resolved");
+                if let Some(ty) = types.get(&symbol_id) {
                     Ok(ty.clone())
-                } else if let Some((params, ret)) = self.signatures.get(name) {
+                } else if let Some((params, ret)) = self.signatures.get(&symbol_id) {
                     Ok(Type::Function {
                         params: params.clone(),
                         return_type: Box::new(ret.clone()),
@@ -2848,7 +2878,7 @@ impl Builder<'_> {
             } => {
                 let receiver_ty = self.infer_expr_type(receiver, types, None)?;
                 let (params, return_type) = if let Some(signature) =
-                    method_signature(receiver, name, self.signatures)
+                    method_signature(receiver, name, self.field_call_signatures)
                 {
                     let (params, return_type) = signature;
                     (params, Box::new(return_type))
@@ -3074,7 +3104,7 @@ impl Builder<'_> {
         left: &Expr,
         right: &Expr,
         op: &BinaryOp,
-        types: &HashMap<String, Type>,
+        types: &HashMap<SymbolId, Type>,
         expected: Option<Type>,
     ) -> Result<Type, Diagnostic> {
         let expected_numeric = match expected {
@@ -3302,7 +3332,7 @@ impl Builder<'_> {
     fn infer_array_literal_type(
         &self,
         elements: &[Expr],
-        types: &HashMap<String, Type>,
+        types: &HashMap<SymbolId, Type>,
         expected: Option<Type>,
     ) -> Result<Type, Diagnostic> {
         if elements.is_empty() {
@@ -3330,8 +3360,8 @@ impl Builder<'_> {
         &mut self,
         name: &str,
         args: &[Expr],
-        env: &HashMap<String, ValueId>,
-        types: &HashMap<String, Type>,
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
         let i32_ty = Type::Numeric(NumericType::I32);
@@ -3438,7 +3468,7 @@ impl Builder<'_> {
         &self,
         name: &str,
         call: &Expr,
-        types: &HashMap<String, Type>,
+        types: &HashMap<SymbolId, Type>,
         expected: Option<Type>,
     ) -> Option<Result<Type, Diagnostic>> {
         let Expr::Call { args, .. } = call else {
@@ -3530,8 +3560,8 @@ impl Builder<'_> {
         &mut self,
         name: &str,
         args: &[Expr],
-        env: &HashMap<String, ValueId>,
-        types: &HashMap<String, Type>,
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
         let (intrinsic, arity) = match name {
@@ -3556,7 +3586,7 @@ impl Builder<'_> {
         let operand_ty = match self.infer_math_builtin_call_type(
             name,
             &Expr::Call {
-                callee: Box::new(Expr::Name(name.to_string(), None)),
+                callee: Box::new(Expr::Name(name.to_string(), None, None)),
                 type_args: Vec::new(),
                 args: args.to_vec(),
                 span: None,
@@ -3589,8 +3619,8 @@ impl Builder<'_> {
         &mut self,
         name: &str,
         args: &[Expr],
-        env: &HashMap<String, ValueId>,
-        types: &HashMap<String, Type>,
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
         if name != TO_STRING {
@@ -3630,8 +3660,8 @@ impl Builder<'_> {
         &mut self,
         name: &str,
         args: &[Expr],
-        env: &HashMap<String, ValueId>,
-        types: &HashMap<String, Type>,
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
         if name != PRINT {
@@ -3655,7 +3685,7 @@ impl Builder<'_> {
         &self,
         name: &str,
         call: &Expr,
-        types: &HashMap<String, Type>,
+        types: &HashMap<SymbolId, Type>,
     ) -> Option<Result<Type, Diagnostic>> {
         let Expr::Call { args, .. } = call else {
             return None;
@@ -3730,7 +3760,7 @@ impl Builder<'_> {
         &self,
         name: &str,
         call: &Expr,
-        types: &HashMap<String, Type>,
+        types: &HashMap<SymbolId, Type>,
     ) -> Option<Result<Type, Diagnostic>> {
         if name != TO_STRING {
             return None;
@@ -3761,7 +3791,7 @@ impl Builder<'_> {
         &self,
         name: &str,
         call: &Expr,
-        types: &HashMap<String, Type>,
+        types: &HashMap<SymbolId, Type>,
     ) -> Option<Result<Type, Diagnostic>> {
         if name != PRINT {
             return None;
@@ -3810,7 +3840,7 @@ fn common_element_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
 fn infer_numeric_common_type(
     left: &Expr,
     right: &Expr,
-    _types: &HashMap<String, Type>,
+    _types: &HashMap<SymbolId, Type>,
     expected: Option<NumericType>,
     infer: impl Fn(&Expr, Option<Type>) -> Result<Type, Diagnostic>,
 ) -> Result<Type, Diagnostic> {

@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+use waluau_ast::{Function as AstFunction, Expr, Program, Stmt, SymbolId, Type, MethodCallOrigin};
+use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
+
 fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
     match ty {
         Type::TypeParam(name) => subst
@@ -27,19 +31,19 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct SpecializationKey {
-    generic_name: String,
+    generic_symbol_id: SymbolId,
     type_args: Vec<Type>,
 }
 
 #[derive(Clone, Debug)]
 struct ActiveSpecialization {
-    generic_name: String,
+    generic_symbol_id: SymbolId,
     type_args: Vec<Type>,
 }
 
 pub(crate) struct Monomorphizer<'a> {
-    generic_functions: HashMap<String, &'a AstFunction>,
-    generic_methods: HashMap<String, &'a waluau_ast::FunctionExpr>,
+    generic_functions: HashMap<SymbolId, &'a AstFunction>,
+    generic_methods: HashMap<(SymbolId, String), &'a waluau_ast::FunctionExpr>,
     specialized_names: HashMap<SpecializationKey, String>,
     pending: Vec<SpecializationKey>,
 }
@@ -50,7 +54,7 @@ impl<'a> Monomorphizer<'a> {
             .functions
             .iter()
             .filter(|function| !function.type_params.is_empty())
-            .map(|function| (function.name.to_string(), function))
+            .map(|function| (function.symbol_id.expect("generic function has symbol id"), function))
             .collect();
         let generic_methods = program
             .functions
@@ -67,8 +71,8 @@ impl<'a> Monomorphizer<'a> {
                             value: Expr::Function(function),
                             ..
                         } if !function.type_params.is_empty() => match base.as_ref() {
-                            Expr::Name(table, _) => {
-                                Some((format!("{table}.{name}"), function))
+                            Expr::Name(_, Some(table_symbol_id), _) => {
+                                Some(((*table_symbol_id, name.clone()), function))
                             }
                             _ => None,
                         },
@@ -96,12 +100,12 @@ impl<'a> Monomorphizer<'a> {
         while let Some(key) = self.pending.pop() {
             let template = self
                 .generic_functions
-                .get(&key.generic_name)
+                .get(&key.generic_symbol_id)
                 .copied()
                 .ok_or_else(|| {
                     Diagnostic::new(format!(
-                        "missing generic function '{}' during monomorphization",
-                        key.generic_name
+                        "missing generic function with symbol ID {:?} during monomorphization",
+                        key.generic_symbol_id
                     ))
                 })?;
             let specialized_name = self
@@ -116,7 +120,7 @@ impl<'a> Monomorphizer<'a> {
                 .zip(key.type_args.iter().cloned())
                 .collect::<HashMap<_, _>>();
             let active = ActiveSpecialization {
-                generic_name: template.name.to_string(),
+                generic_symbol_id: key.generic_symbol_id,
                 type_args: key.type_args.clone(),
             };
             functions.push(self.rewrite_function_with_name(
@@ -127,14 +131,17 @@ impl<'a> Monomorphizer<'a> {
             )?);
         }
 
-        Ok(Program {
+        let mut specialized_program = Program {
             functions,
             type_declarations: program.type_declarations.clone(),
             top_level: program.top_level.clone(),
             export: program.export.clone(),
             sources: program.sources.clone(),
             entry_file_path: program.entry_file_path.clone(),
-        })
+        };
+
+        waluau_ast::resolve_symbols(&mut specialized_program)?;
+        Ok(specialized_program)
     }
 
     fn rewrite_function(
@@ -160,12 +167,14 @@ impl<'a> Monomorphizer<'a> {
     ) -> Result<AstFunction, Diagnostic> {
         Ok(AstFunction {
             name,
+            symbol_id: None,
             type_params: Vec::new(),
             params: function
                 .params
                 .iter()
                 .map(|param| waluau_ast::Param {
                     name: param.name.clone(),
+                    symbol_id: None,
                     ty: substitute_type(&param.ty, subst),
                 })
                 .collect(),
@@ -212,15 +221,18 @@ impl<'a> Monomorphizer<'a> {
                 rebindability,
                 ty,
                 value,
+                ..
             } => Stmt::Let {
                 name: name.clone(),
+                symbol_id: None,
                 rebindability: *rebindability,
                 ty: ty.as_ref().map(|ty| substitute_type(ty, subst)),
                 value: self.rewrite_expr(value, subst, active)?,
             },
-            Stmt::Assign { op, name, value } => Stmt::Assign {
+            Stmt::Assign { op, name, value, .. } => Stmt::Assign {
                 op: *op,
                 name: name.clone(),
+                symbol_id: None,
                 value: self.rewrite_expr(value, subst, active)?,
             },
             Stmt::IndexAssign {
@@ -268,8 +280,10 @@ impl<'a> Monomorphizer<'a> {
                 stop,
                 step,
                 body,
+                ..
             } => Stmt::NumericFor {
                 name: name.clone(),
+                symbol_id: None,
                 start: self.rewrite_expr(start, subst, active)?,
                 stop: self.rewrite_expr(stop, subst, active)?,
                 step: step
@@ -282,8 +296,10 @@ impl<'a> Monomorphizer<'a> {
                 names,
                 iterator,
                 body,
+                ..
             } => Stmt::ForIn {
                 names: names.clone(),
+                symbol_ids: None,
                 iterator: self.rewrite_expr(iterator, subst, active)?,
                 body: self.rewrite_stmts(body, subst, active)?,
             },
@@ -301,6 +317,7 @@ impl<'a> Monomorphizer<'a> {
                     .iter()
                     .map(|binding| waluau_ast::Binding {
                         name: binding.name.clone(),
+                        symbol_id: None,
                         rebindability: binding.rebindability,
                         ty: binding.ty.as_ref().map(|ty| substitute_type(ty, subst)),
                     })
@@ -310,8 +327,9 @@ impl<'a> Monomorphizer<'a> {
                     .map(|expr| self.rewrite_expr(expr, subst, active))
                     .collect::<Result<Vec<_>, _>>()?,
             },
-            Stmt::AssignMulti { targets, values } => Stmt::AssignMulti {
+            Stmt::AssignMulti { targets, values, .. } => Stmt::AssignMulti {
                 targets: targets.clone(),
+                symbol_ids: None,
                 values: values
                     .iter()
                     .map(|expr| self.rewrite_expr(expr, subst, active))
@@ -332,8 +350,8 @@ impl<'a> Monomorphizer<'a> {
             | Expr::Bool(..)
             | Expr::String(..)
             | Expr::Bytes(..)
-            | Expr::Name(..)
             | Expr::Require(..) => expr.clone(),
+            Expr::Name(name, symbol_id, span) => Expr::Name(name.clone(), *symbol_id, *span),
             Expr::Unary { op, expr, span } => Expr::Unary {
                 op: *op,
                 expr: Box::new(self.rewrite_expr(expr, subst, active)?),
@@ -432,17 +450,17 @@ impl<'a> Monomorphizer<'a> {
             .map(|expr| self.rewrite_expr(expr, subst, active))
             .collect::<Result<Vec<_>, _>>()?;
 
-        if let Expr::Name(name, callee_span) = callee {
-            if self.generic_functions.contains_key(name) {
+        if let Expr::Name(_name, Some(symbol_id), callee_span) = callee {
+            if self.generic_functions.contains_key(symbol_id) {
                 let concrete_type_args = type_args
                     .iter()
                     .map(|ty| substitute_type(ty, subst))
                     .collect::<Vec<_>>();
-                self.check_recursive_specialization(name, &concrete_type_args, active)?;
+                self.check_recursive_specialization(*symbol_id, &concrete_type_args, active)?;
                 let specialized_name =
-                    self.ensure_specialization(name, concrete_type_args.clone())?;
+                    self.ensure_specialization(*symbol_id, concrete_type_args.clone())?;
                 return Ok(Expr::Call {
-                    callee: Box::new(Expr::Name(specialized_name, *callee_span)),
+                    callee: Box::new(Expr::Name(specialized_name, None, *callee_span)),
                     type_args: Vec::new(),
                     args,
                     span,
@@ -452,9 +470,9 @@ impl<'a> Monomorphizer<'a> {
         }
 
         if let Expr::Field { base, name, span } = callee {
-            if let Expr::Name(table, _) = base.as_ref() {
-                let method_name = format!("{table}.{name}");
-                if let Some(function) = self.generic_methods.get(&method_name).copied() {
+            if let Expr::Name(_, Some(table_symbol_id), _) = base.as_ref() {
+                let key = (*table_symbol_id, name.clone());
+                if let Some(function) = self.generic_methods.get(&key).copied() {
                     let specialized =
                         self.specialize_function_expr(function, type_args, subst, active)?;
                     
@@ -533,9 +551,9 @@ impl<'a> Monomorphizer<'a> {
         // `rewrite_call_expr`: inline the specialized method as a plain call with
         // the receiver threaded in as the explicit `self` argument.
         if !type_args.is_empty() {
-            if let Expr::Name(table, _) = receiver.as_ref() {
-                let method_name = format!("{table}.{name}");
-                if let Some(function) = self.generic_methods.get(&method_name).copied() {
+            if let Expr::Name(_, Some(table_symbol_id), _) = receiver.as_ref() {
+                let key = (*table_symbol_id, name.clone());
+                if let Some(function) = self.generic_methods.get(&key).copied() {
                     let specialized =
                         self.specialize_function_expr(function, type_args, subst, active)?;
                     let mut call_args = Vec::with_capacity(rewritten_args.len() + 1);
@@ -581,6 +599,7 @@ impl<'a> Monomorphizer<'a> {
         }
         Ok(waluau_ast::FunctionExpr {
             name: function.name.clone(),
+            symbol_id: None,
             implicit_self: function.implicit_self.clone(),
             type_params: Vec::new(),
             params: function
@@ -588,6 +607,7 @@ impl<'a> Monomorphizer<'a> {
                 .iter()
                 .map(|param| waluau_ast::Param {
                     name: param.name.clone(),
+                    symbol_id: None,
                     ty: substitute_type(&param.ty, subst),
                 })
                 .collect(),
@@ -632,6 +652,7 @@ impl<'a> Monomorphizer<'a> {
         }
         Ok(waluau_ast::FunctionExpr {
             name: function.name.clone(),
+            symbol_id: None,
             implicit_self: function.implicit_self.clone(),
             type_params: Vec::new(),
             params: function
@@ -639,6 +660,7 @@ impl<'a> Monomorphizer<'a> {
                 .iter()
                 .map(|param| waluau_ast::Param {
                     name: param.name.clone(),
+                    symbol_id: None,
                     ty: substitute_type(&param.ty, &local_subst),
                 })
                 .collect(),
@@ -654,17 +676,17 @@ impl<'a> Monomorphizer<'a> {
 
     fn ensure_specialization(
         &mut self,
-        generic_name: &str,
+        generic_symbol_id: SymbolId,
         type_args: Vec<Type>,
     ) -> Result<String, Diagnostic> {
         let template = self
             .generic_functions
-            .get(generic_name)
+            .get(&generic_symbol_id)
             .copied()
             .ok_or_else(|| {
                 Diagnostic::new(format!(
-                    "missing generic function '{}' during monomorphization",
-                    generic_name
+                    "missing generic function with symbol ID {:?} during monomorphization",
+                    generic_symbol_id
                 ))
             })?;
         if type_args.len() != template.type_params.len() {
@@ -683,12 +705,13 @@ impl<'a> Monomorphizer<'a> {
             ));
         }
         let key = SpecializationKey {
-            generic_name: generic_name.to_string(),
+            generic_symbol_id,
             type_args,
         };
         if let Some(existing) = self.specialized_names.get(&key) {
             return Ok(existing.clone());
         }
+        let generic_name = template.name.to_string();
         let name = format!(
             "__waluau_generic${}${}",
             generic_name,
@@ -705,18 +728,20 @@ impl<'a> Monomorphizer<'a> {
 
     fn check_recursive_specialization(
         &self,
-        generic_name: &str,
+        generic_symbol_id: SymbolId,
         type_args: &[Type],
         active: Option<&ActiveSpecialization>,
     ) -> Result<(), Diagnostic> {
         let Some(active) = active else {
             return Ok(());
         };
-        if active.generic_name == generic_name && active.type_args != type_args {
+        if active.generic_symbol_id == generic_symbol_id && active.type_args != type_args {
+            let template = self.generic_functions.get(&generic_symbol_id).unwrap();
             return Err(generic_diagnostic(
                 "generic/cross-specialization-recursion",
                 format!(
-                    "generic function '{generic_name}' cannot recursively instantiate different type arguments in this MVP"
+                    "generic function '{}' cannot recursively instantiate different type arguments in this MVP",
+                    template.name
                 ),
             ));
         }
@@ -754,4 +779,10 @@ fn mangle_type(ty: &Type) -> String {
         #[allow(unreachable_patterns)]
         _ => format!("$u{}", ty),
     }
+}
+
+fn generic_diagnostic(code: &'static str, message: impl Into<String>) -> Diagnostic {
+    Diagnostic::new(format!("[{code}] {}", message.into()))
+        .with_code(code)
+        .with_category(DiagnosticCategory::Unsupported)
 }

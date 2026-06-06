@@ -19,9 +19,9 @@ use super::statements::check_stmt;
 
 fn builtin_name(callee: &Expr) -> Option<String> {
     match callee {
-        Expr::Name(name, _) => Some(name.clone()),
+        Expr::Name(name, _, _) => Some(name.clone()),
         Expr::Field { base, name, .. } => match base.as_ref() {
-            Expr::Name(namespace, _) => Some(format!("{namespace}.{name}")),
+            Expr::Name(namespace, _, _) => Some(format!("{namespace}.{name}")),
             _ => None,
         },
         _ => None,
@@ -49,7 +49,7 @@ fn method_signature<'a>(
     name: &str,
     fn_signatures: &'a HashMap<String, FnSignature>,
 ) -> Option<(&'a FnSignature, String)> {
-    let Expr::Name(base, _) = receiver else {
+    let Expr::Name(base, _, _) = receiver else {
         return None;
     };
     let method_name = method_signature_name(base, name);
@@ -83,7 +83,7 @@ pub(super) fn infer_expr(
             "require(\"{path}\") can only be resolved when compiling from a file; \
              relative imports are unavailable when compiling a single source string"
         ))),
-        Expr::Name(name, _) => {
+        Expr::Name(name, _, _) => {
             if matches!(fn_signatures.get(name), Some(FnSignature::Generic(_))) {
                 return Err(generic_diagnostic(
                     "generic/uninstantiated-value",
@@ -265,7 +265,7 @@ pub(super) fn infer_expr(
                     return result;
                 }
             }
-            if let Expr::Name(name, _) = callee.as_ref() {
+            if let Expr::Name(name, _, _) = callee.as_ref() {
                 if let Some(FnSignature::Generic(scheme)) = fn_signatures.get(name) {
                     return infer_generic_call(
                         scheme,
@@ -279,7 +279,7 @@ pub(super) fn infer_expr(
                 }
             }
             if let Expr::Field { base, name, .. } = callee.as_ref() {
-                if let Expr::Name(base_name, _) = base.as_ref() {
+                if let Expr::Name(base_name, _, _) = base.as_ref() {
                     let method_name = method_signature_name(base_name, name);
                     if let Some(FnSignature::Generic(scheme)) = fn_signatures.get(&method_name) {
                         return infer_generic_call(
@@ -474,7 +474,7 @@ pub(super) fn infer_expr(
             coerce_type(Type::Record(record_fields), expected)
         }
         Expr::Field { base, name, .. } => {
-            if let Expr::Name(base_name, _) = base.as_ref() {
+            if let Expr::Name(base_name, _, _) = base.as_ref() {
                 let method_name = method_signature_name(base_name, name);
                 if let Some(signature) = fn_signatures.get(&method_name) {
                     return match signature {

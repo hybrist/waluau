@@ -269,7 +269,7 @@ fn parses_unary_and_elseif_forms() {
                 ..
             }] if matches!(
                 then_body.as_slice(),
-                [waluau_ast::Stmt::Return(waluau_ast::Expr::Name(name, _))] if name == "x"
+                [waluau_ast::Stmt::Return(waluau_ast::Expr::Name(name, _, _))] if name == "x"
             )
         )
     ));
@@ -532,7 +532,7 @@ fn parses_method_call_syntax() {
             ..
         }) if name == "update"
             && args.len() == 1
-            && matches!(receiver.as_ref(), waluau_ast::Expr::Name(base, _) if base == "obj")
+            && matches!(receiver.as_ref(), waluau_ast::Expr::Name(base, _, _) if base == "obj")
     ));
 }
 
@@ -557,7 +557,7 @@ fn parses_generic_method_call_syntax() {
             && type_args.len() == 1
             && matches!(&type_args[0], waluau_ast::Type::Numeric(waluau_ast::NumericType::I32))
             && args.len() == 1
-            && matches!(receiver.as_ref(), waluau_ast::Expr::Name(base, _) if base == "obj")
+            && matches!(receiver.as_ref(), waluau_ast::Expr::Name(base, _, _) if base == "obj")
             && matches!(&args[0], waluau_ast::Expr::Number(_, _))
     ));
 }
@@ -958,7 +958,7 @@ fn parses_multi_local_and_multi_assignment() {
     ));
     assert!(matches!(
         &function.body[1],
-        waluau_ast::Stmt::AssignMulti { targets, values } if targets.len() == 2 && values.len() == 2
+        waluau_ast::Stmt::AssignMulti { targets, values, .. } if targets.len() == 2 && values.len() == 2
     ));
 }
 
@@ -1029,7 +1029,7 @@ fn captures_trailing_top_level_return_as_module_export() {
         return helper
     "#;
     let program = parse(source).expect("parse should succeed");
-    assert!(matches!(program.export, Some(waluau_ast::Expr::Name(name, _)) if name == "helper"));
+    assert!(matches!(program.export, Some(waluau_ast::Expr::Name(name, _, _)) if name == "helper"));
 }
 
 #[test]

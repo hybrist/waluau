@@ -71,6 +71,7 @@ impl Parser {
                 self.expect_simple(TokenKind::End, "expected 'end' after for loop body")?;
                 return Ok(Stmt::NumericFor {
                     name: first_name,
+                    symbol_id: None,
                     start,
                     stop,
                     step,
@@ -90,6 +91,7 @@ impl Parser {
             self.expect_simple(TokenKind::End, "expected 'end' after for loop body")?;
             return Ok(Stmt::ForIn {
                 names,
+                symbol_ids: None,
                 iterator,
                 body,
             });
@@ -146,6 +148,7 @@ impl Parser {
         if self.check_simple(&TokenKind::Comma) {
             let mut bindings = vec![Binding {
                 name,
+                symbol_id: None,
                 rebindability,
                 ty,
             }];
@@ -159,6 +162,7 @@ impl Parser {
         let value = self.parse_expr()?;
         Ok(Stmt::Let {
             name,
+            symbol_id: None,
             rebindability,
             ty,
             value,
@@ -193,6 +197,7 @@ impl Parser {
         Ok(if values.len() == 1 {
             Stmt::Let {
                 name,
+                symbol_id: None,
                 rebindability: Rebindability::Const,
                 ty: Some(ty),
                 value: values.into_iter().next().expect("len checked"),
@@ -201,6 +206,7 @@ impl Parser {
             Stmt::LetMulti {
                 bindings: vec![Binding {
                     name,
+                    symbol_id: None,
                     rebindability: Rebindability::Const,
                     ty: Some(ty),
                 }],
@@ -240,9 +246,10 @@ impl Parser {
         }
         Ok(Some(if targets.len() == 1 && values.len() == 1 {
             match targets.into_iter().next().expect("len checked") {
-                Expr::Name(name, _) => Stmt::Assign {
+                Expr::Name(name, _, _) => Stmt::Assign {
                     op,
                     name,
+                    symbol_id: None,
                     value: values.into_iter().next().expect("len checked"),
                 },
                 Expr::Index { base, index, .. } => Stmt::IndexAssign {
@@ -265,12 +272,13 @@ impl Parser {
             let mut names = Vec::new();
             for target in targets {
                 match target {
-                    Expr::Name(name, _) => names.push(name),
+                    Expr::Name(name, _, _) => names.push(name),
                     _ => return Err(Diagnostic::new("multi-assignment targets must be names")),
                 }
             }
             Stmt::AssignMulti {
                 targets: names,
+                symbol_ids: None,
                 values,
             }
         }))
@@ -302,6 +310,7 @@ impl Parser {
             };
             bindings.push(Binding {
                 name,
+                symbol_id: None,
                 rebindability,
                 ty,
             });

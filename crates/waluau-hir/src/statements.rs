@@ -25,7 +25,7 @@ fn narrowed_variant_scopes(
     let Expr::IsVariant { expr, tag, .. } = condition else {
         return (then_scope, else_scope);
     };
-    let Expr::Name(name, _) = expr.as_ref() else {
+    let Expr::Name(name, _, _) = expr.as_ref() else {
         return (then_scope, else_scope);
     };
     let Some(binding) = vars.get(name) else {
@@ -120,6 +120,7 @@ pub(super) fn collect_return_types(
                 rebindability,
                 ty,
                 value,
+                ..
             } => {
                 let inferred_ty = if let Some(expected_ty) = ty {
                     infer_expr(
@@ -176,7 +177,7 @@ pub(super) fn collect_return_types(
             Stmt::FieldAssign {
                 base, name, value, ..
             } => {
-                if let Expr::Name(base_name, _) = base.as_ref() {
+                if let Expr::Name(base_name, _, _) = base.as_ref() {
                     let binding = scope
                         .get(base_name)
                         .cloned()
@@ -288,6 +289,7 @@ pub(super) fn collect_return_types(
                 stop,
                 step,
                 body,
+                ..
             } => {
                 let start_ty = infer_expr(start, &scope, fn_signatures, active_type_params, None)?;
                 let stop_ty = infer_expr(stop, &scope, fn_signatures, active_type_params, None)?;
@@ -317,6 +319,7 @@ pub(super) fn collect_return_types(
                 names,
                 iterator,
                 body,
+                ..
             } => {
                 let iterator_ty =
                     infer_expr(iterator, &scope, fn_signatures, active_type_params, None)?;
@@ -464,7 +467,9 @@ pub(super) fn collect_return_types(
                     scope.insert(binding.name.clone(), binding_for(ty, binding.rebindability));
                 }
             }
-            Stmt::AssignMulti { targets, values } => {
+            Stmt::AssignMulti {
+                targets, values, ..
+            } => {
                 let mut expected = Vec::new();
                 for target in targets {
                     let binding = scope
@@ -498,7 +503,7 @@ pub(super) fn collect_return_types(
                     ..
                 } = expr
                 {
-                    if let Expr::Name(name, _) = callee.as_ref() {
+                    if let Expr::Name(name, _, _) = callee.as_ref() {
                         if name == ASSERT {
                             if args.len() != 1 {
                                 return Err(Diagnostic::new(format!(
@@ -569,6 +574,7 @@ pub(super) fn check_stmt(
             rebindability,
             ty,
             value,
+            ..
         } => {
             let inferred_ty = if let Some(expected_ty) = ty {
                 let value_ty = infer_expr(
@@ -594,7 +600,9 @@ pub(super) fn check_stmt(
             vars.insert(name.clone(), binding_for(inferred_ty, *rebindability));
             Ok(false)
         }
-        Stmt::Assign { op, name, value } => {
+        Stmt::Assign {
+            op, name, value, ..
+        } => {
             let existing = vars
                 .get(name)
                 .ok_or_else(|| Diagnostic::new(format!("unknown local '{name}'")))?;
@@ -672,7 +680,7 @@ pub(super) fn check_stmt(
             name,
             value,
         } => {
-            if let Expr::Name(base_name, _) = base.as_ref() {
+            if let Expr::Name(base_name, _, _) = base.as_ref() {
                 let binding = vars
                     .get(base_name)
                     .cloned()
@@ -697,6 +705,7 @@ pub(super) fn check_stmt(
                         }
                         let synthetic = Function {
                             name: waluau_ast::FunctionName::Simple(method_name),
+                            symbol_id: None,
                             type_params: function.type_params.clone(),
                             params: function.params.clone(),
                             return_type: function.return_type.clone(),
@@ -876,6 +885,7 @@ pub(super) fn check_stmt(
             stop,
             step,
             body,
+            ..
         } => {
             let start_ty = infer_expr(start, vars, fn_signatures, active_type_params, None)?;
             let stop_ty = infer_expr(stop, vars, fn_signatures, active_type_params, None)?;
@@ -908,6 +918,7 @@ pub(super) fn check_stmt(
             names,
             iterator,
             body,
+            ..
         } => {
             let iterator_ty = infer_expr(iterator, vars, fn_signatures, active_type_params, None)?;
             seal_record_locals_in_expr(iterator, vars);
@@ -1098,7 +1109,9 @@ pub(super) fn check_stmt(
             }
             Ok(false)
         }
-        Stmt::AssignMulti { targets, values } => {
+        Stmt::AssignMulti {
+            targets, values, ..
+        } => {
             let mut expected = Vec::new();
             for target in targets {
                 let binding = vars
@@ -1153,7 +1166,7 @@ pub(super) fn check_stmt(
                 ..
             } = expr
             {
-                if let Expr::Name(name, _) = callee.as_ref() {
+                if let Expr::Name(name, _, _) = callee.as_ref() {
                     if name == ASSERT {
                         if args.len() != 1 {
                             return Err(Diagnostic::new(format!(
@@ -1271,7 +1284,7 @@ fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
             args,
             ..
         } => {
-            matches!(called.as_ref(), Expr::Name(name, _) if name == callee)
+            matches!(called.as_ref(), Expr::Name(name, _, _) if name == callee)
                 || expr_calls_name(called, callee)
                 || args.iter().any(|arg| expr_calls_name(arg, callee))
         }
@@ -1305,7 +1318,7 @@ pub(super) fn function_calls(function: &Function, callee: &str) -> bool {
 
 fn seal_record_locals_in_expr(expr: &Expr, vars: &mut HashMap<String, Binding>) {
     match expr {
-        Expr::Name(name, _) => {
+        Expr::Name(name, _, _) => {
             if let Some(binding) = vars.get_mut(name) {
                 if matches!(binding.ty, Type::Record(_)) {
                     binding.record_open = false;

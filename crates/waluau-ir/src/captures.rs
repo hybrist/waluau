@@ -1,22 +1,70 @@
-pub(crate) fn collect_assigned_names(stmts: &[Stmt]) -> BTreeSet<String> {
+use std::collections::{BTreeSet, HashMap, HashSet};
+use waluau_ast::{Expr, Stmt, SymbolId, Type};
+use crate::ValueId;
+
+pub(crate) fn collect_assigned_names(stmts: &[Stmt]) -> BTreeSet<SymbolId> {
     let mut assigned = BTreeSet::new();
     collect_assigned_into(stmts, &mut assigned);
     assigned
 }
 
+fn collect_assigned_into(stmts: &[Stmt], out: &mut BTreeSet<SymbolId>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Let { symbol_id, .. } | Stmt::Assign { symbol_id, .. } => {
+                if let Some(id) = symbol_id {
+                    out.insert(*id);
+                }
+            }
+            Stmt::LetMulti { bindings, .. } => {
+                for binding in bindings {
+                    if let Some(id) = binding.symbol_id {
+                        out.insert(id);
+                    }
+                }
+            }
+            Stmt::AssignMulti { symbol_ids, .. } => {
+                if let Some(ids) = symbol_ids {
+                    for id in ids {
+                        out.insert(*id);
+                    }
+                }
+            }
+            Stmt::IndexAssign { .. } | Stmt::FieldAssign { .. } => {}
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_assigned_into(then_body, out);
+                collect_assigned_into(else_body, out);
+            }
+            Stmt::While { body, .. } => collect_assigned_into(body, out),
+            Stmt::Repeat { body, .. } => collect_assigned_into(body, out),
+            Stmt::NumericFor { body, .. } => collect_assigned_into(body, out),
+            Stmt::ForIn { body, .. } => collect_assigned_into(body, out),
+            Stmt::Return(_)
+            | Stmt::ReturnMulti(_)
+            | Stmt::Expr(_)
+            | Stmt::Break
+            | Stmt::Continue => {}
+        }
+    }
+}
+
 pub(crate) fn collect_captures(
     function: &waluau_ast::FunctionExpr,
-    env: &HashMap<String, ValueId>,
-    types: &HashMap<String, Type>,
-    signatures: &HashMap<String, (Vec<Type>, Type)>,
-) -> Vec<(String, Type)> {
-    let mut bound: HashSet<String> = function
+    env: &HashMap<SymbolId, ValueId>,
+    types: &HashMap<SymbolId, Type>,
+    signatures: &HashMap<SymbolId, (Vec<Type>, Type)>,
+) -> Vec<(SymbolId, Type)> {
+    let mut bound: HashSet<SymbolId> = function
         .params
         .iter()
-        .map(|param| param.name.clone())
+        .filter_map(|param| param.symbol_id)
         .collect();
-    if let Some(name) = &function.name {
-        bound.insert(name.clone());
+    if let Some(symbol_id) = function.symbol_id {
+        bound.insert(symbol_id);
     }
     let mut captures = BTreeSet::new();
     for stmt in &function.body {
@@ -24,26 +72,28 @@ pub(crate) fn collect_captures(
     }
     captures
         .into_iter()
-        .filter_map(|name| {
-            env.get(&name)?;
-            let ty = types.get(&name)?.clone();
-            Some((name, ty))
+        .filter_map(|symbol_id| {
+            env.get(&symbol_id)?;
+            let ty = types.get(&symbol_id)?.clone();
+            Some((symbol_id, ty))
         })
         .collect()
 }
 
 fn collect_expr_captures_from_stmt(
     stmt: &Stmt,
-    bound: &HashSet<String>,
-    env: &HashMap<String, ValueId>,
-    signatures: &HashMap<String, (Vec<Type>, Type)>,
-    captures: &mut BTreeSet<String>,
+    bound: &HashSet<SymbolId>,
+    env: &HashMap<SymbolId, ValueId>,
+    signatures: &HashMap<SymbolId, (Vec<Type>, Type)>,
+    captures: &mut BTreeSet<SymbolId>,
 ) {
     match stmt {
         Stmt::Let { value, .. } => collect_expr_captures(value, bound, env, signatures, captures),
-        Stmt::Assign { name, value, .. } => {
-            if !bound.contains(name) && env.contains_key(name) && !signatures.contains_key(name) {
-                captures.insert(name.clone());
+        Stmt::Assign { symbol_id, value, .. } => {
+            if let Some(id) = symbol_id {
+                if !bound.contains(id) && env.contains_key(id) && !signatures.contains_key(id) {
+                    captures.insert(*id);
+                }
             }
             collect_expr_captures(value, bound, env, signatures, captures)
         }
@@ -64,31 +114,32 @@ fn collect_expr_captures_from_stmt(
             else_body,
         } => {
             collect_expr_captures(condition, bound, env, signatures, captures);
-            for stmt in then_body {
-                collect_expr_captures_from_stmt(stmt, bound, env, signatures, captures);
+            for s in then_body {
+                collect_expr_captures_from_stmt(s, bound, env, signatures, captures);
             }
-            for stmt in else_body {
-                collect_expr_captures_from_stmt(stmt, bound, env, signatures, captures);
+            for s in else_body {
+                collect_expr_captures_from_stmt(s, bound, env, signatures, captures);
             }
         }
         Stmt::While { condition, body } => {
             collect_expr_captures(condition, bound, env, signatures, captures);
-            for stmt in body {
-                collect_expr_captures_from_stmt(stmt, bound, env, signatures, captures);
+            for s in body {
+                collect_expr_captures_from_stmt(s, bound, env, signatures, captures);
             }
         }
         Stmt::Repeat { body, condition } => {
-            for stmt in body {
-                collect_expr_captures_from_stmt(stmt, bound, env, signatures, captures);
+            for s in body {
+                collect_expr_captures_from_stmt(s, bound, env, signatures, captures);
             }
             collect_expr_captures(condition, bound, env, signatures, captures);
         }
         Stmt::NumericFor {
-            name,
+            symbol_id,
             start,
             stop,
             step,
             body,
+            ..
         } => {
             collect_expr_captures(start, bound, env, signatures, captures);
             collect_expr_captures(stop, bound, env, signatures, captures);
@@ -96,23 +147,28 @@ fn collect_expr_captures_from_stmt(
                 collect_expr_captures(step_expr, bound, env, signatures, captures);
             }
             let mut nested_bound = bound.clone();
-            nested_bound.insert(name.clone());
-            for stmt in body {
-                collect_expr_captures_from_stmt(stmt, &nested_bound, env, signatures, captures);
+            if let Some(id) = symbol_id {
+                nested_bound.insert(*id);
+            }
+            for s in body {
+                collect_expr_captures_from_stmt(s, &nested_bound, env, signatures, captures);
             }
         }
         Stmt::ForIn {
-            names,
+            symbol_ids,
             iterator,
             body,
+            ..
         } => {
             collect_expr_captures(iterator, bound, env, signatures, captures);
             let mut nested_bound = bound.clone();
-            for name in names {
-                nested_bound.insert(name.clone());
+            if let Some(ids) = symbol_ids {
+                for id in ids {
+                    nested_bound.insert(*id);
+                }
             }
-            for stmt in body {
-                collect_expr_captures_from_stmt(stmt, &nested_bound, env, signatures, captures);
+            for s in body {
+                collect_expr_captures_from_stmt(s, &nested_bound, env, signatures, captures);
             }
         }
         Stmt::Return(expr) | Stmt::Expr(expr) => {
@@ -128,13 +184,12 @@ fn collect_expr_captures_from_stmt(
                 collect_expr_captures(value, bound, env, signatures, captures);
             }
         }
-        Stmt::AssignMulti { targets, values } => {
-            for target in targets {
-                if !bound.contains(target)
-                    && env.contains_key(target)
-                    && !signatures.contains_key(target)
-                {
-                    captures.insert(target.clone());
+        Stmt::AssignMulti { symbol_ids, values, .. } => {
+            if let Some(ids) = symbol_ids {
+                for id in ids {
+                    if !bound.contains(id) && env.contains_key(id) && !signatures.contains_key(id) {
+                        captures.insert(*id);
+                    }
                 }
             }
             for value in values {
@@ -147,15 +202,15 @@ fn collect_expr_captures_from_stmt(
 
 fn collect_expr_captures(
     expr: &Expr,
-    bound: &HashSet<String>,
-    env: &HashMap<String, ValueId>,
-    signatures: &HashMap<String, (Vec<Type>, Type)>,
-    captures: &mut BTreeSet<String>,
+    bound: &HashSet<SymbolId>,
+    env: &HashMap<SymbolId, ValueId>,
+    signatures: &HashMap<SymbolId, (Vec<Type>, Type)>,
+    captures: &mut BTreeSet<SymbolId>,
 ) {
     match expr {
-        Expr::Name(name, _) => {
-            if !bound.contains(name) && env.contains_key(name) && !signatures.contains_key(name) {
-                captures.insert(name.clone());
+        Expr::Name(_, Some(symbol_id), _) => {
+            if !bound.contains(symbol_id) && env.contains_key(symbol_id) && !signatures.contains_key(symbol_id) {
+                captures.insert(*symbol_id);
             }
         }
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => {
@@ -213,7 +268,8 @@ fn collect_expr_captures(
             collect_expr_captures(base, bound, env, signatures, captures);
             collect_expr_captures(index, bound, env, signatures, captures);
         }
-        Expr::Number(..)
+        Expr::Name(_, None, _)
+        | Expr::Number(..)
         | Expr::Bool(..)
         | Expr::String(..)
         | Expr::Bytes(..)
@@ -221,50 +277,9 @@ fn collect_expr_captures(
     }
 }
 
-fn collect_assigned_into(stmts: &[Stmt], out: &mut BTreeSet<String>) {
-    for stmt in stmts {
-        match stmt {
-            Stmt::Let { name, .. } | Stmt::Assign { name, .. } => {
-                out.insert(name.clone());
-            }
-            Stmt::LetMulti { bindings, .. } => {
-                for binding in bindings {
-                    out.insert(binding.name.clone());
-                }
-            }
-            Stmt::AssignMulti { targets, .. } => {
-                for target in targets {
-                    out.insert(target.clone());
-                }
-            }
-            Stmt::IndexAssign { .. } | Stmt::FieldAssign { .. } => {}
-            Stmt::If {
-                then_body,
-                else_body,
-                ..
-            } => {
-                collect_assigned_into(then_body, out);
-                collect_assigned_into(else_body, out);
-            }
-            Stmt::While { body, .. } => collect_assigned_into(body, out),
-            Stmt::Repeat { body, .. } => collect_assigned_into(body, out),
-            Stmt::NumericFor { body, .. } => collect_assigned_into(body, out),
-            Stmt::ForIn { body, .. } => collect_assigned_into(body, out),
-            Stmt::Return(_)
-            | Stmt::ReturnMulti(_)
-            | Stmt::Expr(_)
-            | Stmt::Break
-            | Stmt::Continue => {}
-        }
-    }
-}
-
-/// Collect free variable names referenced by any nested FunctionExpr within `function`.
-/// This returns a set of identifier names that are referenced inside nested functions
-/// and are not bound by those nested functions' parameter lists or self name.
 pub(crate) fn collect_nested_function_capture_names(
     function: &waluau_ast::Function,
-) -> HashSet<String> {
+) -> HashSet<SymbolId> {
     let mut out = HashSet::new();
     for stmt in &function.body {
         collect_nested_from_stmt(stmt, &mut out);
@@ -272,7 +287,7 @@ pub(crate) fn collect_nested_function_capture_names(
     out
 }
 
-fn collect_nested_from_stmt(stmt: &Stmt, out: &mut HashSet<String>) {
+fn collect_nested_from_stmt(stmt: &Stmt, out: &mut HashSet<SymbolId>) {
     match stmt {
         Stmt::Let { value, .. }
         | Stmt::Assign { value, .. }
@@ -347,14 +362,14 @@ fn collect_nested_from_stmt(stmt: &Stmt, out: &mut HashSet<String>) {
     }
 }
 
-fn collect_nested_from_expr(expr: &Expr, out: &mut HashSet<String>) {
+fn collect_nested_from_expr(expr: &Expr, out: &mut HashSet<SymbolId>) {
     match expr {
         Expr::Function(function) => {
-            // collect free names within this function expression
-            let mut bound: HashSet<String> =
-                function.params.iter().map(|p| p.name.clone()).collect();
-            if let Some(name) = &function.name {
-                bound.insert(name.clone());
+            // collect free symbol IDs within this function expression
+            let mut bound: HashSet<SymbolId> =
+                function.params.iter().filter_map(|p| p.symbol_id).collect();
+            if let Some(symbol_id) = function.symbol_id {
+                bound.insert(symbol_id);
             }
             collect_free_names_in_stmts(&function.body, &bound, out);
             // Recurse into nested function expressions
@@ -419,18 +434,18 @@ fn collect_nested_from_expr(expr: &Expr, out: &mut HashSet<String>) {
     }
 }
 
-fn collect_free_names_in_stmts(stmts: &[Stmt], bound: &HashSet<String>, out: &mut HashSet<String>) {
+fn collect_free_names_in_stmts(stmts: &[Stmt], bound: &HashSet<SymbolId>, out: &mut HashSet<SymbolId>) {
     for stmt in stmts {
         match stmt {
             Stmt::Let {
-                name: _,
-                rebindability: _,
-                ty: _,
                 value,
+                ..
             } => collect_free_names_in_expr(value, bound, out),
-            Stmt::Assign { name, value, .. } => {
-                if !bound.contains(name) {
-                    out.insert(name.clone());
+            Stmt::Assign { symbol_id, value, .. } => {
+                if let Some(id) = symbol_id {
+                    if !bound.contains(id) {
+                        out.insert(*id);
+                    }
                 }
                 collect_free_names_in_expr(value, bound, out)
             }
@@ -471,11 +486,12 @@ fn collect_free_names_in_stmts(stmts: &[Stmt], bound: &HashSet<String>, out: &mu
                 collect_free_names_in_expr(condition, bound, out);
             }
             Stmt::NumericFor {
-                name,
+                symbol_id,
                 start,
                 stop,
                 step,
                 body,
+                ..
             } => {
                 collect_free_names_in_expr(start, bound, out);
                 collect_free_names_in_expr(stop, bound, out);
@@ -483,20 +499,25 @@ fn collect_free_names_in_stmts(stmts: &[Stmt], bound: &HashSet<String>, out: &mu
                     collect_free_names_in_expr(step_expr, bound, out);
                 }
                 let mut nested_bound = bound.clone();
-                nested_bound.insert(name.clone());
+                if let Some(id) = symbol_id {
+                    nested_bound.insert(*id);
+                }
                 for s in body {
                     collect_free_names_in_stmts(std::slice::from_ref(s), &nested_bound, out);
                 }
             }
             Stmt::ForIn {
-                names,
+                symbol_ids,
                 iterator,
                 body,
+                ..
             } => {
                 collect_free_names_in_expr(iterator, bound, out);
                 let mut nested_bound = bound.clone();
-                for name in names {
-                    nested_bound.insert(name.clone());
+                if let Some(ids) = symbol_ids {
+                    for id in ids {
+                        nested_bound.insert(*id);
+                    }
                 }
                 for s in body {
                     collect_free_names_in_stmts(std::slice::from_ref(s), &nested_bound, out);
@@ -517,11 +538,11 @@ fn collect_free_names_in_stmts(stmts: &[Stmt], bound: &HashSet<String>, out: &mu
     }
 }
 
-fn collect_free_names_in_expr(expr: &Expr, bound: &HashSet<String>, out: &mut HashSet<String>) {
+fn collect_free_names_in_expr(expr: &Expr, bound: &HashSet<SymbolId>, out: &mut HashSet<SymbolId>) {
     match expr {
-        Expr::Name(name, _) => {
-            if !bound.contains(name) {
-                out.insert(name.clone());
+        Expr::Name(_, Some(symbol_id), _) => {
+            if !bound.contains(symbol_id) {
+                out.insert(*symbol_id);
             }
         }
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => {
@@ -561,10 +582,10 @@ fn collect_free_names_in_expr(expr: &Expr, bound: &HashSet<String>, out: &mut Ha
         }
         Expr::Function(function) => {
             // nested function - skip its own bound names when collecting free in its body
-            let mut nested_bound: HashSet<String> =
-                function.params.iter().map(|p| p.name.clone()).collect();
-            if let Some(name) = &function.name {
-                nested_bound.insert(name.clone());
+            let mut nested_bound: HashSet<SymbolId> =
+                function.params.iter().filter_map(|p| p.symbol_id).collect();
+            if let Some(symbol_id) = function.symbol_id {
+                nested_bound.insert(symbol_id);
             }
             collect_free_names_in_stmts(&function.body, &nested_bound, out);
         }
@@ -583,7 +604,8 @@ fn collect_free_names_in_expr(expr: &Expr, bound: &HashSet<String>, out: &mut Ha
             collect_free_names_in_expr(base, bound, out);
             collect_free_names_in_expr(index, bound, out);
         }
-        Expr::Number(..)
+        Expr::Name(_, None, _)
+        | Expr::Number(..)
         | Expr::Bool(..)
         | Expr::String(..)
         | Expr::Bytes(..)
