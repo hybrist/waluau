@@ -335,6 +335,11 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         EntityType::Function(host_type_base + 1),
     );
     imports.import(
+        host::JS_STRING_BUILTINS_MODULE,
+        host::IMPORT_JS_STRING_COMPARE,
+        EntityType::Function(host_type_base),
+    );
+    imports.import(
         host::IMPORT_MODULE,
         host::IMPORT_BYTES_LITERAL,
         EntityType::Function(host_type_base + 2),
@@ -2136,9 +2141,9 @@ fn emit_binary(
                 ));
             }
             Type::String => {
-                return Err(Diagnostic::new(
-                    "string comparison is not supported during wasm emission",
-                ));
+                out.instruction(&Instruction::Call(host::IMPORT_JS_STRING_COMPARE_FUNC));
+                out.instruction(&Instruction::I32Const(0));
+                out.instruction(&Instruction::I32LtS);
             }
             Type::Bytes => {
                 out.instruction(&Instruction::Call(host::IMPORT_BYTES_COMPARE_FUNC));
@@ -2182,9 +2187,9 @@ fn emit_binary(
                 ));
             }
             Type::String => {
-                return Err(Diagnostic::new(
-                    "string comparison is not supported during wasm emission",
-                ));
+                out.instruction(&Instruction::Call(host::IMPORT_JS_STRING_COMPARE_FUNC));
+                out.instruction(&Instruction::I32Const(0));
+                out.instruction(&Instruction::I32GtS);
             }
             Type::Bytes => {
                 out.instruction(&Instruction::Call(host::IMPORT_BYTES_COMPARE_FUNC));

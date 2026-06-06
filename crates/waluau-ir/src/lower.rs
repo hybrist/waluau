@@ -230,11 +230,13 @@ fn erase_expr_opaque_types(expr: &Expr) -> Expr {
             name,
             args,
             span,
+            type_args,
         } => Expr::MethodCall {
             receiver: Box::new(erase_expr_opaque_types(receiver)),
             name: name.clone(),
             args: args.iter().map(erase_expr_opaque_types).collect(),
             span: *span,
+            type_args: type_args.clone(),
         },
         Expr::Function(function) => Expr::Function(waluau_ast::FunctionExpr {
             name: function.name.clone(),
@@ -2983,6 +2985,11 @@ impl Builder<'_> {
                         let right_ty = self.infer_expr_type(right, types, Some(Type::Bytes))?;
                         if right_ty == Type::Bytes {
                             return Ok(Type::Bytes);
+                        }
+                    } else if left_ty == Type::String {
+                        let right_ty = self.infer_expr_type(right, types, Some(Type::String))?;
+                        if right_ty == Type::String {
+                            return Ok(Type::String);
                         }
                     }
                 }
