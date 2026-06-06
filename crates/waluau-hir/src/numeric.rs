@@ -155,6 +155,9 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
     match expected {
         None => Ok(actual),
         Some(expected) if actual == expected => Ok(expected),
+        // Any value implicitly boxes into `unknown` (anyref). Unboxing back to a
+        // concrete type is never implicit — it requires an explicit cast.
+        Some(Type::Unknown) => Ok(Type::Unknown),
         Some(Type::Record(expected_fields)) => {
             let Type::Record(actual_fields) = actual else {
                 let expected_record = Type::Record(expected_fields.clone());
@@ -168,12 +171,14 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                 let Some(actual_ty) = actual_fields.get(name) else {
                     return Err(Diagnostic::new(format!("missing record field '{}'", name)));
                 };
-                if actual_ty != expected_ty {
-                    return Err(Diagnostic::new(format!(
+                // Each field coerces independently, so e.g. an `i32` value boxes
+                // into an `unknown` field.
+                coerce_type(actual_ty.clone(), Some(expected_ty.clone())).map_err(|_| {
+                    Diagnostic::new(format!(
                         "record field '{}' expects {}, got {}",
                         name, expected_ty, actual_ty
-                    )));
-                }
+                    ))
+                })?;
             }
             for name in actual_fields.keys() {
                 if !expected_fields.contains_key(name) {
@@ -231,6 +236,9 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             Type::Thread => Err(Diagnostic::new(format!(
                 "cannot implicitly convert thread to {expected_numeric}",
             ))),
+            Type::Unknown => Err(Diagnostic::new(format!(
+                "cannot implicitly convert unknown to {expected_numeric}; use an explicit cast",
+            ))),
         },
         Some(Type::Bool) => Err(Diagnostic::new(format!(
             "cannot implicitly convert {actual} to bool",
@@ -248,6 +256,8 @@ pub(super) fn require_numeric_cast(actual: Type, target: Type) -> Result<(), Dia
     match (&actual, &target) {
         (Type::Opaque { ty, .. }, target) if ty.as_ref() == target => Ok(()),
         (actual, Type::Opaque { name: _, ty }) if actual == ty.as_ref() => Ok(()),
+        // Boxing into / unboxing out of `unknown` (anyref) is an explicit cast.
+        (_, Type::Unknown) | (Type::Unknown, _) => Ok(()),
         _ => match (actual, target) {
             (Type::Numeric(_), Type::Numeric(_)) => Ok(()),
             _ => Err(Diagnostic::new(
@@ -306,7 +316,9 @@ pub(super) fn resolve_number_literal(
         Some(Type::Thread) => Err(Diagnostic::new(
             "numeric literal is not assignable to thread",
         )),
-        None => Ok(Type::number()),
+        // A bare literal boxed into `unknown` takes its default numeric type; the
+        // surrounding coercion then boxes that value into anyref.
+        Some(Type::Unknown) | None => Ok(Type::number()),
     }
 }
 

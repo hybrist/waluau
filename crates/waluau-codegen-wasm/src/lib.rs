@@ -76,8 +76,10 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     let closure_gc_base = host_type_base + host::HOST_TYPE_COUNT;
     let anyref_array_type = closure_gc_base;
     let func_val_struct_type = closure_gc_base + 1;
+    // $boxed_f64 = (struct (field f64)) — boxes f64 values into anyref (`unknown`).
+    let boxed_f64_struct_type = closure_gc_base + 2;
     // Coroutine GC types sit after the closure GC types.
-    let coroutine_types_base = closure_gc_base + 2;
+    let coroutine_types_base = closure_gc_base + 3;
     let coroutine_body_sig_type = coroutine_plan.has_state().then_some(coroutine_types_base);
     let coroutine_state_type = coroutine_plan
         .has_state()
@@ -93,6 +95,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         record_types_base,
         anyref_array_type,
         func_val_struct_type,
+        boxed_f64_struct_type,
     );
     array_registry.coroutine_state_type = coroutine_state_type;
 
@@ -187,6 +190,12 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
                 mutable: true,
             },
         ]);
+        // $boxed_f64 = (struct (field f64)) — immutable box for f64 → anyref.
+        debug_assert_eq!(boxed_f64_struct_type, closure_gc_base + 2);
+        types.ty().struct_(vec![FieldType {
+            element_type: StorageType::Val(ValType::F64),
+            mutable: false,
+        }]);
     }
     // Coroutine GC types (before user function types so `thread` params can reference them).
     if let (Some(body_sig), Some(state_type)) = (coroutine_body_sig_type, coroutine_state_type) {
@@ -1195,7 +1204,7 @@ fn emit_block_instructions(
                 to,
             } => {
                 emit_value_operand(out, local_plan, *source)?;
-                emit_cast(out, from.clone(), to.clone())?;
+                emit_cast(out, from.clone(), to.clone(), ctx.array_registry)?;
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::Binary {
@@ -1811,9 +1820,22 @@ where
     })
 }
 
-fn emit_cast(out: &mut Function, from: Type, to: Type) -> Result<(), Diagnostic> {
+fn emit_cast(
+    out: &mut Function,
+    from: Type,
+    to: Type,
+    array_registry: &ArrayTypeRegistry,
+) -> Result<(), Diagnostic> {
     if from == to {
         return Ok(());
+    }
+
+    // Boxing a primitive into `unknown` (anyref), or unboxing it back out.
+    if to == Type::Unknown {
+        return emit_box(out, &from, array_registry);
+    }
+    if from == Type::Unknown {
+        return emit_unbox(out, &to, array_registry);
     }
 
     let (Type::Numeric(from), Type::Numeric(to)) = (from, to) else {
@@ -1901,6 +1923,69 @@ fn emit_cast(out: &mut Function, from: Type, to: Type) -> Result<(), Diagnostic>
     Ok(())
 }
 
+/// `(ref i31)` heap type — the boxed representation of small integers and bools.
+fn i31_heap_type() -> HeapType {
+    HeapType::Abstract {
+        shared: false,
+        ty: AbstractHeapType::I31,
+    }
+}
+
+/// Box a primitive value (already on the stack) into an `anyref` (`unknown`).
+///
+/// `i32` and `bool` use `i31ref` (the value is truncated to 31 bits, matching the
+/// design's small-integer boxing); `f64` is wrapped in a `$boxed_f64` struct.
+fn emit_box(
+    out: &mut Function,
+    from: &Type,
+    array_registry: &ArrayTypeRegistry,
+) -> Result<(), Diagnostic> {
+    match from {
+        Type::Numeric(NumericType::I32 | NumericType::U32) | Type::Bool => {
+            out.instruction(&Instruction::RefI31);
+            Ok(())
+        }
+        Type::Numeric(NumericType::F64) => {
+            out.instruction(&Instruction::StructNew(
+                array_registry.boxed_f64_struct_type,
+            ));
+            Ok(())
+        }
+        other => Err(Diagnostic::new(format!(
+            "boxing {other} into unknown is not yet supported during wasm emission",
+        ))),
+    }
+}
+
+/// Unbox an `anyref` (`unknown`, on the stack) back into a concrete primitive.
+/// Traps at runtime if the boxed value does not match the requested type.
+fn emit_unbox(
+    out: &mut Function,
+    to: &Type,
+    array_registry: &ArrayTypeRegistry,
+) -> Result<(), Diagnostic> {
+    match to {
+        Type::Numeric(NumericType::I32 | NumericType::U32) | Type::Bool => {
+            out.instruction(&Instruction::RefCastNonNull(i31_heap_type()));
+            out.instruction(&Instruction::I31GetS);
+            Ok(())
+        }
+        Type::Numeric(NumericType::F64) => {
+            out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
+                array_registry.boxed_f64_struct_type,
+            )));
+            out.instruction(&Instruction::StructGet {
+                struct_type_index: array_registry.boxed_f64_struct_type,
+                field_index: 0,
+            });
+            Ok(())
+        }
+        other => Err(Diagnostic::new(format!(
+            "unboxing unknown into {other} is not yet supported during wasm emission",
+        ))),
+    }
+}
+
 fn emit_binary(
     out: &mut Function,
     _ctx: &EmissionContext<'_>,
@@ -1944,7 +2029,11 @@ fn emit_binary(
                     "multi-value add is not supported during wasm emission",
                 ));
             }
-            Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
+            Type::Function { .. }
+            | Type::Record(_)
+            | Type::TypeParam(_)
+            | Type::Thread
+            | Type::Unknown => {
                 unreachable!()
             }
             Type::Unit => unreachable!(),
@@ -1997,7 +2086,11 @@ fn emit_binary(
                     "multi-value sub is not supported during wasm emission",
                 ));
             }
-            Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
+            Type::Function { .. }
+            | Type::Record(_)
+            | Type::TypeParam(_)
+            | Type::Thread
+            | Type::Unknown => {
                 unreachable!()
             }
             Type::Unit => unreachable!(),
@@ -2037,7 +2130,11 @@ fn emit_binary(
                     "multi-value mul is not supported during wasm emission",
                 ));
             }
-            Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
+            Type::Function { .. }
+            | Type::Record(_)
+            | Type::TypeParam(_)
+            | Type::Thread
+            | Type::Unknown => {
                 unreachable!()
             }
             Type::Unit => unreachable!(),
@@ -2083,7 +2180,11 @@ fn emit_binary(
                     "multi-value div is not supported during wasm emission",
                 ));
             }
-            Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
+            Type::Function { .. }
+            | Type::Record(_)
+            | Type::TypeParam(_)
+            | Type::Thread
+            | Type::Unknown => {
                 unreachable!()
             }
             Type::Unit => unreachable!(),
@@ -2115,7 +2216,11 @@ fn emit_binary(
                     "multi-value equality is not supported during wasm emission",
                 ));
             }
-            Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
+            Type::Function { .. }
+            | Type::Record(_)
+            | Type::TypeParam(_)
+            | Type::Thread
+            | Type::Unknown => {
                 unreachable!()
             }
             Type::Unit => unreachable!(),
@@ -2161,7 +2266,11 @@ fn emit_binary(
                     "multi-value comparison is not supported during wasm emission",
                 ));
             }
-            Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
+            Type::Function { .. }
+            | Type::Record(_)
+            | Type::TypeParam(_)
+            | Type::Thread
+            | Type::Unknown => {
                 unreachable!()
             }
             Type::Unit => unreachable!(),
@@ -2207,7 +2316,11 @@ fn emit_binary(
                     "multi-value comparison is not supported during wasm emission",
                 ));
             }
-            Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
+            Type::Function { .. }
+            | Type::Record(_)
+            | Type::TypeParam(_)
+            | Type::Thread
+            | Type::Unknown => {
                 unreachable!()
             }
             Type::Unit => unreachable!(),

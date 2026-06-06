@@ -1833,6 +1833,23 @@ impl Builder<'_> {
                             "numeric literal is not assignable to thread",
                         ));
                     }
+                    Type::Unknown => {
+                        // Boxing a bare literal into `unknown`: lower it at its
+                        // default numeric type, then box the result into anyref.
+                        let ty = match self.infer_expr_type(expr, types, None)? {
+                            Type::Numeric(ty) => ty,
+                            other => {
+                                return Err(Diagnostic::new(format!(
+                                    "cannot box numeric literal as unknown: {other}"
+                                )));
+                            }
+                        };
+                        let value = self.emit(Instruction::Number {
+                            ty,
+                            literal: number.clone(),
+                        });
+                        return self.coerce_value(value, Type::Numeric(ty), Some(Type::Unknown));
+                    }
                 };
                 self.emit(Instruction::Number {
                     ty,
@@ -2022,7 +2039,7 @@ impl Builder<'_> {
                                     "unary '-' requires a numeric operand",
                                 ));
                             }
-                            Type::Thread => {
+                            Type::Thread | Type::Unknown => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -2631,6 +2648,8 @@ impl Builder<'_> {
                 Some(Type::Thread) => Err(Diagnostic::new(
                     "numeric literal is not assignable to thread",
                 )),
+                // A literal coerced to `unknown` is boxed; report `unknown` as its type.
+                Some(Type::Unknown) => Ok(Type::Unknown),
                 None => Ok(Type::number()),
             },
             Expr::Bool(..) => Ok(Type::Bool),
@@ -2739,7 +2758,7 @@ impl Builder<'_> {
                         Type::TypeParam(_) => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
-                        Type::Thread => {
+                        Type::Thread | Type::Unknown => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                     }
@@ -3659,6 +3678,29 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
     match expected {
         None => Ok(actual),
         Some(expected) if actual == expected => Ok(expected),
+        // Any value implicitly boxes into `unknown` (anyref). Unboxing is explicit-only.
+        Some(Type::Unknown) => Ok(Type::Unknown),
+        // Records coerce field-by-field so a field value can box into an `unknown`
+        // field. Lowering then targets the expected field types and inserts boxes.
+        Some(Type::Record(expected_fields)) => {
+            let Type::Record(actual_fields) = &actual else {
+                return Err(Diagnostic::new(format!(
+                    "cannot implicitly convert {actual} to {}",
+                    Type::Record(expected_fields)
+                )));
+            };
+            for (name, expected_ty) in &expected_fields {
+                let Some(actual_ty) = actual_fields.get(name) else {
+                    return Err(Diagnostic::new(format!("missing record field '{name}'")));
+                };
+                coerce_type(actual_ty.clone(), Some(expected_ty.clone())).map_err(|_| {
+                    Diagnostic::new(format!(
+                        "record field '{name}' expects {expected_ty}, got {actual_ty}"
+                    ))
+                })?;
+            }
+            Ok(Type::Record(expected_fields))
+        }
         Some(Type::Numeric(expected_numeric)) => match actual {
             Type::Numeric(actual_numeric)
                 if actual_numeric.can_implicitly_widen_to(expected_numeric) =>
@@ -3704,6 +3746,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Thread => Err(Diagnostic::new(format!(
                 "cannot implicitly convert thread to {expected_numeric}",
             ))),
+            Type::Unknown => Err(Diagnostic::new(format!(
+                "cannot implicitly convert unknown to {expected_numeric}; use an explicit cast",
+            ))),
         },
         Some(Type::Bool) => Err(Diagnostic::new(format!(
             "cannot implicitly convert {actual} to bool",
@@ -3721,6 +3766,8 @@ pub(crate) fn require_numeric_cast(actual: Type, target: Type) -> Result<(), Dia
     match (&actual, &target) {
         (Type::Opaque { ty, .. }, target) if ty.as_ref() == target => Ok(()),
         (actual, Type::Opaque { ty, .. }) if actual == ty.as_ref() => Ok(()),
+        // Boxing into / unboxing out of `unknown` (anyref) is an explicit cast.
+        (_, Type::Unknown) | (Type::Unknown, _) => Ok(()),
         _ => match (actual, target) {
         (Type::Numeric(_), Type::Numeric(_)) => Ok(()),
         _ => Err(Diagnostic::new(

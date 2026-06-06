@@ -289,6 +289,7 @@ fn reuses_i32_local_slots_for_disjoint_live_ranges() {
         0, // record_type_offset placeholder (unused in this test)
         0, // anyref_array_type placeholder (unused in this test)
         0, // func_val_struct_type placeholder (unused in this test)
+        0, // boxed_f64_struct_type placeholder (unused in this test)
     );
     let local_plan = super::build_local_plan(function, &value_types, &array_registry)
         .expect("plan should build");
@@ -445,5 +446,82 @@ fn devirtualized_method_call_avoids_call_indirect() {
     assert!(
         !saw_call_indirect,
         "expected direct call for method dispatch"
+    );
+}
+
+#[test]
+fn emits_valid_wasm_for_unknown_boxing() {
+    // `unknown` lowers to anyref; primitives box (i32/bool via i31ref, f64 via a
+    // boxed struct) and unbox via explicit cast, including through calls and
+    // record fields.
+    let source = r#"
+        function roundtrip_i32(x: i32): i32
+            local boxed: unknown = x
+            return boxed::i32
+        end
+
+        function roundtrip_f64(x: f64): f64
+            local boxed: unknown = x
+            return boxed::f64
+        end
+
+        function identity(v: unknown): unknown
+            return v
+        end
+
+        function call_through(x: i32): i32
+            return identity(x)::i32
+        end
+
+        function store_in_field(x: i32): i32
+            local r: { v: unknown } = { v = x }
+            return r.v::i32
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    let mut saw_ref_i31 = false;
+    let mut saw_i31_get = false;
+    let mut saw_struct_new = false;
+    for payload in Parser::new(0).parse_all(&wasm) {
+        let payload = payload.expect("wasm should parse");
+        if let Payload::CodeSectionEntry(body) = payload {
+            let mut reader = body.get_operators_reader().expect("ops should decode");
+            while !reader.eof() {
+                match reader.read().expect("op should decode") {
+                    Operator::RefI31 => saw_ref_i31 = true,
+                    Operator::I31GetS | Operator::I31GetU => saw_i31_get = true,
+                    Operator::StructNew { .. } => saw_struct_new = true,
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    assert!(saw_ref_i31, "expected ref.i31 for i32/bool boxing");
+    assert!(saw_i31_get, "expected i31.get for i32/bool unboxing");
+    assert!(saw_struct_new, "expected struct.new for f64 boxing");
+}
+
+#[test]
+fn rejects_implicit_unbox_from_unknown() {
+    // Unboxing must be explicit: assigning `unknown` to a concrete type is rejected.
+    let source = r#"
+        function bad(v: unknown): i32
+            local x: i32 = v
+            return x
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let result = waluau_hir::type_check_and_infer(&program);
+    assert!(
+        result.is_err(),
+        "implicit unbox from unknown should be a type error"
     );
 }

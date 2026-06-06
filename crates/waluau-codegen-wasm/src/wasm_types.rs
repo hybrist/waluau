@@ -25,6 +25,18 @@ pub(crate) fn externref_nonnull_val_type() -> ValType {
     })
 }
 
+/// `anyref` (`ref null any`): the wasm representation of the `unknown` type. Boxed
+/// primitives and any other heap reference are subtypes of `any`.
+pub(crate) fn anyref_val_type() -> ValType {
+    ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Abstract {
+            shared: false,
+            ty: AbstractHeapType::Any,
+        },
+    })
+}
+
 pub(crate) fn wasm_type(
     ty: &Type,
     array_registry: &ArrayTypeRegistry,
@@ -46,6 +58,7 @@ pub(crate) fn wasm_type(
         }
         Type::String => Ok(externref_val_type()),
         Type::Bytes => Ok(externref_val_type()),
+        Type::Unknown => Ok(anyref_val_type()),
         Type::Unit => Err(Diagnostic::new(
             "unit type has no wasm value representation",
         )),

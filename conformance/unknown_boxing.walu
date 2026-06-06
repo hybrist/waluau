@@ -1,0 +1,46 @@
+-- anyref/boxing support (waluau-myp2): the `unknown` type lowers to wasm
+-- `anyref`. Primitives box into anyref (i32/bool via i31ref, f64 via a boxed
+-- struct) when coerced to `unknown`, and unbox with an explicit `::T` cast.
+
+-- Implicitly box an i32 into `unknown`, then unbox it back.
+function roundtrip_i32(x: i32): i32
+    local boxed: unknown = x
+    return boxed::i32
+end
+assert(roundtrip_i32(42) == 42)
+assert(roundtrip_i32(1000000) == 1000000)
+
+-- Box a bool. (i31ref represents 0/1 just like the unboxed i32.)
+function roundtrip_bool(b: bool): bool
+    local boxed: unknown = b
+    return boxed::bool
+end
+assert(roundtrip_bool(true))
+assert(not roundtrip_bool(false))
+
+-- Box an f64 (does not fit in i31ref, so it is wrapped in a boxed struct).
+function roundtrip_f64(x: f64): f64
+    local boxed: unknown = x
+    return boxed::f64
+end
+assert(roundtrip_f64(3.5) == 3.5)
+assert(roundtrip_f64(-2.25) == -2.25)
+
+-- Explicit boxing cast on a literal, then unbox.
+assert(3.5::unknown::f64 == 3.5)
+
+-- anyref values pass through function calls unchanged.
+function identity(v: unknown): unknown
+    return v
+end
+function call_through(x: i32): i32
+    return identity(x)::i32
+end
+assert(call_through(99) == 99)
+
+-- anyref values are stored in and read back from a record (struct) field.
+function store_in_field(x: i32): i32
+    local r: { v: unknown } = { v = x }
+    return r.v::i32
+end
+assert(store_in_field(123) == 123)

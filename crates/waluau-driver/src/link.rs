@@ -644,7 +644,8 @@ impl Rewriter<'_> {
             | Type::String
             | Type::Bytes
             | Type::TypeParam(_)
-            | Type::Thread => {}
+            | Type::Thread
+            | Type::Unknown => {}
         }
     }
 
