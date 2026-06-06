@@ -387,4 +387,15 @@ mod tests {
         assert!(result.wat.contains("(export \"main\""));
         assert!(!result.wat.contains("__waluau_m"));
     }
+
+    #[test]
+    fn compile_multi_preserves_filenames_in_assertions() {
+        let mut files = std::collections::HashMap::new();
+        files.insert(
+            "main.walu".to_string(),
+            "function test(): i32\n    assert(false)\n    return 0\nend\n".to_string(),
+        );
+        let result = super::compile_sources(&files, "main.walu").expect("compile should succeed");
+        assert!(result.ir.contains("at /main.walu:2"));
+    }
 }
