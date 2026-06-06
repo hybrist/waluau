@@ -20,7 +20,8 @@ Included:
 
 - generic top-level function declarations
 - generic function expressions, including expressions assigned to locals
-- explicit type arguments at generic call sites
+- generic method declarations (`function t:m<T>(...) ... end`)
+- explicit type arguments at generic call sites (`f<T>(...)`)
 - type parameters in parameter types, return types, local annotations, array
   element types, and nested function types
 - deterministic substitution before normal type checking and lowering
@@ -34,6 +35,9 @@ Excluded:
 - source syntax for polymorphic function value types
 - partial application or value-level references to an uninstantiated generic
   function
+- explicit type arguments at method call sites (`obj:method<T>(...)`)  — the
+  `MethodCall` AST node does not carry `type_args`; generic methods can be
+  declared but only called through a desugared field-access form for now
 
 ## Source Syntax
 
@@ -81,11 +85,18 @@ TypeArgList   ::= "<" Type ("," Type)* ">"
 FunctionDecl  ::= "function" Identifier TypeParamList? "(" ParamList? ")"
                   ReturnType? Block "end"
 
+MethodDecl    ::= "function" Identifier ":" Identifier TypeParamList?
+                  "(" ParamList? ")" ReturnType? Block "end"
+
 FunctionExpr  ::= "function" Identifier? TypeParamList? "(" ParamList? ")"
                   ReturnType? Block "end"
 
 CallExpr      ::= Callee TypeArgList? "(" ArgList? ")"
 ```
+
+`MethodDecl` is desugared during HIR lowering into a regular generic function
+stored on the table. The colon-call form `obj:method<T>(...)` does not yet
+accept a `TypeArgList`; that extension is tracked separately.
 
 Type parameter names share the identifier token shape with value names, but they
 live in a separate type namespace.
@@ -348,7 +359,9 @@ Deferred beyond the MVP:
 - constraints, bounds, or trait-like operator capabilities
 - generic type aliases and generic data types
 - polymorphic function value types
-- generic methods or table-associated functions
+- explicit type arguments at method call sites — `obj:method<T>(...)` syntax;
+  generic method declarations are implemented and desugared, but the
+  `MethodCall` AST node does not carry `type_args` yet
 - specialization sharing across representation-compatible types
 - cross-module generic export/import semantics
 - cross-specialization recursive cycles
