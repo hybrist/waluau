@@ -445,7 +445,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             .get(&params, &function.return_type)
             .unwrap();
         functions.function(user_type_base + sig_index);
-        if function.name != "__waluau_top_level_init" {
+        if should_export_function(&function.name) {
             exports.export(
                 &function.name,
                 ExportKind::Func,
@@ -620,6 +620,10 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         wasm: bytes,
         record_type_indices,
     })
+}
+
+fn should_export_function(name: &str) -> bool {
+    name != "__waluau_top_level_init" && !name.starts_with("__waluau_") && !name.contains("$lambda")
 }
 
 #[derive(Clone)]

@@ -370,4 +370,21 @@ mod tests {
         assert!(result.wat.contains("(module"));
         assert!(result.ir.contains("main"));
     }
+
+    #[test]
+    fn compile_multi_only_exports_entry_surface() {
+        let mut files = std::collections::HashMap::new();
+        files.insert(
+            "main.walu".to_string(),
+            "function main(): i32\n    local double: (i32) -> i32 = require(\"./double\")\n    return double(2)\nend\n".to_string(),
+        );
+        files.insert(
+            "double.walu".to_string(),
+            "function double(x: i32): i32\n    return x * 2\nend\nreturn double\n".to_string(),
+        );
+
+        let result = super::compile_sources(&files, "main.walu").expect("compile should succeed");
+        assert!(result.wat.contains("(export \"main\""));
+        assert!(!result.wat.contains("__waluau_m"));
+    }
 }
