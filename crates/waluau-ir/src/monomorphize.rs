@@ -1471,6 +1471,7 @@ impl<'a> Monomorphizer<'a> {
         None
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn infer_generic_call_return_type(
         &self,
         type_params: &[String],
