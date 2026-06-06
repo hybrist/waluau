@@ -247,6 +247,13 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                     actual_variant.tag, expected_name
                 ))),
             },
+            Type::Record(_) if matches!(expected_ty.as_ref(), Type::Record(_)) => {
+                let _ = coerce_type(actual, Some(*expected_ty.clone()))?;
+                Ok(Type::Opaque {
+                    name: expected_name,
+                    ty: expected_ty,
+                })
+            }
             _ => Err(Diagnostic::new(format!(
                 "cannot implicitly convert {} to {}",
                 actual, expected_name
@@ -305,6 +312,9 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             ))),
             Type::Bytes => Err(Diagnostic::new(format!(
                 "cannot implicitly convert bytes to {expected_numeric}",
+            ))),
+            Type::Extern => Err(Diagnostic::new(format!(
+                "cannot implicitly convert extern to {expected_numeric}",
             ))),
             Type::Named { name, .. } => Err(Diagnostic::new(format!(
                 "cannot implicitly convert {name} to {expected_numeric}",
@@ -388,6 +398,9 @@ pub(super) fn resolve_number_literal(
         )),
         Some(Type::Bytes) => Err(Diagnostic::new(
             "numeric literal is not assignable to bytes",
+        )),
+        Some(Type::Extern) => Err(Diagnostic::new(
+            "numeric literal is not assignable to extern",
         )),
         Some(Type::Named { name, .. }) => Err(Diagnostic::new(format!(
             "numeric literal is not assignable to {name}",

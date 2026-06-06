@@ -1096,14 +1096,41 @@ fn desugar_method_declarations(program: &Program) -> Result<Program, Diagnostic>
     rewritten.functions.clear();
     rewritten.top_level.clear();
     let mut pending_methods: Vec<(String, Stmt)> = Vec::new();
+    let type_names = program
+        .type_declarations
+        .iter()
+        .map(|decl| decl.name.clone())
+        .collect::<HashSet<_>>();
 
     for function in &program.functions {
         match &function.name {
             FunctionName::Simple(_) => rewritten.functions.push(function.clone()),
+            FunctionName::Method { table, method } if type_names.contains(table) => {
+                let mut params = Vec::with_capacity(function.params.len() + 1);
+                params.push(Param {
+                    name: "self".to_string(),
+                    symbol_id: None,
+                    ty: Type::Named {
+                        name: table.clone(),
+                        type_args: Vec::new(),
+                    },
+                });
+                params.extend(function.params.clone());
+                rewritten.functions.push(Function {
+                    name: FunctionName::Simple(method_signature_name(table, method)),
+                    symbol_id: None,
+                    type_params: function.type_params.clone(),
+                    params,
+                    return_type: function.return_type.clone(),
+                    body: function.body.clone(),
+                    file_path: function.file_path.clone(),
+                });
+            }
             FunctionName::Method { table, method } => {
                 let mut params = Vec::with_capacity(function.params.len() + 1);
                 params.push(Param {
                     name: "self".to_string(),
+                    symbol_id: None,
                     ty: Type::Unit,
                 });
                 params.extend(function.params.clone());
@@ -1111,10 +1138,11 @@ fn desugar_method_declarations(program: &Program) -> Result<Program, Diagnostic>
                     table.clone(),
                     Stmt::FieldAssign {
                         op: AssignOp::Set,
-                        base: Box::new(Expr::Name(table.clone(), None)),
+                        base: Box::new(Expr::Name(table.clone(), None, None)),
                         name: method.clone(),
                         value: Expr::Function(FunctionExpr {
                             name: None,
+                            symbol_id: None,
                             implicit_self: Some(table.clone()),
                             type_params: function.type_params.clone(),
                             params,
@@ -1192,7 +1220,7 @@ fn resolve_implicit_self_functions(
             ..
         } = stmt
         {
-            if let Expr::Name(table, _) = base.as_ref() {
+            if let Expr::Name(table, _, _) = base.as_ref() {
                 if let Some(signature) = signature_from_function_expr(function) {
                     fn_signatures.insert(method_signature_name(table, name), signature);
                 }
@@ -1405,6 +1433,7 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
     if !typed.top_level.is_empty() {
         typed.functions.push(Function {
             name: FunctionName::Simple("__waluau_top_level_init".to_string()),
+            symbol_id: None,
             type_params: Vec::new(),
             params: Vec::new(),
             return_type: Some(Type::number()),

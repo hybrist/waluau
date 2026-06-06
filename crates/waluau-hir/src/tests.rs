@@ -218,6 +218,49 @@ fn opaque_types_reject_implicit_conversion_to_their_representation() {
 }
 
 #[test]
+fn extern_type_aliases_are_nominal_and_lower_to_extern() {
+    let source = r#"
+        type Element = extern
+
+        function identity(value: Element): Element
+            return value
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+
+    assert_eq!(typed.type_declarations[0].ty, Type::Extern);
+    assert!(matches!(
+        &typed.functions[0].params[0].ty,
+        Type::Opaque { name, ty } if name == "Element" && **ty == Type::Extern
+    ));
+}
+
+#[test]
+fn distinct_extern_type_aliases_do_not_implicitly_convert() {
+    let source = r#"
+        type Element = extern
+        type Node = extern
+
+        function take_node(value: Node): Node
+            return value
+        end
+
+        function entry(value: Element): Node
+            return take_node(value)
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "cannot implicitly convert Element to Node"
+    );
+}
+
+#[test]
 fn generic_type_declarations_resolve_transparently() {
     let source = r#"
         type Pair<A, B> = {first: A, second: B}
@@ -942,6 +985,63 @@ fn type_checks_method_call_via_method_declaration() {
 }
 
 #[test]
+fn type_checks_method_declaration_on_named_record_type() {
+    let source = r#"
+        type Point = { x: i32, y: i32 }
+
+        function Point:sum_with(delta: i32): i32
+            return self.x + self.y + delta
+        end
+
+        function Point:add(other: Point): Point
+            return { x = (self.x + other.x)::i32, y = (self.y + other.y)::i32 }
+        end
+
+        local a: Point = { x = 2::i32, y = 4::i32 }
+        local b: Point = { x = 10::i32, y = 1::i32 }
+        local c: Point = a:add(b)
+
+        assert(a:sum_with(3::i32) == 9::i32)
+        assert(b:sum_with(3::i32) == 14::i32)
+        assert(c.x == 12::i32)
+        assert(c.y == 5::i32)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn preserves_type_method_declarations_as_direct_functions() {
+    let source = r#"
+        type Point = { x: i32, y: i32 }
+
+        function Point:sum_with(delta: i32): i32
+            return self.x + self.y + delta
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+
+    let function = typed
+        .functions
+        .iter()
+        .find(|function| function.name == FunctionName::Simple("Point.sum_with".to_string()))
+        .expect("expected type method to lower to direct function");
+    assert_eq!(function.params[0].name, "self");
+    assert!(matches!(
+        &function.params[0].ty,
+        Type::Opaque { name, ty } if name == "Point" && matches!(ty.as_ref(), Type::Record(_))
+    ));
+    assert!(
+        typed
+            .top_level
+            .iter()
+            .all(|stmt| !matches!(stmt, Stmt::FieldAssign { .. })),
+        "type method declarations should not become top-level field assignments"
+    );
+}
+
+#[test]
 fn desugars_method_declaration_into_field_assignment_with_resolved_self_type() {
     let source = r#"
         local point = { x = 41::i32 }
@@ -972,7 +1072,7 @@ fn desugars_method_declaration_into_field_assignment_with_resolved_self_type() {
         .find_map(|stmt| match stmt {
             Stmt::FieldAssign {
                 base, name, value, ..
-            } if matches!(base.as_ref(), Expr::Name(base_name, _) if base_name == "point")
+            } if matches!(base.as_ref(), Expr::Name(base_name, _, _) if base_name == "point")
                 && name == "get_x" =>
             {
                 Some(value)
@@ -1016,7 +1116,7 @@ fn type_checks_generic_method_declaration() {
         .find_map(|stmt| match stmt {
             Stmt::FieldAssign {
                 base, name, value, ..
-            } if matches!(base.as_ref(), Expr::Name(base_name, _) if base_name == "point")
+            } if matches!(base.as_ref(), Expr::Name(base_name, _, _) if base_name == "point")
                 && name == "identity" =>
             {
                 Some(value)

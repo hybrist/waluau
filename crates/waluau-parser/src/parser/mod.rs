@@ -106,6 +106,7 @@ impl Parser {
         let function_expr = self.parse_function_expr_tail(None, false, start_pos)?;
         Ok(Function {
             name,
+            symbol_id: None,
             type_params: function_expr.type_params,
             params: function_expr.params,
             return_type: function_expr.return_type,
@@ -203,6 +204,7 @@ impl Parser {
                 };
                 params.push(Param {
                     name: param_name,
+                    symbol_id: None,
                     ty: param_type,
                 });
                 if self.check_simple(&TokenKind::Comma) {
@@ -233,6 +235,7 @@ impl Parser {
         self.expect_simple(TokenKind::End, "expected 'end' after function body")?;
         Ok(FunctionExpr {
             name,
+            symbol_id: None,
             implicit_self: None,
             type_params,
             params,

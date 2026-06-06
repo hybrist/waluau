@@ -87,6 +87,29 @@ fn parses_type_declarations_and_named_type_references() {
 }
 
 #[test]
+fn parses_extern_type_declaration() {
+    let source = r#"
+        type Element = extern
+
+        function identity(value: Element): Element
+            return value
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert_eq!(program.type_declarations.len(), 1);
+    assert_eq!(program.type_declarations[0].name, "Element");
+    assert_eq!(program.type_declarations[0].ty, Type::Extern);
+    assert_eq!(
+        program.functions[0].params[0].ty,
+        Type::Named {
+            name: "Element".into(),
+            type_args: vec![],
+        }
+    );
+}
+
+#[test]
 fn parses_generic_type_declarations_and_references() {
     let source = r#"
         type Pair<A, B> = {first: A, second: B}
@@ -246,7 +269,7 @@ fn parses_unary_and_elseif_forms() {
                 ..
             }] if matches!(
                 then_body.as_slice(),
-                [waluau_ast::Stmt::Return(waluau_ast::Expr::Name(name, _))] if name == "x"
+                [waluau_ast::Stmt::Return(waluau_ast::Expr::Name(name, _, _))] if name == "x"
             )
         )
     ));
@@ -509,7 +532,7 @@ fn parses_method_call_syntax() {
             ..
         }) if name == "update"
             && args.len() == 1
-            && matches!(receiver.as_ref(), waluau_ast::Expr::Name(base, _) if base == "obj")
+            && matches!(receiver.as_ref(), waluau_ast::Expr::Name(base, _, _) if base == "obj")
     ));
 }
 
@@ -534,7 +557,7 @@ fn parses_generic_method_call_syntax() {
             && type_args.len() == 1
             && matches!(&type_args[0], waluau_ast::Type::Numeric(waluau_ast::NumericType::I32))
             && args.len() == 1
-            && matches!(receiver.as_ref(), waluau_ast::Expr::Name(base, _) if base == "obj")
+            && matches!(receiver.as_ref(), waluau_ast::Expr::Name(base, _, _) if base == "obj")
             && matches!(&args[0], waluau_ast::Expr::Number(_, _))
     ));
 }
@@ -935,7 +958,7 @@ fn parses_multi_local_and_multi_assignment() {
     ));
     assert!(matches!(
         &function.body[1],
-        waluau_ast::Stmt::AssignMulti { targets, values } if targets.len() == 2 && values.len() == 2
+        waluau_ast::Stmt::AssignMulti { targets, values, .. } if targets.len() == 2 && values.len() == 2
     ));
 }
 
@@ -1006,7 +1029,7 @@ fn captures_trailing_top_level_return_as_module_export() {
         return helper
     "#;
     let program = parse(source).expect("parse should succeed");
-    assert!(matches!(program.export, Some(waluau_ast::Expr::Name(name, _)) if name == "helper"));
+    assert!(matches!(program.export, Some(waluau_ast::Expr::Name(name, _, _)) if name == "helper"));
 }
 
 #[test]

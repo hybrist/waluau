@@ -238,6 +238,7 @@ fn hoist_table_export_functions(
 fn function_expr_to_function(name: &str, function: &FunctionExpr) -> Function {
     Function {
         name: waluau_ast::FunctionName::Simple(name.to_string()),
+        symbol_id: function.symbol_id,
         type_params: function.type_params.clone(),
         params: function.params.clone(),
         return_type: function.return_type.clone(),
@@ -329,7 +330,7 @@ fn resolve_module_export(
     namespaces: &HashMap<String, BTreeMap<String, String>>,
 ) -> Result<ResolvedImport, Diagnostic> {
     match export {
-        Some(Expr::Name(name, _)) => Ok(ResolvedImport::Function(export_function_name(
+        Some(Expr::Name(name, _, _)) => Ok(ResolvedImport::Function(export_function_name(
             name,
             prefix,
             top_level_names,
@@ -388,7 +389,7 @@ fn export_field_function_name(
     namespaces: &HashMap<String, BTreeMap<String, String>>,
 ) -> Result<String, Diagnostic> {
     match &field.value {
-        Expr::Name(name, _) => export_function_name(
+        Expr::Name(name, _, _) => export_function_name(
             name,
             prefix,
             top_level_names,
@@ -398,7 +399,7 @@ fn export_field_function_name(
         Expr::Field {
             base, name: member, ..
         } if matches!(&**base, Expr::Name(..)) => {
-            let Expr::Name(namespace, _) = &**base else {
+            let Expr::Name(namespace, _, _) = &**base else {
                 unreachable!()
             };
             let fields = namespaces.get(namespace).ok_or_else(|| {
@@ -651,6 +652,7 @@ impl Rewriter<'_> {
             | Type::Unknown
             | Type::String
             | Type::Bytes
+            | Type::Extern
             | Type::TypeParam(_)
             | Type::Thread => {}
         }
@@ -682,7 +684,7 @@ impl Rewriter<'_> {
                 if let Expr::TableLiteral { fields, .. } = &*value {
                     let mut field_map = BTreeMap::new();
                     for field in fields {
-                        if let Expr::Name(function_name, _) = &field.value {
+                        if let Expr::Name(function_name, _, _) = &field.value {
                             field_map.insert(field.name.clone(), function_name.clone());
                         }
                     }
@@ -729,6 +731,7 @@ impl Rewriter<'_> {
                 stop,
                 step,
                 body,
+                ..
             } => {
                 self.rewrite_expr(start, bound);
                 self.rewrite_expr(stop, bound);
@@ -743,6 +746,7 @@ impl Rewriter<'_> {
                 names,
                 iterator,
                 body,
+                ..
             } => {
                 self.rewrite_expr(iterator, bound);
                 let mut inner = bound.clone();
@@ -780,10 +784,10 @@ impl Rewriter<'_> {
             base, name: field, ..
         } = expr
         {
-            if let Expr::Name(local, _) = &**base {
+            if let Expr::Name(local, _, _) = &**base {
                 if let Some(fields) = self.namespaces.get(local) {
                     if let Some(resolved) = fields.get(field) {
-                        *expr = Expr::Name(resolved.clone(), None);
+                        *expr = Expr::Name(resolved.clone(), None, None);
                         return;
                     }
                 }
@@ -794,13 +798,13 @@ impl Rewriter<'_> {
             Expr::Require(path, span) => {
                 if let Some(resolved) = self.imports.get(path) {
                     *expr = match resolved {
-                        ResolvedImport::Function(name) => Expr::Name(name.clone(), *span),
+                        ResolvedImport::Function(name) => Expr::Name(name.clone(), None, *span),
                         ResolvedImport::Namespace(fields) => Expr::TableLiteral {
                             fields: fields
                                 .iter()
                                 .map(|(name, function)| TableField {
                                     name: name.clone(),
-                                    value: Expr::Name(function.clone(), None),
+                                    value: Expr::Name(function.clone(), None, None),
                                 })
                                 .collect(),
                             span: *span,
@@ -808,7 +812,7 @@ impl Rewriter<'_> {
                     };
                 }
             }
-            Expr::Name(name, _) => {
+            Expr::Name(name, _, _) => {
                 if !bound.contains(name) && self.func_names.contains(name) {
                     *name = format!("{}{name}", self.prefix);
                 }
@@ -999,6 +1003,7 @@ fn rename_stmt(
             stop,
             step,
             body,
+            ..
         } => {
             rename_expr(start, renames, available, shadowed);
             rename_expr(stop, renames, available, shadowed);
@@ -1016,6 +1021,7 @@ fn rename_stmt(
             names,
             iterator,
             body,
+            ..
         } => {
             rename_expr(iterator, renames, available, shadowed);
             let mut inner_available = available.clone();
@@ -1055,7 +1061,7 @@ fn rename_expr(
     shadowed: &HashSet<String>,
 ) {
     match expr {
-        Expr::Name(name, _) => {
+        Expr::Name(name, _, _) => {
             if available.contains(name) && !shadowed.contains(name) {
                 if let Some(renamed) = renames.get(name) {
                     *name = renamed.clone();
@@ -1203,7 +1209,7 @@ fn stmt_mentions_name_in_stmt(name: &str, stmt: &Stmt) -> bool {
 
 fn expr_mentions_name(name: &str, expr: &Expr) -> bool {
     match expr {
-        Expr::Name(local, _) => local == name,
+        Expr::Name(local, _, _) => local == name,
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => expr_mentions_name(name, expr),
         Expr::IsVariant { expr, .. } => expr_mentions_name(name, expr),
         Expr::Binary { left, right, .. } => {

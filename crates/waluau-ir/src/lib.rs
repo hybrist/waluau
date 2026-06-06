@@ -1,8 +1,8 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use waluau_ast::{
-    AssignOp, BinaryOp, Expr, Function as AstFunction, MethodCallOrigin, NumberLiteral,
-    NumericType, Program, Stmt, TaggedVariant, Type, UnaryOp,
+    AssignOp, BinaryOp, Expr, Function as AstFunction, NumberLiteral, NumericType, Program, Stmt,
+    SymbolId, TaggedVariant, Type, UnaryOp,
 };
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
@@ -35,14 +35,8 @@ fn inference_diagnostic(
         .with_action(action)
 }
 
-fn generic_diagnostic(code: &'static str, message: impl Into<String>) -> Diagnostic {
-    Diagnostic::new(message)
-        .with_code(code)
-        .with_category(DiagnosticCategory::Unsupported)
-}
-
 mod captures {
-    use super::*;
+
     include!("captures.rs");
 }
 
@@ -52,7 +46,7 @@ mod model {
 }
 
 mod monomorphize {
-    use super::*;
+
     include!("monomorphize.rs");
 }
 

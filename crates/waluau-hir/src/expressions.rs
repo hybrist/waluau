@@ -19,9 +19,9 @@ use super::statements::check_stmt;
 
 fn builtin_name(callee: &Expr) -> Option<String> {
     match callee {
-        Expr::Name(name, _) => Some(name.clone()),
+        Expr::Name(name, _, _) => Some(name.clone()),
         Expr::Field { base, name, .. } => match base.as_ref() {
-            Expr::Name(namespace, _) => Some(format!("{namespace}.{name}")),
+            Expr::Name(namespace, _, _) => Some(format!("{namespace}.{name}")),
             _ => None,
         },
         _ => None,
@@ -49,10 +49,27 @@ fn method_signature<'a>(
     name: &str,
     fn_signatures: &'a HashMap<String, FnSignature>,
 ) -> Option<(&'a FnSignature, String)> {
-    let Expr::Name(base, _) = receiver else {
+    let Expr::Name(base, _, _) = receiver else {
         return None;
     };
     let method_name = method_signature_name(base, name);
+    fn_signatures
+        .get(&method_name)
+        .map(|signature| (signature, method_name))
+}
+
+fn type_method_signature<'a>(
+    receiver_ty: &Type,
+    name: &str,
+    fn_signatures: &'a HashMap<String, FnSignature>,
+) -> Option<(&'a FnSignature, String)> {
+    let Type::Opaque {
+        name: type_name, ..
+    } = receiver_ty
+    else {
+        return None;
+    };
+    let method_name = method_signature_name(type_name, name);
     fn_signatures
         .get(&method_name)
         .map(|signature| (signature, method_name))
@@ -83,7 +100,7 @@ pub(super) fn infer_expr(
             "require(\"{path}\") can only be resolved when compiling from a file; \
              relative imports are unavailable when compiling a single source string"
         ))),
-        Expr::Name(name, _) => {
+        Expr::Name(name, _, _) => {
             if matches!(fn_signatures.get(name), Some(FnSignature::Generic(_))) {
                 return Err(generic_diagnostic(
                     "generic/uninstantiated-value",
@@ -124,6 +141,7 @@ pub(super) fn infer_expr(
                     Type::Unit => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::String => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Bytes => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                    Type::Extern => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Named { .. } => {
                         Err(Diagnostic::new("unary '-' requires a numeric operand"))
                     }
@@ -219,7 +237,7 @@ pub(super) fn infer_expr(
             // Tagged-union constructor: Tag(expr) when Tag is a variant in the expected type.
             // The inferred type is the full expected type (union or variant) so that
             // Stmt::Let's exact-equality check passes and the variable carries the union type.
-            if let (Expr::Name(tag, _), [arg]) = (callee.as_ref(), args.as_slice()) {
+            if let (Expr::Name(tag, _, _), [arg]) = (callee.as_ref(), args.as_slice()) {
                 if !fn_signatures.contains_key(tag.as_str()) && !vars.contains_key(tag.as_str()) {
                     if let Some(variant) = expected.as_ref().and_then(|e| e.tagged_variant(tag)) {
                         let payload_ty = *variant.payload.clone();
@@ -283,7 +301,7 @@ pub(super) fn infer_expr(
                     return result;
                 }
             }
-            if let Expr::Name(name, _) = callee.as_ref() {
+            if let Expr::Name(name, _, _) = callee.as_ref() {
                 if let Some(FnSignature::Generic(scheme)) = fn_signatures.get(name) {
                     return infer_generic_call(
                         scheme,
@@ -297,7 +315,7 @@ pub(super) fn infer_expr(
                 }
             }
             if let Expr::Field { base, name, .. } = callee.as_ref() {
-                if let Expr::Name(base_name, _) = base.as_ref() {
+                if let Expr::Name(base_name, _, _) = base.as_ref() {
                     let method_name = method_signature_name(base_name, name);
                     if let Some(FnSignature::Generic(scheme)) = fn_signatures.get(&method_name) {
                         return infer_generic_call(
@@ -371,61 +389,63 @@ pub(super) fn infer_expr(
             ..
         } => {
             let receiver_ty = infer_expr(receiver, vars, fn_signatures, active_type_params, None)?;
-            let (params, ret) =
-                if let Some((signature, _)) = method_signature(receiver, name, fn_signatures) {
-                    match signature {
-                        FnSignature::Mono {
-                            params,
-                            return_type,
-                        } => {
-                            if !type_args.is_empty() {
-                                return Err(generic_diagnostic(
-                                    "generic/extra-type-args",
-                                    "type arguments are only allowed when calling a generic method",
-                                    "remove the type argument list or call a generic method",
-                                ));
-                            }
-                            (params.clone(), return_type.clone())
+            let (params, ret) = if let Some((signature, _)) =
+                method_signature(receiver, name, fn_signatures)
+                    .or_else(|| type_method_signature(&receiver_ty, name, fn_signatures))
+            {
+                match signature {
+                    FnSignature::Mono {
+                        params,
+                        return_type,
+                    } => {
+                        if !type_args.is_empty() {
+                            return Err(generic_diagnostic(
+                                "generic/extra-type-args",
+                                "type arguments are only allowed when calling a generic method",
+                                "remove the type argument list or call a generic method",
+                            ));
                         }
-                        FnSignature::Generic(scheme) => {
-                            // Create a modified args list with the receiver as the first argument
-                            let mut method_args = vec![(**receiver).clone()];
-                            method_args.extend_from_slice(args);
+                        (params.clone(), return_type.clone())
+                    }
+                    FnSignature::Generic(scheme) => {
+                        // Create a modified args list with the receiver as the first argument
+                        let mut method_args = vec![(**receiver).clone()];
+                        method_args.extend_from_slice(args);
 
-                            return infer_generic_call(
-                                scheme,
-                                type_args,
-                                &method_args,
-                                vars,
-                                fn_signatures,
-                                active_type_params,
-                                expected,
-                            );
-                        }
+                        return infer_generic_call(
+                            scheme,
+                            type_args,
+                            &method_args,
+                            vars,
+                            fn_signatures,
+                            active_type_params,
+                            expected,
+                        );
                     }
-                } else {
-                    if !type_args.is_empty() {
-                        return Err(generic_diagnostic(
-                            "generic/extra-type-args",
-                            "type arguments are only allowed when calling a generic method",
-                            "remove the type argument list or call a generic method",
-                        ));
+                }
+            } else {
+                if !type_args.is_empty() {
+                    return Err(generic_diagnostic(
+                        "generic/extra-type-args",
+                        "type arguments are only allowed when calling a generic method",
+                        "remove the type argument list or call a generic method",
+                    ));
+                }
+                let field_ty = receiver_ty
+                    .record_field(name)
+                    .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
+                match field_ty {
+                    Type::Function {
+                        params,
+                        return_type,
+                    } => (params, *return_type),
+                    other => {
+                        return Err(Diagnostic::new(format!(
+                            "attempt to call non-function value of type {other}",
+                        )));
                     }
-                    let field_ty = receiver_ty
-                        .record_field(name)
-                        .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
-                    match field_ty {
-                        Type::Function {
-                            params,
-                            return_type,
-                        } => (params, *return_type),
-                        other => {
-                            return Err(Diagnostic::new(format!(
-                                "attempt to call non-function value of type {other}",
-                            )));
-                        }
-                    }
-                };
+                }
+            };
             if params.is_empty() {
                 return Err(Diagnostic::new(format!(
                     "function expects 0 arguments, got {}",
@@ -492,7 +512,7 @@ pub(super) fn infer_expr(
             coerce_type(Type::Record(record_fields), expected)
         }
         Expr::Field { base, name, .. } => {
-            if let Expr::Name(base_name, _) = base.as_ref() {
+            if let Expr::Name(base_name, _, _) = base.as_ref() {
                 let method_name = method_signature_name(base_name, name);
                 if let Some(signature) = fn_signatures.get(&method_name) {
                     return match signature {
@@ -746,7 +766,7 @@ pub(super) fn infer_expr_list(
             // A Name not found in fn_signatures or vars may be a tagged-union constructor
             // (e.g. `Num(42)`). Pass next_expected so the constructor intercept in
             // infer_expr can see the expected union type and fire correctly.
-            let is_potential_constructor = matches!(callee.as_ref(), Expr::Name(tag, _)
+            let is_potential_constructor = matches!(callee.as_ref(), Expr::Name(tag, _, _)
                     if !fn_signatures.contains_key(tag.as_str())
                         && !vars.contains_key(tag.as_str()));
             let call_expected = if is_resume {
