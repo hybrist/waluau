@@ -46,7 +46,7 @@ Conflict-resolution policy for this repo:
 ## Post-merge requirement (mandatory)
 
 After merge:
-1. Update local refs and switch to latest `main` (`git fetch`, checkout `main`, fast-forward/rebase).
+1. Update local refs (`git fetch`). If working in a git worktree where `main` is checked out in another worktree, do not check it out. Otherwise, switch to the latest `main` (`git checkout main`, fast-forward/rebase).
 2. Review latest main branch state for unfinished or newly exposed follow-up work.
 3. Check beads for existing related items (`bd ready`, `bd search`, `bd show` as needed).
 4. If follow-up is needed and not tracked, create beads issue(s) with clear description and dependencies (`discovered-from` when applicable).
