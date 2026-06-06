@@ -27,8 +27,15 @@ function boxed_sum_nested(seed: i32): i32
     return boxed.value.first + boxed.value.second
 end
 
+function swap_pair(pair: Pair<i32, bool>): Pair<bool, i32>
+    return { first = pair.second, second = pair.first }
+end
+
 local pair: Pair<i32, bool> = { first = 7::i32, second = true }
+local swapped: Pair<bool, i32> = swap_pair(pair)
 
 assert(pair_score(pair) == 7)
 assert(boxed_sum(3) == 21)
 assert(boxed_sum_nested(3) == 21)
+assert(swapped.first)
+assert(swapped.second == 7)
