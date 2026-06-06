@@ -2266,9 +2266,15 @@ impl Builder<'_> {
                 }
             }
             Expr::Cast { expr, ty, .. } => {
-                let value = self.lower_expr(expr, env, types, None)?;
                 let actual = self.infer_expr_type(expr, types, None)?;
-                let cast = self.explicit_cast(value, actual, ty.clone())?;
+                let cast = if require_numeric_cast(actual.clone(), ty.clone()).is_ok() {
+                    let value = self.lower_expr(expr, env, types, None)?;
+                    self.explicit_cast(value, actual, ty.clone())?
+                } else {
+                    let typed_actual = self.infer_expr_type(expr, types, Some(ty.clone()))?;
+                    let value = self.lower_expr(expr, env, types, Some(ty.clone()))?;
+                    self.coerce_value(value, typed_actual, Some(ty.clone()))?
+                };
                 self.coerce_value(cast, ty.clone(), expected)?
             }
             Expr::IsVariant { expr, tag, .. } => {
@@ -3118,7 +3124,9 @@ impl Builder<'_> {
             },
             Expr::Cast { expr, ty, .. } => {
                 let actual = self.infer_expr_type(expr, types, None)?;
-                require_numeric_cast(actual, ty.clone())?;
+                if require_numeric_cast(actual, ty.clone()).is_err() {
+                    self.infer_expr_type(expr, types, Some(ty.clone()))?;
+                }
                 Ok(ty.clone())
             }
             Expr::If {
@@ -3195,8 +3203,15 @@ impl Builder<'_> {
             }
             Expr::TableLiteral { fields, .. } => {
                 let mut record_fields = BTreeMap::new();
+                let expected_fields = match &expected {
+                    Some(Type::Record(fields)) => Some(fields),
+                    _ => None,
+                };
                 for field in fields {
-                    let field_ty = self.infer_expr_type(&field.value, types, None)?;
+                    let expected_field_ty = expected_fields
+                        .and_then(|fields| fields.get(&field.name))
+                        .cloned();
+                    let field_ty = self.infer_expr_type(&field.value, types, expected_field_ty)?;
                     record_fields.insert(field.name.clone(), field_ty);
                 }
                 coerce_type(Type::Record(record_fields), expected)

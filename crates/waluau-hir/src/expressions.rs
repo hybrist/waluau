@@ -187,7 +187,15 @@ pub(super) fn infer_expr(
         },
         Expr::Cast { expr, ty, .. } => {
             let actual = infer_expr(expr, vars, fn_signatures, active_type_params, None)?;
-            require_numeric_cast(actual, ty.clone())?;
+            if require_numeric_cast(actual, ty.clone()).is_err() {
+                infer_expr(
+                    expr,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    Some(ty.clone()),
+                )?;
+            }
             coerce_type(ty.clone(), expected)
         }
         Expr::If {
