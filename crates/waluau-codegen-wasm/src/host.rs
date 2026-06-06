@@ -53,7 +53,8 @@ pub const IMPORT_JS_TOSTRING_F32_FUNC: u32 = 14;
 pub const IMPORT_JS_TOSTRING_F64_FUNC: u32 = 15;
 pub const IMPORT_JS_TOSTRING_BOOL_FUNC: u32 = 16;
 
-/// Number of host function types emitted after array types in the type section.
+/// Number of host function types in the canonical type-slot table.
+/// The actual number emitted in a given module may be less if some slots are unused.
 pub const HOST_TYPE_COUNT: u32 = 9;
 
 /// Records which host functions are actually referenced by a module.
@@ -138,6 +139,55 @@ impl UsedHostImports {
             count: next,
         }
     }
+}
+
+/// Returns a bitmask of which host type slots (0–8) are needed by `used`.
+///
+/// The 9 canonical host type slots correspond to the function signatures used
+/// by host imports (in the order they appear in the type section):
+///
+/// | Slot | Signature                             | Used by                                      |
+/// |------|---------------------------------------|----------------------------------------------|
+/// | 0    | (externref, externref) → i32          | js_string_eq, js_string_compare, bytes_eq, bytes_compare |
+/// | 1    | (externref, externref) → externref_nn | js_string_concat, bytes_concat               |
+/// | 2    | (i32) → externref                     | bytes_literal, js_tostring_i32/u32/bool      |
+/// | 3    | (i64) → externref                     | js_tostring_i64, js_tostring_u64             |
+/// | 4    | (f32) → externref                     | js_tostring_f32                              |
+/// | 5    | (f64) → externref                     | js_tostring_f64                              |
+/// | 6    | (externref) → []                      | print                                        |
+/// | 7    | (externref, i32) → i32                | bytes_get                                    |
+/// | 8    | (externref) → i32                     | bytes_len                                    |
+pub fn needed_host_type_slots(used: &UsedHostImports) -> [bool; HOST_TYPE_COUNT as usize] {
+    let mut slots = [false; HOST_TYPE_COUNT as usize];
+    if used.js_string_eq || used.js_string_compare || used.bytes_eq || used.bytes_compare {
+        slots[0] = true;
+    }
+    if used.js_string_concat || used.bytes_concat {
+        slots[1] = true;
+    }
+    if used.bytes_literal || used.js_tostring_i32 || used.js_tostring_u32 || used.js_tostring_bool
+    {
+        slots[2] = true;
+    }
+    if used.js_tostring_i64 || used.js_tostring_u64 {
+        slots[3] = true;
+    }
+    if used.js_tostring_f32 {
+        slots[4] = true;
+    }
+    if used.js_tostring_f64 {
+        slots[5] = true;
+    }
+    if used.print {
+        slots[6] = true;
+    }
+    if used.bytes_get {
+        slots[7] = true;
+    }
+    if used.bytes_len {
+        slots[8] = true;
+    }
+    slots
 }
 
 /// Scan `module` and return the set of host functions it actually references.

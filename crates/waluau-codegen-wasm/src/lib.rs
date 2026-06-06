@@ -56,6 +56,49 @@ fn collect_closure_targets(module: &Module) -> Vec<String> {
     names
 }
 
+/// Returns `true` if the module uses any features that require the closure GC types
+/// (`$anyref_array`, `$func_val`, `$boxed_f64`) to be declared in the type section.
+fn needs_closure_gc_types(module: &Module) -> bool {
+    for function in &module.functions {
+        // A function-typed parameter or return references `$func_val` via `wasm_type`.
+        if function
+            .params
+            .iter()
+            .any(|(_, ty)| matches!(ty, Type::Function { .. }))
+            || matches!(function.return_type, Type::Function { .. })
+        {
+            return true;
+        }
+        for block in function.blocks.values() {
+            for (_, instruction) in &block.instructions {
+                match instruction {
+                    // Closure creation and indirect calls require all three GC types.
+                    IrInstruction::Closure { .. } | IrInstruction::CallValue { .. } => {
+                        return true;
+                    }
+                    // Casting to/from `unknown` with f64 uses `$boxed_f64`.
+                    IrInstruction::Cast { from, to, .. } => {
+                        if matches!(
+                            (from, to),
+                            (
+                                Type::Numeric(waluau_ast::NumericType::F64),
+                                Type::Unknown
+                            ) | (
+                                Type::Unknown,
+                                Type::Numeric(waluau_ast::NumericType::F64)
+                            )
+                        ) {
+                            return true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    false
+}
+
 #[derive(Debug)]
 pub struct EmitResult {
     pub wasm: Vec<u8>,
@@ -70,16 +113,40 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     let coroutine_plan = CoroutinePlan::new(module, string_constants.len() as u32);
     let start_thunk = module.start;
     let host_type_base = array_types.len() as u32;
-    // Two closure GC types sit after host types:
+
+    // Determine which host imports the module actually uses, and build the
+    // index remapping so callers can use canonical slot numbers.
+    let used_imports = host::collect_used_host_imports(module);
+    let import_map = used_imports.to_import_map();
+
+    // Only emit host function type entries for the slots that are actually used.
+    // Build a map from canonical slot index (0–8) to the actual type-section index.
+    let needed_host_slots = host::needed_host_type_slots(&used_imports);
+    let mut host_slot_type_index = [None::<u32>; host::HOST_TYPE_COUNT as usize];
+    let mut actual_host_type_count = 0u32;
+    for (slot, &needed) in needed_host_slots.iter().enumerate() {
+        if needed {
+            host_slot_type_index[slot] = Some(host_type_base + actual_host_type_count);
+            actual_host_type_count += 1;
+        }
+    }
+
+    // Closure GC types ($anyref_array, $func_val, $boxed_f64) are only needed when
+    // the program uses closures, function-typed values, or f64 boxing into unknown.
+    let closure_gc_needed = needs_closure_gc_types(module);
+    // Two closure GC types sit after host types (only when needed):
     //   $anyref_array = (array (ref null any) mutable)
     //   $func_val = (struct { func_idx: i32, env: ref null $anyref_array })
-    let closure_gc_base = host_type_base + host::HOST_TYPE_COUNT;
-    let anyref_array_type = closure_gc_base;
-    let func_val_struct_type = closure_gc_base + 1;
-    // $boxed_f64 = (struct (field f64)) — boxes f64 values into anyref (`unknown`).
-    let boxed_f64_struct_type = closure_gc_base + 2;
+    let closure_gc_base = host_type_base + actual_host_type_count;
+    let (anyref_array_type, func_val_struct_type, boxed_f64_struct_type) = if closure_gc_needed {
+        (closure_gc_base, closure_gc_base + 1, closure_gc_base + 2)
+    } else {
+        // Dummy values — never referenced when closure GC types are absent.
+        (0, 0, 0)
+    };
+    let closure_gc_count = if closure_gc_needed { 3 } else { 0 };
     // Coroutine GC types sit after the closure GC types.
-    let coroutine_types_base = closure_gc_base + 3;
+    let coroutine_types_base = closure_gc_base + closure_gc_count;
     let coroutine_body_sig_type = coroutine_plan.has_state().then_some(coroutine_types_base);
     let coroutine_state_type = coroutine_plan
         .has_state()
@@ -98,11 +165,6 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         boxed_f64_struct_type,
     );
     array_registry.coroutine_state_type = coroutine_state_type;
-
-    // Determine which host imports the module actually uses, and build the
-    // index remapping so callers can use canonical slot numbers.
-    let used_imports = host::collect_used_host_imports(module);
-    let import_map = used_imports.to_import_map();
 
     let signature_registry = collect_user_signatures(module, start_thunk.is_some());
 
@@ -132,36 +194,35 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         let storage = array_storage_type(&element_ty, &array_registry)?;
         types.ty().array(&storage, true);
     }
-    // Host import function types for wasm:js-string builtins.
-    types.ty().function(
-        vec![externref_val_type(), externref_val_type()],
-        vec![ValType::I32],
-    );
-    types.ty().function(
-        vec![externref_val_type(), externref_val_type()],
-        vec![externref_nonnull_val_type()],
-    );
-    types
-        .ty()
-        .function(vec![ValType::I32], vec![externref_val_type()]);
-    types
-        .ty()
-        .function(vec![ValType::I64], vec![externref_val_type()]);
-    types
-        .ty()
-        .function(vec![ValType::F32], vec![externref_val_type()]);
-    types
-        .ty()
-        .function(vec![ValType::F64], vec![externref_val_type()]);
-    types.ty().function(vec![externref_val_type()], vec![]);
-    types
-        .ty()
-        .function(vec![externref_val_type(), ValType::I32], vec![ValType::I32]);
-    types
-        .ty()
-        .function(vec![externref_val_type()], vec![ValType::I32]);
-    // Closure GC types: $anyref_array and $func_val (always present).
-    {
+    // Emit only the host function type entries that are actually used by this module.
+    // The 9 canonical slots and their signatures are documented in `host::needed_host_type_slots`.
+    let host_type_specs: [(&[ValType], &[ValType]); host::HOST_TYPE_COUNT as usize] = [
+        (
+            &[externref_val_type(), externref_val_type()],
+            &[ValType::I32],
+        ),
+        (
+            &[externref_val_type(), externref_val_type()],
+            &[externref_nonnull_val_type()],
+        ),
+        (&[ValType::I32], &[externref_val_type()]),
+        (&[ValType::I64], &[externref_val_type()]),
+        (&[ValType::F32], &[externref_val_type()]),
+        (&[ValType::F64], &[externref_val_type()]),
+        (&[externref_val_type()], &[]),
+        (&[externref_val_type(), ValType::I32], &[ValType::I32]),
+        (&[externref_val_type()], &[ValType::I32]),
+    ];
+    for (slot, (params, results)) in host_type_specs.iter().enumerate() {
+        if needed_host_slots[slot] {
+            types
+                .ty()
+                .function(params.iter().copied(), results.iter().copied());
+        }
+    }
+    // Closure GC types: only emitted when the program actually uses closures,
+    // function-typed values, or f64 boxing into unknown.
+    if closure_gc_needed {
         // $anyref_array = (array (ref null any) mutable)
         let anyref_storage = StorageType::Val(ValType::Ref(RefType {
             nullable: true,
@@ -170,14 +231,12 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
                 ty: AbstractHeapType::Any,
             },
         }));
-        debug_assert_eq!(anyref_array_type, closure_gc_base);
         types.ty().array(&anyref_storage, true);
         // $func_val = (struct {
         //   func_idx: i32 (mut)    — original function's table slot (for coroutine use)
         //   env: ref null $anyref_array (mut) — capture-cell env for wrapper calls
         //   wrapper_idx: i32 (mut) — wrapper table slot (for call_indirect)
         // })
-        debug_assert_eq!(func_val_struct_type, closure_gc_base + 1);
         types.ty().struct_(vec![
             FieldType {
                 element_type: StorageType::Val(ValType::I32),
@@ -196,7 +255,6 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             },
         ]);
         // $boxed_f64 = (struct (field f64)) — immutable box for f64 → anyref.
-        debug_assert_eq!(boxed_f64_struct_type, closure_gc_base + 2);
         types.ty().struct_(vec![FieldType {
             element_type: StorageType::Val(ValType::F64),
             mutable: false,
@@ -343,63 +401,63 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         imports.import(
             host::JS_STRING_BUILTINS_MODULE,
             host::IMPORT_JS_STRING_EQ,
-            EntityType::Function(host_type_base),
+            EntityType::Function(host_slot_type_index[0].unwrap()),
         );
     }
     if used_imports.js_string_concat {
         imports.import(
             host::JS_STRING_BUILTINS_MODULE,
             host::IMPORT_JS_STRING_CONCAT,
-            EntityType::Function(host_type_base + 1),
+            EntityType::Function(host_slot_type_index[1].unwrap()),
         );
     }
     if used_imports.js_string_compare {
         imports.import(
             host::JS_STRING_BUILTINS_MODULE,
             host::IMPORT_JS_STRING_COMPARE,
-            EntityType::Function(host_type_base),
+            EntityType::Function(host_slot_type_index[0].unwrap()),
         );
     }
     if used_imports.bytes_literal {
         imports.import(
             host::IMPORT_MODULE,
             host::IMPORT_BYTES_LITERAL,
-            EntityType::Function(host_type_base + 2),
+            EntityType::Function(host_slot_type_index[2].unwrap()),
         );
     }
     if used_imports.bytes_get {
         imports.import(
             host::IMPORT_MODULE,
             host::IMPORT_BYTES_GET,
-            EntityType::Function(host_type_base + 7),
+            EntityType::Function(host_slot_type_index[7].unwrap()),
         );
     }
     if used_imports.bytes_len {
         imports.import(
             host::IMPORT_MODULE,
             host::IMPORT_BYTES_LEN,
-            EntityType::Function(host_type_base + 8),
+            EntityType::Function(host_slot_type_index[8].unwrap()),
         );
     }
     if used_imports.bytes_concat {
         imports.import(
             host::IMPORT_MODULE,
             host::IMPORT_BYTES_CONCAT,
-            EntityType::Function(host_type_base + 1),
+            EntityType::Function(host_slot_type_index[1].unwrap()),
         );
     }
     if used_imports.bytes_eq {
         imports.import(
             host::IMPORT_MODULE,
             host::IMPORT_BYTES_EQ,
-            EntityType::Function(host_type_base),
+            EntityType::Function(host_slot_type_index[0].unwrap()),
         );
     }
     if used_imports.bytes_compare {
         imports.import(
             host::IMPORT_MODULE,
             host::IMPORT_BYTES_COMPARE,
-            EntityType::Function(host_type_base),
+            EntityType::Function(host_slot_type_index[0].unwrap()),
         );
     }
     for string in &string_constants {
@@ -417,56 +475,56 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         imports.import(
             host::IMPORT_MODULE,
             host::IMPORT_PRINT,
-            EntityType::Function(host_type_base + 6),
+            EntityType::Function(host_slot_type_index[6].unwrap()),
         );
     }
     if used_imports.js_tostring_i32 {
         imports.import(
             host::IMPORT_MODULE,
             host::IMPORT_JS_TOSTRING_I32,
-            EntityType::Function(host_type_base + 2),
+            EntityType::Function(host_slot_type_index[2].unwrap()),
         );
     }
     if used_imports.js_tostring_u32 {
         imports.import(
             host::IMPORT_MODULE,
             host::IMPORT_JS_TOSTRING_U32,
-            EntityType::Function(host_type_base + 2),
+            EntityType::Function(host_slot_type_index[2].unwrap()),
         );
     }
     if used_imports.js_tostring_i64 {
         imports.import(
             host::IMPORT_MODULE,
             host::IMPORT_JS_TOSTRING_I64,
-            EntityType::Function(host_type_base + 3),
+            EntityType::Function(host_slot_type_index[3].unwrap()),
         );
     }
     if used_imports.js_tostring_u64 {
         imports.import(
             host::IMPORT_MODULE,
             host::IMPORT_JS_TOSTRING_U64,
-            EntityType::Function(host_type_base + 3),
+            EntityType::Function(host_slot_type_index[3].unwrap()),
         );
     }
     if used_imports.js_tostring_f32 {
         imports.import(
             host::IMPORT_MODULE,
             host::IMPORT_JS_TOSTRING_F32,
-            EntityType::Function(host_type_base + 4),
+            EntityType::Function(host_slot_type_index[4].unwrap()),
         );
     }
     if used_imports.js_tostring_f64 {
         imports.import(
             host::IMPORT_MODULE,
             host::IMPORT_JS_TOSTRING_F64,
-            EntityType::Function(host_type_base + 5),
+            EntityType::Function(host_slot_type_index[5].unwrap()),
         );
     }
     if used_imports.js_tostring_bool {
         imports.import(
             host::IMPORT_MODULE,
             host::IMPORT_JS_TOSTRING_BOOL,
-            EntityType::Function(host_type_base + 2),
+            EntityType::Function(host_slot_type_index[2].unwrap()),
         );
     }
 

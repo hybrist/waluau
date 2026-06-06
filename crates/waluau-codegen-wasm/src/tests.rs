@@ -578,3 +578,77 @@ fn only_imports_used_host_functions() {
         "should not import from 'wasm:js-string' when string ops are unused"
     );
 }
+
+#[test]
+fn scalar_program_has_no_externref_types() {
+    // A plain arithmetic program should not declare any externref types in its
+    // type section — there is no string/bytes/print usage that needs them.
+    let source = r#"
+        function add(x: number, y: number): number
+            local z: number = x + y
+            return z
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        !wat.contains("externref"),
+        "scalar program type section should not contain externref types"
+    );
+}
+
+#[test]
+fn scalar_program_has_no_closure_gc_types() {
+    // A program with no closures or function values should not emit the
+    // $anyref_array, $func_val, or $boxed_f64 GC struct/array types.
+    let source = r#"
+        function add(x: i32, y: i32): i32
+            return x + y
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        !wat.contains("(array"),
+        "scalar program should not emit GC array types"
+    );
+    assert!(
+        !wat.contains("(struct"),
+        "scalar program should not emit GC struct types"
+    );
+}
+
+#[test]
+fn closure_program_still_emits_closure_gc_types() {
+    // Programs that use closures must still emit the closure GC types.
+    let source = r#"
+        function entry(x: i32): i32
+            local f: (i32) -> i32 = function(y: i32): i32
+                return x + y
+            end
+            return f(1)
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        wat.contains("(array"),
+        "closure program should emit $anyref_array GC type"
+    );
+    assert!(
+        wat.contains("(struct"),
+        "closure program should emit $func_val GC struct type"
+    );
+}
