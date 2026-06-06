@@ -2117,6 +2117,7 @@ impl Builder<'_> {
                 let value = if let Some((direct_name, _, _)) = type_method {
                     self.emit(Instruction::Call {
                         name: direct_name,
+                        symbol_id: None,
                         args: lowered_args,
                     })
                 } else if let Some(direct_name) = direct_name {
