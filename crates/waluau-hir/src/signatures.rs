@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use waluau_ast::{Expr, Function, FunctionExpr, Rebindability, Type};
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
-use super::expressions::infer_expr_list;
+use super::expressions::{infer_expr, infer_expr_list};
 use super::numeric::coerce_type;
 use super::statements::{collect_return_types, common_return_type, function_calls};
 use super::{Binding, binding_for};
@@ -200,6 +200,223 @@ pub(super) fn active_type_param_set(type_params: &[String]) -> HashSet<String> {
     type_params.iter().cloned().collect()
 }
 
+fn contains_type_param(ty: &Type) -> bool {
+    match ty {
+        Type::Named { type_args, .. } => type_args.iter().any(contains_type_param),
+        Type::TaggedVariant(variant) => contains_type_param(variant.payload.as_ref()),
+        Type::TaggedUnion(variants) => variants
+            .iter()
+            .any(|variant| contains_type_param(variant.payload.as_ref())),
+        Type::TypeParam(_) => true,
+        Type::Opaque { ty, .. } => contains_type_param(ty.as_ref()),
+        Type::Array(inner) => contains_type_param(inner.as_ref()),
+        Type::Record(fields) => fields.values().any(contains_type_param),
+        Type::Function {
+            params,
+            return_type,
+        } => params.iter().any(contains_type_param) || contains_type_param(return_type.as_ref()),
+        _ => false,
+    }
+}
+
+fn unify(
+    param_ty: &Type,
+    actual_ty: &Type,
+    subst: &mut HashMap<String, Type>,
+) -> Result<(), Diagnostic> {
+    match (param_ty, actual_ty) {
+        (Type::TypeParam(name), _) => {
+            if let Some(existing) = subst.get(name) {
+                match (existing, actual_ty) {
+                    (Type::Numeric(left), Type::Numeric(right)) => {
+                        if let Some(common) = left.common(*right) {
+                            subst.insert(name.clone(), Type::Numeric(common));
+                            Ok(())
+                        } else {
+                            Err(Diagnostic::new(format!(
+                                "conflicting types inferred for type parameter '{name}': {existing} vs {actual_ty}"
+                            )))
+                        }
+                    }
+                    (left, right) if left == right => Ok(()),
+                    _ => Err(Diagnostic::new(format!(
+                        "conflicting types inferred for type parameter '{name}': {existing} vs {actual_ty}"
+                    ))),
+                }
+            } else {
+                subst.insert(name.clone(), actual_ty.clone());
+                Ok(())
+            }
+        }
+        (
+            Type::Named {
+                name: p_name,
+                type_args: p_args,
+            },
+            Type::Named {
+                name: a_name,
+                type_args: a_args,
+            },
+        ) => {
+            if p_name != a_name || p_args.len() != a_args.len() {
+                return Err(Diagnostic::new(format!(
+                    "cannot match type {param_ty} with {actual_ty}"
+                )));
+            }
+            for (p_arg, a_arg) in p_args.iter().zip(a_args.iter()) {
+                unify(p_arg, a_arg, subst)?;
+            }
+            Ok(())
+        }
+        (Type::TaggedVariant(p_var), Type::TaggedVariant(a_var)) => {
+            if p_var.tag != a_var.tag {
+                return Err(Diagnostic::new(format!(
+                    "cannot match type {param_ty} with {actual_ty}"
+                )));
+            }
+            unify(p_var.payload.as_ref(), a_var.payload.as_ref(), subst)
+        }
+        (Type::TaggedUnion(p_variants), Type::TaggedVariant(a_variant)) => {
+            let Some(p_var) = p_variants.iter().find(|v| v.tag == a_variant.tag) else {
+                return Err(Diagnostic::new(format!(
+                    "cannot match type {param_ty} with {actual_ty}"
+                )));
+            };
+            unify(p_var.payload.as_ref(), a_variant.payload.as_ref(), subst)
+        }
+        (Type::TaggedVariant(p_variant), Type::TaggedUnion(a_variants)) => {
+            let Some(a_var) = a_variants.iter().find(|v| v.tag == p_variant.tag) else {
+                return Err(Diagnostic::new(format!(
+                    "cannot match type {param_ty} with {actual_ty}"
+                )));
+            };
+            unify(p_variant.payload.as_ref(), a_var.payload.as_ref(), subst)
+        }
+        (Type::TaggedUnion(p_variants), Type::TaggedUnion(a_variants)) => {
+            for a_var in a_variants {
+                let Some(p_var) = p_variants.iter().find(|v| v.tag == a_var.tag) else {
+                    return Err(Diagnostic::new(format!(
+                        "cannot match type {param_ty} with {actual_ty}"
+                    )));
+                };
+                unify(p_var.payload.as_ref(), a_var.payload.as_ref(), subst)?;
+            }
+            Ok(())
+        }
+        (
+            Type::Opaque {
+                name: p_name,
+                ty: p_ty,
+            },
+            Type::Opaque {
+                name: a_name,
+                ty: a_ty,
+            },
+        ) => {
+            if p_name != a_name {
+                return Err(Diagnostic::new(format!(
+                    "cannot match type {param_ty} with {actual_ty}"
+                )));
+            }
+            unify(p_ty.as_ref(), a_ty.as_ref(), subst)
+        }
+        (Type::Array(p_inner), Type::Array(a_inner)) => {
+            unify(p_inner.as_ref(), a_inner.as_ref(), subst)
+        }
+        (Type::Record(p_fields), Type::Record(a_fields)) => {
+            for (name, p_ty) in p_fields {
+                if let Some(a_ty) = a_fields.get(name) {
+                    unify(p_ty, a_ty, subst)?;
+                } else {
+                    return Err(Diagnostic::new(format!(
+                        "missing record field '{name}' in actual type {actual_ty}"
+                    )));
+                }
+            }
+            Ok(())
+        }
+        (
+            Type::Function {
+                params: p_params,
+                return_type: p_ret,
+            },
+            Type::Function {
+                params: a_params,
+                return_type: a_ret,
+            },
+        ) => {
+            if p_params.len() != a_params.len() {
+                return Err(Diagnostic::new(format!(
+                    "cannot match functions of different arity: {param_ty} vs {actual_ty}"
+                )));
+            }
+            for (p_param, a_param) in p_params.iter().zip(a_params.iter()) {
+                unify(p_param, a_param, subst)?;
+            }
+            unify(p_ret.as_ref(), a_ret.as_ref(), subst)
+        }
+        (p, a) => {
+            if !contains_type_param(p) {
+                if coerce_type(a.clone(), Some(p.clone())).is_ok() {
+                    Ok(())
+                } else {
+                    Err(Diagnostic::new(format!("cannot match type {p} with {a}")))
+                }
+            } else {
+                Err(Diagnostic::new(format!("cannot match type {p} with {a}")))
+            }
+        }
+    }
+}
+
+fn infer_type_arguments(
+    scheme: &GenericScheme,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Result<Vec<Type>, Diagnostic> {
+    let mut subst = HashMap::new();
+
+    if let Some(expected_ty) = expected {
+        if expected_ty != Type::Unknown {
+            let _ = unify(&scheme.return_type, &expected_ty, &mut subst);
+        }
+    }
+
+    for (param_ty, arg) in scheme.params.iter().zip(args.iter()) {
+        let substituted_param_ty = substitute_type(param_ty, &subst);
+        let actual_arg_ty = if contains_type_param(&substituted_param_ty) {
+            infer_expr(arg, vars, fn_signatures, active_type_params, None)?
+        } else {
+            infer_expr(
+                arg,
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(substituted_param_ty.clone()),
+            )?
+        };
+        unify(&substituted_param_ty, &actual_arg_ty, &mut subst)?;
+    }
+
+    let mut inferred_type_args = Vec::new();
+    for param in &scheme.type_params {
+        if let Some(ty) = subst.get(param) {
+            inferred_type_args.push(ty.clone());
+        } else {
+            return Err(generic_diagnostic(
+                "generic/missing-type-args",
+                format!("cannot infer type argument for type parameter '{param}'"),
+                "specify type arguments explicitly",
+            ));
+        }
+    }
+
+    Ok(inferred_type_args)
+}
+
 pub(super) fn infer_generic_call(
     scheme: &GenericScheme,
     type_args: &[Type],
@@ -209,13 +426,27 @@ pub(super) fn infer_generic_call(
     active_type_params: &HashSet<String>,
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
-    if type_args.is_empty() {
-        return Err(generic_diagnostic(
-            "generic/missing-type-args",
-            "generic function call requires explicit type arguments",
-            "supply type arguments between the callee and argument list, e.g. id<i32>(value)",
-        ));
-    }
+    let inferred_type_args;
+    let type_args = if type_args.is_empty() && !scheme.type_params.is_empty() {
+        inferred_type_args = infer_type_arguments(
+            scheme,
+            args,
+            vars,
+            fn_signatures,
+            active_type_params,
+            expected.clone(),
+        )?;
+        &inferred_type_args
+    } else {
+        if type_args.is_empty() {
+            return Err(generic_diagnostic(
+                "generic/missing-type-args",
+                "generic function call requires explicit type arguments",
+                "supply type arguments between the callee and argument list, e.g. id<i32>(value)",
+            ));
+        }
+        type_args
+    };
     if type_args.len() != scheme.type_params.len() {
         return Err(generic_diagnostic(
             "generic/type-arg-count",
