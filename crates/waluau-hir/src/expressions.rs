@@ -127,7 +127,11 @@ pub(super) fn infer_expr(
                     | Type::Record(_)
                     | Type::TypeParam(_)
                     | Type::Thread
-                    | Type::Unknown => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                    | Type::Unknown
+                    | Type::TaggedVariant(_)
+                    | Type::TaggedUnion(_) => {
+                        Err(Diagnostic::new("unary '-' requires a numeric operand"))
+                    }
                 }
             }
             UnaryOp::Not => {

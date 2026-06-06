@@ -118,11 +118,50 @@ impl Parser {
     }
 
     fn parse_comparison(&mut self) -> Result<Expr, Diagnostic> {
-        self.parse_binary(
-            Parser::parse_concat,
-            &[TokenKind::EqualEqual, TokenKind::Less, TokenKind::Greater],
-            &[BinaryOp::Eq, BinaryOp::Less, BinaryOp::Greater],
-        )
+        let mut expr = self.parse_concat()?;
+        loop {
+            if matches!(self.peek().map(|token| &token.kind), Some(TokenKind::Identifier(name)) if name == "is")
+            {
+                let start_pos = expr.span().map(|s| s.start).unwrap_or(0);
+                self.advance();
+                let tag = self.expect_identifier()?;
+                let end_token = self.tokens.get(self.index.saturating_sub(1));
+                let end_pos = end_token.map(|t| t.span.end).unwrap_or(start_pos);
+                expr = Expr::IsVariant {
+                    expr: Box::new(expr),
+                    tag,
+                    span: Some(Span {
+                        start: start_pos,
+                        end: end_pos,
+                    }),
+                };
+                continue;
+            }
+
+            let Some(next) = self.peek() else {
+                break;
+            };
+            let op = match next.kind {
+                TokenKind::EqualEqual => BinaryOp::Eq,
+                TokenKind::Less => BinaryOp::Less,
+                TokenKind::Greater => BinaryOp::Greater,
+                _ => break,
+            };
+            let start_pos = expr.span().map(|s| s.start).unwrap_or(0);
+            self.advance();
+            let right = self.parse_concat()?;
+            let end_pos = right.span().map(|s| s.end).unwrap_or(start_pos);
+            expr = Expr::Binary {
+                op,
+                left: Box::new(expr),
+                right: Box::new(right),
+                span: Some(Span {
+                    start: start_pos,
+                    end: end_pos,
+                }),
+            };
+        }
+        Ok(expr)
     }
 
     fn parse_concat(&mut self) -> Result<Expr, Diagnostic> {

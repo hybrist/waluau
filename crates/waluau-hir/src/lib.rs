@@ -49,6 +49,19 @@ fn substitute_type_params(ty: &Type, subst: &HashMap<String, Type>) -> Type {
                 .map(|arg| substitute_type_params(arg, subst))
                 .collect(),
         },
+        Type::TaggedVariant(variant) => Type::TaggedVariant(waluau_ast::TaggedVariant {
+            tag: variant.tag.clone(),
+            payload: Box::new(substitute_type_params(variant.payload.as_ref(), subst)),
+        }),
+        Type::TaggedUnion(variants) => Type::TaggedUnion(
+            variants
+                .iter()
+                .map(|variant| waluau_ast::TaggedVariant {
+                    tag: variant.tag.clone(),
+                    payload: Box::new(substitute_type_params(variant.payload.as_ref(), subst)),
+                })
+                .collect(),
+        ),
         Type::Opaque { name, ty } => Type::Opaque {
             name: name.clone(),
             ty: Box::new(substitute_type_params(ty, subst)),
@@ -84,6 +97,230 @@ fn substitute_type_params(ty: &Type, subst: &HashMap<String, Type>) -> Type {
     }
 }
 
+fn resolve_decl_type_allowing_forward_refs(
+    name: &str,
+    raw_opaque: &HashMap<String, Type>,
+    generic: &HashMap<String, GenericTypeDecl>,
+    opaque_cache: &mut HashMap<String, Type>,
+    stack: &mut Vec<String>,
+) -> Result<Type, Diagnostic> {
+    // Check for direct cycles (type A = A)
+    if stack.iter().any(|entry| entry == name) {
+        let cycle = stack
+            .iter()
+            .cloned()
+            .chain(std::iter::once(name.to_string()))
+            .collect::<Vec<_>>()
+            .join(" -> ");
+        return Err(Diagnostic::new(format!(
+            "cyclic type declaration detected: {cycle}"
+        )));
+    }
+
+    let raw_ty = raw_opaque
+        .get(name)
+        .cloned()
+        .ok_or_else(|| Diagnostic::new(format!("unknown type '{name}'")))?;
+
+    stack.push(name.to_string());
+    let resolved_underlying = resolve_type_refs_allowing_forward_refs(
+        &raw_ty,
+        &HashSet::new(),
+        raw_opaque,
+        generic,
+        opaque_cache,
+        stack,
+    )?;
+    stack.pop();
+
+    let opaque = Type::Opaque {
+        name: name.to_string(),
+        ty: Box::new(resolved_underlying),
+    };
+    Ok(opaque)
+}
+
+fn resolve_type_refs_allowing_forward_refs(
+    ty: &Type,
+    active_type_params: &HashSet<String>,
+    raw_opaque: &HashMap<String, Type>,
+    generic: &HashMap<String, GenericTypeDecl>,
+    opaque_cache: &mut HashMap<String, Type>,
+    stack: &mut Vec<String>,
+) -> Result<Type, Diagnostic> {
+    match ty {
+        Type::Named { name, type_args } => {
+            if active_type_params.contains(name) {
+                if type_args.is_empty() {
+                    return Ok(Type::TypeParam(name.clone()));
+                }
+                return Err(Diagnostic::new(format!(
+                    "type parameter '{name}' cannot be used with type arguments"
+                )));
+            }
+            let resolved_args = type_args
+                .iter()
+                .map(|arg| {
+                    resolve_type_refs_allowing_forward_refs(
+                        arg,
+                        active_type_params,
+                        raw_opaque,
+                        generic,
+                        opaque_cache,
+                        stack,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if let Some(decl) = generic.get(name) {
+                if resolved_args.len() != decl.type_params.len() {
+                    return Err(Diagnostic::new(format!(
+                        "type declaration '{name}' expects {} type argument{}, got {}",
+                        decl.type_params.len(),
+                        if decl.type_params.len() == 1 { "" } else { "s" },
+                        resolved_args.len()
+                    )));
+                }
+                // Handle generic type instantiation - this can still have cycles
+                if stack.iter().any(|entry| entry == name) {
+                    // For mutually recursive generics, return a placeholder
+                    return Ok(Type::Named {
+                        name: name.clone(),
+                        type_args: resolved_args,
+                    });
+                }
+                let subst = decl
+                    .type_params
+                    .iter()
+                    .cloned()
+                    .zip(resolved_args)
+                    .collect::<HashMap<_, _>>();
+                stack.push(name.clone());
+                let instantiated = substitute_type_params(&decl.ty, &subst);
+                let resolved = resolve_type_refs_allowing_forward_refs(
+                    &instantiated,
+                    active_type_params,
+                    raw_opaque,
+                    generic,
+                    opaque_cache,
+                    stack,
+                );
+                stack.pop();
+                return resolved;
+            }
+            if !raw_opaque.contains_key(name) {
+                return Err(Diagnostic::new(format!("unknown type '{name}'")));
+            }
+            if !resolved_args.is_empty() {
+                return Err(Diagnostic::new(format!(
+                    "non-generic type declaration '{name}' does not accept type arguments"
+                )));
+            }
+            // For forward references, return the current opaque type from cache
+            // But first check if this is a direct self-reference in the resolution stack
+            if stack.iter().any(|entry| entry == name) {
+                let cycle = stack
+                    .iter()
+                    .cloned()
+                    .chain(std::iter::once(name.to_string()))
+                    .collect::<Vec<_>>()
+                    .join(" -> ");
+                return Err(Diagnostic::new(format!(
+                    "cyclic type declaration detected: {cycle}"
+                )));
+            }
+
+            Ok(opaque_cache
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| Type::Opaque {
+                    name: name.to_string(),
+                    ty: Box::new(Type::Unit),
+                }))
+        }
+        Type::Opaque { name, ty } => Ok(Type::Opaque {
+            name: name.clone(),
+            ty: Box::new(resolve_type_refs_allowing_forward_refs(
+                ty,
+                active_type_params,
+                raw_opaque,
+                generic,
+                opaque_cache,
+                stack,
+            )?),
+        }),
+        Type::Array(inner) => Ok(Type::Array(Box::new(
+            resolve_type_refs_allowing_forward_refs(
+                inner,
+                active_type_params,
+                raw_opaque,
+                generic,
+                opaque_cache,
+                stack,
+            )?,
+        ))),
+        Type::Multi(types) => Ok(Type::Multi(
+            types
+                .iter()
+                .map(|ty| {
+                    resolve_type_refs_allowing_forward_refs(
+                        ty,
+                        active_type_params,
+                        raw_opaque,
+                        generic,
+                        opaque_cache,
+                        stack,
+                    )
+                })
+                .collect::<Result<_, _>>()?,
+        )),
+        Type::Function {
+            params,
+            return_type,
+        } => Ok(Type::Function {
+            params: params
+                .iter()
+                .map(|param| {
+                    resolve_type_refs_allowing_forward_refs(
+                        param,
+                        active_type_params,
+                        raw_opaque,
+                        generic,
+                        opaque_cache,
+                        stack,
+                    )
+                })
+                .collect::<Result<_, _>>()?,
+            return_type: Box::new(resolve_type_refs_allowing_forward_refs(
+                return_type,
+                active_type_params,
+                raw_opaque,
+                generic,
+                opaque_cache,
+                stack,
+            )?),
+        }),
+        Type::Record(fields) => Ok(Type::Record(
+            fields
+                .iter()
+                .map(|(name, ty)| {
+                    Ok((
+                        name.clone(),
+                        resolve_type_refs_allowing_forward_refs(
+                            ty,
+                            active_type_params,
+                            raw_opaque,
+                            generic,
+                            opaque_cache,
+                            stack,
+                        )?,
+                    ))
+                })
+                .collect::<Result<_, Diagnostic>>()?,
+        )),
+        other => Ok(other.clone()),
+    }
+}
+
 fn resolve_program_types(program: &mut Program) -> Result<(), Diagnostic> {
     let mut seen = HashSet::new();
     let mut raw_opaque = HashMap::new();
@@ -108,11 +345,21 @@ fn resolve_program_types(program: &mut Program) -> Result<(), Diagnostic> {
         }
     }
 
+    // Initialize opaque cache with all declared types to enable forward references
     let mut opaque_cache = HashMap::new();
+    for name in raw_opaque.keys() {
+        let placeholder = Type::Opaque {
+            name: name.clone(),
+            ty: Box::new(Type::Unit), // Will be replaced
+        };
+        opaque_cache.insert(name.clone(), placeholder);
+    }
+
+    // Resolve all types allowing forward references
     let mut stack = Vec::new();
     for decl in &program.type_declarations {
         if decl.type_params.is_empty() {
-            let resolved_ty = resolve_decl_type(
+            let resolved_ty = resolve_decl_type_allowing_forward_refs(
                 &decl.name,
                 &raw_opaque,
                 &generic,
@@ -164,7 +411,7 @@ fn resolve_program_types(program: &mut Program) -> Result<(), Diagnostic> {
     Ok(())
 }
 
-fn resolve_decl_type(
+fn resolve_decl_type_impl(
     name: &str,
     raw_opaque: &HashMap<String, Type>,
     generic: &HashMap<String, GenericTypeDecl>,
@@ -208,6 +455,25 @@ fn resolve_decl_type(
 }
 
 fn resolve_type_refs(
+    ty: &Type,
+    active_type_params: &HashSet<String>,
+    raw_opaque: &HashMap<String, Type>,
+    generic: &HashMap<String, GenericTypeDecl>,
+    opaque_cache: &mut HashMap<String, Type>,
+    stack: &mut Vec<String>,
+) -> Result<Type, Diagnostic> {
+    resolve_type_refs_fixpoint(
+        ty,
+        active_type_params,
+        raw_opaque,
+        generic,
+        opaque_cache,
+        stack,
+        false,
+    )
+}
+
+fn resolve_type_refs_impl(
     ty: &Type,
     active_type_params: &HashSet<String>,
     raw_opaque: &HashMap<String, Type>,
@@ -285,7 +551,7 @@ fn resolve_type_refs(
                     "non-generic type declaration '{name}' does not accept type arguments"
                 )));
             }
-            resolve_decl_type(name, raw_opaque, generic, opaque_cache, stack)
+            resolve_decl_type_fixpoint(name, raw_opaque, generic, opaque_cache, stack, false)
         }
         Type::Opaque { name, ty } => Ok(Type::Opaque {
             name: name.clone(),
@@ -298,6 +564,35 @@ fn resolve_type_refs(
                 stack,
             )?),
         }),
+        Type::TaggedVariant(variant) => Ok(Type::TaggedVariant(waluau_ast::TaggedVariant {
+            tag: variant.tag.clone(),
+            payload: Box::new(resolve_type_refs(
+                variant.payload.as_ref(),
+                active_type_params,
+                raw_opaque,
+                generic,
+                opaque_cache,
+                stack,
+            )?),
+        })),
+        Type::TaggedUnion(variants) => Ok(Type::TaggedUnion(
+            variants
+                .iter()
+                .map(|variant| {
+                    Ok(waluau_ast::TaggedVariant {
+                        tag: variant.tag.clone(),
+                        payload: Box::new(resolve_type_refs(
+                            variant.payload.as_ref(),
+                            active_type_params,
+                            raw_opaque,
+                            generic,
+                            opaque_cache,
+                            stack,
+                        )?),
+                    })
+                })
+                .collect::<Result<Vec<_>, Diagnostic>>()?,
+        )),
         Type::Array(inner) => Ok(Type::Array(Box::new(resolve_type_refs(
             inner,
             active_type_params,
@@ -367,6 +662,261 @@ fn resolve_type_refs(
         )),
         other => Ok(other.clone()),
     }
+}
+
+fn resolve_type_refs_fixpoint(
+    ty: &Type,
+    active_type_params: &HashSet<String>,
+    raw_opaque: &HashMap<String, Type>,
+    generic: &HashMap<String, GenericTypeDecl>,
+    opaque_cache: &mut HashMap<String, Type>,
+    stack: &mut Vec<String>,
+    fixpoint_mode: bool,
+) -> Result<Type, Diagnostic> {
+    match ty {
+        Type::Named { name, type_args } => {
+            if active_type_params.contains(name) {
+                if type_args.is_empty() {
+                    return Ok(Type::TypeParam(name.clone()));
+                }
+                return Err(Diagnostic::new(format!(
+                    "type parameter '{name}' cannot be used with type arguments"
+                )));
+            }
+            let resolved_args = type_args
+                .iter()
+                .map(|arg| {
+                    resolve_type_refs_fixpoint(
+                        arg,
+                        active_type_params,
+                        raw_opaque,
+                        generic,
+                        opaque_cache,
+                        stack,
+                        fixpoint_mode,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if let Some(decl) = generic.get(name) {
+                if resolved_args.len() != decl.type_params.len() {
+                    return Err(Diagnostic::new(format!(
+                        "type declaration '{name}' expects {} type argument{}, got {}",
+                        decl.type_params.len(),
+                        if decl.type_params.len() == 1 { "" } else { "s" },
+                        resolved_args.len()
+                    )));
+                }
+                if stack.iter().any(|entry| entry == name) {
+                    if fixpoint_mode {
+                        // In fixpoint mode, return a placeholder when we hit a cycle
+                        return Ok(Type::Named {
+                            name: name.clone(),
+                            type_args: resolved_args,
+                        });
+                    } else {
+                        let cycle = stack
+                            .iter()
+                            .cloned()
+                            .chain(std::iter::once(name.clone()))
+                            .collect::<Vec<_>>()
+                            .join(" -> ");
+                        return Err(Diagnostic::new(format!(
+                            "cyclic type declaration detected: {cycle}"
+                        )));
+                    }
+                }
+                let subst = decl
+                    .type_params
+                    .iter()
+                    .cloned()
+                    .zip(resolved_args)
+                    .collect::<HashMap<_, _>>();
+                stack.push(name.clone());
+                let instantiated = substitute_type_params(&decl.ty, &subst);
+                let resolved = resolve_type_refs_fixpoint(
+                    &instantiated,
+                    active_type_params,
+                    raw_opaque,
+                    generic,
+                    opaque_cache,
+                    stack,
+                    fixpoint_mode,
+                );
+                stack.pop();
+                return resolved;
+            }
+            if !raw_opaque.contains_key(name) {
+                return Err(Diagnostic::new(format!("unknown type '{name}'")));
+            }
+            if !resolved_args.is_empty() {
+                return Err(Diagnostic::new(format!(
+                    "non-generic type declaration '{name}' does not accept type arguments"
+                )));
+            }
+            if fixpoint_mode {
+                // In fixpoint mode, just return a reference to the opaque type
+                // Don't try to resolve it further to avoid infinite expansion
+                Ok(opaque_cache
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| Type::Opaque {
+                        name: name.to_string(),
+                        ty: Box::new(Type::Unit),
+                    }))
+            } else {
+                resolve_decl_type_fixpoint(
+                    name,
+                    raw_opaque,
+                    generic,
+                    opaque_cache,
+                    stack,
+                    fixpoint_mode,
+                )
+            }
+        }
+        Type::Opaque { name, ty } => Ok(Type::Opaque {
+            name: name.clone(),
+            ty: Box::new(resolve_type_refs_fixpoint(
+                ty,
+                active_type_params,
+                raw_opaque,
+                generic,
+                opaque_cache,
+                stack,
+                fixpoint_mode,
+            )?),
+        }),
+        Type::Array(inner) => Ok(Type::Array(Box::new(resolve_type_refs_fixpoint(
+            inner,
+            active_type_params,
+            raw_opaque,
+            generic,
+            opaque_cache,
+            stack,
+            fixpoint_mode,
+        )?))),
+        Type::Multi(types) => Ok(Type::Multi(
+            types
+                .iter()
+                .map(|ty| {
+                    resolve_type_refs_fixpoint(
+                        ty,
+                        active_type_params,
+                        raw_opaque,
+                        generic,
+                        opaque_cache,
+                        stack,
+                        fixpoint_mode,
+                    )
+                })
+                .collect::<Result<_, _>>()?,
+        )),
+        Type::Function {
+            params,
+            return_type,
+        } => Ok(Type::Function {
+            params: params
+                .iter()
+                .map(|param| {
+                    resolve_type_refs_fixpoint(
+                        param,
+                        active_type_params,
+                        raw_opaque,
+                        generic,
+                        opaque_cache,
+                        stack,
+                        fixpoint_mode,
+                    )
+                })
+                .collect::<Result<_, _>>()?,
+            return_type: Box::new(resolve_type_refs_fixpoint(
+                return_type,
+                active_type_params,
+                raw_opaque,
+                generic,
+                opaque_cache,
+                stack,
+                fixpoint_mode,
+            )?),
+        }),
+        Type::Record(fields) => Ok(Type::Record(
+            fields
+                .iter()
+                .map(|(name, ty)| {
+                    Ok((
+                        name.clone(),
+                        resolve_type_refs_fixpoint(
+                            ty,
+                            active_type_params,
+                            raw_opaque,
+                            generic,
+                            opaque_cache,
+                            stack,
+                            fixpoint_mode,
+                        )?,
+                    ))
+                })
+                .collect::<Result<_, Diagnostic>>()?,
+        )),
+        other => Ok(other.clone()),
+    }
+}
+
+fn resolve_decl_type_fixpoint(
+    name: &str,
+    raw_opaque: &HashMap<String, Type>,
+    generic: &HashMap<String, GenericTypeDecl>,
+    opaque_cache: &mut HashMap<String, Type>,
+    stack: &mut Vec<String>,
+    fixpoint_mode: bool,
+) -> Result<Type, Diagnostic> {
+    if let Some(ty) = opaque_cache.get(name) {
+        return Ok(ty.clone());
+    }
+    if stack.iter().any(|entry| entry == name) {
+        if fixpoint_mode {
+            // In fixpoint mode, return the current cached value if available,
+            // or create a placeholder
+            return Ok(opaque_cache
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| Type::Opaque {
+                    name: name.to_string(),
+                    ty: Box::new(Type::Unit),
+                }));
+        } else {
+            let cycle = stack
+                .iter()
+                .cloned()
+                .chain(std::iter::once(name.to_string()))
+                .collect::<Vec<_>>()
+                .join(" -> ");
+            return Err(Diagnostic::new(format!(
+                "cyclic type declaration detected: {cycle}"
+            )));
+        }
+    }
+    let raw_ty = raw_opaque
+        .get(name)
+        .cloned()
+        .ok_or_else(|| Diagnostic::new(format!("unknown type '{name}'")))?;
+    stack.push(name.to_string());
+    let resolved_underlying = resolve_type_refs_fixpoint(
+        &raw_ty,
+        &HashSet::new(),
+        raw_opaque,
+        generic,
+        opaque_cache,
+        stack,
+        fixpoint_mode,
+    )?;
+    stack.pop();
+    let opaque = Type::Opaque {
+        name: name.to_string(),
+        ty: Box::new(resolved_underlying),
+    };
+    opaque_cache.insert(name.to_string(), opaque.clone());
+    Ok(opaque)
 }
 
 fn resolve_function_type_refs(
@@ -735,7 +1285,8 @@ fn resolve_expr_type_refs(
         | Expr::String(..)
         | Expr::Bytes(..)
         | Expr::Name(..)
-        | Expr::Require(..) => Ok(()),
+        | Expr::Require(..)
+        | Expr::IsVariant { .. } => Ok(()),
     }
 }
 
@@ -1072,7 +1623,8 @@ fn resolve_expr_implicit_self(
         | Expr::Bool(..)
         | Expr::String(..)
         | Expr::Bytes(..)
-        | Expr::Require(..) => Ok(()),
+        | Expr::Require(..)
+        | Expr::IsVariant { .. } => Ok(()),
     }
 }
 

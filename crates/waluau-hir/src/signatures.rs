@@ -56,6 +56,19 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
                 .map(|arg| substitute_type(arg, subst))
                 .collect(),
         },
+        Type::TaggedVariant(variant) => Type::TaggedVariant(waluau_ast::TaggedVariant {
+            tag: variant.tag.clone(),
+            payload: Box::new(substitute_type(variant.payload.as_ref(), subst)),
+        }),
+        Type::TaggedUnion(variants) => Type::TaggedUnion(
+            variants
+                .iter()
+                .map(|variant| waluau_ast::TaggedVariant {
+                    tag: variant.tag.clone(),
+                    payload: Box::new(substitute_type(variant.payload.as_ref(), subst)),
+                })
+                .collect(),
+        ),
         Type::TypeParam(name) => subst
             .get(name)
             .cloned()
@@ -125,6 +138,13 @@ pub(super) fn validate_type_in_scope(
             }
             Ok(())
         }
+        Type::TaggedVariant(variant) => validate_type_in_scope(variant.payload.as_ref(), allowed),
+        Type::TaggedUnion(variants) => {
+            for variant in variants {
+                validate_type_in_scope(variant.payload.as_ref(), allowed)?;
+            }
+            Ok(())
+        }
         Type::Opaque { ty, .. } => validate_type_in_scope(ty, allowed),
         Type::Array(inner) => validate_type_in_scope(inner, allowed),
         Type::Record(fields) => {
@@ -151,6 +171,12 @@ fn is_valid_type_argument(ty: &Type, active_type_params: &HashSet<String>) -> bo
         Type::Named { type_args, .. } => type_args
             .iter()
             .all(|arg| is_valid_type_argument(arg, active_type_params)),
+        Type::TaggedVariant(variant) => {
+            is_valid_type_argument(variant.payload.as_ref(), active_type_params)
+        }
+        Type::TaggedUnion(variants) => variants
+            .iter()
+            .all(|variant| is_valid_type_argument(variant.payload.as_ref(), active_type_params)),
         Type::TypeParam(name) => active_type_params.contains(name),
         Type::Opaque { ty, .. } => is_valid_type_argument(ty, active_type_params),
         Type::Array(inner) => is_valid_type_argument(inner, active_type_params),

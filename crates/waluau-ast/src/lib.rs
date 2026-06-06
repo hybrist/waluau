@@ -82,6 +82,12 @@ pub struct Param {
     pub ty: Type,
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct TaggedVariant {
+    pub tag: String,
+    pub payload: Box<Type>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum NumericType {
     U32,
@@ -97,8 +103,11 @@ pub enum Type {
     Numeric(NumericType),
     Unit,
     Bool,
+    Unknown,
     String,
     Bytes,
+    TaggedVariant(TaggedVariant),
+    TaggedUnion(Vec<TaggedVariant>),
     Named {
         name: String,
         type_args: Vec<Type>,
@@ -152,6 +161,38 @@ impl Type {
     pub fn record_field(&self, name: &str) -> Option<Type> {
         match self {
             Self::Record(fields) => fields.get(name).cloned(),
+            Self::TaggedVariant(variant) if name == "value" => Some((*variant.payload).clone()),
+            _ => None,
+        }
+    }
+
+    pub fn tagged_variant(&self, tag: &str) -> Option<TaggedVariant> {
+        match self {
+            Self::TaggedVariant(variant) if variant.tag == tag => Some(variant.clone()),
+            Self::TaggedUnion(variants) => {
+                variants.iter().find(|variant| variant.tag == tag).cloned()
+            }
+            _ => None,
+        }
+    }
+
+    pub fn remove_tagged_variant(&self, tag: &str) -> Option<Type> {
+        match self {
+            Self::TaggedVariant(variant) if variant.tag == tag => None,
+            Self::TaggedUnion(variants) => {
+                let remaining = variants
+                    .iter()
+                    .filter(|variant| variant.tag != tag)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                match remaining.len() {
+                    0 => None,
+                    1 => Some(Self::TaggedVariant(
+                        remaining.into_iter().next().expect("len checked"),
+                    )),
+                    _ => Some(Self::TaggedUnion(remaining)),
+                }
+            }
             _ => None,
         }
     }
@@ -201,8 +242,19 @@ impl std::fmt::Display for Type {
             Self::Numeric(ty) => ty.fmt(f),
             Self::Unit => f.write_str("unit"),
             Self::Bool => f.write_str("bool"),
+            Self::Unknown => f.write_str("unknown"),
             Self::String => f.write_str("string"),
             Self::Bytes => f.write_str("bytes"),
+            Self::TaggedVariant(variant) => write!(f, "{}({})", variant.tag, variant.payload),
+            Self::TaggedUnion(variants) => {
+                for (index, variant) in variants.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, " | ")?;
+                    }
+                    write!(f, "{}({})", variant.tag, variant.payload)?;
+                }
+                Ok(())
+            }
             Self::Named { name, type_args } => {
                 f.write_str(name)?;
                 if !type_args.is_empty() {
@@ -366,6 +418,11 @@ pub enum Expr {
         right: Box<Expr>,
         span: Option<Span>,
     },
+    IsVariant {
+        expr: Box<Expr>,
+        tag: String,
+        span: Option<Span>,
+    },
     If {
         condition: Box<Expr>,
         then_expr: Box<Expr>,
@@ -426,6 +483,7 @@ impl Expr {
             Expr::Unary { span, .. } => *span,
             Expr::Cast { span, .. } => *span,
             Expr::Binary { span, .. } => *span,
+            Expr::IsVariant { span, .. } => *span,
             Expr::If { span, .. } => *span,
             Expr::Call { span, .. } => *span,
             Expr::MethodCall { span, .. } => *span,

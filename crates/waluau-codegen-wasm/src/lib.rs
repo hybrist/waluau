@@ -2029,6 +2029,11 @@ fn emit_binary(
                     "multi-value add is not supported during wasm emission",
                 ));
             }
+            Type::TaggedVariant(_) | Type::TaggedUnion(_) => {
+                return Err(Diagnostic::new(
+                    "tagged unions are not yet supported during wasm emission",
+                ));
+            }
             Type::Function { .. }
             | Type::Record(_)
             | Type::TypeParam(_)
@@ -2086,6 +2091,11 @@ fn emit_binary(
                     "multi-value sub is not supported during wasm emission",
                 ));
             }
+            Type::TaggedVariant(_) | Type::TaggedUnion(_) => {
+                return Err(Diagnostic::new(
+                    "tagged unions are not yet supported during wasm emission",
+                ));
+            }
             Type::Function { .. }
             | Type::Record(_)
             | Type::TypeParam(_)
@@ -2128,6 +2138,11 @@ fn emit_binary(
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value mul is not supported during wasm emission",
+                ));
+            }
+            Type::TaggedVariant(_) | Type::TaggedUnion(_) => {
+                return Err(Diagnostic::new(
+                    "tagged unions are not yet supported during wasm emission",
                 ));
             }
             Type::Function { .. }
@@ -2180,6 +2195,11 @@ fn emit_binary(
                     "multi-value div is not supported during wasm emission",
                 ));
             }
+            Type::TaggedVariant(_) | Type::TaggedUnion(_) => {
+                return Err(Diagnostic::new(
+                    "tagged unions are not yet supported during wasm emission",
+                ));
+            }
             Type::Function { .. }
             | Type::Record(_)
             | Type::TypeParam(_)
@@ -2214,6 +2234,11 @@ fn emit_binary(
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value equality is not supported during wasm emission",
+                ));
+            }
+            Type::TaggedVariant(_) | Type::TaggedUnion(_) => {
+                return Err(Diagnostic::new(
+                    "tagged unions are not yet supported during wasm emission",
                 ));
             }
             Type::Function { .. }
@@ -2266,6 +2291,11 @@ fn emit_binary(
                     "multi-value comparison is not supported during wasm emission",
                 ));
             }
+            Type::TaggedVariant(_) | Type::TaggedUnion(_) => {
+                return Err(Diagnostic::new(
+                    "tagged unions are not yet supported during wasm emission",
+                ));
+            }
             Type::Function { .. }
             | Type::Record(_)
             | Type::TypeParam(_)
@@ -2314,6 +2344,11 @@ fn emit_binary(
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value comparison is not supported during wasm emission",
+                ));
+            }
+            Type::TaggedVariant(_) | Type::TaggedUnion(_) => {
+                return Err(Diagnostic::new(
+                    "tagged unions are not yet supported during wasm emission",
                 ));
             }
             Type::Function { .. }

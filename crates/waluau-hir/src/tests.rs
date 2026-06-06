@@ -261,6 +261,84 @@ fn generic_type_declarations_reject_recursive_cycles() {
 }
 
 #[test]
+fn mutually_recursive_type_aliases_are_supported() {
+    let source = r#"
+        type A = {b: B}
+        type B = {a: A}
+
+        function entry(a: A): B
+            return a.b
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+
+    // Verify that both types were resolved
+    assert_eq!(typed.type_declarations.len(), 2);
+
+    // Find the type declarations
+    let type_a = typed
+        .type_declarations
+        .iter()
+        .find(|d| d.name == "A")
+        .expect("Type A should exist");
+    let type_b = typed
+        .type_declarations
+        .iter()
+        .find(|d| d.name == "B")
+        .expect("Type B should exist");
+
+    // Verify they are record types with the expected structure
+    match &type_a.ty {
+        Type::Record(fields) => {
+            assert!(fields.contains_key("b"), "Type A should have field 'b'");
+            match fields.get("b").unwrap() {
+                Type::Opaque { name, .. } => {
+                    assert_eq!(name, "B", "Field 'b' should reference type B");
+                }
+                other => panic!("Expected opaque reference to B, got {:?}", other),
+            }
+        }
+        other => panic!("Expected record type for A, got {:?}", other),
+    }
+
+    match &type_b.ty {
+        Type::Record(fields) => {
+            assert!(fields.contains_key("a"), "Type B should have field 'a'");
+            match fields.get("a").unwrap() {
+                Type::Opaque { name, .. } => {
+                    assert_eq!(name, "A", "Field 'a' should reference type A");
+                }
+                other => panic!("Expected opaque reference to A, got {:?}", other),
+            }
+        }
+        other => panic!("Expected record type for B, got {:?}", other),
+    }
+}
+
+#[test]
+fn rejects_direct_self_referencing_type_aliases() {
+    let source = r#"
+        type A = A
+        
+        function entry(): i32
+            return 0
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("cyclic type declaration detected"),
+        "Expected cycle detection error, got: {}",
+        error
+    );
+}
+
+#[test]
 fn accepts_unary_negation_not_and_elseif() {
     let source = r#"
         function entry(flag: bool, x: i32): i32
@@ -1268,8 +1346,11 @@ fn type_checks_coroutine_create_and_resume_for_zero_arg_functions() {
                 return 7
             end
             local co: thread = coroutine.create(job)
-            local ok: bool, value: i32 = coroutine.resume(co)
-            return value
+            local result: Yielded(unknown) | Finished(i32) | Error(string) = coroutine.resume(co)
+            if result is Finished then
+                return result.value
+            end
+            return 0
         end
     "#;
     let program = parse(source).expect("parse should succeed");
@@ -1317,13 +1398,68 @@ fn rejects_coroutine_resume_for_non_thread() {
             local co: () -> i32 = function(): i32
                 return 7
             end
-            local ok: bool, value: i32 = coroutine.resume(co)
-            return value
+            local result: Yielded(unknown) | Finished(i32) | Error(string) = coroutine.resume(co)
+            return 0
         end
     "#;
     let program = parse(source).expect("parse should succeed");
     let error = super::type_check(&program).expect_err("type check should fail");
     assert_eq!(error.to_string(), "coroutine.resume expects a thread");
+}
+
+#[test]
+fn type_checks_tagged_union_narrowing_and_value_access() {
+    let source = r#"
+        type Resume<R> = Yielded(unknown) | Finished(R) | Error(string)
+
+        function unwrap(result: Resume<i32>): i32
+            if result is Yielded then
+                return 0
+            end
+            if result is Error then
+                return 0
+            end
+            return result.value
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn coroutine_resume_returns_tagged_union() {
+    let source = r#"
+        function run_job(): i32
+            local job: () -> i32 = function(): i32
+                return 7
+            end
+            local co: thread = coroutine.create(job)
+            local result: Yielded(unknown) | Finished(i32) | Error(string) = coroutine.resume(co)
+            if result is Finished then
+                return result.value
+            end
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_tagged_union_value_access_without_narrowing() {
+    let source = r#"
+        type Resume<R> = Yielded(unknown) | Finished(R) | Error(string)
+
+        function unwrap(result: Resume<i32>): i32
+            return result.value
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "field access on tagged union requires narrowing before reading 'value'"
+    );
 }
 
 #[test]

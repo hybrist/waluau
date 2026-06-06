@@ -36,6 +36,7 @@ pub enum TokenKind {
     F64Type,
     UnitType,
     BoolType,
+    UnknownType,
     StringType,
     BytesType,
     ThreadType,
@@ -59,6 +60,7 @@ pub enum TokenKind {
     Greater,
     And,
     Or,
+    Pipe,
     Arrow,
     ColonColon,
     Colon,
@@ -177,7 +179,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 if matches!(chars.get(i + 1), Some('|')) {
                     return Err(Diagnostic::new("unsupported '||', use 'or'"));
                 } else {
-                    return Err(Diagnostic::new("unexpected '|', expected '||'"));
+                    (TokenKind::Pipe, 1)
                 }
             }
             '"' => {
@@ -281,6 +283,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                     "f64" => TokenKind::F64Type,
                     "unit" | "void" => TokenKind::UnitType,
                     "bool" => TokenKind::BoolType,
+                    "unknown" => TokenKind::UnknownType,
                     "string" => TokenKind::StringType,
                     "bytes" => TokenKind::BytesType,
                     "thread" => TokenKind::ThreadType,

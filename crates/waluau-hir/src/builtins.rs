@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use waluau_ast::{Expr, NumericType, Type};
+use waluau_ast::{Expr, NumericType, TaggedVariant, Type};
 use waluau_diagnostics::Diagnostic;
 
 use super::Binding;
@@ -81,7 +81,23 @@ pub(super) fn infer_coroutine_builtin_call(
                 Err(error) => return Some(Err(error)),
             };
             match coroutine_ty {
-                Type::Thread => Some(coerce_type(Type::Multi(vec![Type::Bool, i32_ty]), expected)),
+                Type::Thread => Some(coerce_type(
+                    Type::TaggedUnion(vec![
+                        TaggedVariant {
+                            tag: "Error".to_string(),
+                            payload: Box::new(Type::String),
+                        },
+                        TaggedVariant {
+                            tag: "Finished".to_string(),
+                            payload: Box::new(i32_ty.clone()),
+                        },
+                        TaggedVariant {
+                            tag: "Yielded".to_string(),
+                            payload: Box::new(Type::Unknown),
+                        },
+                    ]),
+                    expected,
+                )),
                 _ => Some(Err(Diagnostic::new("coroutine.resume expects a thread"))),
             }
         }

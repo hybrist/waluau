@@ -728,6 +728,38 @@ fn parses_record_type_annotations_and_function_signature_types() {
 }
 
 #[test]
+fn parses_tagged_union_type_annotations_and_is_checks() {
+    let source = r#"
+        type Resume<R> = Yielded(unknown) | Finished(R) | Error(string)
+
+        function read(result: Resume<i32>): i32
+            if result is Yielded then
+                return 0
+            else
+                return result.value
+            end
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert!(matches!(
+        &program.type_declarations[0].ty,
+        Type::TaggedUnion(variants)
+            if variants.len() == 3
+                && variants.iter().any(|variant| variant.tag == "Yielded")
+                && variants.iter().any(|variant| variant.tag == "Finished")
+                && variants.iter().any(|variant| variant.tag == "Error")
+    ));
+    assert!(matches!(
+        &program.functions[0].body[0],
+        Stmt::If {
+            condition: waluau_ast::Expr::IsVariant { tag, .. },
+            ..
+        } if tag == "Yielded"
+    ));
+}
+
+#[test]
 fn parses_function_literal_without_return_annotation() {
     let source = r#"
         function entry(): i32

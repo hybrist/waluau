@@ -1833,6 +1833,11 @@ impl Builder<'_> {
                             "numeric literal is not assignable to thread",
                         ));
                     }
+                    Type::TaggedVariant(_) | Type::TaggedUnion(_) => {
+                        return Err(Diagnostic::new(
+                            "numeric literal is not assignable to tagged union type",
+                        ));
+                    }
                     Type::Unknown => {
                         // Boxing a bare literal into `unknown`: lower it at its
                         // default numeric type, then box the result into anyref.
@@ -2648,10 +2653,16 @@ impl Builder<'_> {
                 Some(Type::Thread) => Err(Diagnostic::new(
                     "numeric literal is not assignable to thread",
                 )),
+                Some(Type::TaggedVariant(_)) | Some(Type::TaggedUnion(_)) => Err(
+                    Diagnostic::new("numeric literal is not assignable to tagged union type"),
+                ),
                 // A literal coerced to `unknown` is boxed; report `unknown` as its type.
                 Some(Type::Unknown) => Ok(Type::Unknown),
                 None => Ok(Type::number()),
             },
+            Expr::IsVariant { .. } => Err(Diagnostic::new(
+                "tagged unions are not yet supported in IR lowering",
+            )),
             Expr::Bool(..) => Ok(Type::Bool),
             Expr::String(..) => Ok(Type::String),
             Expr::Bytes(..) => Ok(Type::Bytes),
@@ -3748,6 +3759,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             ))),
             Type::Unknown => Err(Diagnostic::new(format!(
                 "cannot implicitly convert unknown to {expected_numeric}; use an explicit cast",
+            ))),
+            Type::TaggedVariant(_) | Type::TaggedUnion(_) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {actual} to {expected_numeric}",
             ))),
         },
         Some(Type::Bool) => Err(Diagnostic::new(format!(
