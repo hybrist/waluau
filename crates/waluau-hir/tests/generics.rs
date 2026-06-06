@@ -35,9 +35,24 @@ fn type_checks_choose_generic() {
 }
 
 #[test]
-fn rejects_missing_type_arguments() {
+fn type_checks_missing_type_arguments_by_inference() {
     let source = r#"
         function identity<T>(value: T): T
+            return value
+        end
+
+        function main(): i32
+            return identity(41)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    waluau_hir::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_missing_type_arguments_when_uninferable() {
+    let source = r#"
+        function identity<T, U>(value: T): T
             return value
         end
 
@@ -156,4 +171,60 @@ fn type_checks_record_literal_construction_against_generic_alias() {
     "#;
     let program = parse(source).expect("parse should succeed");
     waluau_hir::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn type_checks_generic_inference_left_to_right() {
+    let source = r#"
+        function choose<T>(condition: bool, a: T, b: T): T
+            if condition then
+                return a
+            else
+                return b
+            end
+        end
+
+        function main(): i32
+            return choose(true, 1 :: i32, 2)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    waluau_hir::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn type_checks_generic_inference_from_expected_return_type() {
+    let source = r#"
+        function default<T>(): T
+            return default<T>()
+        end
+
+        function main(): i32
+            local x: i32 = default()
+            return x
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    waluau_hir::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_conflicting_generic_inference() {
+    let source = r#"
+        function choose<T>(condition: bool, a: T, b: T): T
+            if condition then
+                return a
+            else
+                return b
+            end
+        end
+
+        function main(): i32
+            -- Here, T is inferred as i32 from a, but b is bool. They conflict!
+            return choose(true, 1 :: i32, true)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = waluau_hir::type_check(&program).expect_err("type check should fail");
+    assert!(error.to_string().contains("cannot match type"));
 }

@@ -1070,11 +1070,26 @@ fn type_checks_generic_method_call_with_type_arguments() {
 }
 
 #[test]
-fn rejects_generic_method_call_without_type_arguments() {
+fn type_checks_generic_method_call_without_type_arguments() {
     let source = r#"
         local point = { x = 41::i32 }
 
         function point:identity<T>(value: T): T
+            return value
+        end
+
+        assert(point:identity(42::i32) == 42)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_generic_method_call_without_type_arguments_when_uninferable() {
+    let source = r#"
+        local point = { x = 41::i32 }
+
+        function point:identity<T, U>(value: T): T
             return value
         end
 

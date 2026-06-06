@@ -352,71 +352,61 @@ pub(super) fn infer_expr(
             ..
         } => {
             let receiver_ty = infer_expr(receiver, vars, fn_signatures, active_type_params, None)?;
-            let (params, ret) = if let Some((signature, method_name)) =
-                method_signature(receiver, name, fn_signatures)
-            {
-                match signature {
-                    FnSignature::Mono {
-                        params,
-                        return_type,
-                    } => {
-                        if !type_args.is_empty() {
-                            return Err(generic_diagnostic(
-                                "generic/extra-type-args",
-                                "type arguments are only allowed when calling a generic method",
-                                "remove the type argument list or call a generic method",
-                            ));
+            let (params, ret) =
+                if let Some((signature, _)) = method_signature(receiver, name, fn_signatures) {
+                    match signature {
+                        FnSignature::Mono {
+                            params,
+                            return_type,
+                        } => {
+                            if !type_args.is_empty() {
+                                return Err(generic_diagnostic(
+                                    "generic/extra-type-args",
+                                    "type arguments are only allowed when calling a generic method",
+                                    "remove the type argument list or call a generic method",
+                                ));
+                            }
+                            (params.clone(), return_type.clone())
                         }
-                        (params.clone(), return_type.clone())
-                    }
-                    FnSignature::Generic(scheme) => {
-                        if type_args.is_empty() {
-                            return Err(generic_diagnostic(
-                                "generic/missing-type-args",
-                                format!(
-                                    "generic method '{method_name}' requires explicit type arguments"
-                                ),
-                                "provide type arguments between the method name and argument list, e.g. obj:method<T>(args)",
-                            ));
-                        }
-                        // Create a modified args list with the receiver as the first argument
-                        let mut method_args = vec![(**receiver).clone()];
-                        method_args.extend_from_slice(args);
+                        FnSignature::Generic(scheme) => {
+                            // Create a modified args list with the receiver as the first argument
+                            let mut method_args = vec![(**receiver).clone()];
+                            method_args.extend_from_slice(args);
 
-                        return infer_generic_call(
-                            scheme,
-                            type_args,
-                            &method_args,
-                            vars,
-                            fn_signatures,
-                            active_type_params,
-                            expected,
-                        );
+                            return infer_generic_call(
+                                scheme,
+                                type_args,
+                                &method_args,
+                                vars,
+                                fn_signatures,
+                                active_type_params,
+                                expected,
+                            );
+                        }
                     }
-                }
-            } else {
-                if !type_args.is_empty() {
-                    return Err(generic_diagnostic(
-                        "generic/extra-type-args",
-                        "type arguments are only allowed when calling a generic method",
-                        "remove the type argument list or call a generic method",
-                    ));
-                }
-                let field_ty = receiver_ty
-                    .record_field(name)
-                    .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
-                match field_ty {
-                    Type::Function {
-                        params,
-                        return_type,
-                    } => (params, *return_type),
-                    other => {
-                        return Err(Diagnostic::new(format!(
-                            "attempt to call non-function value of type {other}",
-                        )));
+                } else {
+                    if !type_args.is_empty() {
+                        return Err(generic_diagnostic(
+                            "generic/extra-type-args",
+                            "type arguments are only allowed when calling a generic method",
+                            "remove the type argument list or call a generic method",
+                        ));
                     }
-                }
-            };
+                    let field_ty = receiver_ty
+                        .record_field(name)
+                        .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
+                    match field_ty {
+                        Type::Function {
+                            params,
+                            return_type,
+                        } => (params, *return_type),
+                        other => {
+                            return Err(Diagnostic::new(format!(
+                                "attempt to call non-function value of type {other}",
+                            )));
+                        }
+                    }
+                };
             if params.is_empty() {
                 return Err(Diagnostic::new(format!(
                     "function expects 0 arguments, got {}",
