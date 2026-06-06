@@ -3,6 +3,7 @@
 .dolt/
 *.db
 .beads-credential-key
+.beads/interactions.jsonl
 
 /target/
 node_modules/
