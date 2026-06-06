@@ -1,1 +1,3 @@
 src/waluau-wasm/
+.vitest-attachments/
+tests/__screenshots__/

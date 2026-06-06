@@ -2208,10 +2208,10 @@ impl Builder<'_> {
                 }
                 _ => {
                     let operand_ty =
-                        self.infer_binary_operand_type(left, right, op, types, None)?;
+                        self.infer_binary_operand_type(left, right, op, types, expected.clone())?;
                     let left = self.lower_expr(left, env, types, Some(operand_ty.clone()))?;
                     let right = self.lower_expr(right, env, types, Some(operand_ty.clone()))?;
-                    let raw_result_ty = self.infer_expr_type(expr, types, None)?;
+                    let raw_result_ty = self.infer_expr_type(expr, types, expected.clone())?;
                     let value = self.emit(Instruction::Binary {
                         op: *op,
                         left,
@@ -2910,7 +2910,7 @@ impl Builder<'_> {
                 | BinaryOp::FloorDiv
                 | BinaryOp::Mod
                 | BinaryOp::Concat => {
-                    let raw = self.infer_binary_operand_type(left, right, op, types, None)?;
+                    let raw = self.infer_binary_operand_type(left, right, op, types, expected.clone())?;
                     coerce_type(raw, expected)
                 }
                 BinaryOp::Less
