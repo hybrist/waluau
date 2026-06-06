@@ -82,6 +82,9 @@ pub(crate) fn wasm_type(
         Type::TypeParam(_) => {
             unreachable!("generic type parameters must be specialized before codegen")
         }
+        Type::TaggedVariant(_) | Type::TaggedUnion(_) => Err(Diagnostic::new(
+            "tagged unions are not yet supported in Wasm signatures",
+        )),
     }
 }
 

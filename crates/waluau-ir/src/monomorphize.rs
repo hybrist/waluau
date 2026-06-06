@@ -355,6 +355,11 @@ impl<'a> Monomorphizer<'a> {
                 right: Box::new(self.rewrite_expr(right, subst, active)?),
                 span: *span,
             },
+            Expr::IsVariant { expr, tag, span } => Expr::IsVariant {
+                expr: Box::new(self.rewrite_expr(expr, subst, active)?),
+                tag: tag.clone(),
+                span: *span,
+            },
             Expr::If {
                 condition,
                 then_expr,

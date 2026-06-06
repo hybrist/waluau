@@ -292,6 +292,9 @@ pub(crate) fn array_storage_type(
         Type::Multi(_) => Err(Diagnostic::new(
             "multi-value types are not supported in array storage yet",
         )),
+        Type::TaggedVariant(_) | Type::TaggedUnion(_) => Err(Diagnostic::new(
+            "tagged unions are not yet supported in wasm array storage",
+        )),
         Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
             unreachable!()
         }
@@ -336,6 +339,9 @@ pub(crate) fn record_storage_type(
         Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
         Type::Multi(_) => Err(Diagnostic::new(
             "multi-value types are not supported in record fields",
+        )),
+        Type::TaggedVariant(_) | Type::TaggedUnion(_) => Err(Diagnostic::new(
+            "tagged unions are not yet supported in wasm record fields",
         )),
         Type::TypeParam(_) => unreachable!(),
         Type::Unit => unreachable!(),

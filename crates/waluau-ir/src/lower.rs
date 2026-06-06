@@ -182,6 +182,11 @@ fn erase_expr_opaque_types(expr: &Expr) -> Expr {
         | Expr::Bytes(..)
         | Expr::Name(..)
         | Expr::Require(..) => expr.clone(),
+        Expr::IsVariant { expr, tag, span } => Expr::IsVariant {
+            expr: Box::new(erase_expr_opaque_types(expr)),
+            tag: tag.clone(),
+            span: *span,
+        },
         Expr::Unary { op, expr, span } => Expr::Unary {
             op: *op,
             expr: Box::new(erase_expr_opaque_types(expr)),
@@ -1833,6 +1838,11 @@ impl Builder<'_> {
                             "numeric literal is not assignable to thread",
                         ));
                     }
+                    Type::TaggedVariant(_) | Type::TaggedUnion(_) => {
+                        return Err(Diagnostic::new(
+                            "numeric literal is not assignable to tagged union type",
+                        ));
+                    }
                     Type::Unknown => {
                         // Boxing a bare literal into `unknown`: lower it at its
                         // default numeric type, then box the result into anyref.
@@ -2039,7 +2049,10 @@ impl Builder<'_> {
                                     "unary '-' requires a numeric operand",
                                 ));
                             }
-                            Type::Thread | Type::Unknown => {
+                            Type::Thread
+                            | Type::Unknown
+                            | Type::TaggedVariant(_)
+                            | Type::TaggedUnion(_) => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -2099,6 +2112,11 @@ impl Builder<'_> {
                 let actual = self.infer_expr_type(expr, types, None)?;
                 let cast = self.explicit_cast(value, actual, ty.clone())?;
                 self.coerce_value(cast, ty.clone(), expected)?
+            }
+            Expr::IsVariant { .. } => {
+                return Err(Diagnostic::new(
+                    "tagged unions are not yet supported in IR lowering",
+                ));
             }
             Expr::If {
                 condition,
@@ -2648,10 +2666,16 @@ impl Builder<'_> {
                 Some(Type::Thread) => Err(Diagnostic::new(
                     "numeric literal is not assignable to thread",
                 )),
+                Some(Type::TaggedVariant(_)) | Some(Type::TaggedUnion(_)) => Err(
+                    Diagnostic::new("numeric literal is not assignable to tagged union type"),
+                ),
                 // A literal coerced to `unknown` is boxed; report `unknown` as its type.
                 Some(Type::Unknown) => Ok(Type::Unknown),
                 None => Ok(Type::number()),
             },
+            Expr::IsVariant { .. } => Err(Diagnostic::new(
+                "tagged unions are not yet supported in IR lowering",
+            )),
             Expr::Bool(..) => Ok(Type::Bool),
             Expr::String(..) => Ok(Type::String),
             Expr::Bytes(..) => Ok(Type::Bytes),
@@ -2758,7 +2782,10 @@ impl Builder<'_> {
                         Type::TypeParam(_) => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
-                        Type::Thread | Type::Unknown => {
+                        Type::Thread
+                        | Type::Unknown
+                        | Type::TaggedVariant(_)
+                        | Type::TaggedUnion(_) => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                     }
@@ -3748,6 +3775,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             ))),
             Type::Unknown => Err(Diagnostic::new(format!(
                 "cannot implicitly convert unknown to {expected_numeric}; use an explicit cast",
+            ))),
+            Type::TaggedVariant(_) | Type::TaggedUnion(_) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {actual} to {expected_numeric}",
             ))),
         },
         Some(Type::Bool) => Err(Diagnostic::new(format!(

@@ -158,6 +158,85 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
         // Any value implicitly boxes into `unknown` (anyref). Unboxing back to a
         // concrete type is never implicit — it requires an explicit cast.
         Some(Type::Unknown) => Ok(Type::Unknown),
+        Some(Type::TaggedVariant(expected_variant)) => match actual {
+            Type::TaggedVariant(actual_variant) if actual_variant.tag == expected_variant.tag => {
+                let payload = coerce_type(
+                    (*actual_variant.payload).clone(),
+                    Some((*expected_variant.payload).clone()),
+                )?;
+                Ok(Type::TaggedVariant(waluau_ast::TaggedVariant {
+                    tag: expected_variant.tag,
+                    payload: Box::new(payload),
+                }))
+            }
+            other => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {other} to {}({})",
+                expected_variant.tag, expected_variant.payload
+            ))),
+        },
+        Some(Type::TaggedUnion(expected_variants)) => match actual {
+            Type::TaggedVariant(actual_variant) => {
+                let Some(expected_variant) = expected_variants
+                    .iter()
+                    .find(|variant| variant.tag == actual_variant.tag)
+                else {
+                    return Err(Diagnostic::new(format!(
+                        "cannot implicitly convert {}({}) to {}",
+                        actual_variant.tag,
+                        actual_variant.payload,
+                        Type::TaggedUnion(expected_variants)
+                    )));
+                };
+                let payload = coerce_type(
+                    (*actual_variant.payload).clone(),
+                    Some((*expected_variant.payload).clone()),
+                )?;
+                Ok(Type::TaggedVariant(waluau_ast::TaggedVariant {
+                    tag: expected_variant.tag.clone(),
+                    payload: Box::new(payload),
+                }))
+            }
+            Type::TaggedUnion(actual_variants)
+                if actual_variants.len() == expected_variants.len() =>
+            {
+                for expected_variant in &expected_variants {
+                    let Some(actual_variant) = actual_variants
+                        .iter()
+                        .find(|variant| variant.tag == expected_variant.tag)
+                    else {
+                        return Err(Diagnostic::new(format!(
+                            "cannot implicitly convert {} to {}",
+                            Type::TaggedUnion(actual_variants),
+                            Type::TaggedUnion(expected_variants)
+                        )));
+                    };
+                    let _ = coerce_type(
+                        Type::TaggedVariant(actual_variant.clone()),
+                        Some(Type::TaggedVariant(expected_variant.clone())),
+                    )?;
+                }
+                Ok(Type::TaggedUnion(expected_variants))
+            }
+            other => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {other} to {}",
+                Type::TaggedUnion(expected_variants)
+            ))),
+        },
+        Some(Type::Opaque {
+            name: expected_name,
+            ty: expected_ty,
+        }) => match actual {
+            Type::Opaque {
+                name: actual_name, ..
+            } if actual_name == expected_name => Ok(Type::Opaque {
+                name: expected_name,
+                ty: expected_ty,
+            }),
+            _ => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {} to {}",
+                actual, expected_name
+            ))),
+        },
         Some(Type::Record(expected_fields)) => {
             let Type::Record(actual_fields) = actual else {
                 let expected_record = Type::Record(expected_fields.clone());
@@ -239,6 +318,9 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             Type::Unknown => Err(Diagnostic::new(format!(
                 "cannot implicitly convert unknown to {expected_numeric}; use an explicit cast",
             ))),
+            Type::TaggedVariant(_) | Type::TaggedUnion(_) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {actual} to {expected_numeric}",
+            ))),
         },
         Some(Type::Bool) => Err(Diagnostic::new(format!(
             "cannot implicitly convert {actual} to bool",
@@ -318,7 +400,11 @@ pub(super) fn resolve_number_literal(
         )),
         // A bare literal boxed into `unknown` takes its default numeric type; the
         // surrounding coercion then boxes that value into anyref.
-        Some(Type::Unknown) | None => Ok(Type::number()),
+        Some(Type::Unknown) => Ok(Type::number()),
+        Some(Type::TaggedVariant(_)) | Some(Type::TaggedUnion(_)) => Err(Diagnostic::new(
+            "numeric literal is not assignable to tagged union type",
+        )),
+        None => Ok(Type::number()),
     }
 }
 

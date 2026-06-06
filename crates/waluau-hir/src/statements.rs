@@ -16,6 +16,33 @@ fn method_signature_name(base: &str, method: &str) -> String {
     format!("{base}.{method}")
 }
 
+fn narrowed_variant_scopes(
+    condition: &Expr,
+    vars: &HashMap<String, Binding>,
+) -> (HashMap<String, Binding>, HashMap<String, Binding>) {
+    let mut then_scope = vars.clone();
+    let mut else_scope = vars.clone();
+    let Expr::IsVariant { expr, tag, .. } = condition else {
+        return (then_scope, else_scope);
+    };
+    let Expr::Name(name, _) = expr.as_ref() else {
+        return (then_scope, else_scope);
+    };
+    let Some(binding) = vars.get(name) else {
+        return (then_scope, else_scope);
+    };
+    if let Some(variant) = binding.ty.tagged_variant(tag) {
+        then_scope.insert(
+            name.clone(),
+            binding_for(Type::TaggedVariant(variant), binding.rebindability),
+        );
+    }
+    if let Some(remaining) = binding.ty.remove_tagged_variant(tag) {
+        else_scope.insert(name.clone(), binding_for(remaining, binding.rebindability));
+    }
+    (then_scope, else_scope)
+}
+
 pub(super) fn check_function(
     function: &Function,
     fn_signatures: &HashMap<String, FnSignature>,
@@ -221,16 +248,17 @@ pub(super) fn collect_return_types(
                 if condition_ty != Type::Bool {
                     return Err(Diagnostic::new("if condition must be bool"));
                 }
+                let (then_scope, else_scope) = narrowed_variant_scopes(condition, &scope);
                 collect_return_types(
                     then_body,
-                    &scope,
+                    &then_scope,
                     fn_signatures,
                     active_type_params,
                     returns,
                 )?;
                 collect_return_types(
                     else_body,
-                    &scope,
+                    &else_scope,
                     fn_signatures,
                     active_type_params,
                     returns,
@@ -736,8 +764,7 @@ pub(super) fn check_stmt(
             if condition_ty != Type::Bool {
                 return Err(Diagnostic::new("if condition must be bool"));
             }
-            let mut then_scope = vars.clone();
-            let mut else_scope = vars.clone();
+            let (mut then_scope, mut else_scope) = narrowed_variant_scopes(condition, vars);
             let mut then_returns = false;
             let mut else_returns = false;
             for stmt in then_body {
@@ -759,6 +786,11 @@ pub(super) fn check_stmt(
                     expected_return,
                     in_loop,
                 )?;
+            }
+            if then_returns && !else_returns {
+                *vars = else_scope;
+            } else if else_returns && !then_returns {
+                *vars = then_scope;
             }
             Ok(then_returns && else_returns)
         }
@@ -1229,6 +1261,7 @@ fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
         Expr::Index { base, index, .. } => {
             expr_calls_name(base, callee) || expr_calls_name(index, callee)
         }
+        Expr::IsVariant { expr, .. } => expr_calls_name(expr, callee),
     }
 }
 
@@ -1297,6 +1330,9 @@ fn seal_record_locals_in_expr(expr: &Expr, vars: &mut HashMap<String, Binding>) 
         Expr::Binary { left, right, .. } => {
             seal_record_locals_in_expr(left, vars);
             seal_record_locals_in_expr(right, vars);
+        }
+        Expr::IsVariant { expr, .. } => {
+            seal_record_locals_in_expr(expr, vars);
         }
     }
 }
