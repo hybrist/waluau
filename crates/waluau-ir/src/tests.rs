@@ -1090,6 +1090,47 @@ fn lowers_generic_method_declaration_after_hir_desugaring() {
 }
 
 #[test]
+fn lowers_generic_method_call_via_colon_syntax() {
+    let source = r#"
+        local point = { x = 41::i32 }
+
+        function point:identity<T>(value: T): T
+            local _x: i32 = self.x
+            return value
+        end
+
+        local n: i32 = point:identity<i32>(1::i32)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+
+    let init = module
+        .functions
+        .iter()
+        .find(|function| function.name == "__waluau_top_level_init")
+        .expect("top-level init should exist");
+
+    // The colon-call generic method must be monomorphized into a direct call to a
+    // specialized function, mirroring the dot-call (`point.identity<i32>(...)`) path.
+    // Before this was fixed it failed lowering with "unknown record field 'identity'".
+    let has_specialized_call = init.blocks.values().any(|block| {
+        block.instructions.iter().any(|(_, instruction)| {
+            matches!(
+                instruction,
+                Instruction::CallValue { .. } | Instruction::Call { .. }
+            )
+        })
+    });
+    assert!(
+        has_specialized_call,
+        "expected colon-call generic method to lower to a call instruction:\n{}",
+        init.dump()
+    );
+}
+
+#[test]
 fn rejects_cross_specialization_recursive_generics() {
     let source = r#"
         function loop<T>(value: T): {T}

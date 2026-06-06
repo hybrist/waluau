@@ -377,22 +377,9 @@ impl<'a> Monomorphizer<'a> {
                 args,
                 span,
             } => self.rewrite_call_expr(callee, type_args, args, *span, subst, active)?,
-            Expr::MethodCall {
-                receiver,
-                name,
-                args,
-                span,
-                type_args,
-            } => Expr::MethodCall {
-                receiver: Box::new(self.rewrite_expr(receiver, subst, active)?),
-                name: name.clone(),
-                args: args
-                    .iter()
-                    .map(|expr| self.rewrite_expr(expr, subst, active))
-                    .collect::<Result<Vec<_>, _>>()?,
-                span: *span,
-                type_args: type_args.clone(),
-            },
+            method_call @ Expr::MethodCall { .. } => {
+                self.rewrite_method_call(method_call, subst, active)?
+            }
             Expr::Function(function) => {
                 Expr::Function(self.rewrite_function_expr(function, subst, active)?)
             }
@@ -497,6 +484,64 @@ impl<'a> Monomorphizer<'a> {
                 .collect(),
             args,
             span,
+        })
+    }
+
+    fn rewrite_method_call(
+        &mut self,
+        method_call: &Expr,
+        subst: &HashMap<String, Type>,
+        active: Option<&ActiveSpecialization>,
+    ) -> Result<Expr, Diagnostic> {
+        let Expr::MethodCall {
+            receiver,
+            name,
+            args,
+            span,
+            type_args,
+        } = method_call
+        else {
+            unreachable!("rewrite_method_call requires a MethodCall expression");
+        };
+        let span = *span;
+        let rewritten_receiver = self.rewrite_expr(receiver, subst, active)?;
+        let rewritten_args = args
+            .iter()
+            .map(|expr| self.rewrite_expr(expr, subst, active))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Specialize generic method calls (`receiver:method<T>(...)`) the same way
+        // the dot-call form (`Table.method<T>(receiver, ...)`) is handled in
+        // `rewrite_call_expr`: inline the specialized method as a plain call with
+        // the receiver threaded in as the explicit `self` argument.
+        if !type_args.is_empty() {
+            if let Expr::Name(table, _) = receiver.as_ref() {
+                let method_name = format!("{table}.{name}");
+                if let Some(function) = self.generic_methods.get(&method_name).copied() {
+                    let specialized =
+                        self.specialize_function_expr(function, type_args, subst, active)?;
+                    let mut call_args = Vec::with_capacity(rewritten_args.len() + 1);
+                    call_args.push(rewritten_receiver);
+                    call_args.extend(rewritten_args);
+                    return Ok(Expr::Call {
+                        callee: Box::new(Expr::Function(specialized)),
+                        type_args: Vec::new(),
+                        args: call_args,
+                        span,
+                    });
+                }
+            }
+        }
+
+        Ok(Expr::MethodCall {
+            receiver: Box::new(rewritten_receiver),
+            name: name.to_string(),
+            args: rewritten_args,
+            span,
+            type_args: type_args
+                .iter()
+                .map(|ty| substitute_type(ty, subst))
+                .collect(),
         })
     }
 
