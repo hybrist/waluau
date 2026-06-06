@@ -1,0 +1,24 @@
+type Pair<A, B> = { first: A, second: B }
+type Box<T> = { value: T }
+
+function pair_score(pair: Pair<i32, bool>): i32
+    if pair.second then
+        return pair.first
+    end
+    return 0
+end
+
+function boxed_sum(seed: i32): i32
+    local boxed: Box<Pair<i32, i32>> = {
+        value = { first = seed, second = (seed + 1) :: i32 },
+    }
+    local inner = boxed.value
+    inner.first = (inner.first + 4) :: i32
+    inner.second = (inner.second + 10) :: i32
+    return inner.first + inner.second
+end
+
+local pair: Pair<i32, bool> = { first = 7::i32, second = true }
+
+assert(pair_score(pair) == 7)
+assert(boxed_sum(3) == 21)
