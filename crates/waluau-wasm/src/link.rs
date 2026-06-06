@@ -92,8 +92,8 @@ impl<'a> Loader<'a> {
             .files
             .get(path)
             .ok_or_else(|| format!("cannot find module \"{}\"", path))?;
-        let program =
-            waluau_parser::parse(source).map_err(|e| format!("in module \"{}\": {}", path, e))?;
+        let program = waluau_parser::parse_with_path(source, path)
+            .map_err(|e| format!("in module \"{}\": {}", path, e))?;
 
         let mut raw_paths = Vec::new();
         collect_require_paths(&program, &mut raw_paths);
