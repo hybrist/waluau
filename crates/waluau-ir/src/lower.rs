@@ -354,6 +354,8 @@ pub(crate) fn build_function(
         blocks: BTreeMap::new(),
         next_value: 0,
         capture_count: 0,
+        value_symbols: BTreeMap::new(),
+        symbol_id: function.symbol_id,
     };
 
     out.blocks.insert(
@@ -386,9 +388,11 @@ pub(crate) fn build_function(
                 },
             ));
             env.insert(symbol_id, cell);
+            out.value_symbols.insert(cell, symbol_id);
         } else {
             env.insert(symbol_id, value);
         }
+        out.value_symbols.insert(value, symbol_id);
         type_env.insert(symbol_id, param.ty.clone());
     }
 
@@ -662,12 +666,14 @@ impl Builder<'_> {
                         elements: vec![value],
                     });
                     env.insert(symbol_id, cell);
+                    self.function.value_symbols.insert(cell, symbol_id);
                     // Keep the declared type as the inner element type for type checking.
                     types.insert(symbol_id, inferred_ty);
                 } else {
                     env.insert(symbol_id, value);
                     types.insert(symbol_id, inferred_ty);
                 }
+                self.function.value_symbols.insert(value, symbol_id);
             }
             Stmt::Assign { op, name, symbol_id, value } => {
                 let symbol_id = symbol_id.expect("symbol_id should be resolved");
@@ -687,6 +693,7 @@ impl Builder<'_> {
                     match op {
                         AssignOp::Set => {
                             let rhs = self.lower_expr(value, env, types, Some(ty.clone()))?;
+                            self.function.value_symbols.insert(rhs, symbol_id);
                             self.emit(Instruction::ArraySet {
                                 array: cell,
                                 index: index0,
@@ -715,6 +722,7 @@ impl Builder<'_> {
                                 operand_ty: ty.clone(),
                                 result_ty: ty.clone(),
                             });
+                            self.function.value_symbols.insert(sum, symbol_id);
                             self.emit(Instruction::ArraySet {
                                 array: cell,
                                 index: index0,
@@ -750,6 +758,7 @@ impl Builder<'_> {
                         }
                     };
                     env.insert(symbol_id, value);
+                    self.function.value_symbols.insert(value, symbol_id);
                 }
             }
             Stmt::IndexAssign {
@@ -842,6 +851,7 @@ impl Builder<'_> {
                                 fields: lowered_fields,
                             });
                             env.insert(*base_symbol_id, rebuilt);
+                            self.function.value_symbols.insert(rebuilt, *base_symbol_id);
                             types.insert(*base_symbol_id, updated_ty);
                             return Ok(());
                         }
@@ -958,6 +968,7 @@ impl Builder<'_> {
                     {
                         let symbol_id = binding.symbol_id.expect("resolved symbol_id");
                         env.insert(symbol_id, value);
+                        self.function.value_symbols.insert(value, symbol_id);
                         types.insert(symbol_id, expected_ty);
                     }
                 } else {
@@ -989,6 +1000,7 @@ impl Builder<'_> {
                     for ((binding, value), ty) in bindings.iter().zip(lowered).zip(inferred_types) {
                         let symbol_id = binding.symbol_id.expect("resolved symbol_id");
                         env.insert(symbol_id, value);
+                        self.function.value_symbols.insert(value, symbol_id);
                         types.insert(symbol_id, ty);
                     }
                 }
@@ -1012,6 +1024,7 @@ impl Builder<'_> {
                 }
                 for (id, value) in ids.iter().zip(lowered) {
                     env.insert(*id, value);
+                    self.function.value_symbols.insert(value, *id);
                 }
             }
             Stmt::If {
@@ -1201,6 +1214,7 @@ impl Builder<'_> {
                     }
                     let phi = self.emit(Instruction::Phi(incoming));
                     env.insert(name, phi);
+                    self.function.value_symbols.insert(phi, name);
                 }
             }
         }
@@ -1244,6 +1258,7 @@ impl Builder<'_> {
             if let Some(initial) = env.get(id).copied() {
                 let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
                 loop_env.insert(*id, phi);
+                self.function.value_symbols.insert(phi, *id);
                 phis.insert(*id, phi);
             }
         }
@@ -1291,6 +1306,7 @@ impl Builder<'_> {
 
         for (id, phi) in phis {
             env.insert(id, phi);
+            self.function.value_symbols.insert(phi, id);
         }
         self.current_block = exit;
         Ok(())
@@ -1318,6 +1334,7 @@ impl Builder<'_> {
             if let Some(initial) = env.get(name).copied() {
                 let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
                 loop_env.insert(*name, phi);
+                self.function.value_symbols.insert(phi, *name);
                 phis.insert(*name, phi);
             }
         }
@@ -1346,6 +1363,7 @@ impl Builder<'_> {
         if body_exit == DEAD_BLOCK {
             for (name, phi) in phis {
                 env.insert(name, phi);
+                self.function.value_symbols.insert(phi, name);
             }
             self.current_block = exit;
             return Ok(());
@@ -1370,7 +1388,9 @@ impl Builder<'_> {
         }
 
         for (name, phi) in phis {
-            env.insert(name, body_env.get(&name).copied().unwrap_or(phi));
+            let val = body_env.get(&name).copied().unwrap_or(phi);
+            env.insert(name, val);
+            self.function.value_symbols.insert(val, name);
         }
         self.current_block = exit;
         Ok(())
@@ -1431,11 +1451,13 @@ impl Builder<'_> {
             if let Some(initial) = env.get(id).copied() {
                 let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
                 loop_env.insert(*id, phi);
+                self.function.value_symbols.insert(phi, *id);
                 phis.insert(*id, phi);
             }
         }
         let stop_phi = self.emit(Instruction::Phi(vec![(preheader, stop_init)]));
         let index_phi = self.emit(Instruction::Phi(vec![(preheader, start_value)]));
+        self.function.value_symbols.insert(index_phi, symbol_id);
         let step_value = if let Some(step_expr) = step {
             self.lower_expr(step_expr, &loop_env, &loop_types, Some(loop_ty.clone()))?
         } else {
@@ -1539,6 +1561,7 @@ impl Builder<'_> {
         let mut body_env = loop_env.clone();
         let mut body_types = loop_types.clone();
         body_env.insert(symbol_id, index_phi);
+        self.function.value_symbols.insert(index_phi, symbol_id);
         body_types.insert(symbol_id, loop_ty.clone());
         for stmt in body {
             if self.current_block == DEAD_BLOCK {
@@ -1584,6 +1607,7 @@ impl Builder<'_> {
 
         for (id, phi) in phis {
             env.insert(id, phi);
+            self.function.value_symbols.insert(phi, id);
         }
         self.current_block = exit;
         Ok(())
@@ -1632,6 +1656,7 @@ impl Builder<'_> {
                 if let Some(initial) = env.get(id).copied() {
                     let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
                     loop_env.insert(*id, phi);
+                    self.function.value_symbols.insert(phi, *id);
                     phis.insert(*id, phi);
                 }
             }
@@ -1672,11 +1697,14 @@ impl Builder<'_> {
 
             if ids.len() == 1 {
                 body_env.insert(ids[0], element_val);
+                self.function.value_symbols.insert(element_val, ids[0]);
                 body_types.insert(ids[0], *element_ty.clone());
             } else {
                 body_env.insert(ids[0], index_phi);
+                self.function.value_symbols.insert(index_phi, ids[0]);
                 body_types.insert(ids[0], Type::Numeric(NumericType::I32));
                 body_env.insert(ids[1], element_val);
+                self.function.value_symbols.insert(element_val, ids[1]);
                 body_types.insert(ids[1], *element_ty.clone());
             }
 
@@ -1730,6 +1758,7 @@ impl Builder<'_> {
 
             for (name, phi) in phis {
                 env.insert(name, phi);
+                self.function.value_symbols.insert(phi, name);
             }
             self.current_block = exit;
             return Ok(());
@@ -1801,6 +1830,7 @@ impl Builder<'_> {
             if let Some(initial) = env.get(id).copied() {
                 let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
                 loop_env.insert(*id, phi);
+                self.function.value_symbols.insert(phi, *id);
                 phis.insert(*id, phi);
             }
         }
@@ -1808,6 +1838,7 @@ impl Builder<'_> {
         let call = if let Some(name) = direct_iterator_name {
             self.emit(Instruction::Call {
                 name,
+                symbol_id: None,
                 args: Vec::new(),
             })
         } else {
@@ -1848,6 +1879,7 @@ impl Builder<'_> {
                 ty: ty.clone(),
             });
             body_env.insert(*id, value);
+            self.function.value_symbols.insert(value, *id);
             body_types.insert(*id, ty.clone());
         }
         for stmt in body {
@@ -1874,6 +1906,7 @@ impl Builder<'_> {
 
         for (id, phi) in phis {
             env.insert(id, phi);
+            self.function.value_symbols.insert(phi, id);
         }
         self.current_block = exit;
         Ok(())
@@ -2084,11 +2117,13 @@ impl Builder<'_> {
                 let value = if let Some((direct_name, _, _)) = type_method {
                     self.emit(Instruction::Call {
                         name: direct_name,
+                        symbol_id: None,
                         args: lowered_args,
                     })
                 } else if let Some(direct_name) = direct_name {
                     self.emit(Instruction::Call {
                         name: direct_name,
+                        symbol_id: None,
                         args: lowered_args,
                     })
                 } else {
@@ -2410,6 +2445,7 @@ impl Builder<'_> {
                             .collect::<Result<Vec<_>, _>>()?;
                         let value = self.emit(Instruction::Call {
                             name: name.clone(),
+                            symbol_id: Some(*symbol_id),
                             args,
                         });
                         let actual = self.infer_expr_type(expr, types, None)?;
@@ -2428,6 +2464,7 @@ impl Builder<'_> {
                         .collect::<Result<Vec<_>, _>>()?;
                     let value = self.emit(Instruction::Call {
                         name: direct_name,
+                        symbol_id: None,
                         args,
                     });
                     let actual = self.infer_expr_type(expr, types, None)?;
@@ -2696,6 +2733,8 @@ impl Builder<'_> {
             blocks: BTreeMap::new(),
             next_value: 0,
             capture_count,
+            value_symbols: BTreeMap::new(),
+            symbol_id: function.symbol_id,
         };
         lifted.blocks.insert(
             lifted.entry,
@@ -2725,6 +2764,7 @@ impl Builder<'_> {
                 .instructions
                 .push((value, Instruction::Param(index)));
             nested_env.insert(symbol_id, value);
+            lifted.value_symbols.insert(value, symbol_id);
             // If the lifted param is an array cell for a captured variable, expose
             // the inner element type within the nested function's type map so that
             // expressions using the name are treated as the element type during lowering.
@@ -2742,6 +2782,7 @@ impl Builder<'_> {
                 .instructions
                 .push((value, Instruction::Param(captures_count + index)));
             nested_env.insert(symbol_id, value);
+            lifted.value_symbols.insert(value, symbol_id);
             nested_types.insert(symbol_id, param.ty.clone());
         }
 
@@ -2799,6 +2840,7 @@ impl Builder<'_> {
                 return_type: return_ty.clone(),
             });
             nested_env.insert(symbol_id, self_callee);
+            nested.function.value_symbols.insert(self_callee, symbol_id);
             nested_types.insert(
                 symbol_id,
                 Type::Function {

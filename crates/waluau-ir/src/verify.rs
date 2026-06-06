@@ -144,7 +144,7 @@ fn verify_function(
                     }
                     crate::lower::require_numeric_cast(from.clone(), to.clone())?;
                 }
-                Instruction::Call { name, args } => {
+                Instruction::Call { name, args, .. } => {
                     let (param_types, _) = signatures
                         .get(name)
                         .ok_or_else(|| Diagnostic::new(format!("unknown function '{}'", name)))?;
