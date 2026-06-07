@@ -1234,6 +1234,18 @@ fn parses_require_as_a_dedicated_node() {
 }
 
 #[test]
+fn parses_require_with_string_sugar() {
+    let source = r#"
+        local add: (i32, i32) -> i32 = require "./add"
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let waluau_ast::Stmt::Let { value, .. } = &program.top_level[0] else {
+        panic!("expected a let binding");
+    };
+    assert!(matches!(value, waluau_ast::Expr::Require(path, _) if path == "./add"));
+}
+
+#[test]
 fn parses_string_literals_as_values() {
     let source = r#"local x: string = "ok""#;
     let program = parse(source).expect("parse should succeed");
