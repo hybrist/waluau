@@ -420,7 +420,9 @@ fn collect_nested_from_expr(expr: &Expr, out: &mut HashSet<SymbolId>) {
             }
         }
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => collect_nested_from_expr(expr, out),
-        Expr::IsVariant { expr, .. } => collect_nested_from_expr(expr, out),
+        Expr::IsVariant { expr, .. } => {
+            collect_nested_from_expr(expr, out)
+        }
         Expr::Binary { left, right, .. } => {
             collect_nested_from_expr(left, out);
             collect_nested_from_expr(right, out);
@@ -610,7 +612,9 @@ fn collect_free_names_in_expr(expr: &Expr, bound: &HashSet<SymbolId>, out: &mut 
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => {
             collect_free_names_in_expr(expr, bound, out)
         }
-        Expr::IsVariant { expr, .. } => collect_free_names_in_expr(expr, bound, out),
+        Expr::IsVariant { expr, .. } => {
+            collect_free_names_in_expr(expr, bound, out)
+        }
         Expr::Binary { left, right, .. } => {
             collect_free_names_in_expr(left, bound, out);
             collect_free_names_in_expr(right, bound, out);

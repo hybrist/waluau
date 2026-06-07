@@ -1736,6 +1736,62 @@ fn type_checks_tagged_union_narrowing_and_value_access() {
 }
 
 #[test]
+fn type_checks_tagged_union_pattern_match_binding() {
+    let source = r#"
+        type Either = Left(i32) | Right(f64)
+
+        function left(either: Either): i32
+            if Left(value) = either then
+                return value
+            end
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_tagged_union_pattern_match_binding_outside_then_branch() {
+    let source = r#"
+        type Either = Left(i32) | Right(f64)
+
+        function left(either: Either): i32
+            if Left(value) = either then
+                return 0
+            end
+            return value
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("binding should not escape the then branch");
+    assert!(
+        error.to_string().contains("value"),
+        "error should mention 'value', got: {error}"
+    );
+}
+
+#[test]
+fn rejects_tagged_union_pattern_match_for_unknown_variant() {
+    let source = r#"
+        type Either = Left(i32) | Right(f64)
+
+        function left(either: Either): i32
+            if Up(value) = either then
+                return value
+            end
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("Up is not a variant of Either");
+    assert!(
+        error.to_string().contains("Up"),
+        "error should mention the unknown variant 'Up', got: {error}"
+    );
+}
+
+#[test]
 fn coroutine_resume_returns_tagged_union() {
     let source = r#"
         function run_job(): i32
