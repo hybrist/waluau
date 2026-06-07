@@ -1626,6 +1626,27 @@ fn coroutine_resume_returns_tagged_union() {
 }
 
 #[test]
+fn coroutine_resume_assigns_to_named_tagged_union_alias() {
+    let source = r#"
+        type Result = Yielded(unknown) | Finished(i32) | Error(string)
+
+        function run_job(): i32
+            local job: () -> i32 = function(): i32
+                return 7
+            end
+            local co: thread = coroutine.create(job)
+            local r: Result = coroutine.resume(co)
+            if r is Finished then
+                return r.value
+            end
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
 fn rejects_tagged_union_value_access_without_narrowing() {
     let source = r#"
         type Resume<R> = Yielded(unknown) | Finished(R) | Error(string)
