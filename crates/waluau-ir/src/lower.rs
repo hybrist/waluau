@@ -594,6 +594,18 @@ fn erase_type_opaque_types(ty: &Type) -> Type {
     }
 }
 
+/// `TaggedUnion`/`TaggedVariant` source-level types are represented at the IR
+/// level by the canonical `{ tag: i32, value: unknown }` record. Use this
+/// whenever a source-level type ends up annotating an IR instruction (array
+/// cells, casts, etc.) so the annotation matches the value's actual runtime
+/// representation that `verify` checks against.
+fn to_runtime_type(ty: &Type) -> Type {
+    match ty {
+        Type::TaggedUnion(_) | Type::TaggedVariant(_) => Type::canonical_tagged_union_record(),
+        other => other.clone(),
+    }
+}
+
 pub(crate) fn build_function(
     function: &AstFunction,
     signatures: &HashMap<SymbolId, (Vec<Type>, Type)>,
@@ -653,7 +665,7 @@ pub(crate) fn build_function(
             block_mut(&mut out, entry).instructions.push((
                 cell,
                 Instruction::ArrayNew {
-                    element_ty: param.ty.clone(),
+                    element_ty: to_runtime_type(&param.ty),
                     elements: vec![value],
                 },
             ));
@@ -933,7 +945,7 @@ impl Builder<'_> {
                 // array cell so closures can observe and mutate the same storage location.
                 if self.cell_names.contains(&symbol_id) {
                     let cell = self.emit(Instruction::ArrayNew {
-                        element_ty: inferred_ty.clone(),
+                        element_ty: to_runtime_type(&inferred_ty),
                         elements: vec![value],
                     });
                     env.insert(symbol_id, cell);
@@ -969,7 +981,7 @@ impl Builder<'_> {
                                 array: cell,
                                 index: index0,
                                 value: rhs,
-                                element_ty: ty,
+                                element_ty: to_runtime_type(&ty),
                             });
                         }
                         AssignOp::Add => {
@@ -2298,7 +2310,7 @@ impl Builder<'_> {
                         let val = self.emit(Instruction::ArrayGet {
                             array: value,
                             index: index0,
-                            element_ty: actual.clone(),
+                            element_ty: to_runtime_type(&actual),
                         });
                         self.coerce_value(val, actual, expected)?
                     } else {
@@ -3071,9 +3083,10 @@ impl Builder<'_> {
         for (symbol_id, ty) in &captures {
             // Captured variables are passed as 1-element array "cells" to nested
             // (lifted) functions so they can observe/mutate shared storage.
-            lifted
-                .params
-                .push((format!("capture_{}", symbol_id.0), Type::Array(Box::new(ty.clone()))));
+            lifted.params.push((
+                format!("capture_{}", symbol_id.0),
+                Type::Array(Box::new(to_runtime_type(ty))),
+            ));
         }
         for param in &function.params {
             lifted.params.push((param.name.clone(), param.ty.clone()));
@@ -3672,7 +3685,10 @@ impl Builder<'_> {
                 } else {
                     Ok(self.emit(Instruction::Cast {
                         value,
-                        from: actual,
+                        // The value's IR-level type is the canonical record for
+                        // TaggedUnion/TaggedVariant; reflect that in the cast so it
+                        // matches what `verify` infers for `value`.
+                        from: to_runtime_type(&actual),
                         to: target,
                     }))
                 }

@@ -1471,3 +1471,26 @@ fn includes_call_symbol_ids_in_ir_dump() {
         dump
     );
 }
+#[test]
+fn lowers_captured_tagged_union_parameter_narrowing() {
+    // Capturing a tagged-union-typed parameter in a closure stores it in an
+    // array "cell"; the cell's element type must be the canonical
+    // `{ tag: i32, value: unknown }` record (the IR-level runtime
+    // representation) so that `is Variant`/`.value` lowering on the value read
+    // back from the cell can find the `tag`/`value` fields.
+    let source = r#"
+        function check(r: Yielded(unknown) | Finished(i32) | Error(string)): i32
+            local f = function(): i32
+                if r is Finished then
+                    return r.value
+                else
+                    return 0
+                end
+            end
+            return f()
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+}
