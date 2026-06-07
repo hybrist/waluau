@@ -43,6 +43,49 @@ fn narrowed_variant_scopes(
     (then_scope, else_scope)
 }
 
+fn nil_test_subject(condition: &Expr) -> Option<(&str, bool)> {
+    let Expr::Binary {
+        op, left, right, ..
+    } = condition
+    else {
+        return None;
+    };
+    let non_null_when_true = match op {
+        waluau_ast::BinaryOp::Eq => false,
+        waluau_ast::BinaryOp::NotEq => true,
+        _ => return None,
+    };
+    match (left.as_ref(), right.as_ref()) {
+        (Expr::Name(name, _, _), Expr::Nil(..)) | (Expr::Nil(..), Expr::Name(name, _, _)) => {
+            Some((name, non_null_when_true))
+        }
+        _ => None,
+    }
+}
+
+fn narrowed_scopes(
+    condition: &Expr,
+    vars: &HashMap<String, Binding>,
+) -> (HashMap<String, Binding>, HashMap<String, Binding>) {
+    let (mut then_scope, mut else_scope) = narrowed_variant_scopes(condition, vars);
+    let Some((name, non_null_when_true)) = nil_test_subject(condition) else {
+        return (then_scope, else_scope);
+    };
+    let Some(binding) = vars.get(name) else {
+        return (then_scope, else_scope);
+    };
+    let Some(inner) = binding.ty.nullable_inner() else {
+        return (then_scope, else_scope);
+    };
+    let target = if non_null_when_true {
+        &mut then_scope
+    } else {
+        &mut else_scope
+    };
+    target.insert(name.to_string(), binding_for(inner, binding.rebindability));
+    (then_scope, else_scope)
+}
+
 pub(super) fn check_function(
     function: &Function,
     fn_signatures: &HashMap<String, FnSignature>,
@@ -249,7 +292,7 @@ pub(super) fn collect_return_types(
                 if condition_ty != Type::Bool {
                     return Err(Diagnostic::new("if condition must be bool"));
                 }
-                let (then_scope, else_scope) = narrowed_variant_scopes(condition, &scope);
+                let (then_scope, else_scope) = narrowed_scopes(condition, &scope);
                 collect_return_types(
                     then_body,
                     &then_scope,
@@ -804,7 +847,7 @@ pub(super) fn check_stmt(
             if condition_ty != Type::Bool {
                 return Err(Diagnostic::new("if condition must be bool"));
             }
-            let (mut then_scope, mut else_scope) = narrowed_variant_scopes(condition, vars);
+            let (mut then_scope, mut else_scope) = narrowed_scopes(condition, vars);
             let mut then_returns = false;
             let mut else_returns = false;
             for stmt in then_body {
@@ -1261,6 +1304,7 @@ fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
         Expr::Name(..)
         | Expr::Number(..)
         | Expr::Bool(..)
+        | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
         | Expr::Require(..) => false,
@@ -1353,6 +1397,7 @@ fn seal_record_locals_in_expr(expr: &Expr, vars: &mut HashMap<String, Binding>) 
         Expr::Function(_)
         | Expr::Number(..)
         | Expr::Bool(..)
+        | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
         | Expr::Require(..) => {}

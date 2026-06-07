@@ -8,6 +8,7 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
             .get(name)
             .cloned()
             .unwrap_or_else(|| Type::TypeParam(name.clone())),
+        Type::Nullable(inner) => Type::Nullable(Box::new(substitute_type(inner, subst))),
         Type::Array(inner) => Type::Array(Box::new(substitute_type(inner, subst))),
         Type::Multi(types) => {
             Type::Multi(types.iter().map(|ty| substitute_type(ty, subst)).collect())
@@ -38,6 +39,7 @@ fn contains_type_param(ty: &Type) -> bool {
             .any(|variant| contains_type_param(variant.payload.as_ref())),
         Type::TypeParam(_) => true,
         Type::Opaque { ty, .. } => contains_type_param(ty.as_ref()),
+        Type::Nullable(inner) => contains_type_param(inner.as_ref()),
         Type::Array(inner) => contains_type_param(inner.as_ref()),
         Type::Record(fields) => fields.values().any(contains_type_param),
         Type::Function {
@@ -676,6 +678,7 @@ impl<'a> Monomorphizer<'a> {
         Ok(match expr {
             Expr::Number(..)
             | Expr::Bool(..)
+            | Expr::Nil(..)
             | Expr::String(..)
             | Expr::Bytes(..)
             | Expr::Require(..) => expr.clone(),
@@ -1207,6 +1210,7 @@ impl<'a> Monomorphizer<'a> {
         match expr {
             Expr::Number(..) => Ok(Type::number()),
             Expr::Bool(..) => Ok(Type::Bool),
+            Expr::Nil(..) => Ok(Type::Nil),
             Expr::String(..) => Ok(Type::String),
             Expr::Bytes(..) => Ok(Type::Bytes),
             Expr::Require(..) => Ok(Type::Unknown),

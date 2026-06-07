@@ -271,6 +271,7 @@ fn collect_expr_captures(
         Expr::Name(_, None, _)
         | Expr::Number(..)
         | Expr::Bool(..)
+        | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
         | Expr::Require(..) => {}
@@ -428,6 +429,7 @@ fn collect_nested_from_expr(expr: &Expr, out: &mut HashSet<SymbolId>) {
         Expr::Name(..)
         | Expr::Number(..)
         | Expr::Bool(..)
+        | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
         | Expr::Require(..) => {}
@@ -607,6 +609,7 @@ fn collect_free_names_in_expr(expr: &Expr, bound: &HashSet<SymbolId>, out: &mut 
         Expr::Name(_, None, _)
         | Expr::Number(..)
         | Expr::Bool(..)
+        | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
         | Expr::Require(..) => {}

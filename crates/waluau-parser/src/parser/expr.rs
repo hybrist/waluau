@@ -143,6 +143,7 @@ impl Parser {
             };
             let op = match next.kind {
                 TokenKind::EqualEqual => BinaryOp::Eq,
+                TokenKind::TildeEqual => BinaryOp::NotEq,
                 TokenKind::Less => BinaryOp::Less,
                 TokenKind::Greater => BinaryOp::Greater,
                 _ => break,
@@ -394,6 +395,7 @@ impl Parser {
             TokenKind::Number(value) => Ok(Expr::Number(NumberLiteral { raw: value }, span)),
             TokenKind::True => Ok(Expr::Bool(true, span)),
             TokenKind::False => Ok(Expr::Bool(false, span)),
+            TokenKind::Nil => Ok(Expr::Nil(span)),
             TokenKind::Identifier(name) => {
                 // `require("...")` is parsed as a dedicated node so the
                 // linker can resolve module ids before IR lowering.

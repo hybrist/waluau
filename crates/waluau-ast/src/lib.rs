@@ -129,6 +129,8 @@ pub enum Type {
     String,
     Bytes,
     Extern,
+    Nil,
+    Nullable(Box<Type>),
     TaggedVariant(TaggedVariant),
     TaggedUnion(Vec<TaggedVariant>),
     Named {
@@ -183,6 +185,13 @@ impl Type {
             Self::Record(fields) => fields.get(name).cloned(),
             Self::Opaque { ty, .. } => ty.record_field(name),
             Self::TaggedVariant(variant) if name == "value" => Some((*variant.payload).clone()),
+            _ => None,
+        }
+    }
+
+    pub fn nullable_inner(&self) -> Option<Type> {
+        match self {
+            Self::Nullable(inner) => Some(*inner.clone()),
             _ => None,
         }
     }
@@ -282,6 +291,8 @@ impl std::fmt::Display for Type {
             Self::String => f.write_str("string"),
             Self::Bytes => f.write_str("bytes"),
             Self::Extern => f.write_str("extern"),
+            Self::Nil => f.write_str("nil"),
+            Self::Nullable(inner) => write!(f, "{inner}?"),
             Self::TaggedVariant(variant) => write!(f, "{}({})", variant.tag, variant.payload),
             Self::TaggedUnion(variants) => {
                 for (index, variant) in variants.iter().enumerate() {
@@ -441,6 +452,7 @@ pub enum Rebindability {
 pub enum Expr {
     Number(NumberLiteral, Option<Span>),
     Bool(bool, Option<Span>),
+    Nil(Option<Span>),
     String(String, Option<Span>),
     Bytes(Vec<u8>, Option<Span>),
     Name(String, Option<SymbolId>, Option<Span>),
@@ -523,6 +535,7 @@ impl Expr {
         match self {
             Expr::Number(_, span) => *span,
             Expr::Bool(_, span) => *span,
+            Expr::Nil(span) => *span,
             Expr::String(_, span) => *span,
             Expr::Bytes(_, span) => *span,
             Expr::Name(_, _, span) => *span,
@@ -558,6 +571,7 @@ pub enum BinaryOp {
     FloorDiv,
     Mod,
     Eq,
+    NotEq,
     Less,
     Greater,
     And,
@@ -882,6 +896,7 @@ impl Resolver {
             }
             Expr::Number(..)
             | Expr::Bool(..)
+            | Expr::Nil(..)
             | Expr::String(..)
             | Expr::Bytes(..)
             | Expr::Require(..) => {}

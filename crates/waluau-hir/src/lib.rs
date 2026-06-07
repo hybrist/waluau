@@ -34,6 +34,20 @@ fn binding_for(ty: Type, rebindability: Rebindability) -> Binding {
     }
 }
 
+fn is_extern_opaque_type(ty: &Type) -> bool {
+    matches!(ty, Type::Opaque { ty, .. } if ty.as_ref() == &Type::Extern)
+}
+
+fn require_nullable_extern_type(ty: &Type) -> Result<(), Diagnostic> {
+    if is_extern_opaque_type(ty) {
+        Ok(())
+    } else {
+        Err(Diagnostic::new(format!(
+            "nullable modifier '?' is only supported on extern opaque types, got {ty}"
+        )))
+    }
+}
+
 #[derive(Clone)]
 struct GenericTypeDecl {
     type_params: Vec<String>,
@@ -66,6 +80,7 @@ fn substitute_type_params(ty: &Type, subst: &HashMap<String, Type>) -> Type {
             name: name.clone(),
             ty: Box::new(substitute_type_params(ty, subst)),
         },
+        Type::Nullable(inner) => Type::Nullable(Box::new(substitute_type_params(inner, subst))),
         Type::TypeParam(name) => subst
             .get(name)
             .cloned()
@@ -248,6 +263,18 @@ fn resolve_type_refs_allowing_forward_refs(
                 stack,
             )?),
         }),
+        Type::Nullable(inner) => {
+            let inner = resolve_type_refs_allowing_forward_refs(
+                inner,
+                active_type_params,
+                raw_opaque,
+                generic,
+                opaque_cache,
+                stack,
+            )?;
+            require_nullable_extern_type(&inner)?;
+            Ok(Type::Nullable(Box::new(inner)))
+        }
         Type::Array(inner) => Ok(Type::Array(Box::new(
             resolve_type_refs_allowing_forward_refs(
                 inner,
@@ -572,6 +599,19 @@ fn resolve_type_refs_fixpoint(
                 fixpoint_mode,
             )?),
         }),
+        Type::Nullable(inner) => {
+            let inner = resolve_type_refs_fixpoint(
+                inner,
+                active_type_params,
+                raw_opaque,
+                generic,
+                opaque_cache,
+                stack,
+                fixpoint_mode,
+            )?;
+            require_nullable_extern_type(&inner)?;
+            Ok(Type::Nullable(Box::new(inner)))
+        }
         Type::Array(inner) => Ok(Type::Array(Box::new(resolve_type_refs_fixpoint(
             inner,
             active_type_params,
@@ -1068,6 +1108,7 @@ fn resolve_expr_type_refs(
         }
         Expr::Number(..)
         | Expr::Bool(..)
+        | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
         | Expr::Name(..)
@@ -1435,6 +1476,7 @@ fn resolve_expr_implicit_self(
         Expr::Name(..)
         | Expr::Number(..)
         | Expr::Bool(..)
+        | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
         | Expr::Require(..)

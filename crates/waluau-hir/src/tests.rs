@@ -254,6 +254,33 @@ fn extern_type_aliases_are_nominal_and_lower_to_extern() {
 }
 
 #[test]
+fn nullable_extern_aliases_narrow_after_nil_check() {
+    let source = r#"
+        type Element = extern
+
+        function take(value: Element): i32
+            return 20
+        end
+
+        function score(value: Element?): i32
+            if value ~= nil then
+                return take(value)
+            end
+            return 10
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+
+    assert!(matches!(
+        &typed.functions[1].params[0].ty,
+        Type::Nullable(inner)
+            if matches!(inner.as_ref(), Type::Opaque { name, ty } if name == "Element" && ty.as_ref() == &Type::Extern)
+    ));
+}
+
+#[test]
 fn distinct_extern_type_aliases_do_not_implicitly_convert() {
     let source = r#"
         type Element = extern

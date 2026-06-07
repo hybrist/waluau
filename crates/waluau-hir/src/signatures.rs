@@ -77,6 +77,7 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
             name: name.clone(),
             ty: Box::new(substitute_type(ty, subst)),
         },
+        Type::Nullable(inner) => Type::Nullable(Box::new(substitute_type(inner, subst))),
         Type::Array(inner) => Type::Array(Box::new(substitute_type(inner, subst))),
         Type::Record(fields) => Type::Record(
             fields
@@ -146,6 +147,7 @@ pub(super) fn validate_type_in_scope(
             Ok(())
         }
         Type::Opaque { ty, .. } => validate_type_in_scope(ty, allowed),
+        Type::Nullable(inner) => validate_type_in_scope(inner, allowed),
         Type::Array(inner) => validate_type_in_scope(inner, allowed),
         Type::Record(fields) => {
             for ty in fields.values() {
@@ -179,6 +181,7 @@ fn is_valid_type_argument(ty: &Type, active_type_params: &HashSet<String>) -> bo
             .all(|variant| is_valid_type_argument(variant.payload.as_ref(), active_type_params)),
         Type::TypeParam(name) => active_type_params.contains(name),
         Type::Opaque { ty, .. } => is_valid_type_argument(ty, active_type_params),
+        Type::Nullable(inner) => is_valid_type_argument(inner, active_type_params),
         Type::Array(inner) => is_valid_type_argument(inner, active_type_params),
         Type::Record(fields) => fields
             .values()
@@ -209,6 +212,7 @@ fn contains_type_param(ty: &Type) -> bool {
             .any(|variant| contains_type_param(variant.payload.as_ref())),
         Type::TypeParam(_) => true,
         Type::Opaque { ty, .. } => contains_type_param(ty.as_ref()),
+        Type::Nullable(inner) => contains_type_param(inner.as_ref()),
         Type::Array(inner) => contains_type_param(inner.as_ref()),
         Type::Record(fields) => fields.values().any(contains_type_param),
         Type::Function {
@@ -321,6 +325,9 @@ fn unify(
             unify(p_ty.as_ref(), a_ty.as_ref(), subst)
         }
         (Type::Array(p_inner), Type::Array(a_inner)) => {
+            unify(p_inner.as_ref(), a_inner.as_ref(), subst)
+        }
+        (Type::Nullable(p_inner), Type::Nullable(a_inner)) => {
             unify(p_inner.as_ref(), a_inner.as_ref(), subst)
         }
         (Type::Record(p_fields), Type::Record(a_fields)) => {
