@@ -1,0 +1,17 @@
+{
+  "memberRenames": {
+    "appendChild": "append_child",
+    "className": "class_name",
+    "createElement": "create_element",
+    "getElementById": "get_element_by_id",
+    "innerText": "inner_text",
+    "nodeName": "node_name",
+    "querySelector": "query_selector",
+    "textContent": "text_content"
+  },
+  "parameterRenames": {
+    "Document.createElement.localName": "tag_name",
+    "Document.getElementById.elementId": "element_id"
+  },
+  "signatureOverrides": {}
+}

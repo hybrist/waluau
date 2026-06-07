@@ -1,0 +1,128 @@
+{
+  "source": "tools/dom-idl/input/dom-first-slice.webidl",
+  "inheritance": [
+    {
+      "interface": "EventTarget",
+      "parent": null
+    },
+    {
+      "interface": "Node",
+      "parent": "EventTarget"
+    },
+    {
+      "interface": "Document",
+      "parent": "Node"
+    },
+    {
+      "interface": "Element",
+      "parent": "Node"
+    },
+    {
+      "interface": "HTMLElement",
+      "parent": "Element"
+    },
+    {
+      "interface": "HTMLHeadingElement",
+      "parent": "HTMLElement"
+    }
+  ],
+  "emittedMembers": [
+    {
+      "interface": "Node",
+      "kind": "attribute",
+      "idlName": "nodeName",
+      "emittedName": "node_name",
+      "type": "string",
+      "readonly": true
+    },
+    {
+      "interface": "Node",
+      "kind": "attribute",
+      "idlName": "textContent",
+      "emittedName": "text_content",
+      "type": "string",
+      "readonly": false
+    },
+    {
+      "interface": "Node",
+      "kind": "operation",
+      "idlName": "appendChild",
+      "emittedName": "append_child",
+      "params": [
+        "node: Node"
+      ],
+      "returnType": "Node"
+    },
+    {
+      "interface": "Document",
+      "kind": "operation",
+      "idlName": "createElement",
+      "emittedName": "create_element",
+      "params": [
+        "tag_name: string"
+      ],
+      "returnType": "Element"
+    },
+    {
+      "interface": "Document",
+      "kind": "operation",
+      "idlName": "getElementById",
+      "emittedName": "get_element_by_id",
+      "params": [
+        "element_id: string"
+      ],
+      "returnType": "Element?"
+    },
+    {
+      "interface": "Document",
+      "kind": "operation",
+      "idlName": "querySelector",
+      "emittedName": "query_selector",
+      "params": [
+        "selectors: string"
+      ],
+      "returnType": "Element?"
+    },
+    {
+      "interface": "Element",
+      "kind": "attribute",
+      "idlName": "id",
+      "emittedName": "id",
+      "type": "string",
+      "readonly": false
+    },
+    {
+      "interface": "Element",
+      "kind": "attribute",
+      "idlName": "className",
+      "emittedName": "class_name",
+      "type": "string",
+      "readonly": false
+    },
+    {
+      "interface": "Element",
+      "kind": "operation",
+      "idlName": "querySelector",
+      "emittedName": "query_selector",
+      "params": [
+        "selectors: string"
+      ],
+      "returnType": "Element?"
+    },
+    {
+      "interface": "HTMLElement",
+      "kind": "attribute",
+      "idlName": "innerText",
+      "emittedName": "inner_text",
+      "type": "string",
+      "readonly": false
+    }
+  ],
+  "skippedMembers": [
+    {
+      "interface": "EventTarget",
+      "member": "addEventListener",
+      "reason": "callback: unsupported Web IDL type EventListener"
+    }
+  ]
+}
