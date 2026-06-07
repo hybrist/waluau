@@ -634,6 +634,7 @@ fn rejects_non_bool_branch_condition() {
         functions: vec![function],
         declared_imports: Vec::new(),
         start: None,
+        tag_ids: std::collections::BTreeMap::new(),
     })
     .expect_err("expected verifier to reject non-bool branch");
     assert!(err.to_string().contains("branch condition"));
@@ -669,6 +670,7 @@ fn rejects_return_type_mismatch() {
         functions: vec![function],
         declared_imports: Vec::new(),
         start: None,
+        tag_ids: std::collections::BTreeMap::new(),
     })
     .expect_err("expected verifier to reject return type mismatch");
     assert!(err.to_string().contains("return in block"));
@@ -782,6 +784,7 @@ fn rejects_phi_predecessor_order_mismatch() {
         functions: vec![function],
         declared_imports: Vec::new(),
         start: None,
+        tag_ids: std::collections::BTreeMap::new(),
     })
     .expect_err("expected verifier to reject phi predecessor ordering");
     assert!(err.to_string().contains("predecessor order mismatch"));
@@ -914,6 +917,7 @@ fn verifies_loop_with_break_and_continue() {
         functions,
         declared_imports: Vec::new(),
         start: None,
+        tag_ids: std::collections::BTreeMap::new(),
     };
 
     let function = &module.functions[0];
