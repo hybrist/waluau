@@ -4,6 +4,7 @@ import {
   compileAndInstantiateWithDom,
   compileAndInstantiateWithExports,
 } from '../src/runner.js';
+import { conformanceIncludePaths } from '../../../tools/conformance/includes.js';
 
 const conformanceModules = import.meta.glob('../../../conformance/**/*.walu', {
   eager: true,
@@ -17,31 +18,13 @@ const includeModules = import.meta.glob('../../../{builtins,externs}/**/*.walu',
   import: 'default',
 });
 
-const INCLUDE_DIRECTIVE = /^--\s*conformance:\s*include=(.+)$/gm;
-
-function cleanPath(path) {
-  const parts = [];
-  for (const part of path.split('/')) {
-    if (!part || part === '.') continue;
-    if (part === '..') parts.pop();
-    else parts.push(part);
-  }
-  return `/${parts.join('/')}`;
-}
-
-function resolveIncludePath(testName, includePath) {
-  const baseDir = testName.includes('/') ? testName.slice(0, testName.lastIndexOf('/')) : '';
-  return cleanPath(`/conformance/${baseDir}/${includePath}`);
-}
-
 function sourceForCase(testCase) {
   const includes = [];
-  for (const match of testCase.source.matchAll(INCLUDE_DIRECTIVE)) {
-    const resolved = resolveIncludePath(testCase.name, match[1].trim());
+  for (const resolved of conformanceIncludePaths(testCase.name, testCase.source)) {
     const globKey = `../../..${resolved}`;
     const source = includeModules[globKey];
     if (source === undefined) {
-      throw new Error(`Unknown conformance include ${match[1].trim()} resolved to ${resolved}`);
+      throw new Error(`Unknown conformance include resolved to ${resolved}`);
     }
     includes.push(source);
   }
