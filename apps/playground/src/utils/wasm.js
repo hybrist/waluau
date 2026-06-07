@@ -1,7 +1,7 @@
 export const WALUAU_STRING_CONSTANTS_MODULE = 'string_constants';
 export const WALUAU_IMPORT_MODULE = 'waluau';
 // Must match waluau_codegen_wasm::host::HOST_IMPORT_COUNT
-export const WALUAU_HOST_IMPORT_COUNT = 16;
+export const WALUAU_HOST_IMPORT_COUNT = 18;
 
 const DOM_IMPORT_NAMES = new Set([
   'dom_append_child',
@@ -307,6 +307,22 @@ export function buildWaluauImports(wasmBuffer, initLogger, options = {}) {
     if (value instanceof Uint8Array) return value;
     throw new Error(`Expected Uint8Array bytes value, got ${Object.prototype.toString.call(value)}`);
   };
+  const externIs = (value, typeName) => {
+    const name = String(typeName);
+    if (name === 'Node') {
+      return typeof Node !== 'undefined' && value instanceof Node ? 1 : 0;
+    }
+    if (name === 'Element') {
+      return typeof Element !== 'undefined' && value instanceof Element ? 1 : 0;
+    }
+    if (name === 'HTMLElement') {
+      return typeof HTMLElement !== 'undefined' && value instanceof HTMLElement ? 1 : 0;
+    }
+    if (name === 'HTMLHeadingElement') {
+      return typeof HTMLHeadingElement !== 'undefined' && value instanceof HTMLHeadingElement ? 1 : 0;
+    }
+    throw new Error(`Unsupported extern cast target: ${name}`);
+  };
   const waluauImports = new Proxy({}, {
     get(_target, prop) {
       const name = String(prop);
@@ -326,6 +342,9 @@ export function buildWaluauImports(wasmBuffer, initLogger, options = {}) {
       }
       if (Object.prototype.hasOwnProperty.call(domHost, name)) {
         return domHost[name];
+      }
+      if (name === 'extern_is') {
+        return externIs;
       }
       if (name === 'bytes_literal') {
         return (index) => {

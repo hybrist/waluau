@@ -8,8 +8,8 @@ use super::builtins::{
     infer_coroutine_builtin_call, infer_math_builtin_call, infer_tostring_builtin_call,
 };
 use super::numeric::{
-    coerce_type, common_element_type, infer_numeric_common_type, require_bool_pair,
-    require_numeric_cast, resolve_number_literal,
+    coerce_type, common_element_type, infer_numeric_common_type, is_extern_subtype_of,
+    require_bool_pair, require_numeric_cast, resolve_number_literal,
 };
 use super::signatures::{
     FnSignature, generic_diagnostic, infer_generic_call, infer_generic_function_expr_call,
@@ -39,6 +39,9 @@ fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
     if expected == actual {
         return true;
     }
+    if is_extern_subtype_of(actual, expected) {
+        return true;
+    }
     match (expected, actual) {
         (Type::Record(expected_fields), Type::Record(actual_fields)) => expected_fields
             .iter()
@@ -66,16 +69,32 @@ fn type_method_signature<'a>(
     name: &str,
     fn_signatures: &'a HashMap<String, FnSignature>,
 ) -> Option<(&'a FnSignature, String)> {
-    let Type::Opaque {
+    if let Type::Opaque {
         name: type_name, ..
     } = receiver_ty
-    else {
-        return None;
-    };
-    let method_name = method_signature_name(type_name, name);
-    fn_signatures
-        .get(&method_name)
-        .map(|signature| (signature, method_name))
+    {
+        let method_name = method_signature_name(type_name, name);
+        if let Some(signature) = fn_signatures.get(&method_name) {
+            return Some((signature, method_name));
+        }
+    }
+
+    let suffix = format!(".{name}");
+    let mut matches = fn_signatures
+        .iter()
+        .filter_map(|(method_name, signature)| {
+            if !method_name.ends_with(&suffix) {
+                return None;
+            }
+            let FnSignature::Mono { params, .. } = signature else {
+                return None;
+            };
+            let receiver_param = params.first()?;
+            method_receiver_matches(receiver_param, receiver_ty)
+                .then_some((signature, method_name.clone()))
+        })
+        .collect::<Vec<_>>();
+    (matches.len() == 1).then(|| matches.remove(0))
 }
 
 fn type_property_getter_signature<'a>(
@@ -178,7 +197,9 @@ pub(super) fn infer_expr(
                     Type::Unit => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::String => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Bytes => Err(Diagnostic::new("unary '-' requires a numeric operand")),
-                    Type::Extern => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                    Type::Extern | Type::ExternSubtype(_) => {
+                        Err(Diagnostic::new("unary '-' requires a numeric operand"))
+                    }
                     Type::Nil | Type::Nullable(_) => {
                         Err(Diagnostic::new("unary '-' requires a numeric operand"))
                     }

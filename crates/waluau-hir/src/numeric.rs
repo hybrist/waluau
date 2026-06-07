@@ -163,6 +163,9 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             Type::Nullable(actual_inner) if actual_inner == expected_inner => {
                 Ok(Type::Nullable(expected_inner))
             }
+            other if is_extern_subtype_of(&other, &expected_inner) => {
+                Ok(Type::Nullable(expected_inner))
+            }
             other if other == *expected_inner => Ok(Type::Nullable(expected_inner)),
             other => Err(Diagnostic::new(format!(
                 "cannot implicitly convert {other} to {}?",
@@ -238,11 +241,16 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             ty: expected_ty,
         }) => match actual {
             Type::Opaque {
-                name: actual_name, ..
-            } if actual_name == expected_name => Ok(Type::Opaque {
-                name: expected_name,
-                ty: expected_ty,
-            }),
+                name: actual_name,
+                ty: actual_ty,
+            } if actual_name == expected_name
+                || extern_opaque_is_subtype(&actual_name, actual_ty.as_ref(), &expected_name) =>
+            {
+                Ok(Type::Opaque {
+                    name: expected_name,
+                    ty: expected_ty,
+                })
+            }
             // A tagged-union constructor produces a TaggedVariant; allow it to be
             // assigned to an Opaque alias whose inner type is a TaggedUnion or TaggedVariant.
             Type::TaggedVariant(ref actual_variant) => match expected_ty.as_ref() {
@@ -341,7 +349,7 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             Type::Bytes => Err(Diagnostic::new(format!(
                 "cannot implicitly convert bytes to {expected_numeric}",
             ))),
-            Type::Extern => Err(Diagnostic::new(format!(
+            Type::Extern | Type::ExternSubtype(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert extern to {expected_numeric}",
             ))),
             Type::Nil => Err(Diagnostic::new(format!(
@@ -393,6 +401,47 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
     }
 }
 
+pub(super) fn is_extern_subtype_of(actual: &Type, expected: &Type) -> bool {
+    if actual == expected {
+        return true;
+    }
+    let (
+        Type::Opaque {
+            name: actual_name,
+            ty: actual_ty,
+        },
+        Type::Opaque {
+            name: expected_name,
+            ..
+        },
+    ) = (actual, expected)
+    else {
+        return false;
+    };
+    extern_opaque_is_subtype(actual_name, actual_ty, expected_name)
+}
+
+fn extern_opaque_is_subtype(actual_name: &str, actual_ty: &Type, expected_name: &str) -> bool {
+    if actual_name == expected_name {
+        return true;
+    }
+    let mut current = actual_ty;
+    loop {
+        match current {
+            Type::ExternSubtype(parent) => match parent.as_ref() {
+                Type::Opaque { name, ty } => {
+                    if name == expected_name {
+                        return true;
+                    }
+                    current = ty;
+                }
+                _ => return false,
+            },
+            _ => return false,
+        }
+    }
+}
+
 pub(super) fn require_numeric_cast(actual: Type, target: Type) -> Result<(), Diagnostic> {
     match (&actual, &target) {
         (Type::Opaque { ty, .. }, target) if ty.as_ref() == target => Ok(()),
@@ -433,7 +482,7 @@ pub(super) fn resolve_number_literal(
         Some(Type::Bytes) => Err(Diagnostic::new(
             "numeric literal is not assignable to bytes",
         )),
-        Some(Type::Extern) => Err(Diagnostic::new(
+        Some(Type::Extern) | Some(Type::ExternSubtype(_)) => Err(Diagnostic::new(
             "numeric literal is not assignable to extern",
         )),
         Some(Type::Nil) => Err(Diagnostic::new("numeric literal is not assignable to nil")),

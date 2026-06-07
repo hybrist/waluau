@@ -128,6 +128,22 @@ function buildWaluauImports(wasmBuffer, options = {}) {
   const appendChild = (parent, child, name) => {
     asElement(parent, name).appendChild(asElement(child, name));
   };
+  const externIs = (value, typeName) => {
+    const name = String(typeName);
+    if (name === 'Node') {
+      return (typeof Node !== 'undefined' && value instanceof Node) || (value && typeof value === 'object' && 'childNodes' in value) ? 1 : 0;
+    }
+    if (name === 'Element') {
+      return (typeof Element !== 'undefined' && value instanceof Element) || (value && typeof value.appendChild === 'function' && typeof value.tagName === 'string') ? 1 : 0;
+    }
+    if (name === 'HTMLElement') {
+      return (typeof HTMLElement !== 'undefined' && value instanceof HTMLElement) || (value && typeof value.appendChild === 'function' && typeof value.tagName === 'string') ? 1 : 0;
+    }
+    if (name === 'HTMLHeadingElement') {
+      return (typeof HTMLHeadingElement !== 'undefined' && value instanceof HTMLHeadingElement) || (value && /^H[1-6]$/.test(String(value.tagName))) ? 1 : 0;
+    }
+    throw new Error(`Unsupported extern cast target: ${name}`);
+  };
   const waluauImports = new Proxy({}, {
     get(_target, prop) {
       const name = String(prop);
@@ -139,6 +155,9 @@ function buildWaluauImports(wasmBuffer, options = {}) {
       }
       if (name === 'host_add') {
         return (left, right) => left + right;
+      }
+      if (name === 'extern_is') {
+        return externIs;
       }
       if (name === 'getElement') {
         return () => ({ value: 42 });

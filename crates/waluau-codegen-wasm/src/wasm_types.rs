@@ -56,7 +56,9 @@ pub(crate) fn wasm_type(
                 heap_type: HeapType::Concrete(index),
             }))
         }
-        Type::String | Type::Bytes | Type::Extern => Ok(externref_val_type()),
+        Type::String | Type::Bytes | Type::Extern | Type::ExternSubtype(_) => {
+            Ok(externref_val_type())
+        }
         Type::Nullable(inner) => wasm_type(inner, array_registry),
         Type::Nil => Ok(externref_val_type()),
         Type::Unknown => Ok(anyref_val_type()),

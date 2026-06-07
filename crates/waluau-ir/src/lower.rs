@@ -95,6 +95,14 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
     Ok(module)
 }
 
+struct IfCastParts<'a> {
+    target_name: &'a str,
+    binding_symbol_id: Option<SymbolId>,
+    value: &'a Expr,
+    then_body: &'a [Stmt],
+    else_body: &'a [Stmt],
+}
+
 fn collect_variant_tag_ids(program: &Program) -> BTreeMap<String, i32> {
     let mut tag_ids = BTreeMap::new();
     for function in &program.functions {
@@ -137,7 +145,10 @@ fn collect_type_variant_tags(ty: &Type, tag_ids: &mut BTreeMap<String, i32>) {
                 collect_type_variant_tags(variant.payload.as_ref(), tag_ids);
             }
         }
-        Type::Opaque { ty, .. } | Type::Array(ty) | Type::Nullable(ty) => {
+        Type::Opaque { ty, .. }
+        | Type::Array(ty)
+        | Type::Nullable(ty)
+        | Type::ExternSubtype(ty) => {
             collect_type_variant_tags(ty, tag_ids)
         }
         Type::Multi(types) => {
@@ -208,6 +219,22 @@ fn collect_stmt_variant_tags(stmt: &Stmt, tag_ids: &mut BTreeMap<String, i32>) {
             else_body,
         } => {
             collect_expr_variant_tags(condition, tag_ids);
+            for stmt in then_body {
+                collect_stmt_variant_tags(stmt, tag_ids);
+            }
+            for stmt in else_body {
+                collect_stmt_variant_tags(stmt, tag_ids);
+            }
+        }
+        Stmt::IfCast {
+            target_ty,
+            value,
+            then_body,
+            else_body,
+            ..
+        } => {
+            collect_type_variant_tags(target_ty, tag_ids);
+            collect_expr_variant_tags(value, tag_ids);
             for stmt in then_body {
                 collect_stmt_variant_tags(stmt, tag_ids);
             }
@@ -465,6 +492,23 @@ fn erase_stmt_opaque_types(stmt: &Stmt) -> Stmt {
             then_body: then_body.iter().map(erase_stmt_opaque_types).collect(),
             else_body: else_body.iter().map(erase_stmt_opaque_types).collect(),
         },
+        Stmt::IfCast {
+            target_name,
+            target_ty,
+            binding,
+            binding_symbol_id,
+            value,
+            then_body,
+            else_body,
+        } => Stmt::IfCast {
+            target_name: target_name.clone(),
+            target_ty: erase_type_opaque_types(target_ty),
+            binding: binding.clone(),
+            binding_symbol_id: *binding_symbol_id,
+            value: erase_expr_opaque_types(value),
+            then_body: then_body.iter().map(erase_stmt_opaque_types).collect(),
+            else_body: else_body.iter().map(erase_stmt_opaque_types).collect(),
+        },
         Stmt::While { condition, body } => Stmt::While {
             condition: erase_expr_opaque_types(condition),
             body: body.iter().map(erase_stmt_opaque_types).collect(),
@@ -647,6 +691,7 @@ fn erase_expr_opaque_types(expr: &Expr) -> Expr {
 fn erase_type_opaque_types(ty: &Type) -> Type {
     match ty {
         Type::Opaque { ty, .. } => erase_type_opaque_types(ty),
+        Type::ExternSubtype(_) => Type::Extern,
         Type::Nullable(inner) => Type::Nullable(Box::new(erase_type_opaque_types(inner))),
         Type::Array(inner) => Type::Array(Box::new(erase_type_opaque_types(inner))),
         Type::Multi(types) => Type::Multi(types.iter().map(erase_type_opaque_types).collect()),
@@ -1492,6 +1537,26 @@ impl Builder<'_> {
             } => {
                 self.lower_if(condition, then_body, else_body, env, types)?;
             }
+            Stmt::IfCast {
+                target_name,
+                binding_symbol_id,
+                value,
+                then_body,
+                else_body,
+                ..
+            } => {
+                self.lower_if_cast(
+                    IfCastParts {
+                        target_name,
+                        binding_symbol_id: *binding_symbol_id,
+                        value,
+                        then_body,
+                        else_body,
+                    },
+                    env,
+                    types,
+                )?;
+            }
             Stmt::While { condition, body } => {
                 self.lower_while(condition, body, env, types)?;
             }
@@ -1730,6 +1795,95 @@ impl Builder<'_> {
                 if let Some(narrowed) = then_types.get(&name) {
                     types.insert(name, narrowed.clone());
                 }
+            }
+        }
+        Ok(())
+    }
+
+    fn lower_if_cast(
+        &mut self,
+        parts: IfCastParts<'_>,
+        env: &mut HashMap<SymbolId, ValueId>,
+        types: &mut HashMap<SymbolId, Type>,
+    ) -> Result<(), Diagnostic> {
+        let binding_symbol_id = parts
+            .binding_symbol_id
+            .ok_or_else(|| Diagnostic::new("if-cast binding must have a symbol ID resolved"))?;
+        let tested = self.lower_expr(parts.value, env, types, None)?;
+        let condition = self.emit(Instruction::ExternCastTest {
+            value: tested,
+            target_name: parts.target_name.to_string(),
+        });
+        let then_block = self.new_block();
+        let else_block = self.new_block();
+        let merge_block = self.new_block();
+        self.set_terminator(
+            self.current_block,
+            Terminator::Branch {
+                condition,
+                then_block,
+                else_block,
+            },
+        );
+
+        let mut then_env = env.clone();
+        let mut then_types = types.clone();
+        then_env.insert(binding_symbol_id, tested);
+        then_types.insert(binding_symbol_id, Type::Extern);
+        self.current_block = then_block;
+        for stmt in parts.then_body {
+            if self.current_block == DEAD_BLOCK {
+                break;
+            }
+            self.lower_stmt(stmt, &mut then_env, &mut then_types)?;
+        }
+        let then_exit = self.current_block;
+        if then_exit != DEAD_BLOCK {
+            self.set_terminator(then_exit, Terminator::Jump(merge_block));
+        }
+
+        let mut else_env = env.clone();
+        let mut else_types = types.clone();
+        self.current_block = else_block;
+        for stmt in parts.else_body {
+            if self.current_block == DEAD_BLOCK {
+                break;
+            }
+            self.lower_stmt(stmt, &mut else_env, &mut else_types)?;
+        }
+        let else_exit = self.current_block;
+        if else_exit != DEAD_BLOCK {
+            self.set_terminator(else_exit, Terminator::Jump(merge_block));
+        }
+
+        if then_exit == DEAD_BLOCK && else_exit == DEAD_BLOCK {
+            self.current_block = DEAD_BLOCK;
+            return Ok(());
+        }
+
+        self.current_block = merge_block;
+        for name in env.keys().cloned().collect::<Vec<_>>() {
+            let t = then_env
+                .get(&name)
+                .copied()
+                .or_else(|| env.get(&name).copied());
+            let e = else_env
+                .get(&name)
+                .copied()
+                .or_else(|| env.get(&name).copied());
+            if let (Some(tv), Some(ev)) = (t, e)
+                && tv != ev
+            {
+                let mut incoming = Vec::new();
+                if then_exit != DEAD_BLOCK {
+                    incoming.push((then_exit, tv));
+                }
+                if else_exit != DEAD_BLOCK {
+                    incoming.push((else_exit, ev));
+                }
+                let phi = self.emit(Instruction::Phi(incoming));
+                env.insert(name, phi);
+                self.function.value_symbols.insert(phi, name);
             }
         }
         Ok(())
@@ -2436,7 +2590,7 @@ impl Builder<'_> {
                             "numeric literal is not assignable to bytes",
                         ));
                     }
-                    Type::Extern => {
+                    Type::Extern | Type::ExternSubtype(_) => {
                         return Err(Diagnostic::new(
                             "numeric literal is not assignable to extern",
                         ));
@@ -2704,7 +2858,7 @@ impl Builder<'_> {
                                     "unary '-' requires a numeric operand",
                                 ));
                             }
-                            Type::Extern => {
+                            Type::Extern | Type::ExternSubtype(_) => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -3551,7 +3705,7 @@ impl Builder<'_> {
                 Some(Type::Bytes) => Err(Diagnostic::new(
                     "numeric literal is not assignable to bytes",
                 )),
-                Some(Type::Extern) => Err(Diagnostic::new(
+                Some(Type::Extern) | Some(Type::ExternSubtype(_)) => Err(Diagnostic::new(
                     "numeric literal is not assignable to extern",
                 )),
                 Some(Type::Nil) => Err(Diagnostic::new(
@@ -3689,7 +3843,7 @@ impl Builder<'_> {
                         Type::Bytes => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
-                        Type::Extern => {
+                        Type::Extern | Type::ExternSubtype(_) => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                         Type::Nil | Type::Nullable(_) | Type::Named { .. } | Type::Opaque { .. } => {
@@ -4767,7 +4921,7 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Bytes => Err(Diagnostic::new(format!(
                 "cannot implicitly convert bytes to {expected_numeric}",
             ))),
-            Type::Extern => Err(Diagnostic::new(format!(
+            Type::Extern | Type::ExternSubtype(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert extern to {expected_numeric}",
             ))),
             Type::Nil => Err(Diagnostic::new(format!(
