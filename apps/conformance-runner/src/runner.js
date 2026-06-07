@@ -167,6 +167,12 @@ function buildWaluauImports(wasmBuffer, options = {}) {
       if (name === 'Element.set_text') {
         return (element, text) => setText(element, text, name);
       }
+      if (name === 'Element.get_inner_text') {
+        return (element) => asElement(element, name).textContent;
+      }
+      if (name === 'Element.set_inner_text') {
+        return (element, text) => setText(element, text, name);
+      }
       if (name === 'bytes_literal') {
         return (index) => {
           const literal = bytesConstants[index];

@@ -6,17 +6,17 @@ const DOM_SAMPLE = `type Document = extern
 type Element = extern
 
 declare function dom_document(): Document
+declare property Element:inner_text: string
 declare function Document:create_element(tag: string): Element
 declare function Document:append_child(child: Element): unit
-declare function Element:set_text(text: string): unit
 
 local document: Document = dom_document()
 local title: Element = document:create_element("h2")
-title:set_text("Hello from Waluau DOM")
+title.inner_text = "Hello from Waluau DOM"
 document:append_child(title)
 
 local body: Element = document:create_element("p")
-body:set_text("Rendered inside the playground Run tab")
+body.inner_text = title.inner_text .. " rendered inside the playground Run tab"
 document:append_child(body)
 `;
 
@@ -47,6 +47,6 @@ test.describe('DOM Output in Run tab', () => {
 
     const outputFrame = page.frameLocator('.dom-output-frame');
     await expect(outputFrame.locator('h2')).toHaveText('Hello from Waluau DOM');
-    await expect(outputFrame.locator('p')).toHaveText('Rendered inside the playground Run tab');
+    await expect(outputFrame.locator('p')).toHaveText('Hello from Waluau DOM rendered inside the playground Run tab');
   });
 });

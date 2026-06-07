@@ -131,6 +131,27 @@ fn parses_declared_host_method_with_implicit_receiver_param() {
 }
 
 #[test]
+fn parses_declared_property_as_getter_and_setter_imports() {
+    let source = r#"
+        type Element = extern
+        declare property Element:inner_text: string
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert_eq!(program.declared_imports.len(), 2);
+    let getter = &program.declared_imports[0];
+    assert_eq!(getter.name, "Element.get_inner_text");
+    assert_eq!(getter.params.len(), 1);
+    assert_eq!(getter.return_type, Type::String);
+
+    let setter = &program.declared_imports[1];
+    assert_eq!(setter.name, "Element.set_inner_text");
+    assert_eq!(setter.params.len(), 2);
+    assert_eq!(setter.params[1].ty, Type::String);
+    assert_eq!(setter.return_type, Type::Unit);
+}
+
+#[test]
 fn parses_nullable_extern_annotations_and_nil_checks() {
     let source = r#"
         type Element = extern

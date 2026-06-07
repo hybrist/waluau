@@ -4,6 +4,7 @@ type Document = extern
 type Element = extern
 
 declare function dom_document(): Document
+declare property Element:inner_text: string
 declare function Document:create_element(tag_name: string): Element
 declare function Document:append_child(child: Element): unit
 declare function Element:set_text(text: string): unit
@@ -11,9 +12,11 @@ declare function Element:set_text(text: string): unit
 local document: Document = dom_document()
 
 local heading: Element = document:create_element("h1")
-heading:set_text("Hello from Waluau")
+heading.inner_text = "Hello from Waluau"
+assert(heading.inner_text == "Hello from Waluau")
 document:append_child(heading)
 
 local paragraph: Element = document:create_element("p")
-paragraph:set_text("Rendered through extern DOM handles")
+paragraph.inner_text = "Rendered through extern DOM handles"
+assert(paragraph.inner_text == "Rendered through extern DOM handles")
 document:append_child(paragraph)

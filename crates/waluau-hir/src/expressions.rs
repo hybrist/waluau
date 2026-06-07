@@ -31,6 +31,10 @@ fn method_signature_name(base: &str, method: &str) -> String {
     format!("{base}.{method}")
 }
 
+fn property_getter_name(base: &str, property: &str) -> String {
+    format!("{base}.get_{property}")
+}
+
 fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
     if expected == actual {
         return true;
@@ -72,6 +76,39 @@ fn type_method_signature<'a>(
     fn_signatures
         .get(&method_name)
         .map(|signature| (signature, method_name))
+}
+
+fn type_property_getter_signature<'a>(
+    receiver_ty: &Type,
+    name: &str,
+    fn_signatures: &'a HashMap<String, FnSignature>,
+) -> Option<(&'a FnSignature, String)> {
+    if let Type::Opaque {
+        name: type_name, ..
+    } = receiver_ty
+    {
+        let getter_name = property_getter_name(type_name, name);
+        if let Some(signature) = fn_signatures.get(&getter_name) {
+            return Some((signature, getter_name));
+        }
+    }
+
+    let suffix = format!(".get_{name}");
+    let mut matches = fn_signatures
+        .iter()
+        .filter_map(|(getter_name, signature)| {
+            if !getter_name.ends_with(&suffix) {
+                return None;
+            }
+            let FnSignature::Mono { params, .. } = signature else {
+                return None;
+            };
+            let receiver_param = params.first()?;
+            (params.len() == 1 && method_receiver_matches(receiver_param, receiver_ty))
+                .then_some((signature, getter_name.clone()))
+        })
+        .collect::<Vec<_>>();
+    (matches.len() == 1).then(|| matches.remove(0))
 }
 
 pub(super) fn infer_expr(
@@ -537,6 +574,24 @@ pub(super) fn infer_expr(
                 }
             }
             let base_ty = infer_expr(base, vars, fn_signatures, active_type_params, None)?;
+            if let Some((signature, _)) =
+                type_property_getter_signature(&base_ty, name, fn_signatures)
+            {
+                let FnSignature::Mono {
+                    params,
+                    return_type,
+                } = signature
+                else {
+                    return Err(generic_diagnostic(
+                        "generic-property/getter",
+                        format!("generic property getter for '{name}' is not supported"),
+                        "declare properties with concrete types",
+                    ));
+                };
+                if params.len() == 1 && method_receiver_matches(&params[0], &base_ty) {
+                    return coerce_type(return_type.clone(), expected);
+                }
+            }
             if matches!(base_ty, Type::TaggedUnion(_)) {
                 return Err(Diagnostic::new(format!(
                     "field access on tagged union requires narrowing before reading '{name}'"
