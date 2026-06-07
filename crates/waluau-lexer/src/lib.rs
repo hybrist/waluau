@@ -41,6 +41,7 @@ pub enum TokenKind {
     BytesType,
     ExternType,
     ThreadType,
+    Nil,
     True,
     False,
     Identifier(String),
@@ -56,6 +57,7 @@ pub enum TokenKind {
     Percent,
     Equal,
     EqualEqual,
+    TildeEqual,
     Less,
     Greater,
     And,
@@ -68,6 +70,7 @@ pub enum TokenKind {
     DoubleDot,
     Comma,
     Hash,
+    Question,
     LBrace,
     RBrace,
     LBracket,
@@ -97,6 +100,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
             '{' => (TokenKind::LBrace, 1),
             '}' => (TokenKind::RBrace, 1),
             '#' => (TokenKind::Hash, 1),
+            '?' => (TokenKind::Question, 1),
             ':' => {
                 if matches!(chars.get(i + 1), Some(':')) {
                     (TokenKind::ColonColon, 2)
@@ -135,6 +139,13 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                     (TokenKind::EqualEqual, 2)
                 } else {
                     (TokenKind::Equal, 1)
+                }
+            }
+            '~' => {
+                if matches!(chars.get(i + 1), Some('=')) {
+                    (TokenKind::TildeEqual, 2)
+                } else {
+                    return Err(Diagnostic::new("unexpected '~', expected '~='"));
                 }
             }
             '-' => {
@@ -288,6 +299,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                     "bytes" => TokenKind::BytesType,
                     "extern" => TokenKind::ExternType,
                     "thread" => TokenKind::ThreadType,
+                    "nil" => TokenKind::Nil,
                     "true" => TokenKind::True,
                     "false" => TokenKind::False,
                     _ => TokenKind::Identifier(text.to_string()),

@@ -653,8 +653,24 @@ fn verify_function(
                 | Instruction::Number { .. }
                 | Instruction::Unit
                 | Instruction::Bool(_)
+                | Instruction::Null { .. }
                 | Instruction::String(_)
                 | Instruction::Bytes(_) => {}
+                Instruction::IsNull { value, ty } => {
+                    let value_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *value,
+                    )?;
+                    if !types_match(&value_ty, ty) {
+                        return Err(Diagnostic::new(format!(
+                            "null test in block {:?} expects {}, got {}",
+                            block.id, ty, value_ty
+                        )));
+                    }
+                }
                 Instruction::ToString { value, from } => {
                     let value_ty = require_dominating_definition(
                         &definitions,
@@ -803,7 +819,13 @@ fn types_match(a: &Type, b: &Type) -> bool {
         matches!(t, Type::TaggedUnion(_) | Type::TaggedVariant(_))
             || t == &Type::canonical_tagged_union_record()
     };
-    is_tagged(a) && is_tagged(b)
+    if is_tagged(a) && is_tagged(b) {
+        return true;
+    }
+    match (a, b) {
+        (Type::Nullable(inner), other) | (other, Type::Nullable(inner)) => inner.as_ref() == other,
+        _ => false,
+    }
 }
 
 fn infer_instruction_type(
@@ -827,12 +849,14 @@ fn infer_instruction_type(
         Instruction::Number { ty, .. } => Ok(Type::Numeric(*ty)),
         Instruction::Unit => Ok(Type::Unit),
         Instruction::Bool(_) => Ok(Type::Bool),
+        Instruction::Null { ty } => Ok(ty.clone()),
         Instruction::String(_) => Ok(Type::String),
         Instruction::Bytes(_) => Ok(Type::Bytes),
         Instruction::Cast { to, .. } => Ok(to.clone()),
         Instruction::Binary { result_ty, .. } => Ok(result_ty.clone()),
         Instruction::MathIntrinsic { result_ty, .. } => Ok(result_ty.clone()),
         Instruction::ToString { .. } => Ok(Type::String),
+        Instruction::IsNull { .. } => Ok(Type::Bool),
         Instruction::Print { .. } => Ok(Type::Unit),
         Instruction::Call { name, .. } => signatures
             .get(name)

@@ -39,7 +39,7 @@ impl Parser {
     }
 
     pub(super) fn parse_type(&mut self) -> Result<Type, Diagnostic> {
-        let first = self.parse_type_atom()?;
+        let first = self.parse_nullable_type()?;
         if !self.check_simple(&TokenKind::Pipe) {
             return Ok(first);
         }
@@ -55,7 +55,7 @@ impl Parser {
 
         while self.check_simple(&TokenKind::Pipe) {
             self.advance();
-            match self.parse_type_atom()? {
+            match self.parse_nullable_type()? {
                 Type::TaggedVariant(variant) => variants.push(variant),
                 other => {
                     return Err(Diagnostic::new(format!(
@@ -66,6 +66,15 @@ impl Parser {
         }
 
         Ok(Type::TaggedUnion(variants))
+    }
+
+    fn parse_nullable_type(&mut self) -> Result<Type, Diagnostic> {
+        let mut ty = self.parse_type_atom()?;
+        while self.check_simple(&TokenKind::Question) {
+            self.advance();
+            ty = Type::Nullable(Box::new(ty));
+        }
+        Ok(ty)
     }
 
     fn parse_type_atom(&mut self) -> Result<Type, Diagnostic> {

@@ -158,6 +158,17 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
         // Any value implicitly boxes into `unknown` (anyref). Unboxing back to a
         // concrete type is never implicit — it requires an explicit cast.
         Some(Type::Unknown) => Ok(Type::Unknown),
+        Some(Type::Nullable(expected_inner)) => match actual {
+            Type::Nil => Ok(Type::Nullable(expected_inner)),
+            Type::Nullable(actual_inner) if actual_inner == expected_inner => {
+                Ok(Type::Nullable(expected_inner))
+            }
+            other if other == *expected_inner => Ok(Type::Nullable(expected_inner)),
+            other => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {other} to {}?",
+                expected_inner
+            ))),
+        },
         Some(Type::TaggedVariant(expected_variant)) => match actual {
             Type::TaggedVariant(actual_variant) if actual_variant.tag == expected_variant.tag => {
                 let payload = coerce_type(
@@ -316,6 +327,12 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             Type::Extern => Err(Diagnostic::new(format!(
                 "cannot implicitly convert extern to {expected_numeric}",
             ))),
+            Type::Nil => Err(Diagnostic::new(format!(
+                "cannot implicitly convert nil to {expected_numeric}",
+            ))),
+            Type::Nullable(_) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert nullable value to {expected_numeric}",
+            ))),
             Type::Named { name, .. } => Err(Diagnostic::new(format!(
                 "cannot implicitly convert {name} to {expected_numeric}",
             ))),
@@ -401,6 +418,10 @@ pub(super) fn resolve_number_literal(
         )),
         Some(Type::Extern) => Err(Diagnostic::new(
             "numeric literal is not assignable to extern",
+        )),
+        Some(Type::Nil) => Err(Diagnostic::new("numeric literal is not assignable to nil")),
+        Some(Type::Nullable(_)) => Err(Diagnostic::new(
+            "numeric literal is not assignable to nullable extern",
         )),
         Some(Type::Named { name, .. }) => Err(Diagnostic::new(format!(
             "numeric literal is not assignable to {name}",

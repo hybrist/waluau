@@ -31,4 +31,15 @@ describe('browser conformance', () => {
     expect(exports.identity(element)).toBe(element);
     expect(exports.pass_back(exports.identity(element))).toBe(element);
   });
+
+  it('passes nullable_extern_host_object.walu null and non-null paths', async () => {
+    const source = cases.find(({ name }) => name === 'nullable_extern_host_object.walu').source;
+    const exports = await compileAndInstantiateWithExports({ '/main.walu': source }, '/main.walu');
+    const element = { id: 'root' };
+
+    expect(exports.nullable_score(null)).toBe(10);
+    expect(exports.nullable_score(element)).toBe(20);
+    expect(exports.nullable_eq_score(null)).toBe(30);
+    expect(exports.nullable_eq_score(element)).toBe(20);
+  });
 });

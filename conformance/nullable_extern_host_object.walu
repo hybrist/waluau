@@ -1,0 +1,23 @@
+-- Nullable extern host references use nil checks to narrow before use.
+
+type Element = extern
+
+function use_element(value: Element): i32
+    return 20
+end
+
+function nullable_score(value: Element?): i32
+    if value ~= nil then
+        return use_element(value)
+    end
+
+    return 10
+end
+
+function nullable_eq_score(value: Element?): i32
+    if value == nil then
+        return 30
+    end
+
+    return use_element(value)
+end

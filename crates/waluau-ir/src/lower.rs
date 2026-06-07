@@ -88,7 +88,9 @@ fn collect_type_variant_tags(ty: &Type, tag_ids: &mut BTreeMap<String, i32>) {
                 collect_type_variant_tags(variant.payload.as_ref(), tag_ids);
             }
         }
-        Type::Opaque { ty, .. } | Type::Array(ty) => collect_type_variant_tags(ty, tag_ids),
+        Type::Opaque { ty, .. } | Type::Array(ty) | Type::Nullable(ty) => {
+            collect_type_variant_tags(ty, tag_ids)
+        }
         Type::Multi(types) => {
             for ty in types {
                 collect_type_variant_tags(ty, tag_ids);
@@ -119,6 +121,7 @@ fn collect_type_variant_tags(ty: &Type, tag_ids: &mut BTreeMap<String, i32>) {
         | Type::String
         | Type::Bytes
         | Type::Extern
+        | Type::Nil
         | Type::Unknown
         | Type::Thread
         | Type::TypeParam(_) => {}
@@ -301,6 +304,7 @@ fn collect_expr_variant_tags(expr: &Expr, tag_ids: &mut BTreeMap<String, i32>) {
         }
         Expr::Number(..)
         | Expr::Bool(..)
+        | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
         | Expr::Name(..)
@@ -459,6 +463,7 @@ fn erase_expr_opaque_types(expr: &Expr) -> Expr {
     match expr {
         Expr::Number(..)
         | Expr::Bool(..)
+        | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
         | Expr::Name(..)
@@ -575,6 +580,7 @@ fn erase_expr_opaque_types(expr: &Expr) -> Expr {
 fn erase_type_opaque_types(ty: &Type) -> Type {
     match ty {
         Type::Opaque { ty, .. } => erase_type_opaque_types(ty),
+        Type::Nullable(inner) => Type::Nullable(Box::new(erase_type_opaque_types(inner))),
         Type::Array(inner) => Type::Array(Box::new(erase_type_opaque_types(inner))),
         Type::Multi(types) => Type::Multi(types.iter().map(erase_type_opaque_types).collect()),
         Type::Function {
@@ -1408,6 +1414,47 @@ impl Builder<'_> {
         (then_types, else_types)
     }
 
+    fn nil_test_subject(condition: &Expr) -> Option<(SymbolId, bool)> {
+        let Expr::Binary {
+            op, left, right, ..
+        } = condition
+        else {
+            return None;
+        };
+        let non_null_when_true = match op {
+            BinaryOp::Eq => false,
+            BinaryOp::NotEq => true,
+            _ => return None,
+        };
+        match (left.as_ref(), right.as_ref()) {
+            (Expr::Name(_, Some(symbol_id), _), Expr::Nil(..))
+            | (Expr::Nil(..), Expr::Name(_, Some(symbol_id), _)) => {
+                Some((*symbol_id, non_null_when_true))
+            }
+            _ => None,
+        }
+    }
+
+    fn narrowed_type_scopes(
+        condition: &Expr,
+        types: &HashMap<SymbolId, Type>,
+    ) -> (HashMap<SymbolId, Type>, HashMap<SymbolId, Type>) {
+        let (mut then_types, mut else_types) =
+            Self::narrowed_variant_type_scopes(condition, types);
+        let Some((symbol_id, non_null_when_true)) = Self::nil_test_subject(condition) else {
+            return (then_types, else_types);
+        };
+        let Some(inner) = types.get(&symbol_id).and_then(Type::nullable_inner) else {
+            return (then_types, else_types);
+        };
+        if non_null_when_true {
+            then_types.insert(symbol_id, inner);
+        } else {
+            else_types.insert(symbol_id, inner);
+        }
+        (then_types, else_types)
+    }
+
     fn lower_if(
         &mut self,
         condition: &Expr,
@@ -1417,7 +1464,7 @@ impl Builder<'_> {
         types: &mut HashMap<SymbolId, Type>,
     ) -> Result<(), Diagnostic> {
         let (then_types_init, else_types_init) =
-            Self::narrowed_variant_type_scopes(condition, types);
+            Self::narrowed_type_scopes(condition, types);
         let condition = self.lower_expr(condition, env, types, Some(Type::Bool))?;
         let then_block = self.new_block();
         let else_block = self.new_block();
@@ -2213,6 +2260,11 @@ impl Builder<'_> {
                             "numeric literal is not assignable to extern",
                         ));
                     }
+                    Type::Nil | Type::Nullable(_) => {
+                        return Err(Diagnostic::new(
+                            "numeric literal is not assignable to nullable extern",
+                        ));
+                    }
                     Type::Named { name, .. } => {
                         return Err(Diagnostic::new(format!(
                             "numeric literal is not assignable to {name}",
@@ -2282,6 +2334,20 @@ impl Builder<'_> {
                 })
             }
             Expr::Bool(value, _) => self.emit(Instruction::Bool(*value)),
+            Expr::Nil(_) => {
+                let ty = match expected.clone() {
+                    Some(Type::Nullable(inner)) => *inner,
+                    Some(Type::Extern) => Type::Extern,
+                    Some(other) => {
+                        return Err(Diagnostic::new(format!(
+                            "nil is only assignable to nullable extern, got {other}"
+                        )));
+                    }
+                    None => Type::Extern,
+                };
+                let value = self.emit(Instruction::Null { ty: ty.clone() });
+                self.coerce_value(value, ty, expected)?
+            }
             Expr::String(value, _) => self.emit(Instruction::String(value.clone())),
             Expr::Bytes(value, _) => self.emit(Instruction::Bytes(value.clone())),
             Expr::Name(name, symbol_id, _) => {
@@ -2453,7 +2519,7 @@ impl Builder<'_> {
                                     "unary '-' requires a numeric operand",
                                 ));
                             }
-                            Type::Named { .. } | Type::Opaque { .. } => {
+                            Type::Nil | Type::Nullable(_) | Type::Named { .. } | Type::Opaque { .. } => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -2663,6 +2729,37 @@ impl Builder<'_> {
                     self.coerce_value(value, result_ty, expected)?
                 }
                 _ => {
+                    if matches!(op, BinaryOp::Eq | BinaryOp::NotEq)
+                        && (matches!(left.as_ref(), Expr::Nil(..))
+                            || matches!(right.as_ref(), Expr::Nil(..)))
+                    {
+                        let value_expr = if matches!(left.as_ref(), Expr::Nil(..)) {
+                            right
+                        } else {
+                            left
+                        };
+                        let nullable_ty = self.infer_expr_type(value_expr, types, None)?;
+                        let inner_ty = nullable_ty.nullable_inner().ok_or_else(|| {
+                            Diagnostic::new("nil comparison requires a nullable extern operand")
+                        })?;
+                        let lowered =
+                            self.lower_expr(value_expr, env, types, Some(nullable_ty))?;
+                        let mut is_null = self.emit(Instruction::IsNull {
+                            value: lowered,
+                            ty: inner_ty,
+                        });
+                        if matches!(op, BinaryOp::NotEq) {
+                            let false_value = self.emit(Instruction::Bool(false));
+                            is_null = self.emit(Instruction::Binary {
+                                op: BinaryOp::Eq,
+                                left: is_null,
+                                right: false_value,
+                                operand_ty: Type::Bool,
+                                result_ty: Type::Bool,
+                            });
+                        }
+                        return self.coerce_value(is_null, Type::Bool, expected);
+                    }
                     let operand_ty =
                         self.infer_binary_operand_type(left, right, op, types, expected.clone())?;
                     let left = self.lower_expr(left, env, types, Some(operand_ty.clone()))?;
@@ -3222,6 +3319,12 @@ impl Builder<'_> {
                 Some(Type::Extern) => Err(Diagnostic::new(
                     "numeric literal is not assignable to extern",
                 )),
+                Some(Type::Nil) => Err(Diagnostic::new(
+                    "numeric literal is not assignable to nil",
+                )),
+                Some(Type::Nullable(_)) => Err(Diagnostic::new(
+                    "numeric literal is not assignable to nullable extern",
+                )),
                 Some(Type::Named { name, .. }) => Err(Diagnostic::new(format!(
                     "numeric literal is not assignable to {name}",
                 ))),
@@ -3253,6 +3356,7 @@ impl Builder<'_> {
                 Some(Type::Unknown) => Ok(Type::Unknown),
                 None => Ok(Type::number()),
             },
+            Expr::Nil(..) => coerce_type(Type::Nil, expected),
             Expr::IsVariant { .. } => coerce_type(Type::Bool, expected),
             Expr::Bool(..) => Ok(Type::Bool),
             Expr::String(..) => Ok(Type::String),
@@ -3353,7 +3457,7 @@ impl Builder<'_> {
                         Type::Extern => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
-                        Type::Named { .. } | Type::Opaque { .. } => {
+                        Type::Nil | Type::Nullable(_) | Type::Named { .. } | Type::Opaque { .. } => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                         Type::Array(_) => {
@@ -3526,6 +3630,7 @@ impl Builder<'_> {
                 BinaryOp::Less
                 | BinaryOp::Greater
                 | BinaryOp::Eq
+                | BinaryOp::NotEq
                 | BinaryOp::And
                 | BinaryOp::Or => Ok(Type::Bool),
             },
@@ -3547,7 +3652,21 @@ impl Builder<'_> {
 
         match op {
             BinaryOp::And | BinaryOp::Or => Ok(Type::Bool),
-            BinaryOp::Eq => {
+            BinaryOp::Eq | BinaryOp::NotEq => {
+                if matches!(left, Expr::Nil(..)) || matches!(right, Expr::Nil(..)) {
+                    let value = if matches!(left, Expr::Nil(..)) {
+                        right
+                    } else {
+                        left
+                    };
+                    let value_ty = self.infer_expr_type(value, types, None)?;
+                    if matches!(value_ty, Type::Nullable(_)) {
+                        return Ok(Type::Bool);
+                    }
+                    return Err(Diagnostic::new(
+                        "nil comparison requires a nullable extern operand",
+                    ));
+                }
                 let left_ty = self.infer_expr_type(left, types, None)?;
                 if left_ty == Type::Bool {
                     let right_ty = self.infer_expr_type(right, types, Some(Type::Bool))?;
@@ -4350,6 +4469,17 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
         Some(expected) if actual == expected => Ok(expected),
         // Any value implicitly boxes into `unknown` (anyref). Unboxing is explicit-only.
         Some(Type::Unknown) => Ok(Type::Unknown),
+        Some(Type::Nullable(expected_inner)) => match actual {
+            Type::Nil => Ok(Type::Nullable(expected_inner)),
+            Type::Nullable(actual_inner) if actual_inner == expected_inner => {
+                Ok(Type::Nullable(expected_inner))
+            }
+            other if other == *expected_inner => Ok(Type::Nullable(expected_inner)),
+            other => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {other} to {}?",
+                expected_inner
+            ))),
+        },
         // Records coerce field-by-field so a field value can box into an `unknown`
         // field. Lowering then targets the expected field types and inserts boxes.
         Some(Type::Record(expected_fields)) => {
@@ -4394,6 +4524,12 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             ))),
             Type::Extern => Err(Diagnostic::new(format!(
                 "cannot implicitly convert extern to {expected_numeric}",
+            ))),
+            Type::Nil => Err(Diagnostic::new(format!(
+                "cannot implicitly convert nil to {expected_numeric}",
+            ))),
+            Type::Nullable(_) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert nullable value to {expected_numeric}",
             ))),
             Type::Named { name, .. } => Err(Diagnostic::new(format!(
                 "cannot implicitly convert {name} to {expected_numeric}",

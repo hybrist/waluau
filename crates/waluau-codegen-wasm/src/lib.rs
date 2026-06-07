@@ -1403,6 +1403,10 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::I32Const(i32::from(*flag)));
                 emit_value_store(out, local_plan, *value)?;
             }
+            IrInstruction::Null { ty } => {
+                emit_ref_null(out, ty, ctx.array_registry)?;
+                emit_value_store(out, local_plan, *value)?;
+            }
             IrInstruction::String(literal) => {
                 let index = host::string_constant_index(ctx.string_constants, literal)?;
                 out.instruction(&Instruction::GlobalGet(index));
@@ -1441,6 +1445,14 @@ fn emit_block_instructions(
                     emit_value_operand(out, local_plan, *right)?;
                     emit_binary(out, ctx, *op, operand_ty.clone(), result_ty.clone())?;
                 }
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::IsNull {
+                value: tested,
+                ty: _,
+            } => {
+                emit_value_operand(out, local_plan, *tested)?;
+                out.instruction(&Instruction::RefIsNull);
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::MathIntrinsic {
@@ -2041,6 +2053,62 @@ fn emit_block_instructions(
     Ok(())
 }
 
+fn emit_ref_null(
+    out: &mut Function,
+    ty: &Type,
+    array_registry: &ArrayTypeRegistry,
+) -> Result<(), Diagnostic> {
+    match ty {
+        Type::Extern | Type::String | Type::Bytes | Type::Nil => {
+            out.instruction(&Instruction::RefNull(HeapType::Abstract {
+                shared: false,
+                ty: AbstractHeapType::Extern,
+            }));
+            Ok(())
+        }
+        Type::Nullable(inner) => emit_ref_null(out, inner, array_registry),
+        Type::Unknown => {
+            out.instruction(&Instruction::RefNull(HeapType::Abstract {
+                shared: false,
+                ty: AbstractHeapType::Any,
+            }));
+            Ok(())
+        }
+        Type::Array(_) => {
+            out.instruction(&Instruction::RefNull(HeapType::Concrete(
+                array_registry.index(ty)?,
+            )));
+            Ok(())
+        }
+        Type::Record(_) | Type::TaggedVariant(_) | Type::TaggedUnion(_) => {
+            let record_ty = if matches!(ty, Type::TaggedVariant(_) | Type::TaggedUnion(_)) {
+                Cow::Owned(Type::canonical_tagged_union_record())
+            } else {
+                Cow::Borrowed(ty)
+            };
+            out.instruction(&Instruction::RefNull(HeapType::Concrete(
+                array_registry.record_index(&record_ty)?,
+            )));
+            Ok(())
+        }
+        Type::Function { .. } => {
+            out.instruction(&Instruction::RefNull(HeapType::Concrete(
+                array_registry.func_val_struct_type,
+            )));
+            Ok(())
+        }
+        Type::Thread => {
+            out.instruction(&Instruction::RefNull(HeapType::Concrete(
+                array_registry.coroutine_state_type()?,
+            )));
+            Ok(())
+        }
+        other => Err(Diagnostic::new(format!(
+            "cannot lower null literal for non-reference type {other}"
+        ))),
+    }
+}
+
 /// After calling a function that may yield, unwind toward `coroutine.resume` if the
 /// active instance is now suspended (i.e. a yield happened transitively).
 fn emit_return_if_coroutine_yielded(
@@ -2394,7 +2462,7 @@ fn emit_binary(
             | Type::Unknown => {
                 unreachable!()
             }
-            Type::Unit => unreachable!(),
+            Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
         },
         BinaryOp::Concat => match operand_ty {
             Type::String => {
@@ -2460,7 +2528,7 @@ fn emit_binary(
             | Type::Unknown => {
                 unreachable!()
             }
-            Type::Unit => unreachable!(),
+            Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
         },
         BinaryOp::Mul => match operand_ty {
             Type::Numeric(NumericType::U32 | NumericType::I32) => {
@@ -2509,7 +2577,7 @@ fn emit_binary(
             | Type::Unknown => {
                 unreachable!()
             }
-            Type::Unit => unreachable!(),
+            Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
         },
         BinaryOp::Div => match operand_ty {
             Type::Numeric(NumericType::U32) => {
@@ -2564,7 +2632,7 @@ fn emit_binary(
             | Type::Unknown => {
                 unreachable!()
             }
-            Type::Unit => unreachable!(),
+            Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
         },
         BinaryOp::FloorDiv | BinaryOp::Mod => unreachable!("handled before stack binary emission"),
         BinaryOp::Eq => match operand_ty {
@@ -2609,8 +2677,12 @@ fn emit_binary(
             | Type::Unknown => {
                 unreachable!()
             }
-            Type::Unit => unreachable!(),
+            Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
         },
+        BinaryOp::NotEq => {
+            emit_binary(out, ctx, BinaryOp::Eq, operand_ty, Type::Bool)?;
+            out.instruction(&Instruction::I32Eqz);
+        }
         BinaryOp::Less => match operand_ty {
             Type::Numeric(NumericType::U32) => {
                 out.instruction(&Instruction::I32LtU);
@@ -2668,7 +2740,7 @@ fn emit_binary(
             | Type::Unknown => {
                 unreachable!()
             }
-            Type::Unit => unreachable!(),
+            Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
         },
         BinaryOp::Greater => match operand_ty {
             Type::Numeric(NumericType::U32) => {
@@ -2727,7 +2799,7 @@ fn emit_binary(
             | Type::Unknown => {
                 unreachable!()
             }
-            Type::Unit => unreachable!(),
+            Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
         },
         BinaryOp::And => {
             out.instruction(&Instruction::I32And);
