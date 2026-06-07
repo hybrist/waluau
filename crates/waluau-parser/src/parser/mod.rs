@@ -159,7 +159,23 @@ impl Parser {
             return Err(Diagnostic::new("expected 'declare'"));
         }
         self.expect_simple(TokenKind::Function, "expected 'function' after 'declare'")?;
-        let name = self.expect_identifier()?;
+        let receiver = self.expect_identifier()?;
+        let (name, receiver_param) = if self.check_simple(&TokenKind::Colon) {
+            self.advance();
+            let method = self.expect_identifier()?;
+            let name = format!("{receiver}.{method}");
+            let receiver_param = Param {
+                name: "self".to_string(),
+                symbol_id: None,
+                ty: Type::Named {
+                    name: receiver,
+                    type_args: Vec::new(),
+                },
+            };
+            (name, Some(receiver_param))
+        } else {
+            (receiver, None)
+        };
         let function_expr = self.parse_function_signature_tail(None, true, name.clone())?;
         if !function_expr.type_params.is_empty() {
             return Err(Diagnostic::new(format!(
@@ -171,10 +187,14 @@ impl Parser {
                 "declared host function '{name}' must have a return type"
             ))
         })?;
+        let mut params = function_expr.params;
+        if let Some(receiver_param) = receiver_param {
+            params.insert(0, receiver_param);
+        }
         Ok(DeclaredImport {
             name,
             symbol_id: None,
-            params: function_expr.params,
+            params,
             return_type,
         })
     }

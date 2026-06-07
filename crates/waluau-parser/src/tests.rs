@@ -110,6 +110,27 @@ fn parses_extern_type_declaration() {
 }
 
 #[test]
+fn parses_declared_host_method_with_implicit_receiver_param() {
+    let source = r#"
+        type Element = extern
+        declare function Element:addEventListener(event: string): i32
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let declared = &program.declared_imports[0];
+    assert_eq!(declared.name, "Element.addEventListener");
+    assert_eq!(declared.params.len(), 2);
+    assert_eq!(
+        declared.params[0].ty,
+        Type::Named {
+            name: "Element".into(),
+            type_args: vec![],
+        }
+    );
+    assert_eq!(declared.params[1].ty, Type::String);
+}
+
+#[test]
 fn parses_nullable_extern_annotations_and_nil_checks() {
     let source = r#"
         type Element = extern

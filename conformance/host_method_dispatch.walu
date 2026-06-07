@@ -1,0 +1,8 @@
+-- Declared host methods on extern types dispatch through host imports.
+
+type Element = extern
+
+declare function getElement(): Element
+declare function Element:value(delta: i32): i32
+
+assert(getElement():value(7::i32) == 49)

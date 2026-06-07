@@ -300,6 +300,20 @@ impl<'a> Monomorphizer<'a> {
                 function_signatures.insert(symbol_id, fn_ty);
             }
         }
+        for declared in &program.declared_imports {
+            let param_types = declared
+                .params
+                .iter()
+                .map(|p| p.ty.clone())
+                .collect::<Vec<_>>();
+            let fn_ty = Type::Function {
+                params: param_types,
+                return_type: Box::new(declared.return_type.clone()),
+            };
+            if let Some(symbol_id) = declared.symbol_id {
+                function_signatures.insert(symbol_id, fn_ty);
+            }
+        }
 
         let mut method_signatures = HashMap::new();
         if let Some(top_level) = program.functions.iter().find(|function| function.name.to_string() == "__waluau_top_level_init") {
