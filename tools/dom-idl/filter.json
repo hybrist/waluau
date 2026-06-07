@@ -1,0 +1,41 @@
+{
+  "interfaces": [
+    "EventTarget",
+    "Node",
+    "Document",
+    "Element",
+    "HTMLElement",
+    "HTMLHeadingElement"
+  ],
+  "members": {
+    "EventTarget": [
+      "operation:addEventListener"
+    ],
+    "Node": [
+      "attribute:nodeName",
+      "attribute:textContent",
+      "operation:appendChild"
+    ],
+    "Document": [
+      "operation:createElement",
+      "operation:getElementById",
+      "operation:querySelector"
+    ],
+    "Element": [
+      "attribute:id",
+      "attribute:className",
+      "operation:querySelector"
+    ],
+    "HTMLElement": [
+      "attribute:innerText"
+    ],
+    "HTMLHeadingElement": []
+  },
+  "typeMap": {
+    "DOMString": "string",
+    "USVString": "string",
+    "boolean": "bool",
+    "undefined": "unit",
+    "void": "unit"
+  }
+}
