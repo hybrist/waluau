@@ -1401,6 +1401,18 @@ fn lowers_tagged_union_resume_to_coroutine_resume_tagged() {
 }
 
 #[test]
+fn verifies_function_with_tagged_union_return_type() {
+    let source = r#"
+        function poll(co: thread): Finished(i32) | Yielded(i32) | Error(string)
+            return coroutine.resume(co)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("ir build should succeed");
+    verify(&module).expect("ir should verify a tagged-union return type against the canonical record produced by coroutine.resume");
+}
+
+#[test]
 fn rejects_error_variant_value_access_for_string_payload() {
     let source = r#"
         function run(): i32

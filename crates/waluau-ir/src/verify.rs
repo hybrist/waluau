@@ -792,7 +792,7 @@ fn verify_function(
                     block.id,
                     *value,
                 )?;
-                if value_ty != function.return_type {
+                if !types_match(&value_ty, &function.return_type) {
                     return Err(Diagnostic::new(format!(
                         "return in block {:?} has type {}, expected {}",
                         block.id, value_ty, function.return_type
