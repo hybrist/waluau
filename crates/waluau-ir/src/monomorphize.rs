@@ -1661,17 +1661,7 @@ impl<'a> Monomorphizer<'a> {
                 }
             }
             "string_find" => {
-                let u32_ty = Type::Numeric(waluau_ast::NumericType::U32);
-                Ok(Some(Type::TaggedUnion(vec![
-                    waluau_ast::TaggedVariant {
-                        tag: "NotFound".to_string(),
-                        payload: Box::new(Type::Unit),
-                    },
-                    waluau_ast::TaggedVariant {
-                        tag: "Found".to_string(),
-                        payload: Box::new(u32_ty),
-                    },
-                ])))
+                Ok(Some(Type::Numeric(waluau_ast::NumericType::I32)))
             }
             _ => Ok(None),
         }

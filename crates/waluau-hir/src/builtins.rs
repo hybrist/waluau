@@ -371,20 +371,8 @@ pub(super) fn infer_string_builtin_call(
         ))));
     }
 
-    // Return type: NotFound(unit) | Found(u32)
-    let u32_ty = Type::Numeric(NumericType::U32);
-    let result_type = Type::TaggedUnion(vec![
-        TaggedVariant {
-            tag: "NotFound".to_string(),
-            payload: Box::new(Type::Unit),
-        },
-        TaggedVariant {
-            tag: "Found".to_string(),
-            payload: Box::new(u32_ty),
-        },
-    ]);
-
-    Some(coerce_type(result_type, expected))
+    // Return type: i32 (position or -1 if not found)
+    Some(coerce_type(Type::Numeric(NumericType::I32), expected))
 }
 
 // infer_print_builtin_call removed - now handled via extern function declaration

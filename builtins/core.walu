@@ -5,5 +5,5 @@
 declare function print(message: string): unit
 
 -- String find function with Lua-compatible API
--- Returns NotFound or Found with start position (0-based indexing)
-declare function string_find(haystack: string, needle: string): NotFound(unit) | Found(u32)
+-- Returns position (0-based) or -1 if not found
+declare function string_find(haystack: string, needle: string): i32

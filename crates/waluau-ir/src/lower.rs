@@ -5114,20 +5114,10 @@ impl Builder<'_> {
         // Call the string_find host function
         let call_args = vec![haystack, needle];
 
-        // The result type: NotFound(unit) | Found(u32)
-        let u32_ty = Type::Numeric(NumericType::U32);
-        let result_ty = Type::TaggedUnion(vec![
-            TaggedVariant {
-                tag: "NotFound".to_string(),
-                payload: Box::new(Type::Unit),
-            },
-            TaggedVariant {
-                tag: "Found".to_string(),
-                payload: Box::new(u32_ty),
-            },
-        ]);
+        // The result type: i32 (position or -1 if not found)
+        let result_ty = Type::Numeric(NumericType::I32);
 
-        // Get the symbol_id for the string.find host function
+        // Get the symbol_id for the string_find host function
         let symbol_id = self.host_import_names.get(STRING_FIND).copied().ok_or_else(|| {
             Diagnostic::new(format!(
                 "declared function '{STRING_FIND}' is missing a host import symbol"
@@ -5184,18 +5174,8 @@ impl Builder<'_> {
             Err(error) => return Some(Err(error)),
         }
 
-        // Return type: NotFound(unit) | Found(u32)  
-        let u32_ty = Type::Numeric(NumericType::U32);
-        Some(Ok(Type::TaggedUnion(vec![
-            TaggedVariant {
-                tag: "NotFound".to_string(),
-                payload: Box::new(Type::Unit),
-            },
-            TaggedVariant {
-                tag: "Found".to_string(),
-                payload: Box::new(u32_ty),
-            },
-        ])))
+        // Return type: i32 (position or -1 if not found)
+        Some(Ok(Type::Numeric(NumericType::I32)))
     }
 }
 
