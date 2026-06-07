@@ -455,6 +455,28 @@ mod tests {
     }
 
     #[test]
+    fn compile_multi_resolves_top_level_dom_window_virtual_module() {
+        let mut files = std::collections::HashMap::new();
+        files.insert(
+            "main.walu".to_string(),
+            r#"
+                local window = require("dom:window")
+                local document = window.document
+
+                function main(): unit
+                end
+            "#
+            .to_string(),
+        );
+
+        let result =
+            super::compile_sources(&files, "main.walu").expect("dom window require should compile");
+        assert!(result.wat.contains("(module"));
+        assert!(result.wat.contains("dom_window"));
+        assert!(result.wat.contains("Window.get_document"));
+    }
+
+    #[test]
     fn compile_multi_rejects_unknown_dom_virtual_module() {
         let mut files = std::collections::HashMap::new();
         files.insert(

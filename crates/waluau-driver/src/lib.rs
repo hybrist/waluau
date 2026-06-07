@@ -184,6 +184,29 @@ mod tests {
     }
 
     #[test]
+    fn compile_file_resolves_top_level_dom_window_virtual_module() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("app.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local window = require("dom:window")
+                local document = window.document
+
+                function main(): unit
+                end
+            "#,
+        )
+        .expect("app should write");
+
+        let wasm = super::compile_file(&input_path).expect("dom window require should compile");
+        assert!(
+            wasm.starts_with(b"\0asm"),
+            "compiled wasm should start with the wasm magic bytes"
+        );
+    }
+
+    #[test]
     fn compile_file_rejects_unknown_dom_virtual_module() {
         let tempdir = tempdir().expect("tempdir should exist");
         let input_path = tempdir.path().join("app.walu");
