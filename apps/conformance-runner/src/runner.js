@@ -120,6 +120,7 @@ function createDomHost() {
 function buildWaluauImports(wasmBuffer, options = {}) {
   const bytesConstants = decodeBytesConstantsFromWasm(wasmBuffer);
   const domHost = options.domHost ?? createDomHost();
+  const hostImports = options.hostImports ?? {};
   const asBytes = (value) => {
     if (value instanceof Uint8Array) return value;
     throw new Error(`Expected Uint8Array bytes value, got ${Object.prototype.toString.call(value)}`);
@@ -179,6 +180,9 @@ function buildWaluauImports(wasmBuffer, options = {}) {
   const waluauImports = new Proxy({}, {
     get(_target, prop) {
       const name = String(prop);
+      if (Object.hasOwn(hostImports, name)) {
+        return hostImports[name];
+      }
       if (name.startsWith('js_tostring_')) {
         return (value) => String(value);
       }
