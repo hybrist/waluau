@@ -886,6 +886,12 @@ fn resolve_stmt_type_refs(
             else_body,
             ..
         } => {
+            // `target_name` may name either a separately-declared (extern) type or a
+            // tagged-union variant tag of the scrutinee's type (e.g. `if Left(n) = value`).
+            // Variant tags aren't resolvable type names, so tolerate resolution failure
+            // here and leave `target_ty` as an unresolved `Type::Named` — the dispatcher
+            // in `check_stmt`/`checked_if_cast_scopes` decides which interpretation
+            // applies once it has the inferred scrutinee type.
             *target_ty = resolve_type_refs(
                 target_ty,
                 active_type_params,
@@ -893,7 +899,8 @@ fn resolve_stmt_type_refs(
                 generic,
                 opaque_cache,
                 &mut Vec::new(),
-            )?;
+            )
+            .unwrap_or_else(|_| target_ty.clone());
             resolve_expr_type_refs(value, raw_opaque, generic, opaque_cache, active_type_params)?;
             for stmt in then_body {
                 resolve_stmt_type_refs(

@@ -40,7 +40,24 @@ struct BranchScopes {
     else_scope: HashMap<String, Binding>,
 }
 
+/// Resolves the dual-purpose `if Name(binding) = expr then ... end` syntax,
+/// which is shared between two unrelated narrowing features that happen to
+/// collide on surface syntax:
+///
+///   - Tagged-union pattern match with binding, e.g. `if Left(n) = either then`:
+///     `Name` is a variant tag of the scrutinee's tagged-union type, and
+///     `binding` is bound (in the `then` branch only) to the unboxed payload.
+///   - Extern safe-cast, e.g. `if Element(node) = value then`: `Name` is an
+///     extern type, and `binding` is bound (in the `then` branch only) to the
+///     narrowed extern value.
+///
+/// Disambiguation can only happen here, once the scrutinee's inferred type is
+/// known: the parser has no type/tag registries, so it always produces the
+/// same `Stmt::IfCast` shape (with `target_ty` resolved to a real type when
+/// possible, or left as an unresolved `Type::Named` when `target_name` turns
+/// out to name a variant tag rather than a declared type).
 fn checked_if_cast_scopes(
+    target_name: &str,
     target_ty: &Type,
     binding: &str,
     value: &Expr,
@@ -48,18 +65,34 @@ fn checked_if_cast_scopes(
     fn_signatures: &HashMap<String, FnSignature>,
     active_type_params: &HashSet<String>,
 ) -> Result<BranchScopes, Diagnostic> {
+    let value_ty = infer_expr(value, vars, fn_signatures, active_type_params, None)?;
+    let source_ty = value_ty
+        .nullable_inner()
+        .unwrap_or_else(|| value_ty.clone());
+
+    // Tagged-union pattern match with binding: `if Tag(name) = expr then`.
+    if let Some(variant) = source_ty.tagged_variant(target_name) {
+        let mut then_scope = vars.clone();
+        then_scope.insert(
+            binding.to_string(),
+            binding_for((*variant.payload).clone(), Rebindability::Const),
+        );
+        return Ok(BranchScopes {
+            then_scope,
+            else_scope: vars.clone(),
+        });
+    }
+
+    // Extern safe-cast: `if Type(name) = expr then`.
     if !matches!(
         target_ty,
         Type::Opaque { ty, .. } if matches!(ty.as_ref(), Type::Extern | Type::ExternSubtype(_))
     ) {
         return Err(Diagnostic::new(format!(
-            "if-cast target must be an extern type, got {target_ty}"
+            "'{target_name}' is neither a tagged-union variant of {source_ty} nor an extern type; \
+             if-cast target must be an extern type or a tagged-union variant tag"
         )));
     }
-    let value_ty = infer_expr(value, vars, fn_signatures, active_type_params, None)?;
-    let source_ty = value_ty
-        .nullable_inner()
-        .unwrap_or_else(|| value_ty.clone());
     if !matches!(
         &source_ty,
         Type::Opaque { ty, .. } if matches!(ty.as_ref(), Type::Extern | Type::ExternSubtype(_))
@@ -128,23 +161,22 @@ fn narrowed_variant_scopes(
 ) -> (HashMap<String, Binding>, HashMap<String, Binding>) {
     let mut then_scope = vars.clone();
     let mut else_scope = vars.clone();
-    let Expr::IsVariant { expr, tag, .. } = condition else {
-        return (then_scope, else_scope);
-    };
-    let Expr::Name(name, _, _) = expr.as_ref() else {
-        return (then_scope, else_scope);
-    };
-    let Some(binding) = vars.get(name) else {
-        return (then_scope, else_scope);
-    };
-    if let Some(variant) = binding.ty.tagged_variant(tag) {
-        then_scope.insert(
-            name.clone(),
-            binding_for(Type::TaggedVariant(variant), binding.rebindability),
-        );
-    }
-    if let Some(remaining) = binding.ty.remove_tagged_variant(tag) {
-        else_scope.insert(name.clone(), binding_for(remaining, binding.rebindability));
+    if let Expr::IsVariant { expr, tag, .. } = condition {
+        let Expr::Name(name, _, _) = expr.as_ref() else {
+            return (then_scope, else_scope);
+        };
+        let Some(binding) = vars.get(name) else {
+            return (then_scope, else_scope);
+        };
+        if let Some(variant) = binding.ty.tagged_variant(tag) {
+            then_scope.insert(
+                name.clone(),
+                binding_for(Type::TaggedVariant(variant), binding.rebindability),
+            );
+        }
+        if let Some(remaining) = binding.ty.remove_tagged_variant(tag) {
+            else_scope.insert(name.clone(), binding_for(remaining, binding.rebindability));
+        }
     }
     (then_scope, else_scope)
 }
@@ -415,6 +447,7 @@ pub(super) fn collect_return_types(
                 )?;
             }
             Stmt::IfCast {
+                target_name,
                 target_ty,
                 binding,
                 value,
@@ -423,6 +456,7 @@ pub(super) fn collect_return_types(
                 ..
             } => {
                 let branch_scopes = checked_if_cast_scopes(
+                    target_name,
                     target_ty,
                     binding,
                     value,
@@ -1054,6 +1088,7 @@ pub(super) fn check_stmt(
             Ok(then_returns && else_returns)
         }
         Stmt::IfCast {
+            target_name,
             target_ty,
             binding,
             value,
@@ -1062,6 +1097,7 @@ pub(super) fn check_stmt(
             ..
         } => {
             let branch_scopes = checked_if_cast_scopes(
+                target_name,
                 target_ty,
                 binding,
                 value,

@@ -14,6 +14,10 @@
       "parent": "Node"
     },
     {
+      "interface": "Window",
+      "parent": null
+    },
+    {
       "interface": "Element",
       "parent": "Node"
     },
@@ -84,6 +88,14 @@
       "returnType": "Element?"
     },
     {
+      "interface": "Window",
+      "kind": "attribute",
+      "idlName": "document",
+      "emittedName": "document",
+      "type": "Document",
+      "readonly": true
+    },
+    {
       "interface": "Element",
       "kind": "attribute",
       "idlName": "id",
@@ -116,6 +128,12 @@
       "emittedName": "inner_text",
       "type": "string",
       "readonly": false
+    }
+  ],
+  "emittedHostFunctions": [
+    {
+      "name": "dom_window",
+      "returnType": "Window"
     }
   ],
   "skippedMembers": [

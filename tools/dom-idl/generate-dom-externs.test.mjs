@@ -44,7 +44,14 @@ test('generated externs emit DOM inheritance syntax', () => {
   const externs = readRepoFile('externs/dom.walu');
   assert.match(externs, /^type Node = extern extends EventTarget$/m);
   assert.match(externs, /^type Document = extern extends Node$/m);
+  assert.match(externs, /^type Window = extern$/m);
   assert.match(externs, /^type Element = extern extends Node$/m);
   assert.match(externs, /^type HTMLElement = extern extends Element$/m);
   assert.match(externs, /^type HTMLHeadingElement = extern extends HTMLElement$/m);
+});
+
+test('generated externs expose the DOM window root', () => {
+  const externs = readRepoFile('externs/dom.walu');
+  assert.match(externs, /^declare property Window:document: Document$/m);
+  assert.match(externs, /^declare function dom_window\(\): Window$/m);
 });

@@ -14,6 +14,10 @@ interface Document : Node {
   Element? querySelector(DOMString selectors);
 };
 
+interface Window {
+  readonly attribute Document document;
+};
+
 interface Element : Node {
   attribute DOMString id;
   attribute DOMString className;

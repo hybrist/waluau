@@ -1407,6 +1407,71 @@ fn lowers_tagged_union_resume_to_coroutine_resume_tagged() {
 }
 
 #[test]
+fn lowers_tagged_union_pattern_match_binding_to_tag_check_and_unbox() {
+    let source = r#"
+        type Either = Left(i32) | Right(f64)
+
+        function left(either: Either): i32
+            if Left(value) = either then
+                return value
+            end
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+
+    let mut saw_tag_check = false;
+    let mut saw_unbox_cast = false;
+    for function in &module.functions {
+        for block in function.blocks.values() {
+            for (_, instruction) in &block.instructions {
+                match instruction {
+                    Instruction::Binary {
+                        op: BinaryOp::Eq, ..
+                    } => saw_tag_check = true,
+                    Instruction::Cast {
+                        from: Type::Unknown,
+                        to,
+                        ..
+                    } if *to == Type::Numeric(NumericType::I32) => saw_unbox_cast = true,
+                    _ => {}
+                }
+            }
+        }
+    }
+    assert!(saw_tag_check, "expected binary Eq for the tag check");
+    assert!(
+        saw_unbox_cast,
+        "expected unbox Cast from Unknown to the payload type"
+    );
+}
+
+#[test]
+fn rejects_tagged_union_pattern_match_for_string_payload() {
+    let source = r#"
+        type Either = Left(i32) | Failed(string)
+
+        function left(either: Either): i32
+            if Failed(message) = either then
+                return 0
+            end
+            return 1
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let error = build(&typed).expect_err("ir build should fail for string payload");
+    assert!(
+        error.to_string().contains("string"),
+        "error should mention string payload, got: {}",
+        error
+    );
+}
+
+#[test]
 fn verifies_function_with_tagged_union_return_type() {
     let source = r#"
         function poll(co: thread): Finished(i32) | Yielded(i32) | Error(string)

@@ -1,9 +1,14 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use waluau_ast::{Expr, Function, FunctionExpr, FunctionName, Program, Stmt, TableField, Type};
 
+const DOM_WINDOW_REQUIRE: &str = "dom:window";
+const DOM_WINDOW_FUNCTION: &str = "dom_window";
+const DOM_WINDOW_TYPE: &str = "Window";
+
 pub struct LoadedModule {
     pub program: Program,
     pub requires: HashMap<String, usize>,
+    pub virtual_requires: HashSet<String>,
 }
 
 pub fn clean_path(path: &str) -> String {
@@ -61,13 +66,25 @@ pub fn link_programs(files: &HashMap<String, String>, entry_path: &str) -> Resul
         modules: Vec::new(),
         by_path: HashMap::new(),
         stack: Vec::new(),
+        requires_dom_externs: false,
     };
 
     // Load builtin declarations first
     let builtin_imports = loader.load_builtins()?;
 
     let entry_id = loader.load(&entry_norm)?;
-    merge_with_ambient_declarations(&loader.modules, entry_id, builtin_imports, ambient_externs)
+    let dom_externs = if loader.requires_dom_externs {
+        Some(loader.load_dom_externs()?)
+    } else {
+        None
+    };
+    merge_with_ambient_declarations(
+        &loader.modules,
+        entry_id,
+        builtin_imports,
+        ambient_externs,
+        dom_externs,
+    )
 }
 
 fn is_ambient_extern_path(path: &str) -> bool {
@@ -109,6 +126,7 @@ struct Loader<'a> {
     modules: Vec<LoadedModule>,
     by_path: HashMap<String, usize>,
     stack: Vec<String>,
+    requires_dom_externs: bool,
 }
 
 impl<'a> Loader<'a> {
@@ -139,7 +157,16 @@ impl<'a> Loader<'a> {
 
         self.stack.push(path.to_string());
         let mut requires = HashMap::new();
+        let mut virtual_requires = HashSet::new();
         for raw in raw_paths {
+            if raw == DOM_WINDOW_REQUIRE {
+                self.requires_dom_externs = true;
+                virtual_requires.insert(raw);
+                continue;
+            }
+            if raw.starts_with("dom:") {
+                return Err(unsupported_dom_require(&raw));
+            }
             if requires.contains_key(&raw) {
                 continue;
             }
@@ -155,7 +182,11 @@ impl<'a> Loader<'a> {
         self.stack.pop();
 
         let id = self.modules.len();
-        self.modules.push(LoadedModule { program, requires });
+        self.modules.push(LoadedModule {
+            program,
+            requires,
+            virtual_requires,
+        });
         self.by_path.insert(path.to_string(), id);
         Ok(id)
     }
@@ -179,6 +210,20 @@ impl<'a> Loader<'a> {
 
         Ok(all_imports)
     }
+
+    fn load_dom_externs(&mut self) -> Result<Program, String> {
+        waluau_parser::parse_with_path(
+            include_str!("../../../externs/dom.walu"),
+            "externs/dom.walu",
+        )
+        .map_err(|e| e.to_string())
+    }
+}
+
+fn unsupported_dom_require(raw: &str) -> String {
+    format!(
+        "unsupported DOM virtual module \"{raw}\"; supported specifiers: \"{DOM_WINDOW_REQUIRE}\""
+    )
 }
 
 fn module_prefix(id: usize, entry_id: usize) -> String {
@@ -194,6 +239,7 @@ fn merge_with_ambient_declarations(
     entry_id: usize,
     builtin_imports: Vec<waluau_ast::DeclaredImport>,
     ambient_externs: Vec<Program>,
+    dom_externs: Option<Program>,
 ) -> Result<Program, String> {
     let mut functions = Vec::new();
     let mut declared_imports = builtin_imports;
@@ -203,6 +249,11 @@ fn merge_with_ambient_declarations(
         declared_imports.extend(extern_program.declared_imports);
         type_declarations.extend(extern_program.type_declarations);
         ambient_sources.extend(extern_program.sources);
+    }
+    if let Some(dom_program) = dom_externs {
+        declared_imports.extend(dom_program.declared_imports);
+        type_declarations.extend(dom_program.type_declarations);
+        ambient_sources.extend(dom_program.sources);
     }
     let mut top_level = Vec::new();
     let mut export_cache = HashMap::new();
@@ -233,6 +284,9 @@ fn merge_with_ambient_declarations(
         let mut imports = HashMap::new();
         for (raw, &target_id) in &module.requires {
             imports.insert(raw.clone(), export_cache[&target_id].clone());
+        }
+        for raw in &module.virtual_requires {
+            imports.insert(raw.clone(), ResolvedImport::DomWindow);
         }
 
         let mut rewriter = Rewriter {
@@ -310,6 +364,7 @@ fn merge_with_ambient_declarations(
 enum ResolvedImport {
     Function(String),
     Namespace(BTreeMap<String, String>),
+    DomWindow,
 }
 
 fn hoist_table_export_functions(
@@ -785,6 +840,7 @@ impl Rewriter<'_> {
                             ResolvedImport::Namespace(fields) => {
                                 self.namespaces.insert(name.clone(), fields.clone());
                             }
+                            ResolvedImport::DomWindow => {}
                         }
                     }
                 }
@@ -932,6 +988,24 @@ impl Rewriter<'_> {
                                     value: Expr::Name(function.clone(), None, *require_span),
                                 })
                                 .collect(),
+                            span: *require_span,
+                        },
+                        ResolvedImport::DomWindow => Expr::Cast {
+                            expr: Box::new(Expr::Call {
+                                callee: Box::new(Expr::Name(
+                                    DOM_WINDOW_FUNCTION.to_string(),
+                                    None,
+                                    *require_span,
+                                )),
+                                type_args: Vec::new(),
+                                args: Vec::new(),
+                                span: *require_span,
+                                method_call_origin: None,
+                            }),
+                            ty: Type::Named {
+                                name: DOM_WINDOW_TYPE.to_string(),
+                                type_args: Vec::new(),
+                            },
                             span: *require_span,
                         },
                     };

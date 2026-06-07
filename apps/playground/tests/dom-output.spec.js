@@ -67,4 +67,22 @@ test.describe('DOM Output in Run tab', () => {
     await expect(outputFrame.locator('h2#playground-title')).toHaveText('Hello from generated DOM externs');
     await expect(outputFrame.locator('p')).toHaveText('Hello from generated DOM externs in a sandboxed output document');
   });
+
+  test('loads DOM externs for the dom_extern_rendering conformance preset', async ({ page }) => {
+    await page.getByRole('button', { name: 'Dom Extern Rendering (Test)' }).click();
+
+    await expect(page.locator('.file-item').getByText('dom_extern_rendering.walu', { exact: true })).toBeVisible();
+    await expect(page.locator('.file-item').getByText('externs/dom.walu', { exact: true })).toBeVisible();
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    const domOutput = page.getByLabel('DOM Output');
+    await expect(domOutput).toBeVisible();
+
+    const outputFrame = page.frameLocator('.dom-output-frame');
+    await expect(outputFrame.locator('h1#generated-heading')).toHaveText('Hello from generated DOM externsleaf');
+    await expect(outputFrame.locator('h1#generated-heading span.leaf')).toHaveText('leaf');
+    await expect(outputFrame.locator('p#generated-paragraph')).toHaveText('Rendered through generated extern DOM handles');
+  });
 });

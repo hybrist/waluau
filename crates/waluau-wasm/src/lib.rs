@@ -499,4 +499,68 @@ mod tests {
         assert!(result.tag_ids.contains_key("Some"));
         assert!(result.tag_ids.contains_key("None"));
     }
+
+    #[test]
+    fn compile_multi_resolves_dom_window_virtual_module() {
+        let mut files = std::collections::HashMap::new();
+        files.insert(
+            "main.walu".to_string(),
+            r#"
+                function main(): unit
+                    local window = require("dom:window")
+                    local document: Document = window.document
+                end
+            "#
+            .to_string(),
+        );
+
+        let result =
+            super::compile_sources(&files, "main.walu").expect("dom window require should compile");
+        assert!(result.wat.contains("(module"));
+        assert!(result.wat.contains("dom_window"));
+        assert!(result.wat.contains("Window.get_document"));
+    }
+
+    #[test]
+    fn compile_multi_resolves_top_level_dom_window_virtual_module() {
+        let mut files = std::collections::HashMap::new();
+        files.insert(
+            "main.walu".to_string(),
+            r#"
+                local window = require("dom:window")
+                local document = window.document
+
+                function main(): unit
+                end
+            "#
+            .to_string(),
+        );
+
+        let result =
+            super::compile_sources(&files, "main.walu").expect("dom window require should compile");
+        assert!(result.wat.contains("(module"));
+        assert!(result.wat.contains("dom_window"));
+        assert!(result.wat.contains("Window.get_document"));
+    }
+
+    #[test]
+    fn compile_multi_rejects_unknown_dom_virtual_module() {
+        let mut files = std::collections::HashMap::new();
+        files.insert(
+            "main.walu".to_string(),
+            r#"
+                function main(): unit
+                    local worker = require("dom:worker")
+                end
+            "#
+            .to_string(),
+        );
+
+        let error = super::compile_sources(&files, "main.walu")
+            .expect_err("unknown DOM virtual module should fail");
+        assert_eq!(
+            error,
+            "unsupported DOM virtual module \"dom:worker\"; supported specifiers: \"dom:window\""
+        );
+    }
 }
