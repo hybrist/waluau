@@ -158,6 +158,17 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
         // Any value implicitly boxes into `unknown` (anyref). Unboxing back to a
         // concrete type is never implicit — it requires an explicit cast.
         Some(Type::Unknown) => Ok(Type::Unknown),
+        Some(Type::Nullable(expected_inner)) => match actual {
+            Type::Nil => Ok(Type::Nullable(expected_inner)),
+            Type::Nullable(actual_inner) if actual_inner == expected_inner => {
+                Ok(Type::Nullable(expected_inner))
+            }
+            other if other == *expected_inner => Ok(Type::Nullable(expected_inner)),
+            other => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {other} to {}?",
+                expected_inner
+            ))),
+        },
         Some(Type::TaggedVariant(expected_variant)) => match actual {
             Type::TaggedVariant(actual_variant) if actual_variant.tag == expected_variant.tag => {
                 let payload = coerce_type(
@@ -247,6 +258,23 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                     actual_variant.tag, expected_name
                 ))),
             },
+            // coroutine.resume (and similar) produce a bare TaggedUnion; allow it to
+            // be assigned to a named alias whose underlying type is that union.
+            Type::TaggedUnion(ref actual_variants) => match expected_ty.as_ref() {
+                Type::TaggedUnion(_) => {
+                    let actual_union = Type::TaggedUnion(actual_variants.clone());
+                    let inner = coerce_type(actual_union, Some(*expected_ty))?;
+                    Ok(Type::Opaque {
+                        name: expected_name,
+                        ty: Box::new(inner),
+                    })
+                }
+                _ => Err(Diagnostic::new(format!(
+                    "cannot implicitly convert {} to {}",
+                    Type::TaggedUnion(actual_variants.clone()),
+                    expected_name
+                ))),
+            },
             Type::Record(_) if matches!(expected_ty.as_ref(), Type::Record(_)) => {
                 let _ = coerce_type(actual, Some(*expected_ty.clone()))?;
                 Ok(Type::Opaque {
@@ -315,6 +343,12 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             ))),
             Type::Extern => Err(Diagnostic::new(format!(
                 "cannot implicitly convert extern to {expected_numeric}",
+            ))),
+            Type::Nil => Err(Diagnostic::new(format!(
+                "cannot implicitly convert nil to {expected_numeric}",
+            ))),
+            Type::Nullable(_) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert nullable value to {expected_numeric}",
             ))),
             Type::Named { name, .. } => Err(Diagnostic::new(format!(
                 "cannot implicitly convert {name} to {expected_numeric}",
@@ -401,6 +435,10 @@ pub(super) fn resolve_number_literal(
         )),
         Some(Type::Extern) => Err(Diagnostic::new(
             "numeric literal is not assignable to extern",
+        )),
+        Some(Type::Nil) => Err(Diagnostic::new("numeric literal is not assignable to nil")),
+        Some(Type::Nullable(_)) => Err(Diagnostic::new(
+            "numeric literal is not assignable to nullable extern",
         )),
         Some(Type::Named { name, .. }) => Err(Diagnostic::new(format!(
             "numeric literal is not assignable to {name}",

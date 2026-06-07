@@ -603,6 +603,7 @@ impl Rewriter<'_> {
             }
             Expr::Number(..)
             | Expr::Bool(..)
+            | Expr::Nil(..)
             | Expr::String(..)
             | Expr::Bytes(..)
             | Expr::Name(..)
@@ -621,6 +622,7 @@ impl Rewriter<'_> {
                 }
             }
             Type::Opaque { ty, .. } => self.rewrite_type(ty),
+            Type::Nullable(inner) => self.rewrite_type(inner),
             Type::TaggedVariant(variant) => self.rewrite_type(variant.payload.as_mut()),
             Type::TaggedUnion(variants) => {
                 for variant in variants {
@@ -654,6 +656,7 @@ impl Rewriter<'_> {
             | Type::String
             | Type::Bytes
             | Type::Extern
+            | Type::Nil
             | Type::TypeParam(_)
             | Type::Thread => {}
         }
@@ -818,7 +821,11 @@ impl Rewriter<'_> {
                     *name = format!("{}{name}", self.prefix);
                 }
             }
-            Expr::Number(..) | Expr::Bool(..) | Expr::String(..) | Expr::Bytes(..) => {}
+            Expr::Number(..)
+            | Expr::Bool(..)
+            | Expr::Nil(..)
+            | Expr::String(..)
+            | Expr::Bytes(..) => {}
             Expr::Unary { expr, .. } | Expr::Cast { expr, .. } | Expr::IsVariant { expr, .. } => {
                 self.rewrite_expr(expr, bound)
             }
@@ -1136,6 +1143,7 @@ fn rename_expr(
         }
         Expr::Number(..)
         | Expr::Bool(..)
+        | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
         | Expr::Require(..) => {}
@@ -1252,6 +1260,7 @@ fn expr_mentions_name(name: &str, expr: &Expr) -> bool {
         Expr::Require(..)
         | Expr::Number(..)
         | Expr::Bool(..)
+        | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..) => false,
     }
@@ -1326,8 +1335,12 @@ fn collect_block(stmts: &[Stmt], out: &mut Vec<String>) {
 fn collect_expr(expr: &Expr, out: &mut Vec<String>) {
     match expr {
         Expr::Require(path, _) => out.push(path.clone()),
-        Expr::Name(..) | Expr::Number(..) | Expr::Bool(..) | Expr::String(..) | Expr::Bytes(..) => {
-        }
+        Expr::Name(..)
+        | Expr::Number(..)
+        | Expr::Bool(..)
+        | Expr::Nil(..)
+        | Expr::String(..)
+        | Expr::Bytes(..) => {}
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } | Expr::IsVariant { expr, .. } => {
             collect_expr(expr, out)
         }

@@ -254,6 +254,33 @@ fn extern_type_aliases_are_nominal_and_lower_to_extern() {
 }
 
 #[test]
+fn nullable_extern_aliases_narrow_after_nil_check() {
+    let source = r#"
+        type Element = extern
+
+        function take(value: Element): i32
+            return 20
+        end
+
+        function score(value: Element?): i32
+            if value ~= nil then
+                return take(value)
+            end
+            return 10
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+
+    assert!(matches!(
+        &typed.functions[1].params[0].ty,
+        Type::Nullable(inner)
+            if matches!(inner.as_ref(), Type::Opaque { name, ty } if name == "Element" && ty.as_ref() == &Type::Extern)
+    ));
+}
+
+#[test]
 fn distinct_extern_type_aliases_do_not_implicitly_convert() {
     let source = r#"
         type Element = extern
@@ -1630,6 +1657,27 @@ fn coroutine_resume_returns_tagged_union() {
             local result: Yielded(unknown) | Finished(i32) | Error(string) = coroutine.resume(co)
             if result is Finished then
                 return result.value
+            end
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn coroutine_resume_assigns_to_named_tagged_union_alias() {
+    let source = r#"
+        type Result = Yielded(unknown) | Finished(i32) | Error(string)
+
+        function run_job(): i32
+            local job: () -> i32 = function(): i32
+                return 7
+            end
+            local co: thread = coroutine.create(job)
+            local r: Result = coroutine.resume(co)
+            if r is Finished then
+                return r.value
             end
             return 0
         end

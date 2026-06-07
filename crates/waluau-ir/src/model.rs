@@ -51,6 +51,9 @@ pub enum Instruction {
     },
     Unit,
     Bool(bool),
+    Null {
+        ty: Type,
+    },
     String(String),
     Bytes(Vec<u8>),
     Cast {
@@ -64,6 +67,10 @@ pub enum Instruction {
         right: ValueId,
         operand_ty: Type,
         result_ty: Type,
+    },
+    IsNull {
+        value: ValueId,
+        ty: Type,
     },
     MathIntrinsic {
         intrinsic: MathIntrinsic,

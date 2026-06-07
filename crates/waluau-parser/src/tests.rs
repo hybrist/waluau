@@ -131,6 +131,34 @@ fn parses_declared_host_method_with_implicit_receiver_param() {
 }
 
 #[test]
+fn parses_nullable_extern_annotations_and_nil_checks() {
+    let source = r#"
+        type Element = extern
+
+        function present(value: Element?): bool
+            return value ~= nil
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert_eq!(
+        program.functions[0].params[0].ty,
+        Type::Nullable(Box::new(Type::Named {
+            name: "Element".into(),
+            type_args: vec![],
+        }))
+    );
+    assert!(matches!(
+        &program.functions[0].body[0],
+        waluau_ast::Stmt::Return(waluau_ast::Expr::Binary {
+            op: waluau_ast::BinaryOp::NotEq,
+            right,
+            ..
+        }) if matches!(right.as_ref(), waluau_ast::Expr::Nil(_))
+    ));
+}
+
+#[test]
 fn parses_generic_type_declarations_and_references() {
     let source = r#"
         type Pair<A, B> = {first: A, second: B}

@@ -213,10 +213,12 @@ pub(crate) fn infer_value_types(
                 IrInstruction::Number { ty, .. } => Type::Numeric(*ty),
                 IrInstruction::Unit => Type::Unit,
                 IrInstruction::Bool(_) => Type::Bool,
+                IrInstruction::Null { ty } => ty.clone(),
                 IrInstruction::String(_) => Type::String,
                 IrInstruction::Bytes(_) => Type::Bytes,
                 IrInstruction::Cast { to, .. } => to.clone(),
                 IrInstruction::Binary { result_ty, .. } => result_ty.clone(),
+                IrInstruction::IsNull { .. } => Type::Bool,
                 IrInstruction::MathIntrinsic { result_ty, .. } => result_ty.clone(),
                 IrInstruction::ToString { .. } => Type::String,
                 IrInstruction::Print { .. } => Type::Unit,
@@ -569,8 +571,10 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
         | IrInstruction::Number { .. }
         | IrInstruction::Unit
         | IrInstruction::Bool(_)
+        | IrInstruction::Null { .. }
         | IrInstruction::String(_)
         | IrInstruction::Bytes(_) => Vec::new(),
+        IrInstruction::IsNull { value, .. } => vec![*value],
         IrInstruction::ToString { value, .. } => vec![*value],
         IrInstruction::Cast { value, .. } => vec![*value],
         IrInstruction::Binary { left, right, .. } => vec![*left, *right],
@@ -636,8 +640,10 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         | IrInstruction::Number { .. }
         | IrInstruction::Unit
         | IrInstruction::Bool(_)
+        | IrInstruction::Null { .. }
         | IrInstruction::String(_)
         | IrInstruction::Bytes(_) => false,
+        IrInstruction::IsNull { value: tested, .. } => *tested == value,
         IrInstruction::ToString { .. } => false,
         IrInstruction::Cast { value: source, .. } => *source == value,
         IrInstruction::Binary { left, .. } => *left == value,

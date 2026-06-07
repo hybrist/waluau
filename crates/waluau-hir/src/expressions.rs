@@ -85,6 +85,7 @@ pub(super) fn infer_expr(
     match expr {
         Expr::Number(value, _) => resolve_number_literal(value, expected),
         Expr::Bool(..) => Ok(Type::Bool),
+        Expr::Nil(..) => coerce_type(Type::Nil, expected),
         Expr::IsVariant { expr, tag, .. } => {
             let actual = infer_expr(expr, vars, fn_signatures, active_type_params, None)?;
             if actual.tagged_variant(tag).is_none() {
@@ -142,6 +143,9 @@ pub(super) fn infer_expr(
                     Type::String => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Bytes => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Extern => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                    Type::Nil | Type::Nullable(_) => {
+                        Err(Diagnostic::new("unary '-' requires a numeric operand"))
+                    }
                     Type::Named { .. } => {
                         Err(Diagnostic::new("unary '-' requires a numeric operand"))
                     }
@@ -701,7 +705,22 @@ pub(super) fn infer_expr(
                 require_bool_pair(left_ty, right_ty)?;
                 Ok(Type::Bool)
             }
-            BinaryOp::Eq => {
+            BinaryOp::Eq | BinaryOp::NotEq => {
+                if is_nil_comparison(left, right) {
+                    let value = if matches!(left.as_ref(), Expr::Nil(..)) {
+                        right
+                    } else {
+                        left
+                    };
+                    let value_ty =
+                        infer_expr(value, vars, fn_signatures, active_type_params, None)?;
+                    if matches!(value_ty, Type::Nullable(_)) {
+                        return Ok(Type::Bool);
+                    }
+                    return Err(Diagnostic::new(
+                        "nil comparison requires a nullable extern operand",
+                    ));
+                }
                 let left_ty = infer_expr(left, vars, fn_signatures, active_type_params, None)?;
                 if left_ty == Type::Bool {
                     let right_ty = infer_expr(
@@ -754,6 +773,10 @@ pub(super) fn infer_expr(
             }
         },
     }
+}
+
+fn is_nil_comparison(left: &Expr, right: &Expr) -> bool {
+    matches!(left, Expr::Nil(..)) || matches!(right, Expr::Nil(..))
 }
 
 pub(super) fn infer_expr_list(
