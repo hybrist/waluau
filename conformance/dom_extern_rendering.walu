@@ -1,7 +1,7 @@
--- conformance: include=../externs/dom.walu
 -- Generated DOM extern host-boundary fixture.
 
-declare function dom_document(): Document
+local window = require("dom:window")
+local document: Document = window.document
 
 function take_node(value: Node): i32
     return 7
@@ -11,7 +11,6 @@ function take_html_element(value: HTMLElement): i32
     return 11
 end
 
-local document: Document = dom_document()
 local document_node: Node = document
 assert(take_node(document_node) == 7)
 

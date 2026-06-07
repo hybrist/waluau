@@ -74,7 +74,7 @@ test.describe('DOM Output in Run tab', () => {
     await page.getByRole('button', { name: 'Dom Extern Rendering (Test)' }).click();
 
     await expect(page.locator('.file-item').getByText('dom_extern_rendering.walu', { exact: true })).toBeVisible();
-    await expect(page.locator('.file-item').getByText('externs/dom.walu', { exact: true })).toBeVisible();
+    await expect(page.locator('.file-item').getByText('externs/dom.walu', { exact: true })).toHaveCount(0);
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
       timeout: COMPILER_READY_TIMEOUT,
     });
