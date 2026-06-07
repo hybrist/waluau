@@ -1,0 +1,12 @@
+-- Core builtin functions
+-- These are host functions that provide basic runtime functionality
+
+-- Print a string to stdout
+declare function print(message: string): unit
+
+-- String find method with Lua-compatible API
+-- Returns NotFound | Found(start_index: u32, end_index: u32) 
+-- Uses 0-based indexing and only supports plain mode (no patterns)
+type FindLocation = { start: u32, end: u32 }
+type FindResult = NotFound(unit) | Found(FindLocation)
+declare function string_find(haystack: string, needle: string, init: u32?): FindResult

@@ -23,6 +23,7 @@ pub(super) const MATH_COPYSIGN: &str = "math.copysign";
 pub(super) const TABLE_CONCAT: &str = "table.concat";
 pub(super) const TO_STRING: &str = "tostring";
 pub(super) const ASSERT: &str = "assert";
+pub(super) const STRING_FIND: &str = "string_find";
 // pub(super) const PRINT: &str = "print"; // now handled via extern declaration
 
 pub(super) fn infer_coroutine_builtin_call(
@@ -314,6 +315,64 @@ pub(super) fn infer_table_builtin_call(
         }
     }
     Some(coerce_type(Type::String, expected))
+}
+
+pub(super) fn infer_string_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    if name != STRING_FIND {
+        return None;
+    }
+
+    // string_find expects 2 arguments: (haystack: string, needle: string)
+    if args.len() != 2 {
+        return Some(Err(Diagnostic::new(format!(
+            "{STRING_FIND} expects 2 arguments, got {}",
+            args.len()
+        ))));
+    }
+
+    // Check haystack argument (string)
+    let haystack_ty = match super::expressions::infer_expr(
+        &args[0],
+        vars,
+        fn_signatures,
+        active_type_params,
+        Some(Type::String),
+    ) {
+        Ok(ty) => ty,
+        Err(error) => return Some(Err(error)),
+    };
+    if haystack_ty != Type::String {
+        return Some(Err(Diagnostic::new(format!(
+            "{STRING_FIND} expects haystack to be a string, got {haystack_ty}"
+        ))));
+    }
+
+    // Check needle argument (string)
+    let needle_ty = match super::expressions::infer_expr(
+        &args[1],
+        vars,
+        fn_signatures,
+        active_type_params,
+        Some(Type::String),
+    ) {
+        Ok(ty) => ty,
+        Err(error) => return Some(Err(error)),
+    };
+    if needle_ty != Type::String {
+        return Some(Err(Diagnostic::new(format!(
+            "{STRING_FIND} expects needle to be a string, got {needle_ty}"
+        ))));
+    }
+
+    // Return type: i32 (position or -1 if not found)
+    Some(coerce_type(Type::Numeric(NumericType::I32), expected))
 }
 
 // infer_print_builtin_call removed - now handled via extern function declaration

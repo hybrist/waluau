@@ -1660,6 +1660,9 @@ impl<'a> Monomorphizer<'a> {
                     Ok(Some(Type::number()))
                 }
             }
+            "string_find" => {
+                Ok(Some(Type::Numeric(waluau_ast::NumericType::I32)))
+            }
             _ => Ok(None),
         }
     }

@@ -1,0 +1,8 @@
+type FindLocation = { start: u32, end: u32 }
+type FindResult = NotFound(unit) | Found(FindLocation)
+
+function test_simple(): bool
+    return true
+end
+
+assert(test_simple())

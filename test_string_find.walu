@@ -1,0 +1,21 @@
+type FindResult = NotFound(unit) | Found({ start: u32, end: u32 })
+
+function test_string_find(): bool
+    local haystack: string = "hello world"
+    local needle: string = "world"
+    
+    -- Basic find test
+    local result: FindResult = string_find(haystack, needle)
+    if Found(found_data) = result then
+        print("Found at start: " .. tostring(found_data.start) .. ", end: " .. tostring(found_data.end))
+        return true
+    end
+    if NotFound(dummy) = result then
+        print("Not found")
+        return false
+    end
+    
+    return false
+end
+
+assert(test_string_find())

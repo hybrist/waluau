@@ -3,3 +3,7 @@
 
 -- Print a string to stdout
 declare function print(message: string): unit
+
+-- String find function with Lua-compatible API
+-- Returns position (0-based) or -1 if not found
+declare function string_find(haystack: string, needle: string): i32
