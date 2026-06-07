@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { compileAndInstantiate, compileAndInstantiateWithExports } from '../src/runner.js';
+import {
+  compileAndInstantiate,
+  compileAndInstantiateWithDom,
+  compileAndInstantiateWithExports,
+} from '../src/runner.js';
 
 const conformanceModules = import.meta.glob('../../../conformance/**/*.walu', {
   eager: true,
@@ -41,5 +45,16 @@ describe('browser conformance', () => {
     expect(exports.nullable_score(element)).toBe(20);
     expect(exports.nullable_eq_score(null)).toBe(30);
     expect(exports.nullable_eq_score(element)).toBe(20);
+  });
+
+  it('renders DOM extern handles into the conformance DOM root', async () => {
+    const source = cases.find(({ name }) => name === 'dom_extern_rendering.walu').source;
+    const { root } = await compileAndInstantiateWithDom({ '/main.walu': source }, '/main.walu');
+
+    expect(root.children).toHaveLength(2);
+    expect(root.children[0].tagName).toBe('H1');
+    expect(root.children[0].textContent).toBe('Hello from Waluau');
+    expect(root.children[1].tagName).toBe('P');
+    expect(root.children[1].textContent).toBe('Rendered through extern DOM handles');
   });
 });

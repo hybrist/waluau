@@ -60,11 +60,67 @@ function decodeBytesConstantsFromWasm(wasmBuffer) {
   return [];
 }
 
-function buildWaluauImports(wasmBuffer) {
+function createMockElement(tagName) {
+  return {
+    tagName: String(tagName).toUpperCase(),
+    childNodes: [],
+    textContent: '',
+    appendChild(child) {
+      this.childNodes.push(child);
+      return child;
+    },
+    get children() {
+      return this.childNodes;
+    },
+    get innerHTML() {
+      const ownText = escapeHtml(this.textContent);
+      const children = this.childNodes.map((child) => child.outerHTML).join('');
+      return `${ownText}${children}`;
+    },
+    get outerHTML() {
+      const tag = this.tagName.toLowerCase();
+      return `<${tag}>${this.innerHTML}</${tag}>`;
+    },
+  };
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+}
+
+function createDomHost() {
+  if (globalThis.document?.createElement) {
+    const root = globalThis.document.createElement('div');
+    root.dataset.waluauConformanceRoot = '';
+    return {
+      document: root,
+      createElement: (tagName) => globalThis.document.createElement(tagName),
+      root,
+    };
+  }
+
+  const root = createMockElement('div');
+  return {
+    document: root,
+    createElement: (tagName) => createMockElement(tagName),
+    root,
+  };
+}
+
+function buildWaluauImports(wasmBuffer, options = {}) {
   const bytesConstants = decodeBytesConstantsFromWasm(wasmBuffer);
+  const domHost = options.domHost ?? createDomHost();
   const asBytes = (value) => {
     if (value instanceof Uint8Array) return value;
     throw new Error(`Expected Uint8Array bytes value, got ${Object.prototype.toString.call(value)}`);
+  };
+  const asElement = (value, name) => {
+    if (value && typeof value.appendChild === 'function') return value;
+    throw new Error(`Expected DOM Element for ${name}`);
   };
   const waluauImports = new Proxy({}, {
     get(_target, prop) {
@@ -83,6 +139,22 @@ function buildWaluauImports(wasmBuffer) {
       }
       if (name === 'Element.value') {
         return (element, delta) => element.value + delta;
+      }
+      if (name === 'dom_document') {
+        return () => domHost.document;
+      }
+      if (name === 'dom_create_element') {
+        return (_document, tagName) => domHost.createElement(String(tagName));
+      }
+      if (name === 'dom_set_text') {
+        return (element, text) => {
+          asElement(element, name).textContent = String(text);
+        };
+      }
+      if (name === 'dom_append_child') {
+        return (parent, child) => {
+          asElement(parent, name).appendChild(asElement(child, name));
+        };
       }
       if (name === 'bytes_literal') {
         return (index) => {
@@ -150,15 +222,24 @@ export async function compileAndInstantiate(files, entryFile = '/main.walu') {
   await compileAndInstantiateWithExports(files, entryFile);
 }
 
-export async function compileAndInstantiateWithExports(files, entryFile = '/main.walu') {
+export async function compileAndInstantiateWithExports(files, entryFile = '/main.walu', options = {}) {
   const module = await import('./waluau-wasm/waluau_wasm.js');
   await module.default();
   const output = module.compile_multi(files, entryFile);
   const wasmBuffer = new Uint8Array(output.wasm);
-  const imports = buildWaluauImports(wasmBuffer);
+  const imports = buildWaluauImports(wasmBuffer, options);
   const result = await WebAssembly.instantiate(wasmBuffer, imports, {
     builtins: ['js-string'],
     importedStringConstants: WALUAU_STRING_CONSTANTS_MODULE,
   });
   return result.instance.exports;
+}
+
+export async function compileAndInstantiateWithDom(files, entryFile = '/main.walu') {
+  const domHost = createDomHost();
+  const exports = await compileAndInstantiateWithExports(files, entryFile, { domHost });
+  return {
+    exports,
+    root: domHost.root,
+  };
 }

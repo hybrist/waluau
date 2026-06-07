@@ -1,0 +1,18 @@
+-- Minimal DOM extern host-boundary fixture.
+
+type Element = extern
+
+declare function dom_document(): Element
+declare function dom_create_element(document: Element, tag_name: string): Element
+declare function dom_set_text(element: Element, text: string): unit
+declare function dom_append_child(parent: Element, child: Element): unit
+
+local document: Element = dom_document()
+
+local heading: Element = dom_create_element(document, "h1")
+dom_set_text(heading, "Hello from Waluau")
+dom_append_child(document, heading)
+
+local paragraph: Element = dom_create_element(document, "p")
+dom_set_text(paragraph, "Rendered through extern DOM handles")
+dom_append_child(document, paragraph)
