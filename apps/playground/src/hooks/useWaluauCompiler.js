@@ -154,7 +154,7 @@ export default function useWaluauCompiler({ files, entryFile }) {
       const capturedInitLogs = [];
       try {
         if (moduleUsesDomOutput) {
-          domOutputRootRef.current.replaceChildren();
+          domOutputRootRef.current.body.replaceChildren();
         }
         const imports = buildWaluauImports(wasmBuffer, (msg) => {
           capturedInitLogs.push(msg);
