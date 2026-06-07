@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Program {
     pub functions: Vec<Function>,
+    pub declared_imports: Vec<DeclaredImport>,
     pub type_declarations: Vec<TypeDeclaration>,
     pub top_level: Vec<Stmt>,
     /// The value a module exports through a trailing top-level `return`.
@@ -25,6 +26,14 @@ pub struct TypeDeclaration {
     pub name: String,
     pub type_params: Vec<String>,
     pub ty: Type,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeclaredImport {
+    pub name: String,
+    pub symbol_id: Option<SymbolId>,
+    pub params: Vec<Param>,
+    pub return_type: Type,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -890,6 +899,10 @@ pub fn resolve_symbols(program: &mut Program) -> Result<(), Diagnostic> {
             let id = resolver.declare(name);
             function.symbol_id = Some(id);
         }
+    }
+    for declared in &mut program.declared_imports {
+        let id = resolver.declare(&declared.name);
+        declared.symbol_id = Some(id);
     }
 
     // Resolve top-level statements

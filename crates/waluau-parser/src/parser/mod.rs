@@ -1,5 +1,6 @@
 use waluau_ast::{
-    Function, FunctionExpr, FunctionName, Param, Program, Span, Stmt, Type, TypeDeclaration,
+    DeclaredImport, Function, FunctionExpr, FunctionName, Param, Program, Span, Stmt, Type,
+    TypeDeclaration,
 };
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
@@ -31,6 +32,7 @@ impl Parser {
 
     pub(super) fn parse_program(&mut self) -> Result<Program, Diagnostic> {
         let mut functions = Vec::new();
+        let mut declared_imports = Vec::new();
         let mut type_declarations = Vec::new();
         let mut top_level = Vec::new();
         let mut export = None;
@@ -49,6 +51,14 @@ impl Parser {
                     Err(error) => {
                         self.record_error(error);
                         self.sync_to_next_function();
+                    }
+                }
+            } else if self.is_declare_function_start() {
+                match self.parse_declared_import() {
+                    Ok(declared) => declared_imports.push(declared),
+                    Err(error) => {
+                        self.record_error(error);
+                        self.synchronize_statement(&[], self.index);
                     }
                 }
             } else {
@@ -85,6 +95,7 @@ impl Parser {
         if self.diagnostics.is_empty() {
             Ok(Program {
                 functions,
+                declared_imports,
                 type_declarations,
                 top_level,
                 export,
@@ -127,6 +138,45 @@ impl Parser {
         } else {
             Ok(FunctionName::Simple(name))
         }
+    }
+
+    fn is_declare_function_start(&self) -> bool {
+        matches!(
+            (
+                self.peek().map(|token| &token.kind),
+                self.peek_n(1).map(|token| &token.kind),
+            ),
+            (
+                Some(TokenKind::Identifier(keyword)),
+                Some(TokenKind::Function)
+            ) if keyword == "declare"
+        )
+    }
+
+    fn parse_declared_import(&mut self) -> Result<DeclaredImport, Diagnostic> {
+        let keyword = self.expect_identifier()?;
+        if keyword != "declare" {
+            return Err(Diagnostic::new("expected 'declare'"));
+        }
+        self.expect_simple(TokenKind::Function, "expected 'function' after 'declare'")?;
+        let name = self.expect_identifier()?;
+        let function_expr = self.parse_function_signature_tail(None, true, name.clone())?;
+        if !function_expr.type_params.is_empty() {
+            return Err(Diagnostic::new(format!(
+                "declared host function '{name}' cannot be generic"
+            )));
+        }
+        let return_type = function_expr.return_type.ok_or_else(|| {
+            Diagnostic::new(format!(
+                "declared host function '{name}' must have a return type"
+            ))
+        })?;
+        Ok(DeclaredImport {
+            name,
+            symbol_id: None,
+            params: function_expr.params,
+            return_type,
+        })
     }
 
     fn is_type_decl_start(&self) -> bool {
@@ -180,6 +230,94 @@ impl Parser {
         );
         self.type_param_scope.truncate(scope_token);
         parsed
+    }
+
+    fn parse_function_signature_tail(
+        &mut self,
+        name: Option<String>,
+        require_return_type: bool,
+        display_name: String,
+    ) -> Result<FunctionExpr, Diagnostic> {
+        let start_pos = self.peek().map(|t| t.span.start).unwrap_or(0);
+        let type_params = self.parse_type_param_list()?;
+        let scope_token = self.type_param_scope.len();
+        self.type_param_scope.extend(type_params.iter().cloned());
+        let parsed = self.parse_function_signature_after_type_params(
+            name,
+            type_params,
+            require_return_type,
+            start_pos,
+            display_name,
+        );
+        self.type_param_scope.truncate(scope_token);
+        parsed
+    }
+
+    fn parse_function_signature_after_type_params(
+        &mut self,
+        name: Option<String>,
+        type_params: Vec<String>,
+        require_return_type: bool,
+        start_pos: u32,
+        display_name: String,
+    ) -> Result<FunctionExpr, Diagnostic> {
+        self.expect_simple(TokenKind::LParen, "expected '('")?;
+        let mut params = Vec::new();
+        if !self.check_simple(&TokenKind::RParen) {
+            loop {
+                let param_name = self.expect_identifier()?;
+                self.expect_simple(TokenKind::Colon, "expected ':' after parameter name")?;
+                let param_type = match self.parse_type() {
+                    Ok(ty) => ty,
+                    Err(error) => {
+                        self.record_error(error);
+                        Type::number()
+                    }
+                };
+                params.push(Param {
+                    name: param_name,
+                    symbol_id: None,
+                    ty: param_type,
+                });
+                if self.check_simple(&TokenKind::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect_simple(TokenKind::RParen, "expected ')'")?;
+        let return_type = if self.check_simple(&TokenKind::Colon) {
+            self.advance();
+            Some(match self.parse_return_type_list() {
+                Ok(ty) => ty,
+                Err(error) => {
+                    self.record_error(error);
+                    Type::number()
+                }
+            })
+        } else if require_return_type {
+            return Err(Diagnostic::new(format!(
+                "expected ':' before return type for declared host function '{display_name}'"
+            )));
+        } else {
+            None
+        };
+        let end_pos = self.peek().map(|t| t.span.start).unwrap_or(start_pos);
+        Ok(FunctionExpr {
+            name,
+            symbol_id: None,
+            implicit_self: None,
+            type_params,
+            params,
+            return_type,
+            body: Vec::new(),
+            file_path: self.file_path.clone(),
+            span: Some(Span {
+                start: start_pos,
+                end: end_pos,
+            }),
+        })
     }
 
     fn parse_function_expr_after_type_params(

@@ -632,6 +632,7 @@ fn rejects_non_bool_branch_condition() {
     };
     let err = verify(&Module {
         functions: vec![function],
+        declared_imports: Vec::new(),
         start: None,
     })
     .expect_err("expected verifier to reject non-bool branch");
@@ -666,6 +667,7 @@ fn rejects_return_type_mismatch() {
     };
     let err = verify(&Module {
         functions: vec![function],
+        declared_imports: Vec::new(),
         start: None,
     })
     .expect_err("expected verifier to reject return type mismatch");
@@ -778,6 +780,7 @@ fn rejects_phi_predecessor_order_mismatch() {
     };
     let err = verify(&Module {
         functions: vec![function],
+        declared_imports: Vec::new(),
         start: None,
     })
     .expect_err("expected verifier to reject phi predecessor ordering");
@@ -892,9 +895,11 @@ fn verifies_loop_with_break_and_continue() {
     }
 
     let tag_ids = std::collections::BTreeMap::new();
+    let host_import_signatures = std::collections::HashMap::new();
     let mut lowered = super::build_function(
         &program.functions[0],
         &signatures,
+        &host_import_signatures,
         &field_call_signatures,
         &program.sources,
         &tag_ids,
@@ -905,6 +910,7 @@ fn verifies_loop_with_break_and_continue() {
     functions.extend(lowered);
     let module = super::Module {
         functions,
+        declared_imports: Vec::new(),
         start: None,
     };
 

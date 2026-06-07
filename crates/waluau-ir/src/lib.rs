@@ -68,7 +68,8 @@ pub use lower::build;
 #[cfg(test)]
 pub(crate) use lower::build_function;
 pub use model::{
-    BasicBlock, BlockId, Function, Instruction, MathIntrinsic, Module, Terminator, ValueId,
+    BasicBlock, BlockId, DeclaredImport, Function, Instruction, MathIntrinsic, Module, Terminator,
+    ValueId,
 };
 pub use verify::verify;
 

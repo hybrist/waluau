@@ -75,6 +75,9 @@ function buildWaluauImports(wasmBuffer) {
       if (name === 'print' || name === 'js_log') {
         return () => {};
       }
+      if (name === 'host_add') {
+        return (left, right) => left + right;
+      }
       if (name === 'bytes_literal') {
         return (index) => {
           const literal = bytesConstants[index];

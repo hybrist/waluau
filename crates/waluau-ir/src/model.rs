@@ -7,7 +7,17 @@ pub struct ValueId(pub usize);
 #[derive(Clone, Debug, PartialEq)]
 pub struct Module {
     pub functions: Vec<Function>,
+    pub declared_imports: Vec<DeclaredImport>,
     pub start: Option<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeclaredImport {
+    pub module: String,
+    pub name: String,
+    pub params: Vec<Type>,
+    pub return_type: Type,
+    pub symbol_id: SymbolId,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -72,6 +82,12 @@ pub enum Instruction {
         name: String,
         symbol_id: Option<SymbolId>,
         args: Vec<ValueId>,
+    },
+    HostCall {
+        name: String,
+        symbol_id: SymbolId,
+        args: Vec<ValueId>,
+        return_type: Type,
     },
     CallValue {
         callee: ValueId,
