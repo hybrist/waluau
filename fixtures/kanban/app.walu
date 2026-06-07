@@ -1,0 +1,414 @@
+-- North-star CSR Kanban app fixture.
+--
+-- This is assumed final Waluau code, not a current conformance fixture. It is
+-- the target shape for raw DOM programming once host imports, extern refs,
+-- nullable extern refs, browser callbacks, and the DOM/localStorage host shim
+-- are implemented.
+
+type Document = extern
+type Element = extern
+type Event = extern
+
+type Card = {
+    id: string,
+    title: string,
+    description: string,
+    status: string,
+    priority: string,
+    tags: {string},
+}
+
+type Activity = {
+    message: string,
+    card_id: string,
+}
+
+type BoardState = {
+    cards: {Card},
+    filter: string,
+    activities: {Activity},
+    editing_id: string,
+}
+
+declare function dom_document(): Document
+declare function dom_get_element_by_id(document: Document, id: string): Element?
+declare function dom_create_element(document: Document, tag: string): Element
+declare function dom_clear(element: Element): unit
+declare function dom_append(parent: Element, child: Element): unit
+declare function dom_set_text(element: Element, text: string): unit
+declare function dom_set_class(element: Element, class_name: string): unit
+declare function dom_set_attr(element: Element, name: string, value: string): unit
+declare function dom_get_value(element: Element): string
+declare function dom_on_click(element: Element, callback: (Event) -> unit): unit
+declare function dom_on_input(element: Element, callback: (Event) -> unit): unit
+declare function dom_target(event: Event): Element
+
+declare function storage_get(key: string): string?
+declare function storage_set(key: string, value: string): unit
+
+declare function cards_from_json(json: string): {Card}
+declare function cards_to_json(cards: {Card}): string
+declare function random_id(): string
+declare function string_contains(haystack: string, needle: string): bool
+declare function string_join(values: {string}, separator: string): string
+
+local STORAGE_KEY: string = "waluau.kanban.cards"
+local STATUS_BACKLOG: string = "backlog"
+local STATUS_DOING: string = "doing"
+local STATUS_DONE: string = "done"
+
+local document: Document = dom_document()
+local app: Element = dom_get_element_by_id(document, "app") :: Element
+
+local state: BoardState = {
+    cards = {},
+    filter = "",
+    activities = {},
+    editing_id = "",
+}
+
+function status_label(status: string): string
+    if status == STATUS_BACKLOG then
+        return "Backlog"
+    elseif status == STATUS_DOING then
+        return "Doing"
+    elseif status == STATUS_DONE then
+        return "Done"
+    end
+
+    return status
+end
+
+function next_status(status: string): string
+    if status == STATUS_BACKLOG then
+        return STATUS_DOING
+    elseif status == STATUS_DOING then
+        return STATUS_DONE
+    end
+
+    return STATUS_DONE
+end
+
+function previous_status(status: string): string
+    if status == STATUS_DONE then
+        return STATUS_DOING
+    elseif status == STATUS_DOING then
+        return STATUS_BACKLOG
+    end
+
+    return STATUS_BACKLOG
+end
+
+function empty_card(): Card
+    return {
+        id = random_id(),
+        title = "New task",
+        description = "",
+        status = STATUS_BACKLOG,
+        priority = "Medium",
+        tags = {},
+    }
+end
+
+function seed_cards(): {Card}
+    return {
+        {
+            id = "seed-1",
+            title = "Expose raw DOM imports",
+            description = "Render nodes, set classes, and wire events from Waluau.",
+            status = STATUS_DOING,
+            priority = "High",
+            tags = {"dom", "interop"},
+        },
+        {
+            id = "seed-2",
+            title = "Persist board state",
+            description = "Round-trip cards through localStorage without server logic.",
+            status = STATUS_BACKLOG,
+            priority = "Medium",
+            tags = {"storage"},
+        },
+        {
+            id = "seed-3",
+            title = "Ship the north-star fixture",
+            description = "Keep the final app shape visible while the blockers land.",
+            status = STATUS_DONE,
+            priority = "Low",
+            tags = {"demo"},
+        },
+    }
+end
+
+function load_cards(): {Card}
+    local encoded: string? = storage_get(STORAGE_KEY)
+    if encoded ~= nil then
+        return cards_from_json(encoded)
+    end
+
+    return seed_cards()
+end
+
+function save_cards(): unit
+    storage_set(STORAGE_KEY, cards_to_json(state.cards))
+end
+
+function activity(message: string, card_id: string): unit
+    local next: Activity = {
+        message = message,
+        card_id = card_id,
+    }
+
+    local items: {Activity} = {next}
+    local count: i32 = 0
+    for old in state.activities do
+        if count < 5 then
+            items[#items] = old
+        end
+        count = count + 1
+    end
+
+    state.activities = items
+end
+
+function find_card_index(card_id: string): i32
+    local index: i32 = 0
+    for card in state.cards do
+        if card.id == card_id then
+            return index
+        end
+        index = index + 1
+    end
+
+    return -1
+end
+
+function card_matches_filter(card: Card): bool
+    if state.filter == "" then
+        return true
+    end
+
+    if string_contains(card.title, state.filter) then
+        return true
+    elseif string_contains(card.description, state.filter) then
+        return true
+    elseif string_contains(string_join(card.tags, " "), state.filter) then
+        return true
+    end
+
+    return false
+end
+
+function add_card(): unit
+    local card: Card = empty_card()
+    state.cards[#state.cards] = card
+    state.editing_id = card.id
+    activity("Created card", card.id)
+    save_cards()
+    render()
+end
+
+function delete_card(card_id: string): unit
+    local next_cards: {Card} = {}
+    for card in state.cards do
+        if card.id ~= card_id then
+            next_cards[#next_cards] = card
+        end
+    end
+
+    state.cards = next_cards
+    activity("Deleted card", card_id)
+    save_cards()
+    render()
+end
+
+function move_card(card_id: string, status: string): unit
+    local index: i32 = find_card_index(card_id)
+    if index >= 0 then
+        state.cards[index].status = status
+        activity("Moved to " .. status_label(status), card_id)
+        save_cards()
+        render()
+    end
+end
+
+function update_card_text(card_id: string, title: string, description: string): unit
+    local index: i32 = find_card_index(card_id)
+    if index >= 0 then
+        state.cards[index].title = title
+        state.cards[index].description = description
+        state.editing_id = ""
+        activity("Updated card", card_id)
+        save_cards()
+        render()
+    end
+end
+
+function set_filter(value: string): unit
+    state.filter = value
+    render()
+end
+
+function el(tag: string, class_name: string): Element
+    local node: Element = dom_create_element(document, tag)
+    dom_set_class(node, class_name)
+    return node
+end
+
+function text_el(tag: string, class_name: string, text: string): Element
+    local node: Element = el(tag, class_name)
+    dom_set_text(node, text)
+    return node
+end
+
+function button(label: string, class_name: string, on_click: (Event) -> unit): Element
+    local node: Element = text_el("button", class_name, label)
+    dom_set_attr(node, "type", "button")
+    dom_on_click(node, on_click)
+    return node
+end
+
+function input(value: string, placeholder: string, on_input: (string) -> unit): Element
+    local node: Element = el("input", "w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none focus:border-teal-600")
+    dom_set_attr(node, "value", value)
+    dom_set_attr(node, "placeholder", placeholder)
+    dom_on_input(node, function(event: Event): unit
+        on_input(dom_get_value(dom_target(event)))
+    end)
+    return node
+end
+
+function render_header(parent: Element): unit
+    local header: Element = el("header", "flex flex-col gap-3 border-b border-slate-200 bg-white px-6 py-4 md:flex-row md:items-center md:justify-between")
+    local title_group: Element = el("div", "space-y-1")
+    dom_append(title_group, text_el("h1", "text-xl font-semibold text-slate-950", "Waluau Kanban"))
+    dom_append(title_group, text_el("p", "text-sm text-slate-600", "Client-side board rendered from Waluau state"))
+
+    local actions: Element = el("div", "flex gap-2")
+    dom_append(actions, input(state.filter, "Filter cards", function(value: string): unit
+        set_filter(value)
+    end))
+    dom_append(actions, button("Add card", "rounded-md bg-teal-700 px-3 py-2 text-sm font-medium text-white hover:bg-teal-800", function(_event: Event): unit
+        add_card()
+    end))
+
+    dom_append(header, title_group)
+    dom_append(header, actions)
+    dom_append(parent, header)
+end
+
+function render_card_view(parent: Element, card: Card): unit
+    local card_node: Element = el("article", "rounded-md border border-slate-200 bg-white p-3 shadow-sm")
+    local top: Element = el("div", "flex items-start justify-between gap-3")
+    local copy: Element = el("div", "min-w-0")
+
+    dom_append(copy, text_el("h3", "truncate text-sm font-semibold text-slate-950", card.title))
+    dom_append(copy, text_el("p", "mt-1 text-sm leading-5 text-slate-600", card.description))
+    dom_append(copy, text_el("p", "mt-2 text-xs font-medium uppercase tracking-wide text-slate-500", card.priority .. " priority"))
+
+    local edit_button: Element = button("Edit", "rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50", function(_event: Event): unit
+        state.editing_id = card.id
+        render()
+    end)
+
+    dom_append(top, copy)
+    dom_append(top, edit_button)
+    dom_append(card_node, top)
+
+    local tags: Element = el("div", "mt-3 flex flex-wrap gap-1")
+    for tag in card.tags do
+        dom_append(tags, text_el("span", "rounded bg-slate-100 px-2 py-1 text-xs text-slate-700", tag))
+    end
+    dom_append(card_node, tags)
+
+    local controls: Element = el("div", "mt-3 flex justify-between gap-2")
+    dom_append(controls, button("Back", "rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 disabled:opacity-40", function(_event: Event): unit
+        move_card(card.id, previous_status(card.status))
+    end))
+    dom_append(controls, button("Delete", "rounded border border-rose-200 px-2 py-1 text-xs text-rose-700 hover:bg-rose-50", function(_event: Event): unit
+        delete_card(card.id)
+    end))
+    dom_append(controls, button("Next", "rounded border border-slate-300 px-2 py-1 text-xs text-slate-700", function(_event: Event): unit
+        move_card(card.id, next_status(card.status))
+    end))
+    dom_append(card_node, controls)
+
+    dom_append(parent, card_node)
+end
+
+function render_card_editor(parent: Element, card: Card): unit
+    local editor: Element = el("article", "rounded-md border border-teal-300 bg-white p-3 shadow-sm")
+    local title_input: Element = el("input", "w-full rounded-md border border-slate-300 px-3 py-2 text-sm")
+    local description_input: Element = el("textarea", "mt-2 min-h-24 w-full rounded-md border border-slate-300 px-3 py-2 text-sm")
+
+    dom_set_attr(title_input, "value", card.title)
+    dom_set_text(description_input, card.description)
+
+    local controls: Element = el("div", "mt-3 flex justify-end gap-2")
+    dom_append(controls, button("Cancel", "rounded border border-slate-300 px-3 py-2 text-sm text-slate-700", function(_event: Event): unit
+        state.editing_id = ""
+        render()
+    end))
+    dom_append(controls, button("Save", "rounded bg-teal-700 px-3 py-2 text-sm font-medium text-white", function(_event: Event): unit
+        update_card_text(card.id, dom_get_value(title_input), dom_get_value(description_input))
+    end))
+
+    dom_append(editor, title_input)
+    dom_append(editor, description_input)
+    dom_append(editor, controls)
+    dom_append(parent, editor)
+end
+
+function render_column(parent: Element, status: string): unit
+    local column: Element = el("section", "flex min-h-0 flex-col rounded-md border border-slate-200 bg-slate-50")
+    local header: Element = el("div", "border-b border-slate-200 px-4 py-3")
+    dom_append(header, text_el("h2", "text-sm font-semibold text-slate-900", status_label(status)))
+    dom_append(column, header)
+
+    local list: Element = el("div", "flex flex-1 flex-col gap-3 overflow-y-auto p-3")
+    for card in state.cards do
+        if card.status == status and card_matches_filter(card) then
+            if state.editing_id == card.id then
+                render_card_editor(list, card)
+            else
+                render_card_view(list, card)
+            end
+        end
+    end
+
+    dom_append(column, list)
+    dom_append(parent, column)
+end
+
+function render_activity(parent: Element): unit
+    local panel: Element = el("aside", "border-t border-slate-200 bg-white px-6 py-3")
+    dom_append(panel, text_el("h2", "text-xs font-semibold uppercase tracking-wide text-slate-500", "Activity"))
+
+    local list: Element = el("div", "mt-2 flex flex-wrap gap-2")
+    for item in state.activities do
+        dom_append(list, text_el("span", "rounded bg-slate-100 px-2 py-1 text-xs text-slate-700", item.message))
+    end
+
+    dom_append(panel, list)
+    dom_append(parent, panel)
+end
+
+function render_board(parent: Element): unit
+    local board: Element = el("main", "grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden p-4 md:grid-cols-3")
+    render_column(board, STATUS_BACKLOG)
+    render_column(board, STATUS_DOING)
+    render_column(board, STATUS_DONE)
+    dom_append(parent, board)
+end
+
+function render(): unit
+    dom_clear(app)
+
+    local shell: Element = el("div", "flex h-screen flex-col bg-slate-100 text-slate-950")
+    render_header(shell)
+    render_board(shell)
+    render_activity(shell)
+    dom_append(app, shell)
+end
+
+state.cards = load_cards()
+render()
