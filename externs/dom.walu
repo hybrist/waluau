@@ -5,6 +5,7 @@
 type EventTarget = extern
 type Node = extern extends EventTarget
 type Document = extern extends Node
+type Window = extern
 type Element = extern extends Node
 type HTMLElement = extern extends Element
 type HTMLHeadingElement = extern extends HTMLElement
@@ -15,7 +16,9 @@ declare function Node:append_child(node: Node): Node
 declare function Document:create_element(tag_name: string): Element
 declare function Document:get_element_by_id(element_id: string): Element?
 declare function Document:query_selector(selectors: string): Element?
+declare property Window:document: Document
 declare property Element:id: string
 declare property Element:class_name: string
 declare function Element:query_selector(selectors: string): Element?
 declare property HTMLElement:inner_text: string
+declare function dom_window(): Window

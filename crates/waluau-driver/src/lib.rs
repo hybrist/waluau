@@ -162,6 +162,50 @@ mod tests {
     }
 
     #[test]
+    fn compile_file_resolves_dom_window_virtual_module() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("app.walu");
+        fs::write(
+            &input_path,
+            r#"
+                function main(): unit
+                    local window = require("dom:window")
+                    local document: Document = window.document
+                end
+            "#,
+        )
+        .expect("app should write");
+
+        let wasm = super::compile_file(&input_path).expect("dom window require should compile");
+        assert!(
+            wasm.starts_with(b"\0asm"),
+            "compiled wasm should start with the wasm magic bytes"
+        );
+    }
+
+    #[test]
+    fn compile_file_rejects_unknown_dom_virtual_module() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("app.walu");
+        fs::write(
+            &input_path,
+            r#"
+                function main(): unit
+                    local worker = require("dom:worker")
+                end
+            "#,
+        )
+        .expect("app should write");
+
+        let error =
+            super::compile_file(&input_path).expect_err("unknown DOM virtual module should fail");
+        assert_eq!(
+            error.to_string(),
+            "unsupported DOM virtual module \"dom:worker\"; supported specifiers: \"dom:window\""
+        );
+    }
+
+    #[test]
     fn rejects_math_abs_for_integer_types() {
         let source = r#"
             function bad(x: i32): i32

@@ -3,6 +3,7 @@
     "EventTarget",
     "Node",
     "Document",
+    "Window",
     "Element",
     "HTMLElement",
     "HTMLHeadingElement"
@@ -21,6 +22,9 @@
       "operation:getElementById",
       "operation:querySelector"
     ],
+    "Window": [
+      "attribute:document"
+    ],
     "Element": [
       "attribute:id",
       "attribute:className",
@@ -31,6 +35,12 @@
     ],
     "HTMLHeadingElement": []
   },
+  "hostFunctions": [
+    {
+      "name": "dom_window",
+      "returnType": "Window"
+    }
+  ],
   "typeMap": {
     "DOMString": "string",
     "USVString": "string",
