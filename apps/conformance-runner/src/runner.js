@@ -78,6 +78,12 @@ function buildWaluauImports(wasmBuffer) {
       if (name === 'host_add') {
         return (left, right) => left + right;
       }
+      if (name === 'getElement') {
+        return () => ({ value: 42 });
+      }
+      if (name === 'Element.value') {
+        return (element, delta) => element.value + delta;
+      }
       if (name === 'bytes_literal') {
         return (index) => {
           const literal = bytesConstants[index];

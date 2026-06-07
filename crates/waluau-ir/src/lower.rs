@@ -65,12 +65,17 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
             )
         })
         .collect::<HashMap<_, _>>();
+    let host_import_names = declared_imports
+        .iter()
+        .map(|declared| (declared.name.clone(), declared.symbol_id))
+        .collect::<HashMap<_, _>>();
     let mut functions = Vec::new();
     for function in &monomorphic.functions {
         let mut lowered = build_function(
             function,
             &signatures,
             &host_import_signatures,
+            &host_import_names,
             &field_call_signatures,
             &monomorphic.sources,
             &tag_ids,
@@ -660,6 +665,7 @@ pub(crate) fn build_function(
     function: &AstFunction,
     signatures: &HashMap<SymbolId, (Vec<Type>, Type)>,
     host_import_signatures: &HashMap<SymbolId, (Vec<Type>, Type)>,
+    host_import_names: &HashMap<String, SymbolId>,
     field_call_signatures: &HashMap<String, (Vec<Type>, Type)>,
     sources: &BTreeMap<String, String>,
     tag_ids: &BTreeMap<String, i32>,
@@ -735,6 +741,7 @@ pub(crate) fn build_function(
         next_block: 1,
         signatures,
         host_import_signatures,
+        host_import_names,
         field_call_signatures,
         lifted_functions: Vec::new(),
         lambda_counter: 0,
@@ -768,6 +775,7 @@ struct Builder<'a> {
     next_block: usize,
     signatures: &'a HashMap<SymbolId, (Vec<Type>, Type)>,
     host_import_signatures: &'a HashMap<SymbolId, (Vec<Type>, Type)>,
+    host_import_names: &'a HashMap<String, SymbolId>,
     field_call_signatures: &'a HashMap<String, (Vec<Type>, Type)>,
     lifted_functions: Vec<Function>,
     lambda_counter: usize,
@@ -2450,12 +2458,21 @@ impl Builder<'_> {
                         lowered_args.len()
                     )));
                 }
-                let value = if let Some((direct_name, _, _)) = type_method {
-                    self.emit(Instruction::Call {
-                        name: direct_name,
-                        symbol_id: None,
-                        args: lowered_args,
-                    })
+                let value = if let Some((direct_name, _, return_type)) = type_method {
+                    if let Some(symbol_id) = self.host_import_names.get(&direct_name) {
+                        self.emit(Instruction::HostCall {
+                            name: direct_name,
+                            symbol_id: *symbol_id,
+                            args: lowered_args,
+                            return_type,
+                        })
+                    } else {
+                        self.emit(Instruction::Call {
+                            name: direct_name,
+                            symbol_id: None,
+                            args: lowered_args,
+                        })
+                    }
                 } else if let Some(direct_name) = direct_name {
                     self.emit(Instruction::Call {
                         name: direct_name,
@@ -3216,6 +3233,7 @@ impl Builder<'_> {
             next_block: 1,
             signatures: self.signatures,
             host_import_signatures: self.host_import_signatures,
+            host_import_names: self.host_import_names,
             field_call_signatures: self.field_call_signatures,
             lifted_functions: Vec::new(),
             lambda_counter: 0,

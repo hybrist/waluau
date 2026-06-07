@@ -450,6 +450,51 @@ fn devirtualized_method_call_avoids_call_indirect() {
 }
 
 #[test]
+fn declared_host_method_call_imports_declared_method() {
+    let source = r#"
+        type Element = extern
+        declare function getElement(): Element
+        declare function Element:value(delta: i32): i32
+
+        assert(getElement():value(7::i32) == 49)
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        wat.contains(r#"(import "waluau" "Element.value""#),
+        "expected declared host method import in:\n{wat}"
+    );
+
+    let mut saw_call_indirect = false;
+    for payload in Parser::new(0).parse_all(&wasm) {
+        let payload = payload.expect("wasm should parse");
+        if let Payload::CodeSectionEntry(body) = payload {
+            let mut reader = body.get_operators_reader().expect("ops should decode");
+            while !reader.eof() {
+                if matches!(
+                    reader.read().expect("op should decode"),
+                    Operator::CallIndirect { .. }
+                ) {
+                    saw_call_indirect = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    assert!(
+        !saw_call_indirect,
+        "expected direct host import call for extern method dispatch"
+    );
+}
+
+#[test]
 fn emits_valid_wasm_for_unknown_boxing() {
     // `unknown` lowers to anyref; primitives box (i32/bool via i31ref, f64 via a
     // boxed struct) and unbox via explicit cast, including through calls and

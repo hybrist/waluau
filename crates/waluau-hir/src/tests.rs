@@ -986,6 +986,19 @@ fn type_checks_method_declaration_with_implicit_self() {
 }
 
 #[test]
+fn type_checks_declared_host_method_on_extern_type() {
+    let source = r#"
+        type Element = extern
+        declare function getElement(): Element
+        declare function Element:value(delta: i32): i32
+
+        assert(getElement():value(7::i32) == 49)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
 fn type_checks_method_call_via_method_declaration() {
     let source = r#"
         local point = { x = 41::i32 }
