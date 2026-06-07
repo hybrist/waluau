@@ -122,6 +122,12 @@ function buildWaluauImports(wasmBuffer, options = {}) {
     if (value && typeof value.appendChild === 'function') return value;
     throw new Error(`Expected DOM Element for ${name}`);
   };
+  const setText = (element, text, name) => {
+    asElement(element, name).textContent = String(text);
+  };
+  const appendChild = (parent, child, name) => {
+    asElement(parent, name).appendChild(asElement(child, name));
+  };
   const waluauImports = new Proxy({}, {
     get(_target, prop) {
       const name = String(prop);
@@ -147,14 +153,19 @@ function buildWaluauImports(wasmBuffer, options = {}) {
         return (_document, tagName) => domHost.createElement(String(tagName));
       }
       if (name === 'dom_set_text') {
-        return (element, text) => {
-          asElement(element, name).textContent = String(text);
-        };
+        return (element, text) => setText(element, text, name);
       }
       if (name === 'dom_append_child') {
-        return (parent, child) => {
-          asElement(parent, name).appendChild(asElement(child, name));
-        };
+        return (parent, child) => appendChild(parent, child, name);
+      }
+      if (name === 'Document.create_element') {
+        return (_document, tagName) => domHost.createElement(String(tagName));
+      }
+      if (name === 'Document.append_child' || name === 'Element.append_child' || name === 'Node.append_child') {
+        return (parent, child) => appendChild(parent, child, name);
+      }
+      if (name === 'Element.set_text') {
+        return (element, text) => setText(element, text, name);
       }
       if (name === 'bytes_literal') {
         return (index) => {
