@@ -1,22 +1,58 @@
--- Minimal DOM extern host-boundary fixture.
-
-type Document = extern
-type Element = extern
+-- conformance: include=../externs/dom.walu
+-- Generated DOM extern host-boundary fixture.
 
 declare function dom_document(): Document
-declare property Element:inner_text: string
-declare function Document:create_element(tag_name: string): Element
-declare function Document:append_child(child: Element): unit
-declare function Element:set_text(text: string): unit
+
+function take_node(value: Node): i32
+    return 7
+end
+
+function take_html_element(value: HTMLElement): i32
+    return 11
+end
 
 local document: Document = dom_document()
+local document_node: Node = document
+assert(take_node(document_node) == 7)
+
+local missing: Element? = document:get_element_by_id("missing-dom-node")
+assert(missing == nil)
 
 local heading: Element = document:create_element("h1")
-heading.inner_text = "Hello from Waluau"
-assert(heading.inner_text == "Hello from Waluau")
+heading.id = "generated-heading"
+heading.class_name = "title"
+assert(heading.id == "generated-heading")
+assert(heading.class_name == "title")
 document:append_child(heading)
 
+if HTMLHeadingElement(actual_heading) = heading then
+    local html_heading: HTMLElement = actual_heading
+    local heading_node: Node = html_heading
+    assert(take_html_element(html_heading) == 11)
+    assert(take_node(heading_node) == 7)
+    actual_heading.inner_text = "Hello from generated DOM externs"
+    assert(actual_heading.inner_text == "Hello from generated DOM externs")
+else
+    assert(false)
+end
+
 local paragraph: Element = document:create_element("p")
-paragraph.inner_text = "Rendered through extern DOM handles"
-assert(paragraph.inner_text == "Rendered through extern DOM handles")
+paragraph.id = "generated-paragraph"
+paragraph.class_name = "body"
+paragraph.text_content = "Rendered through generated extern DOM handles"
+assert(paragraph.text_content == "Rendered through generated extern DOM handles")
 document:append_child(paragraph)
+
+if HTMLHeadingElement(not_heading) = paragraph then
+    assert(false)
+else
+    assert(take_node(paragraph) == 7)
+end
+
+local heading_by_id: Element? = document:get_element_by_id("generated-heading")
+assert(heading_by_id ~= nil)
+
+local child: Element = document:create_element("span")
+child.class_name = "leaf"
+child.text_content = "leaf"
+heading:append_child(child)
