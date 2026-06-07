@@ -9,6 +9,7 @@ pub struct Module {
     pub functions: Vec<Function>,
     pub declared_imports: Vec<DeclaredImport>,
     pub start: Option<usize>,
+    pub tag_ids: std::collections::BTreeMap<String, i32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

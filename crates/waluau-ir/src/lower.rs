@@ -3,7 +3,7 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
     waluau_ast::resolve_symbols(&mut resolved)?;
     let erased = erase_opaque_types(&resolved);
     let monomorphic = Monomorphizer::new(&erased).run(&erased)?;
-    let tag_ids = collect_variant_tag_ids(&monomorphic);
+    let tag_ids = collect_variant_tag_ids(&monomorphic, &resolved.type_declarations);
     let mut signatures = HashMap::new();
     let mut field_call_signatures = HashMap::new();
     let mut declared_imports = Vec::new();
@@ -90,6 +90,7 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
         functions,
         declared_imports,
         start,
+        tag_ids,
     };
     verify(&module)?;
     Ok(module)
@@ -103,8 +104,11 @@ struct IfCastParts<'a> {
     else_body: &'a [Stmt],
 }
 
-fn collect_variant_tag_ids(program: &Program) -> BTreeMap<String, i32> {
+fn collect_variant_tag_ids(program: &Program, type_declarations: &[TypeDeclaration]) -> BTreeMap<String, i32> {
     let mut tag_ids = BTreeMap::new();
+    for decl in type_declarations {
+        collect_type_variant_tags(&decl.ty, &mut tag_ids);
+    }
     for function in &program.functions {
         for param in &function.params {
             collect_type_variant_tags(&param.ty, &mut tag_ids);
