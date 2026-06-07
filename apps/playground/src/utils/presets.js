@@ -1,3 +1,5 @@
+import { conformanceIncludePaths } from '../../../../tools/conformance/includes.js';
+
 const fixtureModules = import.meta.glob('../../../../fixtures/*.walu', {
   eager: true,
   query: '?raw',
@@ -16,6 +18,12 @@ const conformanceModules = import.meta.glob('../../../../conformance/*.walu', {
   import: 'default'
 });
 
+const conformanceIncludeModules = import.meta.glob('../../../../{builtins,externs}/**/*.walu', {
+  eager: true,
+  query: '?raw',
+  import: 'default'
+});
+
 const domExternSource = import.meta.glob('../../../../externs/dom.walu', {
   eager: true,
   query: '?raw',
@@ -25,6 +33,22 @@ const domExternSource = import.meta.glob('../../../../externs/dom.walu', {
 export { fixtureModules, moduleFixtures, conformanceModules };
 
 const DOM_EXTERNS = Object.values(domExternSource)[0] || '';
+
+export function filesForConformancePreset(filename, source) {
+  const files = {
+    [`/${filename}`]: source
+  };
+
+  for (const resolved of conformanceIncludePaths(filename, source)) {
+    const includeSource = conformanceIncludeModules[`../../../..${resolved}`];
+    if (includeSource === undefined) {
+      throw new Error(`Unknown conformance include resolved to ${resolved}`);
+    }
+    files[resolved] = includeSource;
+  }
+
+  return files;
+}
 
 const SINGLE_PRESETS = Object.entries(fixtureModules)
   .map(([path, source]) => {
@@ -57,9 +81,7 @@ const CONFORMANCE_PRESETS = Object.entries(conformanceModules)
     return {
       key: `conformance-${key}`,
       label: `${label} (Test)`,
-      files: {
-        [`/${filename}`]: source
-      },
+      files: filesForConformancePreset(filename, source),
       entryFile: `/${filename}`
     };
   });
