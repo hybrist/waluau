@@ -49,6 +49,8 @@ pub fn link_programs(files: &HashMap<String, String>, entry_path: &str) -> Resul
         normalized_files.insert(norm, source.clone());
     }
 
+    let ambient_externs = load_ambient_externs(&normalized_files)?;
+
     let mut entry_norm = clean_path(entry_path);
     if !entry_norm.ends_with(".walu") && std::path::Path::new(&entry_norm).extension().is_none() {
         entry_norm.push_str(".walu");
@@ -65,7 +67,41 @@ pub fn link_programs(files: &HashMap<String, String>, entry_path: &str) -> Resul
     let builtin_imports = loader.load_builtins()?;
 
     let entry_id = loader.load(&entry_norm)?;
-    merge_with_builtins(&loader.modules, entry_id, builtin_imports)
+    merge_with_ambient_declarations(&loader.modules, entry_id, builtin_imports, ambient_externs)
+}
+
+fn is_ambient_extern_path(path: &str) -> bool {
+    path.starts_with("/externs/") && path.ends_with(".walu")
+}
+
+fn load_ambient_externs(files: &HashMap<String, String>) -> Result<Vec<Program>, String> {
+    let mut extern_paths = files
+        .keys()
+        .filter(|path| is_ambient_extern_path(path))
+        .cloned()
+        .collect::<Vec<_>>();
+    extern_paths.sort();
+
+    let mut programs = Vec::new();
+    for path in extern_paths {
+        let source = files
+            .get(&path)
+            .expect("path came from normalized file map");
+        let program = waluau_parser::parse_with_path(source, &path)
+            .map_err(|e| format!("in ambient extern module \"{}\": {}", path, e))?;
+        if !program.functions.is_empty()
+            || !program.top_level.is_empty()
+            || program.export.is_some()
+        {
+            return Err(format!(
+                "ambient extern module \"{}\" may only contain type and declare statements",
+                path
+            ));
+        }
+        programs.push(program);
+    }
+
+    Ok(programs)
 }
 
 struct Loader<'a> {
@@ -153,13 +189,21 @@ fn module_prefix(id: usize, entry_id: usize) -> String {
     }
 }
 
-fn merge_with_builtins(
+fn merge_with_ambient_declarations(
     modules: &[LoadedModule],
     entry_id: usize,
     builtin_imports: Vec<waluau_ast::DeclaredImport>,
+    ambient_externs: Vec<Program>,
 ) -> Result<Program, String> {
     let mut functions = Vec::new();
     let mut declared_imports = builtin_imports;
+    let mut type_declarations = Vec::new();
+    let mut ambient_sources = BTreeMap::new();
+    for extern_program in ambient_externs {
+        declared_imports.extend(extern_program.declared_imports);
+        type_declarations.extend(extern_program.type_declarations);
+        ambient_sources.extend(extern_program.sources);
+    }
     let mut top_level = Vec::new();
     let mut export_cache = HashMap::new();
 
@@ -169,7 +213,6 @@ fn merge_with_builtins(
         }
     }
 
-    let mut type_declarations = Vec::new();
     for (id, module) in modules.iter().enumerate() {
         let prefix = module_prefix(id, entry_id);
         let mut module_functions = module.program.functions.clone();
@@ -247,7 +290,7 @@ fn merge_with_builtins(
     }
 
     let entry_file_path = modules[entry_id].program.entry_file_path.clone();
-    let mut sources = BTreeMap::new();
+    let mut sources = ambient_sources;
     for module in modules {
         sources.extend(module.program.sources.clone());
     }
@@ -1561,6 +1604,50 @@ mod tests {
             matches!(&program.top_level[1], Stmt::Expr(Expr::Call { .. })),
             "expected imported assert to remain in merged top-level init: {:?}",
             program.top_level
+        );
+    }
+
+    #[test]
+    fn extern_files_are_merged_as_ambient_declarations() {
+        let files = std::collections::HashMap::from([
+            (
+                "/main.walu".to_string(),
+                r#"
+                    declare function get_element(): Element
+
+                    function main(): string
+                        return get_element().id
+                    end
+                "#
+                .to_string(),
+            ),
+            (
+                "/externs/dom.walu".to_string(),
+                r#"
+                    type Node = extern
+                    type Element = extern extends Node
+                    declare property Element:id: string
+                "#
+                .to_string(),
+            ),
+        ]);
+
+        let program = link_programs(&files, "/main.walu").expect("link should succeed");
+        assert!(
+            program
+                .type_declarations
+                .iter()
+                .any(|decl| decl.name == "Element"),
+            "expected ambient extern type declarations: {:?}",
+            program.type_declarations
+        );
+        assert!(
+            program
+                .declared_imports
+                .iter()
+                .any(|declared| declared.name == "Element.get_id"),
+            "expected ambient declared property imports: {:?}",
+            program.declared_imports
         );
     }
 }

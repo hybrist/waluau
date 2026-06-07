@@ -12,15 +12,27 @@ const DOM_IMPORT_NAMES = new Set([
   'Document.append_child',
   'Document.create_element',
   'Document.get_element_by_id',
+  'Document.query_selector',
   'Element.append',
   'Element.append_child',
   'Element.clear',
+  'Element.get_class_name',
+  'Element.get_id',
   'Element.get_inner_text',
+  'Element.query_selector',
   'Element.set_attr',
   'Element.set_class',
+  'Element.set_class_name',
+  'Element.set_id',
   'Element.set_inner_text',
   'Element.set_text',
+  'HTMLElement.get_inner_text',
+  'HTMLElement.set_inner_text',
   'Node.append_child',
+  'Node.get_node_name',
+  'Node.get_text_content',
+  'Node.set_node_name',
+  'Node.set_text_content',
 ]);
 
 const BLOCKED_DOM_TAGS = new Set([
@@ -215,9 +227,19 @@ function createPlaygroundDomHost(domOutputRoot) {
   };
 
   const requireElement = (value, label = 'DOM host value') => {
-    const ElementCtor = value?.ownerDocument?.defaultView?.Element ?? Element;
+    const document = requireOutputDocument();
+    const ElementCtor = document.defaultView?.Element ?? Element;
     if (!(value instanceof ElementCtor)) {
       throw new Error(`${label} must be an Element`);
+    }
+    return value;
+  };
+
+  const requireNode = (value, label = 'DOM host value') => {
+    const document = requireOutputDocument();
+    const NodeCtor = document.defaultView?.Node ?? Node;
+    if (!(value instanceof NodeCtor)) {
+      throw new Error(`${label} must be a Node`);
     }
     return value;
   };
@@ -227,7 +249,7 @@ function createPlaygroundDomHost(domOutputRoot) {
     if (value === document) {
       return document.body;
     }
-    return requireElement(value, label);
+    return requireNode(value, label);
   };
 
   const clearTarget = (value) => {
@@ -251,7 +273,7 @@ function createPlaygroundDomHost(domOutputRoot) {
   };
 
   const appendChild = (parent, child) => {
-    requireAppendTarget(parent).appendChild(requireElement(child, 'DOM child'));
+    return requireAppendTarget(parent).appendChild(requireNode(child, 'DOM child'));
   };
 
   const clear = (element) => {
@@ -259,15 +281,54 @@ function createPlaygroundDomHost(domOutputRoot) {
   };
 
   const setText = (element, text) => {
-    requireElement(element).textContent = String(text);
+    requireNode(element).textContent = String(text);
   };
 
   const getInnerText = (element) => {
     return requireElement(element).textContent;
   };
 
+  const getTextContent = (node) => {
+    return requireNode(node).textContent ?? '';
+  };
+
+  const getNodeName = (node) => {
+    return requireNode(node).nodeName;
+  };
+
+  const setNodeName = () => {
+    throw new Error('node_name is read-only in the playground DOM host');
+  };
+
   const setClass = (element, className) => {
     requireElement(element).className = String(className);
+  };
+
+  const getClassName = (element) => {
+    return requireElement(element).className;
+  };
+
+  const setId = (element, id) => {
+    requireElement(element).id = String(id);
+  };
+
+  const getId = (element) => {
+    return requireElement(element).id;
+  };
+
+  const getElementById = (document, id) => {
+    if (document !== requireOutputDocument()) {
+      throw new Error('Document.get_element_by_id receiver must be the DOM Output document');
+    }
+    return document.getElementById(String(id));
+  };
+
+  const querySelector = (target, selectors) => {
+    const selector = String(selectors);
+    if (target === requireOutputDocument()) {
+      return target.body.querySelector(selector);
+    }
+    return requireElement(target).querySelector(selector);
   };
 
   const setAttr = (element, name, value) => {
@@ -288,15 +349,28 @@ function createPlaygroundDomHost(domOutputRoot) {
     dom_set_text: setText,
     'Document.append_child': appendChild,
     'Document.create_element': createElement,
+    'Document.get_element_by_id': getElementById,
+    'Document.query_selector': querySelector,
     'Element.append': appendChild,
     'Element.append_child': appendChild,
     'Element.clear': clear,
+    'Element.get_class_name': getClassName,
+    'Element.get_id': getId,
     'Element.get_inner_text': getInnerText,
+    'Element.query_selector': querySelector,
     'Element.set_inner_text': setText,
     'Element.set_text': setText,
     'Element.set_class': setClass,
+    'Element.set_class_name': setClass,
+    'Element.set_id': setId,
     'Element.set_attr': setAttr,
+    'HTMLElement.get_inner_text': getInnerText,
+    'HTMLElement.set_inner_text': setText,
     'Node.append_child': appendChild,
+    'Node.get_node_name': getNodeName,
+    'Node.get_text_content': getTextContent,
+    'Node.set_node_name': setNodeName,
+    'Node.set_text_content': setText,
   };
 }
 
@@ -309,17 +383,24 @@ export function buildWaluauImports(wasmBuffer, initLogger, options = {}) {
   };
   const externIs = (value, typeName) => {
     const name = String(typeName);
+    const view = value?.ownerDocument?.defaultView ?? (value?.nodeType === 9 ? value.defaultView : globalThis);
+    if (name === 'EventTarget') {
+      return typeof view.EventTarget !== 'undefined' && value instanceof view.EventTarget ? 1 : 0;
+    }
     if (name === 'Node') {
-      return typeof Node !== 'undefined' && value instanceof Node ? 1 : 0;
+      return typeof view.Node !== 'undefined' && value instanceof view.Node ? 1 : 0;
+    }
+    if (name === 'Document') {
+      return typeof view.Document !== 'undefined' && value instanceof view.Document ? 1 : 0;
     }
     if (name === 'Element') {
-      return typeof Element !== 'undefined' && value instanceof Element ? 1 : 0;
+      return typeof view.Element !== 'undefined' && value instanceof view.Element ? 1 : 0;
     }
     if (name === 'HTMLElement') {
-      return typeof HTMLElement !== 'undefined' && value instanceof HTMLElement ? 1 : 0;
+      return typeof view.HTMLElement !== 'undefined' && value instanceof view.HTMLElement ? 1 : 0;
     }
     if (name === 'HTMLHeadingElement') {
-      return typeof HTMLHeadingElement !== 'undefined' && value instanceof HTMLHeadingElement ? 1 : 0;
+      return typeof view.HTMLHeadingElement !== 'undefined' && value instanceof view.HTMLHeadingElement ? 1 : 0;
     }
     throw new Error(`Unsupported extern cast target: ${name}`);
   };

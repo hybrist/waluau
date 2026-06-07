@@ -49,4 +49,22 @@ test.describe('DOM Output in Run tab', () => {
     await expect(outputFrame.locator('h2')).toHaveText('Hello from Waluau DOM');
     await expect(outputFrame.locator('p')).toHaveText('Hello from Waluau DOM rendered inside the playground Run tab');
   });
+
+  test('loads generated DOM externs from the DOM preset', async ({ page }) => {
+    await page.getByRole('button', { name: 'DOM Externs Example' }).click();
+
+    await expect(page.locator('.file-item').getByText('main.walu', { exact: true })).toBeVisible();
+    await expect(page.locator('.file-item').getByText('externs/dom.walu', { exact: true })).toBeVisible();
+    await expect(page.locator('.code-textarea')).not.toContainText('type Document = extern');
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    const domOutput = page.getByLabel('DOM Output');
+    await expect(domOutput).toBeVisible();
+
+    const outputFrame = page.frameLocator('.dom-output-frame');
+    await expect(outputFrame.locator('h2#playground-title')).toHaveText('Hello from generated DOM externs');
+    await expect(outputFrame.locator('p')).toHaveText('Hello from generated DOM externs in a sandboxed output document');
+  });
 });
