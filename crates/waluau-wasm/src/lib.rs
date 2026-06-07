@@ -4,6 +4,12 @@ use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 #[derive(Debug, Serialize)]
+struct TaggedVariantJson {
+    tag: String,
+    payload: Box<TypeJson>,
+}
+
+#[derive(Debug, Serialize)]
 #[serde(tag = "kind", content = "value")]
 enum TypeJson {
     I32,
@@ -24,6 +30,11 @@ enum TypeJson {
         type_index: u32,
         fields: std::collections::BTreeMap<String, TypeJson>,
     },
+    TaggedUnion {
+        #[serde(rename = "typeIndex")]
+        type_index: u32,
+        variants: Vec<TaggedVariantJson>,
+    },
     Unknown(String),
 }
 
@@ -41,6 +52,8 @@ struct CompileResult {
     #[serde(rename = "requiresWasmGc")]
     requires_wasm_gc: bool,
     signatures: std::collections::HashMap<String, FunctionSignatureJson>,
+    #[serde(rename = "tagIds")]
+    tag_ids: std::collections::BTreeMap<String, i32>,
 }
 
 fn to_type_json(
@@ -59,6 +72,7 @@ fn to_type_json(
         waluau_ast::Type::Bytes => TypeJson::Bytes,
         waluau_ast::Type::Unit => TypeJson::Unit,
         waluau_ast::Type::Thread => TypeJson::Thread,
+        waluau_ast::Type::Opaque { ty, .. } => to_type_json(ty, record_type_indices),
         waluau_ast::Type::Array(elem_ty) => TypeJson::Array {
             element_type: Box::new(to_type_json(elem_ty, record_type_indices)),
         },
@@ -74,6 +88,38 @@ fn to_type_json(
             TypeJson::Record {
                 type_index,
                 fields: fields_json,
+            }
+        }
+        waluau_ast::Type::TaggedVariant(variant) => {
+            let canonical = waluau_ast::Type::canonical_tagged_union_record();
+            let type_index = record_type_indices
+                .get(&canonical.to_string())
+                .copied()
+                .unwrap_or(0);
+            TypeJson::TaggedUnion {
+                type_index,
+                variants: vec![TaggedVariantJson {
+                    tag: variant.tag.clone(),
+                    payload: Box::new(to_type_json(&variant.payload, record_type_indices)),
+                }],
+            }
+        }
+        waluau_ast::Type::TaggedUnion(variants) => {
+            let canonical = waluau_ast::Type::canonical_tagged_union_record();
+            let type_index = record_type_indices
+                .get(&canonical.to_string())
+                .copied()
+                .unwrap_or(0);
+            let variants_json = variants
+                .iter()
+                .map(|variant| TaggedVariantJson {
+                    tag: variant.tag.clone(),
+                    payload: Box::new(to_type_json(&variant.payload, record_type_indices)),
+                })
+                .collect();
+            TypeJson::TaggedUnion {
+                type_index,
+                variants: variants_json,
             }
         }
         other => TypeJson::Unknown(format!("{:?}", other)),
@@ -161,6 +207,7 @@ fn compile_sources(
         wasm: emit_res.wasm,
         requires_wasm_gc,
         signatures,
+        tag_ids: module.tag_ids.clone(),
     })
 }
 
@@ -205,6 +252,7 @@ fn compile_source(source: &str) -> Result<CompileResult, String> {
         wasm: emit_res.wasm,
         requires_wasm_gc,
         signatures,
+        tag_ids: module.tag_ids.clone(),
     })
 }
 
@@ -434,6 +482,25 @@ mod tests {
     }
 
     #[test]
+    fn compile_tagged_unions_exports_tag_ids() {
+        let source = r#"
+            type Option = Some(i32) | None(unit)
+
+            function process_option(opt: Option): i32
+                if opt is Some then
+                    return 1
+                else
+                    return 0
+                end
+            end
+        "#;
+        let result = compile_source(source).expect("compile should succeed");
+        println!("tag_ids: {:?}", result.tag_ids);
+        assert!(result.tag_ids.contains_key("Some"));
+        assert!(result.tag_ids.contains_key("None"));
+    }
+
+    #[test]
     fn compile_multi_resolves_dom_window_virtual_module() {
         let mut files = std::collections::HashMap::new();
         files.insert(
@@ -442,6 +509,28 @@ mod tests {
                 function main(): unit
                     local window = require("dom:window")
                     local document: Document = window.document
+                end
+            "#
+            .to_string(),
+        );
+
+        let result =
+            super::compile_sources(&files, "main.walu").expect("dom window require should compile");
+        assert!(result.wat.contains("(module"));
+        assert!(result.wat.contains("dom_window"));
+        assert!(result.wat.contains("Window.get_document"));
+    }
+
+    #[test]
+    fn compile_multi_resolves_top_level_dom_window_virtual_module() {
+        let mut files = std::collections::HashMap::new();
+        files.insert(
+            "main.walu".to_string(),
+            r#"
+                local window = require("dom:window")
+                local document = window.document
+
+                function main(): unit
                 end
             "#
             .to_string(),

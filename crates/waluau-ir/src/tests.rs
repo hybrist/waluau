@@ -634,6 +634,7 @@ fn rejects_non_bool_branch_condition() {
         functions: vec![function],
         declared_imports: Vec::new(),
         start: None,
+        tag_ids: std::collections::BTreeMap::new(),
     })
     .expect_err("expected verifier to reject non-bool branch");
     assert!(err.to_string().contains("branch condition"));
@@ -669,6 +670,7 @@ fn rejects_return_type_mismatch() {
         functions: vec![function],
         declared_imports: Vec::new(),
         start: None,
+        tag_ids: std::collections::BTreeMap::new(),
     })
     .expect_err("expected verifier to reject return type mismatch");
     assert!(err.to_string().contains("return in block"));
@@ -782,6 +784,7 @@ fn rejects_phi_predecessor_order_mismatch() {
         functions: vec![function],
         declared_imports: Vec::new(),
         start: None,
+        tag_ids: std::collections::BTreeMap::new(),
     })
     .expect_err("expected verifier to reject phi predecessor ordering");
     assert!(err.to_string().contains("predecessor order mismatch"));
@@ -914,6 +917,7 @@ fn verifies_loop_with_break_and_continue() {
         functions,
         declared_imports: Vec::new(),
         start: None,
+        tag_ids: std::collections::BTreeMap::new(),
     };
 
     let function = &module.functions[0];
@@ -1315,6 +1319,69 @@ fn lowers_array_for_in_loop() {
     let module = build(&program).expect("ir build should succeed");
     let function = &module.functions[0];
     println!("FUNCTION IR: {:#?}", function);
+}
+
+#[test]
+fn lowers_table_concat_builtin_call_to_naive_concat_loop() {
+    let source = r#"
+        function entry(): string
+            local words: {string} = {"a", "b", "c"}
+            return table.concat(words, ", ")
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("ir build should succeed");
+    let function = &module.functions[0];
+    assert_eq!(function.return_type, Type::String);
+    // No host-level "join" intrinsic exists; this lowers to a loop that reads each
+    // element and accumulates the result via string concatenation.
+    assert!(function.blocks.values().any(|block| {
+        block
+            .instructions
+            .iter()
+            .any(|(_, instruction)| matches!(instruction, Instruction::ArrayLen { .. }))
+    }));
+    assert!(function.blocks.values().any(|block| {
+        block
+            .instructions
+            .iter()
+            .any(|(_, instruction)| matches!(instruction, Instruction::ArrayGet { .. }))
+    }));
+    let concat_count: usize = function
+        .blocks
+        .values()
+        .flat_map(|block| &block.instructions)
+        .filter(|(_, instruction)| {
+            matches!(
+                instruction,
+                Instruction::Binary {
+                    op: BinaryOp::Concat,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(
+        concat_count, 2,
+        "expected two concatenations per loop iteration (accumulator .. separator .. element)"
+    );
+}
+
+#[test]
+fn rejects_table_concat_for_non_string_array() {
+    let source = r#"
+        function entry(): string
+            local nums: {i32} = {1, 2, 3}
+            return table.concat(nums, ", ")
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = build(&program).expect_err("table.concat should reject non-string arrays");
+    assert!(
+        error
+            .to_string()
+            .contains("table.concat expects an array of strings")
+    );
 }
 
 #[test]

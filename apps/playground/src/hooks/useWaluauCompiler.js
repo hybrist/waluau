@@ -217,14 +217,14 @@ export default function useWaluauCompiler({ files, entryFile }) {
 
   const handleManualRun = (funcName, params, richParams, richReturns) => {
     const inputs = funcInputs[funcName] || (richParams || params).map(getDefaultParamValue);
-    const res = executeCall(runInstance, funcName, params, richParams, richReturns, inputs);
+    const res = executeCall(runInstance, funcName, params, richParams, richReturns, inputs, output?.tagIds);
     setManualResults(prev => ({ ...prev, [funcName]: res }));
   };
 
   const getResult = (funcName, params, richParams, richReturns) => {
     if (autoRun) {
       const inputs = funcInputs[funcName] || (richParams || params).map(getDefaultParamValue);
-      return executeCall(runInstance, funcName, params, richParams, richReturns, inputs);
+      return executeCall(runInstance, funcName, params, richParams, richReturns, inputs, output?.tagIds);
     } else {
       return manualResults[funcName] || { isIdle: true };
     }

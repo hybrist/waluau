@@ -8,6 +8,7 @@ const DOM_IMPORT_NAMES = new Set([
   'dom_clear',
   'dom_create_element',
   'dom_document',
+  'dom_window',
   'dom_set_text',
   'Document.append_child',
   'Document.create_element',
@@ -33,6 +34,7 @@ const DOM_IMPORT_NAMES = new Set([
   'Node.get_text_content',
   'Node.set_node_name',
   'Node.set_text_content',
+  'Window.get_document',
 ]);
 
 const BLOCKED_DOM_TAGS = new Set([
@@ -244,6 +246,14 @@ function createPlaygroundDomHost(domOutputRoot) {
     return value;
   };
 
+  const requireWindow = (value, label = 'DOM window') => {
+    const document = requireOutputDocument();
+    if (value !== document.defaultView) {
+      throw new Error(`${label} must be the DOM Output window`);
+    }
+    return value;
+  };
+
   const requireAppendTarget = (value, label = 'DOM parent') => {
     const document = requireOutputDocument();
     if (value === document) {
@@ -341,6 +351,7 @@ function createPlaygroundDomHost(domOutputRoot) {
 
   return {
     dom_document: () => requireOutputDocument(),
+    dom_window: () => requireOutputDocument().defaultView,
     dom_root: () => requireOutputDocument().body,
     dom_output_root: () => requireOutputDocument().body,
     dom_create_element: createElement,
@@ -371,6 +382,7 @@ function createPlaygroundDomHost(domOutputRoot) {
     'Node.get_text_content': getTextContent,
     'Node.set_node_name': setNodeName,
     'Node.set_text_content': setText,
+    'Window.get_document': (window) => requireWindow(window).document,
   };
 }
 
@@ -392,6 +404,9 @@ export function buildWaluauImports(wasmBuffer, initLogger, options = {}) {
     }
     if (name === 'Document') {
       return typeof view.Document !== 'undefined' && value instanceof view.Document ? 1 : 0;
+    }
+    if (name === 'Window') {
+      return typeof view.Window !== 'undefined' && value instanceof view.Window ? 1 : 0;
     }
     if (name === 'Element') {
       return typeof view.Element !== 'undefined' && value instanceof view.Element ? 1 : 0;
@@ -719,6 +734,12 @@ export function renderType(type) {
         .join(', ');
       return `{ ${inner} }`;
     }
+    case 'TaggedUnion': {
+      const inner = type.value.variants
+        .map(v => `${v.tag}(${renderType(v.payload)})`)
+        .join(' | ');
+      return inner;
+    }
     default: return 'unknown';
   }
 }
@@ -732,6 +753,13 @@ export function getDefaultParamValue(type) {
       }
       return obj;
     }
+    if (type.kind === 'TaggedUnion') {
+      const firstVariant = type.value.variants[0];
+      return firstVariant ? {
+        tag: firstVariant.tag,
+        value: getDefaultParamValue(firstVariant.payload)
+      } : null;
+    }
     if (type.kind === 'Array') {
       return '[]';
     }
@@ -742,8 +770,12 @@ export function getDefaultParamValue(type) {
   return type === 'string' ? '""' : '0';
 }
 
-export function constructArg(val, type, instance) {
+export function constructArg(val, type, instance, tagIds) {
   if (!type) return Number(val);
+  const plainTagIds = (tagIds && typeof tagIds.entries === 'function')
+    ? Object.fromEntries(tagIds.entries())
+    : (tagIds || {});
+
   switch (type.kind) {
     case 'I32': {
       const n = Number(val);
@@ -776,6 +808,9 @@ export function constructArg(val, type, instance) {
     case 'Bytes': {
       return parseBytesInput(String(val));
     }
+    case 'Unit': {
+      return null;
+    }
     case 'Record': {
       const typeIdx = type.value.typeIndex;
       const ctorName = `__waluau_new_record_${typeIdx}`;
@@ -785,9 +820,29 @@ export function constructArg(val, type, instance) {
       }
       const args = getEntries(type.value.fields).map(([name, fieldTy]) => {
         const fieldVal = val ? val[name] : null;
-        return constructArg(fieldVal, fieldTy, instance);
+        return constructArg(fieldVal, fieldTy, instance, plainTagIds);
       });
       return ctor(...args);
+    }
+    case 'TaggedUnion': {
+      const typeIdx = type.value.typeIndex;
+      const ctorName = `__waluau_new_record_${typeIdx}`;
+      const ctor = instance.exports[ctorName];
+      if (!ctor) {
+        throw new Error(`Constructor ${ctorName} not found`);
+      }
+      const selectedTag = val?.tag;
+      const variant = type.value.variants.find(v => v.tag === selectedTag);
+      if (!variant) {
+        throw new Error(`Variant "${selectedTag}" not found in union`);
+      }
+      const tagId = plainTagIds[selectedTag];
+      if (tagId === undefined) {
+        throw new Error(`Tag ID for variant "${selectedTag}" not found`);
+      }
+      const payloadVal = val ? val.value : null;
+      const constructedPayload = constructArg(payloadVal, variant.payload, instance, plainTagIds);
+      return ctor(tagId, constructedPayload);
     }
     default: {
       return Number(val);
@@ -795,9 +850,13 @@ export function constructArg(val, type, instance) {
   }
 }
 
-export function inspectVal(val, type, instance) {
+export function inspectVal(val, type, instance, tagIds) {
   if (val === null || val === undefined) return null;
   if (!type) return val;
+  const plainTagIds = (tagIds && typeof tagIds.entries === 'function')
+    ? Object.fromEntries(tagIds.entries())
+    : (tagIds || {});
+
   switch (type.kind) {
     case 'I32': return Number(val);
     case 'I64': return { _isBigInt: true, val: BigInt(val) };
@@ -806,6 +865,7 @@ export function inspectVal(val, type, instance) {
     case 'Bool': return Boolean(val);
     case 'String': return String(val);
     case 'Bytes': return { _isBytes: true, bytes: Array.from(val instanceof Uint8Array ? val : []) };
+    case 'Unit': return null;
     case 'Record': {
       const typeIdx = type.value.typeIndex;
       const obj = {};
@@ -814,12 +874,36 @@ export function inspectVal(val, type, instance) {
         const getter = instance.exports[getterName];
         if (getter) {
           const fieldVal = getter(val);
-          obj[fieldName] = inspectVal(fieldVal, fieldTy, instance);
+          obj[fieldName] = inspectVal(fieldVal, fieldTy, instance, plainTagIds);
         } else {
           obj[fieldName] = 'undefined';
         }
       });
       return obj;
+    }
+    case 'TaggedUnion': {
+      const typeIdx = type.value.typeIndex;
+      const tagGetterName = `__waluau_get_record_${typeIdx}_0`;
+      const valGetterName = `__waluau_get_record_${typeIdx}_1`;
+      const tagGetter = instance.exports[tagGetterName];
+      const valGetter = instance.exports[valGetterName];
+      if (!tagGetter || !valGetter) {
+        return { _isTaggedUnion: true, tag: 'unknown', value: 'undefined' };
+      }
+      const tagVal = tagGetter(val);
+      const payloadVal = valGetter(val);
+      
+      const tagNames = Object.fromEntries(Object.entries(plainTagIds).map(([k, v]) => [v, k]));
+      const tagName = tagNames[tagVal] ?? `UnknownTag(${tagVal})`;
+      
+      const variant = type.value.variants.find(v => v.tag === tagName);
+      const payloadTy = variant ? variant.payload : null;
+      
+      return {
+        _isTaggedUnion: true,
+        tag: tagName,
+        value: inspectVal(payloadVal, payloadTy, instance, plainTagIds),
+      };
     }
     default: return val;
   }
@@ -833,6 +917,12 @@ export function formatInspectedVal(inspectedVal) {
     }
     if (inspectedVal._isBytes) {
       return `bytes[${inspectedVal.bytes.join(', ')}]`;
+    }
+    if (inspectedVal._isTaggedUnion) {
+      if (inspectedVal.value === null || inspectedVal.value === undefined) {
+        return `${inspectedVal.tag}()`;
+      }
+      return `${inspectedVal.tag}(${formatInspectedVal(inspectedVal.value)})`;
     }
     if (Array.isArray(inspectedVal)) {
       return '{' + inspectedVal.map(formatInspectedVal).join(', ') + '}';
@@ -848,7 +938,7 @@ export function formatInspectedVal(inspectedVal) {
   return String(inspectedVal);
 }
 
-export function executeCall(instance, funcName, paramsInfo, richParamsInfo, richReturnsInfo, inputValues) {
+export function executeCall(instance, funcName, paramsInfo, richParamsInfo, richReturnsInfo, inputValues, tagIds) {
   if (!instance) return { error: 'No instance' };
   const func = instance.exports[funcName];
   if (!func) return { error: `Exported function "${funcName}" not found` };
@@ -867,7 +957,7 @@ export function executeCall(instance, funcName, paramsInfo, richParamsInfo, rich
 
       if (richType) {
         try {
-          parsedArgs.push(constructArg(val, richType, instance));
+          parsedArgs.push(constructArg(val, richType, instance, tagIds));
         } catch (err) {
           return { error: `Parameter ${i} error: ${err.message}`, logs };
         }
@@ -903,12 +993,12 @@ export function executeCall(instance, funcName, paramsInfo, richParamsInfo, rich
     let valStr = '';
     if (richReturnsInfo && richReturnsInfo.length > 0) {
       if (richReturnsInfo.length === 1) {
-        const inspected = inspectVal(result, richReturnsInfo[0], instance);
+        const inspected = inspectVal(result, richReturnsInfo[0], instance, tagIds);
         valStr = formatInspectedVal(inspected);
       } else {
         const inspected = richReturnsInfo.map((retTy, rIdx) => {
           const retVal = Array.isArray(result) ? result[rIdx] : (rIdx === 0 ? result : null);
-          return inspectVal(retVal, retTy, instance);
+          return inspectVal(retVal, retTy, instance, tagIds);
         });
         valStr = inspected.map(formatInspectedVal).join(', ');
       }

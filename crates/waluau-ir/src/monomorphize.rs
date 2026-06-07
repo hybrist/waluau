@@ -235,6 +235,40 @@ fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
     }
 }
 
+fn property_getter_name(base: &str, property: &str) -> String {
+    format!("{base}.get_{property}")
+}
+
+fn type_property_getter_signature(
+    receiver_ty: &Type,
+    name: &str,
+    signatures: &HashMap<String, (Vec<Type>, Type)>,
+) -> Option<(Vec<Type>, Type)> {
+    if let Type::Opaque {
+        name: type_name, ..
+    } = receiver_ty
+    {
+        let direct_name = property_getter_name(type_name, name);
+        if let Some(signature) = signatures.get(&direct_name).cloned() {
+            return Some(signature);
+        }
+    }
+
+    let suffix = format!(".get_{name}");
+    let mut matches = signatures
+        .iter()
+        .filter_map(|(direct_name, (params, return_type))| {
+            if !direct_name.ends_with(&suffix) || params.len() != 1 {
+                return None;
+            }
+            let receiver_param = params.first()?;
+            method_receiver_matches(receiver_param, receiver_ty)
+                .then(|| (params.clone(), return_type.clone()))
+        })
+        .collect::<Vec<_>>();
+    (matches.len() == 1).then(|| matches.remove(0))
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct SpecializationKey {
     generic_symbol_id: SymbolId,
@@ -252,6 +286,7 @@ pub(crate) struct Monomorphizer<'a> {
     generic_methods: HashMap<(SymbolId, String), &'a waluau_ast::FunctionExpr>,
     function_signatures: HashMap<SymbolId, Type>,
     method_signatures: HashMap<(SymbolId, String), Type>,
+    property_signatures: HashMap<String, (Vec<Type>, Type)>,
     specialized_names: HashMap<SpecializationKey, String>,
     pending: Vec<SpecializationKey>,
 }
@@ -302,15 +337,21 @@ impl<'a> Monomorphizer<'a> {
                 function_signatures.insert(symbol_id, fn_ty);
             }
         }
+        let mut property_signatures = HashMap::new();
         for declared in &program.declared_imports {
             let param_types = declared
                 .params
                 .iter()
                 .map(|p| p.ty.clone())
                 .collect::<Vec<_>>();
+            let return_type = declared.return_type.clone();
+            property_signatures.insert(
+                declared.name.clone(),
+                (param_types.clone(), return_type.clone()),
+            );
             let fn_ty = Type::Function {
                 params: param_types,
-                return_type: Box::new(declared.return_type.clone()),
+                return_type: Box::new(return_type),
             };
             if let Some(symbol_id) = declared.symbol_id {
                 function_signatures.insert(symbol_id, fn_ty);
@@ -344,6 +385,7 @@ impl<'a> Monomorphizer<'a> {
             generic_methods,
             function_signatures,
             method_signatures,
+            property_signatures,
             specialized_names: HashMap::new(),
             pending: Vec::new(),
         }
@@ -1472,6 +1514,13 @@ impl<'a> Monomorphizer<'a> {
             }
             Expr::Field { base, name, .. } => {
                 let base_ty = self.infer_expr_type(base, subst, types)?;
+                if let Some((params, return_type)) =
+                    type_property_getter_signature(&base_ty, name, &self.property_signatures)
+                {
+                    if params.len() == 1 && method_receiver_matches(&params[0], &base_ty) {
+                        return Ok(substitute_type(&return_type, subst));
+                    }
+                }
                 base_ty.record_field(name).ok_or_else(|| {
                     Diagnostic::new(format!(
                         "unknown record field '{name}' on type '{base_ty}'"

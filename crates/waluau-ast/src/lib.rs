@@ -613,7 +613,7 @@ impl Resolver {
         };
 
         // Populate builtins
-        for builtin in &["print", "assert", "tostring", "math", "coroutine"] {
+        for builtin in &["print", "assert", "tostring", "math", "coroutine", "table"] {
             let id = resolver.next_id();
             global_bindings.insert(builtin.to_string(), id);
         }

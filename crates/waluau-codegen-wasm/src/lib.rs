@@ -2440,6 +2440,13 @@ fn emit_box(
             ));
             Ok(())
         }
+        Type::Unit => {
+            out.instruction(&Instruction::RefNull(HeapType::Abstract {
+                shared: false,
+                ty: AbstractHeapType::Any,
+            }));
+            Ok(())
+        }
         other => Err(Diagnostic::new(format!(
             "boxing {other} into unknown is not yet supported during wasm emission",
         ))),
@@ -2467,6 +2474,10 @@ fn emit_unbox(
                 struct_type_index: array_registry.boxed_f64_struct_type,
                 field_index: 0,
             });
+            Ok(())
+        }
+        Type::Unit => {
+            out.instruction(&Instruction::Drop);
             Ok(())
         }
         other => Err(Diagnostic::new(format!(

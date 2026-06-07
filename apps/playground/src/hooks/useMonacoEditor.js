@@ -28,6 +28,7 @@ export default function useMonacoEditor({ files, entryFile, exportsList, outputW
         keywords: [
           'and',
           'const',
+          'declare',
           'do',
           'else',
           'elseif',
@@ -35,6 +36,7 @@ export default function useMonacoEditor({ files, entryFile, exportsList, outputW
           'false',
           'function',
           'if',
+          'is',
           'local',
           'not',
           'or',
@@ -42,6 +44,7 @@ export default function useMonacoEditor({ files, entryFile, exportsList, outputW
           'return',
           'then',
           'true',
+          'type',
           'until',
           'while',
         ],
