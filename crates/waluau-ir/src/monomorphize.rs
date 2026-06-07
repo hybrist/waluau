@@ -723,6 +723,19 @@ impl<'a> Monomorphizer<'a> {
                 tag: tag.clone(),
                 span: *span,
             },
+            Expr::VariantBinding {
+                expr,
+                tag,
+                binding,
+                binding_symbol_id,
+                span,
+            } => Expr::VariantBinding {
+                expr: Box::new(self.rewrite_expr(expr, subst, active, types)?),
+                tag: tag.clone(),
+                binding: binding.clone(),
+                binding_symbol_id: *binding_symbol_id,
+                span: *span,
+            },
             Expr::If {
                 condition,
                 then_expr,
@@ -1273,7 +1286,7 @@ impl<'a> Monomorphizer<'a> {
                     }
                 }
             },
-            Expr::IsVariant { .. } => Ok(Type::Bool),
+            Expr::IsVariant { .. } | Expr::VariantBinding { .. } => Ok(Type::Bool),
             Expr::If { then_expr, .. } => self.infer_expr_type(then_expr, subst, types),
             Expr::Call {
                 callee,

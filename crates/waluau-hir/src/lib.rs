@@ -1106,6 +1106,9 @@ fn resolve_expr_type_refs(
             resolve_expr_type_refs(base, raw_opaque, generic, opaque_cache, active_type_params)?;
             resolve_expr_type_refs(index, raw_opaque, generic, opaque_cache, active_type_params)
         }
+        Expr::VariantBinding { expr, .. } => {
+            resolve_expr_type_refs(expr, raw_opaque, generic, opaque_cache, active_type_params)
+        }
         Expr::Number(..)
         | Expr::Bool(..)
         | Expr::Nil(..)
@@ -1472,6 +1475,9 @@ fn resolve_expr_implicit_self(
         Expr::Index { base, index, .. } => {
             resolve_expr_implicit_self(base, vars, fn_signatures, active_type_params)?;
             resolve_expr_implicit_self(index, vars, fn_signatures, active_type_params)
+        }
+        Expr::VariantBinding { expr, .. } => {
+            resolve_expr_implicit_self(expr, vars, fn_signatures, active_type_params)
         }
         Expr::Name(..)
         | Expr::Number(..)

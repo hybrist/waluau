@@ -68,28 +68,43 @@ fn type_property_setter_signature<'a>(
 fn narrowed_variant_scopes(
     condition: &Expr,
     vars: &HashMap<String, Binding>,
-) -> (HashMap<String, Binding>, HashMap<String, Binding>) {
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+) -> Result<(HashMap<String, Binding>, HashMap<String, Binding>), Diagnostic> {
     let mut then_scope = vars.clone();
     let mut else_scope = vars.clone();
-    let Expr::IsVariant { expr, tag, .. } = condition else {
-        return (then_scope, else_scope);
-    };
-    let Expr::Name(name, _, _) = expr.as_ref() else {
-        return (then_scope, else_scope);
-    };
-    let Some(binding) = vars.get(name) else {
-        return (then_scope, else_scope);
-    };
-    if let Some(variant) = binding.ty.tagged_variant(tag) {
-        then_scope.insert(
-            name.clone(),
-            binding_for(Type::TaggedVariant(variant), binding.rebindability),
-        );
+    match condition {
+        Expr::IsVariant { expr, tag, .. } => {
+            let Expr::Name(name, _, _) = expr.as_ref() else {
+                return Ok((then_scope, else_scope));
+            };
+            let Some(binding) = vars.get(name) else {
+                return Ok((then_scope, else_scope));
+            };
+            if let Some(variant) = binding.ty.tagged_variant(tag) {
+                then_scope.insert(
+                    name.clone(),
+                    binding_for(Type::TaggedVariant(variant), binding.rebindability),
+                );
+            }
+            if let Some(remaining) = binding.ty.remove_tagged_variant(tag) {
+                else_scope.insert(name.clone(), binding_for(remaining, binding.rebindability));
+            }
+        }
+        Expr::VariantBinding {
+            expr, tag, binding, ..
+        } => {
+            let scrutinee_ty = infer_expr(expr, vars, fn_signatures, active_type_params, None)?;
+            if let Some(variant) = scrutinee_ty.tagged_variant(tag) {
+                then_scope.insert(
+                    binding.clone(),
+                    binding_for((*variant.payload).clone(), Rebindability::Const),
+                );
+            }
+        }
+        _ => {}
     }
-    if let Some(remaining) = binding.ty.remove_tagged_variant(tag) {
-        else_scope.insert(name.clone(), binding_for(remaining, binding.rebindability));
-    }
-    (then_scope, else_scope)
+    Ok((then_scope, else_scope))
 }
 
 fn nil_test_subject(condition: &Expr) -> Option<(&str, bool)> {
@@ -115,16 +130,19 @@ fn nil_test_subject(condition: &Expr) -> Option<(&str, bool)> {
 fn narrowed_scopes(
     condition: &Expr,
     vars: &HashMap<String, Binding>,
-) -> (HashMap<String, Binding>, HashMap<String, Binding>) {
-    let (mut then_scope, mut else_scope) = narrowed_variant_scopes(condition, vars);
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+) -> Result<(HashMap<String, Binding>, HashMap<String, Binding>), Diagnostic> {
+    let (mut then_scope, mut else_scope) =
+        narrowed_variant_scopes(condition, vars, fn_signatures, active_type_params)?;
     let Some((name, non_null_when_true)) = nil_test_subject(condition) else {
-        return (then_scope, else_scope);
+        return Ok((then_scope, else_scope));
     };
     let Some(binding) = vars.get(name) else {
-        return (then_scope, else_scope);
+        return Ok((then_scope, else_scope));
     };
     let Some(inner) = binding.ty.nullable_inner() else {
-        return (then_scope, else_scope);
+        return Ok((then_scope, else_scope));
     };
     let target = if non_null_when_true {
         &mut then_scope
@@ -132,7 +150,7 @@ fn narrowed_scopes(
         &mut else_scope
     };
     target.insert(name.to_string(), binding_for(inner, binding.rebindability));
-    (then_scope, else_scope)
+    Ok((then_scope, else_scope))
 }
 
 pub(super) fn check_function(
@@ -341,7 +359,8 @@ pub(super) fn collect_return_types(
                 if condition_ty != Type::Bool {
                     return Err(Diagnostic::new("if condition must be bool"));
                 }
-                let (then_scope, else_scope) = narrowed_scopes(condition, &scope);
+                let (then_scope, else_scope) =
+                    narrowed_scopes(condition, &scope, fn_signatures, active_type_params)?;
                 collect_return_types(
                     then_body,
                     &then_scope,
@@ -934,7 +953,8 @@ pub(super) fn check_stmt(
             if condition_ty != Type::Bool {
                 return Err(Diagnostic::new("if condition must be bool"));
             }
-            let (mut then_scope, mut else_scope) = narrowed_scopes(condition, vars);
+            let (mut then_scope, mut else_scope) =
+                narrowed_scopes(condition, vars, fn_signatures, active_type_params)?;
             let mut then_returns = false;
             let mut else_returns = false;
             for stmt in then_body {
@@ -1436,7 +1456,9 @@ fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
         Expr::Index { base, index, .. } => {
             expr_calls_name(base, callee) || expr_calls_name(index, callee)
         }
-        Expr::IsVariant { expr, .. } => expr_calls_name(expr, callee),
+        Expr::IsVariant { expr, .. } | Expr::VariantBinding { expr, .. } => {
+            expr_calls_name(expr, callee)
+        }
     }
 }
 
@@ -1507,7 +1529,7 @@ fn seal_record_locals_in_expr(expr: &Expr, vars: &mut HashMap<String, Binding>) 
             seal_record_locals_in_expr(left, vars);
             seal_record_locals_in_expr(right, vars);
         }
-        Expr::IsVariant { expr, .. } => {
+        Expr::IsVariant { expr, .. } | Expr::VariantBinding { expr, .. } => {
             seal_record_locals_in_expr(expr, vars);
         }
     }

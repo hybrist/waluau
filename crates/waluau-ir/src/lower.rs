@@ -282,7 +282,9 @@ fn collect_expr_variant_tags(expr: &Expr, tag_ids: &mut BTreeMap<String, i32>) {
             collect_expr_variant_tags(expr, tag_ids);
             collect_type_variant_tags(ty, tag_ids);
         }
-        Expr::IsVariant { expr, .. } => collect_expr_variant_tags(expr, tag_ids),
+        Expr::IsVariant { expr, .. } | Expr::VariantBinding { expr, .. } => {
+            collect_expr_variant_tags(expr, tag_ids)
+        }
         Expr::Binary { left, right, .. } => {
             collect_expr_variant_tags(left, tag_ids);
             collect_expr_variant_tags(right, tag_ids);
@@ -538,6 +540,19 @@ fn erase_expr_opaque_types(expr: &Expr) -> Expr {
         Expr::IsVariant { expr, tag, span } => Expr::IsVariant {
             expr: Box::new(erase_expr_opaque_types(expr)),
             tag: tag.clone(),
+            span: *span,
+        },
+        Expr::VariantBinding {
+            expr,
+            tag,
+            binding,
+            binding_symbol_id,
+            span,
+        } => Expr::VariantBinding {
+            expr: Box::new(erase_expr_opaque_types(expr)),
+            tag: tag.clone(),
+            binding: binding.clone(),
+            binding_symbol_id: *binding_symbol_id,
             span: *span,
         },
         Expr::Unary { op, expr, span } => Expr::Unary {
@@ -997,6 +1012,31 @@ impl Builder<'_> {
             .get(name)
             .copied()
             .ok_or_else(|| Diagnostic::new(format!("unknown tagged-union variant '{name}'")))
+    }
+
+    /// Unbox the payload of a canonical tagged-union record (`{ tag: i32, value: anyref }`):
+    /// reads the `value` field and casts the resulting `unknown` to the payload type.
+    fn unbox_tagged_variant_value(
+        &mut self,
+        base: ValueId,
+        payload_ty: &Type,
+    ) -> Result<ValueId, Diagnostic> {
+        if matches!(payload_ty, Type::String | Type::Bytes) {
+            return Err(Diagnostic::new(format!(
+                "reading .value of type {payload_ty} is not yet supported \
+                 (string/bytes payloads cannot be unboxed from anyref)"
+            )));
+        }
+        let unknown_val = self.emit(Instruction::StructGet {
+            base,
+            field: "value".to_string(),
+            field_ty: Type::Unknown,
+        });
+        Ok(self.emit(Instruction::Cast {
+            value: unknown_val,
+            from: Type::Unknown,
+            to: payload_ty.clone(),
+        }))
     }
 
     fn instruction(&self, value: ValueId) -> Option<&Instruction> {
@@ -1644,9 +1684,90 @@ impl Builder<'_> {
         env: &mut HashMap<SymbolId, ValueId>,
         types: &mut HashMap<SymbolId, Type>,
     ) -> Result<(), Diagnostic> {
-        let (then_types_init, else_types_init) =
-            Self::narrowed_type_scopes(condition, types);
-        let condition = self.lower_expr(condition, env, types, Some(Type::Bool))?;
+        if let Expr::VariantBinding {
+            expr,
+            tag,
+            binding_symbol_id,
+            ..
+        } = condition
+        {
+            let symbol_id = binding_symbol_id.expect("binding_symbol_id should be resolved");
+            let scrutinee_ty = self.infer_expr_type(expr, types, None)?;
+            let variant = scrutinee_ty.tagged_variant(tag).ok_or_else(|| {
+                Diagnostic::new(format!(
+                    "type {scrutinee_ty} has no tagged variant '{tag}'"
+                ))
+            })?;
+            let payload_ty = (*variant.payload).clone();
+
+            // Lower the scrutinee once; the underlying IR value is the canonical record.
+            let base = self.lower_expr(expr, env, types, None)?;
+            let tag_id = self.variant_tag_id(tag)?;
+            let tag_field_ty = Type::Numeric(NumericType::I32);
+            let tag_val = self.emit(Instruction::StructGet {
+                base,
+                field: "tag".to_string(),
+                field_ty: tag_field_ty.clone(),
+            });
+            let expected_tag = self.emit(Instruction::Number {
+                ty: NumericType::I32,
+                literal: NumberLiteral {
+                    raw: tag_id.to_string(),
+                },
+            });
+            let condition_value = self.emit(Instruction::Binary {
+                op: BinaryOp::Eq,
+                left: tag_val,
+                right: expected_tag,
+                operand_ty: tag_field_ty,
+                result_ty: Type::Bool,
+            });
+
+            let mut then_types_init = types.clone();
+            then_types_init.insert(symbol_id, payload_ty.clone());
+            let else_types_init = types.clone();
+            return self.lower_if_branches(
+                condition_value,
+                then_body,
+                else_body,
+                env,
+                types,
+                then_types_init,
+                else_types_init,
+                Some((symbol_id, base, payload_ty)),
+            );
+        }
+
+        let (then_types_init, else_types_init) = Self::narrowed_type_scopes(condition, types);
+        let condition_value = self.lower_expr(condition, env, types, Some(Type::Bool))?;
+        self.lower_if_branches(
+            condition_value,
+            then_body,
+            else_body,
+            env,
+            types,
+            then_types_init,
+            else_types_init,
+            None,
+        )
+    }
+
+    /// Lowers the branches of an `if`, given the already-lowered boolean `condition`
+    /// value and the narrowed type scopes for each branch. `pattern_binding`, when
+    /// present, additionally unboxes the tagged-variant payload from `base` and binds
+    /// it to `symbol_id` at the start of the `then` branch (for `if Tag(x) = expr then`).
+    #[allow(clippy::too_many_arguments)]
+    fn lower_if_branches(
+        &mut self,
+        condition: ValueId,
+        then_body: &[Stmt],
+        else_body: &[Stmt],
+        env: &mut HashMap<SymbolId, ValueId>,
+        types: &mut HashMap<SymbolId, Type>,
+        then_types_init: HashMap<SymbolId, Type>,
+        else_types_init: HashMap<SymbolId, Type>,
+        pattern_binding: Option<(SymbolId, ValueId, Type)>,
+    ) -> Result<(), Diagnostic> {
         let then_block = self.new_block();
         let else_block = self.new_block();
         let merge_block = self.new_block();
@@ -1662,6 +1783,20 @@ impl Builder<'_> {
         let mut then_env = env.clone();
         let mut then_types = then_types_init;
         self.current_block = then_block;
+        if let Some((symbol_id, base, payload_ty)) = &pattern_binding {
+            let unboxed = self.unbox_tagged_variant_value(*base, payload_ty)?;
+            if self.cell_names.contains(symbol_id) {
+                let cell = self.emit(Instruction::ArrayNew {
+                    element_ty: to_runtime_type(payload_ty),
+                    elements: vec![unboxed],
+                });
+                then_env.insert(*symbol_id, cell);
+                self.function.value_symbols.insert(cell, *symbol_id);
+            } else {
+                then_env.insert(*symbol_id, unboxed);
+                self.function.value_symbols.insert(unboxed, *symbol_id);
+            }
+        }
         for stmt in then_body {
             if self.current_block == DEAD_BLOCK {
                 break;
@@ -2804,6 +2939,11 @@ impl Builder<'_> {
                 };
                 self.coerce_value(cast, ty.clone(), expected)?
             }
+            Expr::VariantBinding { .. } => {
+                return Err(Diagnostic::new(
+                    "pattern match 'Tag(name) = expr' can only be used directly as an 'if'/'elseif' condition",
+                ));
+            }
             Expr::IsVariant { expr, tag, .. } => {
                 // Lower the base expression as-is (the underlying IR value is the canonical record).
                 let base = self.lower_expr(expr, env, types, None)?;
@@ -3275,24 +3415,9 @@ impl Builder<'_> {
                 // Cast (unbox) to the payload type.
                 if matches!(&base_ty, Type::TaggedVariant(_)) && name == "value" {
                     let payload_ty = base_ty.record_field(name).expect("TaggedVariant has value field");
-                    if matches!(&payload_ty, Type::String | Type::Bytes) {
-                        return Err(Diagnostic::new(format!(
-                            "reading .value of type {payload_ty} is not yet supported \
-                             (string/bytes payloads cannot be unboxed from anyref)"
-                        )));
-                    }
                     // Lower base without expected (avoids Record<->TaggedVariant coerce mismatch).
                     let base_val = self.lower_expr(base, env, types, None)?;
-                    let unknown_val = self.emit(Instruction::StructGet {
-                        base: base_val,
-                        field: "value".to_string(),
-                        field_ty: Type::Unknown,
-                    });
-                    let cast_val = self.emit(Instruction::Cast {
-                        value: unknown_val,
-                        from: Type::Unknown,
-                        to: payload_ty.clone(),
-                    });
+                    let cast_val = self.unbox_tagged_variant_value(base_val, &payload_ty)?;
                     return self.coerce_value(cast_val, payload_ty, expected);
                 }
                 let field_ty = base_ty
@@ -3592,7 +3717,9 @@ impl Builder<'_> {
                 None => Ok(Type::number()),
             },
             Expr::Nil(..) => coerce_type(Type::Nil, expected),
-            Expr::IsVariant { .. } => coerce_type(Type::Bool, expected),
+            Expr::IsVariant { .. } | Expr::VariantBinding { .. } => {
+                coerce_type(Type::Bool, expected)
+            }
             Expr::Bool(..) => Ok(Type::Bool),
             Expr::String(..) => Ok(Type::String),
             Expr::Bytes(..) => Ok(Type::Bytes),

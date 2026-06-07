@@ -477,6 +477,17 @@ pub enum Expr {
         tag: String,
         span: Option<Span>,
     },
+    /// A tagged-union pattern match used as an `if`/`elseif` condition, e.g.
+    /// `if Left(value) = either then ... end`. Evaluates to `true` (and binds
+    /// `binding` to the unboxed payload, scoped to the `then` branch) when
+    /// `expr`'s tag matches `tag`, otherwise evaluates to `false`.
+    VariantBinding {
+        expr: Box<Expr>,
+        tag: String,
+        binding: String,
+        binding_symbol_id: Option<SymbolId>,
+        span: Option<Span>,
+    },
     If {
         condition: Box<Expr>,
         then_expr: Box<Expr>,
@@ -543,6 +554,7 @@ impl Expr {
             Expr::Cast { span, .. } => *span,
             Expr::Binary { span, .. } => *span,
             Expr::IsVariant { span, .. } => *span,
+            Expr::VariantBinding { span, .. } => *span,
             Expr::If { span, .. } => *span,
             Expr::Call { span, .. } => *span,
             Expr::MethodCall { span, .. } => *span,
@@ -710,12 +722,29 @@ impl Resolver {
                 then_body,
                 else_body,
             } => {
-                self.resolve_expr(condition)?;
-                self.enter_scope();
-                for s in then_body {
-                    self.resolve_stmt(s)?;
+                if let Expr::VariantBinding {
+                    expr,
+                    binding,
+                    binding_symbol_id,
+                    ..
+                } = condition
+                {
+                    self.resolve_expr(expr)?;
+                    self.enter_scope();
+                    let id = self.declare(binding);
+                    *binding_symbol_id = Some(id);
+                    for s in then_body {
+                        self.resolve_stmt(s)?;
+                    }
+                    self.exit_scope();
+                } else {
+                    self.resolve_expr(condition)?;
+                    self.enter_scope();
+                    for s in then_body {
+                        self.resolve_stmt(s)?;
+                    }
+                    self.exit_scope();
                 }
-                self.exit_scope();
                 self.enter_scope();
                 for s in else_body {
                     self.resolve_stmt(s)?;
@@ -815,6 +844,11 @@ impl Resolver {
             }
             Expr::Unary { expr, .. } | Expr::Cast { expr, .. } | Expr::IsVariant { expr, .. } => {
                 self.resolve_expr(expr)?;
+            }
+            Expr::VariantBinding { .. } => {
+                return Err(Diagnostic::new(
+                    "pattern match 'Tag(name) = expr' can only be used directly as an 'if'/'elseif' condition",
+                ));
             }
             Expr::Binary { left, right, .. }
             | Expr::Index {

@@ -131,6 +131,15 @@ pub(super) fn infer_expr(
             }
             Ok(Type::Bool)
         }
+        Expr::VariantBinding { expr, tag, .. } => {
+            let actual = infer_expr(expr, vars, fn_signatures, active_type_params, None)?;
+            if actual.tagged_variant(tag).is_none() {
+                return Err(Diagnostic::new(format!(
+                    "type {actual} has no tagged variant '{tag}'"
+                )));
+            }
+            Ok(Type::Bool)
+        }
         Expr::String(..) => coerce_type(Type::String, expected),
         Expr::Bytes(..) => coerce_type(Type::Bytes, expected),
         Expr::Require(path, _) => Err(Diagnostic::new(format!(

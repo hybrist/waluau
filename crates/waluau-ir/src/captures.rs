@@ -216,7 +216,7 @@ fn collect_expr_captures(
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => {
             collect_expr_captures(expr, bound, env, signatures, captures)
         }
-        Expr::IsVariant { expr, .. } => {
+        Expr::IsVariant { expr, .. } | Expr::VariantBinding { expr, .. } => {
             collect_expr_captures(expr, bound, env, signatures, captures)
         }
         Expr::Binary { left, right, .. } => {
@@ -379,7 +379,9 @@ fn collect_nested_from_expr(expr: &Expr, out: &mut HashSet<SymbolId>) {
             }
         }
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => collect_nested_from_expr(expr, out),
-        Expr::IsVariant { expr, .. } => collect_nested_from_expr(expr, out),
+        Expr::IsVariant { expr, .. } | Expr::VariantBinding { expr, .. } => {
+            collect_nested_from_expr(expr, out)
+        }
         Expr::Binary { left, right, .. } => {
             collect_nested_from_expr(left, out);
             collect_nested_from_expr(right, out);
@@ -468,8 +470,16 @@ fn collect_free_names_in_stmts(stmts: &[Stmt], bound: &HashSet<SymbolId>, out: &
                 else_body,
             } => {
                 collect_free_names_in_expr(condition, bound, out);
+                let mut then_bound = bound.clone();
+                if let Expr::VariantBinding {
+                    binding_symbol_id: Some(id),
+                    ..
+                } = condition
+                {
+                    then_bound.insert(*id);
+                }
                 for s in then_body {
-                    collect_free_names_in_stmts(std::slice::from_ref(s), bound, out);
+                    collect_free_names_in_stmts(std::slice::from_ref(s), &then_bound, out);
                 }
                 for s in else_body {
                     collect_free_names_in_stmts(std::slice::from_ref(s), bound, out);
@@ -550,7 +560,9 @@ fn collect_free_names_in_expr(expr: &Expr, bound: &HashSet<SymbolId>, out: &mut 
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => {
             collect_free_names_in_expr(expr, bound, out)
         }
-        Expr::IsVariant { expr, .. } => collect_free_names_in_expr(expr, bound, out),
+        Expr::IsVariant { expr, .. } | Expr::VariantBinding { expr, .. } => {
+            collect_free_names_in_expr(expr, bound, out)
+        }
         Expr::Binary { left, right, .. } => {
             collect_free_names_in_expr(left, bound, out);
             collect_free_names_in_expr(right, bound, out);

@@ -569,7 +569,9 @@ impl Rewriter<'_> {
     fn rewrite_expr_types(&self, expr: &mut Expr) {
         match expr {
             Expr::Unary { expr, .. } => self.rewrite_expr_types(expr),
-            Expr::IsVariant { expr, .. } => self.rewrite_expr_types(expr),
+            Expr::IsVariant { expr, .. } | Expr::VariantBinding { expr, .. } => {
+                self.rewrite_expr_types(expr)
+            }
             Expr::Cast { expr, ty, .. } => {
                 self.rewrite_expr_types(expr);
                 self.rewrite_type(ty);
@@ -859,9 +861,10 @@ impl Rewriter<'_> {
             | Expr::Nil(..)
             | Expr::String(..)
             | Expr::Bytes(..) => {}
-            Expr::Unary { expr, .. } | Expr::Cast { expr, .. } | Expr::IsVariant { expr, .. } => {
-                self.rewrite_expr(expr, bound)
-            }
+            Expr::Unary { expr, .. }
+            | Expr::Cast { expr, .. }
+            | Expr::IsVariant { expr, .. }
+            | Expr::VariantBinding { expr, .. } => self.rewrite_expr(expr, bound),
             Expr::Binary { left, right, .. } => {
                 self.rewrite_expr(left, bound);
                 self.rewrite_expr(right, bound);
@@ -1112,7 +1115,9 @@ fn rename_expr(
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => {
             rename_expr(expr, renames, available, shadowed)
         }
-        Expr::IsVariant { expr, .. } => rename_expr(expr, renames, available, shadowed),
+        Expr::IsVariant { expr, .. } | Expr::VariantBinding { expr, .. } => {
+            rename_expr(expr, renames, available, shadowed)
+        }
         Expr::Binary { left, right, .. } => {
             rename_expr(left, renames, available, shadowed);
             rename_expr(right, renames, available, shadowed);
@@ -1253,7 +1258,9 @@ fn expr_mentions_name(name: &str, expr: &Expr) -> bool {
     match expr {
         Expr::Name(local, _, _) => local == name,
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => expr_mentions_name(name, expr),
-        Expr::IsVariant { expr, .. } => expr_mentions_name(name, expr),
+        Expr::IsVariant { expr, .. } | Expr::VariantBinding { expr, .. } => {
+            expr_mentions_name(name, expr)
+        }
         Expr::Binary { left, right, .. } => {
             expr_mentions_name(name, left) || expr_mentions_name(name, right)
         }
@@ -1374,9 +1381,10 @@ fn collect_expr(expr: &Expr, out: &mut Vec<String>) {
         | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..) => {}
-        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } | Expr::IsVariant { expr, .. } => {
-            collect_expr(expr, out)
-        }
+        Expr::Unary { expr, .. }
+        | Expr::Cast { expr, .. }
+        | Expr::IsVariant { expr, .. }
+        | Expr::VariantBinding { expr, .. } => collect_expr(expr, out),
         Expr::Binary { left, right, .. } => {
             collect_expr(left, out);
             collect_expr(right, out);
