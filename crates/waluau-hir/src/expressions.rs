@@ -5,8 +5,7 @@ use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
 use super::Binding;
 use super::builtins::{
-    infer_coroutine_builtin_call, infer_math_builtin_call, infer_print_builtin_call,
-    infer_tostring_builtin_call,
+    infer_coroutine_builtin_call, infer_math_builtin_call, infer_tostring_builtin_call,
 };
 use super::numeric::{
     coerce_type, common_element_type, infer_numeric_common_type, require_bool_pair,
@@ -301,18 +300,7 @@ pub(super) fn infer_expr(
                     return result;
                 }
             }
-            if let Some(name) = builtin_name(callee.as_ref()) {
-                if let Some(result) = infer_print_builtin_call(
-                    &name,
-                    args,
-                    vars,
-                    fn_signatures,
-                    active_type_params,
-                    expected.clone(),
-                ) {
-                    return result;
-                }
-            }
+            // Note: print builtin is now handled via extern function declaration
             if let Expr::Name(name, _, _) = callee.as_ref() {
                 if let Some(FnSignature::Generic(scheme)) = fn_signatures.get(name) {
                     return infer_generic_call(

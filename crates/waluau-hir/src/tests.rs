@@ -1756,6 +1756,8 @@ fn rejects_assert_with_non_bool_argument() {
 #[test]
 fn type_checks_print_with_string_argument() {
     let source = r#"
+        declare function print(message: string): unit
+
         function check(): i32
             print("hello")
             return 1
@@ -1768,6 +1770,8 @@ fn type_checks_print_with_string_argument() {
 #[test]
 fn type_checks_unit_return_with_print() {
     let source = r#"
+        declare function print(message: string): unit
+
         function check(): unit
             print("hello")
         end
@@ -1779,6 +1783,8 @@ fn type_checks_unit_return_with_print() {
 #[test]
 fn rejects_print_in_non_unit_expression_context() {
     let source = r#"
+        declare function print(message: string): unit
+
         function check(): string
             return print("hello")
         end
