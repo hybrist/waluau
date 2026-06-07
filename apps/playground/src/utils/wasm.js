@@ -3,6 +3,33 @@ export const WALUAU_IMPORT_MODULE = 'waluau';
 // Must match waluau_codegen_wasm::host::HOST_IMPORT_COUNT
 export const WALUAU_HOST_IMPORT_COUNT = 16;
 
+const DOM_IMPORT_NAMES = new Set([
+  'dom_append_child',
+  'dom_clear',
+  'dom_create_element',
+  'dom_document',
+  'dom_set_text',
+  'Document.create_element',
+  'Document.get_element_by_id',
+  'Element.append',
+  'Element.clear',
+  'Element.set_attr',
+  'Element.set_class',
+  'Element.set_text',
+  'Node.append_child',
+]);
+
+const BLOCKED_DOM_TAGS = new Set([
+  'base',
+  'embed',
+  'iframe',
+  'link',
+  'meta',
+  'object',
+  'script',
+  'style',
+]);
+
 let printCaptureCallback = null;
 
 export function decodeBytesConstantsFromWasm(wasmBuffer) {
@@ -81,8 +108,169 @@ export function parseBytesInput(valStr) {
   throw new Error('bytes input must use JSON array syntax like [0, 255, 10]');
 }
 
-export function buildWaluauImports(wasmBuffer, initLogger) {
+export function isDomImportName(name) {
+  return name.startsWith('dom_') || DOM_IMPORT_NAMES.has(name);
+}
+
+export function getWasmImports(buffer) {
+  if (!buffer) return [];
+  const bytes = new Uint8Array(buffer);
+  let pos = 8;
+  const imports = [];
+
+  function readVaruint() {
+    let result = 0;
+    let shift = 0;
+    while (pos < bytes.length) {
+      const byte = bytes[pos++];
+      result |= (byte & 0x7f) << shift;
+      if ((byte & 0x80) === 0) return result >>> 0;
+      shift += 7;
+    }
+    throw new Error('truncated wasm leb128');
+  }
+
+  function readName() {
+    const len = readVaruint();
+    const value = new TextDecoder().decode(bytes.subarray(pos, pos + len));
+    pos += len;
+    return value;
+  }
+
+  function skipLimits() {
+    const flags = readVaruint();
+    readVaruint();
+    if (flags & 0x01) readVaruint();
+  }
+
+  function skipValType() {
+    const byte = bytes[pos++];
+    if (byte === 0x63 || byte === 0x64) {
+      pos += 1;
+    }
+  }
+
+  while (pos < bytes.length) {
+    const sectionId = bytes[pos++];
+    const sectionLength = readVaruint();
+    const sectionEnd = pos + sectionLength;
+    if (sectionEnd > bytes.length) break;
+
+    if (sectionId !== 2) {
+      pos = sectionEnd;
+      continue;
+    }
+
+    const numImports = readVaruint();
+    for (let i = 0; i < numImports; i++) {
+      const module = readName();
+      const name = readName();
+      const kind = bytes[pos++];
+      if (kind === 0) {
+        const typeIndex = readVaruint();
+        imports.push({ module, name, kind: 'function', typeIndex });
+      } else if (kind === 1) {
+        skipValType();
+        skipLimits();
+        imports.push({ module, name, kind: 'table' });
+      } else if (kind === 2) {
+        skipLimits();
+        imports.push({ module, name, kind: 'memory' });
+      } else if (kind === 3) {
+        skipValType();
+        pos += 1;
+        imports.push({ module, name, kind: 'global' });
+      } else {
+        pos = sectionEnd;
+        break;
+      }
+    }
+    pos = sectionEnd;
+  }
+
+  return imports;
+}
+
+export function usesDomImports(wasmBuffer) {
+  return getWasmImports(wasmBuffer).some((wasmImport) =>
+    wasmImport.module === WALUAU_IMPORT_MODULE &&
+    wasmImport.kind === 'function' &&
+    isDomImportName(wasmImport.name)
+  );
+}
+
+function createPlaygroundDomHost(domOutputRoot) {
+  const requireOutputRoot = () => {
+    if (!domOutputRoot) {
+      throw new Error('DOM Output root is not mounted');
+    }
+    return domOutputRoot;
+  };
+
+  const requireElement = (value, label = 'DOM host value') => {
+    if (!(value instanceof Element)) {
+      throw new Error(`${label} must be an Element`);
+    }
+    return value;
+  };
+
+  const normalizeTag = (tag) => {
+    const normalized = String(tag).trim().toLowerCase();
+    if (!/^[a-z][a-z0-9-]*$/.test(normalized) || BLOCKED_DOM_TAGS.has(normalized)) {
+      throw new Error(`Unsupported DOM tag: ${tag}`);
+    }
+    return normalized;
+  };
+
+  const createElement = (_document, tag) => {
+    return requireOutputRoot().ownerDocument.createElement(normalizeTag(tag));
+  };
+
+  const appendChild = (parent, child) => {
+    requireElement(parent, 'DOM parent').appendChild(requireElement(child, 'DOM child'));
+  };
+
+  const clear = (element) => {
+    requireElement(element).replaceChildren();
+  };
+
+  const setText = (element, text) => {
+    requireElement(element).textContent = String(text);
+  };
+
+  const setClass = (element, className) => {
+    requireElement(element).className = String(className);
+  };
+
+  const setAttr = (element, name, value) => {
+    const attrName = String(name).trim().toLowerCase();
+    if (!/^[a-z_:][a-z0-9_:.-]*$/.test(attrName) || attrName.startsWith('on')) {
+      throw new Error(`Unsupported DOM attribute: ${name}`);
+    }
+    requireElement(element).setAttribute(attrName, String(value));
+  };
+
+  return {
+    dom_document: () => requireOutputRoot(),
+    dom_root: () => requireOutputRoot(),
+    dom_output_root: () => requireOutputRoot(),
+    dom_create_element: createElement,
+    dom_append_child: appendChild,
+    dom_clear: clear,
+    dom_set_text: setText,
+    'Document.create_element': createElement,
+    'Element.append': appendChild,
+    'Element.clear': clear,
+    'Element.set_text': setText,
+    'Element.set_class': setClass,
+    'Element.set_attr': setAttr,
+    'Node.append_child': appendChild,
+  };
+}
+
+export function buildWaluauImports(wasmBuffer, initLogger, options = {}) {
   const bytesConstants = decodeBytesConstantsFromWasm(wasmBuffer);
+  const domHost = createPlaygroundDomHost(options.domOutputRoot);
   const asBytes = (value) => {
     if (value instanceof Uint8Array) return value;
     throw new Error(`Expected Uint8Array bytes value, got ${Object.prototype.toString.call(value)}`);
@@ -103,6 +291,9 @@ export function buildWaluauImports(wasmBuffer, initLogger) {
             console.log(value);
           }
         };
+      }
+      if (Object.prototype.hasOwnProperty.call(domHost, name)) {
+        return domHost[name];
       }
       if (name === 'bytes_literal') {
         return (index) => {

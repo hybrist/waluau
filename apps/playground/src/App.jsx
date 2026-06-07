@@ -47,6 +47,8 @@ export default function App() {
     runError,
     exportsList,
     initLogs,
+    usesDomOutput,
+    setDomOutputRoot,
     funcInputs,
     autoRun,
     setAutoRun,
@@ -309,6 +311,8 @@ export default function App() {
                 exportsList={exportsList}
                 funcInputs={funcInputs}
                 initLogs={initLogs}
+                usesDomOutput={usesDomOutput}
+                setDomOutputRoot={setDomOutputRoot}
                 autoRun={autoRun}
                 setAutoRun={setAutoRun}
                 handleInputChange={handleInputChange}

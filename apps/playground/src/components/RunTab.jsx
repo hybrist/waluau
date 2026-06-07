@@ -7,6 +7,8 @@ export default function RunTab({
   exportsList,
   funcInputs,
   initLogs,
+  usesDomOutput,
+  setDomOutputRoot,
   autoRun,
   setAutoRun,
   handleInputChange,
@@ -33,6 +35,13 @@ export default function RunTab({
           <div className="init-logs-label">Module Initialization Print Output</div>
           <pre className="init-logs-value">{initLogs.join('\n')}</pre>
         </div>
+      )}
+
+      {usesDomOutput && (
+        <section className="dom-output-section" aria-label="DOM Output">
+          <div className="dom-output-label">DOM Output</div>
+          <div className="dom-output-root" ref={setDomOutputRoot} />
+        </section>
       )}
 
       {status === 'loading' ? (
