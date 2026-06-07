@@ -9,6 +9,7 @@ future browser host interop features tracked by beads:
 - `waluau-rw8e` host function declarations
 - `waluau-oeb5` extern host-object types
 - `waluau-s21a` nullable extern references
+- `waluau-6mcb` method dispatch on extern host objects
 - `waluau-3nm7` minimal DOM and localStorage host API
 - `waluau-4s72` Waluau callbacks as browser event handlers
 
