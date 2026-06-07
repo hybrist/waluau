@@ -2032,6 +2032,49 @@ fn rejects_tostring_for_non_primitive_inputs() {
 }
 
 #[test]
+fn type_checks_table_concat_with_and_without_separator() {
+    let source = r#"
+        function entry(words: {string}): string
+            local a: string = table.concat(words, ", ")
+            local b: string = table.concat(words)
+            return a .. b
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_table_concat_for_non_string_array() {
+    let source = r#"
+        function entry(nums: {i32}): string
+            return table.concat(nums, ", ")
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "table.concat expects an array of strings, got {i32}"
+    );
+}
+
+#[test]
+fn rejects_table_concat_with_non_string_separator() {
+    let source = r#"
+        function entry(words: {string}, separator: i32): string
+            return table.concat(words, separator)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "table.concat expects a string separator, got i32"
+    );
+}
+
+#[test]
 fn rejects_array_equality_in_mvp() {
     let source = r#"
         function entry(a: {i32}, b: {i32}): bool

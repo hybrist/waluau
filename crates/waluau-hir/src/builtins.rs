@@ -20,6 +20,7 @@ pub(super) const MATH_CEIL: &str = "math.ceil";
 pub(super) const MATH_TRUNC: &str = "math.trunc";
 pub(super) const MATH_NEAREST: &str = "math.nearest";
 pub(super) const MATH_COPYSIGN: &str = "math.copysign";
+pub(super) const TABLE_CONCAT: &str = "table.concat";
 pub(super) const TO_STRING: &str = "tostring";
 pub(super) const ASSERT: &str = "assert";
 // pub(super) const PRINT: &str = "print"; // now handled via extern declaration
@@ -261,6 +262,58 @@ pub(super) fn infer_tostring_builtin_call(
             "{TO_STRING} expects a primitive argument (numeric, bool, or string), got {arg_ty}",
         ))))
     }
+}
+
+pub(super) fn infer_table_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    if name != TABLE_CONCAT {
+        return None;
+    }
+    if args.is_empty() || args.len() > 2 {
+        return Some(Err(Diagnostic::new(format!(
+            "{TABLE_CONCAT} expects 1 or 2 arguments, got {}",
+            args.len()
+        ))));
+    }
+    let list_ty = match super::expressions::infer_expr(
+        &args[0],
+        vars,
+        fn_signatures,
+        active_type_params,
+        None,
+    ) {
+        Ok(ty) => ty,
+        Err(error) => return Some(Err(error)),
+    };
+    if list_ty != Type::Array(Box::new(Type::String)) {
+        return Some(Err(Diagnostic::new(format!(
+            "{TABLE_CONCAT} expects an array of strings, got {list_ty}"
+        ))));
+    }
+    if let Some(separator) = args.get(1) {
+        match super::expressions::infer_expr(
+            separator,
+            vars,
+            fn_signatures,
+            active_type_params,
+            None,
+        ) {
+            Ok(Type::String) => {}
+            Ok(ty) => {
+                return Some(Err(Diagnostic::new(format!(
+                    "{TABLE_CONCAT} expects a string separator, got {ty}"
+                ))));
+            }
+            Err(error) => return Some(Err(error)),
+        }
+    }
+    Some(coerce_type(Type::String, expected))
 }
 
 // infer_print_builtin_call removed - now handled via extern function declaration
