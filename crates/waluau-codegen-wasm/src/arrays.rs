@@ -273,6 +273,7 @@ fn collect_record_types_from_instruction(
         | IrInstruction::StructSet { .. }
         | IrInstruction::Null { .. }
         | IrInstruction::IsNull { .. }
+        | IrInstruction::ExternCastTest { .. }
         | IrInstruction::MultiGet { .. } => {}
     }
 }
@@ -287,7 +288,7 @@ pub(crate) fn array_storage_type(
         Type::Numeric(NumericType::F32) => Ok(StorageType::Val(ValType::F32)),
         Type::Numeric(NumericType::F64) => Ok(StorageType::Val(ValType::F64)),
         Type::Bool => Ok(StorageType::Val(ValType::I32)),
-        Type::String | Type::Bytes | Type::Extern | Type::Nil => {
+        Type::String | Type::Bytes | Type::Extern | Type::ExternSubtype(_) | Type::Nil => {
             Ok(StorageType::Val(externref_val_type()))
         }
         Type::Nullable(inner) => array_storage_type(inner, registry),
@@ -328,7 +329,7 @@ pub(crate) fn record_storage_type(
         Type::Numeric(NumericType::F32) => Ok(StorageType::Val(ValType::F32)),
         Type::Numeric(NumericType::F64) => Ok(StorageType::Val(ValType::F64)),
         Type::Bool => Ok(StorageType::Val(ValType::I32)),
-        Type::String | Type::Bytes | Type::Extern | Type::Nil => {
+        Type::String | Type::Bytes | Type::Extern | Type::ExternSubtype(_) | Type::Nil => {
             Ok(StorageType::Val(externref_val_type()))
         }
         Type::Nullable(inner) => record_storage_type(inner, registry),

@@ -1,0 +1,37 @@
+-- Extern host objects support nominal inheritance plus guarded runtime casts.
+
+type Node = extern
+type Element = extern extends Node
+type HTMLElement = extern extends Element
+type HTMLHeadingElement = extern extends HTMLElement
+
+declare function dom_document(): Element
+declare function dom_create_element(document: Element, tag_name: string): Element
+declare property Element:inner_text: string
+
+function take_node(value: Node): i32
+    return 7
+end
+
+local document: Element = dom_document()
+
+local heading_element: Element = dom_create_element(document, "h1")
+local heading_node: Node = heading_element
+assert(take_node(heading_node) == 7)
+
+if HTMLHeadingElement(heading) = heading_element then
+    local as_html_element: HTMLElement = heading
+    local as_node: Node = as_html_element
+    assert(take_node(as_node) == 7)
+    heading.inner_text = "Heading"
+    assert(heading.inner_text == "Heading")
+else
+    assert(false)
+end
+
+local paragraph: Element = dom_create_element(document, "p")
+if HTMLHeadingElement(not_heading) = paragraph then
+    assert(false)
+else
+    assert(take_node(paragraph) == 7)
+end

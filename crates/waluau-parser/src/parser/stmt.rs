@@ -1,4 +1,4 @@
-use waluau_ast::{AssignOp, Binding, Expr, Rebindability, Span, Stmt};
+use waluau_ast::{AssignOp, Binding, Expr, Rebindability, Stmt, Type};
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::TokenKind;
 
@@ -331,51 +331,6 @@ impl Parser {
         Ok(values)
     }
 
-    /// Recognizes the tagged-union pattern-match condition `Tag(binding) = expr`,
-    /// e.g. `if Left(value) = either then ... end`. Falls back to a regular
-    /// expression condition when the lookahead doesn't match (`=` is never a valid
-    /// binary operator in expressions, so there's no ambiguity).
-    fn parse_variant_binding_condition(&mut self) -> Result<Expr, Diagnostic> {
-        let is_pattern = matches!(
-            (
-                self.peek().map(|t| &t.kind),
-                self.peek_n(1).map(|t| &t.kind),
-                self.peek_n(2).map(|t| &t.kind),
-                self.peek_n(3).map(|t| &t.kind),
-                self.peek_n(4).map(|t| &t.kind),
-            ),
-            (
-                Some(TokenKind::Identifier(_)),
-                Some(TokenKind::LParen),
-                Some(TokenKind::Identifier(_)),
-                Some(TokenKind::RParen),
-                Some(TokenKind::Equal),
-            )
-        );
-        if !is_pattern {
-            return self.parse_expr();
-        }
-
-        let start_pos = self.peek().map(|t| t.span.start).unwrap_or(0);
-        let tag = self.expect_identifier()?;
-        self.expect_simple(TokenKind::LParen, "expected '(' after variant tag")?;
-        let binding = self.expect_identifier()?;
-        self.expect_simple(TokenKind::RParen, "expected ')' after pattern binding")?;
-        self.expect_simple(TokenKind::Equal, "expected '=' after pattern")?;
-        let scrutinee = self.parse_expr()?;
-        let end_pos = scrutinee.span().map(|s| s.end).unwrap_or(start_pos);
-        Ok(Expr::VariantBinding {
-            expr: Box::new(scrutinee),
-            tag,
-            binding,
-            binding_symbol_id: None,
-            span: Some(Span {
-                start: start_pos,
-                end: end_pos,
-            }),
-        })
-    }
-
     fn parse_if_stmt(&mut self) -> Result<Stmt, Diagnostic> {
         self.expect_simple(TokenKind::If, "expected 'if'")?;
         let stmt = self.parse_if_clause()?;
@@ -384,7 +339,10 @@ impl Parser {
     }
 
     fn parse_if_clause(&mut self) -> Result<Stmt, Diagnostic> {
-        let condition = self.parse_variant_binding_condition()?;
+        if let Some(stmt) = self.try_parse_if_cast_clause()? {
+            return Ok(stmt);
+        }
+        let condition = self.parse_expr()?;
         self.expect_simple(TokenKind::Then, "expected 'then' after if condition")?;
         let then_body =
             self.parse_block_until(&[TokenKind::ElseIf, TokenKind::Else, TokenKind::End]);
@@ -402,5 +360,55 @@ impl Parser {
             then_body,
             else_body,
         })
+    }
+
+    fn try_parse_if_cast_clause(&mut self) -> Result<Option<Stmt>, Diagnostic> {
+        let checkpoint = self.index;
+        let target_name = match self.peek().map(|token| &token.kind) {
+            Some(TokenKind::Identifier(name)) => name.clone(),
+            _ => return Ok(None),
+        };
+        if !matches!(
+            self.peek_n(1).map(|token| &token.kind),
+            Some(TokenKind::LParen)
+        ) {
+            return Ok(None);
+        }
+
+        self.advance();
+        self.expect_simple(TokenKind::LParen, "expected '(' after cast target")?;
+        let binding = self.expect_identifier()?;
+        self.expect_simple(TokenKind::RParen, "expected ')' after cast binding")?;
+        if !self.check_simple(&TokenKind::Equal) {
+            self.index = checkpoint;
+            return Ok(None);
+        }
+        self.advance();
+        let value = self.parse_expr()?;
+        self.expect_simple(TokenKind::Then, "expected 'then' after if-cast")?;
+        let then_body =
+            self.parse_block_until(&[TokenKind::ElseIf, TokenKind::Else, TokenKind::End]);
+        let else_body = if self.check_simple(&TokenKind::ElseIf) {
+            self.advance();
+            vec![self.parse_if_clause()?]
+        } else if self.check_simple(&TokenKind::Else) {
+            self.advance();
+            self.parse_block_until(&[TokenKind::End])
+        } else {
+            Vec::new()
+        };
+
+        Ok(Some(Stmt::IfCast {
+            target_name: target_name.clone(),
+            target_ty: Type::Named {
+                name: target_name,
+                type_args: Vec::new(),
+            },
+            binding,
+            binding_symbol_id: None,
+            value,
+            then_body,
+            else_body,
+        }))
     }
 }

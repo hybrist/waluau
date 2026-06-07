@@ -35,7 +35,11 @@ fn binding_for(ty: Type, rebindability: Rebindability) -> Binding {
 }
 
 fn is_extern_opaque_type(ty: &Type) -> bool {
-    matches!(ty, Type::Opaque { ty, .. } if ty.as_ref() == &Type::Extern)
+    matches!(
+        ty,
+        Type::Opaque { ty, .. }
+            if matches!(ty.as_ref(), Type::Extern | Type::ExternSubtype(_))
+    )
 }
 
 fn require_nullable_extern_type(ty: &Type) -> Result<(), Diagnostic> {
@@ -80,6 +84,9 @@ fn substitute_type_params(ty: &Type, subst: &HashMap<String, Type>) -> Type {
             name: name.clone(),
             ty: Box::new(substitute_type_params(ty, subst)),
         },
+        Type::ExternSubtype(parent) => {
+            Type::ExternSubtype(Box::new(substitute_type_params(parent, subst)))
+        }
         Type::Nullable(inner) => Type::Nullable(Box::new(substitute_type_params(inner, subst))),
         Type::TypeParam(name) => subst
             .get(name)
@@ -263,6 +270,18 @@ fn resolve_type_refs_allowing_forward_refs(
                 stack,
             )?),
         }),
+        Type::ExternSubtype(parent) => {
+            let parent = resolve_type_refs_allowing_forward_refs(
+                parent,
+                active_type_params,
+                raw_opaque,
+                generic,
+                opaque_cache,
+                stack,
+            )?;
+            require_nullable_extern_type(&parent)?;
+            Ok(Type::ExternSubtype(Box::new(parent)))
+        }
         Type::Nullable(inner) => {
             let inner = resolve_type_refs_allowing_forward_refs(
                 inner,
@@ -599,6 +618,19 @@ fn resolve_type_refs_fixpoint(
                 fixpoint_mode,
             )?),
         }),
+        Type::ExternSubtype(parent) => {
+            let parent = resolve_type_refs_fixpoint(
+                parent,
+                active_type_params,
+                raw_opaque,
+                generic,
+                opaque_cache,
+                stack,
+                fixpoint_mode,
+            )?;
+            require_nullable_extern_type(&parent)?;
+            Ok(Type::ExternSubtype(Box::new(parent)))
+        }
         Type::Nullable(inner) => {
             let inner = resolve_type_refs_fixpoint(
                 inner,
@@ -827,6 +859,49 @@ fn resolve_stmt_type_refs(
                 opaque_cache,
                 active_type_params,
             )?;
+            for stmt in then_body {
+                resolve_stmt_type_refs(
+                    stmt,
+                    raw_opaque,
+                    generic,
+                    opaque_cache,
+                    active_type_params,
+                )?;
+            }
+            for stmt in else_body {
+                resolve_stmt_type_refs(
+                    stmt,
+                    raw_opaque,
+                    generic,
+                    opaque_cache,
+                    active_type_params,
+                )?;
+            }
+            Ok(())
+        }
+        Stmt::IfCast {
+            target_ty,
+            value,
+            then_body,
+            else_body,
+            ..
+        } => {
+            // `target_name` may name either a separately-declared (extern) type or a
+            // tagged-union variant tag of the scrutinee's type (e.g. `if Left(n) = value`).
+            // Variant tags aren't resolvable type names, so tolerate resolution failure
+            // here and leave `target_ty` as an unresolved `Type::Named` — the dispatcher
+            // in `check_stmt`/`checked_if_cast_scopes` decides which interpretation
+            // applies once it has the inferred scrutinee type.
+            *target_ty = resolve_type_refs(
+                target_ty,
+                active_type_params,
+                raw_opaque,
+                generic,
+                opaque_cache,
+                &mut Vec::new(),
+            )
+            .unwrap_or_else(|_| target_ty.clone());
+            resolve_expr_type_refs(value, raw_opaque, generic, opaque_cache, active_type_params)?;
             for stmt in then_body {
                 resolve_stmt_type_refs(
                     stmt,
@@ -1106,9 +1181,6 @@ fn resolve_expr_type_refs(
             resolve_expr_type_refs(base, raw_opaque, generic, opaque_cache, active_type_params)?;
             resolve_expr_type_refs(index, raw_opaque, generic, opaque_cache, active_type_params)
         }
-        Expr::VariantBinding { expr, .. } => {
-            resolve_expr_type_refs(expr, raw_opaque, generic, opaque_cache, active_type_params)
-        }
         Expr::Number(..)
         | Expr::Bool(..)
         | Expr::Nil(..)
@@ -1338,6 +1410,21 @@ fn resolve_stmt_implicit_self(
             }
             Ok(())
         }
+        Stmt::IfCast {
+            value,
+            then_body,
+            else_body,
+            ..
+        } => {
+            resolve_expr_implicit_self(value, vars, fn_signatures, active_type_params)?;
+            for stmt in then_body {
+                resolve_stmt_implicit_self(stmt, vars, fn_signatures, active_type_params)?;
+            }
+            for stmt in else_body {
+                resolve_stmt_implicit_self(stmt, vars, fn_signatures, active_type_params)?;
+            }
+            Ok(())
+        }
         Stmt::While { condition, body } => {
             resolve_expr_implicit_self(condition, vars, fn_signatures, active_type_params)?;
             for stmt in body {
@@ -1475,9 +1562,6 @@ fn resolve_expr_implicit_self(
         Expr::Index { base, index, .. } => {
             resolve_expr_implicit_self(base, vars, fn_signatures, active_type_params)?;
             resolve_expr_implicit_self(index, vars, fn_signatures, active_type_params)
-        }
-        Expr::VariantBinding { expr, .. } => {
-            resolve_expr_implicit_self(expr, vars, fn_signatures, active_type_params)
         }
         Expr::Name(..)
         | Expr::Number(..)

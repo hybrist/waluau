@@ -9,6 +9,7 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
             .cloned()
             .unwrap_or_else(|| Type::TypeParam(name.clone())),
         Type::Nullable(inner) => Type::Nullable(Box::new(substitute_type(inner, subst))),
+        Type::ExternSubtype(parent) => Type::ExternSubtype(Box::new(substitute_type(parent, subst))),
         Type::Array(inner) => Type::Array(Box::new(substitute_type(inner, subst))),
         Type::Multi(types) => {
             Type::Multi(types.iter().map(|ty| substitute_type(ty, subst)).collect())
@@ -39,6 +40,7 @@ fn contains_type_param(ty: &Type) -> bool {
             .any(|variant| contains_type_param(variant.payload.as_ref())),
         Type::TypeParam(_) => true,
         Type::Opaque { ty, .. } => contains_type_param(ty.as_ref()),
+        Type::ExternSubtype(parent) => contains_type_param(parent.as_ref()),
         Type::Nullable(inner) => contains_type_param(inner.as_ref()),
         Type::Array(inner) => contains_type_param(inner.as_ref()),
         Type::Record(fields) => fields.values().any(contains_type_param),
@@ -560,6 +562,30 @@ impl<'a> Monomorphizer<'a> {
                 then_body: self.rewrite_stmts(then_body, subst, active, &mut types.clone())?,
                 else_body: self.rewrite_stmts(else_body, subst, active, &mut types.clone())?,
             },
+            Stmt::IfCast {
+                target_name,
+                target_ty,
+                binding,
+                binding_symbol_id,
+                value,
+                then_body,
+                else_body,
+            } => {
+                let rewritten_value = self.rewrite_expr(value, subst, active, types)?;
+                let mut then_types = types.clone();
+                if let Some(symbol_id) = binding_symbol_id {
+                    then_types.insert(*symbol_id, substitute_type(target_ty, subst));
+                }
+                Stmt::IfCast {
+                    target_name: target_name.clone(),
+                    target_ty: substitute_type(target_ty, subst),
+                    binding: binding.clone(),
+                    binding_symbol_id: *binding_symbol_id,
+                    value: rewritten_value,
+                    then_body: self.rewrite_stmts(then_body, subst, active, &mut then_types)?,
+                    else_body: self.rewrite_stmts(else_body, subst, active, &mut types.clone())?,
+                }
+            }
             Stmt::While { condition, body } => Stmt::While {
                 condition: self.rewrite_expr(condition, subst, active, types)?,
                 body: self.rewrite_stmts(body, subst, active, &mut types.clone())?,
@@ -721,19 +747,6 @@ impl<'a> Monomorphizer<'a> {
             Expr::IsVariant { expr, tag, span } => Expr::IsVariant {
                 expr: Box::new(self.rewrite_expr(expr, subst, active, types)?),
                 tag: tag.clone(),
-                span: *span,
-            },
-            Expr::VariantBinding {
-                expr,
-                tag,
-                binding,
-                binding_symbol_id,
-                span,
-            } => Expr::VariantBinding {
-                expr: Box::new(self.rewrite_expr(expr, subst, active, types)?),
-                tag: tag.clone(),
-                binding: binding.clone(),
-                binding_symbol_id: *binding_symbol_id,
                 span: *span,
             },
             Expr::If {
@@ -1286,7 +1299,7 @@ impl<'a> Monomorphizer<'a> {
                     }
                 }
             },
-            Expr::IsVariant { .. } | Expr::VariantBinding { .. } => Ok(Type::Bool),
+            Expr::IsVariant { .. } => Ok(Type::Bool),
             Expr::If { then_expr, .. } => self.infer_expr_type(then_expr, subst, types),
             Expr::Call {
                 callee,

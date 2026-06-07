@@ -5,7 +5,7 @@ use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
 use super::builtins::ASSERT;
 use super::expressions::{infer_expr, infer_expr_list};
-use super::numeric::common_numeric_type;
+use super::numeric::{common_numeric_type, is_extern_subtype_of};
 use super::signatures::{
     FnSignature, active_type_param_set, generic_diagnostic, inference_diagnostic,
     validate_type_in_scope, validate_type_param_list,
@@ -24,12 +24,102 @@ fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
     if expected == actual {
         return true;
     }
+    if is_extern_subtype_of(actual, expected) {
+        return true;
+    }
     match (expected, actual) {
         (Type::Record(expected_fields), Type::Record(actual_fields)) => expected_fields
             .iter()
             .all(|(name, expected_ty)| actual_fields.get(name) == Some(expected_ty)),
         _ => false,
     }
+}
+
+struct BranchScopes {
+    then_scope: HashMap<String, Binding>,
+    else_scope: HashMap<String, Binding>,
+}
+
+/// Resolves the dual-purpose `if Name(binding) = expr then ... end` syntax,
+/// which is shared between two unrelated narrowing features that happen to
+/// collide on surface syntax:
+///
+///   - Tagged-union pattern match with binding, e.g. `if Left(n) = either then`:
+///     `Name` is a variant tag of the scrutinee's tagged-union type, and
+///     `binding` is bound (in the `then` branch only) to the unboxed payload.
+///   - Extern safe-cast, e.g. `if Element(node) = value then`: `Name` is an
+///     extern type, and `binding` is bound (in the `then` branch only) to the
+///     narrowed extern value.
+///
+/// Disambiguation can only happen here, once the scrutinee's inferred type is
+/// known: the parser has no type/tag registries, so it always produces the
+/// same `Stmt::IfCast` shape (with `target_ty` resolved to a real type when
+/// possible, or left as an unresolved `Type::Named` when `target_name` turns
+/// out to name a variant tag rather than a declared type).
+fn checked_if_cast_scopes(
+    target_name: &str,
+    target_ty: &Type,
+    binding: &str,
+    value: &Expr,
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+) -> Result<BranchScopes, Diagnostic> {
+    let value_ty = infer_expr(value, vars, fn_signatures, active_type_params, None)?;
+    let source_ty = value_ty
+        .nullable_inner()
+        .unwrap_or_else(|| value_ty.clone());
+
+    // Tagged-union pattern match with binding: `if Tag(name) = expr then`.
+    if let Some(variant) = source_ty.tagged_variant(target_name) {
+        let mut then_scope = vars.clone();
+        then_scope.insert(
+            binding.to_string(),
+            binding_for((*variant.payload).clone(), Rebindability::Const),
+        );
+        return Ok(BranchScopes {
+            then_scope,
+            else_scope: vars.clone(),
+        });
+    }
+
+    // Extern safe-cast: `if Type(name) = expr then`.
+    if !matches!(
+        target_ty,
+        Type::Opaque { ty, .. } if matches!(ty.as_ref(), Type::Extern | Type::ExternSubtype(_))
+    ) {
+        return Err(Diagnostic::new(format!(
+            "'{target_name}' is neither a tagged-union variant of {source_ty} nor an extern type; \
+             if-cast target must be an extern type or a tagged-union variant tag"
+        )));
+    }
+    if !matches!(
+        &source_ty,
+        Type::Opaque { ty, .. } if matches!(ty.as_ref(), Type::Extern | Type::ExternSubtype(_))
+    ) {
+        return Err(Diagnostic::new(format!(
+            "if-cast value must be an extern type, got {value_ty}"
+        )));
+    }
+    if is_extern_subtype_of(&source_ty, target_ty) {
+        return Err(Diagnostic::new(format!(
+            "if-cast from {source_ty} to {target_ty} is an upcast; use direct assignment"
+        )));
+    }
+    if !is_extern_subtype_of(target_ty, &source_ty) {
+        return Err(Diagnostic::new(format!(
+            "cannot if-cast unrelated extern types {source_ty} and {target_ty}"
+        )));
+    }
+    let mut then_scope = vars.clone();
+    then_scope.insert(
+        binding.to_string(),
+        binding_for(target_ty.clone(), Rebindability::Const),
+    );
+    Ok(BranchScopes {
+        then_scope,
+        else_scope: vars.clone(),
+    })
 }
 
 fn type_property_setter_signature<'a>(
@@ -68,43 +158,27 @@ fn type_property_setter_signature<'a>(
 fn narrowed_variant_scopes(
     condition: &Expr,
     vars: &HashMap<String, Binding>,
-    fn_signatures: &HashMap<String, FnSignature>,
-    active_type_params: &HashSet<String>,
-) -> Result<(HashMap<String, Binding>, HashMap<String, Binding>), Diagnostic> {
+) -> (HashMap<String, Binding>, HashMap<String, Binding>) {
     let mut then_scope = vars.clone();
     let mut else_scope = vars.clone();
-    match condition {
-        Expr::IsVariant { expr, tag, .. } => {
-            let Expr::Name(name, _, _) = expr.as_ref() else {
-                return Ok((then_scope, else_scope));
-            };
-            let Some(binding) = vars.get(name) else {
-                return Ok((then_scope, else_scope));
-            };
-            if let Some(variant) = binding.ty.tagged_variant(tag) {
-                then_scope.insert(
-                    name.clone(),
-                    binding_for(Type::TaggedVariant(variant), binding.rebindability),
-                );
-            }
-            if let Some(remaining) = binding.ty.remove_tagged_variant(tag) {
-                else_scope.insert(name.clone(), binding_for(remaining, binding.rebindability));
-            }
+    if let Expr::IsVariant { expr, tag, .. } = condition {
+        let Expr::Name(name, _, _) = expr.as_ref() else {
+            return (then_scope, else_scope);
+        };
+        let Some(binding) = vars.get(name) else {
+            return (then_scope, else_scope);
+        };
+        if let Some(variant) = binding.ty.tagged_variant(tag) {
+            then_scope.insert(
+                name.clone(),
+                binding_for(Type::TaggedVariant(variant), binding.rebindability),
+            );
         }
-        Expr::VariantBinding {
-            expr, tag, binding, ..
-        } => {
-            let scrutinee_ty = infer_expr(expr, vars, fn_signatures, active_type_params, None)?;
-            if let Some(variant) = scrutinee_ty.tagged_variant(tag) {
-                then_scope.insert(
-                    binding.clone(),
-                    binding_for((*variant.payload).clone(), Rebindability::Const),
-                );
-            }
+        if let Some(remaining) = binding.ty.remove_tagged_variant(tag) {
+            else_scope.insert(name.clone(), binding_for(remaining, binding.rebindability));
         }
-        _ => {}
     }
-    Ok((then_scope, else_scope))
+    (then_scope, else_scope)
 }
 
 fn nil_test_subject(condition: &Expr) -> Option<(&str, bool)> {
@@ -130,19 +204,16 @@ fn nil_test_subject(condition: &Expr) -> Option<(&str, bool)> {
 fn narrowed_scopes(
     condition: &Expr,
     vars: &HashMap<String, Binding>,
-    fn_signatures: &HashMap<String, FnSignature>,
-    active_type_params: &HashSet<String>,
-) -> Result<(HashMap<String, Binding>, HashMap<String, Binding>), Diagnostic> {
-    let (mut then_scope, mut else_scope) =
-        narrowed_variant_scopes(condition, vars, fn_signatures, active_type_params)?;
+) -> (HashMap<String, Binding>, HashMap<String, Binding>) {
+    let (mut then_scope, mut else_scope) = narrowed_variant_scopes(condition, vars);
     let Some((name, non_null_when_true)) = nil_test_subject(condition) else {
-        return Ok((then_scope, else_scope));
+        return (then_scope, else_scope);
     };
     let Some(binding) = vars.get(name) else {
-        return Ok((then_scope, else_scope));
+        return (then_scope, else_scope);
     };
     let Some(inner) = binding.ty.nullable_inner() else {
-        return Ok((then_scope, else_scope));
+        return (then_scope, else_scope);
     };
     let target = if non_null_when_true {
         &mut then_scope
@@ -150,7 +221,7 @@ fn narrowed_scopes(
         &mut else_scope
     };
     target.insert(name.to_string(), binding_for(inner, binding.rebindability));
-    Ok((then_scope, else_scope))
+    (then_scope, else_scope)
 }
 
 pub(super) fn check_function(
@@ -359,8 +430,7 @@ pub(super) fn collect_return_types(
                 if condition_ty != Type::Bool {
                     return Err(Diagnostic::new("if condition must be bool"));
                 }
-                let (then_scope, else_scope) =
-                    narrowed_scopes(condition, &scope, fn_signatures, active_type_params)?;
+                let (then_scope, else_scope) = narrowed_scopes(condition, &scope);
                 collect_return_types(
                     then_body,
                     &then_scope,
@@ -371,6 +441,40 @@ pub(super) fn collect_return_types(
                 collect_return_types(
                     else_body,
                     &else_scope,
+                    fn_signatures,
+                    active_type_params,
+                    returns,
+                )?;
+            }
+            Stmt::IfCast {
+                target_name,
+                target_ty,
+                binding,
+                value,
+                then_body,
+                else_body,
+                ..
+            } => {
+                let branch_scopes = checked_if_cast_scopes(
+                    target_name,
+                    target_ty,
+                    binding,
+                    value,
+                    &scope,
+                    fn_signatures,
+                    active_type_params,
+                )?;
+                seal_record_locals_in_expr(value, &mut scope);
+                collect_return_types(
+                    then_body,
+                    &branch_scopes.then_scope,
+                    fn_signatures,
+                    active_type_params,
+                    returns,
+                )?;
+                collect_return_types(
+                    else_body,
+                    &branch_scopes.else_scope,
                     fn_signatures,
                     active_type_params,
                     returns,
@@ -953,8 +1057,7 @@ pub(super) fn check_stmt(
             if condition_ty != Type::Bool {
                 return Err(Diagnostic::new("if condition must be bool"));
             }
-            let (mut then_scope, mut else_scope) =
-                narrowed_scopes(condition, vars, fn_signatures, active_type_params)?;
+            let (mut then_scope, mut else_scope) = narrowed_scopes(condition, vars);
             let mut then_returns = false;
             let mut else_returns = false;
             for stmt in then_body {
@@ -981,6 +1084,54 @@ pub(super) fn check_stmt(
                 *vars = else_scope;
             } else if else_returns && !then_returns {
                 *vars = then_scope;
+            }
+            Ok(then_returns && else_returns)
+        }
+        Stmt::IfCast {
+            target_name,
+            target_ty,
+            binding,
+            value,
+            then_body,
+            else_body,
+            ..
+        } => {
+            let branch_scopes = checked_if_cast_scopes(
+                target_name,
+                target_ty,
+                binding,
+                value,
+                vars,
+                fn_signatures,
+                active_type_params,
+            )?;
+            let mut then_scope = branch_scopes.then_scope;
+            let mut else_scope = branch_scopes.else_scope;
+            seal_record_locals_in_expr(value, vars);
+            let mut then_returns = false;
+            let mut else_returns = false;
+            for stmt in then_body {
+                then_returns |= check_stmt(
+                    stmt,
+                    &mut then_scope,
+                    fn_signatures,
+                    active_type_params,
+                    expected_return,
+                    in_loop,
+                )?;
+            }
+            for stmt in else_body {
+                else_returns |= check_stmt(
+                    stmt,
+                    &mut else_scope,
+                    fn_signatures,
+                    active_type_params,
+                    expected_return,
+                    in_loop,
+                )?;
+            }
+            if then_returns && !else_returns {
+                *vars = else_scope;
             }
             Ok(then_returns && else_returns)
         }
@@ -1376,6 +1527,16 @@ fn stmt_calls_name(stmt: &Stmt, callee: &str) -> bool {
                 || then_body.iter().any(|stmt| stmt_calls_name(stmt, callee))
                 || else_body.iter().any(|stmt| stmt_calls_name(stmt, callee))
         }
+        Stmt::IfCast {
+            value,
+            then_body,
+            else_body,
+            ..
+        } => {
+            expr_calls_name(value, callee)
+                || then_body.iter().any(|stmt| stmt_calls_name(stmt, callee))
+                || else_body.iter().any(|stmt| stmt_calls_name(stmt, callee))
+        }
         Stmt::While { condition, body } => {
             expr_calls_name(condition, callee)
                 || body.iter().any(|stmt| stmt_calls_name(stmt, callee))
@@ -1456,9 +1617,7 @@ fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
         Expr::Index { base, index, .. } => {
             expr_calls_name(base, callee) || expr_calls_name(index, callee)
         }
-        Expr::IsVariant { expr, .. } | Expr::VariantBinding { expr, .. } => {
-            expr_calls_name(expr, callee)
-        }
+        Expr::IsVariant { expr, .. } => expr_calls_name(expr, callee),
     }
 }
 
@@ -1529,7 +1688,7 @@ fn seal_record_locals_in_expr(expr: &Expr, vars: &mut HashMap<String, Binding>) 
             seal_record_locals_in_expr(left, vars);
             seal_record_locals_in_expr(right, vars);
         }
-        Expr::IsVariant { expr, .. } | Expr::VariantBinding { expr, .. } => {
+        Expr::IsVariant { expr, .. } => {
             seal_record_locals_in_expr(expr, vars);
         }
     }

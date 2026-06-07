@@ -304,6 +304,95 @@ fn distinct_extern_type_aliases_do_not_implicitly_convert() {
 }
 
 #[test]
+fn extern_inheritance_allows_upcast() {
+    let source = r#"
+        type Node = extern
+        type Element = extern extends Node
+        type HTMLElement = extern extends Element
+        type HTMLHeadingElement = extern extends HTMLElement
+
+        function take_node(value: Node): i32
+            return 1
+        end
+
+        function entry(value: HTMLHeadingElement): i32
+            local element: Element = value
+            return take_node(element)
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program).expect("type check should succeed");
+}
+
+#[test]
+fn extern_inheritance_rejects_unguarded_downcast() {
+    let source = r#"
+        type Node = extern
+        type Element = extern extends Node
+        type HTMLElement = extern extends Element
+        type HTMLHeadingElement = extern extends HTMLElement
+
+        function entry(value: Element): HTMLHeadingElement
+            local heading: HTMLHeadingElement = value
+            return heading
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "cannot implicitly convert Element to HTMLHeadingElement"
+    );
+}
+
+#[test]
+fn if_cast_narrows_extern_binding_only_in_success_branch() {
+    let source = r#"
+        type Node = extern
+        type Element = extern extends Node
+        type HTMLElement = extern extends Element
+        type HTMLHeadingElement = extern extends HTMLElement
+
+        function take_heading(value: HTMLHeadingElement): i32
+            return 1
+        end
+
+        function entry(value: Element): i32
+            if HTMLHeadingElement(heading) = value then
+                return take_heading(heading)
+            else
+                return 0
+            end
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program).expect("type check should succeed");
+}
+
+#[test]
+fn if_cast_binding_does_not_escape_success_branch() {
+    let source = r#"
+        type Node = extern
+        type Element = extern extends Node
+        type HTMLHeadingElement = extern extends Element
+
+        function entry(value: Element): HTMLHeadingElement
+            if HTMLHeadingElement(heading) = value then
+                return heading
+            end
+            return heading
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(error.to_string(), "unknown name 'heading'");
+}
+
+#[test]
 fn generic_type_declarations_resolve_transparently() {
     let source = r#"
         type Pair<A, B> = {first: A, second: B}

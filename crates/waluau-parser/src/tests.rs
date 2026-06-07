@@ -110,6 +110,41 @@ fn parses_extern_type_declaration() {
 }
 
 #[test]
+fn parses_extern_inheritance_and_if_cast() {
+    let source = r#"
+        type Node = extern
+        type Element = extern extends Node
+
+        function entry(value: Node): i32
+            if Element(element) = value then
+                return 1
+            else
+                return 0
+            end
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert_eq!(program.type_declarations.len(), 2);
+    assert_eq!(program.type_declarations[1].name, "Element");
+    assert_eq!(
+        program.type_declarations[1].ty,
+        Type::ExternSubtype(Box::new(Type::Named {
+            name: "Node".into(),
+            type_args: vec![],
+        }))
+    );
+    assert!(matches!(
+        &program.functions[0].body[0],
+        Stmt::IfCast {
+            target_name,
+            binding,
+            ..
+        } if target_name == "Element" && binding == "element"
+    ));
+}
+
+#[test]
 fn parses_declared_host_method_with_implicit_receiver_param() {
     let source = r#"
         type Element = extern

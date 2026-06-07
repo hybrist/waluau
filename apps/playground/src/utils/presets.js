@@ -1,3 +1,5 @@
+import { conformanceIncludePaths } from '../../../../tools/conformance/includes.js';
+
 const fixtureModules = import.meta.glob('../../../../fixtures/*.walu', {
   eager: true,
   query: '?raw',
@@ -16,7 +18,37 @@ const conformanceModules = import.meta.glob('../../../../conformance/*.walu', {
   import: 'default'
 });
 
+const conformanceIncludeModules = import.meta.glob('../../../../{builtins,externs}/**/*.walu', {
+  eager: true,
+  query: '?raw',
+  import: 'default'
+});
+
+const domExternSource = import.meta.glob('../../../../externs/dom.walu', {
+  eager: true,
+  query: '?raw',
+  import: 'default'
+});
+
 export { fixtureModules, moduleFixtures, conformanceModules };
+
+const DOM_EXTERNS = Object.values(domExternSource)[0] || '';
+
+export function filesForConformancePreset(filename, source) {
+  const files = {
+    [`/${filename}`]: source
+  };
+
+  for (const resolved of conformanceIncludePaths(filename, source)) {
+    const includeSource = conformanceIncludeModules[`../../../..${resolved}`];
+    if (includeSource === undefined) {
+      throw new Error(`Unknown conformance include resolved to ${resolved}`);
+    }
+    files[resolved] = includeSource;
+  }
+
+  return files;
+}
 
 const SINGLE_PRESETS = Object.entries(fixtureModules)
   .map(([path, source]) => {
@@ -49,9 +81,7 @@ const CONFORMANCE_PRESETS = Object.entries(conformanceModules)
     return {
       key: `conformance-${key}`,
       label: `${label} (Test)`,
-      files: {
-        [`/${filename}`]: source
-      },
+      files: filesForConformancePreset(filename, source),
       entryFile: `/${filename}`
     };
   });
@@ -67,7 +97,41 @@ export const MULTI_PRESET = {
   entryFile: '/main.walu'
 };
 
-export const PRESETS = [...SINGLE_PRESETS, MULTI_PRESET, ...CONFORMANCE_PRESETS].sort((left, right) =>
+export const DOM_PRESET = {
+  key: 'dom-externs',
+  label: 'DOM Externs Example',
+  files: {
+    '/externs/dom.walu': DOM_EXTERNS,
+    '/main.walu': `declare function dom_document(): Document
+
+local document: Document = dom_document()
+local heading: Element = document:create_element("h2")
+heading.id = "playground-title"
+heading.class_name = "waluau-dom-title"
+
+if HTMLHeadingElement(title) = heading then
+    title.inner_text = "Hello from generated DOM externs"
+else
+    heading.text_content = "Generated DOM extern cast failed"
+end
+
+document:append_child(heading)
+
+local body: Element = document:create_element("p")
+local found: Element? = document:get_element_by_id("playground-title")
+if found ~= nil then
+    body.text_content = found.text_content .. " in a sandboxed output document"
+else
+    body.text_content = "DOM lookup failed"
+end
+
+document:append_child(body)
+`
+  },
+  entryFile: '/main.walu'
+};
+
+export const PRESETS = [...SINGLE_PRESETS, MULTI_PRESET, DOM_PRESET, ...CONFORMANCE_PRESETS].sort((left, right) =>
   left.label.localeCompare(right.label)
 );
 

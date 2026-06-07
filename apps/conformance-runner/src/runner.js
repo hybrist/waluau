@@ -63,6 +63,8 @@ function decodeBytesConstantsFromWasm(wasmBuffer) {
 function createMockElement(tagName) {
   return {
     tagName: String(tagName).toUpperCase(),
+    id: '',
+    className: '',
     childNodes: [],
     textContent: '',
     appendChild(child) {
@@ -96,6 +98,7 @@ function createDomHost() {
   if (globalThis.document?.createElement) {
     const root = globalThis.document.createElement('div');
     root.dataset.waluauConformanceRoot = '';
+    root.id = 'waluau-conformance-root';
     return {
       document: root,
       createElement: (tagName) => globalThis.document.createElement(tagName),
@@ -104,6 +107,7 @@ function createDomHost() {
   }
 
   const root = createMockElement('div');
+  root.id = 'waluau-conformance-root';
   return {
     document: root,
     createElement: (tagName) => createMockElement(tagName),
@@ -122,11 +126,53 @@ function buildWaluauImports(wasmBuffer, options = {}) {
     if (value && typeof value.appendChild === 'function') return value;
     throw new Error(`Expected DOM Element for ${name}`);
   };
+  const asNode = (value, name) => {
+    if (value && typeof value === 'object' && typeof value.appendChild === 'function') return value;
+    throw new Error(`Expected DOM Node for ${name}`);
+  };
   const setText = (element, text, name) => {
     asElement(element, name).textContent = String(text);
   };
   const appendChild = (parent, child, name) => {
-    asElement(parent, name).appendChild(asElement(child, name));
+    return asNode(parent, name).appendChild(asNode(child, name));
+  };
+  const childrenOf = (node) => Array.from(node.children ?? node.childNodes ?? []);
+  const walk = (root, visit) => {
+    if (visit(root)) return root;
+    for (const child of childrenOf(root)) {
+      const found = walk(child, visit);
+      if (found) return found;
+    }
+    return null;
+  };
+  const getElementById = (root, id) => walk(root, (node) => node.id === id);
+  const getInnerText = (element, name) => {
+    const target = asElement(element, name);
+    return 'innerText' in target ? target.innerText : target.textContent;
+  };
+  const setInnerText = (element, text, name) => {
+    const target = asElement(element, name);
+    if ('innerText' in target) {
+      target.innerText = String(text);
+    } else {
+      target.textContent = String(text);
+    }
+  };
+  const externIs = (value, typeName) => {
+    const name = String(typeName);
+    if (name === 'Node') {
+      return (typeof Node !== 'undefined' && value instanceof Node) || (value && typeof value === 'object' && 'childNodes' in value) ? 1 : 0;
+    }
+    if (name === 'Element') {
+      return (typeof Element !== 'undefined' && value instanceof Element) || (value && typeof value.appendChild === 'function' && typeof value.tagName === 'string') ? 1 : 0;
+    }
+    if (name === 'HTMLElement') {
+      return (typeof HTMLElement !== 'undefined' && value instanceof HTMLElement) || (value && typeof value.appendChild === 'function' && typeof value.tagName === 'string') ? 1 : 0;
+    }
+    if (name === 'HTMLHeadingElement') {
+      return (typeof HTMLHeadingElement !== 'undefined' && value instanceof HTMLHeadingElement) || (value && /^H[1-6]$/.test(String(value.tagName))) ? 1 : 0;
+    }
+    throw new Error(`Unsupported extern cast target: ${name}`);
   };
   const waluauImports = new Proxy({}, {
     get(_target, prop) {
@@ -139,6 +185,9 @@ function buildWaluauImports(wasmBuffer, options = {}) {
       }
       if (name === 'host_add') {
         return (left, right) => left + right;
+      }
+      if (name === 'extern_is') {
+        return externIs;
       }
       if (name === 'getElement') {
         return () => ({ value: 42 });
@@ -161,17 +210,53 @@ function buildWaluauImports(wasmBuffer, options = {}) {
       if (name === 'Document.create_element') {
         return (_document, tagName) => domHost.createElement(String(tagName));
       }
+      if (name === 'Document.get_element_by_id') {
+        return (document, id) => getElementById(asElement(document, name), String(id));
+      }
       if (name === 'Document.append_child' || name === 'Element.append_child' || name === 'Node.append_child') {
         return (parent, child) => appendChild(parent, child, name);
       }
       if (name === 'Element.set_text') {
         return (element, text) => setText(element, text, name);
       }
+      if (name === 'Node.get_node_name') {
+        return (node) => asNode(node, name).nodeName ?? asNode(node, name).tagName ?? '';
+      }
+      if (name === 'Node.get_text_content') {
+        return (node) => asNode(node, name).textContent ?? '';
+      }
+      if (name === 'Node.set_text_content') {
+        return (node, text) => {
+          asNode(node, name).textContent = String(text);
+        };
+      }
+      if (name === 'Element.get_id') {
+        return (element) => asElement(element, name).id ?? '';
+      }
+      if (name === 'Element.set_id') {
+        return (element, id) => {
+          asElement(element, name).id = String(id);
+        };
+      }
+      if (name === 'Element.get_class_name') {
+        return (element) => asElement(element, name).className ?? '';
+      }
+      if (name === 'Element.set_class_name') {
+        return (element, className) => {
+          asElement(element, name).className = String(className);
+        };
+      }
       if (name === 'Element.get_inner_text') {
         return (element) => asElement(element, name).textContent;
       }
       if (name === 'Element.set_inner_text') {
         return (element, text) => setText(element, text, name);
+      }
+      if (name === 'HTMLElement.get_inner_text') {
+        return (element) => getInnerText(element, name);
+      }
+      if (name === 'HTMLElement.set_inner_text') {
+        return (element, text) => setInnerText(element, text, name);
       }
       if (name === 'bytes_literal') {
         return (index) => {

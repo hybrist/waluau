@@ -4,12 +4,35 @@ import {
   compileAndInstantiateWithDom,
   compileAndInstantiateWithExports,
 } from '../src/runner.js';
+import { conformanceIncludePaths } from '../../../tools/conformance/includes.js';
 
 const conformanceModules = import.meta.glob('../../../conformance/**/*.walu', {
   eager: true,
   query: '?raw',
   import: 'default',
 });
+
+const includeModules = import.meta.glob('../../../{builtins,externs}/**/*.walu', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+});
+
+function sourceForCase(testCase) {
+  const includes = [];
+  for (const resolved of conformanceIncludePaths(testCase.name, testCase.source)) {
+    const globKey = `../../..${resolved}`;
+    const source = includeModules[globKey];
+    if (source === undefined) {
+      throw new Error(`Unknown conformance include resolved to ${resolved}`);
+    }
+    includes.push(source);
+  }
+  if (includes.length === 0) {
+    return testCase.source;
+  }
+  return `${includes.join('\n')}\n${testCase.source}`;
+}
 
 const cases = Object.entries(conformanceModules)
   .map(([path, source]) => {
@@ -22,7 +45,7 @@ describe('browser conformance', () => {
   for (const { name, source } of cases) {
     it(`passes ${name}`, async () => {
       await expect(
-        compileAndInstantiate({ '/main.walu': source }, '/main.walu'),
+        compileAndInstantiate({ '/main.walu': sourceForCase({ name, source }) }, '/main.walu'),
       ).resolves.toBeUndefined();
     });
   }
@@ -48,13 +71,22 @@ describe('browser conformance', () => {
   });
 
   it('renders DOM extern handles into the conformance DOM root', async () => {
-    const source = cases.find(({ name }) => name === 'dom_extern_rendering.walu').source;
+    const testCase = cases.find(({ name }) => name === 'dom_extern_rendering.walu');
+    const source = sourceForCase(testCase);
     const { root } = await compileAndInstantiateWithDom({ '/main.walu': source }, '/main.walu');
 
     expect(root.children).toHaveLength(2);
     expect(root.children[0].tagName).toBe('H1');
-    expect(root.children[0].textContent).toBe('Hello from Waluau');
+    expect(root.children[0].id).toBe('generated-heading');
+    expect(root.children[0].className).toBe('title');
+    expect(root.children[0].textContent).toBe('Hello from generated DOM externsleaf');
+    expect(root.children[0].children).toHaveLength(1);
+    expect(root.children[0].children[0].tagName).toBe('SPAN');
+    expect(root.children[0].children[0].className).toBe('leaf');
+    expect(root.children[0].children[0].textContent).toBe('leaf');
     expect(root.children[1].tagName).toBe('P');
-    expect(root.children[1].textContent).toBe('Rendered through extern DOM handles');
+    expect(root.children[1].id).toBe('generated-paragraph');
+    expect(root.children[1].className).toBe('body');
+    expect(root.children[1].textContent).toBe('Rendered through generated extern DOM handles');
   });
 });

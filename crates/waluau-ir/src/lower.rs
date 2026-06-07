@@ -95,6 +95,14 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
     Ok(module)
 }
 
+struct IfCastParts<'a> {
+    target_name: &'a str,
+    binding_symbol_id: Option<SymbolId>,
+    value: &'a Expr,
+    then_body: &'a [Stmt],
+    else_body: &'a [Stmt],
+}
+
 fn collect_variant_tag_ids(program: &Program) -> BTreeMap<String, i32> {
     let mut tag_ids = BTreeMap::new();
     for function in &program.functions {
@@ -137,7 +145,10 @@ fn collect_type_variant_tags(ty: &Type, tag_ids: &mut BTreeMap<String, i32>) {
                 collect_type_variant_tags(variant.payload.as_ref(), tag_ids);
             }
         }
-        Type::Opaque { ty, .. } | Type::Array(ty) | Type::Nullable(ty) => {
+        Type::Opaque { ty, .. }
+        | Type::Array(ty)
+        | Type::Nullable(ty)
+        | Type::ExternSubtype(ty) => {
             collect_type_variant_tags(ty, tag_ids)
         }
         Type::Multi(types) => {
@@ -215,6 +226,22 @@ fn collect_stmt_variant_tags(stmt: &Stmt, tag_ids: &mut BTreeMap<String, i32>) {
                 collect_stmt_variant_tags(stmt, tag_ids);
             }
         }
+        Stmt::IfCast {
+            target_ty,
+            value,
+            then_body,
+            else_body,
+            ..
+        } => {
+            collect_type_variant_tags(target_ty, tag_ids);
+            collect_expr_variant_tags(value, tag_ids);
+            for stmt in then_body {
+                collect_stmt_variant_tags(stmt, tag_ids);
+            }
+            for stmt in else_body {
+                collect_stmt_variant_tags(stmt, tag_ids);
+            }
+        }
         Stmt::While { condition, body } => {
             collect_expr_variant_tags(condition, tag_ids);
             for stmt in body {
@@ -282,9 +309,7 @@ fn collect_expr_variant_tags(expr: &Expr, tag_ids: &mut BTreeMap<String, i32>) {
             collect_expr_variant_tags(expr, tag_ids);
             collect_type_variant_tags(ty, tag_ids);
         }
-        Expr::IsVariant { expr, .. } | Expr::VariantBinding { expr, .. } => {
-            collect_expr_variant_tags(expr, tag_ids)
-        }
+        Expr::IsVariant { expr, .. } => collect_expr_variant_tags(expr, tag_ids),
         Expr::Binary { left, right, .. } => {
             collect_expr_variant_tags(left, tag_ids);
             collect_expr_variant_tags(right, tag_ids);
@@ -467,6 +492,23 @@ fn erase_stmt_opaque_types(stmt: &Stmt) -> Stmt {
             then_body: then_body.iter().map(erase_stmt_opaque_types).collect(),
             else_body: else_body.iter().map(erase_stmt_opaque_types).collect(),
         },
+        Stmt::IfCast {
+            target_name,
+            target_ty,
+            binding,
+            binding_symbol_id,
+            value,
+            then_body,
+            else_body,
+        } => Stmt::IfCast {
+            target_name: target_name.clone(),
+            target_ty: erase_type_opaque_types(target_ty),
+            binding: binding.clone(),
+            binding_symbol_id: *binding_symbol_id,
+            value: erase_expr_opaque_types(value),
+            then_body: then_body.iter().map(erase_stmt_opaque_types).collect(),
+            else_body: else_body.iter().map(erase_stmt_opaque_types).collect(),
+        },
         Stmt::While { condition, body } => Stmt::While {
             condition: erase_expr_opaque_types(condition),
             body: body.iter().map(erase_stmt_opaque_types).collect(),
@@ -540,19 +582,6 @@ fn erase_expr_opaque_types(expr: &Expr) -> Expr {
         Expr::IsVariant { expr, tag, span } => Expr::IsVariant {
             expr: Box::new(erase_expr_opaque_types(expr)),
             tag: tag.clone(),
-            span: *span,
-        },
-        Expr::VariantBinding {
-            expr,
-            tag,
-            binding,
-            binding_symbol_id,
-            span,
-        } => Expr::VariantBinding {
-            expr: Box::new(erase_expr_opaque_types(expr)),
-            tag: tag.clone(),
-            binding: binding.clone(),
-            binding_symbol_id: *binding_symbol_id,
             span: *span,
         },
         Expr::Unary { op, expr, span } => Expr::Unary {
@@ -662,6 +691,7 @@ fn erase_expr_opaque_types(expr: &Expr) -> Expr {
 fn erase_type_opaque_types(ty: &Type) -> Type {
     match ty {
         Type::Opaque { ty, .. } => erase_type_opaque_types(ty),
+        Type::ExternSubtype(_) => Type::Extern,
         Type::Nullable(inner) => Type::Nullable(Box::new(erase_type_opaque_types(inner))),
         Type::Array(inner) => Type::Array(Box::new(erase_type_opaque_types(inner))),
         Type::Multi(types) => Type::Multi(types.iter().map(erase_type_opaque_types).collect()),
@@ -1532,6 +1562,26 @@ impl Builder<'_> {
             } => {
                 self.lower_if(condition, then_body, else_body, env, types)?;
             }
+            Stmt::IfCast {
+                target_name,
+                binding_symbol_id,
+                value,
+                then_body,
+                else_body,
+                ..
+            } => {
+                self.lower_if_cast(
+                    IfCastParts {
+                        target_name,
+                        binding_symbol_id: *binding_symbol_id,
+                        value,
+                        then_body,
+                        else_body,
+                    },
+                    env,
+                    types,
+                )?;
+            }
             Stmt::While { condition, body } => {
                 self.lower_while(condition, body, env, types)?;
             }
@@ -1684,60 +1734,6 @@ impl Builder<'_> {
         env: &mut HashMap<SymbolId, ValueId>,
         types: &mut HashMap<SymbolId, Type>,
     ) -> Result<(), Diagnostic> {
-        if let Expr::VariantBinding {
-            expr,
-            tag,
-            binding_symbol_id,
-            ..
-        } = condition
-        {
-            let symbol_id = binding_symbol_id.expect("binding_symbol_id should be resolved");
-            let scrutinee_ty = self.infer_expr_type(expr, types, None)?;
-            let variant = scrutinee_ty.tagged_variant(tag).ok_or_else(|| {
-                Diagnostic::new(format!(
-                    "type {scrutinee_ty} has no tagged variant '{tag}'"
-                ))
-            })?;
-            let payload_ty = (*variant.payload).clone();
-
-            // Lower the scrutinee once; the underlying IR value is the canonical record.
-            let base = self.lower_expr(expr, env, types, None)?;
-            let tag_id = self.variant_tag_id(tag)?;
-            let tag_field_ty = Type::Numeric(NumericType::I32);
-            let tag_val = self.emit(Instruction::StructGet {
-                base,
-                field: "tag".to_string(),
-                field_ty: tag_field_ty.clone(),
-            });
-            let expected_tag = self.emit(Instruction::Number {
-                ty: NumericType::I32,
-                literal: NumberLiteral {
-                    raw: tag_id.to_string(),
-                },
-            });
-            let condition_value = self.emit(Instruction::Binary {
-                op: BinaryOp::Eq,
-                left: tag_val,
-                right: expected_tag,
-                operand_ty: tag_field_ty,
-                result_ty: Type::Bool,
-            });
-
-            let mut then_types_init = types.clone();
-            then_types_init.insert(symbol_id, payload_ty.clone());
-            let else_types_init = types.clone();
-            return self.lower_if_branches(
-                condition_value,
-                then_body,
-                else_body,
-                env,
-                types,
-                then_types_init,
-                else_types_init,
-                Some((symbol_id, base, payload_ty)),
-            );
-        }
-
         let (then_types_init, else_types_init) = Self::narrowed_type_scopes(condition, types);
         let condition_value = self.lower_expr(condition, env, types, Some(Type::Bool))?;
         self.lower_if_branches(
@@ -1865,6 +1861,150 @@ impl Builder<'_> {
                 if let Some(narrowed) = then_types.get(&name) {
                     types.insert(name, narrowed.clone());
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Lowers the dual-purpose `if Name(binding) = expr then ... end` syntax.
+    /// HIR type-checking has already validated which interpretation applies and
+    /// scoped `binding` accordingly, but the IR re-derives the same dispatch
+    /// (tagged-union pattern match vs. extern safe-cast) from the scrutinee's
+    /// inferred type, since a single parsed `Stmt::IfCast` shape backs both:
+    ///
+    ///   - Tagged-union pattern match with binding (`target_name` matches a
+    ///     variant tag of the scrutinee's type): emits `StructGet tag` + `Eq`
+    ///     and unboxes the payload into `binding`, scoped to `then`.
+    ///   - Extern safe-cast (`target_name` names an extern type): emits
+    ///     `ExternCastTest` and binds the whole tested value to `binding` with
+    ///     type `Type::Extern`, scoped to `then`.
+    fn lower_if_cast(
+        &mut self,
+        parts: IfCastParts<'_>,
+        env: &mut HashMap<SymbolId, ValueId>,
+        types: &mut HashMap<SymbolId, Type>,
+    ) -> Result<(), Diagnostic> {
+        let binding_symbol_id = parts
+            .binding_symbol_id
+            .ok_or_else(|| Diagnostic::new("if-cast binding must have a symbol ID resolved"))?;
+
+        let scrutinee_ty = self.infer_expr_type(parts.value, types, None)?;
+        if let Some(variant) = scrutinee_ty.tagged_variant(parts.target_name) {
+            let payload_ty = (*variant.payload).clone();
+
+            // Lower the scrutinee once; the underlying IR value is the canonical record.
+            let base = self.lower_expr(parts.value, env, types, None)?;
+            let tag_id = self.variant_tag_id(parts.target_name)?;
+            let tag_field_ty = Type::Numeric(NumericType::I32);
+            let tag_val = self.emit(Instruction::StructGet {
+                base,
+                field: "tag".to_string(),
+                field_ty: tag_field_ty.clone(),
+            });
+            let expected_tag = self.emit(Instruction::Number {
+                ty: NumericType::I32,
+                literal: NumberLiteral {
+                    raw: tag_id.to_string(),
+                },
+            });
+            let condition_value = self.emit(Instruction::Binary {
+                op: BinaryOp::Eq,
+                left: tag_val,
+                right: expected_tag,
+                operand_ty: tag_field_ty,
+                result_ty: Type::Bool,
+            });
+
+            let mut then_types_init = types.clone();
+            then_types_init.insert(binding_symbol_id, payload_ty.clone());
+            let else_types_init = types.clone();
+            return self.lower_if_branches(
+                condition_value,
+                parts.then_body,
+                parts.else_body,
+                env,
+                types,
+                then_types_init,
+                else_types_init,
+                Some((binding_symbol_id, base, payload_ty)),
+            );
+        }
+
+        let tested = self.lower_expr(parts.value, env, types, None)?;
+        let condition = self.emit(Instruction::ExternCastTest {
+            value: tested,
+            target_name: parts.target_name.to_string(),
+        });
+        let then_block = self.new_block();
+        let else_block = self.new_block();
+        let merge_block = self.new_block();
+        self.set_terminator(
+            self.current_block,
+            Terminator::Branch {
+                condition,
+                then_block,
+                else_block,
+            },
+        );
+
+        let mut then_env = env.clone();
+        let mut then_types = types.clone();
+        then_env.insert(binding_symbol_id, tested);
+        then_types.insert(binding_symbol_id, Type::Extern);
+        self.current_block = then_block;
+        for stmt in parts.then_body {
+            if self.current_block == DEAD_BLOCK {
+                break;
+            }
+            self.lower_stmt(stmt, &mut then_env, &mut then_types)?;
+        }
+        let then_exit = self.current_block;
+        if then_exit != DEAD_BLOCK {
+            self.set_terminator(then_exit, Terminator::Jump(merge_block));
+        }
+
+        let mut else_env = env.clone();
+        let mut else_types = types.clone();
+        self.current_block = else_block;
+        for stmt in parts.else_body {
+            if self.current_block == DEAD_BLOCK {
+                break;
+            }
+            self.lower_stmt(stmt, &mut else_env, &mut else_types)?;
+        }
+        let else_exit = self.current_block;
+        if else_exit != DEAD_BLOCK {
+            self.set_terminator(else_exit, Terminator::Jump(merge_block));
+        }
+
+        if then_exit == DEAD_BLOCK && else_exit == DEAD_BLOCK {
+            self.current_block = DEAD_BLOCK;
+            return Ok(());
+        }
+
+        self.current_block = merge_block;
+        for name in env.keys().cloned().collect::<Vec<_>>() {
+            let t = then_env
+                .get(&name)
+                .copied()
+                .or_else(|| env.get(&name).copied());
+            let e = else_env
+                .get(&name)
+                .copied()
+                .or_else(|| env.get(&name).copied());
+            if let (Some(tv), Some(ev)) = (t, e)
+                && tv != ev
+            {
+                let mut incoming = Vec::new();
+                if then_exit != DEAD_BLOCK {
+                    incoming.push((then_exit, tv));
+                }
+                if else_exit != DEAD_BLOCK {
+                    incoming.push((else_exit, ev));
+                }
+                let phi = self.emit(Instruction::Phi(incoming));
+                env.insert(name, phi);
+                self.function.value_symbols.insert(phi, name);
             }
         }
         Ok(())
@@ -2571,7 +2711,7 @@ impl Builder<'_> {
                             "numeric literal is not assignable to bytes",
                         ));
                     }
-                    Type::Extern => {
+                    Type::Extern | Type::ExternSubtype(_) => {
                         return Err(Diagnostic::new(
                             "numeric literal is not assignable to extern",
                         ));
@@ -2839,7 +2979,7 @@ impl Builder<'_> {
                                     "unary '-' requires a numeric operand",
                                 ));
                             }
-                            Type::Extern => {
+                            Type::Extern | Type::ExternSubtype(_) => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -2938,11 +3078,6 @@ impl Builder<'_> {
                     self.coerce_value(value, typed_actual, Some(ty.clone()))?
                 };
                 self.coerce_value(cast, ty.clone(), expected)?
-            }
-            Expr::VariantBinding { .. } => {
-                return Err(Diagnostic::new(
-                    "pattern match 'Tag(name) = expr' can only be used directly as an 'if'/'elseif' condition",
-                ));
             }
             Expr::IsVariant { expr, tag, .. } => {
                 // Lower the base expression as-is (the underlying IR value is the canonical record).
@@ -3676,7 +3811,7 @@ impl Builder<'_> {
                 Some(Type::Bytes) => Err(Diagnostic::new(
                     "numeric literal is not assignable to bytes",
                 )),
-                Some(Type::Extern) => Err(Diagnostic::new(
+                Some(Type::Extern) | Some(Type::ExternSubtype(_)) => Err(Diagnostic::new(
                     "numeric literal is not assignable to extern",
                 )),
                 Some(Type::Nil) => Err(Diagnostic::new(
@@ -3717,9 +3852,7 @@ impl Builder<'_> {
                 None => Ok(Type::number()),
             },
             Expr::Nil(..) => coerce_type(Type::Nil, expected),
-            Expr::IsVariant { .. } | Expr::VariantBinding { .. } => {
-                coerce_type(Type::Bool, expected)
-            }
+            Expr::IsVariant { .. } => coerce_type(Type::Bool, expected),
             Expr::Bool(..) => Ok(Type::Bool),
             Expr::String(..) => Ok(Type::String),
             Expr::Bytes(..) => Ok(Type::Bytes),
@@ -3816,7 +3949,7 @@ impl Builder<'_> {
                         Type::Bytes => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
-                        Type::Extern => {
+                        Type::Extern | Type::ExternSubtype(_) => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                         Type::Nil | Type::Nullable(_) | Type::Named { .. } | Type::Opaque { .. } => {
@@ -4894,7 +5027,7 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Bytes => Err(Diagnostic::new(format!(
                 "cannot implicitly convert bytes to {expected_numeric}",
             ))),
-            Type::Extern => Err(Diagnostic::new(format!(
+            Type::Extern | Type::ExternSubtype(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert extern to {expected_numeric}",
             ))),
             Type::Nil => Err(Diagnostic::new(format!(

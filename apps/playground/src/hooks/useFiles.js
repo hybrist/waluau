@@ -3,6 +3,7 @@ import {
   fixtureModules,
   moduleFixtures,
   conformanceModules,
+  filesForConformancePreset,
   MULTI_PRESET,
   DEFAULT_PRESET
 } from '../utils/presets.js';
@@ -136,7 +137,7 @@ export default function useFiles() {
         onSelect: () => {
           selectPreset({
             key: `conformance-${filename.replace(/\.walu$/, '')}`,
-            files: { [`/${filename}`]: source },
+            files: filesForConformancePreset(filename, source),
             entryFile: `/${filename}`
           });
         }

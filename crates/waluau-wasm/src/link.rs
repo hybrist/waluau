@@ -49,6 +49,8 @@ pub fn link_programs(files: &HashMap<String, String>, entry_path: &str) -> Resul
         normalized_files.insert(norm, source.clone());
     }
 
+    let ambient_externs = load_ambient_externs(&normalized_files)?;
+
     let mut entry_norm = clean_path(entry_path);
     if !entry_norm.ends_with(".walu") && std::path::Path::new(&entry_norm).extension().is_none() {
         entry_norm.push_str(".walu");
@@ -65,7 +67,41 @@ pub fn link_programs(files: &HashMap<String, String>, entry_path: &str) -> Resul
     let builtin_imports = loader.load_builtins()?;
 
     let entry_id = loader.load(&entry_norm)?;
-    merge_with_builtins(&loader.modules, entry_id, builtin_imports)
+    merge_with_ambient_declarations(&loader.modules, entry_id, builtin_imports, ambient_externs)
+}
+
+fn is_ambient_extern_path(path: &str) -> bool {
+    path.starts_with("/externs/") && path.ends_with(".walu")
+}
+
+fn load_ambient_externs(files: &HashMap<String, String>) -> Result<Vec<Program>, String> {
+    let mut extern_paths = files
+        .keys()
+        .filter(|path| is_ambient_extern_path(path))
+        .cloned()
+        .collect::<Vec<_>>();
+    extern_paths.sort();
+
+    let mut programs = Vec::new();
+    for path in extern_paths {
+        let source = files
+            .get(&path)
+            .expect("path came from normalized file map");
+        let program = waluau_parser::parse_with_path(source, &path)
+            .map_err(|e| format!("in ambient extern module \"{}\": {}", path, e))?;
+        if !program.functions.is_empty()
+            || !program.top_level.is_empty()
+            || program.export.is_some()
+        {
+            return Err(format!(
+                "ambient extern module \"{}\" may only contain type and declare statements",
+                path
+            ));
+        }
+        programs.push(program);
+    }
+
+    Ok(programs)
 }
 
 struct Loader<'a> {
@@ -153,13 +189,21 @@ fn module_prefix(id: usize, entry_id: usize) -> String {
     }
 }
 
-fn merge_with_builtins(
+fn merge_with_ambient_declarations(
     modules: &[LoadedModule],
     entry_id: usize,
     builtin_imports: Vec<waluau_ast::DeclaredImport>,
+    ambient_externs: Vec<Program>,
 ) -> Result<Program, String> {
     let mut functions = Vec::new();
     let mut declared_imports = builtin_imports;
+    let mut type_declarations = Vec::new();
+    let mut ambient_sources = BTreeMap::new();
+    for extern_program in ambient_externs {
+        declared_imports.extend(extern_program.declared_imports);
+        type_declarations.extend(extern_program.type_declarations);
+        ambient_sources.extend(extern_program.sources);
+    }
     let mut top_level = Vec::new();
     let mut export_cache = HashMap::new();
 
@@ -169,7 +213,6 @@ fn merge_with_builtins(
         }
     }
 
-    let mut type_declarations = Vec::new();
     for (id, module) in modules.iter().enumerate() {
         let prefix = module_prefix(id, entry_id);
         let mut module_functions = module.program.functions.clone();
@@ -247,7 +290,7 @@ fn merge_with_builtins(
     }
 
     let entry_file_path = modules[entry_id].program.entry_file_path.clone();
-    let mut sources = BTreeMap::new();
+    let mut sources = ambient_sources;
     for module in modules {
         sources.extend(module.program.sources.clone());
     }
@@ -524,6 +567,22 @@ impl Rewriter<'_> {
                     self.rewrite_stmt_types(stmt);
                 }
             }
+            Stmt::IfCast {
+                target_ty,
+                value,
+                then_body,
+                else_body,
+                ..
+            } => {
+                self.rewrite_type(target_ty);
+                self.rewrite_expr_types(value);
+                for stmt in then_body {
+                    self.rewrite_stmt_types(stmt);
+                }
+                for stmt in else_body {
+                    self.rewrite_stmt_types(stmt);
+                }
+            }
             Stmt::While { condition, body } => {
                 self.rewrite_expr_types(condition);
                 for stmt in body {
@@ -580,9 +639,7 @@ impl Rewriter<'_> {
     fn rewrite_expr_types(&self, expr: &mut Expr) {
         match expr {
             Expr::Unary { expr, .. } => self.rewrite_expr_types(expr),
-            Expr::IsVariant { expr, .. } | Expr::VariantBinding { expr, .. } => {
-                self.rewrite_expr_types(expr)
-            }
+            Expr::IsVariant { expr, .. } => self.rewrite_expr_types(expr),
             Expr::Cast { expr, ty, .. } => {
                 self.rewrite_expr_types(expr);
                 self.rewrite_type(ty);
@@ -668,6 +725,7 @@ impl Rewriter<'_> {
                 }
             }
             Type::Opaque { ty, .. } => self.rewrite_type(ty),
+            Type::ExternSubtype(parent) => self.rewrite_type(parent),
             Type::Nullable(inner) => self.rewrite_type(inner),
             Type::TaggedVariant(variant) => self.rewrite_type(variant.payload.as_mut()),
             Type::TaggedUnion(variants) => {
@@ -763,6 +821,19 @@ impl Rewriter<'_> {
             } => {
                 self.rewrite_expr(condition, bound);
                 self.rewrite_block(then_body, &mut bound.clone());
+                self.rewrite_block(else_body, &mut bound.clone());
+            }
+            Stmt::IfCast {
+                binding,
+                value,
+                then_body,
+                else_body,
+                ..
+            } => {
+                self.rewrite_expr(value, bound);
+                let mut then_bound = bound.clone();
+                then_bound.insert(binding.clone());
+                self.rewrite_block(then_body, &mut then_bound);
                 self.rewrite_block(else_body, &mut bound.clone());
             }
             Stmt::While { condition, body } => {
@@ -876,10 +947,9 @@ impl Rewriter<'_> {
             | Expr::Nil(..)
             | Expr::String(..)
             | Expr::Bytes(..) => {}
-            Expr::Unary { expr, .. }
-            | Expr::Cast { expr, .. }
-            | Expr::IsVariant { expr, .. }
-            | Expr::VariantBinding { expr, .. } => self.rewrite_expr(expr, bound),
+            Expr::Unary { expr, .. } | Expr::Cast { expr, .. } | Expr::IsVariant { expr, .. } => {
+                self.rewrite_expr(expr, bound)
+            }
             Expr::Binary { left, right, .. } => {
                 self.rewrite_expr(left, bound);
                 self.rewrite_expr(right, bound);
@@ -1046,6 +1116,27 @@ fn rename_stmt(
                 &mut shadowed.clone(),
             );
         }
+        Stmt::IfCast {
+            binding,
+            value,
+            then_body,
+            else_body,
+            ..
+        } => {
+            rename_expr(value, renames, available, shadowed);
+            let mut then_available = available.clone();
+            let mut then_shadowed = shadowed.clone();
+            if renames.contains_key(binding) {
+                then_shadowed.insert(binding.clone());
+            }
+            rename_stmt_block(then_body, renames, &mut then_available, &mut then_shadowed);
+            rename_stmt_block(
+                else_body,
+                renames,
+                &mut available.clone(),
+                &mut shadowed.clone(),
+            );
+        }
         Stmt::While { condition, body } => {
             rename_expr(condition, renames, available, shadowed);
             rename_stmt_block(body, renames, &mut available.clone(), &mut shadowed.clone());
@@ -1130,9 +1221,7 @@ fn rename_expr(
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => {
             rename_expr(expr, renames, available, shadowed)
         }
-        Expr::IsVariant { expr, .. } | Expr::VariantBinding { expr, .. } => {
-            rename_expr(expr, renames, available, shadowed)
-        }
+        Expr::IsVariant { expr, .. } => rename_expr(expr, renames, available, shadowed),
         Expr::Binary { left, right, .. } => {
             rename_expr(left, renames, available, shadowed);
             rename_expr(right, renames, available, shadowed);
@@ -1237,6 +1326,17 @@ fn stmt_mentions_name_in_stmt(name: &str, stmt: &Stmt) -> bool {
                 || stmt_mentions_name(name, then_body)
                 || stmt_mentions_name(name, else_body)
         }
+        Stmt::IfCast {
+            binding,
+            value,
+            then_body,
+            else_body,
+            ..
+        } => {
+            expr_mentions_name(name, value)
+                || (binding != name && stmt_mentions_name(name, then_body))
+                || stmt_mentions_name(name, else_body)
+        }
         Stmt::While { condition, body } => {
             expr_mentions_name(name, condition) || stmt_mentions_name(name, body)
         }
@@ -1273,9 +1373,7 @@ fn expr_mentions_name(name: &str, expr: &Expr) -> bool {
     match expr {
         Expr::Name(local, _, _) => local == name,
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => expr_mentions_name(name, expr),
-        Expr::IsVariant { expr, .. } | Expr::VariantBinding { expr, .. } => {
-            expr_mentions_name(name, expr)
-        }
+        Expr::IsVariant { expr, .. } => expr_mentions_name(name, expr),
         Expr::Binary { left, right, .. } => {
             expr_mentions_name(name, left) || expr_mentions_name(name, right)
         }
@@ -1352,6 +1450,16 @@ fn collect_block(stmts: &[Stmt], out: &mut Vec<String>) {
                 collect_block(then_body, out);
                 collect_block(else_body, out);
             }
+            Stmt::IfCast {
+                value,
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_expr(value, out);
+                collect_block(then_body, out);
+                collect_block(else_body, out);
+            }
             Stmt::While { condition, body } | Stmt::Repeat { body, condition } => {
                 collect_expr(condition, out);
                 collect_block(body, out);
@@ -1396,10 +1504,9 @@ fn collect_expr(expr: &Expr, out: &mut Vec<String>) {
         | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..) => {}
-        Expr::Unary { expr, .. }
-        | Expr::Cast { expr, .. }
-        | Expr::IsVariant { expr, .. }
-        | Expr::VariantBinding { expr, .. } => collect_expr(expr, out),
+        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } | Expr::IsVariant { expr, .. } => {
+            collect_expr(expr, out)
+        }
         Expr::Binary { left, right, .. } => {
             collect_expr(left, out);
             collect_expr(right, out);
@@ -1497,6 +1604,50 @@ mod tests {
             matches!(&program.top_level[1], Stmt::Expr(Expr::Call { .. })),
             "expected imported assert to remain in merged top-level init: {:?}",
             program.top_level
+        );
+    }
+
+    #[test]
+    fn extern_files_are_merged_as_ambient_declarations() {
+        let files = std::collections::HashMap::from([
+            (
+                "/main.walu".to_string(),
+                r#"
+                    declare function get_element(): Element
+
+                    function main(): string
+                        return get_element().id
+                    end
+                "#
+                .to_string(),
+            ),
+            (
+                "/externs/dom.walu".to_string(),
+                r#"
+                    type Node = extern
+                    type Element = extern extends Node
+                    declare property Element:id: string
+                "#
+                .to_string(),
+            ),
+        ]);
+
+        let program = link_programs(&files, "/main.walu").expect("link should succeed");
+        assert!(
+            program
+                .type_declarations
+                .iter()
+                .any(|decl| decl.name == "Element"),
+            "expected ambient extern type declarations: {:?}",
+            program.type_declarations
+        );
+        assert!(
+            program
+                .declared_imports
+                .iter()
+                .any(|declared| declared.name == "Element.get_id"),
+            "expected ambient declared property imports: {:?}",
+            program.declared_imports
         );
     }
 }

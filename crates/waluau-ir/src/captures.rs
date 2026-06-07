@@ -39,6 +39,14 @@ fn collect_assigned_into(stmts: &[Stmt], out: &mut BTreeSet<SymbolId>) {
                 collect_assigned_into(then_body, out);
                 collect_assigned_into(else_body, out);
             }
+            Stmt::IfCast {
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_assigned_into(then_body, out);
+                collect_assigned_into(else_body, out);
+            }
             Stmt::While { body, .. } => collect_assigned_into(body, out),
             Stmt::Repeat { body, .. } => collect_assigned_into(body, out),
             Stmt::NumericFor { body, .. } => collect_assigned_into(body, out),
@@ -116,6 +124,25 @@ fn collect_expr_captures_from_stmt(
             collect_expr_captures(condition, bound, env, signatures, captures);
             for s in then_body {
                 collect_expr_captures_from_stmt(s, bound, env, signatures, captures);
+            }
+            for s in else_body {
+                collect_expr_captures_from_stmt(s, bound, env, signatures, captures);
+            }
+        }
+        Stmt::IfCast {
+            binding_symbol_id,
+            value,
+            then_body,
+            else_body,
+            ..
+        } => {
+            collect_expr_captures(value, bound, env, signatures, captures);
+            let mut then_bound = bound.clone();
+            if let Some(id) = binding_symbol_id {
+                then_bound.insert(*id);
+            }
+            for s in then_body {
+                collect_expr_captures_from_stmt(s, &then_bound, env, signatures, captures);
             }
             for s in else_body {
                 collect_expr_captures_from_stmt(s, bound, env, signatures, captures);
@@ -216,7 +243,7 @@ fn collect_expr_captures(
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => {
             collect_expr_captures(expr, bound, env, signatures, captures)
         }
-        Expr::IsVariant { expr, .. } | Expr::VariantBinding { expr, .. } => {
+        Expr::IsVariant { expr, .. } => {
             collect_expr_captures(expr, bound, env, signatures, captures)
         }
         Expr::Binary { left, right, .. } => {
@@ -325,6 +352,20 @@ fn collect_nested_from_stmt(stmt: &Stmt, out: &mut HashSet<SymbolId>) {
                 collect_nested_from_stmt(s, out);
             }
         }
+        Stmt::IfCast {
+            value,
+            then_body,
+            else_body,
+            ..
+        } => {
+            collect_nested_from_expr(value, out);
+            for s in then_body {
+                collect_nested_from_stmt(s, out);
+            }
+            for s in else_body {
+                collect_nested_from_stmt(s, out);
+            }
+        }
         Stmt::While { condition, body } => {
             collect_nested_from_expr(condition, out);
             for s in body {
@@ -379,7 +420,7 @@ fn collect_nested_from_expr(expr: &Expr, out: &mut HashSet<SymbolId>) {
             }
         }
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => collect_nested_from_expr(expr, out),
-        Expr::IsVariant { expr, .. } | Expr::VariantBinding { expr, .. } => {
+        Expr::IsVariant { expr, .. } => {
             collect_nested_from_expr(expr, out)
         }
         Expr::Binary { left, right, .. } => {
@@ -470,12 +511,23 @@ fn collect_free_names_in_stmts(stmts: &[Stmt], bound: &HashSet<SymbolId>, out: &
                 else_body,
             } => {
                 collect_free_names_in_expr(condition, bound, out);
+                for s in then_body {
+                    collect_free_names_in_stmts(std::slice::from_ref(s), bound, out);
+                }
+                for s in else_body {
+                    collect_free_names_in_stmts(std::slice::from_ref(s), bound, out);
+                }
+            }
+            Stmt::IfCast {
+                binding_symbol_id,
+                value,
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_free_names_in_expr(value, bound, out);
                 let mut then_bound = bound.clone();
-                if let Expr::VariantBinding {
-                    binding_symbol_id: Some(id),
-                    ..
-                } = condition
-                {
+                if let Some(id) = binding_symbol_id {
                     then_bound.insert(*id);
                 }
                 for s in then_body {
@@ -560,7 +612,7 @@ fn collect_free_names_in_expr(expr: &Expr, bound: &HashSet<SymbolId>, out: &mut 
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => {
             collect_free_names_in_expr(expr, bound, out)
         }
-        Expr::IsVariant { expr, .. } | Expr::VariantBinding { expr, .. } => {
+        Expr::IsVariant { expr, .. } => {
             collect_free_names_in_expr(expr, bound, out)
         }
         Expr::Binary { left, right, .. } => {
