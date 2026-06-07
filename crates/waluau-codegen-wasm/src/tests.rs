@@ -703,6 +703,33 @@ fn extern_type_alias_lowers_to_externref() {
 }
 
 #[test]
+fn nullable_extern_nil_check_lowers_to_ref_is_null() {
+    let source = r#"
+        type Element = extern
+
+        function score(value: Element?): i32
+            if value ~= nil then
+                return 20
+            end
+            return 10
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        wat.contains("ref.is_null"),
+        "nullable extern nil checks should lower to ref.is_null in:\n{wat}"
+    );
+}
+
+#[test]
 fn scalar_program_has_no_closure_gc_types() {
     // A program with no closures or function values should not emit the
     // $anyref_array, $func_val, or $boxed_f64 GC struct/array types.
