@@ -258,6 +258,23 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                     actual_variant.tag, expected_name
                 ))),
             },
+            // coroutine.resume (and similar) produce a bare TaggedUnion; allow it to
+            // be assigned to a named alias whose underlying type is that union.
+            Type::TaggedUnion(ref actual_variants) => match expected_ty.as_ref() {
+                Type::TaggedUnion(_) => {
+                    let actual_union = Type::TaggedUnion(actual_variants.clone());
+                    let inner = coerce_type(actual_union, Some(*expected_ty))?;
+                    Ok(Type::Opaque {
+                        name: expected_name,
+                        ty: Box::new(inner),
+                    })
+                }
+                _ => Err(Diagnostic::new(format!(
+                    "cannot implicitly convert {} to {}",
+                    Type::TaggedUnion(actual_variants.clone()),
+                    expected_name
+                ))),
+            },
             Type::Record(_) if matches!(expected_ty.as_ref(), Type::Record(_)) => {
                 let _ = coerce_type(actual, Some(*expected_ty.clone()))?;
                 Ok(Type::Opaque {
