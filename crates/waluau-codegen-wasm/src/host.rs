@@ -323,10 +323,10 @@ fn collect_from_function<'a>(
                 IrInstruction::ExternCastTest { target_name, .. }
                     if indices
                         .insert(target_name.as_str(), strings.len() as u32)
-                        .is_none()
-                    => {
-                        strings.push(target_name.clone());
-                    }
+                        .is_none() =>
+                {
+                    strings.push(target_name.clone());
+                }
                 _ => {}
             }
         }

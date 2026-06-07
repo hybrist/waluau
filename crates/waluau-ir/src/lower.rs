@@ -95,6 +95,14 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
     Ok(module)
 }
 
+struct IfCastParts<'a> {
+    target_name: &'a str,
+    binding_symbol_id: Option<SymbolId>,
+    value: &'a Expr,
+    then_body: &'a [Stmt],
+    else_body: &'a [Stmt],
+}
+
 fn collect_variant_tag_ids(program: &Program) -> BTreeMap<String, i32> {
     let mut tag_ids = BTreeMap::new();
     for function in &program.functions {
@@ -1538,11 +1546,13 @@ impl Builder<'_> {
                 ..
             } => {
                 self.lower_if_cast(
-                    target_name,
-                    *binding_symbol_id,
-                    value,
-                    then_body,
-                    else_body,
+                    IfCastParts {
+                        target_name,
+                        binding_symbol_id: *binding_symbol_id,
+                        value,
+                        then_body,
+                        else_body,
+                    },
                     env,
                     types,
                 )?;
@@ -1792,20 +1802,17 @@ impl Builder<'_> {
 
     fn lower_if_cast(
         &mut self,
-        target_name: &str,
-        binding_symbol_id: Option<SymbolId>,
-        value: &Expr,
-        then_body: &[Stmt],
-        else_body: &[Stmt],
+        parts: IfCastParts<'_>,
         env: &mut HashMap<SymbolId, ValueId>,
         types: &mut HashMap<SymbolId, Type>,
     ) -> Result<(), Diagnostic> {
-        let binding_symbol_id = binding_symbol_id
+        let binding_symbol_id = parts
+            .binding_symbol_id
             .ok_or_else(|| Diagnostic::new("if-cast binding must have a symbol ID resolved"))?;
-        let tested = self.lower_expr(value, env, types, None)?;
+        let tested = self.lower_expr(parts.value, env, types, None)?;
         let condition = self.emit(Instruction::ExternCastTest {
             value: tested,
-            target_name: target_name.to_string(),
+            target_name: parts.target_name.to_string(),
         });
         let then_block = self.new_block();
         let else_block = self.new_block();
@@ -1824,7 +1831,7 @@ impl Builder<'_> {
         then_env.insert(binding_symbol_id, tested);
         then_types.insert(binding_symbol_id, Type::Extern);
         self.current_block = then_block;
-        for stmt in then_body {
+        for stmt in parts.then_body {
             if self.current_block == DEAD_BLOCK {
                 break;
             }
@@ -1838,7 +1845,7 @@ impl Builder<'_> {
         let mut else_env = env.clone();
         let mut else_types = types.clone();
         self.current_block = else_block;
-        for stmt in else_body {
+        for stmt in parts.else_body {
             if self.current_block == DEAD_BLOCK {
                 break;
             }

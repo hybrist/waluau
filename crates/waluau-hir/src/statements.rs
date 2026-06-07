@@ -35,6 +35,11 @@ fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
     }
 }
 
+struct BranchScopes {
+    then_scope: HashMap<String, Binding>,
+    else_scope: HashMap<String, Binding>,
+}
+
 fn checked_if_cast_scopes(
     target_ty: &Type,
     binding: &str,
@@ -42,7 +47,7 @@ fn checked_if_cast_scopes(
     vars: &HashMap<String, Binding>,
     fn_signatures: &HashMap<String, FnSignature>,
     active_type_params: &HashSet<String>,
-) -> Result<(HashMap<String, Binding>, HashMap<String, Binding>), Diagnostic> {
+) -> Result<BranchScopes, Diagnostic> {
     if !matches!(
         target_ty,
         Type::Opaque { ty, .. } if matches!(ty.as_ref(), Type::Extern | Type::ExternSubtype(_))
@@ -78,7 +83,10 @@ fn checked_if_cast_scopes(
         binding.to_string(),
         binding_for(target_ty.clone(), Rebindability::Const),
     );
-    Ok((then_scope, vars.clone()))
+    Ok(BranchScopes {
+        then_scope,
+        else_scope: vars.clone(),
+    })
 }
 
 fn type_property_setter_signature<'a>(
@@ -414,7 +422,7 @@ pub(super) fn collect_return_types(
                 else_body,
                 ..
             } => {
-                let (then_scope, else_scope) = checked_if_cast_scopes(
+                let branch_scopes = checked_if_cast_scopes(
                     target_ty,
                     binding,
                     value,
@@ -425,14 +433,14 @@ pub(super) fn collect_return_types(
                 seal_record_locals_in_expr(value, &mut scope);
                 collect_return_types(
                     then_body,
-                    &then_scope,
+                    &branch_scopes.then_scope,
                     fn_signatures,
                     active_type_params,
                     returns,
                 )?;
                 collect_return_types(
                     else_body,
-                    &else_scope,
+                    &branch_scopes.else_scope,
                     fn_signatures,
                     active_type_params,
                     returns,
@@ -1053,7 +1061,7 @@ pub(super) fn check_stmt(
             else_body,
             ..
         } => {
-            let (mut then_scope, mut else_scope) = checked_if_cast_scopes(
+            let branch_scopes = checked_if_cast_scopes(
                 target_ty,
                 binding,
                 value,
@@ -1061,6 +1069,8 @@ pub(super) fn check_stmt(
                 fn_signatures,
                 active_type_params,
             )?;
+            let mut then_scope = branch_scopes.then_scope;
+            let mut else_scope = branch_scopes.else_scope;
             seal_record_locals_in_expr(value, vars);
             let mut then_returns = false;
             let mut else_returns = false;
