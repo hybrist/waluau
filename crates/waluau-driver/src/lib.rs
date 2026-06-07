@@ -156,6 +156,12 @@ mod tests {
     }
 
     #[test]
+    fn compiles_generated_dom_externs_with_inheritance() {
+        super::compile_source(include_str!("../../../externs/dom.walu"))
+            .expect("generated DOM extern declarations should compile");
+    }
+
+    #[test]
     fn rejects_math_abs_for_integer_types() {
         let source = r#"
             function bad(x: i32): i32

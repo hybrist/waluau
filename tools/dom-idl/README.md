@@ -16,8 +16,7 @@ The generator writes:
 - `externs/dom.metadata.json`: parsed interface inheritance and emitted/skipped member metadata.
 - `externs/dom.diagnostics.txt`: deterministic skip diagnostics for unsupported or filtered IDL.
 
-`waluau-snxo` is expected to add extern inheritance and safe cast narrowing.
-Until that lands, generated `.walu` output is intentionally flat and does not
-emit inheritance syntax. Parent interface names are preserved in metadata so the
-generator can switch to direct inheritance emission later without changing the
-IDL fixture.
+The generated `.walu` output emits extern inheritance with
+`type Child = extern extends Parent`. Parent interface names are also mirrored in
+metadata so downstream tooling can inspect the DOM hierarchy without reparsing
+the generated source.

@@ -39,3 +39,12 @@ test('unsupported Web IDL members are diagnosed deterministically', () => {
   assert.deepEqual(diagnostics, [...diagnostics].sort());
   assert.match(diagnostics.join('\n'), /skip EventTarget\.addEventListener: callback: unsupported Web IDL type EventListener/);
 });
+
+test('generated externs emit DOM inheritance syntax', () => {
+  const externs = readRepoFile('externs/dom.walu');
+  assert.match(externs, /^type Node = extern extends EventTarget$/m);
+  assert.match(externs, /^type Document = extern extends Node$/m);
+  assert.match(externs, /^type Element = extern extends Node$/m);
+  assert.match(externs, /^type HTMLElement = extern extends Element$/m);
+  assert.match(externs, /^type HTMLHeadingElement = extern extends HTMLElement$/m);
+});
