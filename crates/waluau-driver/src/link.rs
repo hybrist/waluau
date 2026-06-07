@@ -22,6 +22,7 @@ use waluau_diagnostics::Diagnostic;
 
 const DOM_WINDOW_REQUIRE: &str = "dom:window";
 const DOM_WINDOW_FUNCTION: &str = "dom_window";
+const DOM_WINDOW_TYPE: &str = "Window";
 
 /// Resolve the module graph rooted at `entry` and merge it into one program.
 pub fn link_program(entry: &Path) -> Result<Program, Diagnostic> {
@@ -925,16 +926,23 @@ impl Rewriter<'_> {
                                 .collect(),
                             span: *span,
                         },
-                        ResolvedImport::DomWindow => Expr::Call {
-                            callee: Box::new(Expr::Name(
-                                DOM_WINDOW_FUNCTION.to_string(),
-                                None,
-                                *span,
-                            )),
-                            type_args: Vec::new(),
-                            args: Vec::new(),
+                        ResolvedImport::DomWindow => Expr::Cast {
+                            expr: Box::new(Expr::Call {
+                                callee: Box::new(Expr::Name(
+                                    DOM_WINDOW_FUNCTION.to_string(),
+                                    None,
+                                    *span,
+                                )),
+                                type_args: Vec::new(),
+                                args: Vec::new(),
+                                span: *span,
+                                method_call_origin: None,
+                            }),
+                            ty: Type::Named {
+                                name: DOM_WINDOW_TYPE.to_string(),
+                                type_args: Vec::new(),
+                            },
                             span: *span,
-                            method_call_origin: None,
                         },
                     };
                 }

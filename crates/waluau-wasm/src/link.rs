@@ -3,6 +3,7 @@ use waluau_ast::{Expr, Function, FunctionExpr, FunctionName, Program, Stmt, Tabl
 
 const DOM_WINDOW_REQUIRE: &str = "dom:window";
 const DOM_WINDOW_FUNCTION: &str = "dom_window";
+const DOM_WINDOW_TYPE: &str = "Window";
 
 pub struct LoadedModule {
     pub program: Program,
@@ -989,16 +990,23 @@ impl Rewriter<'_> {
                                 .collect(),
                             span: *require_span,
                         },
-                        ResolvedImport::DomWindow => Expr::Call {
-                            callee: Box::new(Expr::Name(
-                                DOM_WINDOW_FUNCTION.to_string(),
-                                None,
-                                *require_span,
-                            )),
-                            type_args: Vec::new(),
-                            args: Vec::new(),
+                        ResolvedImport::DomWindow => Expr::Cast {
+                            expr: Box::new(Expr::Call {
+                                callee: Box::new(Expr::Name(
+                                    DOM_WINDOW_FUNCTION.to_string(),
+                                    None,
+                                    *require_span,
+                                )),
+                                type_args: Vec::new(),
+                                args: Vec::new(),
+                                span: *require_span,
+                                method_call_origin: None,
+                            }),
+                            ty: Type::Named {
+                                name: DOM_WINDOW_TYPE.to_string(),
+                                type_args: Vec::new(),
+                            },
                             span: *require_span,
-                            method_call_origin: None,
                         },
                     };
                 }
