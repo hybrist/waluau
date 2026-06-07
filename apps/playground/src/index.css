@@ -631,6 +631,50 @@ body,
   min-width: 0;
 }
 
+.dom-output-section {
+  padding: 14px;
+  border-radius: 8px;
+  background: #1f1f1f;
+  border: 1px solid var(--border-light);
+}
+
+.dom-output-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  margin-bottom: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.dom-output-root {
+  min-height: 96px;
+  padding: 14px;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2937;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  overflow: auto;
+}
+
+.dom-output-root:empty::before {
+  content: "DOM host calls will render here.";
+  color: #6b7280;
+}
+
+.dom-output-root h1,
+.dom-output-root h2,
+.dom-output-root h3,
+.dom-output-root p {
+  margin: 0 0 8px;
+}
+
+.dom-output-root :last-child {
+  margin-bottom: 0;
+}
+
 .func-card {
   background: var(--bg-card);
   border: 1px solid var(--border-light);
@@ -1476,5 +1520,4 @@ body,
   font-size: 10px;
   color: var(--text-muted);
 }
-
 

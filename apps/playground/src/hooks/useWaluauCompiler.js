@@ -1,11 +1,12 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   WALUAU_STRING_CONSTANTS_MODULE,
   buildWaluauImports,
   getWasmExports,
   getDefaultParamValue,
   executeCall,
-  classifyWasmInstantiationError
+  classifyWasmInstantiationError,
+  usesDomImports
 } from '../utils/wasm.js';
 
 export default function useWaluauCompiler({ files, entryFile }) {
@@ -20,6 +21,14 @@ export default function useWaluauCompiler({ files, entryFile }) {
   const [funcInputs, setFuncInputs] = useState({});
   const [autoRun, setAutoRun] = useState(true);
   const [manualResults, setManualResults] = useState({});
+  const [usesDomOutput, setUsesDomOutput] = useState(false);
+  const [domMountVersion, setDomMountVersion] = useState(0);
+  const domOutputRootRef = useRef(null);
+
+  const setDomOutputRoot = useCallback((node) => {
+    domOutputRootRef.current = node;
+    setDomMountVersion((version) => version + 1);
+  }, []);
 
   // Load compiler module
   useEffect(() => {
@@ -100,10 +109,18 @@ export default function useWaluauCompiler({ files, entryFile }) {
           setExportsList([]);
           setManualResults({});
           setInitLogs([]);
+          setUsesDomOutput(false);
         }
         return;
       }
       const wasmBuffer = new Uint8Array(outputWasmBytes);
+      const moduleUsesDomOutput = usesDomImports(wasmBuffer);
+      if (active) {
+        setUsesDomOutput(moduleUsesDomOutput);
+      }
+      if (moduleUsesDomOutput && !domOutputRootRef.current) {
+        return;
+      }
       const richSigs = output?.signatures || {};
       const list = getWasmExports(wasmBuffer)
         .filter(func => !func.name.startsWith('__waluau'))
@@ -136,8 +153,13 @@ export default function useWaluauCompiler({ files, entryFile }) {
       }
       const capturedInitLogs = [];
       try {
+        if (moduleUsesDomOutput) {
+          domOutputRootRef.current.replaceChildren();
+        }
         const imports = buildWaluauImports(wasmBuffer, (msg) => {
           capturedInitLogs.push(msg);
+        }, {
+          domOutputRoot: moduleUsesDomOutput ? domOutputRootRef.current : null,
         });
         const obj = await WebAssembly.instantiate(wasmBuffer, imports, {
           builtins: ["js-string"],
@@ -166,7 +188,7 @@ export default function useWaluauCompiler({ files, entryFile }) {
     return () => {
       active = false;
     };
-  }, [outputWasmBytes, requiresWasmGc, output]);
+  }, [outputWasmBytes, requiresWasmGc, output, domMountVersion]);
 
   const handleInputChange = (funcName, paramIndex, value) => {
     setFuncInputs(prev => {
@@ -219,6 +241,8 @@ export default function useWaluauCompiler({ files, entryFile }) {
     runError,
     exportsList,
     initLogs,
+    usesDomOutput,
+    setDomOutputRoot,
     funcInputs,
     autoRun,
     setAutoRun,
