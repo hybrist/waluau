@@ -20,6 +20,9 @@ use std::path::{Path, PathBuf};
 use waluau_ast::{Expr, Function, FunctionExpr, FunctionName, Program, Stmt, TableField, Type};
 use waluau_diagnostics::Diagnostic;
 
+const DOM_WINDOW_REQUIRE: &str = "dom:window";
+const DOM_WINDOW_FUNCTION: &str = "dom_window";
+
 /// Resolve the module graph rooted at `entry` and merge it into one program.
 pub fn link_program(entry: &Path) -> Result<Program, Diagnostic> {
     let entry = entry.canonicalize().map_err(|error| {
@@ -34,13 +37,20 @@ pub fn link_program(entry: &Path) -> Result<Program, Diagnostic> {
     let builtin_imports = loader.load_builtins()?;
 
     let entry_id = loader.load(&entry)?;
-    merge_with_builtins(&loader.modules, entry_id, builtin_imports)
+    let dom_externs = if loader.requires_dom_externs {
+        Some(loader.load_dom_externs()?)
+    } else {
+        None
+    };
+    merge_with_builtins(&loader.modules, entry_id, builtin_imports, dom_externs)
 }
 
 struct LoadedModule {
     program: Program,
     /// Raw `require` path strings to the module id they resolve to.
     requires: HashMap<String, usize>,
+    /// Raw virtual extern module specifiers that do not resolve to source files.
+    virtual_requires: HashSet<String>,
 }
 
 #[derive(Default)]
@@ -48,6 +58,7 @@ struct Loader {
     modules: Vec<LoadedModule>,
     by_path: HashMap<PathBuf, usize>,
     stack: Vec<PathBuf>,
+    requires_dom_externs: bool,
 }
 
 impl Loader {
@@ -80,7 +91,16 @@ impl Loader {
 
         self.stack.push(path.to_path_buf());
         let mut requires = HashMap::new();
+        let mut virtual_requires = HashSet::new();
         for raw in raw_paths {
+            if raw == DOM_WINDOW_REQUIRE {
+                self.requires_dom_externs = true;
+                virtual_requires.insert(raw);
+                continue;
+            }
+            if raw.starts_with("dom:") {
+                return Err(unsupported_dom_require(&raw));
+            }
             if requires.contains_key(&raw) {
                 continue;
             }
@@ -91,7 +111,11 @@ impl Loader {
         self.stack.pop();
 
         let id = self.modules.len();
-        self.modules.push(LoadedModule { program, requires });
+        self.modules.push(LoadedModule {
+            program,
+            requires,
+            virtual_requires,
+        });
         self.by_path.insert(path.to_path_buf(), id);
         Ok(id)
     }
@@ -114,6 +138,19 @@ impl Loader {
 
         Ok(all_imports)
     }
+
+    fn load_dom_externs(&mut self) -> Result<Program, Diagnostic> {
+        waluau_parser::parse_with_path(
+            include_str!("../../../externs/dom.walu"),
+            "externs/dom.walu",
+        )
+    }
+}
+
+fn unsupported_dom_require(raw: &str) -> Diagnostic {
+    Diagnostic::new(format!(
+        "unsupported DOM virtual module \"{raw}\"; supported specifiers: \"{DOM_WINDOW_REQUIRE}\""
+    ))
 }
 
 fn resolve_module_path(dir: &Path, raw: &str) -> Result<PathBuf, Diagnostic> {
@@ -143,10 +180,17 @@ fn merge_with_builtins(
     modules: &[LoadedModule],
     entry_id: usize,
     builtin_imports: Vec<waluau_ast::DeclaredImport>,
+    dom_externs: Option<Program>,
 ) -> Result<Program, Diagnostic> {
     let mut functions = Vec::new();
     let mut declared_imports = builtin_imports;
     let mut type_declarations = Vec::new();
+    let mut extern_sources = BTreeMap::new();
+    if let Some(dom_program) = dom_externs {
+        declared_imports.extend(dom_program.declared_imports);
+        type_declarations.extend(dom_program.type_declarations);
+        extern_sources.extend(dom_program.sources);
+    }
     let mut top_level = Vec::new();
     let mut export_cache = HashMap::new();
 
@@ -176,6 +220,9 @@ fn merge_with_builtins(
         let mut imports = HashMap::new();
         for (raw, &target_id) in &module.requires {
             imports.insert(raw.clone(), export_cache[&target_id].clone());
+        }
+        for raw in &module.virtual_requires {
+            imports.insert(raw.clone(), ResolvedImport::DomWindow);
         }
 
         let mut rewriter = Rewriter {
@@ -232,7 +279,7 @@ fn merge_with_builtins(
         top_level.extend(lowered);
     }
     let entry_file_path = modules[entry_id].program.entry_file_path.clone();
-    let mut sources = BTreeMap::new();
+    let mut sources = extern_sources;
     for module in modules {
         sources.extend(module.program.sources.clone());
     }
@@ -252,6 +299,7 @@ fn merge_with_builtins(
 enum ResolvedImport {
     Function(String),
     Namespace(BTreeMap<String, String>),
+    DomWindow,
 }
 
 fn hoist_table_export_functions(
@@ -731,6 +779,7 @@ impl Rewriter<'_> {
                             ResolvedImport::Namespace(fields) => {
                                 self.namespaces.insert(name.clone(), fields.clone());
                             }
+                            ResolvedImport::DomWindow => {}
                         }
                     }
                 }
@@ -875,6 +924,17 @@ impl Rewriter<'_> {
                                 })
                                 .collect(),
                             span: *span,
+                        },
+                        ResolvedImport::DomWindow => Expr::Call {
+                            callee: Box::new(Expr::Name(
+                                DOM_WINDOW_FUNCTION.to_string(),
+                                None,
+                                *span,
+                            )),
+                            type_args: Vec::new(),
+                            args: Vec::new(),
+                            span: *span,
+                            method_call_origin: None,
                         },
                     };
                 }

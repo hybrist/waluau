@@ -212,6 +212,7 @@ function generate({ idlSource, filter, patches }) {
     source: defaults.input,
     inheritance: [],
     emittedMembers,
+    emittedHostFunctions: [],
     skippedMembers: [],
   };
 
@@ -254,6 +255,19 @@ function generate({ idlSource, filter, patches }) {
       output.push(emitted.line);
       emittedMembers.push(emitted.metadata);
     }
+  }
+
+  for (const hostFunction of filter.hostFunctions ?? []) {
+    const returnType = mapType(hostFunction.returnType, filter, knownInterfaces);
+    if (returnType.error) {
+      diagnostics.push(`skip host function ${hostFunction.name}: ${returnType.error}`);
+      continue;
+    }
+    output.push(`declare function ${hostFunction.name}(): ${returnType.type}`);
+    metadata.emittedHostFunctions.push({
+      name: hostFunction.name,
+      returnType: returnType.type,
+    });
   }
 
   output.push('');
