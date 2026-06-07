@@ -2318,6 +2318,9 @@ fn emit_cast(
     if from == to {
         return Ok(());
     }
+    if from.nullable_inner().as_ref() == Some(&to) {
+        return Ok(());
+    }
 
     // Boxing a primitive into `unknown` (anyref), or unboxing it back out.
     if to == Type::Unknown {

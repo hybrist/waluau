@@ -1781,8 +1781,30 @@ impl Builder<'_> {
         );
 
         let mut then_env = env.clone();
-        let mut then_types = then_types_init;
+        let mut then_types = types.clone();
+        let mut then_narrowed_values = HashMap::new();
         self.current_block = then_block;
+        for (symbol_id, narrowed_ty) in then_types_init {
+            if let (Some(original_ty), Some(original_value)) =
+                (types.get(&symbol_id), then_env.get(&symbol_id).copied())
+            {
+                if original_ty != &narrowed_ty
+                    && original_ty.nullable_inner().as_ref() == Some(&narrowed_ty)
+                {
+                    let narrowed_value = self.emit(Instruction::Cast {
+                        value: original_value,
+                        from: original_ty.clone(),
+                        to: narrowed_ty.clone(),
+                    });
+                    then_env.insert(symbol_id, narrowed_value);
+                    then_narrowed_values.insert(symbol_id, narrowed_value);
+                    self.function
+                        .value_symbols
+                        .insert(narrowed_value, symbol_id);
+                }
+            }
+            then_types.insert(symbol_id, narrowed_ty);
+        }
         if let Some((symbol_id, base, payload_ty)) = &pattern_binding {
             let unboxed = self.unbox_tagged_variant_value(*base, payload_ty)?;
             if self.cell_names.contains(symbol_id) {
@@ -1809,8 +1831,30 @@ impl Builder<'_> {
         }
 
         let mut else_env = env.clone();
-        let mut else_types = else_types_init;
+        let mut else_types = types.clone();
+        let mut else_narrowed_values = HashMap::new();
         self.current_block = else_block;
+        for (symbol_id, narrowed_ty) in else_types_init {
+            if let (Some(original_ty), Some(original_value)) =
+                (types.get(&symbol_id), else_env.get(&symbol_id).copied())
+            {
+                if original_ty != &narrowed_ty
+                    && original_ty.nullable_inner().as_ref() == Some(&narrowed_ty)
+                {
+                    let narrowed_value = self.emit(Instruction::Cast {
+                        value: original_value,
+                        from: original_ty.clone(),
+                        to: narrowed_ty.clone(),
+                    });
+                    else_env.insert(symbol_id, narrowed_value);
+                    else_narrowed_values.insert(symbol_id, narrowed_value);
+                    self.function
+                        .value_symbols
+                        .insert(narrowed_value, symbol_id);
+                }
+            }
+            else_types.insert(symbol_id, narrowed_ty);
+        }
         for stmt in else_body {
             if self.current_block == DEAD_BLOCK {
                 break;
@@ -1839,6 +1883,14 @@ impl Builder<'_> {
                 .or_else(|| env.get(&name).copied());
             if let (Some(tv), Some(ev)) = (t, e) {
                 if tv != ev {
+                    let original = env.get(&name).copied();
+                    let then_is_only_narrowed =
+                        then_narrowed_values.get(&name).copied() == Some(tv) && original == Some(ev);
+                    let else_is_only_narrowed =
+                        else_narrowed_values.get(&name).copied() == Some(ev) && original == Some(tv);
+                    if then_is_only_narrowed || else_is_only_narrowed {
+                        continue;
+                    }
                     let mut incoming = Vec::new();
                     if then_exit != DEAD_BLOCK {
                         incoming.push((then_exit, tv));

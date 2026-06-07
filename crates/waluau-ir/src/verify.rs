@@ -168,7 +168,9 @@ fn verify_function(
                             block.id, value_ty, from
                         )));
                     }
-                    crate::lower::require_numeric_cast(from.clone(), to.clone())?;
+                    if from.nullable_inner().as_ref() != Some(to) {
+                        crate::lower::require_numeric_cast(from.clone(), to.clone())?;
+                    }
                 }
                 Instruction::Call { name, args, .. } => {
                     let (param_types, _) = signatures

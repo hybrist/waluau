@@ -95,10 +95,14 @@ export const DOM_PRESET = {
   files: {
     '/main.walu': `local window = require("dom:window")
 local document = window.document
+local storage: Storage = window.local_storage
+local output_body: HTMLElement = document.body
 
 local heading: Element = document:create_element("h2")
 heading.id = "playground-title"
 heading.class_name = "waluau-dom-title"
+heading:append_class("generated")
+heading:set_attribute("data-source", "waluau")
 
 if HTMLHeadingElement(title) = heading then
     title.inner_text = "Hello from generated DOM externs"
@@ -110,13 +114,32 @@ document:append_child(heading)
 
 local body: Element = document:create_element("p")
 local found: Element? = document:get_element_by_id("playground-title")
+storage:remove_item("waluau-playground-dom-preset")
+local missing: string? = storage:get_item("waluau-playground-dom-preset")
+assert(missing == nil)
+storage:set_item("waluau-playground-dom-preset", "persisted")
+local saved: string? = storage:get_item("waluau-playground-dom-preset")
+
 if found ~= nil then
-    body.text_content = found.text_content .. " in a sandboxed output document"
+    if saved ~= nil then
+        body.text_content = found.text_content .. " in a sandboxed output document with " .. saved .. " state"
+    else
+        body.text_content = "DOM storage failed"
+    end
 else
     body.text_content = "DOM lookup failed"
 end
 
 document:append_child(body)
+
+local input_element: Element = document:create_element("input")
+input_element:set_attribute("value", "typed value")
+if HTMLInputElement(input) = input_element then
+    local value: Element = document:create_element("span")
+    value.id = "input-value"
+    value.text_content = input.value
+    output_body:append_child(value)
+end
 `
   },
   entryFile: '/main.walu'

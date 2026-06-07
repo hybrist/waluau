@@ -28,6 +28,18 @@
     {
       "interface": "HTMLHeadingElement",
       "parent": "HTMLElement"
+    },
+    {
+      "interface": "HTMLInputElement",
+      "parent": "HTMLElement"
+    },
+    {
+      "interface": "HTMLTextAreaElement",
+      "parent": "HTMLElement"
+    },
+    {
+      "interface": "Storage",
+      "parent": null
     }
   ],
   "emittedMembers": [
@@ -56,6 +68,43 @@
         "node: Node"
       ],
       "returnType": "Node"
+    },
+    {
+      "interface": "Node",
+      "kind": "operation",
+      "idlName": "replaceChild",
+      "emittedName": "replace_child",
+      "params": [
+        "new_child: Node",
+        "old_child: Node"
+      ],
+      "returnType": "Node"
+    },
+    {
+      "interface": "Node",
+      "kind": "operation",
+      "idlName": "removeChild",
+      "emittedName": "remove_child",
+      "params": [
+        "child: Node"
+      ],
+      "returnType": "Node"
+    },
+    {
+      "interface": "Document",
+      "kind": "attribute",
+      "idlName": "body",
+      "emittedName": "body",
+      "type": "HTMLElement",
+      "readonly": true
+    },
+    {
+      "interface": "Document",
+      "kind": "attribute",
+      "idlName": "documentElement",
+      "emittedName": "document_element",
+      "type": "Element",
+      "readonly": true
     },
     {
       "interface": "Document",
@@ -96,6 +145,14 @@
       "readonly": true
     },
     {
+      "interface": "Window",
+      "kind": "attribute",
+      "idlName": "localStorage",
+      "emittedName": "local_storage",
+      "type": "Storage",
+      "readonly": true
+    },
+    {
       "interface": "Element",
       "kind": "attribute",
       "idlName": "id",
@@ -114,6 +171,47 @@
     {
       "interface": "Element",
       "kind": "operation",
+      "idlName": "getAttribute",
+      "emittedName": "get_attribute",
+      "params": [
+        "name: string"
+      ],
+      "returnType": "string?"
+    },
+    {
+      "interface": "Element",
+      "kind": "operation",
+      "idlName": "setAttribute",
+      "emittedName": "set_attribute",
+      "params": [
+        "name: string",
+        "value: string"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "Element",
+      "kind": "operation",
+      "idlName": "removeAttribute",
+      "emittedName": "remove_attribute",
+      "params": [
+        "name: string"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "Element",
+      "kind": "operation",
+      "idlName": "appendClass",
+      "emittedName": "append_class",
+      "params": [
+        "class_name: string"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "Element",
+      "kind": "operation",
       "idlName": "querySelector",
       "emittedName": "query_selector",
       "params": [
@@ -128,6 +226,45 @@
       "emittedName": "inner_text",
       "type": "string",
       "readonly": false
+    },
+    {
+      "interface": "HTMLElement",
+      "kind": "attribute",
+      "idlName": "value",
+      "emittedName": "value",
+      "type": "string",
+      "readonly": false
+    },
+    {
+      "interface": "Storage",
+      "kind": "operation",
+      "idlName": "getItem",
+      "emittedName": "get_item",
+      "params": [
+        "key: string"
+      ],
+      "returnType": "string?"
+    },
+    {
+      "interface": "Storage",
+      "kind": "operation",
+      "idlName": "setItem",
+      "emittedName": "set_item",
+      "params": [
+        "key: string",
+        "value: string"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "Storage",
+      "kind": "operation",
+      "idlName": "removeItem",
+      "emittedName": "remove_item",
+      "params": [
+        "key: string"
+      ],
+      "returnType": "unit"
     }
   ],
   "emittedHostFunctions": [

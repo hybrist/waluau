@@ -281,7 +281,31 @@ fn nullable_extern_aliases_narrow_after_nil_check() {
 }
 
 #[test]
-fn nullable_modifier_rejects_non_extern_types() {
+fn nullable_strings_narrow_after_nil_check() {
+    let source = r#"
+        function take(value: string): i32
+            return 20
+        end
+
+        function score(value: string?): i32
+            if value ~= nil then
+                return take(value)
+            end
+            return 10
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+
+    assert!(matches!(
+        &typed.functions[1].params[0].ty,
+        Type::Nullable(inner) if inner.as_ref() == &Type::String
+    ));
+}
+
+#[test]
+fn nullable_modifier_rejects_non_host_ref_types() {
     let source = r#"
         function entry(value: i32?): i32
             return 0
@@ -292,7 +316,7 @@ fn nullable_modifier_rejects_non_extern_types() {
     let error = super::type_check_and_infer(&program).expect_err("type check should fail");
     assert_eq!(
         error.to_string(),
-        "nullable modifier '?' is only supported on extern opaque types, got i32"
+        "nullable modifier '?' is only supported on host reference types, got i32"
     );
 }
 

@@ -6,7 +6,10 @@
     "Window",
     "Element",
     "HTMLElement",
-    "HTMLHeadingElement"
+    "HTMLHeadingElement",
+    "HTMLInputElement",
+    "HTMLTextAreaElement",
+    "Storage"
   ],
   "members": {
     "EventTarget": [
@@ -15,25 +18,42 @@
     "Node": [
       "attribute:nodeName",
       "attribute:textContent",
-      "operation:appendChild"
+      "operation:appendChild",
+      "operation:replaceChild",
+      "operation:removeChild"
     ],
     "Document": [
+      "attribute:body",
+      "attribute:documentElement",
       "operation:createElement",
       "operation:getElementById",
       "operation:querySelector"
     ],
     "Window": [
-      "attribute:document"
+      "attribute:document",
+      "attribute:localStorage"
     ],
     "Element": [
       "attribute:id",
       "attribute:className",
+      "operation:getAttribute",
+      "operation:setAttribute",
+      "operation:removeAttribute",
+      "operation:appendClass",
       "operation:querySelector"
     ],
     "HTMLElement": [
-      "attribute:innerText"
+      "attribute:innerText",
+      "attribute:value"
     ],
-    "HTMLHeadingElement": []
+    "HTMLHeadingElement": [],
+    "HTMLInputElement": [],
+    "HTMLTextAreaElement": [],
+    "Storage": [
+      "operation:getItem",
+      "operation:setItem",
+      "operation:removeItem"
+    ]
   },
   "hostFunctions": [
     {
