@@ -24,15 +24,7 @@ const conformanceIncludeModules = import.meta.glob('../../../../{builtins,extern
   import: 'default'
 });
 
-const domExternSource = import.meta.glob('../../../../externs/dom.walu', {
-  eager: true,
-  query: '?raw',
-  import: 'default'
-});
-
 export { fixtureModules, moduleFixtures, conformanceModules };
-
-const DOM_EXTERNS = Object.values(domExternSource)[0] || '';
 
 export function filesForConformancePreset(filename, source) {
   const files = {
@@ -101,10 +93,9 @@ export const DOM_PRESET = {
   key: 'dom-externs',
   label: 'DOM Externs Example',
   files: {
-    '/externs/dom.walu': DOM_EXTERNS,
-    '/main.walu': `declare function dom_document(): Document
+    '/main.walu': `local window = require("dom:window")
+local document = window.document
 
-local document: Document = dom_document()
 local heading: Element = document:create_element("h2")
 heading.id = "playground-title"
 heading.class_name = "waluau-dom-title"

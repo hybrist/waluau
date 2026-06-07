@@ -8,6 +8,7 @@ const DOM_IMPORT_NAMES = new Set([
   'dom_clear',
   'dom_create_element',
   'dom_document',
+  'dom_window',
   'dom_set_text',
   'Document.append_child',
   'Document.create_element',
@@ -33,6 +34,7 @@ const DOM_IMPORT_NAMES = new Set([
   'Node.get_text_content',
   'Node.set_node_name',
   'Node.set_text_content',
+  'Window.get_document',
 ]);
 
 const BLOCKED_DOM_TAGS = new Set([
@@ -244,6 +246,14 @@ function createPlaygroundDomHost(domOutputRoot) {
     return value;
   };
 
+  const requireWindow = (value, label = 'DOM window') => {
+    const document = requireOutputDocument();
+    if (value !== document.defaultView) {
+      throw new Error(`${label} must be the DOM Output window`);
+    }
+    return value;
+  };
+
   const requireAppendTarget = (value, label = 'DOM parent') => {
     const document = requireOutputDocument();
     if (value === document) {
@@ -341,6 +351,7 @@ function createPlaygroundDomHost(domOutputRoot) {
 
   return {
     dom_document: () => requireOutputDocument(),
+    dom_window: () => requireOutputDocument().defaultView,
     dom_root: () => requireOutputDocument().body,
     dom_output_root: () => requireOutputDocument().body,
     dom_create_element: createElement,
@@ -371,6 +382,7 @@ function createPlaygroundDomHost(domOutputRoot) {
     'Node.get_text_content': getTextContent,
     'Node.set_node_name': setNodeName,
     'Node.set_text_content': setText,
+    'Window.get_document': (window) => requireWindow(window).document,
   };
 }
 
@@ -392,6 +404,9 @@ export function buildWaluauImports(wasmBuffer, initLogger, options = {}) {
     }
     if (name === 'Document') {
       return typeof view.Document !== 'undefined' && value instanceof view.Document ? 1 : 0;
+    }
+    if (name === 'Window') {
+      return typeof view.Window !== 'undefined' && value instanceof view.Window ? 1 : 0;
     }
     if (name === 'Element') {
       return typeof view.Element !== 'undefined' && value instanceof view.Element ? 1 : 0;
