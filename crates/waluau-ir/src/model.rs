@@ -72,6 +72,10 @@ pub enum Instruction {
         value: ValueId,
         ty: Type,
     },
+    ExternCastTest {
+        value: ValueId,
+        target_name: String,
+    },
     MathIntrinsic {
         intrinsic: MathIntrinsic,
         args: Vec<ValueId>,

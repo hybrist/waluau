@@ -129,6 +129,7 @@ pub enum Type {
     String,
     Bytes,
     Extern,
+    ExternSubtype(Box<Type>),
     Nil,
     Nullable(Box<Type>),
     TaggedVariant(TaggedVariant),
@@ -291,6 +292,7 @@ impl std::fmt::Display for Type {
             Self::String => f.write_str("string"),
             Self::Bytes => f.write_str("bytes"),
             Self::Extern => f.write_str("extern"),
+            Self::ExternSubtype(parent) => write!(f, "extern extends {parent}"),
             Self::Nil => f.write_str("nil"),
             Self::Nullable(inner) => write!(f, "{inner}?"),
             Self::TaggedVariant(variant) => write!(f, "{}({})", variant.tag, variant.payload),
@@ -387,6 +389,15 @@ pub enum Stmt {
     },
     If {
         condition: Expr,
+        then_body: Vec<Stmt>,
+        else_body: Vec<Stmt>,
+    },
+    IfCast {
+        target_name: String,
+        target_ty: Type,
+        binding: String,
+        binding_symbol_id: Option<SymbolId>,
+        value: Expr,
         then_body: Vec<Stmt>,
         else_body: Vec<Stmt>,
     },
@@ -712,6 +723,28 @@ impl Resolver {
             } => {
                 self.resolve_expr(condition)?;
                 self.enter_scope();
+                for s in then_body {
+                    self.resolve_stmt(s)?;
+                }
+                self.exit_scope();
+                self.enter_scope();
+                for s in else_body {
+                    self.resolve_stmt(s)?;
+                }
+                self.exit_scope();
+            }
+            Stmt::IfCast {
+                binding,
+                binding_symbol_id,
+                value,
+                then_body,
+                else_body,
+                ..
+            } => {
+                self.resolve_expr(value)?;
+                self.enter_scope();
+                let id = self.declare(binding);
+                *binding_symbol_id = Some(id);
                 for s in then_body {
                     self.resolve_stmt(s)?;
                 }

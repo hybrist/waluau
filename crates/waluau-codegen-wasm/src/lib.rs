@@ -524,6 +524,13 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             EntityType::Function(host_slot_type_index[2].unwrap()),
         );
     }
+    if used_imports.extern_is {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_EXTERN_IS,
+            EntityType::Function(host_slot_type_index[0].unwrap()),
+        );
+    }
     let mut declared_import_indices = HashMap::new();
     for (offset, declared) in module.declared_imports.iter().enumerate() {
         let sig_index = signature_registry
@@ -1491,6 +1498,18 @@ fn emit_block_instructions(
             } => {
                 emit_value_operand(out, local_plan, *tested)?;
                 out.instruction(&Instruction::RefIsNull);
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::ExternCastTest {
+                value: tested,
+                target_name,
+            } => {
+                let index = host::string_constant_index(ctx.string_constants, target_name)?;
+                emit_value_operand(out, local_plan, *tested)?;
+                out.instruction(&Instruction::GlobalGet(index));
+                out.instruction(&Instruction::Call(
+                    ctx.host_func_index(host::IMPORT_EXTERN_IS_FUNC)?,
+                ));
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::MathIntrinsic {
@@ -2492,7 +2511,9 @@ fn emit_binary(
                     "bytes add is not supported during wasm emission",
                 ));
             }
-            Type::Extern | Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
+            Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
+                unreachable!()
+            }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -2558,7 +2579,9 @@ fn emit_binary(
                     "bytes sub is not supported during wasm emission",
                 ));
             }
-            Type::Extern | Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
+            Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
+                unreachable!()
+            }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -2607,7 +2630,9 @@ fn emit_binary(
                     "bytes mul is not supported during wasm emission",
                 ));
             }
-            Type::Extern | Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
+            Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
+                unreachable!()
+            }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -2662,7 +2687,9 @@ fn emit_binary(
                     "bytes div is not supported during wasm emission",
                 ));
             }
-            Type::Extern | Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
+            Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
+                unreachable!()
+            }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -2707,7 +2734,9 @@ fn emit_binary(
                     ctx.host_func_index(host::IMPORT_BYTES_EQ_FUNC)?,
                 ));
             }
-            Type::Extern | Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
+            Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
+                unreachable!()
+            }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -2770,7 +2799,9 @@ fn emit_binary(
                 out.instruction(&Instruction::I32Const(0));
                 out.instruction(&Instruction::I32LtS);
             }
-            Type::Extern | Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
+            Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
+                unreachable!()
+            }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
@@ -2829,7 +2860,9 @@ fn emit_binary(
                 out.instruction(&Instruction::I32Const(0));
                 out.instruction(&Instruction::I32GtS);
             }
-            Type::Extern | Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
+            Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
+                unreachable!()
+            }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(

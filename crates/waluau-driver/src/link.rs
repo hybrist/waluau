@@ -513,6 +513,22 @@ impl Rewriter<'_> {
                     self.rewrite_stmt_types(stmt);
                 }
             }
+            Stmt::IfCast {
+                target_ty,
+                value,
+                then_body,
+                else_body,
+                ..
+            } => {
+                self.rewrite_type(target_ty);
+                self.rewrite_expr_types(value);
+                for stmt in then_body {
+                    self.rewrite_stmt_types(stmt);
+                }
+                for stmt in else_body {
+                    self.rewrite_stmt_types(stmt);
+                }
+            }
             Stmt::While { condition, body } => {
                 self.rewrite_expr_types(condition);
                 for stmt in body {
@@ -655,6 +671,7 @@ impl Rewriter<'_> {
                 }
             }
             Type::Opaque { ty, .. } => self.rewrite_type(ty),
+            Type::ExternSubtype(parent) => self.rewrite_type(parent),
             Type::Nullable(inner) => self.rewrite_type(inner),
             Type::TaggedVariant(variant) => self.rewrite_type(variant.payload.as_mut()),
             Type::TaggedUnion(variants) => {
@@ -750,6 +767,19 @@ impl Rewriter<'_> {
             } => {
                 self.rewrite_expr(condition, bound);
                 self.rewrite_block(then_body, &mut bound.clone());
+                self.rewrite_block(else_body, &mut bound.clone());
+            }
+            Stmt::IfCast {
+                binding,
+                value,
+                then_body,
+                else_body,
+                ..
+            } => {
+                self.rewrite_expr(value, bound);
+                let mut then_bound = bound.clone();
+                then_bound.insert(binding.clone());
+                self.rewrite_block(then_body, &mut then_bound);
                 self.rewrite_block(else_body, &mut bound.clone());
             }
             Stmt::While { condition, body } => {
@@ -1028,6 +1058,27 @@ fn rename_stmt(
                 &mut shadowed.clone(),
             );
         }
+        Stmt::IfCast {
+            binding,
+            value,
+            then_body,
+            else_body,
+            ..
+        } => {
+            rename_expr(value, renames, available, shadowed);
+            let mut then_available = available.clone();
+            let mut then_shadowed = shadowed.clone();
+            if renames.contains_key(binding) {
+                then_shadowed.insert(binding.clone());
+            }
+            rename_stmt_block(then_body, renames, &mut then_available, &mut then_shadowed);
+            rename_stmt_block(
+                else_body,
+                renames,
+                &mut available.clone(),
+                &mut shadowed.clone(),
+            );
+        }
         Stmt::While { condition, body } => {
             rename_expr(condition, renames, available, shadowed);
             rename_stmt_block(body, renames, &mut available.clone(), &mut shadowed.clone());
@@ -1217,6 +1268,17 @@ fn stmt_mentions_name_in_stmt(name: &str, stmt: &Stmt) -> bool {
                 || stmt_mentions_name(name, then_body)
                 || stmt_mentions_name(name, else_body)
         }
+        Stmt::IfCast {
+            binding,
+            value,
+            then_body,
+            else_body,
+            ..
+        } => {
+            expr_mentions_name(name, value)
+                || (binding != name && stmt_mentions_name(name, then_body))
+                || stmt_mentions_name(name, else_body)
+        }
         Stmt::While { condition, body } => {
             expr_mentions_name(name, condition) || stmt_mentions_name(name, body)
         }
@@ -1327,6 +1389,16 @@ fn collect_block(stmts: &[Stmt], out: &mut Vec<String>) {
                 else_body,
             } => {
                 collect_expr(condition, out);
+                collect_block(then_body, out);
+                collect_block(else_body, out);
+            }
+            Stmt::IfCast {
+                value,
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_expr(value, out);
                 collect_block(then_body, out);
                 collect_block(else_body, out);
             }

@@ -151,7 +151,18 @@ impl Parser {
             Some(TokenKind::BoolType) => Ok(Type::Bool),
             Some(TokenKind::StringType) => Ok(Type::String),
             Some(TokenKind::BytesType) => Ok(Type::Bytes),
-            Some(TokenKind::ExternType) => Ok(Type::Extern),
+            Some(TokenKind::ExternType) => {
+                if matches!(
+                    self.peek().map(|token| &token.kind),
+                    Some(TokenKind::Identifier(keyword)) if keyword == "extends"
+                ) {
+                    self.advance();
+                    let parent = self.parse_type()?;
+                    Ok(Type::ExternSubtype(Box::new(parent)))
+                } else {
+                    Ok(Type::Extern)
+                }
+            }
             Some(TokenKind::ThreadType) => Ok(Type::Thread),
             Some(TokenKind::UnknownType) => Ok(Type::Unknown),
             Some(TokenKind::Identifier(name)) if self.check_simple(&TokenKind::LParen) => {

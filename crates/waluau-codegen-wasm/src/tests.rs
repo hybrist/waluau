@@ -495,6 +495,38 @@ fn declared_host_method_call_imports_declared_method() {
 }
 
 #[test]
+fn safe_extern_if_cast_imports_runtime_check() {
+    let source = r#"
+        type Node = extern
+        type Element = extern extends Node
+        type HTMLHeadingElement = extern extends Element
+
+        declare function getElement(): Element
+
+        function entry(): i32
+            local value: Element = getElement()
+            if HTMLHeadingElement(heading) = value then
+                return 1
+            else
+                return 0
+            end
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        wat.contains(r#"(import "waluau" "extern_is""#),
+        "expected safe extern cast runtime import in:\n{wat}"
+    );
+}
+
+#[test]
 fn emits_valid_wasm_for_unknown_boxing() {
     // `unknown` lowers to anyref; primitives box (i32/bool via i31ref, f64 via a
     // boxed struct) and unbox via explicit cast, including through calls and

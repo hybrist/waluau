@@ -219,6 +219,7 @@ pub(crate) fn infer_value_types(
                 IrInstruction::Cast { to, .. } => to.clone(),
                 IrInstruction::Binary { result_ty, .. } => result_ty.clone(),
                 IrInstruction::IsNull { .. } => Type::Bool,
+                IrInstruction::ExternCastTest { .. } => Type::Bool,
                 IrInstruction::MathIntrinsic { result_ty, .. } => result_ty.clone(),
                 IrInstruction::ToString { .. } => Type::String,
                 IrInstruction::Print { .. } => Type::Unit,
@@ -574,7 +575,9 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
         | IrInstruction::Null { .. }
         | IrInstruction::String(_)
         | IrInstruction::Bytes(_) => Vec::new(),
-        IrInstruction::IsNull { value, .. } => vec![*value],
+        IrInstruction::IsNull { value, .. } | IrInstruction::ExternCastTest { value, .. } => {
+            vec![*value]
+        }
         IrInstruction::ToString { value, .. } => vec![*value],
         IrInstruction::Cast { value, .. } => vec![*value],
         IrInstruction::Binary { left, right, .. } => vec![*left, *right],
@@ -643,7 +646,8 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         | IrInstruction::Null { .. }
         | IrInstruction::String(_)
         | IrInstruction::Bytes(_) => false,
-        IrInstruction::IsNull { value: tested, .. } => *tested == value,
+        IrInstruction::IsNull { value: tested, .. }
+        | IrInstruction::ExternCastTest { value: tested, .. } => *tested == value,
         IrInstruction::ToString { .. } => false,
         IrInstruction::Cast { value: source, .. } => *source == value,
         IrInstruction::Binary { left, .. } => *left == value,

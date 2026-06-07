@@ -124,6 +124,21 @@ fn verify_function(
                         )));
                     }
                 }
+                Instruction::ExternCastTest { value: tested, .. } => {
+                    let tested_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *tested,
+                    )?;
+                    if !matches!(tested_ty, Type::Extern | Type::Nullable(_)) {
+                        return Err(Diagnostic::new(format!(
+                            "extern cast test in block {:?} requires extern value, got {}",
+                            block.id, tested_ty
+                        )));
+                    }
+                }
                 Instruction::Print { value } => {
                     let value_ty = require_dominating_definition(
                         &definitions,
@@ -901,6 +916,7 @@ fn infer_instruction_type(
         Instruction::MathIntrinsic { result_ty, .. } => Ok(result_ty.clone()),
         Instruction::ToString { .. } => Ok(Type::String),
         Instruction::IsNull { .. } => Ok(Type::Bool),
+        Instruction::ExternCastTest { .. } => Ok(Type::Bool),
         Instruction::Print { .. } => Ok(Type::Unit),
         Instruction::Call { name, .. } => signatures
             .get(name)

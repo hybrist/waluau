@@ -28,9 +28,10 @@ pub const IMPORT_JS_TOSTRING_F32: &str = "js_tostring_f32";
 pub const IMPORT_JS_TOSTRING_F64: &str = "js_tostring_f64";
 pub const IMPORT_JS_TOSTRING_BOOL: &str = "js_tostring_bool";
 pub const IMPORT_PRINT: &str = "print";
+pub const IMPORT_EXTERN_IS: &str = "extern_is";
 
 /// Maximum number of host function imports (when all are used).
-pub const HOST_IMPORT_COUNT: u32 = 17;
+pub const HOST_IMPORT_COUNT: u32 = 18;
 
 /// Canonical function-index slot for each host import.
 /// These are stable identifiers used as keys into [`HostImportMap`].
@@ -51,6 +52,7 @@ pub const IMPORT_JS_TOSTRING_U64_FUNC: u32 = 13;
 pub const IMPORT_JS_TOSTRING_F32_FUNC: u32 = 14;
 pub const IMPORT_JS_TOSTRING_F64_FUNC: u32 = 15;
 pub const IMPORT_JS_TOSTRING_BOOL_FUNC: u32 = 16;
+pub const IMPORT_EXTERN_IS_FUNC: u32 = 17;
 
 /// Number of host function types in the canonical type-slot table.
 /// The actual number emitted in a given module may be less if some slots are unused.
@@ -76,6 +78,7 @@ pub struct UsedHostImports {
     pub js_tostring_f32: bool,
     pub js_tostring_f64: bool,
     pub js_tostring_bool: bool,
+    pub extern_is: bool,
 }
 
 /// Maps canonical host-import slot indices (0–16) to the actual Wasm function
@@ -124,6 +127,7 @@ impl UsedHostImports {
             (IMPORT_JS_TOSTRING_F32_FUNC, self.js_tostring_f32),
             (IMPORT_JS_TOSTRING_F64_FUNC, self.js_tostring_f64),
             (IMPORT_JS_TOSTRING_BOOL_FUNC, self.js_tostring_bool),
+            (IMPORT_EXTERN_IS_FUNC, self.extern_is),
         ];
         let mut indices = [None; HOST_IMPORT_COUNT as usize];
         let mut next = 0u32;
@@ -147,7 +151,7 @@ impl UsedHostImports {
 ///
 /// | Slot | Signature                             | Used by                                      |
 /// |------|---------------------------------------|----------------------------------------------|
-/// | 0    | (externref, externref) → i32          | js_string_eq, js_string_compare, bytes_eq, bytes_compare |
+/// | 0    | (externref, externref) → i32          | js_string_eq, js_string_compare, bytes_eq, bytes_compare, extern_is |
 /// | 1    | (externref, externref) → externref_nn | js_string_concat, bytes_concat               |
 /// | 2    | (i32) → externref                     | bytes_literal, js_tostring_i32/u32/bool      |
 /// | 3    | (i64) → externref                     | js_tostring_i64, js_tostring_u64             |
@@ -158,7 +162,12 @@ impl UsedHostImports {
 /// | 8    | (externref) → i32                     | bytes_len                                    |
 pub fn needed_host_type_slots(used: &UsedHostImports) -> [bool; HOST_TYPE_COUNT as usize] {
     let mut slots = [false; HOST_TYPE_COUNT as usize];
-    if used.js_string_eq || used.js_string_compare || used.bytes_eq || used.bytes_compare {
+    if used.js_string_eq
+        || used.js_string_compare
+        || used.bytes_eq
+        || used.bytes_compare
+        || used.extern_is
+    {
         slots[0] = true;
     }
     if used.js_string_concat || used.bytes_concat {
@@ -214,6 +223,9 @@ fn mark_used_by_instruction(instruction: &IrInstruction, used: &mut UsedHostImpo
         }
         IrInstruction::Print { .. } => {
             used.print = true;
+        }
+        IrInstruction::ExternCastTest { .. } => {
+            used.extern_is = true;
         }
         IrInstruction::ToString { from, .. } => match from {
             Type::Numeric(NumericType::I32) => used.js_tostring_i32 = true,
@@ -299,12 +311,23 @@ fn collect_from_function<'a>(
 ) {
     for block in function.blocks.values() {
         for (_, instruction) in &block.instructions {
-            if let IrInstruction::String(literal) = instruction
-                && indices
-                    .insert(literal.as_str(), strings.len() as u32)
-                    .is_none()
-            {
-                strings.push(literal.clone());
+            match instruction {
+                IrInstruction::String(literal) => {
+                    if indices
+                        .insert(literal.as_str(), strings.len() as u32)
+                        .is_none()
+                    {
+                        strings.push(literal.clone());
+                    }
+                }
+                IrInstruction::ExternCastTest { target_name, .. }
+                    if indices
+                        .insert(target_name.as_str(), strings.len() as u32)
+                        .is_none()
+                    => {
+                        strings.push(target_name.clone());
+                    }
+                _ => {}
             }
         }
     }
