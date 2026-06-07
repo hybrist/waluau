@@ -3315,6 +3315,11 @@ impl Builder<'_> {
                         return result;
                     }
                     if let Some(result) =
+                        self.lower_table_builtin_call(&name, args, env, types, expected.clone())
+                    {
+                        return result;
+                    }
+                    if let Some(result) =
                         self.lower_print_builtin_call(&name, args, env, types, expected.clone())
                     {
                         return result;
@@ -4048,6 +4053,9 @@ impl Builder<'_> {
                     {
                         return result;
                     }
+                    if let Some(result) = self.infer_table_builtin_call_type(&name, expr, types) {
+                        return result;
+                    }
                     if let Some(result) = self.infer_print_builtin_call_type(&name, expr, types) {
                         return result;
                     }
@@ -4722,6 +4730,144 @@ impl Builder<'_> {
         Some(self.coerce_value(value, Type::String, expected))
     }
 
+    fn lower_table_builtin_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<ValueId, Diagnostic>> {
+        if name != TABLE_CONCAT {
+            return None;
+        }
+        if args.is_empty() || args.len() > 2 {
+            return Some(Err(Diagnostic::new(format!(
+                "{TABLE_CONCAT} expects 1 or 2 arguments, got {}",
+                args.len()
+            ))));
+        }
+        let array_ty = Type::Array(Box::new(Type::String));
+        let list_ty = match self.infer_expr_type(&args[0], types, None) {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        if list_ty != array_ty {
+            return Some(Err(Diagnostic::new(format!(
+                "{TABLE_CONCAT} expects an array of strings, got {list_ty}"
+            ))));
+        }
+        let array_value = match self.lower_expr(&args[0], env, types, Some(array_ty)) {
+            Ok(value) => value,
+            Err(error) => return Some(Err(error)),
+        };
+        let empty_string = self.emit(Instruction::String(String::new()));
+        let separator = if let Some(separator_expr) = args.get(1) {
+            match self.infer_expr_type(separator_expr, types, None) {
+                Ok(Type::String) => {}
+                Ok(ty) => {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{TABLE_CONCAT} expects a string separator, got {ty}"
+                    ))));
+                }
+                Err(error) => return Some(Err(error)),
+            }
+            match self.lower_expr(separator_expr, env, types, Some(Type::String)) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            }
+        } else {
+            empty_string
+        };
+
+        let len = self.emit(Instruction::ArrayLen { array: array_value });
+        let zero = self.emit(Instruction::Number {
+            ty: NumericType::I32,
+            literal: NumberLiteral { raw: "0".into() },
+        });
+        let one = self.emit(Instruction::Number {
+            ty: NumericType::I32,
+            literal: NumberLiteral { raw: "1".into() },
+        });
+
+        // Naive lowering: result = "" then for each element, result = result .. prefix .. element,
+        // where prefix starts as "" and becomes the separator after the first element. This avoids
+        // a conditional inside the loop body while still placing the separator only between items.
+        let preheader = self.current_block;
+        let header = self.new_block();
+        let loop_body = self.new_block();
+        let exit = self.new_block();
+        self.set_terminator(preheader, Terminator::Jump(header));
+
+        self.current_block = header;
+        let index_phi = self.emit(Instruction::Phi(vec![(preheader, zero)]));
+        let acc_phi = self.emit(Instruction::Phi(vec![(preheader, empty_string)]));
+        let prefix_phi = self.emit(Instruction::Phi(vec![(preheader, empty_string)]));
+        // `len` is loop-invariant, but it must still be threaded through a phi (with a
+        // trivial `+ 0` self-edge) so the local allocator's liveness analysis treats it as
+        // live across the back-edge — mirrors `array_len_phi` in `lower_for_in`.
+        let len_phi = self.emit(Instruction::Phi(vec![(preheader, len)]));
+        let cond = self.emit(Instruction::Binary {
+            op: BinaryOp::Less,
+            left: index_phi,
+            right: len_phi,
+            operand_ty: Type::Numeric(NumericType::I32),
+            result_ty: Type::Bool,
+        });
+        self.set_terminator(
+            header,
+            Terminator::Branch {
+                condition: cond,
+                then_block: loop_body,
+                else_block: exit,
+            },
+        );
+
+        self.current_block = loop_body;
+        let element = self.emit(Instruction::ArrayGet {
+            array: array_value,
+            index: index_phi,
+            element_ty: Type::String,
+        });
+        let with_prefix = self.emit(Instruction::Binary {
+            op: BinaryOp::Concat,
+            left: acc_phi,
+            right: prefix_phi,
+            operand_ty: Type::String,
+            result_ty: Type::String,
+        });
+        let next_acc = self.emit(Instruction::Binary {
+            op: BinaryOp::Concat,
+            left: with_prefix,
+            right: element,
+            operand_ty: Type::String,
+            result_ty: Type::String,
+        });
+        let next_index = self.emit(Instruction::Binary {
+            op: BinaryOp::Add,
+            left: index_phi,
+            right: one,
+            operand_ty: Type::Numeric(NumericType::I32),
+            result_ty: Type::Numeric(NumericType::I32),
+        });
+        let next_len = self.emit(Instruction::Binary {
+            op: BinaryOp::Add,
+            left: len_phi,
+            right: zero,
+            operand_ty: Type::Numeric(NumericType::I32),
+            result_ty: Type::Numeric(NumericType::I32),
+        });
+        let body_exit = self.current_block;
+        self.set_terminator(body_exit, Terminator::Jump(header));
+        add_phi_incoming(&mut self.function, header, index_phi, (body_exit, next_index));
+        add_phi_incoming(&mut self.function, header, acc_phi, (body_exit, next_acc));
+        add_phi_incoming(&mut self.function, header, prefix_phi, (body_exit, separator));
+        add_phi_incoming(&mut self.function, header, len_phi, (body_exit, next_len));
+
+        self.current_block = exit;
+        Some(self.coerce_value(acc_phi, Type::String, expected))
+    }
+
     fn lower_print_builtin_call(
         &mut self,
         name: &str,
@@ -4851,6 +4997,47 @@ impl Builder<'_> {
                 "{TO_STRING} expects a primitive argument (numeric, bool, or string), got {arg_ty}",
             ))))
         }
+    }
+
+    fn infer_table_builtin_call_type(
+        &self,
+        name: &str,
+        call: &Expr,
+        types: &HashMap<SymbolId, Type>,
+    ) -> Option<Result<Type, Diagnostic>> {
+        if name != TABLE_CONCAT {
+            return None;
+        }
+        let Expr::Call { args, .. } = call else {
+            return None;
+        };
+        if args.is_empty() || args.len() > 2 {
+            return Some(Err(Diagnostic::new(format!(
+                "{TABLE_CONCAT} expects 1 or 2 arguments, got {}",
+                args.len()
+            ))));
+        }
+        let list_ty = match self.infer_expr_type(&args[0], types, None) {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        if list_ty != Type::Array(Box::new(Type::String)) {
+            return Some(Err(Diagnostic::new(format!(
+                "{TABLE_CONCAT} expects an array of strings, got {list_ty}"
+            ))));
+        }
+        if let Some(separator) = args.get(1) {
+            match self.infer_expr_type(separator, types, None) {
+                Ok(Type::String) => {}
+                Ok(ty) => {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{TABLE_CONCAT} expects a string separator, got {ty}"
+                    ))));
+                }
+                Err(error) => return Some(Err(error)),
+            }
+        }
+        Some(Ok(Type::String))
     }
 
     fn infer_print_builtin_call_type(
