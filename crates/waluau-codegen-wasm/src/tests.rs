@@ -1,10 +1,68 @@
 use waluau_ast::BinaryOp;
 use waluau_ir::Instruction as IrInstruction;
-use wasmparser::{Operator, Parser, Payload, Validator};
+use wasmparser::{Operator, Parser, Payload, TypeRef, Validator};
 use wasmprinter::print_bytes;
 
 fn emit(module: &waluau_ir::Module) -> Result<Vec<u8>, waluau_diagnostics::Diagnostic> {
     super::emit(module).map(|r| r.wasm)
+}
+
+fn wasm_export_func_index(wasm: &[u8], name: &str) -> Option<u32> {
+    for payload in Parser::new(0).parse_all(wasm) {
+        let payload = payload.expect("wasm should parse");
+        if let Payload::ExportSection(reader) = payload {
+            for export in reader {
+                let export = export.expect("export should decode");
+                if export.name == name {
+                    return Some(export.index);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn wasm_function_import_count(wasm: &[u8]) -> u32 {
+    let mut count = 0;
+    for payload in Parser::new(0).parse_all(wasm) {
+        let payload = payload.expect("wasm should parse");
+        if let Payload::ImportSection(reader) = payload {
+            for import in reader {
+                let import = import.expect("import should decode");
+                if matches!(import.ty, TypeRef::Func(_)) {
+                    count += 1;
+                }
+            }
+        }
+    }
+    count
+}
+
+fn wasm_function_body_has_call_indirect(wasm: &[u8], func_index: u32) -> bool {
+    let import_count = wasm_function_import_count(wasm);
+    let target_body = func_index
+        .checked_sub(import_count)
+        .expect("exported function should be defined in this module");
+    let mut body_index = 0;
+    for payload in Parser::new(0).parse_all(wasm) {
+        let payload = payload.expect("wasm should parse");
+        if let Payload::CodeSectionEntry(body) = payload {
+            if body_index == target_body {
+                let mut reader = body.get_operators_reader().expect("ops should decode");
+                while !reader.eof() {
+                    if matches!(
+                        reader.read().expect("op should decode"),
+                        Operator::CallIndirect { .. }
+                    ) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            body_index += 1;
+        }
+    }
+    false
 }
 
 #[test]
@@ -726,6 +784,104 @@ fn nullable_extern_nil_check_lowers_to_ref_is_null() {
     assert!(
         wat.contains("ref.is_null"),
         "nullable extern nil checks should lower to ref.is_null in:\n{wat}"
+    );
+}
+
+#[test]
+fn declared_host_event_callback_import_exports_trampoline() {
+    let source = r#"
+        type Event = extern
+
+        declare function addEventListener(handler: (Event) -> unit): unit
+
+        function register(): unit
+            addEventListener(function(event: Event): unit
+            end)
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        wat.contains(r#"(import "waluau" "addEventListener""#),
+        "expected declared host callback import in:\n{wat}"
+    );
+    let trampoline_idx =
+        wasm_export_func_index(&wasm, super::CALLBACK_EVENT_UNIT_TRAMPOLINE_EXPORT)
+            .expect("callback trampoline should be exported");
+    assert!(
+        wasm_function_body_has_call_indirect(&wasm, trampoline_idx),
+        "callback trampoline should dispatch through the closure wrapper table"
+    );
+}
+
+#[test]
+fn declared_host_event_callback_import_validates_without_call_site() {
+    let source = r#"
+        type Event = extern
+
+        declare function addEventListener(handler: (Event) -> unit): unit
+
+        function entry(): i32
+            return 1
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    assert!(
+        wasm_export_func_index(&wasm, super::CALLBACK_EVENT_UNIT_TRAMPOLINE_EXPORT).is_some(),
+        "declared event callback imports should make the trampoline ABI available"
+    );
+}
+
+#[test]
+fn declared_host_event_callback_supports_captured_closure_wrapper() {
+    let source = r#"
+        type Event = extern
+
+        declare function addEventListener(handler: (Event) -> unit): unit
+        declare function record(value: i32): unit
+
+        function register(seed: i32): unit
+            local count: i32 = seed
+            addEventListener(function(event: Event): unit
+                count = count + 1
+                record(count)
+            end)
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    assert!(
+        wasm_export_func_index(&wasm, super::CALLBACK_EVENT_UNIT_TRAMPOLINE_EXPORT).is_some(),
+        "callback trampoline should be exported for captured event handlers"
+    );
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        wat.contains("array.get"),
+        "captured callback wrapper should reload captured state from the env array:\n{wat}"
+    );
+    assert!(
+        wat.contains("call_indirect"),
+        "trampoline should use the same indirect wrapper path as Waluau CallValue:\n{wat}"
     );
 }
 
