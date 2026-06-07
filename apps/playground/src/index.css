@@ -647,32 +647,14 @@ body,
   letter-spacing: 0.5px;
 }
 
-.dom-output-root {
+.dom-output-frame {
+  display: block;
+  width: 100%;
   min-height: 96px;
-  padding: 14px;
+  height: 128px;
   border-radius: 6px;
+  border: 0;
   background: #ffffff;
-  color: #1f2937;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 16px;
-  line-height: 1.5;
-  overflow: auto;
-}
-
-.dom-output-root:empty::before {
-  content: "DOM host calls will render here.";
-  color: #6b7280;
-}
-
-.dom-output-root h1,
-.dom-output-root h2,
-.dom-output-root h3,
-.dom-output-root p {
-  margin: 0 0 8px;
-}
-
-.dom-output-root :last-child {
-  margin-bottom: 0;
 }
 
 .func-card {
@@ -1520,4 +1502,3 @@ body,
   font-size: 10px;
   color: var(--text-muted);
 }
-

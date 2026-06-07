@@ -202,18 +202,38 @@ export function usesDomImports(wasmBuffer) {
 }
 
 function createPlaygroundDomHost(domOutputRoot) {
-  const requireOutputRoot = () => {
+  const requireOutputDocument = () => {
     if (!domOutputRoot) {
       throw new Error('DOM Output root is not mounted');
+    }
+    if (domOutputRoot.nodeType !== Node.DOCUMENT_NODE || typeof domOutputRoot.createElement !== 'function') {
+      throw new Error('DOM Output root must be a Document');
     }
     return domOutputRoot;
   };
 
   const requireElement = (value, label = 'DOM host value') => {
-    if (!(value instanceof Element)) {
+    const ElementCtor = value?.ownerDocument?.defaultView?.Element ?? Element;
+    if (!(value instanceof ElementCtor)) {
       throw new Error(`${label} must be an Element`);
     }
     return value;
+  };
+
+  const requireAppendTarget = (value, label = 'DOM parent') => {
+    const document = requireOutputDocument();
+    if (value === document) {
+      return document.body;
+    }
+    return requireElement(value, label);
+  };
+
+  const clearTarget = (value) => {
+    const document = requireOutputDocument();
+    if (value === document) {
+      return document.body;
+    }
+    return requireElement(value);
   };
 
   const normalizeTag = (tag) => {
@@ -225,15 +245,15 @@ function createPlaygroundDomHost(domOutputRoot) {
   };
 
   const createElement = (_document, tag) => {
-    return requireOutputRoot().ownerDocument.createElement(normalizeTag(tag));
+    return requireOutputDocument().createElement(normalizeTag(tag));
   };
 
   const appendChild = (parent, child) => {
-    requireElement(parent, 'DOM parent').appendChild(requireElement(child, 'DOM child'));
+    requireAppendTarget(parent).appendChild(requireElement(child, 'DOM child'));
   };
 
   const clear = (element) => {
-    requireElement(element).replaceChildren();
+    clearTarget(element).replaceChildren();
   };
 
   const setText = (element, text) => {
@@ -253,9 +273,9 @@ function createPlaygroundDomHost(domOutputRoot) {
   };
 
   return {
-    dom_document: () => requireOutputRoot(),
-    dom_root: () => requireOutputRoot(),
-    dom_output_root: () => requireOutputRoot(),
+    dom_document: () => requireOutputDocument(),
+    dom_root: () => requireOutputDocument().body,
+    dom_output_root: () => requireOutputDocument().body,
     dom_create_element: createElement,
     dom_append_child: appendChild,
     dom_clear: clear,

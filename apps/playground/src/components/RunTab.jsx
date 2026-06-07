@@ -1,5 +1,34 @@
+import { useCallback } from 'react';
 import { getDefaultParamValue, renderType } from '../utils/wasm.js';
 import { ParamField } from './ParamFields.jsx';
+
+function DomOutputFrame({ setDomOutputRoot }) {
+  const setFrame = useCallback((node) => {
+    if (!node) {
+      setDomOutputRoot(null);
+      return;
+    }
+    const syncDocument = () => {
+      setDomOutputRoot(node.contentDocument);
+    };
+    syncDocument();
+    node.addEventListener('load', syncDocument);
+    return () => {
+      node.removeEventListener('load', syncDocument);
+      setDomOutputRoot(null);
+    };
+  }, [setDomOutputRoot]);
+
+  return (
+    <iframe
+      className="dom-output-frame"
+      ref={setFrame}
+      title="DOM Output"
+      sandbox="allow-same-origin"
+      srcDoc="<!doctype html><html><head><style>html{color:#1f2937;font-family:system-ui,-apple-system,BlinkMacSystemFont,&quot;Segoe UI&quot;,sans-serif;font-size:16px;line-height:1.5}body{margin:0;padding:14px}h1,h2,h3,p{margin:0 0 8px}body>:last-child{margin-bottom:0}</style></head><body></body></html>"
+    />
+  );
+}
 
 export default function RunTab({
   status,
@@ -40,7 +69,7 @@ export default function RunTab({
       {usesDomOutput && (
         <section className="dom-output-section" aria-label="DOM Output">
           <div className="dom-output-label">DOM Output</div>
-          <div className="dom-output-root" ref={setDomOutputRoot} />
+          <DomOutputFrame setDomOutputRoot={setDomOutputRoot} />
         </section>
       )}
 

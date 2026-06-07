@@ -42,7 +42,11 @@ test.describe('DOM Output in Run tab', () => {
 
     const domOutput = page.getByLabel('DOM Output');
     await expect(domOutput).toBeVisible();
-    await expect(domOutput.locator('h2')).toHaveText('Hello from Waluau DOM');
-    await expect(domOutput.locator('p')).toHaveText('Rendered inside the playground Run tab');
+    await expect(domOutput.locator('.dom-output-frame')).toBeVisible();
+    await expect(domOutput.locator('h2')).toHaveCount(0);
+
+    const outputFrame = page.frameLocator('.dom-output-frame');
+    await expect(outputFrame.locator('h2')).toHaveText('Hello from Waluau DOM');
+    await expect(outputFrame.locator('p')).toHaveText('Rendered inside the playground Run tab');
   });
 });
