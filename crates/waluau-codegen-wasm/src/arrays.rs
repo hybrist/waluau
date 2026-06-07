@@ -263,6 +263,7 @@ fn collect_record_types_from_instruction(
         | IrInstruction::Print { .. }
         | IrInstruction::ToString { .. }
         | IrInstruction::Call { .. }
+        | IrInstruction::HostCall { .. }
         | IrInstruction::CoroutineCreate { .. }
         | IrInstruction::CoroutineResume { .. }
         | IrInstruction::CoroutineClose { .. }

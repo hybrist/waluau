@@ -375,6 +375,7 @@ impl<'a> Monomorphizer<'a> {
 
         let mut specialized_program = Program {
             functions,
+            declared_imports: program.declared_imports.clone(),
             type_declarations: program.type_declarations.clone(),
             top_level: program.top_level.clone(),
             export: program.export.clone(),

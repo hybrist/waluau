@@ -6,6 +6,36 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
     let tag_ids = collect_variant_tag_ids(&monomorphic);
     let mut signatures = HashMap::new();
     let mut field_call_signatures = HashMap::new();
+    let mut declared_imports = Vec::new();
+    for declared in &monomorphic.declared_imports {
+        let symbol_id = declared.symbol_id.ok_or_else(|| {
+            Diagnostic::new(format!(
+                "declared host function '{}' must have a symbol ID resolved",
+                declared.name
+            ))
+        })?;
+        let sig = (
+            declared
+                .params
+                .iter()
+                .map(|param| param.ty.clone())
+                .collect::<Vec<_>>(),
+            declared.return_type.clone(),
+        );
+        signatures.insert(symbol_id, sig.clone());
+        field_call_signatures.insert(declared.name.clone(), sig);
+        declared_imports.push(DeclaredImport {
+            module: "waluau".to_string(),
+            name: declared.name.clone(),
+            params: declared
+                .params
+                .iter()
+                .map(|param| param.ty.clone())
+                .collect(),
+            return_type: declared.return_type.clone(),
+            symbol_id,
+        });
+    }
     for function in &monomorphic.functions {
         let symbol_id = function.symbol_id.ok_or_else(|| {
             Diagnostic::new(format!(
@@ -26,11 +56,21 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
         signatures.insert(symbol_id, sig.clone());
         field_call_signatures.insert(function.name.to_string(), sig);
     }
+    let host_import_signatures = declared_imports
+        .iter()
+        .map(|declared| {
+            (
+                declared.symbol_id,
+                (declared.params.clone(), declared.return_type.clone()),
+            )
+        })
+        .collect::<HashMap<_, _>>();
     let mut functions = Vec::new();
     for function in &monomorphic.functions {
         let mut lowered = build_function(
             function,
             &signatures,
+            &host_import_signatures,
             &field_call_signatures,
             &monomorphic.sources,
             &tag_ids,
@@ -41,7 +81,11 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
     let start = functions
         .iter()
         .position(|function| function.name == "__waluau_top_level_init");
-    let module = Module { functions, start };
+    let module = Module {
+        functions,
+        declared_imports,
+        start,
+    };
     verify(&module)?;
     Ok(module)
 }
@@ -311,6 +355,24 @@ fn collect_expr_variant_tags(expr: &Expr, tag_ids: &mut BTreeMap<String, i32>) {
 fn erase_opaque_types(program: &Program) -> Program {
     Program {
         functions: program.functions.iter().map(erase_function_opaque_types).collect(),
+        declared_imports: program
+            .declared_imports
+            .iter()
+            .map(|declared| waluau_ast::DeclaredImport {
+                name: declared.name.clone(),
+                symbol_id: declared.symbol_id,
+                params: declared
+                    .params
+                    .iter()
+                    .map(|param| waluau_ast::Param {
+                        name: param.name.clone(),
+                        symbol_id: param.symbol_id,
+                        ty: erase_type_opaque_types(&param.ty),
+                    })
+                    .collect(),
+                return_type: erase_type_opaque_types(&declared.return_type),
+            })
+            .collect(),
         type_declarations: Vec::new(),
         top_level: program.top_level.iter().map(erase_stmt_opaque_types).collect(),
         export: program.export.as_ref().map(erase_expr_opaque_types),
@@ -597,6 +659,7 @@ fn erase_type_opaque_types(ty: &Type) -> Type {
 pub(crate) fn build_function(
     function: &AstFunction,
     signatures: &HashMap<SymbolId, (Vec<Type>, Type)>,
+    host_import_signatures: &HashMap<SymbolId, (Vec<Type>, Type)>,
     field_call_signatures: &HashMap<String, (Vec<Type>, Type)>,
     sources: &BTreeMap<String, String>,
     tag_ids: &BTreeMap<String, i32>,
@@ -671,6 +734,7 @@ pub(crate) fn build_function(
         current_block: BlockId(0),
         next_block: 1,
         signatures,
+        host_import_signatures,
         field_call_signatures,
         lifted_functions: Vec::new(),
         lambda_counter: 0,
@@ -703,6 +767,7 @@ struct Builder<'a> {
     current_block: BlockId,
     next_block: usize,
     signatures: &'a HashMap<SymbolId, (Vec<Type>, Type)>,
+    host_import_signatures: &'a HashMap<SymbolId, (Vec<Type>, Type)>,
     field_call_signatures: &'a HashMap<String, (Vec<Type>, Type)>,
     lifted_functions: Vec<Function>,
     lambda_counter: usize,
@@ -2759,6 +2824,25 @@ impl Builder<'_> {
                     }
                 }
                 if let Expr::Name(name, Some(symbol_id), _) = callee.as_ref() {
+                    if let Some((param_types, return_type)) =
+                        self.host_import_signatures.get(symbol_id)
+                    {
+                        let args = args
+                            .iter()
+                            .zip(param_types.iter())
+                            .map(|(arg, param_ty)| {
+                                self.lower_expr(arg, env, types, Some(param_ty.clone()))
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let value = self.emit(Instruction::HostCall {
+                            name: name.clone(),
+                            symbol_id: *symbol_id,
+                            args,
+                            return_type: return_type.clone(),
+                        });
+                        let actual = self.infer_expr_type(expr, types, None)?;
+                        return self.coerce_value(value, actual, expected);
+                    }
                     if let Some((param_types, _)) = self.signatures.get(symbol_id) {
                         let args = args
                             .iter()
@@ -3131,6 +3215,7 @@ impl Builder<'_> {
             current_block: BlockId(0),
             next_block: 1,
             signatures: self.signatures,
+            host_import_signatures: self.host_import_signatures,
             field_call_signatures: self.field_call_signatures,
             lifted_functions: Vec::new(),
             lambda_counter: 0,

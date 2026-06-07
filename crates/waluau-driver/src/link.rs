@@ -206,6 +206,7 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, Diagnosti
 
     Ok(Program {
         functions,
+        declared_imports: modules[entry_id].program.declared_imports.clone(),
         type_declarations,
         top_level,
         export: None,

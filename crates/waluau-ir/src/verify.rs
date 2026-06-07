@@ -16,8 +16,18 @@ pub fn verify(module: &Module) -> Result<(), Diagnostic> {
             )
         })
         .collect();
+    let host_signatures: HashMap<_, _> = module
+        .declared_imports
+        .iter()
+        .map(|declared| {
+            (
+                declared.symbol_id,
+                (declared.params.clone(), declared.return_type.clone()),
+            )
+        })
+        .collect();
     for function in &module.functions {
-        verify_function(function, &signatures)?;
+        verify_function(function, &signatures, &host_signatures)?;
     }
     Ok(())
 }
@@ -25,6 +35,7 @@ pub fn verify(module: &Module) -> Result<(), Diagnostic> {
 fn verify_function(
     function: &Function,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
+    host_signatures: &HashMap<SymbolId, (Vec<Type>, Type)>,
 ) -> Result<(), Diagnostic> {
     let predecessors = predecessors(function);
     let dominators = compute_dominators(function, &predecessors)?;
@@ -167,6 +178,39 @@ fn verify_function(
                         if !types_match(&arg_ty, param_ty) {
                             return Err(Diagnostic::new(format!(
                                 "call argument in block {:?} has type {}, expected {}",
+                                block.id, arg_ty, param_ty
+                            )));
+                        }
+                    }
+                }
+                Instruction::HostCall {
+                    name,
+                    symbol_id,
+                    args,
+                    ..
+                } => {
+                    let (param_types, _) = host_signatures.get(symbol_id).ok_or_else(|| {
+                        Diagnostic::new(format!("unknown host function '{}'", name))
+                    })?;
+                    if args.len() != param_types.len() {
+                        return Err(Diagnostic::new(format!(
+                            "host call to '{}' has {} args but signature expects {}",
+                            name,
+                            args.len(),
+                            param_types.len()
+                        )));
+                    }
+                    for (arg, param_ty) in args.iter().zip(param_types.iter()) {
+                        let arg_ty = require_dominating_definition(
+                            &definitions,
+                            &dominators,
+                            &seen_in_block,
+                            block.id,
+                            *arg,
+                        )?;
+                        if !types_match(&arg_ty, param_ty) {
+                            return Err(Diagnostic::new(format!(
+                                "host call argument in block {:?} has type {}, expected {}",
                                 block.id, arg_ty, param_ty
                             )));
                         }
@@ -838,6 +882,7 @@ fn infer_instruction_type(
             .get(name)
             .map(|(_, ret)| ret.clone())
             .ok_or_else(|| Diagnostic::new(format!("unknown function '{}'", name))),
+        Instruction::HostCall { return_type, .. } => Ok(return_type.clone()),
         Instruction::CallValue { return_type, .. } => Ok(return_type.clone()),
         Instruction::CoroutineCreate { .. } => Ok(Type::Thread),
         Instruction::CoroutineResume { .. } => Ok(Type::Multi(vec![

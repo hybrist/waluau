@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 
-use waluau_ast::{BinaryOp, NumberLiteral, NumericType, Type};
+use waluau_ast::{BinaryOp, NumberLiteral, NumericType, SymbolId, Type};
 use waluau_diagnostics::Diagnostic;
 use waluau_ir::{
     BasicBlock, Function as IrFunction, Instruction as IrInstruction, MathIntrinsic, Module,
@@ -524,6 +524,24 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             EntityType::Function(host_slot_type_index[2].unwrap()),
         );
     }
+    let mut declared_import_indices = HashMap::new();
+    for (offset, declared) in module.declared_imports.iter().enumerate() {
+        let sig_index = signature_registry
+            .get(&declared.params, &declared.return_type)
+            .ok_or_else(|| {
+                Diagnostic::new(format!(
+                    "missing signature for declared host function '{}'",
+                    declared.name
+                ))
+            })?;
+        imports.import(
+            &declared.module,
+            &declared.name,
+            EntityType::Function(user_type_base + sig_index),
+        );
+        declared_import_indices.insert(declared.symbol_id, import_map.count + offset as u32);
+    }
+    let import_func_count = import_map.count + module.declared_imports.len() as u32;
 
     // Build wrapper slot map: function name → table slot index for its wrapper.
     // Wrappers are placed in table slots N..N+W-1 (after the N user-defined functions).
@@ -558,7 +576,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             exports.export(
                 &function.name,
                 ExportKind::Func,
-                import_map.count + index as u32,
+                import_func_count + index as u32,
             );
         }
         codes.function(&emit_function(
@@ -573,13 +591,15 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             coroutine_body_sig_type,
             &closure_wrapper_slots,
             &import_map,
+            &declared_import_indices,
+            import_func_count,
         )?);
     }
     if let Some(start) = start_thunk {
         let thunk_sig_index = signature_registry.get(&[], &Type::Unit).unwrap();
         functions.function(user_type_base + thunk_sig_index);
         let mut thunk = Function::new(Vec::new());
-        thunk.instruction(&Instruction::Call(import_map.count + start as u32));
+        thunk.instruction(&Instruction::Call(import_func_count + start as u32));
         let n_returns = match &module.functions[start].return_type {
             Type::Multi(types) => types.len(),
             Type::Unit => 0,
@@ -619,7 +639,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             target_sig,
             &logical_params,
             &array_registry,
-            import_map.count,
+            import_func_count,
         )?;
         codes.function(&wrapper_fn);
         let _ = wrapper_idx;
@@ -641,7 +661,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         exports.export(
             &format!("__waluau_new_record_{}", info.record_idx),
             ExportKind::Func,
-            import_map.count + helper_func_idx_counter,
+            import_func_count + helper_func_idx_counter,
         );
         helper_func_idx_counter += 1;
 
@@ -659,7 +679,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             exports.export(
                 &format!("__waluau_get_record_{}_{}", info.record_idx, field_idx),
                 ExportKind::Func,
-                import_map.count + helper_func_idx_counter,
+                import_func_count + helper_func_idx_counter,
             );
             helper_func_idx_counter += 1;
 
@@ -676,7 +696,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
 
     let defined_func_count = module.functions.len() as u64;
     let wrapper_count = closure_targets.len() as u64;
-    let table_size = import_map.count as u64 + defined_func_count + wrapper_count;
+    let table_size = import_func_count as u64 + defined_func_count + wrapper_count;
     tables.table(TableType {
         element_type: RefType::FUNCREF,
         table64: false,
@@ -686,11 +706,11 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     });
     // Element segment: user functions at slots 0..N-1, wrappers at slots N..N+W-1.
     let mut table_inits: Vec<u32> = (0..module.functions.len() as u32)
-        .map(|i| import_map.count + i)
+        .map(|i| import_func_count + i)
         .collect();
     for i in 0..closure_targets.len() as u32 {
         let wrapper_module_idx =
-            import_map.count + module.functions.len() as u32 + thunk_offset + i;
+            import_func_count + module.functions.len() as u32 + thunk_offset + i;
         table_inits.push(wrapper_module_idx);
     }
     elements.active(
@@ -709,7 +729,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     wasm.section(&exports);
     if start_thunk.is_some() {
         wasm.section(&StartSection {
-            function_index: import_map.count + module.functions.len() as u32,
+            function_index: import_func_count + module.functions.len() as u32,
         });
     }
     wasm.section(&elements);
@@ -758,17 +778,31 @@ struct EmissionContext<'a> {
     closure_wrapper_slots: &'a HashMap<String, u32>,
     /// Remapping from canonical host-import slots to actual Wasm function indices.
     import_map: &'a host::HostImportMap,
+    declared_import_indices: &'a HashMap<SymbolId, u32>,
+    import_func_count: u32,
 }
 
 impl EmissionContext<'_> {
     /// Wasm function index for a user-defined function (0-based user index).
     fn wasm_func_index(&self, user_index: u32) -> u32 {
-        self.import_map.count + user_index
+        self.import_func_count + user_index
     }
 
     /// Wasm function index for a host import identified by its canonical slot.
     fn host_func_index(&self, canonical: u32) -> Result<u32, Diagnostic> {
         self.import_map.func_index(canonical)
+    }
+
+    fn declared_host_func_index(&self, symbol_id: SymbolId) -> Result<u32, Diagnostic> {
+        self.declared_import_indices
+            .get(&symbol_id)
+            .copied()
+            .ok_or_else(|| {
+                Diagnostic::new(format!(
+                    "internal error: declared host import symbol @{} used but not emitted",
+                    symbol_id.0
+                ))
+            })
     }
 
     fn coroutine_state_type(&self) -> Result<u32, Diagnostic> {
@@ -794,6 +828,8 @@ fn emit_function(
     coroutine_body_sig_type: Option<u32>,
     closure_wrapper_slots: &HashMap<String, u32>,
     import_map: &host::HostImportMap,
+    declared_import_indices: &HashMap<SymbolId, u32>,
+    import_func_count: u32,
 ) -> Result<Function, Diagnostic> {
     let ctx = EmissionContext {
         signatures,
@@ -806,6 +842,8 @@ fn emit_function(
         coroutine_body_sig_type,
         closure_wrapper_slots,
         import_map,
+        declared_import_indices,
+        import_func_count,
     };
     let value_types = infer_value_types(function, signatures)?;
     let local_plan = build_local_plan(function, &value_types, array_registry)?;
@@ -1525,6 +1563,17 @@ fn emit_block_instructions(
                 if ctx.coroutine_plan.function_yields(name) {
                     emit_return_if_coroutine_yielded(out, function, ctx)?;
                 }
+            }
+            IrInstruction::HostCall {
+                symbol_id, args, ..
+            } => {
+                for arg in args {
+                    emit_value_operand(out, local_plan, *arg)?;
+                }
+                out.instruction(&Instruction::Call(
+                    ctx.declared_host_func_index(*symbol_id)?,
+                ));
+                emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::CallValue {
                 callee,

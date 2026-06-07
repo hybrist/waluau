@@ -390,6 +390,26 @@ fn resolve_program_types(program: &mut Program) -> Result<(), Diagnostic> {
             &HashSet::new(),
         )?;
     }
+    for declared in &mut program.declared_imports {
+        for param in &mut declared.params {
+            param.ty = resolve_type_refs(
+                &param.ty,
+                &HashSet::new(),
+                &raw_opaque,
+                &generic,
+                &mut opaque_cache,
+                &mut Vec::new(),
+            )?;
+        }
+        declared.return_type = resolve_type_refs(
+            &declared.return_type,
+            &HashSet::new(),
+            &raw_opaque,
+            &generic,
+            &mut opaque_cache,
+            &mut Vec::new(),
+        )?;
+    }
     for stmt in &mut program.top_level {
         resolve_stmt_type_refs(
             stmt,
@@ -1450,6 +1470,19 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
     }
 
     let mut fn_signatures: HashMap<String, FnSignature> = HashMap::new();
+    for declared in &typed.declared_imports {
+        fn_signatures.insert(
+            declared.name.clone(),
+            FnSignature::Mono {
+                params: declared
+                    .params
+                    .iter()
+                    .map(|param| param.ty.clone())
+                    .collect(),
+                return_type: declared.return_type.clone(),
+            },
+        );
+    }
     for function in &typed.functions {
         if function.type_params.is_empty() {
             if let Some(ret) = &function.return_type {

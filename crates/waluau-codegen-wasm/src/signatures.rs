@@ -67,6 +67,9 @@ pub(crate) fn collect_user_signatures(module: &Module, start_thunk: bool) -> Sig
         let params = function.params.iter().map(|(_, ty)| ty.clone()).collect();
         registry.add(params, function.return_type.clone());
     }
+    for import in &module.declared_imports {
+        registry.add(import.params.clone(), import.return_type.clone());
+    }
     for function in &module.functions {
         for block in function.blocks.values() {
             for (_, instruction) in &block.instructions {

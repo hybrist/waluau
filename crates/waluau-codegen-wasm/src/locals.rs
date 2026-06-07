@@ -227,6 +227,7 @@ pub(crate) fn infer_value_types(
                     })?
                     .result
                     .clone(),
+                IrInstruction::HostCall { return_type, .. } => return_type.clone(),
                 IrInstruction::CallValue { return_type, .. } => return_type.clone(),
                 IrInstruction::CoroutineCreate { .. } => Type::Thread,
                 IrInstruction::CoroutineResume { .. } => {
@@ -575,7 +576,7 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
         IrInstruction::Binary { left, right, .. } => vec![*left, *right],
         IrInstruction::MathIntrinsic { args, .. } => args.clone(),
         IrInstruction::Print { value } => vec![*value],
-        IrInstruction::Call { args, .. } => args.clone(),
+        IrInstruction::Call { args, .. } | IrInstruction::HostCall { args, .. } => args.clone(),
         IrInstruction::CallValue { callee, args, .. } => {
             let mut out = Vec::with_capacity(args.len() + 1);
             out.extend(args.iter().copied());
@@ -642,7 +643,9 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         IrInstruction::Binary { left, .. } => *left == value,
         IrInstruction::MathIntrinsic { args, .. } => args.first().copied() == Some(value),
         IrInstruction::Print { value: printed } => *printed == value,
-        IrInstruction::Call { args, .. } => args.first().copied() == Some(value),
+        IrInstruction::Call { args, .. } | IrInstruction::HostCall { args, .. } => {
+            args.first().copied() == Some(value)
+        }
         IrInstruction::CallValue { .. } => false,
         IrInstruction::CoroutineCreate { .. } => false,
         IrInstruction::CoroutineResume { coroutine, .. }
