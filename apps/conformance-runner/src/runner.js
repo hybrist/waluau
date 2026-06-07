@@ -101,6 +101,7 @@ function createDomHost() {
     root.id = 'waluau-conformance-root';
     return {
       document: root,
+      window: root.ownerDocument.defaultView,
       createElement: (tagName) => globalThis.document.createElement(tagName),
       root,
     };
@@ -110,6 +111,7 @@ function createDomHost() {
   root.id = 'waluau-conformance-root';
   return {
     document: root,
+    window: { document: root },
     createElement: (tagName) => createMockElement(tagName),
     root,
   };
@@ -198,6 +200,9 @@ function buildWaluauImports(wasmBuffer, options = {}) {
       if (name === 'dom_document') {
         return () => domHost.document;
       }
+      if (name === 'dom_window') {
+        return () => domHost.window;
+      }
       if (name === 'dom_create_element') {
         return (_document, tagName) => domHost.createElement(String(tagName));
       }
@@ -212,6 +217,9 @@ function buildWaluauImports(wasmBuffer, options = {}) {
       }
       if (name === 'Document.get_element_by_id') {
         return (document, id) => getElementById(asElement(document, name), String(id));
+      }
+      if (name === 'Window.get_document') {
+        return () => domHost.document;
       }
       if (name === 'Document.append_child' || name === 'Element.append_child' || name === 'Node.append_child') {
         return (parent, child) => appendChild(parent, child, name);
