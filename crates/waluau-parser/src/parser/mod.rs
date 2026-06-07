@@ -61,6 +61,14 @@ impl Parser {
                         self.synchronize_statement(&[], self.index);
                     }
                 }
+            } else if self.is_declare_property_start() {
+                match self.parse_declared_property() {
+                    Ok(mut declared) => declared_imports.append(&mut declared),
+                    Err(error) => {
+                        self.record_error(error);
+                        self.synchronize_statement(&[], self.index);
+                    }
+                }
             } else {
                 match self.parse_stmt() {
                     // A trailing top-level `return <expr>` declares the value a
@@ -153,6 +161,19 @@ impl Parser {
         )
     }
 
+    fn is_declare_property_start(&self) -> bool {
+        matches!(
+            (
+                self.peek().map(|token| &token.kind),
+                self.peek_n(1).map(|token| &token.kind),
+            ),
+            (
+                Some(TokenKind::Identifier(keyword)),
+                Some(TokenKind::Identifier(kind))
+            ) if keyword == "declare" && kind == "property"
+        )
+    }
+
     fn parse_declared_import(&mut self) -> Result<DeclaredImport, Diagnostic> {
         let keyword = self.expect_identifier()?;
         if keyword != "declare" {
@@ -197,6 +218,55 @@ impl Parser {
             params,
             return_type,
         })
+    }
+
+    fn parse_declared_property(&mut self) -> Result<Vec<DeclaredImport>, Diagnostic> {
+        let keyword = self.expect_identifier()?;
+        if keyword != "declare" {
+            return Err(Diagnostic::new("expected 'declare'"));
+        }
+        let kind = self.expect_identifier()?;
+        if kind != "property" {
+            return Err(Diagnostic::new("expected 'property' after 'declare'"));
+        }
+        let receiver = self.expect_identifier()?;
+        self.expect_simple(TokenKind::Colon, "expected ':' after property receiver")?;
+        let property = self.expect_identifier()?;
+        self.expect_simple(TokenKind::Colon, "expected ':' before property type")?;
+        let property_type = self.parse_type()?;
+        let receiver_ty = Type::Named {
+            name: receiver.clone(),
+            type_args: Vec::new(),
+        };
+        Ok(vec![
+            DeclaredImport {
+                name: format!("{receiver}.get_{property}"),
+                symbol_id: None,
+                params: vec![Param {
+                    name: "self".to_string(),
+                    symbol_id: None,
+                    ty: receiver_ty.clone(),
+                }],
+                return_type: property_type.clone(),
+            },
+            DeclaredImport {
+                name: format!("{receiver}.set_{property}"),
+                symbol_id: None,
+                params: vec![
+                    Param {
+                        name: "self".to_string(),
+                        symbol_id: None,
+                        ty: receiver_ty,
+                    },
+                    Param {
+                        name: "value".to_string(),
+                        symbol_id: None,
+                        ty: property_type,
+                    },
+                ],
+                return_type: Type::Unit,
+            },
+        ])
     }
 
     fn is_type_decl_start(&self) -> bool {

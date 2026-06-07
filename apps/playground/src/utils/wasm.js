@@ -15,8 +15,10 @@ const DOM_IMPORT_NAMES = new Set([
   'Element.append',
   'Element.append_child',
   'Element.clear',
+  'Element.get_inner_text',
   'Element.set_attr',
   'Element.set_class',
+  'Element.set_inner_text',
   'Element.set_text',
   'Node.append_child',
 ]);
@@ -260,6 +262,10 @@ function createPlaygroundDomHost(domOutputRoot) {
     requireElement(element).textContent = String(text);
   };
 
+  const getInnerText = (element) => {
+    return requireElement(element).textContent;
+  };
+
   const setClass = (element, className) => {
     requireElement(element).className = String(className);
   };
@@ -285,6 +291,8 @@ function createPlaygroundDomHost(domOutputRoot) {
     'Element.append': appendChild,
     'Element.append_child': appendChild,
     'Element.clear': clear,
+    'Element.get_inner_text': getInnerText,
+    'Element.set_inner_text': setText,
     'Element.set_text': setText,
     'Element.set_class': setClass,
     'Element.set_attr': setAttr,

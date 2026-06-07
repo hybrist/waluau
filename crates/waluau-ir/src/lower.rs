@@ -830,6 +830,14 @@ fn method_signature_name(base: &str, method: &str) -> String {
     format!("{base}.{method}")
 }
 
+fn property_getter_name(base: &str, property: &str) -> String {
+    format!("{base}.get_{property}")
+}
+
+fn property_setter_name(base: &str, property: &str) -> String {
+    format!("{base}.set_{property}")
+}
+
 fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
     if expected == actual {
         return true;
@@ -871,6 +879,60 @@ fn type_method_signature(
         .iter()
         .filter_map(|(direct_name, (params, return_type))| {
             if !direct_name.ends_with(&suffix) {
+                return None;
+            }
+            let receiver_param = params.first()?;
+            method_receiver_matches(receiver_param, receiver_ty)
+                .then(|| (direct_name.clone(), params.clone(), return_type.clone()))
+        })
+        .collect::<Vec<_>>();
+    (matches.len() == 1).then(|| matches.remove(0))
+}
+
+fn type_property_getter_signature(
+    receiver_ty: &Type,
+    name: &str,
+    signatures: &HashMap<String, (Vec<Type>, Type)>,
+) -> Option<(String, Vec<Type>, Type)> {
+    if let Type::Opaque { name: type_name, .. } = receiver_ty {
+        let direct_name = property_getter_name(type_name, name);
+        if let Some((params, return_type)) = signatures.get(&direct_name).cloned() {
+            return Some((direct_name, params, return_type));
+        }
+    }
+
+    let suffix = format!(".get_{name}");
+    let mut matches = signatures
+        .iter()
+        .filter_map(|(direct_name, (params, return_type))| {
+            if !direct_name.ends_with(&suffix) || params.len() != 1 {
+                return None;
+            }
+            let receiver_param = params.first()?;
+            method_receiver_matches(receiver_param, receiver_ty)
+                .then(|| (direct_name.clone(), params.clone(), return_type.clone()))
+        })
+        .collect::<Vec<_>>();
+    (matches.len() == 1).then(|| matches.remove(0))
+}
+
+fn type_property_setter_signature(
+    receiver_ty: &Type,
+    name: &str,
+    signatures: &HashMap<String, (Vec<Type>, Type)>,
+) -> Option<(String, Vec<Type>, Type)> {
+    if let Type::Opaque { name: type_name, .. } = receiver_ty {
+        let direct_name = property_setter_name(type_name, name);
+        if let Some((params, return_type)) = signatures.get(&direct_name).cloned() {
+            return Some((direct_name, params, return_type));
+        }
+    }
+
+    let suffix = format!(".set_{name}");
+    let mut matches = signatures
+        .iter()
+        .filter_map(|(direct_name, (params, return_type))| {
+            if !direct_name.ends_with(&suffix) || params.len() != 2 {
                 return None;
             }
             let receiver_param = params.first()?;
@@ -1179,6 +1241,40 @@ impl Builder<'_> {
                     unreachable!();
                 };
                 let base_ty = self.infer_expr_type(base, types, None)?;
+                if let Some((setter_name, params, return_type)) =
+                    type_property_setter_signature(&base_ty, name, self.field_call_signatures)
+                {
+                    if *op != AssignOp::Set {
+                        return Err(Diagnostic::new(
+                            "compound property assignment is not supported",
+                        ));
+                    }
+                    if params.len() != 2 || !method_receiver_matches(&params[0], &base_ty) {
+                        return Err(Diagnostic::new(format!(
+                            "property setter for '{name}' does not accept receiver {base_ty}"
+                        )));
+                    }
+                    if return_type != Type::Unit {
+                        return Err(Diagnostic::new(format!(
+                            "property setter for '{name}' must return unit"
+                        )));
+                    }
+                    let receiver =
+                        self.lower_expr(base, env, types, Some(params[0].clone()))?;
+                    let stored = self.lower_expr(value, env, types, Some(params[1].clone()))?;
+                    let symbol_id = self.host_import_names.get(&setter_name).copied().ok_or_else(|| {
+                        Diagnostic::new(format!(
+                            "declared property setter '{setter_name}' is missing a host import symbol"
+                        ))
+                    })?;
+                    self.emit(Instruction::HostCall {
+                        name: setter_name,
+                        symbol_id,
+                        args: vec![receiver, stored],
+                        return_type,
+                    });
+                    return Ok(());
+                }
                 let (base_ty, field_ty) = if let Expr::Name(_base_name, Some(base_symbol_id), _) = base.as_ref() {
                     let Some(Type::Record(mut fields)) = types.get(base_symbol_id).cloned() else {
                         return Err(Diagnostic::new("field assignment requires a record base"));
@@ -3151,6 +3247,29 @@ impl Builder<'_> {
             }
             Expr::Field { base, name, .. } => {
                 let base_ty = self.infer_expr_type(base, types, None)?;
+                if let Some((getter_name, params, return_type)) =
+                    type_property_getter_signature(&base_ty, name, self.field_call_signatures)
+                {
+                    if params.len() != 1 || !method_receiver_matches(&params[0], &base_ty) {
+                        return Err(Diagnostic::new(format!(
+                            "property getter for '{name}' does not accept receiver {base_ty}"
+                        )));
+                    }
+                    let receiver =
+                        self.lower_expr(base, env, types, Some(params[0].clone()))?;
+                    let symbol_id = self.host_import_names.get(&getter_name).copied().ok_or_else(|| {
+                        Diagnostic::new(format!(
+                            "declared property getter '{getter_name}' is missing a host import symbol"
+                        ))
+                    })?;
+                    let value = self.emit(Instruction::HostCall {
+                        name: getter_name,
+                        symbol_id,
+                        args: vec![receiver],
+                        return_type: return_type.clone(),
+                    });
+                    return self.coerce_value(value, return_type, expected);
+                }
                 // Special case: `.value` on a narrowed tagged variant — the IR value is a
                 // canonical record, so we must StructGet the `unknown` value field and then
                 // Cast (unbox) to the payload type.
@@ -3709,6 +3828,13 @@ impl Builder<'_> {
             }
             Expr::Field { base, name, .. } => {
                 let base_ty = self.infer_expr_type(base, types, None)?;
+                if let Some((_, params, return_type)) =
+                    type_property_getter_signature(&base_ty, name, self.field_call_signatures)
+                {
+                    if params.len() == 1 && method_receiver_matches(&params[0], &base_ty) {
+                        return coerce_type(return_type, expected);
+                    }
+                }
                 let field_ty = base_ty
                     .record_field(name)
                     .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;

@@ -16,6 +16,55 @@ fn method_signature_name(base: &str, method: &str) -> String {
     format!("{base}.{method}")
 }
 
+fn property_setter_name(base: &str, property: &str) -> String {
+    format!("{base}.set_{property}")
+}
+
+fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
+    if expected == actual {
+        return true;
+    }
+    match (expected, actual) {
+        (Type::Record(expected_fields), Type::Record(actual_fields)) => expected_fields
+            .iter()
+            .all(|(name, expected_ty)| actual_fields.get(name) == Some(expected_ty)),
+        _ => false,
+    }
+}
+
+fn type_property_setter_signature<'a>(
+    receiver_ty: &Type,
+    name: &str,
+    fn_signatures: &'a HashMap<String, FnSignature>,
+) -> Option<&'a FnSignature> {
+    if let Type::Opaque {
+        name: type_name, ..
+    } = receiver_ty
+    {
+        let setter_name = property_setter_name(type_name, name);
+        if let Some(signature) = fn_signatures.get(&setter_name) {
+            return Some(signature);
+        }
+    }
+
+    let suffix = format!(".set_{name}");
+    let mut matches = fn_signatures
+        .iter()
+        .filter_map(|(setter_name, signature)| {
+            if !setter_name.ends_with(&suffix) {
+                return None;
+            }
+            let FnSignature::Mono { params, .. } = signature else {
+                return None;
+            };
+            let receiver_param = params.first()?;
+            (params.len() == 2 && method_receiver_matches(receiver_param, receiver_ty))
+                .then_some(signature)
+        })
+        .collect::<Vec<_>>();
+    (matches.len() == 1).then(|| matches.remove(0))
+}
+
 fn narrowed_variant_scopes(
     condition: &Expr,
     vars: &HashMap<String, Binding>,
@@ -723,6 +772,44 @@ pub(super) fn check_stmt(
             name,
             value,
         } => {
+            let base_ty = infer_expr(base, vars, fn_signatures, active_type_params, None)?;
+            if let Some(signature) = type_property_setter_signature(&base_ty, name, fn_signatures) {
+                if *op != AssignOp::Set {
+                    return Err(Diagnostic::new(
+                        "compound property assignment is not supported",
+                    ));
+                }
+                let FnSignature::Mono {
+                    params,
+                    return_type,
+                } = signature
+                else {
+                    return Err(generic_diagnostic(
+                        "generic-property/setter",
+                        format!("generic property setter for '{name}' is not supported"),
+                        "declare properties with concrete types",
+                    ));
+                };
+                if params.len() != 2 || !method_receiver_matches(&params[0], &base_ty) {
+                    return Err(Diagnostic::new(format!(
+                        "property setter for '{name}' does not accept receiver {base_ty}"
+                    )));
+                }
+                if *return_type != Type::Unit {
+                    return Err(Diagnostic::new(format!(
+                        "property setter for '{name}' must return unit"
+                    )));
+                }
+                infer_expr(
+                    value,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    Some(params[1].clone()),
+                )?;
+                seal_record_locals_in_expr(value, vars);
+                return Ok(false);
+            }
             if let Expr::Name(base_name, _, _) = base.as_ref() {
                 let binding = vars
                     .get(base_name)
