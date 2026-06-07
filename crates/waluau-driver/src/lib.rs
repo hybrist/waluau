@@ -12,7 +12,11 @@ mod link;
 /// be resolved against a file path. Use [`compile_file`] for programs that use
 /// `require`.
 pub fn compile_source(source: &str) -> Result<Vec<u8>, Diagnostic> {
-    let program = waluau_parser::parse(source)?;
+    let mut program = waluau_parser::parse(source)?;
+
+    // Add builtin declarations to standalone programs
+    add_builtins_to_program(&mut program)?;
+
     compile_program(program)
 }
 
@@ -97,6 +101,26 @@ where
 
 fn default_output_path(input: &Path) -> PathBuf {
     input.with_extension("wasm")
+}
+
+fn add_builtins_to_program(program: &mut waluau_ast::Program) -> Result<(), Diagnostic> {
+    // Load builtin declaration files and merge their declared_imports
+    let builtin_files = ["core.walu"];
+
+    for filename in &builtin_files {
+        let builtin_source = match *filename {
+            "core.walu" => include_str!("../../../builtins/core.walu"),
+            _ => continue,
+        };
+
+        let builtin_program =
+            waluau_parser::parse_with_path(builtin_source, &format!("builtin:{filename}"))?;
+        program
+            .declared_imports
+            .extend(builtin_program.declared_imports);
+    }
+
+    Ok(())
 }
 
 fn io_error(action: &str, path: &Path, error: std::io::Error) -> Diagnostic {

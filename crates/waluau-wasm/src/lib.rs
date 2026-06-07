@@ -165,7 +165,11 @@ fn compile_sources(
 }
 
 fn compile_source(source: &str) -> Result<CompileResult, String> {
-    let program = waluau_parser::parse(source).map_err(|e| e.to_string())?;
+    let mut program = waluau_parser::parse(source).map_err(|e| e.to_string())?;
+
+    // Add builtin declarations to standalone programs
+    add_builtins_to_program(&mut program).map_err(|e| e.to_string())?;
+
     let typed_program = waluau_hir::type_check_and_infer(&program).map_err(|e| e.to_string())?;
     let module = waluau_ir::build(&typed_program).map_err(|e| e.to_string())?;
     let requires_wasm_gc = module_requires_wasm_gc(&module);
@@ -235,6 +239,28 @@ fn type_requires_wasm_gc(ty: &waluau_ast::Type) -> bool {
             | waluau_ast::Type::Function { .. }
             | waluau_ast::Type::Record(_)
     )
+}
+
+fn add_builtins_to_program(
+    program: &mut waluau_ast::Program,
+) -> Result<(), waluau_diagnostics::Diagnostic> {
+    // Load builtin declaration files and merge their declared_imports
+    let builtin_files = ["core.walu"];
+
+    for filename in &builtin_files {
+        let builtin_source = match *filename {
+            "core.walu" => include_str!("../../../builtins/core.walu"),
+            _ => continue,
+        };
+
+        let builtin_program =
+            waluau_parser::parse_with_path(builtin_source, &format!("builtin:{filename}"))?;
+        program
+            .declared_imports
+            .extend(builtin_program.declared_imports);
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

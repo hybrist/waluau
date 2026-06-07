@@ -1,0 +1,5 @@
+-- Core builtin functions
+-- These are host functions that provide basic runtime functionality
+
+-- Print a string to stdout
+declare function print(message: string): unit

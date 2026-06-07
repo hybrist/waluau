@@ -22,7 +22,7 @@ pub(super) const MATH_NEAREST: &str = "math.nearest";
 pub(super) const MATH_COPYSIGN: &str = "math.copysign";
 pub(super) const TO_STRING: &str = "tostring";
 pub(super) const ASSERT: &str = "assert";
-pub(super) const PRINT: &str = "print";
+// pub(super) const PRINT: &str = "print"; // now handled via extern declaration
 
 pub(super) fn infer_coroutine_builtin_call(
     name: &str,
@@ -263,37 +263,4 @@ pub(super) fn infer_tostring_builtin_call(
     }
 }
 
-pub(super) fn infer_print_builtin_call(
-    name: &str,
-    args: &[Expr],
-    vars: &HashMap<String, Binding>,
-    fn_signatures: &HashMap<String, FnSignature>,
-    active_type_params: &HashSet<String>,
-    expected: Option<Type>,
-) -> Option<Result<Type, Diagnostic>> {
-    if name != PRINT {
-        return None;
-    }
-    if args.len() != 1 {
-        return Some(Err(Diagnostic::new(format!(
-            "{PRINT} expects 1 argument, got {}",
-            args.len()
-        ))));
-    }
-    let arg_ty = match super::expressions::infer_expr(
-        &args[0],
-        vars,
-        fn_signatures,
-        active_type_params,
-        Some(Type::String),
-    ) {
-        Ok(ty) => ty,
-        Err(error) => return Some(Err(error)),
-    };
-    if arg_ty != Type::String {
-        return Some(Err(Diagnostic::new(format!(
-            "{PRINT} expects string, got {arg_ty}",
-        ))));
-    }
-    Some(coerce_type(Type::Unit, expected))
-}
+// infer_print_builtin_call removed - now handled via extern function declaration

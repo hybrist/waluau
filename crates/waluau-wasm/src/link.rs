@@ -61,8 +61,11 @@ pub fn link_programs(files: &HashMap<String, String>, entry_path: &str) -> Resul
         stack: Vec::new(),
     };
 
+    // Load builtin declarations first
+    let builtin_imports = loader.load_builtins()?;
+
     let entry_id = loader.load(&entry_norm)?;
-    merge(&loader.modules, entry_id)
+    merge_with_builtins(&loader.modules, entry_id, builtin_imports)
 }
 
 struct Loader<'a> {
@@ -120,6 +123,26 @@ impl<'a> Loader<'a> {
         self.by_path.insert(path.to_string(), id);
         Ok(id)
     }
+
+    fn load_builtins(&mut self) -> Result<Vec<waluau_ast::DeclaredImport>, String> {
+        // Load builtin declaration files and extract their declared_imports
+        let builtin_files = ["core.walu"];
+        let mut all_imports = Vec::new();
+
+        for filename in &builtin_files {
+            let builtin_source = match *filename {
+                "core.walu" => include_str!("../../../builtins/core.walu"),
+                _ => continue,
+            };
+
+            let program =
+                waluau_parser::parse_with_path(builtin_source, &format!("builtin:{filename}"))
+                    .map_err(|e| e.to_string())?;
+            all_imports.extend(program.declared_imports);
+        }
+
+        Ok(all_imports)
+    }
 }
 
 fn module_prefix(id: usize, entry_id: usize) -> String {
@@ -130,8 +153,13 @@ fn module_prefix(id: usize, entry_id: usize) -> String {
     }
 }
 
-fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, String> {
+fn merge_with_builtins(
+    modules: &[LoadedModule],
+    entry_id: usize,
+    builtin_imports: Vec<waluau_ast::DeclaredImport>,
+) -> Result<Program, String> {
     let mut functions = Vec::new();
+    let mut declared_imports = builtin_imports;
     let mut top_level = Vec::new();
     let mut export_cache = HashMap::new();
 
@@ -180,6 +208,11 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, String> {
             type_declarations.push(lowered);
         }
 
+        // Collect declared imports from all modules (mainly builtins)
+        for import in &module.program.declared_imports {
+            declared_imports.push(import.clone());
+        }
+
         for function in &module_functions {
             let mut lowered = function.clone();
             rewriter.rewrite_function_types(&mut lowered);
@@ -221,7 +254,7 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, String> {
 
     Ok(Program {
         functions,
-        declared_imports: modules[entry_id].program.declared_imports.clone(),
+        declared_imports,
         type_declarations,
         top_level,
         export: None,

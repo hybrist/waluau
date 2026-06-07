@@ -29,8 +29,12 @@ pub fn link_program(entry: &Path) -> Result<Program, Diagnostic> {
         ))
     })?;
     let mut loader = Loader::default();
+
+    // Load builtin declarations first
+    let builtin_imports = loader.load_builtins()?;
+
     let entry_id = loader.load(&entry)?;
-    merge(&loader.modules, entry_id)
+    merge_with_builtins(&loader.modules, entry_id, builtin_imports)
 }
 
 struct LoadedModule {
@@ -91,6 +95,25 @@ impl Loader {
         self.by_path.insert(path.to_path_buf(), id);
         Ok(id)
     }
+
+    fn load_builtins(&mut self) -> Result<Vec<waluau_ast::DeclaredImport>, Diagnostic> {
+        // Load builtin declaration files and extract their declared_imports
+        let builtin_files = ["core.walu"];
+        let mut all_imports = Vec::new();
+
+        for filename in &builtin_files {
+            let builtin_source = match *filename {
+                "core.walu" => include_str!("../../../builtins/core.walu"),
+                _ => continue,
+            };
+
+            let program =
+                waluau_parser::parse_with_path(builtin_source, &format!("builtin:{filename}"))?;
+            all_imports.extend(program.declared_imports);
+        }
+
+        Ok(all_imports)
+    }
 }
 
 fn resolve_module_path(dir: &Path, raw: &str) -> Result<PathBuf, Diagnostic> {
@@ -116,8 +139,13 @@ fn module_prefix(id: usize, entry_id: usize) -> String {
     }
 }
 
-fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, Diagnostic> {
+fn merge_with_builtins(
+    modules: &[LoadedModule],
+    entry_id: usize,
+    builtin_imports: Vec<waluau_ast::DeclaredImport>,
+) -> Result<Program, Diagnostic> {
     let mut functions = Vec::new();
+    let mut declared_imports = builtin_imports;
     let mut type_declarations = Vec::new();
     let mut top_level = Vec::new();
     let mut export_cache = HashMap::new();
@@ -166,6 +194,11 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, Diagnosti
             type_declarations.push(lowered);
         }
 
+        // Collect declared imports from all modules (mainly builtins)
+        for import in &module.program.declared_imports {
+            declared_imports.push(import.clone());
+        }
+
         for function in &module_functions {
             let mut lowered = function.clone();
             rewriter.rewrite_function_types(&mut lowered);
@@ -206,7 +239,7 @@ fn merge(modules: &[LoadedModule], entry_id: usize) -> Result<Program, Diagnosti
 
     Ok(Program {
         functions,
-        declared_imports: modules[entry_id].program.declared_imports.clone(),
+        declared_imports,
         type_declarations,
         top_level,
         export: None,
