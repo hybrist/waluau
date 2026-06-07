@@ -2,21 +2,22 @@ import { test, expect } from '@playwright/test';
 
 const COMPILER_READY_TIMEOUT = 20_000;
 
-const DOM_SAMPLE = `type Element = extern
+const DOM_SAMPLE = `type Document = extern
+type Element = extern
 
-declare function dom_document(): Element
-declare function dom_create_element(root: Element, tag: string): Element
-declare function dom_set_text(element: Element, text: string): unit
-declare function dom_append_child(parent: Element, child: Element): unit
+declare function dom_document(): Document
+declare function Document:create_element(tag: string): Element
+declare function Document:append_child(child: Element): unit
+declare function Element:set_text(text: string): unit
 
-local root: Element = dom_document()
-local title: Element = dom_create_element(root, "h2")
-dom_set_text(title, "Hello from Waluau DOM")
-dom_append_child(root, title)
+local document: Document = dom_document()
+local title: Element = document:create_element("h2")
+title:set_text("Hello from Waluau DOM")
+document:append_child(title)
 
-local body: Element = dom_create_element(root, "p")
-dom_set_text(body, "Rendered inside the playground Run tab")
-dom_append_child(root, body)
+local body: Element = document:create_element("p")
+body:set_text("Rendered inside the playground Run tab")
+document:append_child(body)
 `;
 
 test.describe('DOM Output in Run tab', () => {
