@@ -14,11 +14,44 @@ impl Parser {
             (Some(TokenKind::Colon), Some(TokenKind::Identifier(_)),)
         ) && (matches!(
             self.peek_n(2).map(|token| &token.kind),
-            Some(TokenKind::LParen) | Some(TokenKind::Less)
+            Some(TokenKind::LParen)
+                | Some(TokenKind::Less)
+                | Some(TokenKind::Str(_))
+                | Some(TokenKind::LBrace)
         ))
     }
 
+    /// Lua's call-argument sugar: a call may take a single string literal or
+    /// table constructor in place of a parenthesized argument list, e.g.
+    /// `obj:method "text"` or `make_thing { x = 0, y = 1 }`.
+    fn check_call_args_start(&self) -> bool {
+        matches!(
+            self.peek().map(|token| &token.kind),
+            Some(TokenKind::LParen) | Some(TokenKind::Str(_)) | Some(TokenKind::LBrace)
+        )
+    }
+
     fn parse_call_args(&mut self) -> Result<(Vec<Expr>, u32, u32), Diagnostic> {
+        if let Some(Token {
+            kind: TokenKind::Str(_),
+            span,
+        }) = self.peek()
+        {
+            let span = *span;
+            let value = match self.advance().expect("peeked string token").kind {
+                TokenKind::Str(value) => value,
+                _ => unreachable!("peeked string token"),
+            };
+            return Ok((vec![Expr::String(value, Some(span))], span.start, span.end));
+        }
+        if self.check_simple(&TokenKind::LBrace) {
+            let start_pos = self.peek().map(|token| token.span.start).unwrap_or(0);
+            self.advance();
+            let arg = self.parse_brace_literal(start_pos)?;
+            let end_pos = arg.span().map(|s| s.end).unwrap_or(start_pos);
+            return Ok((vec![arg], start_pos, end_pos));
+        }
+
         let call_start = self.peek().map(|token| token.span.start).unwrap_or(0);
         self.expect_simple(TokenKind::LParen, "expected '('")?;
         let mut args = Vec::new();
@@ -326,7 +359,7 @@ impl Parser {
             } else {
                 Vec::new()
             };
-            if self.check_simple(&TokenKind::LParen) {
+            if self.check_call_args_start() {
                 let (args, call_start, call_end) = self.parse_call_args()?;
                 expr = Expr::Call {
                     callee: Box::new(expr),
