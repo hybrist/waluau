@@ -22,6 +22,7 @@ pub(super) const MATH_NEAREST: &str = "math.nearest";
 pub(super) const MATH_COPYSIGN: &str = "math.copysign";
 pub(super) const TO_STRING: &str = "tostring";
 pub(super) const ASSERT: &str = "assert";
+pub(super) const STRING_FIND: &str = "string_find";
 // pub(super) const PRINT: &str = "print"; // now handled via extern declaration
 
 pub(super) fn infer_coroutine_builtin_call(
@@ -261,6 +262,76 @@ pub(super) fn infer_tostring_builtin_call(
             "{TO_STRING} expects a primitive argument (numeric, bool, or string), got {arg_ty}",
         ))))
     }
+}
+
+pub(super) fn infer_string_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    if name != STRING_FIND {
+        return None;
+    }
+
+    // string.find expects 2 arguments: (haystack: string, needle: string)
+    if args.len() != 2 {
+        return Some(Err(Diagnostic::new(format!(
+            "{STRING_FIND} expects 2 arguments, got {}",
+            args.len()
+        ))));
+    }
+
+    // Check haystack argument (string)
+    let haystack_ty = match super::expressions::infer_expr(
+        &args[0],
+        vars,
+        fn_signatures,
+        active_type_params,
+        Some(Type::String),
+    ) {
+        Ok(ty) => ty,
+        Err(error) => return Some(Err(error)),
+    };
+    if haystack_ty != Type::String {
+        return Some(Err(Diagnostic::new(format!(
+            "{STRING_FIND} expects haystack to be a string, got {haystack_ty}"
+        ))));
+    }
+
+    // Check needle argument (string)
+    let needle_ty = match super::expressions::infer_expr(
+        &args[1],
+        vars,
+        fn_signatures,
+        active_type_params,
+        Some(Type::String),
+    ) {
+        Ok(ty) => ty,
+        Err(error) => return Some(Err(error)),
+    };
+    if needle_ty != Type::String {
+        return Some(Err(Diagnostic::new(format!(
+            "{STRING_FIND} expects needle to be a string, got {needle_ty}"
+        ))));
+    }
+
+    // Return type: NotFound(unit) | Found(u32)
+    let u32_ty = Type::Numeric(NumericType::U32);
+    let result_type = Type::TaggedUnion(vec![
+        TaggedVariant {
+            tag: "NotFound".to_string(),
+            payload: Box::new(Type::Unit),
+        },
+        TaggedVariant {
+            tag: "Found".to_string(),
+            payload: Box::new(u32_ty),
+        },
+    ]);
+
+    Some(coerce_type(result_type, expected))
 }
 
 // infer_print_builtin_call removed - now handled via extern function declaration

@@ -22,6 +22,7 @@ const MATH_COPYSIGN: &str = "math.copysign";
 const TO_STRING: &str = "tostring";
 const ASSERT: &str = "assert";
 const PRINT: &str = "print";
+const STRING_FIND: &str = "string_find";
 
 fn inference_diagnostic(
     code: &'static str,

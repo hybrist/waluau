@@ -1,0 +1,7 @@
+type SimpleResult = NotFound(unit) | Found(u32)
+
+function test(): bool
+    return true
+end
+
+assert(test())

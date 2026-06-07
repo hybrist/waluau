@@ -3319,6 +3319,11 @@ impl Builder<'_> {
                     {
                         return result;
                     }
+                    if let Some(result) =
+                        self.lower_string_builtin_call(&name, args, env, types, expected.clone())
+                    {
+                        return result;
+                    }
                 }
                 if let Expr::Name(name, Some(symbol_id), _) = callee.as_ref() {
                     if let Some((param_types, return_type)) =
@@ -4049,6 +4054,9 @@ impl Builder<'_> {
                         return result;
                     }
                     if let Some(result) = self.infer_print_builtin_call_type(&name, expr, types) {
+                        return result;
+                    }
+                    if let Some(result) = self.infer_string_builtin_call_type(&name, expr, types) {
                         return result;
                     }
                 }
@@ -4878,6 +4886,125 @@ impl Builder<'_> {
             )))),
             Err(error) => Some(Err(error)),
         }
+    }
+
+    fn lower_string_builtin_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<ValueId, Diagnostic>> {
+        if name != STRING_FIND {
+            return None;
+        }
+        
+        // Validate argument count
+        if args.len() != 2 {
+            return Some(Err(Diagnostic::new(format!(
+                "{STRING_FIND} expects 2 arguments, got {}",
+                args.len()
+            ))));
+        }
+
+        // Lower haystack argument
+        let haystack = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+            Ok(val) => val,
+            Err(error) => return Some(Err(error)),
+        };
+
+        // Lower needle argument  
+        let needle = match self.lower_expr(&args[1], env, types, Some(Type::String)) {
+            Ok(val) => val,
+            Err(error) => return Some(Err(error)),
+        };
+
+        // Call the string_find host function
+        let call_args = vec![haystack, needle];
+
+        // The result type: NotFound(unit) | Found(u32)
+        let u32_ty = Type::Numeric(NumericType::U32);
+        let result_ty = Type::TaggedUnion(vec![
+            TaggedVariant {
+                tag: "NotFound".to_string(),
+                payload: Box::new(Type::Unit),
+            },
+            TaggedVariant {
+                tag: "Found".to_string(),
+                payload: Box::new(u32_ty),
+            },
+        ]);
+
+        // Get the symbol_id for the string.find host function
+        let symbol_id = self.host_import_names.get(STRING_FIND).copied().ok_or_else(|| {
+            Diagnostic::new(format!(
+                "declared function '{STRING_FIND}' is missing a host import symbol"
+            ))
+        });
+        let symbol_id = match symbol_id {
+            Ok(id) => id,
+            Err(error) => return Some(Err(error)),
+        };
+
+        let result_value = self.emit(Instruction::HostCall {
+            name: STRING_FIND.to_string(),
+            symbol_id,
+            args: call_args,
+            return_type: result_ty.clone(),
+        });
+        
+        Some(self.coerce_value(result_value, result_ty, expected))
+    }
+
+    fn infer_string_builtin_call_type(
+        &self,
+        name: &str,
+        call: &Expr,
+        types: &HashMap<SymbolId, Type>,
+    ) -> Option<Result<Type, Diagnostic>> {
+        if name != STRING_FIND {
+            return None;
+        }
+        let Expr::Call { args, .. } = call else {
+            return None;
+        };
+        if args.len() != 2 {
+            return Some(Err(Diagnostic::new(format!(
+                "{STRING_FIND} expects 2 arguments, got {}",
+                args.len()
+            ))));
+        }
+
+        // Check argument types
+        match self.infer_expr_type(&args[0], types, Some(Type::String)) {
+            Ok(Type::String) => {},
+            Ok(actual) => return Some(Err(Diagnostic::new(format!(
+                "{STRING_FIND} expects haystack to be string, got {actual}",
+            )))),
+            Err(error) => return Some(Err(error)),
+        }
+
+        match self.infer_expr_type(&args[1], types, Some(Type::String)) {
+            Ok(Type::String) => {},
+            Ok(actual) => return Some(Err(Diagnostic::new(format!(
+                "{STRING_FIND} expects needle to be string, got {actual}",
+            )))),
+            Err(error) => return Some(Err(error)),
+        }
+
+        // Return type: NotFound(unit) | Found(u32)  
+        let u32_ty = Type::Numeric(NumericType::U32);
+        Some(Ok(Type::TaggedUnion(vec![
+            TaggedVariant {
+                tag: "NotFound".to_string(),
+                payload: Box::new(Type::Unit),
+            },
+            TaggedVariant {
+                tag: "Found".to_string(),
+                payload: Box::new(u32_ty),
+            },
+        ])))
     }
 }
 
