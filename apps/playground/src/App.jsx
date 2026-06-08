@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Editor from '@monaco-editor/react';
 
-import FileExplorer from './components/FileExplorer.jsx';
+import FileTabs from './components/FileTabs.jsx';
 import FileSearchModal from './components/FileSearchModal.jsx';
 import InlineRunner from './components/InlineRunner.jsx';
 import RunTab from './components/RunTab.jsx';
@@ -130,13 +130,8 @@ export default function App() {
       <main className="playground-main">
         {/* Editor Column */}
         <section className="column-panel editor-panel">
-          <div className="panel-header">
-            <h3>Source Code</h3>
-            <span className="file-extension">.walu</span>
-          </div>
-          <div className="editor-layout">
-            {/* File Explorer Sidebar */}
-            <FileExplorer
+          <div className="panel-header tab-header">
+            <FileTabs
               files={files}
               activeFile={activeFile}
               setActiveFile={setActiveFile}
@@ -150,7 +145,8 @@ export default function App() {
               handleRenameFile={handleRenameFile}
               handleSetEntryFile={handleSetEntryFile}
             />
-
+          </div>
+          <div className="editor-layout">
             {/* Monaco Editor Container */}
             <div className="editor-container">
               <div style={{ flex: 1, height: '100%' }}>
