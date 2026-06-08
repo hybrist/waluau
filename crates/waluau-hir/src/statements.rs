@@ -35,9 +35,9 @@ fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
     }
 }
 
-struct BranchScopes {
-    then_scope: HashMap<String, Binding>,
-    else_scope: HashMap<String, Binding>,
+pub(super) struct BranchScopes {
+    pub(super) then_scope: HashMap<String, Binding>,
+    pub(super) else_scope: HashMap<String, Binding>,
 }
 
 /// Resolves the dual-purpose `if Name(binding) = expr then ... end` syntax,
@@ -56,7 +56,7 @@ struct BranchScopes {
 /// same `Stmt::IfCast` shape (with `target_ty` resolved to a real type when
 /// possible, or left as an unresolved `Type::Named` when `target_name` turns
 /// out to name a variant tag rather than a declared type).
-fn checked_if_cast_scopes(
+pub(super) fn checked_if_cast_scopes(
     target_name: &str,
     target_ty: &Type,
     binding: &str,
@@ -126,33 +126,10 @@ fn type_property_setter_signature<'a>(
     receiver_ty: &Type,
     name: &str,
     fn_signatures: &'a HashMap<String, FnSignature>,
-) -> Option<&'a FnSignature> {
-    if let Type::Opaque {
-        name: type_name, ..
-    } = receiver_ty
-    {
-        let setter_name = property_setter_name(type_name, name);
-        if let Some(signature) = fn_signatures.get(&setter_name) {
-            return Some(signature);
-        }
-    }
-
-    let suffix = format!(".set/{name}");
-    let mut matches = fn_signatures
-        .iter()
-        .filter_map(|(setter_name, signature)| {
-            if !setter_name.ends_with(&suffix) {
-                return None;
-            }
-            let FnSignature::Mono { params, .. } = signature else {
-                return None;
-            };
-            let receiver_param = params.first()?;
-            (params.len() == 2 && method_receiver_matches(receiver_param, receiver_ty))
-                .then_some(signature)
-        })
-        .collect::<Vec<_>>();
-    (matches.len() == 1).then(|| matches.remove(0))
+) -> Option<(&'a FnSignature, String)> {
+    let setter_name = resolved_type_property_setter_name(receiver_ty, name, fn_signatures)?;
+    let signature = fn_signatures.get(&setter_name)?;
+    Some((signature, setter_name))
 }
 
 fn narrowed_variant_scopes(
@@ -201,7 +178,7 @@ fn nil_test_subject(condition: &Expr) -> Option<(&str, bool)> {
     }
 }
 
-fn narrowed_scopes(
+pub(super) fn narrowed_scopes(
     condition: &Expr,
     vars: &HashMap<String, Binding>,
 ) -> (HashMap<String, Binding>, HashMap<String, Binding>) {
@@ -222,6 +199,39 @@ fn narrowed_scopes(
     };
     target.insert(name.to_string(), binding_for(inner, binding.rebindability));
     (then_scope, else_scope)
+}
+
+pub(super) fn resolved_type_property_setter_name(
+    receiver_ty: &Type,
+    name: &str,
+    fn_signatures: &HashMap<String, FnSignature>,
+) -> Option<String> {
+    if let Type::Opaque {
+        name: type_name, ..
+    } = receiver_ty
+    {
+        let setter_name = property_setter_name(type_name, name);
+        if fn_signatures.contains_key(&setter_name) {
+            return Some(setter_name);
+        }
+    }
+
+    let suffix = format!(".set/{name}");
+    let mut matches = fn_signatures
+        .iter()
+        .filter_map(|(setter_name, signature)| {
+            if !setter_name.ends_with(&suffix) {
+                return None;
+            }
+            let FnSignature::Mono { params, .. } = signature else {
+                return None;
+            };
+            let receiver_param = params.first()?;
+            (params.len() == 2 && method_receiver_matches(receiver_param, receiver_ty))
+                .then_some(setter_name.clone())
+        })
+        .collect::<Vec<_>>();
+    (matches.len() == 1).then(|| matches.remove(0))
 }
 
 pub(super) fn check_function(
@@ -893,10 +903,13 @@ pub(super) fn check_stmt(
             op,
             base,
             name,
+            resolved_name: _,
             value,
         } => {
             let base_ty = infer_expr(base, vars, fn_signatures, active_type_params, None)?;
-            if let Some(signature) = type_property_setter_signature(&base_ty, name, fn_signatures) {
+            if let Some((signature, _)) =
+                type_property_setter_signature(&base_ty, name, fn_signatures)
+            {
                 if *op != AssignOp::Set {
                     return Err(Diagnostic::new(
                         "compound property assignment is not supported",
@@ -918,7 +931,7 @@ pub(super) fn check_stmt(
                         "property setter for '{name}' does not accept receiver {base_ty}"
                     )));
                 }
-                if *return_type != Type::Unit {
+                if return_type != &Type::Unit {
                     return Err(Diagnostic::new(format!(
                         "property setter for '{name}' must return unit"
                     )));

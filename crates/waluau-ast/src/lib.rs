@@ -386,6 +386,7 @@ pub enum Stmt {
         op: AssignOp,
         base: Box<Expr>,
         name: String,
+        resolved_name: Option<String>,
         value: Expr,
     },
     If {
@@ -508,6 +509,7 @@ pub enum Expr {
     MethodCall {
         receiver: Box<Expr>,
         name: String,
+        resolved_name: Option<String>,
         type_args: Vec<Type>,
         args: Vec<Expr>,
         span: Option<Span>,
@@ -533,6 +535,7 @@ pub enum Expr {
     Field {
         base: Box<Expr>,
         name: String,
+        resolved_name: Option<String>,
         span: Option<Span>,
     },
     Index {

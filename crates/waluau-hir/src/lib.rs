@@ -1,8 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use waluau_ast::{
-    AssignOp, Expr, Function, FunctionExpr, FunctionName, NumberLiteral, Param, Program,
-    Rebindability, Stmt, Type,
+    AssignOp, Expr, Function, FunctionExpr, FunctionName, NumberLiteral, NumericType, Param,
+    Program, Rebindability, Stmt, Type,
 };
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
@@ -12,11 +12,13 @@ mod numeric;
 mod signatures;
 mod statements;
 
+use expressions::{infer_expr, resolved_type_method_name, resolved_type_property_getter_name};
 use signatures::{
     FnSignature, GenericScheme, active_type_param_set, infer_function_expr_return_type,
     infer_top_level_function_return_type, inference_diagnostic,
 };
 use statements::{check_function, check_stmt};
+use statements::{checked_if_cast_scopes, narrowed_scopes, resolved_type_property_setter_name};
 
 #[derive(Clone)]
 struct Binding {
@@ -1280,6 +1282,7 @@ fn desugar_method_declarations(program: &Program) -> Result<Program, Diagnostic>
                         op: AssignOp::Set,
                         base: Box::new(Expr::Name(table.clone(), None, None)),
                         name: method.clone(),
+                        resolved_name: None,
                         value: Expr::Function(FunctionExpr {
                             name: None,
                             symbol_id: None,
@@ -1578,6 +1581,387 @@ fn resolve_expr_implicit_self(
     }
 }
 
+fn annotate_resolved_extern_members(
+    program: &mut Program,
+    fn_signatures: &HashMap<String, FnSignature>,
+) -> Result<(), Diagnostic> {
+    for function in &mut program.functions {
+        annotate_function_resolved_members(function, fn_signatures)?;
+    }
+    if let Some(export) = &mut program.export {
+        annotate_expr_resolved_members(export, &HashMap::new(), fn_signatures, &HashSet::new())?;
+    }
+    Ok(())
+}
+
+fn annotate_function_resolved_members(
+    function: &mut Function,
+    fn_signatures: &HashMap<String, FnSignature>,
+) -> Result<(), Diagnostic> {
+    let active_type_params = active_type_param_set(&function.type_params);
+    let mut vars: HashMap<String, Binding> = HashMap::new();
+    for param in &function.params {
+        vars.insert(
+            param.name.clone(),
+            binding_for(param.ty.clone(), Rebindability::Rebindable),
+        );
+    }
+    annotate_stmts_resolved_members(
+        &mut function.body,
+        &mut vars,
+        fn_signatures,
+        &active_type_params,
+    )
+}
+
+fn annotate_function_expr_resolved_members(
+    function: &mut FunctionExpr,
+    fn_signatures: &HashMap<String, FnSignature>,
+) -> Result<(), Diagnostic> {
+    let active_type_params = active_type_param_set(&function.type_params);
+    let mut vars: HashMap<String, Binding> = HashMap::new();
+    for param in &function.params {
+        vars.insert(
+            param.name.clone(),
+            binding_for(param.ty.clone(), Rebindability::Rebindable),
+        );
+    }
+    annotate_stmts_resolved_members(
+        &mut function.body,
+        &mut vars,
+        fn_signatures,
+        &active_type_params,
+    )
+}
+
+fn annotate_stmts_resolved_members(
+    stmts: &mut [Stmt],
+    vars: &mut HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+) -> Result<(), Diagnostic> {
+    for stmt in stmts {
+        annotate_stmt_resolved_members(stmt, vars, fn_signatures, active_type_params)?;
+    }
+    Ok(())
+}
+
+fn annotate_stmt_resolved_members(
+    stmt: &mut Stmt,
+    vars: &mut HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+) -> Result<(), Diagnostic> {
+    match stmt {
+        Stmt::Let {
+            name,
+            rebindability,
+            ty,
+            value,
+            ..
+        } => {
+            annotate_expr_resolved_members(value, vars, fn_signatures, active_type_params)?;
+            let inferred_ty = if let Some(expected_ty) = ty {
+                infer_expr(
+                    value,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    Some(expected_ty.clone()),
+                )
+                .unwrap_or_else(|_| expected_ty.clone())
+            } else if matches!(value, Expr::ArrayLiteral { elements, .. } if elements.is_empty()) {
+                Type::Record(BTreeMap::new())
+            } else {
+                infer_expr(value, vars, fn_signatures, active_type_params, None)
+                    .unwrap_or(Type::Unknown)
+            };
+            vars.insert(name.clone(), binding_for(inferred_ty, *rebindability));
+        }
+        Stmt::Assign { value, .. } | Stmt::Expr(value) | Stmt::Return(value) => {
+            annotate_expr_resolved_members(value, vars, fn_signatures, active_type_params)?;
+        }
+        Stmt::IndexAssign {
+            base, index, value, ..
+        } => {
+            annotate_expr_resolved_members(base, vars, fn_signatures, active_type_params)?;
+            annotate_expr_resolved_members(index, vars, fn_signatures, active_type_params)?;
+            annotate_expr_resolved_members(value, vars, fn_signatures, active_type_params)?;
+        }
+        Stmt::FieldAssign {
+            base,
+            name,
+            resolved_name,
+            value,
+            ..
+        } => {
+            annotate_expr_resolved_members(base, vars, fn_signatures, active_type_params)?;
+            annotate_expr_resolved_members(value, vars, fn_signatures, active_type_params)?;
+            if let Ok(base_ty) = infer_expr(base, vars, fn_signatures, active_type_params, None) {
+                *resolved_name = resolved_type_property_setter_name(&base_ty, name, fn_signatures);
+            }
+
+            if let Expr::Name(base_name, _, _) = base.as_ref() {
+                let binding = vars
+                    .get(base_name)
+                    .cloned()
+                    .ok_or_else(|| Diagnostic::new(format!("unknown local '{base_name}'")))?;
+                if let Type::Record(mut fields) = binding.ty {
+                    let existing_field = fields.get(name).cloned();
+                    if let Ok(value_ty) = infer_expr(
+                        value,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        existing_field.clone(),
+                    ) {
+                        if existing_field.is_none() && binding.record_open {
+                            fields.insert(name.clone(), value_ty);
+                        }
+                    }
+                    let mut updated = binding_for(Type::Record(fields), binding.rebindability);
+                    if !binding.record_open {
+                        updated.record_open = false;
+                    }
+                    vars.insert(base_name.clone(), updated);
+                }
+            }
+        }
+        Stmt::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
+            annotate_expr_resolved_members(condition, vars, fn_signatures, active_type_params)?;
+            let (mut then_scope, mut else_scope) = narrowed_scopes(condition, vars);
+            annotate_stmts_resolved_members(
+                then_body,
+                &mut then_scope,
+                fn_signatures,
+                active_type_params,
+            )?;
+            annotate_stmts_resolved_members(
+                else_body,
+                &mut else_scope,
+                fn_signatures,
+                active_type_params,
+            )?;
+        }
+        Stmt::IfCast {
+            target_name,
+            target_ty,
+            binding,
+            value,
+            then_body,
+            else_body,
+            ..
+        } => {
+            annotate_expr_resolved_members(value, vars, fn_signatures, active_type_params)?;
+            let branch_scopes = checked_if_cast_scopes(
+                target_name,
+                target_ty,
+                binding,
+                value,
+                vars,
+                fn_signatures,
+                active_type_params,
+            )?;
+            let mut then_scope = branch_scopes.then_scope;
+            let mut else_scope = branch_scopes.else_scope;
+            annotate_stmts_resolved_members(
+                then_body,
+                &mut then_scope,
+                fn_signatures,
+                active_type_params,
+            )?;
+            annotate_stmts_resolved_members(
+                else_body,
+                &mut else_scope,
+                fn_signatures,
+                active_type_params,
+            )?;
+        }
+        Stmt::While { condition, body } => {
+            annotate_expr_resolved_members(condition, vars, fn_signatures, active_type_params)?;
+            let mut loop_scope = vars.clone();
+            annotate_stmts_resolved_members(
+                body,
+                &mut loop_scope,
+                fn_signatures,
+                active_type_params,
+            )?;
+        }
+        Stmt::Repeat { body, condition } => {
+            let mut loop_scope = vars.clone();
+            annotate_stmts_resolved_members(
+                body,
+                &mut loop_scope,
+                fn_signatures,
+                active_type_params,
+            )?;
+            annotate_expr_resolved_members(condition, vars, fn_signatures, active_type_params)?;
+        }
+        Stmt::NumericFor {
+            name,
+            start,
+            stop,
+            step,
+            body,
+            ..
+        } => {
+            annotate_expr_resolved_members(start, vars, fn_signatures, active_type_params)?;
+            annotate_expr_resolved_members(stop, vars, fn_signatures, active_type_params)?;
+            if let Some(step) = step {
+                annotate_expr_resolved_members(step, vars, fn_signatures, active_type_params)?;
+            }
+            let mut loop_scope = vars.clone();
+            if let Ok(start_ty) = infer_expr(start, vars, fn_signatures, active_type_params, None) {
+                loop_scope.insert(name.clone(), binding_for(start_ty, Rebindability::Const));
+            }
+            annotate_stmts_resolved_members(
+                body,
+                &mut loop_scope,
+                fn_signatures,
+                active_type_params,
+            )?;
+        }
+        Stmt::ForIn {
+            names,
+            iterator,
+            body,
+            ..
+        } => {
+            annotate_expr_resolved_members(iterator, vars, fn_signatures, active_type_params)?;
+            let mut loop_scope = vars.clone();
+            if let Ok(Type::Array(element_ty)) =
+                infer_expr(iterator, vars, fn_signatures, active_type_params, None)
+            {
+                if names.len() == 1 {
+                    loop_scope.insert(
+                        names[0].clone(),
+                        binding_for(*element_ty, Rebindability::Const),
+                    );
+                } else if names.len() == 2 {
+                    loop_scope.insert(
+                        names[0].clone(),
+                        binding_for(Type::Numeric(NumericType::I32), Rebindability::Const),
+                    );
+                    loop_scope.insert(
+                        names[1].clone(),
+                        binding_for(*element_ty, Rebindability::Const),
+                    );
+                }
+            }
+            annotate_stmts_resolved_members(
+                body,
+                &mut loop_scope,
+                fn_signatures,
+                active_type_params,
+            )?;
+        }
+        Stmt::Break | Stmt::Continue => {}
+        Stmt::ReturnMulti(values)
+        | Stmt::LetMulti { values, .. }
+        | Stmt::AssignMulti { values, .. } => {
+            for value in values {
+                annotate_expr_resolved_members(value, vars, fn_signatures, active_type_params)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn annotate_expr_resolved_members(
+    expr: &mut Expr,
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+) -> Result<(), Diagnostic> {
+    match expr {
+        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } | Expr::IsVariant { expr, .. } => {
+            annotate_expr_resolved_members(expr, vars, fn_signatures, active_type_params)?
+        }
+        Expr::Binary { left, right, .. } => {
+            annotate_expr_resolved_members(left, vars, fn_signatures, active_type_params)?;
+            annotate_expr_resolved_members(right, vars, fn_signatures, active_type_params)?;
+        }
+        Expr::If {
+            condition,
+            then_expr,
+            else_expr,
+            ..
+        } => {
+            annotate_expr_resolved_members(condition, vars, fn_signatures, active_type_params)?;
+            annotate_expr_resolved_members(then_expr, vars, fn_signatures, active_type_params)?;
+            annotate_expr_resolved_members(else_expr, vars, fn_signatures, active_type_params)?;
+        }
+        Expr::Call { callee, args, .. } => {
+            annotate_expr_resolved_members(callee, vars, fn_signatures, active_type_params)?;
+            for arg in args {
+                annotate_expr_resolved_members(arg, vars, fn_signatures, active_type_params)?;
+            }
+        }
+        Expr::MethodCall {
+            receiver,
+            name,
+            resolved_name,
+            args,
+            ..
+        } => {
+            annotate_expr_resolved_members(receiver, vars, fn_signatures, active_type_params)?;
+            for arg in args {
+                annotate_expr_resolved_members(arg, vars, fn_signatures, active_type_params)?;
+            }
+            if let Ok(receiver_ty) =
+                infer_expr(receiver, vars, fn_signatures, active_type_params, None)
+            {
+                *resolved_name = resolved_type_method_name(&receiver_ty, name, fn_signatures);
+            }
+        }
+        Expr::Function(function) => {
+            annotate_function_expr_resolved_members(function, fn_signatures)?;
+        }
+        Expr::ArrayLiteral { elements, .. } => {
+            for element in elements {
+                annotate_expr_resolved_members(element, vars, fn_signatures, active_type_params)?;
+            }
+        }
+        Expr::TableLiteral { fields, .. } => {
+            for field in fields {
+                annotate_expr_resolved_members(
+                    &mut field.value,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                )?;
+            }
+        }
+        Expr::Field {
+            base,
+            name,
+            resolved_name,
+            ..
+        } => {
+            annotate_expr_resolved_members(base, vars, fn_signatures, active_type_params)?;
+            if let Ok(base_ty) = infer_expr(base, vars, fn_signatures, active_type_params, None) {
+                *resolved_name = resolved_type_property_getter_name(&base_ty, name, fn_signatures);
+            }
+        }
+        Expr::Index { base, index, .. } => {
+            annotate_expr_resolved_members(base, vars, fn_signatures, active_type_params)?;
+            annotate_expr_resolved_members(index, vars, fn_signatures, active_type_params)?;
+        }
+        Expr::Number(..)
+        | Expr::Bool(..)
+        | Expr::Nil(..)
+        | Expr::String(..)
+        | Expr::Bytes(..)
+        | Expr::Name(..)
+        | Expr::Require(..) => {}
+    }
+    Ok(())
+}
+
 pub fn type_check(program: &Program) -> Result<(), Diagnostic> {
     let _ = type_check_and_infer(program)?;
     Ok(())
@@ -1713,6 +2097,8 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
     for function in &typed.functions {
         check_function(function, &fn_signatures, &HashSet::new())?;
     }
+
+    annotate_resolved_extern_members(&mut typed, &fn_signatures)?;
 
     Ok(typed)
 }

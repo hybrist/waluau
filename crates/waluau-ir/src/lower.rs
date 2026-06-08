@@ -531,11 +531,13 @@ fn erase_stmt_opaque_types(stmt: &Stmt) -> Stmt {
             op,
             base,
             name,
+            resolved_name,
             value,
         } => Stmt::FieldAssign {
             op: *op,
             base: Box::new(erase_expr_opaque_types(base)),
             name: name.clone(),
+            resolved_name: resolved_name.clone(),
             value: erase_expr_opaque_types(value),
         },
         Stmt::If {
@@ -687,12 +689,14 @@ fn erase_expr_opaque_types(expr: &Expr) -> Expr {
         Expr::MethodCall {
             receiver,
             name,
+            resolved_name,
             args,
             span,
             type_args,
         } => Expr::MethodCall {
             receiver: Box::new(erase_expr_opaque_types(receiver)),
             name: name.clone(),
+            resolved_name: resolved_name.clone(),
             args: args.iter().map(erase_expr_opaque_types).collect(),
             span: *span,
             type_args: type_args.clone(),
@@ -730,9 +734,15 @@ fn erase_expr_opaque_types(expr: &Expr) -> Expr {
                 .collect(),
             span: *span,
         },
-        Expr::Field { base, name, span } => Expr::Field {
+        Expr::Field {
+            base,
+            name,
+            resolved_name,
+            span,
+        } => Expr::Field {
             base: Box::new(erase_expr_opaque_types(base)),
             name: name.clone(),
+            resolved_name: resolved_name.clone(),
             span: *span,
         },
         Expr::Index { base, index, span } => Expr::Index {
@@ -963,9 +973,16 @@ fn method_signature(
 
 fn type_method_signature(
     receiver_ty: &Type,
+    resolved_name: Option<&str>,
     name: &str,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
 ) -> Option<(String, Vec<Type>, Type)> {
+    if let Some(direct_name) = resolved_name {
+        return signatures
+            .get(direct_name)
+            .cloned()
+            .map(|(params, return_type)| (direct_name.to_string(), params, return_type));
+    }
     if let Type::Opaque { name: type_name, .. } = receiver_ty {
         let direct_name = method_signature_name(type_name, name);
         return signatures
@@ -991,9 +1008,15 @@ fn type_method_signature(
 
 fn type_property_getter_signature(
     receiver_ty: &Type,
+    resolved_name: Option<&str>,
     name: &str,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
 ) -> Option<(String, Vec<Type>, Type)> {
+    if let Some(direct_name) = resolved_name {
+        if let Some((params, return_type)) = signatures.get(direct_name).cloned() {
+            return Some((direct_name.to_string(), params, return_type));
+        }
+    }
     if let Type::Opaque { name: type_name, .. } = receiver_ty {
         let direct_name = property_getter_name(type_name, name);
         if let Some((params, return_type)) = signatures.get(&direct_name).cloned() {
@@ -1018,9 +1041,15 @@ fn type_property_getter_signature(
 
 fn type_property_setter_signature(
     receiver_ty: &Type,
+    resolved_name: Option<&str>,
     name: &str,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
 ) -> Option<(String, Vec<Type>, Type)> {
+    if let Some(direct_name) = resolved_name {
+        if let Some((params, return_type)) = signatures.get(direct_name).cloned() {
+            return Some((direct_name.to_string(), params, return_type));
+        }
+    }
     if let Type::Opaque { name: type_name, .. } = receiver_ty {
         let direct_name = property_setter_name(type_name, name);
         if let Some((params, return_type)) = signatures.get(&direct_name).cloned() {
@@ -1360,6 +1389,7 @@ impl Builder<'_> {
                     op,
                     base,
                     name,
+                    resolved_name,
                     value,
                 } = stmt
                 else {
@@ -1367,7 +1397,12 @@ impl Builder<'_> {
                 };
                 let base_ty = self.infer_expr_type(base, types, None)?;
                 if let Some((setter_name, params, return_type)) =
-                    type_property_setter_signature(&base_ty, name, self.field_call_signatures)
+                    type_property_setter_signature(
+                        &base_ty,
+                        resolved_name.as_deref(),
+                        name,
+                        self.field_call_signatures,
+                    )
                 {
                     if *op != AssignOp::Set {
                         return Err(Diagnostic::new(
@@ -2954,6 +2989,7 @@ impl Builder<'_> {
             Expr::MethodCall {
                 receiver,
                 name,
+                resolved_name,
                 args,
                 ..
             } => {
@@ -2973,7 +3009,12 @@ impl Builder<'_> {
                     }
                 }
                 let type_method =
-                    type_method_signature(&receiver_ty, name, self.field_call_signatures);
+                    type_method_signature(
+                        &receiver_ty,
+                        resolved_name.as_deref(),
+                        name,
+                        self.field_call_signatures,
+                    );
                 let (param_types, return_type) = if let Some((_, params, return_type)) =
                     type_method.clone()
                 {
@@ -3651,10 +3692,20 @@ impl Builder<'_> {
                 });
                 self.coerce_value(value, struct_ty, expected)?
             }
-            Expr::Field { base, name, .. } => {
+            Expr::Field {
+                base,
+                name,
+                resolved_name,
+                ..
+            } => {
                 let base_ty = self.infer_expr_type(base, types, None)?;
                 if let Some((getter_name, params, return_type)) =
-                    type_property_getter_signature(&base_ty, name, self.field_call_signatures)
+                    type_property_getter_signature(
+                        &base_ty,
+                        resolved_name.as_deref(),
+                        name,
+                        self.field_call_signatures,
+                    )
                 {
                     if params.len() != 1 || !method_receiver_matches(&params[0], &base_ty) {
                         return Err(Diagnostic::new(format!(
@@ -4013,6 +4064,7 @@ impl Builder<'_> {
             Expr::MethodCall {
                 receiver,
                 name,
+                resolved_name,
                 args,
                 ..
             } => {
@@ -4028,7 +4080,12 @@ impl Builder<'_> {
                     }
                 }
                 let (params, return_type) = if let Some((_, params, return_type)) =
-                    type_method_signature(&receiver_ty, name, self.field_call_signatures)
+                    type_method_signature(
+                        &receiver_ty,
+                        resolved_name.as_deref(),
+                        name,
+                        self.field_call_signatures,
+                    )
                 {
                     (params, Box::new(return_type))
                 } else if let Some(signature) =
@@ -4238,10 +4295,20 @@ impl Builder<'_> {
                 }
                 coerce_type(Type::Record(record_fields), expected)
             }
-            Expr::Field { base, name, .. } => {
+            Expr::Field {
+                base,
+                name,
+                resolved_name,
+                ..
+            } => {
                 let base_ty = self.infer_expr_type(base, types, None)?;
                 if let Some((_, params, return_type)) =
-                    type_property_getter_signature(&base_ty, name, self.field_call_signatures)
+                    type_property_getter_signature(
+                        &base_ty,
+                        resolved_name.as_deref(),
+                        name,
+                        self.field_call_signatures,
+                    )
                 {
                     if params.len() == 1 && method_receiver_matches(&params[0], &base_ty) {
                         return coerce_type(return_type, expected);
