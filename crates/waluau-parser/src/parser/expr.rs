@@ -310,6 +310,7 @@ impl Parser {
                 expr = Expr::Field {
                     base: Box::new(expr),
                     name,
+                    resolved_name: None,
                     span: Some(Span {
                         start: start_pos,
                         end: end_pos,
@@ -345,6 +346,7 @@ impl Parser {
                 expr = Expr::MethodCall {
                     receiver: Box::new(expr),
                     name,
+                    resolved_name: None,
                     type_args,
                     args,
                     span: Some(Span {

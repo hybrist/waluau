@@ -70,13 +70,23 @@ fn type_method_signature<'a>(
     name: &str,
     fn_signatures: &'a HashMap<String, FnSignature>,
 ) -> Option<(&'a FnSignature, String)> {
+    let method_name = resolved_type_method_name(receiver_ty, name, fn_signatures)?;
+    let signature = fn_signatures.get(&method_name)?;
+    Some((signature, method_name))
+}
+
+pub(super) fn resolved_type_method_name(
+    receiver_ty: &Type,
+    name: &str,
+    fn_signatures: &HashMap<String, FnSignature>,
+) -> Option<String> {
     if let Type::Opaque {
         name: type_name, ..
     } = receiver_ty
     {
         let method_name = method_signature_name(type_name, name);
-        if let Some(signature) = fn_signatures.get(&method_name) {
-            return Some((signature, method_name));
+        if fn_signatures.contains_key(&method_name) {
+            return Some(method_name);
         }
     }
 
@@ -91,8 +101,7 @@ fn type_method_signature<'a>(
                 return None;
             };
             let receiver_param = params.first()?;
-            method_receiver_matches(receiver_param, receiver_ty)
-                .then_some((signature, method_name.clone()))
+            method_receiver_matches(receiver_param, receiver_ty).then_some(method_name.clone())
         })
         .collect::<Vec<_>>();
     (matches.len() == 1).then(|| matches.remove(0))
@@ -103,13 +112,23 @@ fn type_property_getter_signature<'a>(
     name: &str,
     fn_signatures: &'a HashMap<String, FnSignature>,
 ) -> Option<(&'a FnSignature, String)> {
+    let getter_name = resolved_type_property_getter_name(receiver_ty, name, fn_signatures)?;
+    let signature = fn_signatures.get(&getter_name)?;
+    Some((signature, getter_name))
+}
+
+pub(super) fn resolved_type_property_getter_name(
+    receiver_ty: &Type,
+    name: &str,
+    fn_signatures: &HashMap<String, FnSignature>,
+) -> Option<String> {
     if let Type::Opaque {
         name: type_name, ..
     } = receiver_ty
     {
         let getter_name = property_getter_name(type_name, name);
-        if let Some(signature) = fn_signatures.get(&getter_name) {
-            return Some((signature, getter_name));
+        if fn_signatures.contains_key(&getter_name) {
+            return Some(getter_name);
         }
     }
 
@@ -125,7 +144,7 @@ fn type_property_getter_signature<'a>(
             };
             let receiver_param = params.first()?;
             (params.len() == 1 && method_receiver_matches(receiver_param, receiver_ty))
-                .then_some((signature, getter_name.clone()))
+                .then_some(getter_name.clone())
         })
         .collect::<Vec<_>>();
     (matches.len() == 1).then(|| matches.remove(0))

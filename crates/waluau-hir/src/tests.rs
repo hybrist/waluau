@@ -1173,6 +1173,72 @@ fn type_checks_declared_host_method_on_extern_type() {
 }
 
 #[test]
+fn type_checks_duplicate_declared_host_members_across_extern_types() {
+    let source = r#"
+        type Alpha = extern
+        type Beta = extern
+
+        declare property Alpha:size: u32
+        declare property Beta:size: u32
+        declare function Alpha:value(delta: i32): i32
+        declare function Beta:value(delta: i32): i32
+
+        function read_alpha(x: Alpha): u32
+            return x.size
+        end
+
+        function read_beta(x: Beta): u32
+            return x.size
+        end
+
+        function write_alpha(x: Alpha): unit
+            x.size = 1::u32
+        end
+
+        function write_beta(x: Beta): unit
+            x.size = 2::u32
+        end
+
+        function call_alpha(x: Alpha): i32
+            return x:value(1::i32)
+        end
+
+        function call_beta(x: Beta): i32
+            return x:value(2::i32)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn type_checks_duplicate_declared_host_members_inside_capturing_closure() {
+    let source = r#"
+        type Event = extern
+        type Alpha = extern
+        type Beta = extern
+
+        declare property Alpha:size: u32
+        declare property Beta:size: u32
+        declare function Alpha:value(delta: i32): i32
+        declare function Beta:value(delta: i32): i32
+
+        declare function make_alpha(): Alpha
+        declare function listen(callback: (Event) -> unit): unit
+
+        function install(): unit
+            local alpha: Alpha = make_alpha()
+            listen(function(event: Event): unit
+                alpha.size = 3::u32
+                assert(alpha:value(4::i32) == 4)
+            end)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
 fn type_checks_method_call_via_method_declaration() {
     let source = r#"
         local point = { x = 41::i32 }

@@ -901,6 +901,94 @@ fn lowers_lifted_unit_function_expression_with_implicit_return() {
 }
 
 #[test]
+fn lowers_duplicate_declared_host_members_across_extern_types() {
+    let source = r#"
+        type Alpha = extern
+        type Beta = extern
+
+        declare function get_alpha(): Alpha
+        declare function get_beta(): Beta
+        declare property Alpha:size: u32
+        declare property Beta:size: u32
+        declare function Alpha:value(delta: i32): i32
+        declare function Beta:value(delta: i32): i32
+
+        function read_alpha(x: Alpha): u32
+            return x.size
+        end
+
+        function read_beta(x: Beta): u32
+            return x.size
+        end
+
+        function write_alpha(x: Alpha): unit
+            x.size = 1::u32
+        end
+
+        function write_beta(x: Beta): unit
+            x.size = 2::u32
+        end
+
+        function call_alpha(x: Alpha): i32
+            return x:value(1::i32)
+        end
+
+        function call_beta(x: Beta): i32
+            return x:value(2::i32)
+        end
+
+        function entry(): i32
+            local alpha = get_alpha()
+            local beta = get_beta()
+            write_alpha(alpha)
+            write_beta(beta)
+            return call_alpha(alpha) + call_beta(beta) + read_alpha(alpha)::i32 + read_beta(beta)::i32
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+
+    let host_calls = module
+        .functions
+        .iter()
+        .flat_map(|function| function.blocks.values())
+        .flat_map(|block| block.instructions.iter())
+        .filter_map(|(_, instruction)| match instruction {
+            Instruction::HostCall { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        host_calls.contains(&"Alpha.get/size"),
+        "expected Alpha getter host call, got {host_calls:?}"
+    );
+    assert!(
+        host_calls.contains(&"Beta.get/size"),
+        "expected Beta getter host call, got {host_calls:?}"
+    );
+    assert!(
+        host_calls.contains(&"Alpha.set/size"),
+        "expected Alpha setter host call, got {host_calls:?}"
+    );
+    assert!(
+        host_calls.contains(&"Beta.set/size"),
+        "expected Beta setter host call, got {host_calls:?}"
+    );
+    assert!(
+        host_calls.contains(&"Alpha.value"),
+        "expected Alpha method host call, got {host_calls:?}"
+    );
+    assert!(
+        host_calls.contains(&"Beta.value"),
+        "expected Beta method host call, got {host_calls:?}"
+    );
+}
+
+#[test]
 fn lowers_named_function_expression_recursion() {
     let source = r#"
         function entry(): i32

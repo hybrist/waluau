@@ -241,9 +241,15 @@ fn property_getter_name(base: &str, property: &str) -> String {
 
 fn type_property_getter_signature(
     receiver_ty: &Type,
+    resolved_name: Option<&str>,
     name: &str,
     signatures: &HashMap<String, (Vec<Type>, Type)>,
 ) -> Option<(Vec<Type>, Type)> {
+    if let Some(direct_name) = resolved_name {
+        if let Some(signature) = signatures.get(direct_name).cloned() {
+            return Some(signature);
+        }
+    }
     if let Type::Opaque {
         name: type_name, ..
     } = receiver_ty
@@ -575,6 +581,7 @@ impl<'a> Monomorphizer<'a> {
                 op,
                 base,
                 name,
+                resolved_name,
                 value,
             } => {
                 let rewritten_base = self.rewrite_expr(base, subst, active, types)?;
@@ -592,6 +599,7 @@ impl<'a> Monomorphizer<'a> {
                     op: *op,
                     base: Box::new(rewritten_base),
                     name: name.clone(),
+                    resolved_name: resolved_name.clone(),
                     value: rewritten_value,
                 }
             }
@@ -834,9 +842,15 @@ impl<'a> Monomorphizer<'a> {
                     .collect::<Result<Vec<_>, _>>()?,
                 span: *span,
             },
-            Expr::Field { base, name, span } => Expr::Field {
+            Expr::Field {
+                base,
+                name,
+                resolved_name,
+                span,
+            } => Expr::Field {
                 base: Box::new(self.rewrite_expr(base, subst, active, types)?),
                 name: name.clone(),
+                resolved_name: resolved_name.clone(),
                 span: *span,
             },
             Expr::Index { base, index, span } => Expr::Index {
@@ -900,7 +914,13 @@ impl<'a> Monomorphizer<'a> {
             }
         }
 
-        if let Expr::Field { base, name, span } = callee {
+        if let Expr::Field {
+            base,
+            name,
+            span,
+            resolved_name: _,
+        } = callee
+        {
             if let Expr::Name(_, Some(table_symbol_id), _) = base.as_ref() {
                 let key = (*table_symbol_id, name.clone());
                 if let Some(function) = self.generic_methods.get(&key).copied() {
@@ -996,6 +1016,7 @@ impl<'a> Monomorphizer<'a> {
         let Expr::MethodCall {
             receiver,
             name,
+            resolved_name,
             args,
             span,
             type_args,
@@ -1097,6 +1118,7 @@ impl<'a> Monomorphizer<'a> {
         Ok(Expr::MethodCall {
             receiver: Box::new(rewritten_receiver),
             name: name.to_string(),
+            resolved_name: resolved_name.clone(),
             args: rewritten_args,
             span,
             type_args: type_args
@@ -1424,6 +1446,7 @@ impl<'a> Monomorphizer<'a> {
             Expr::MethodCall {
                 receiver,
                 name,
+                resolved_name,
                 type_args,
                 args,
                 ..
@@ -1473,7 +1496,11 @@ impl<'a> Monomorphizer<'a> {
                     );
                 }
 
-                let field_ty = if let Some(ty) = self.lookup_method_signature(&receiver_ty, name) {
+                let field_ty = if let Some(ty) = self.lookup_method_signature(
+                    &receiver_ty,
+                    resolved_name.as_deref(),
+                    name,
+                ) {
                     ty
                 } else {
                     receiver_ty.record_field(name).unwrap_or(Type::Unknown)
@@ -1515,10 +1542,20 @@ impl<'a> Monomorphizer<'a> {
                 }
                 Ok(Type::Record(record_fields))
             }
-            Expr::Field { base, name, .. } => {
+            Expr::Field {
+                base,
+                name,
+                resolved_name,
+                ..
+            } => {
                 let base_ty = self.infer_expr_type(base, subst, types)?;
                 if let Some((params, return_type)) =
-                    type_property_getter_signature(&base_ty, name, &self.property_signatures)
+                    type_property_getter_signature(
+                        &base_ty,
+                        resolved_name.as_deref(),
+                        name,
+                        &self.property_signatures,
+                    )
                 {
                     if params.len() == 1 && method_receiver_matches(&params[0], &base_ty) {
                         return Ok(substitute_type(&return_type, subst));
@@ -1539,7 +1576,20 @@ impl<'a> Monomorphizer<'a> {
         }
     }
 
-    fn lookup_method_signature(&self, receiver_ty: &Type, name: &str) -> Option<Type> {
+    fn lookup_method_signature(
+        &self,
+        receiver_ty: &Type,
+        resolved_name: Option<&str>,
+        name: &str,
+    ) -> Option<Type> {
+        if let Some(direct_name) = resolved_name {
+            if let Some((params, return_type)) = self.property_signatures.get(direct_name) {
+                return Some(Type::Function {
+                    params: params.clone(),
+                    return_type: Box::new(return_type.clone()),
+                });
+            }
+        }
         let suffix = name;
         for ((_table_id, m_name), function_ty) in &self.method_signatures {
             if m_name == suffix {

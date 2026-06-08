@@ -4,8 +4,8 @@ import {
   WALUAU_IMPORT_MODULE,
 } from '../../playground/src/utils/wasm.js';
 
-export async function compileAndInstantiate(files, entryFile = '/main.walu') {
-  await compileAndInstantiateWithExports(files, entryFile);
+export async function compileAndInstantiate(files, entryFile = '/main.walu', options = {}) {
+  await compileAndInstantiateWithExports(files, entryFile, options);
 }
 
 export async function compileAndInstantiateWithExports(files, entryFile = '/main.walu', options = {}) {

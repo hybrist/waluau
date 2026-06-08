@@ -961,6 +961,7 @@ impl Rewriter<'_> {
             base,
             name: field,
             span,
+            ..
         } = expr
         {
             if let Expr::Name(local, _, _) = &**base {

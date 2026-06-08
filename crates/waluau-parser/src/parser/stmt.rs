@@ -262,6 +262,7 @@ impl Parser {
                     op,
                     base,
                     name,
+                    resolved_name: None,
                     value: values.into_iter().next().expect("len checked"),
                 },
                 _ => {
