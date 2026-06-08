@@ -23,7 +23,7 @@ pub(super) const MATH_COPYSIGN: &str = "math.copysign";
 pub(super) const TABLE_CONCAT: &str = "table.concat";
 pub(super) const TO_STRING: &str = "tostring";
 pub(super) const ASSERT: &str = "assert";
-pub(super) const STRING_FIND: &str = "string_find";
+pub(super) const STRING_FIND: &str = "string.find";
 // pub(super) const PRINT: &str = "print"; // now handled via extern declaration
 
 pub(super) fn infer_coroutine_builtin_call(
@@ -329,15 +329,15 @@ pub(super) fn infer_string_builtin_call(
         return None;
     }
 
-    // string_find expects 2 arguments: (haystack: string, needle: string)
-    if args.len() != 2 {
+    // string.find(haystack, needle, init?, plain?): the trailing `init` (search
+    // start offset) and `plain` (plain substring search) arguments are optional.
+    if args.len() < 2 || args.len() > 4 {
         return Some(Err(Diagnostic::new(format!(
-            "{STRING_FIND} expects 2 arguments, got {}",
+            "{STRING_FIND} expects 2 to 4 arguments, got {}",
             args.len()
         ))));
     }
 
-    // Check haystack argument (string)
     let haystack_ty = match super::expressions::infer_expr(
         &args[0],
         vars,
@@ -354,7 +354,6 @@ pub(super) fn infer_string_builtin_call(
         ))));
     }
 
-    // Check needle argument (string)
     let needle_ty = match super::expressions::infer_expr(
         &args[1],
         vars,
@@ -371,8 +370,45 @@ pub(super) fn infer_string_builtin_call(
         ))));
     }
 
-    // Return type: i32 (position or -1 if not found)
-    Some(coerce_type(Type::Numeric(NumericType::I32), expected))
+    let i32_ty = Type::Numeric(NumericType::I32);
+    if let Some(init_arg) = args.get(2) {
+        let init_ty = match super::expressions::infer_expr(
+            init_arg,
+            vars,
+            fn_signatures,
+            active_type_params,
+            Some(i32_ty.clone()),
+        ) {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        if init_ty != i32_ty {
+            return Some(Err(Diagnostic::new(format!(
+                "{STRING_FIND} expects init to be an i32, got {init_ty}"
+            ))));
+        }
+    }
+
+    if let Some(plain_arg) = args.get(3) {
+        let plain_ty = match super::expressions::infer_expr(
+            plain_arg,
+            vars,
+            fn_signatures,
+            active_type_params,
+            Some(Type::Bool),
+        ) {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        if plain_ty != Type::Bool {
+            return Some(Err(Diagnostic::new(format!(
+                "{STRING_FIND} expects plain to be a bool, got {plain_ty}"
+            ))));
+        }
+    }
+
+    // Return type: i32 (0-based position, or -1 if not found)
+    Some(coerce_type(i32_ty, expected))
 }
 
 // infer_print_builtin_call removed - now handled via extern function declaration

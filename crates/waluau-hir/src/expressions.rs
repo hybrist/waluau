@@ -5,7 +5,7 @@ use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
 use super::Binding;
 use super::builtins::{
-    infer_coroutine_builtin_call, infer_math_builtin_call, infer_string_builtin_call,
+    STRING_FIND, infer_coroutine_builtin_call, infer_math_builtin_call, infer_string_builtin_call,
     infer_table_builtin_call, infer_tostring_builtin_call,
 };
 use super::numeric::{
@@ -472,6 +472,21 @@ pub(super) fn infer_expr(
             ..
         } => {
             let receiver_ty = infer_expr(receiver, vars, fn_signatures, active_type_params, None)?;
+            if receiver_ty == Type::String && name == "find" {
+                let mut call_args = Vec::with_capacity(args.len() + 1);
+                call_args.push((**receiver).clone());
+                call_args.extend_from_slice(args);
+                if let Some(result) = infer_string_builtin_call(
+                    STRING_FIND,
+                    &call_args,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    expected.clone(),
+                ) {
+                    return result;
+                }
+            }
             let (params, ret) = if let Some((signature, _)) =
                 method_signature(receiver, name, fn_signatures)
                     .or_else(|| type_method_signature(&receiver_ty, name, fn_signatures))

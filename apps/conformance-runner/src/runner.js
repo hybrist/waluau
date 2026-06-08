@@ -188,6 +188,17 @@ function buildWaluauImports(wasmBuffer, options = {}) {
       if (name === 'host_add') {
         return (left, right) => left + right;
       }
+      if (name === 'string_find') {
+        return (haystack, needle, init, plain) => {
+          const hay = String(haystack);
+          const needleStr = String(needle);
+          let start = Number(init);
+          if (start < 0) start = Math.max(0, hay.length + start);
+          // Pattern matching is not supported; only plain substring search.
+          void plain;
+          return hay.indexOf(needleStr, start);
+        };
+      }
       if (name === 'extern_is') {
         return externIs;
       }

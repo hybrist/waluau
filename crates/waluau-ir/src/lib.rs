@@ -23,7 +23,8 @@ const TABLE_CONCAT: &str = "table.concat";
 const TO_STRING: &str = "tostring";
 const ASSERT: &str = "assert";
 const PRINT: &str = "print";
-const STRING_FIND: &str = "string_find";
+const STRING_FIND: &str = "string.find";
+const STRING_FIND_HOST: &str = "string_find";
 
 fn inference_diagnostic(
     code: &'static str,

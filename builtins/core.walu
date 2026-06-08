@@ -4,6 +4,8 @@
 -- Print a string to stdout
 declare function print(message: string): unit
 
--- String find function with Lua-compatible API
--- Returns position (0-based) or -1 if not found
-declare function string_find(haystack: string, needle: string): i32
+-- Low-level string search primitive backing `string.find`/`string:find`.
+-- Returns the 0-based start position of `needle` in `haystack` searching from
+-- `init`, or -1 if not found. `plain` selects plain substring search (patterns
+-- are not yet supported, so callers should always pass `true`).
+declare function string_find(haystack: string, needle: string, init: i32, plain: bool): i32

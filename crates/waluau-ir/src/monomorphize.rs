@@ -1429,6 +1429,9 @@ impl<'a> Monomorphizer<'a> {
                 ..
             } => {
                 let receiver_ty = self.infer_expr_type(receiver, subst, types)?;
+                if receiver_ty == Type::String && name == "find" {
+                    return Ok(Type::Numeric(waluau_ast::NumericType::I32));
+                }
                 if let Expr::Name(_, Some(table_symbol_id), _) = receiver.as_ref() {
                     let key = (*table_symbol_id, name.clone());
                     if let Some(function) = self.generic_methods.get(&key) {
@@ -1660,7 +1663,7 @@ impl<'a> Monomorphizer<'a> {
                     Ok(Some(Type::number()))
                 }
             }
-            "string_find" => {
+            "string.find" => {
                 Ok(Some(Type::Numeric(waluau_ast::NumericType::I32)))
             }
             _ => Ok(None),
