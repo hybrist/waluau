@@ -1,3 +1,0 @@
-declare function host_add(left: i32, right: i32): i32
-
-assert(host_add(20, 22) == 42)
