@@ -430,12 +430,14 @@ impl Parser {
             TokenKind::False => Ok(Expr::Bool(false, span)),
             TokenKind::Nil => Ok(Expr::Nil(span)),
             TokenKind::Identifier(name) => {
-                // `require("...")` is parsed as a dedicated node so the
-                // linker can resolve module ids before IR lowering.
+                // `require("...")` (or the sugared `require "..."`) is parsed
+                // as a dedicated node so the linker can resolve module ids
+                // before IR lowering.
                 if name == "require"
-                    && self.peek().is_some_and(|token| {
-                        super::tokens::same_variant(&token.kind, &TokenKind::LParen)
-                    })
+                    && matches!(
+                        self.peek().map(|token| &token.kind),
+                        Some(TokenKind::LParen) | Some(TokenKind::Str(_))
+                    )
                 {
                     return self.parse_require(token.span.start);
                 }
@@ -475,6 +477,27 @@ impl Parser {
     }
 
     fn parse_require(&mut self, start_pos: u32) -> Result<Expr, Diagnostic> {
+        // Lua's call-argument sugar allows `require "./module"` as shorthand
+        // for `require("./module")`.
+        if let Some(Token {
+            kind: TokenKind::Str(_),
+            span,
+        }) = self.peek()
+        {
+            let span = *span;
+            let path = match self.advance().expect("peeked string token").kind {
+                TokenKind::Str(path) => path,
+                _ => unreachable!("peeked string token"),
+            };
+            return Ok(Expr::Require(
+                path,
+                Some(Span {
+                    start: start_pos,
+                    end: span.end,
+                }),
+            ));
+        }
+
         self.expect_simple(TokenKind::LParen, "expected '(' after require")?;
         let path = match self.advance() {
             Some(Token {
