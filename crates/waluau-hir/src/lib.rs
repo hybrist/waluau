@@ -1616,10 +1616,13 @@ fn annotate_function_resolved_members(
 
 fn annotate_function_expr_resolved_members(
     function: &mut FunctionExpr,
+    parent_vars: &HashMap<String, Binding>,
     fn_signatures: &HashMap<String, FnSignature>,
+    parent_type_params: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
-    let active_type_params = active_type_param_set(&function.type_params);
-    let mut vars: HashMap<String, Binding> = HashMap::new();
+    let mut active_type_params = parent_type_params.clone();
+    active_type_params.extend(active_type_param_set(&function.type_params));
+    let mut vars = parent_vars.clone();
     for param in &function.params {
         vars.insert(
             param.name.clone(),
@@ -1919,7 +1922,12 @@ fn annotate_expr_resolved_members(
             }
         }
         Expr::Function(function) => {
-            annotate_function_expr_resolved_members(function, fn_signatures)?;
+            annotate_function_expr_resolved_members(
+                function,
+                vars,
+                fn_signatures,
+                active_type_params,
+            )?;
         }
         Expr::ArrayLiteral { elements, .. } => {
             for element in elements {

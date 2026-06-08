@@ -1212,6 +1212,33 @@ fn type_checks_duplicate_declared_host_members_across_extern_types() {
 }
 
 #[test]
+fn type_checks_duplicate_declared_host_members_inside_capturing_closure() {
+    let source = r#"
+        type Event = extern
+        type Alpha = extern
+        type Beta = extern
+
+        declare property Alpha:size: u32
+        declare property Beta:size: u32
+        declare function Alpha:value(delta: i32): i32
+        declare function Beta:value(delta: i32): i32
+
+        declare function make_alpha(): Alpha
+        declare function listen(callback: (Event) -> unit): unit
+
+        function install(): unit
+            local alpha: Alpha = make_alpha()
+            listen(function(event: Event): unit
+                alpha.size = 3::u32
+                assert(alpha:value(4::i32) == 4)
+            end)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
 fn type_checks_method_call_via_method_declaration() {
     let source = r#"
         local point = { x = 41::i32 }
