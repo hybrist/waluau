@@ -207,6 +207,46 @@ mod tests {
     }
 
     #[test]
+    fn compile_file_accepts_callback_filtering_with_helper_and_string_find() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("app.walu");
+        fs::write(
+            &input_path,
+            r#"
+                function contains_text(haystack: string, needle: string): bool
+                    return haystack:find(needle) ~= -1
+                end
+
+                function install(): unit
+                    local window = require("dom:window")
+                    local document: Document = window.document
+                    local input_element: Element = document:create_element("input")
+                    local seed_text: string = "typed card"
+
+                    input_element:add_event_listener("input", function(event: Event): unit
+                        if HTMLInputElement(target) = event.target then
+                            local value: string = target.value
+                            local matches_seed: bool = value == "" or seed_text:find(value) ~= -1
+                            if contains_text(seed_text, value) then
+                            end
+                            if matches_seed then
+                            end
+                        end
+                    end)
+                end
+            "#,
+        )
+        .expect("app should write");
+
+        let wasm = super::compile_file(&input_path)
+            .expect("callback filtering inside DOM event handlers should compile");
+        assert!(
+            wasm.starts_with(b"\0asm"),
+            "compiled wasm should start with the wasm magic bytes"
+        );
+    }
+
+    #[test]
     fn compile_file_rejects_unknown_dom_virtual_module() {
         let tempdir = tempdir().expect("tempdir should exist");
         let input_path = tempdir.path().join("app.walu");

@@ -145,6 +145,31 @@ fn parses_extern_inheritance_and_if_cast() {
 }
 
 #[test]
+fn parses_if_call_condition_without_confusing_it_for_if_cast() {
+    let source = r#"
+        function contains_text(haystack: string, needle: string): bool
+            return haystack:find(needle) ~= -1
+        end
+
+        function entry(value: string): bool
+            if contains_text(value, "card") then
+                return true
+            end
+            return false
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert!(matches!(
+        &program.functions[1].body[0],
+        Stmt::If {
+            condition: waluau_ast::Expr::Call { .. },
+            ..
+        }
+    ));
+}
+
+#[test]
 fn parses_declared_host_method_with_implicit_receiver_param() {
     let source = r#"
         type Element = extern
