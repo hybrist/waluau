@@ -9,5 +9,9 @@
     "test:dom-externs": "node --test tools/dom-idl/generate-dom-externs.test.mjs",
     "test:playground": "pnpm --filter playground test",
     "test:conformance-browser": "pnpm --filter conformance-runner test:browser"
+  },
+  "devDependencies": {
+    "@webref/idl": "^3.80.0",
+    "webidl2": "^24.5.0"
   }
 }

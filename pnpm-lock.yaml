@@ -6,7 +6,14 @@ settings:
 
 importers:
 
-  .: {}
+  .:
+    devDependencies:
+      '@webref/idl':
+        specifier: ^3.80.0
+        version: 3.80.0(webidl2@24.5.0)
+      webidl2:
+        specifier: ^24.5.0
+        version: 24.5.0
 
   apps/conformance-runner:
     devDependencies:
@@ -428,6 +435,11 @@ packages:
 
   '@vitest/utils@4.1.7':
     resolution: {integrity: sha512-T532WBu791cBxJlCl6SO+J14l81DQx6uQHm1bQbmCDY7nqlEIgkza/UFnSBNaUtSf41unldDFjdOBYEQC4b5Hw==}
+
+  '@webref/idl@3.80.0':
+    resolution: {integrity: sha512-TBKsgIfcCNfoR1YUXsCfsAJBFbT+eROvpvmgZZPMCBZ7kY8lUM3dutu1O/LOtp7iifn0sGsR2s8vfZUnK9SQkg==}
+    peerDependencies:
+      webidl2: ^24.5.0
 
   acorn-jsx@5.3.2:
     resolution: {integrity: sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ==}
@@ -1025,6 +1037,10 @@ packages:
       jsdom:
         optional: true
 
+  webidl2@24.5.0:
+    resolution: {integrity: sha512-fxOigKkIem1iAgQ9t4cFOP+kWEA8y6Be/uh50FpJh0FijoeeT/VMrOyJzNLUgjy0rGMEcHeReKDCqj0g9dIe9A==}
+    engines: {node: '>= 18'}
+
   which@2.0.2:
     resolution: {integrity: sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA==}
     engines: {node: '>= 8'}
@@ -1439,6 +1455,10 @@ snapshots:
       '@vitest/pretty-format': 4.1.7
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.0
+
+  '@webref/idl@3.80.0(webidl2@24.5.0)':
+    dependencies:
+      webidl2: 24.5.0
 
   acorn-jsx@5.3.2(acorn@8.16.0):
     dependencies:
@@ -1922,6 +1942,8 @@ snapshots:
       '@vitest/browser-playwright': 4.1.7(playwright@1.60.0)(vite@8.0.14)(vitest@4.1.7)
     transitivePeerDependencies:
       - msw
+
+  webidl2@24.5.0: {}
 
   which@2.0.2:
     dependencies:

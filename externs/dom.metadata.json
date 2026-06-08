@@ -1,25 +1,13 @@
 {
-  "source": "tools/dom-idl/input/dom-first-slice.webidl",
+  "source": "@webref/idl",
   "inheritance": [
-    {
-      "interface": "EventTarget",
-      "parent": null
-    },
-    {
-      "interface": "Event",
-      "parent": null
-    },
-    {
-      "interface": "Node",
-      "parent": "EventTarget"
-    },
     {
       "interface": "Document",
       "parent": "Node"
     },
     {
       "interface": "Window",
-      "parent": null
+      "parent": "EventTarget"
     },
     {
       "interface": "Element",
@@ -30,11 +18,23 @@
       "parent": "Element"
     },
     {
-      "interface": "HTMLHeadingElement",
-      "parent": "HTMLElement"
+      "interface": "Event",
+      "parent": null
+    },
+    {
+      "interface": "EventTarget",
+      "parent": null
+    },
+    {
+      "interface": "Node",
+      "parent": "EventTarget"
     },
     {
       "interface": "HTMLInputElement",
+      "parent": "HTMLElement"
+    },
+    {
+      "interface": "HTMLHeadingElement",
       "parent": "HTMLElement"
     },
     {
@@ -47,80 +47,6 @@
     }
   ],
   "emittedMembers": [
-    {
-      "interface": "EventTarget",
-      "kind": "operation",
-      "idlName": "addEventListener",
-      "emittedName": "add_event_listener",
-      "params": [
-        "type: string",
-        "callback: (Event) -> unit"
-      ],
-      "returnType": "unit"
-    },
-    {
-      "interface": "Event",
-      "kind": "attribute",
-      "idlName": "target",
-      "emittedName": "target",
-      "type": "EventTarget",
-      "readonly": true
-    },
-    {
-      "interface": "Node",
-      "kind": "attribute",
-      "idlName": "nodeName",
-      "emittedName": "node_name",
-      "type": "string",
-      "readonly": true
-    },
-    {
-      "interface": "Node",
-      "kind": "attribute",
-      "idlName": "textContent",
-      "emittedName": "text_content",
-      "type": "string",
-      "readonly": false
-    },
-    {
-      "interface": "Node",
-      "kind": "operation",
-      "idlName": "appendChild",
-      "emittedName": "append_child",
-      "params": [
-        "node: Node"
-      ],
-      "returnType": "Node"
-    },
-    {
-      "interface": "Node",
-      "kind": "operation",
-      "idlName": "replaceChild",
-      "emittedName": "replace_child",
-      "params": [
-        "new_child: Node",
-        "old_child: Node"
-      ],
-      "returnType": "Node"
-    },
-    {
-      "interface": "Node",
-      "kind": "operation",
-      "idlName": "removeChild",
-      "emittedName": "remove_child",
-      "params": [
-        "child: Node"
-      ],
-      "returnType": "Node"
-    },
-    {
-      "interface": "Document",
-      "kind": "attribute",
-      "idlName": "body",
-      "emittedName": "body",
-      "type": "HTMLElement",
-      "readonly": true
-    },
     {
       "interface": "Document",
       "kind": "attribute",
@@ -138,6 +64,14 @@
         "tag_name: string"
       ],
       "returnType": "Element"
+    },
+    {
+      "interface": "Document",
+      "kind": "attribute",
+      "idlName": "body",
+      "emittedName": "body",
+      "type": "HTMLElement",
+      "readonly": true
     },
     {
       "interface": "Document",
@@ -235,16 +169,6 @@
     {
       "interface": "Element",
       "kind": "operation",
-      "idlName": "querySelector",
-      "emittedName": "query_selector",
-      "params": [
-        "selectors: string"
-      ],
-      "returnType": "Element?"
-    },
-    {
-      "interface": "Element",
-      "kind": "operation",
       "idlName": "onClick",
       "emittedName": "on_click",
       "params": [
@@ -263,6 +187,16 @@
       "returnType": "unit"
     },
     {
+      "interface": "Element",
+      "kind": "operation",
+      "idlName": "querySelector",
+      "emittedName": "query_selector",
+      "params": [
+        "selectors: string"
+      ],
+      "returnType": "Element?"
+    },
+    {
       "interface": "HTMLElement",
       "kind": "attribute",
       "idlName": "innerText",
@@ -277,6 +211,72 @@
       "emittedName": "value",
       "type": "string",
       "readonly": false
+    },
+    {
+      "interface": "Event",
+      "kind": "attribute",
+      "idlName": "target",
+      "emittedName": "target",
+      "type": "EventTarget",
+      "readonly": true
+    },
+    {
+      "interface": "EventTarget",
+      "kind": "operation",
+      "idlName": "addEventListener",
+      "emittedName": "add_event_listener",
+      "params": [
+        "type: string",
+        "callback: (Event) -> unit"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "Node",
+      "kind": "attribute",
+      "idlName": "nodeName",
+      "emittedName": "node_name",
+      "type": "string",
+      "readonly": true
+    },
+    {
+      "interface": "Node",
+      "kind": "attribute",
+      "idlName": "textContent",
+      "emittedName": "text_content",
+      "type": "string",
+      "readonly": false
+    },
+    {
+      "interface": "Node",
+      "kind": "operation",
+      "idlName": "appendChild",
+      "emittedName": "append_child",
+      "params": [
+        "node: Node"
+      ],
+      "returnType": "Node"
+    },
+    {
+      "interface": "Node",
+      "kind": "operation",
+      "idlName": "replaceChild",
+      "emittedName": "replace_child",
+      "params": [
+        "new_child: Node",
+        "old_child: Node"
+      ],
+      "returnType": "Node"
+    },
+    {
+      "interface": "Node",
+      "kind": "operation",
+      "idlName": "removeChild",
+      "emittedName": "remove_child",
+      "params": [
+        "child: Node"
+      ],
+      "returnType": "Node"
     },
     {
       "interface": "Storage",
