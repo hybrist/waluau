@@ -61,7 +61,11 @@ impl SignatureRegistry {
     }
 }
 
-pub(crate) fn collect_user_signatures(module: &Module, start_thunk: bool) -> SignatureRegistry {
+pub(crate) fn collect_user_signatures(
+    module: &Module,
+    start_thunk: bool,
+    callback_event_unit_trampoline: bool,
+) -> SignatureRegistry {
     let mut registry = SignatureRegistry::new();
     for function in &module.functions {
         let params = function.params.iter().map(|(_, ty)| ty.clone()).collect();
@@ -97,6 +101,9 @@ pub(crate) fn collect_user_signatures(module: &Module, start_thunk: bool) -> Sig
     }
     if start_thunk {
         registry.add(Vec::new(), Type::Unit);
+    }
+    if callback_event_unit_trampoline {
+        registry.add_wrapper(vec![Type::Extern], Type::Unit);
     }
     registry
 }

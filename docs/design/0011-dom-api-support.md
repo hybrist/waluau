@@ -55,6 +55,23 @@ declare function setTimeout(cb: () -> unit, ms: i32): i32
 A conformance test that declares one host function, calls it, and verifies the
 result executes correctly in the browser harness.
 
+### Callback ABI MVP
+
+For browser events, the first supported callback shape is `(Event) -> unit`,
+where `Event` is an extern-backed type and lowers to `externref`. Waluau function
+values keep the existing Wasm-GC `$func_val` representation:
+
+- the function value stores the original function table slot, captured
+  environment array, and wrapper table slot;
+- host imports receive that `$func_val` reference for function-typed parameters;
+- modules that declare an `(extern) -> unit` host callback parameter export
+  `__waluau_call_callback_event_unit(callback, event)`, which loads the
+  callback's wrapper slot and invokes it through the normal `call_indirect`
+  wrapper path;
+- JS/browser listener wrappers retain the callback value for as long as the
+  listener is registered, and release it when the listener is removed. The
+  compiler ABI does not add a new closure representation or lifetime primitive.
+
 ---
 
 ## 2. Opaque / extern host-object types (`type T = extern`)
