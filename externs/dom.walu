@@ -6,37 +6,835 @@ type EventTarget = extern
 type Event = extern
 type Node = extern extends EventTarget
 type Document = extern extends Node
-type Window = extern extends EventTarget
+type DocumentFragment = extern extends Node
+type DocumentType = extern extends Node
+type CharacterData = extern extends Node
+type Text = extern extends CharacterData
+type Comment = extern extends CharacterData
+type CDATASection = extern extends Text
+type ProcessingInstruction = extern extends CharacterData
+type Attr = extern extends Node
+type NamedNodeMap = extern
+type NodeList = extern
+type HTMLCollection = extern
+type HTMLAllCollection = extern
+type HTMLFormControlsCollection = extern extends HTMLCollection
+type DOMTokenList = extern
+type DOMStringMap = extern
+type ShadowRoot = extern extends DocumentFragment
+type AbstractRange = extern
+type Range = extern extends AbstractRange
+type NodeIterator = extern
+type TreeWalker = extern
+type CustomElementRegistry = extern
 type Element = extern extends Node
 type HTMLElement = extern extends Element
 type HTMLHeadingElement = extern extends HTMLElement
 type HTMLInputElement = extern extends HTMLElement
 type HTMLTextAreaElement = extern extends HTMLElement
+type HTMLFormElement = extern extends HTMLElement
+type HTMLDataListElement = extern extends HTMLElement
+type HTMLHeadElement = extern extends HTMLElement
+type HTMLSlotElement = extern extends HTMLElement
+type ValidityState = extern
+type Window = extern extends EventTarget
+type Location = extern
+type History = extern
+type Navigator = extern
+type Screen = extern
+type ScreenOrientation = extern extends EventTarget
+type BarProp = extern
+type VirtualKeyboard = extern extends EventTarget
 type Storage = extern
+type DOMRectReadOnly = extern
+type DOMRect = extern extends DOMRectReadOnly
+type DOMRectList = extern
+type DOMPointReadOnly = extern
+type DOMPoint = extern extends DOMPointReadOnly
+type DOMQuad = extern
+type Selection = extern
+type Blob = extern
+type File = extern extends Blob
+type FileList = extern
+type MimeType = extern
+type MimeTypeArray = extern
+type Plugin = extern
+type PluginArray = extern
+type CSSStyleDeclaration = extern
+type CSSStyleProperties = extern extends CSSStyleDeclaration
+type CSSRule = extern
+type CSSRuleList = extern
+type StyleSheet = extern
+type CSSStyleSheet = extern extends StyleSheet
+type StyleSheetList = extern
+type MediaList = extern
+type CSSPseudoElement = extern
+type StylePropertyMapReadOnly = extern
+type StylePropertyMap = extern extends StylePropertyMapReadOnly
 
+declare property Blob:size: u64
+declare property Blob:type: string
+declare function Blob:slice(): Blob
+declare property File:lastModified: i64
+declare property File:webkitRelativePath: string
+declare property Document:URL: string
+declare property Document:documentURI: string
+declare property Document:compatMode: string
+declare property Document:characterSet: string
+declare property Document:charset: string
+declare property Document:inputEncoding: string
+declare property Document:contentType: string
+declare property Document:doctype: DocumentType?
 declare property Document:document_element: Element
+declare function Document:getElementsByTagName(qualified_name: string): HTMLCollection
+declare function Document:getElementsByTagNameNS(namespace: string?, local_name: string): HTMLCollection
+declare function Document:getElementsByClassName(class_names: string): HTMLCollection
 declare function Document:create_element(tag_name: string): Element
+declare function Document:createElementNS(namespace: string?, qualified_name: string): Element
+declare function Document:createDocumentFragment(): DocumentFragment
+declare function Document:createTextNode(data: string): Text
+declare function Document:createCDATASection(data: string): CDATASection
+declare function Document:createComment(data: string): Comment
+declare function Document:createProcessingInstruction(target: string, data: string): ProcessingInstruction
+declare function Document:importNode(node: Node): Node
+declare function Document:adoptNode(node: Node): Node
+declare function Document:createAttribute(local_name: string): Attr
+declare function Document:createAttributeNS(namespace: string?, qualified_name: string): Attr
+declare function Document:createEvent(interface: string): Event
+declare function Document:createRange(): Range
+declare function Document:createNodeIterator(root: Node): NodeIterator
+declare function Document:createTreeWalker(root: Node): TreeWalker
+declare function Document:elementFromPoint(x: f64, y: f64): Element?
+declare property Document:scrollingElement: Element?
+declare property Document:fullscreenEnabled: bool
+declare property Document:fullscreen: bool
+declare property Document:onfullscreenchange: (Event) -> unit
+declare property Document:onfullscreenerror: (Event) -> unit
+declare function Document:parseHTML(html: string): Document
+declare property Document:domain: string
+declare property Document:referrer: string
+declare property Document:cookie: string
+declare property Document:readyState: string
+declare property Document:dir: string
 declare property Document:body: HTMLElement
+declare property Document:head: HTMLHeadElement?
+declare property Document:images: HTMLCollection
+declare property Document:embeds: HTMLCollection
+declare property Document:links: HTMLCollection
+declare property Document:forms: HTMLCollection
+declare property Document:scripts: HTMLCollection
+declare function Document:getElementsByName(element_name: string): NodeList
+declare property Document:defaultView: Window?
+declare function Document:hasFocus(): bool
+declare property Document:designMode: string
+declare function Document:execCommand(command_id: string): bool
+declare function Document:queryCommandEnabled(command_id: string): bool
+declare function Document:queryCommandIndeterm(command_id: string): bool
+declare function Document:queryCommandState(command_id: string): bool
+declare function Document:queryCommandSupported(command_id: string): bool
+declare function Document:queryCommandValue(command_id: string): string
+declare property Document:hidden: bool
+declare property Document:visibilityState: string
+declare property Document:onreadystatechange: (Event) -> unit
+declare property Document:onvisibilitychange: (Event) -> unit
+declare property Document:fgColor: string
+declare property Document:linkColor: string
+declare property Document:vlinkColor: string
+declare property Document:alinkColor: string
+declare property Document:bgColor: string
+declare property Document:anchors: HTMLCollection
+declare property Document:applets: HTMLCollection
+declare property Document:all: HTMLAllCollection
+declare property Document:onfreeze: (Event) -> unit
+declare property Document:onresume: (Event) -> unit
+declare property Document:wasDiscarded: bool
+declare property Document:pictureInPictureEnabled: bool
+declare property Document:onpointerlockchange: (Event) -> unit
+declare property Document:onpointerlockerror: (Event) -> unit
+declare function Document:exitPointerLock(): unit
+declare property Document:prerendering: bool
+declare property Document:onprerenderingchange: (Event) -> unit
 declare function Document:get_element_by_id(element_id: string): Element?
+declare property Document:customElementRegistry: CustomElementRegistry?
+declare property Document:styleSheets: StyleSheetList
+declare property Document:fullscreenElement: Element?
+declare property Document:activeElement: Element?
+declare property Document:pictureInPictureElement: Element?
+declare property Document:pointerLockElement: Element?
+declare property Document:children: HTMLCollection
+declare property Document:firstElementChild: Element?
+declare property Document:lastElementChild: Element?
+declare property Document:childElementCount: u32
+declare function Document:moveBefore(node: Node, child: Node?): unit
 declare function Document:query_selector(selectors: string): Element?
+declare function Document:querySelectorAll(selectors: string): NodeList
+declare function Document:createNSResolver(node_resolver: Node): Node
+declare function Document:ariaNotify(announcement: string): unit
+declare property Window:window: Window
+declare property Window:self: Window
 declare property Window:document: Document
+declare property Window:location: Location
+declare property Window:history: History
+declare property Window:customElements: CustomElementRegistry
+declare property Window:locationbar: BarProp
+declare property Window:menubar: BarProp
+declare property Window:personalbar: BarProp
+declare property Window:scrollbars: BarProp
+declare property Window:statusbar: BarProp
+declare property Window:toolbar: BarProp
+declare property Window:status: string
+declare function Window:close(): unit
+declare property Window:closed: bool
+declare function Window:stop(): unit
+declare function Window:focus(): unit
+declare function Window:blur(): unit
+declare property Window:frames: Window
+declare property Window:parent: Window?
+declare property Window:frameElement: Element?
+declare function Window:open(): Window?
+declare property Window:navigator: Navigator
+declare property Window:clientInformation: Navigator
+declare property Window:originAgentCluster: bool
+declare function Window:alert(message: string): unit
+declare function Window:confirm(): bool
+declare function Window:prompt(): string?
+declare function Window:print(): unit
+declare property Window:credentialless: bool
+declare property Window:onorientationchange: (Event) -> unit
+declare function Window:navigate(dir: string): unit
+declare function Window:requestResize(): unit
+declare property Window:screen: Screen
+declare function Window:moveTo(x: i32, y: i32): unit
+declare function Window:moveBy(x: i32, y: i32): unit
+declare function Window:resizeTo(width: i32, height: i32): unit
+declare function Window:resizeBy(x: i32, y: i32): unit
+declare property Window:innerWidth: i32
+declare property Window:innerHeight: i32
+declare property Window:scrollX: f64
+declare property Window:pageXOffset: f64
+declare property Window:scrollY: f64
+declare property Window:pageYOffset: f64
+declare property Window:screenX: i32
+declare property Window:screenLeft: i32
+declare property Window:screenY: i32
+declare property Window:screenTop: i32
+declare property Window:outerWidth: i32
+declare property Window:outerHeight: i32
+declare property Window:devicePixelRatio: f64
+declare function Window:getComputedStyle(elt: Element): CSSStyleProperties
+declare function Window:captureEvents(): unit
+declare function Window:releaseEvents(): unit
+declare property Window:onappinstalled: (Event) -> unit
+declare property Window:onbeforeinstallprompt: (Event) -> unit
+declare property Window:ondeviceorientation: (Event) -> unit
+declare property Window:ondeviceorientationabsolute: (Event) -> unit
+declare property Window:ondevicemotion: (Event) -> unit
+declare function Window:cancelIdleCallback(handle: u32): unit
+declare function Window:getSelection(): Selection?
+declare property Window:onabort: (Event) -> unit
+declare property Window:onauxclick: (Event) -> unit
+declare property Window:onbeforeinput: (Event) -> unit
+declare property Window:onbeforematch: (Event) -> unit
+declare property Window:onbeforetoggle: (Event) -> unit
+declare property Window:onblur: (Event) -> unit
+declare property Window:oncancel: (Event) -> unit
+declare property Window:oncanplay: (Event) -> unit
+declare property Window:oncanplaythrough: (Event) -> unit
+declare property Window:onclick: (Event) -> unit
+declare property Window:onclose: (Event) -> unit
+declare property Window:oncommand: (Event) -> unit
+declare property Window:oncontextlost: (Event) -> unit
+declare property Window:oncontextmenu: (Event) -> unit
+declare property Window:oncontextrestored: (Event) -> unit
+declare property Window:oncopy: (Event) -> unit
+declare property Window:oncuechange: (Event) -> unit
+declare property Window:oncut: (Event) -> unit
+declare property Window:ondblclick: (Event) -> unit
+declare property Window:ondrag: (Event) -> unit
+declare property Window:ondragend: (Event) -> unit
+declare property Window:ondragenter: (Event) -> unit
+declare property Window:ondragleave: (Event) -> unit
+declare property Window:ondragover: (Event) -> unit
+declare property Window:ondragstart: (Event) -> unit
+declare property Window:ondrop: (Event) -> unit
+declare property Window:ondurationchange: (Event) -> unit
+declare property Window:onemptied: (Event) -> unit
+declare property Window:onended: (Event) -> unit
+declare property Window:onfocus: (Event) -> unit
+declare property Window:onformdata: (Event) -> unit
+declare property Window:oninput: (Event) -> unit
+declare property Window:oninvalid: (Event) -> unit
+declare property Window:onkeydown: (Event) -> unit
+declare property Window:onkeypress: (Event) -> unit
+declare property Window:onkeyup: (Event) -> unit
+declare property Window:onload: (Event) -> unit
+declare property Window:onloadeddata: (Event) -> unit
+declare property Window:onloadedmetadata: (Event) -> unit
+declare property Window:onloadstart: (Event) -> unit
+declare property Window:onmousedown: (Event) -> unit
+declare property Window:onmouseenter: (Event) -> unit
+declare property Window:onmouseleave: (Event) -> unit
+declare property Window:onmousemove: (Event) -> unit
+declare property Window:onmouseout: (Event) -> unit
+declare property Window:onmouseover: (Event) -> unit
+declare property Window:onmouseup: (Event) -> unit
+declare property Window:onpaste: (Event) -> unit
+declare property Window:onpause: (Event) -> unit
+declare property Window:onplay: (Event) -> unit
+declare property Window:onplaying: (Event) -> unit
+declare property Window:onprogress: (Event) -> unit
+declare property Window:onratechange: (Event) -> unit
+declare property Window:onreset: (Event) -> unit
+declare property Window:onresize: (Event) -> unit
+declare property Window:onscroll: (Event) -> unit
+declare property Window:onscrollend: (Event) -> unit
+declare property Window:onsecuritypolicyviolation: (Event) -> unit
+declare property Window:onseeked: (Event) -> unit
+declare property Window:onseeking: (Event) -> unit
+declare property Window:onselect: (Event) -> unit
+declare property Window:onslotchange: (Event) -> unit
+declare property Window:onstalled: (Event) -> unit
+declare property Window:onsubmit: (Event) -> unit
+declare property Window:onsuspend: (Event) -> unit
+declare property Window:ontimeupdate: (Event) -> unit
+declare property Window:ontoggle: (Event) -> unit
+declare property Window:onvolumechange: (Event) -> unit
+declare property Window:onwaiting: (Event) -> unit
+declare property Window:onwebkitanimationend: (Event) -> unit
+declare property Window:onwebkitanimationiteration: (Event) -> unit
+declare property Window:onwebkitanimationstart: (Event) -> unit
+declare property Window:onwebkittransitionend: (Event) -> unit
+declare property Window:onwheel: (Event) -> unit
+declare property Window:onanimationstart: (Event) -> unit
+declare property Window:onanimationiteration: (Event) -> unit
+declare property Window:onanimationend: (Event) -> unit
+declare property Window:onanimationcancel: (Event) -> unit
+declare property Window:onsnapchanged: (Event) -> unit
+declare property Window:onsnapchanging: (Event) -> unit
+declare property Window:ontransitionrun: (Event) -> unit
+declare property Window:ontransitionstart: (Event) -> unit
+declare property Window:ontransitionend: (Event) -> unit
+declare property Window:ontransitioncancel: (Event) -> unit
+declare property Window:onfencedtreeclick: (Event) -> unit
+declare property Window:onpointerover: (Event) -> unit
+declare property Window:onpointerenter: (Event) -> unit
+declare property Window:onpointerdown: (Event) -> unit
+declare property Window:onpointermove: (Event) -> unit
+declare property Window:onpointerrawupdate: (Event) -> unit
+declare property Window:onpointerup: (Event) -> unit
+declare property Window:onpointercancel: (Event) -> unit
+declare property Window:onpointerout: (Event) -> unit
+declare property Window:onpointerleave: (Event) -> unit
+declare property Window:ongotpointercapture: (Event) -> unit
+declare property Window:onlostpointercapture: (Event) -> unit
+declare property Window:onselectstart: (Event) -> unit
+declare property Window:onselectionchange: (Event) -> unit
+declare property Window:ontouchstart: (Event) -> unit
+declare property Window:ontouchend: (Event) -> unit
+declare property Window:ontouchmove: (Event) -> unit
+declare property Window:ontouchcancel: (Event) -> unit
+declare property Window:onbeforexrselect: (Event) -> unit
+declare property Window:onafterprint: (Event) -> unit
+declare property Window:onbeforeprint: (Event) -> unit
+declare property Window:onhashchange: (Event) -> unit
+declare property Window:onlanguagechange: (Event) -> unit
+declare property Window:onmessage: (Event) -> unit
+declare property Window:onmessageerror: (Event) -> unit
+declare property Window:onoffline: (Event) -> unit
+declare property Window:ononline: (Event) -> unit
+declare property Window:onpagehide: (Event) -> unit
+declare property Window:onpagereveal: (Event) -> unit
+declare property Window:onpageshow: (Event) -> unit
+declare property Window:onpageswap: (Event) -> unit
+declare property Window:onpopstate: (Event) -> unit
+declare property Window:onrejectionhandled: (Event) -> unit
+declare property Window:onstorage: (Event) -> unit
+declare property Window:onunhandledrejection: (Event) -> unit
+declare property Window:onunload: (Event) -> unit
+declare property Window:ongamepadconnected: (Event) -> unit
+declare property Window:ongamepaddisconnected: (Event) -> unit
+declare property Window:onportalactivate: (Event) -> unit
+declare property Window:isSecureContext: bool
+declare property Window:crossOriginIsolated: bool
+declare function Window:btoa(data: string): string
+declare function Window:atob(data: string): string
+declare function Window:clearTimeout(): unit
+declare function Window:clearInterval(): unit
+declare function Window:queueMicrotask(callback: () -> unit): unit
+declare function Window:requestAnimationFrame(callback: (f64) -> unit): u32
+declare function Window:cancelAnimationFrame(handle: u32): unit
+declare property Window:sessionStorage: Storage
 declare property Window:local_storage: Storage
+declare function Navigator:sendBeacon(url: string): bool
+declare property Navigator:maxTouchPoints: i32
+declare property Navigator:virtualKeyboard: VirtualKeyboard
+declare function Navigator:canShare(): bool
+declare property Navigator:deviceMemory: f64
+declare property Navigator:globalPrivacyControl: bool
+declare property Navigator:appCodeName: string
+declare property Navigator:appName: string
+declare property Navigator:appVersion: string
+declare property Navigator:platform: string
+declare property Navigator:product: string
+declare property Navigator:productSub: string
+declare property Navigator:userAgent: string
+declare property Navigator:vendor: string
+declare property Navigator:vendorSub: string
+declare function Navigator:taintEnabled(): bool
+declare property Navigator:oscpu: string
+declare property Navigator:language: string
+declare property Navigator:onLine: bool
+declare function Navigator:registerProtocolHandler(scheme: string, url: string): unit
+declare function Navigator:unregisterProtocolHandler(scheme: string, url: string): unit
+declare property Navigator:cookieEnabled: bool
+declare property Navigator:plugins: PluginArray
+declare property Navigator:mimeTypes: MimeTypeArray
+declare function Navigator:javaEnabled(): bool
+declare property Navigator:pdfViewerEnabled: bool
+declare property Navigator:hardwareConcurrency: u64
+declare property Navigator:webdriver: bool
+declare property Element:tagName: string
 declare property Element:id: string
 declare property Element:class_name: string
+declare property Element:classList: DOMTokenList
+declare property Element:slot: string
+declare function Element:hasAttributes(): bool
+declare property Element:attributes: NamedNodeMap
 declare function Element:get_attribute(name: string): string?
+declare function Element:getAttributeNS(namespace: string?, local_name: string): string?
 declare function Element:set_attribute(name: string, value: string): unit
 declare function Element:remove_attribute(name: string): unit
-declare function Element:query_selector(selectors: string): Element?
+declare function Element:removeAttributeNS(namespace: string?, local_name: string): unit
+declare function Element:toggleAttribute(qualified_name: string): bool
+declare function Element:hasAttribute(qualified_name: string): bool
+declare function Element:hasAttributeNS(namespace: string?, local_name: string): bool
+declare function Element:getAttributeNode(qualified_name: string): Attr?
+declare function Element:getAttributeNodeNS(namespace: string?, local_name: string): Attr?
+declare function Element:setAttributeNode(attr: Attr): Attr?
+declare function Element:setAttributeNodeNS(attr: Attr): Attr?
+declare function Element:removeAttributeNode(attr: Attr): Attr
+declare property Element:shadowRoot: ShadowRoot?
+declare function Element:closest(selectors: string): Element?
+declare function Element:matches(selectors: string): bool
+declare function Element:webkitMatchesSelector(selectors: string): bool
+declare function Element:insertAdjacentElement(where: string, element: Element): Element?
+declare function Element:insertAdjacentText(where: string, data: string): unit
+declare property Element:containertiming: string
+declare property Element:containertimingIgnore: string?
+declare function Element:getSpatialNavigationContainer(): Node
+declare function Element:spatialNavigationSearch(dir: string): Node?
+declare property Element:part: DOMTokenList
+declare function Element:computedStyleMap(): StylePropertyMapReadOnly
+declare function Element:checkVisibility(): bool
+declare property Element:scrollTop: f64
+declare property Element:scrollLeft: f64
+declare property Element:scrollWidth: i32
+declare property Element:scrollHeight: i32
+declare property Element:clientTop: i32
+declare property Element:clientLeft: i32
+declare property Element:clientWidth: i32
+declare property Element:clientHeight: i32
+declare property Element:currentCSSZoom: f64
+declare property Element:elementTiming: string
+declare function Element:setHTML(html: string): unit
+declare function Element:getHTML(): string
+declare function Element:setPointerCapture(pointer_id: i32): unit
+declare function Element:releasePointerCapture(pointer_id: i32): unit
+declare function Element:hasPointerCapture(pointer_id: i32): bool
+declare property Element:regionOverset: string
+declare property Element:assignedSlot: HTMLSlotElement?
+declare property Element:role: string?
+declare property Element:ariaActiveDescendantElement: Element?
+declare property Element:ariaAtomic: string?
+declare property Element:ariaAutoComplete: string?
+declare property Element:ariaBrailleLabel: string?
+declare property Element:ariaBrailleRoleDescription: string?
+declare property Element:ariaBusy: string?
+declare property Element:ariaChecked: string?
+declare property Element:ariaColCount: string?
+declare property Element:ariaColIndex: string?
+declare property Element:ariaColIndexText: string?
+declare property Element:ariaColSpan: string?
+declare property Element:ariaCurrent: string?
+declare property Element:ariaDescription: string?
+declare property Element:ariaDisabled: string?
+declare property Element:ariaExpanded: string?
+declare property Element:ariaHasPopup: string?
+declare property Element:ariaHidden: string?
+declare property Element:ariaInvalid: string?
+declare property Element:ariaKeyShortcuts: string?
+declare property Element:ariaLabel: string?
+declare property Element:ariaLevel: string?
+declare property Element:ariaLive: string?
+declare property Element:ariaModal: string?
+declare property Element:ariaMultiLine: string?
+declare property Element:ariaMultiSelectable: string?
+declare property Element:ariaOrientation: string?
+declare property Element:ariaPlaceholder: string?
+declare property Element:ariaPosInSet: string?
+declare property Element:ariaPressed: string?
+declare property Element:ariaReadOnly: string?
+declare property Element:ariaRelevant: string?
+declare property Element:ariaRequired: string?
+declare property Element:ariaRoleDescription: string?
+declare property Element:ariaRowCount: string?
+declare property Element:ariaRowIndex: string?
+declare property Element:ariaRowIndexText: string?
+declare property Element:ariaRowSpan: string?
+declare property Element:ariaSelected: string?
+declare property Element:ariaSetSize: string?
+declare property Element:ariaSort: string?
+declare property Element:ariaValueMax: string?
+declare property Element:ariaValueMin: string?
+declare property Element:ariaValueNow: string?
+declare property Element:ariaValueText: string?
+declare property CSSRule:cssText: string
+declare property CSSRule:parentRule: CSSRule?
+declare property CSSRule:parentStyleSheet: CSSStyleSheet?
+declare property CSSPseudoElement:element: Element
+declare property CSSPseudoElement:selectorText: string
+declare function CSSPseudoElement:pseudo(type: string): CSSPseudoElement?
+declare function StylePropertyMapReadOnly:has(property: string): bool
+declare function StylePropertyMap:delete(property: string): unit
+declare property Screen:availWidth: i32
+declare property Screen:availHeight: i32
+declare property Screen:colorDepth: u32
+declare property Screen:pixelDepth: u32
+declare property Screen:orientation: ScreenOrientation
+declare property Screen:isExtended: bool
+declare property Screen:onchange: (Event) -> unit
+declare property HTMLElement:lang: string
+declare property HTMLElement:translate: bool
+declare property HTMLElement:inert: bool
+declare function HTMLElement:click(): unit
+declare property HTMLElement:accessKey: string
+declare property HTMLElement:accessKeyLabel: string
+declare property HTMLElement:draggable: bool
+declare property HTMLElement:spellcheck: bool
+declare property HTMLElement:writingSuggestions: string
+declare property HTMLElement:autocapitalize: string
+declare property HTMLElement:autocorrect: bool
 declare property HTMLElement:inner_text: string
+declare property HTMLElement:outerText: string
+declare function HTMLElement:showPopover(): unit
+declare function HTMLElement:hidePopover(): unit
+declare function HTMLElement:togglePopover(): bool
+declare property HTMLElement:popover: string?
+declare property HTMLElement:headingOffset: u32
+declare property HTMLElement:headingReset: bool
+declare property HTMLElement:scrollParent: Element?
+declare property HTMLElement:offsetParent: Element?
+declare property HTMLElement:offsetTop: i32
+declare property HTMLElement:offsetLeft: i32
+declare property HTMLElement:offsetWidth: i32
+declare property HTMLElement:offsetHeight: i32
 declare property HTMLElement:value: string
+declare property HTMLElement:style: CSSStyleProperties
+declare property HTMLElement:attributeStyleMap: StylePropertyMap
+declare property HTMLElement:contentEditable: string
+declare property HTMLElement:enterKeyHint: string
+declare property HTMLElement:isContentEditable: bool
+declare property HTMLElement:inputMode: string
+declare property HTMLElement:virtualKeyboardPolicy: string
+declare property HTMLElement:dataset: DOMStringMap
+declare property HTMLElement:nonce: string
+declare property HTMLElement:autofocus: bool
+declare property HTMLElement:tabIndex: i32
+declare property Range:commonAncestorContainer: Node
+declare function Range:setStart(node: Node, offset: u32): unit
+declare function Range:setEnd(node: Node, offset: u32): unit
+declare function Range:setStartBefore(node: Node): unit
+declare function Range:setStartAfter(node: Node): unit
+declare function Range:setEndBefore(node: Node): unit
+declare function Range:setEndAfter(node: Node): unit
+declare function Range:selectNode(node: Node): unit
+declare function Range:selectNodeContents(node: Node): unit
+declare function Range:compareBoundaryPoints(how: u32, source_range: Range): i32
+declare function Range:deleteContents(): unit
+declare function Range:extractContents(): DocumentFragment
+declare function Range:cloneContents(): DocumentFragment
+declare function Range:insertNode(node: Node): unit
+declare function Range:surroundContents(new_parent: Node): unit
+declare function Range:cloneRange(): Range
+declare function Range:isPointInRange(node: Node, offset: u32): bool
+declare function Range:comparePoint(node: Node, offset: u32): i32
+declare function Range:intersectsNode(node: Node): bool
+declare function Range:getClientRects(): DOMRectList
+declare function Range:getBoundingClientRect(): DOMRect
+declare property MediaList:mediaText: string
+declare function MediaList:appendMedium(medium: string): unit
+declare function MediaList:deleteMedium(medium: string): unit
+declare property StyleSheet:title: string?
+declare property StyleSheet:media: MediaList
+declare property StyleSheet:disabled: bool
+declare property CSSStyleSheet:ownerRule: CSSRule?
+declare property CSSStyleSheet:cssRules: CSSRuleList
+declare function CSSStyleSheet:insertRule(rule: string): u32
+declare function CSSStyleSheet:deleteRule(index: u32): unit
+declare function CSSStyleSheet:replaceSync(text: string): unit
+declare property CSSStyleSheet:rules: CSSRuleList
+declare function CSSStyleSheet:addRule(): i32
+declare function CSSStyleSheet:removeRule(): unit
+declare function CSSRuleList:item(index: u32): CSSRule?
+declare property CSSRuleList:length: u32
+declare function CSSStyleDeclaration:getPropertyValue(property: string): string
+declare function CSSStyleDeclaration:getPropertyPriority(property: string): string
+declare function CSSStyleDeclaration:setProperty(property: string, value: string): unit
+declare function CSSStyleDeclaration:removeProperty(property: string): string
+declare property CSSStyleProperties:cssFloat: string
 declare property Event:target: EventTarget
+declare property Event:srcElement: EventTarget?
+declare property Event:currentTarget: EventTarget?
+declare property Event:eventPhase: u32
+declare function Event:stopPropagation(): unit
+declare property Event:cancelBubble: bool
+declare function Event:stopImmediatePropagation(): unit
+declare property Event:bubbles: bool
+declare property Event:cancelable: bool
+declare property Event:returnValue: bool
+declare function Event:preventDefault(): unit
+declare property Event:defaultPrevented: bool
+declare property Event:composed: bool
+declare property Event:isTrusted: bool
+declare property Event:timeStamp: f64
+declare function Event:initEvent(type: string): unit
 declare function EventTarget:add_event_listener(type: string, callback: (Event) -> unit): unit
+declare function EventTarget:dispatchEvent(event: Event): bool
+declare function HTMLCollection:namedItem(name: string): Element?
+declare property Node:nodeType: u32
 declare property Node:node_name: string
+declare property Node:baseURI: string
+declare property Node:isConnected: bool
+declare property Node:ownerDocument: Document?
+declare function Node:getRootNode(): Node
+declare property Node:parentNode: Node?
+declare property Node:parentElement: Element?
+declare function Node:hasChildNodes(): bool
+declare property Node:childNodes: NodeList
+declare property Node:firstChild: Node?
+declare property Node:lastChild: Node?
+declare property Node:previousSibling: Node?
+declare property Node:nextSibling: Node?
+declare property Node:nodeValue: string?
 declare property Node:text_content: string
+declare function Node:normalize(): unit
+declare function Node:cloneNode(): Node
+declare function Node:isEqualNode(other_node: Node?): bool
+declare function Node:isSameNode(other_node: Node?): bool
+declare function Node:compareDocumentPosition(other: Node): u32
+declare function Node:lookupPrefix(namespace: string?): string?
+declare function Node:lookupNamespaceURI(prefix: string?): string?
+declare function Node:isDefaultNamespace(namespace: string?): bool
+declare function Node:insertBefore(node: Node, child: Node?): Node
 declare function Node:append_child(node: Node): Node
 declare function Node:replace_child(new_child: Node, old_child: Node): Node
 declare function Node:remove_child(child: Node): Node
+declare property DocumentType:publicId: string
+declare property DocumentType:systemId: string
+declare property ShadowRoot:mode: string
+declare property ShadowRoot:delegatesFocus: bool
+declare property ShadowRoot:slotAssignment: string
+declare property ShadowRoot:clonable: bool
+declare property ShadowRoot:serializable: bool
+declare function NamedNodeMap:getNamedItem(qualified_name: string): Attr?
+declare function NamedNodeMap:getNamedItemNS(namespace: string?, local_name: string): Attr?
+declare function NamedNodeMap:setNamedItem(attr: Attr): Attr?
+declare function NamedNodeMap:setNamedItemNS(attr: Attr): Attr?
+declare function NamedNodeMap:removeNamedItem(qualified_name: string): Attr
+declare function NamedNodeMap:removeNamedItemNS(namespace: string?, local_name: string): Attr
+declare property Attr:namespaceURI: string?
+declare property Attr:prefix: string?
+declare property Attr:localName: string
+declare property Attr:ownerElement: Element?
+declare property Attr:specified: bool
+declare property CharacterData:data: string
+declare function CharacterData:substringData(offset: u32, count: u32): string
+declare function CharacterData:appendData(data: string): unit
+declare function CharacterData:insertData(offset: u32, data: string): unit
+declare function CharacterData:deleteData(offset: u32, count: u32): unit
+declare function CharacterData:replaceData(offset: u32, count: u32, data: string): unit
+declare property CharacterData:previousElementSibling: Element?
+declare property CharacterData:nextElementSibling: Element?
+declare function Text:splitText(offset: u32): Text
+declare property Text:wholeText: string
+declare property ProcessingInstruction:sheet: CSSStyleSheet?
+declare property AbstractRange:startContainer: Node
+declare property AbstractRange:startOffset: u32
+declare property AbstractRange:endContainer: Node
+declare property AbstractRange:endOffset: u32
+declare property AbstractRange:collapsed: bool
+declare property NodeIterator:root: Node
+declare property NodeIterator:referenceNode: Node
+declare property NodeIterator:pointerBeforeReferenceNode: bool
+declare property NodeIterator:whatToShow: u32
+declare function NodeIterator:nextNode(): Node?
+declare function NodeIterator:previousNode(): Node?
+declare function NodeIterator:detach(): unit
+declare property TreeWalker:currentNode: Node
+declare function TreeWalker:parentNode(): Node?
+declare function TreeWalker:firstChild(): Node?
+declare function TreeWalker:lastChild(): Node?
+declare function TreeWalker:previousSibling(): Node?
+declare function TreeWalker:nextSibling(): Node?
+declare function DOMTokenList:contains(token: string): bool
+declare function DOMTokenList:add(tokens: string): unit
+declare function DOMTokenList:remove(tokens: string): unit
+declare function DOMTokenList:toggle(token: string): bool
+declare function DOMTokenList:replace(token: string, new_token: string): bool
+declare function DOMTokenList:supports(token: string): bool
+declare property HTMLInputElement:accept: string
+declare property HTMLInputElement:alpha: bool
+declare property HTMLInputElement:alt: string
+declare property HTMLInputElement:defaultChecked: bool
+declare property HTMLInputElement:checked: bool
+declare property HTMLInputElement:colorSpace: string
+declare property HTMLInputElement:dirName: string
+declare property HTMLInputElement:form: HTMLFormElement?
+declare property HTMLInputElement:files: FileList?
+declare property HTMLInputElement:formAction: string
+declare property HTMLInputElement:formEnctype: string
+declare property HTMLInputElement:formMethod: string
+declare property HTMLInputElement:formNoValidate: bool
+declare property HTMLInputElement:formTarget: string
+declare property HTMLInputElement:indeterminate: bool
+declare property HTMLInputElement:list: HTMLDataListElement?
+declare property HTMLInputElement:max: string
+declare property HTMLInputElement:maxLength: i32
+declare property HTMLInputElement:min: string
+declare property HTMLInputElement:minLength: i32
+declare property HTMLInputElement:multiple: bool
+declare property HTMLInputElement:pattern: string
+declare property HTMLInputElement:placeholder: string
+declare property HTMLInputElement:readOnly: bool
+declare property HTMLInputElement:required: bool
+declare property HTMLInputElement:src: string
+declare property HTMLInputElement:step: string
+declare property HTMLInputElement:defaultValue: string
+declare property HTMLInputElement:valueAsNumber: f64
+declare function HTMLInputElement:stepUp(): unit
+declare function HTMLInputElement:stepDown(): unit
+declare property HTMLInputElement:willValidate: bool
+declare property HTMLInputElement:validity: ValidityState
+declare property HTMLInputElement:validationMessage: string
+declare function HTMLInputElement:setCustomValidity(error: string): unit
+declare property HTMLInputElement:labels: NodeList?
+declare function HTMLInputElement:select(): unit
+declare property HTMLInputElement:selectionDirection: string?
+declare function HTMLInputElement:showPicker(): unit
+declare property HTMLInputElement:webkitdirectory: bool
+declare property HTMLInputElement:capture: string
+declare property HTMLInputElement:useMap: string
+declare property HTMLInputElement:popoverTargetElement: Element?
+declare property HTMLInputElement:popoverTargetAction: string
+declare function DOMPointReadOnly:fromPoint(): DOMPointReadOnly
+declare property DOMPointReadOnly:x: f64
+declare property DOMPointReadOnly:y: f64
+declare property DOMPointReadOnly:z: f64
+declare property DOMPointReadOnly:w: f64
+declare function DOMPointReadOnly:matrixTransform(): DOMPoint
+declare function DOMRectReadOnly:fromRect(): DOMRectReadOnly
+declare property DOMRectReadOnly:width: f64
+declare property DOMRectReadOnly:height: f64
+declare property DOMRectReadOnly:top: f64
+declare property DOMRectReadOnly:right: f64
+declare property DOMRectReadOnly:bottom: f64
+declare property DOMRectReadOnly:left: f64
+declare function DOMQuad:fromQuad(): DOMQuad
+declare property DOMQuad:p1: DOMPoint
+declare property DOMQuad:p2: DOMPoint
+declare property DOMQuad:p3: DOMPoint
+declare property DOMQuad:p4: DOMPoint
+declare function DOMQuad:getBounds(): DOMRect
+declare property HTMLHeadingElement:align: string
+declare property HTMLFormElement:acceptCharset: string
+declare property HTMLFormElement:action: string
+declare property HTMLFormElement:autocomplete: string
+declare property HTMLFormElement:enctype: string
+declare property HTMLFormElement:encoding: string
+declare property HTMLFormElement:method: string
+declare property HTMLFormElement:noValidate: bool
+declare property HTMLFormElement:rel: string
+declare property HTMLFormElement:relList: DOMTokenList
+declare property HTMLFormElement:elements: HTMLFormControlsCollection
+declare function HTMLFormElement:submit(): unit
+declare function HTMLFormElement:requestSubmit(): unit
+declare function HTMLFormElement:reset(): unit
+declare function HTMLFormElement:checkValidity(): bool
+declare function HTMLFormElement:reportValidity(): bool
+declare property HTMLDataListElement:options: HTMLCollection
+declare property HTMLTextAreaElement:cols: u32
+declare property HTMLTextAreaElement:rows: u32
+declare property HTMLTextAreaElement:wrap: string
+declare property HTMLTextAreaElement:textLength: u32
+declare property HTMLTextAreaElement:selectionStart: u32
+declare property HTMLTextAreaElement:selectionEnd: u32
+declare property ValidityState:valueMissing: bool
+declare property ValidityState:typeMismatch: bool
+declare property ValidityState:patternMismatch: bool
+declare property ValidityState:tooLong: bool
+declare property ValidityState:tooShort: bool
+declare property ValidityState:rangeUnderflow: bool
+declare property ValidityState:rangeOverflow: bool
+declare property ValidityState:stepMismatch: bool
+declare property ValidityState:badInput: bool
+declare property ValidityState:customError: bool
+declare property ValidityState:valid: bool
+declare function CustomElementRegistry:upgrade(root: Node): unit
+declare function CustomElementRegistry:initialize(root: Node): unit
+declare property BarProp:visible: bool
+declare property Location:href: string
+declare property Location:origin: string
+declare property Location:protocol: string
+declare property Location:host: string
+declare property Location:hostname: string
+declare property Location:port: string
+declare property Location:pathname: string
+declare property Location:search: string
+declare property Location:hash: string
+declare function Location:assign(url: string): unit
+declare function Location:reload(): unit
+declare property History:scrollRestoration: string
+declare function History:go(): unit
+declare function History:back(): unit
+declare function History:forward(): unit
+declare function PluginArray:refresh(): unit
+declare property Plugin:name: string
+declare property Plugin:filename: string
+declare property MimeType:description: string
+declare property MimeType:suffixes: string
+declare property MimeType:enabledPlugin: Plugin
+declare function Storage:key(index: u32): string?
 declare function Storage:get_item(key: string): string?
 declare function Storage:set_item(key: string, value: string): unit
 declare function Storage:remove_item(key: string): unit
+declare function Storage:clear(): unit
+declare function ScreenOrientation:unlock(): unit
+declare property ScreenOrientation:angle: u32
+declare property Selection:anchorNode: Node?
+declare property Selection:anchorOffset: u32
+declare property Selection:focusNode: Node?
+declare property Selection:focusOffset: u32
+declare property Selection:isCollapsed: bool
+declare property Selection:rangeCount: u32
+declare property Selection:direction: string
+declare function Selection:getRangeAt(index: u32): Range
+declare function Selection:addRange(range: Range): unit
+declare function Selection:removeRange(range: Range): unit
+declare function Selection:removeAllRanges(): unit
+declare function Selection:empty(): unit
+declare function Selection:collapse(node: Node?): unit
+declare function Selection:setPosition(node: Node?): unit
+declare function Selection:collapseToStart(): unit
+declare function Selection:collapseToEnd(): unit
+declare function Selection:extend(node: Node): unit
+declare function Selection:setBaseAndExtent(anchor_node: Node, anchor_offset: u32, focus_node: Node, focus_offset: u32): unit
+declare function Selection:selectAllChildren(node: Node): unit
+declare function Selection:modify(): unit
+declare function Selection:deleteFromDocument(): unit
+declare function Selection:containsNode(node: Node): bool
+declare function VirtualKeyboard:show(): unit
+declare function VirtualKeyboard:hide(): unit
+declare property VirtualKeyboard:boundingRect: DOMRect
+declare property VirtualKeyboard:overlaysContent: bool
+declare property VirtualKeyboard:ongeometrychange: (Event) -> unit
 declare function dom_window(): Window
