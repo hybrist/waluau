@@ -1,0 +1,27 @@
+-- Duplicate extern member names must resolve through the receiver type.
+
+type Alpha = extern
+type Beta = extern
+
+declare property Alpha:size: u32
+declare property Beta:size: u32
+declare function Alpha:value(delta: i32): i32
+declare function Beta:value(delta: i32): i32
+
+declare function make_alpha(): Alpha
+declare function make_beta(): Beta
+
+local alpha: Alpha = make_alpha()
+local beta: Beta = make_beta()
+
+assert(alpha.size == 10::u32)
+assert(beta.size == 20::u32)
+
+alpha.size = 11::u32
+beta.size = 22::u32
+
+assert(alpha.size == 11::u32)
+assert(beta.size == 22::u32)
+
+assert(alpha:value(1::i32) == 101)
+assert(beta:value(2::i32) == 202)

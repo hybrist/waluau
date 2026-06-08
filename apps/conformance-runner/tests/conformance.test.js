@@ -34,6 +34,44 @@ function sourceForCase(testCase) {
   return `${includes.join('\n')}\n${testCase.source}`;
 }
 
+function optionsForCase(name) {
+  if (name !== 'extern_member_collisions.walu') {
+    return undefined;
+  }
+
+  const alpha = { size: 10 };
+  const beta = { size: 20 };
+
+  return {
+    hostImports: {
+      make_alpha() {
+        return alpha;
+      },
+      make_beta() {
+        return beta;
+      },
+      'Alpha.get/size'(receiver) {
+        return receiver.size;
+      },
+      'Alpha.set/size'(receiver, value) {
+        receiver.size = value;
+      },
+      'Beta.get/size'(receiver) {
+        return receiver.size;
+      },
+      'Beta.set/size'(receiver, value) {
+        receiver.size = value;
+      },
+      'Alpha.value'(receiver, delta) {
+        return receiver.size * 9 + delta + 1;
+      },
+      'Beta.value'(receiver, delta) {
+        return receiver.size * 9 + delta + 2;
+      },
+    },
+  };
+}
+
 const cases = Object.entries(conformanceModules)
   .map(([path, source]) => {
     const normalized = path.replace(/^.*\/conformance\//, '');
@@ -45,7 +83,11 @@ describe('browser conformance', () => {
   for (const { name, source } of cases) {
     it(`passes ${name}`, async () => {
       await expect(
-        compileAndInstantiate({ '/main.walu': sourceForCase({ name, source }) }, '/main.walu'),
+        compileAndInstantiate(
+          { '/main.walu': sourceForCase({ name, source }) },
+          '/main.walu',
+          optionsForCase(name),
+        ),
       ).resolves.toBeUndefined();
     });
   }
