@@ -62,6 +62,7 @@ function decodeBytesConstantsFromWasm(wasmBuffer) {
 
 function createMockElement(tagName) {
   const attributes = new Map();
+  const listeners = new Map();
   const element = {
     tagName: String(tagName).toUpperCase(),
     id: '',
@@ -130,6 +131,27 @@ function createMockElement(tagName) {
     },
     querySelector(selector) {
       return queryMockSelector(this, String(selector));
+    },
+    addEventListener(type, listener) {
+      const eventType = String(type);
+      let listenersForType = listeners.get(eventType);
+      if (!listenersForType) {
+        listenersForType = new Set();
+        listeners.set(eventType, listenersForType);
+      }
+      listenersForType.add(listener);
+    },
+    removeEventListener(type, listener) {
+      const listenersForType = listeners.get(String(type));
+      if (listenersForType) listenersForType.delete(listener);
+    },
+    dispatchEvent(event) {
+      const eventObject = event && typeof event === 'object' ? event : { type: String(event) };
+      if (!eventObject.type) throw new Error('mock DOM event requires a type');
+      if (!('target' in eventObject)) eventObject.target = this;
+      const listenersForType = Array.from(listeners.get(String(eventObject.type)) ?? []);
+      for (const listener of listenersForType) listener(eventObject);
+      return true;
     },
     get children() {
       return this.childNodes;
@@ -227,6 +249,8 @@ function buildWaluauImports(wasmBuffer, options = {}) {
   const bytesConstants = decodeBytesConstantsFromWasm(wasmBuffer);
   const domHost = options.domHost ?? createDomHost();
   const hostImports = options.hostImports ?? {};
+  const getWasmExports = options.getWasmExports ?? (() => null);
+  const eventListeners = new WeakMap();
   const asBytes = (value) => {
     if (value instanceof Uint8Array) return value;
     throw new Error(`Expected Uint8Array bytes value, got ${Object.prototype.toString.call(value)}`);
@@ -238,6 +262,14 @@ function buildWaluauImports(wasmBuffer, options = {}) {
   const asNode = (value, name) => {
     if (value && typeof value === 'object' && typeof value.appendChild === 'function') return value;
     throw new Error(`Expected DOM Node for ${name}`);
+  };
+  const asEventTarget = (value, name) => {
+    if (value && typeof value.addEventListener === 'function' && typeof value.removeEventListener === 'function') return value;
+    throw new Error(`Expected DOM EventTarget for ${name}`);
+  };
+  const asEvent = (value, name) => {
+    if (value && typeof value === 'object' && 'target' in value) return value;
+    throw new Error(`Expected DOM Event for ${name}`);
   };
   const asStorage = (value, name) => {
     if (value && typeof value.getItem === 'function' && typeof value.setItem === 'function' && typeof value.removeItem === 'function') return value;
@@ -267,6 +299,42 @@ function buildWaluauImports(wasmBuffer, options = {}) {
     return asNode(parent, name).removeChild(asNode(child, name));
   };
   const childrenOf = (node) => Array.from(node.children ?? node.childNodes ?? []);
+  const removeRegisteredListeners = (target) => {
+    const records = eventListeners.get(target);
+    if (!records) return;
+    for (const { type, listener } of records) {
+      target.removeEventListener(type, listener);
+    }
+    records.clear();
+    eventListeners.delete(target);
+  };
+  const cleanupEventListeners = (node) => {
+    if (!node || typeof node !== 'object') return;
+    for (const child of childrenOf(node)) cleanupEventListeners(child);
+    if (typeof node.removeEventListener === 'function') removeRegisteredListeners(node);
+  };
+  const registerEventListener = (target, type, callback, name) => {
+    const eventTarget = asEventTarget(target, name);
+    const eventType = String(type);
+    if (eventType !== 'click' && eventType !== 'input') {
+      throw new Error(`${name} only supports click and input events`);
+    }
+    const listener = (event) => {
+      const exports = getWasmExports();
+      const trampoline = exports?.__waluau_call_callback_event_unit;
+      if (typeof trampoline !== 'function') {
+        throw new Error('Missing __waluau_call_callback_event_unit export for DOM event callback');
+      }
+      trampoline(callback, event);
+    };
+    eventTarget.addEventListener(eventType, listener);
+    let records = eventListeners.get(eventTarget);
+    if (!records) {
+      records = new Set();
+      eventListeners.set(eventTarget, records);
+    }
+    records.add({ type: eventType, listener });
+  };
   const walk = (root, visit) => {
     if (visit(root)) return root;
     for (const child of childrenOf(root)) {
@@ -303,6 +371,12 @@ function buildWaluauImports(wasmBuffer, options = {}) {
     const name = String(typeName);
     if (name === 'Node') {
       return (typeof Node !== 'undefined' && value instanceof Node) || (value && typeof value === 'object' && 'childNodes' in value) ? 1 : 0;
+    }
+    if (name === 'EventTarget') {
+      return (typeof EventTarget !== 'undefined' && value instanceof EventTarget) || (value && typeof value.addEventListener === 'function' && typeof value.removeEventListener === 'function') ? 1 : 0;
+    }
+    if (name === 'Event') {
+      return (typeof Event !== 'undefined' && value instanceof Event) || (value && typeof value === 'object' && 'target' in value) ? 1 : 0;
     }
     if (name === 'Document') {
       return value === domHost.document ? 1 : 0;
@@ -417,10 +491,42 @@ function buildWaluauImports(wasmBuffer, options = {}) {
         return (parent, child) => appendChild(parent, child, name);
       }
       if (name === 'Node.replace_child') {
-        return (parent, newChild, oldChild) => replaceChild(parent, newChild, oldChild, name);
+        return (parent, newChild, oldChild) => {
+          const removed = replaceChild(parent, newChild, oldChild, name);
+          cleanupEventListeners(removed);
+          return removed;
+        };
       }
       if (name === 'Node.remove_child') {
-        return (parent, child) => removeChild(parent, child, name);
+        return (parent, child) => {
+          const removed = removeChild(parent, child, name);
+          cleanupEventListeners(removed);
+          return removed;
+        };
+      }
+      if (name === 'Element.clear') {
+        return (element) => {
+          const target = asElement(element, name);
+          cleanupEventListeners(target);
+          target.replaceChildren();
+        };
+      }
+      if (name === 'Event.get_target') {
+        return (event) => asEvent(event, name).target;
+      }
+      if (name === 'Event.set_target') {
+        return () => {
+          throw new Error('Event.target is read-only');
+        };
+      }
+      if (name === 'EventTarget.add_event_listener') {
+        return (target, type, callback) => registerEventListener(target, type, callback, name);
+      }
+      if (name === 'Element.on_click') {
+        return (element, callback) => registerEventListener(element, 'click', callback, name);
+      }
+      if (name === 'Element.on_input') {
+        return (element, callback) => registerEventListener(element, 'input', callback, name);
       }
       if (name === 'Element.set_text') {
         return (element, text) => setText(element, text, name);
@@ -581,11 +687,16 @@ export async function compileAndInstantiateWithExports(files, entryFile = '/main
   await module.default();
   const output = module.compile_multi(files, entryFile);
   const wasmBuffer = new Uint8Array(output.wasm);
-  const imports = buildWaluauImports(wasmBuffer, options);
+  let instanceExports = null;
+  const imports = buildWaluauImports(wasmBuffer, {
+    ...options,
+    getWasmExports: () => instanceExports,
+  });
   const result = await WebAssembly.instantiate(wasmBuffer, imports, {
     builtins: ['js-string'],
     importedStringConstants: WALUAU_STRING_CONSTANTS_MODULE,
   });
+  instanceExports = result.instance.exports;
   return result.instance.exports;
 }
 

@@ -1,1 +1,1 @@
-skip EventTarget.addEventListener: callback: unsupported Web IDL type EventListener
+

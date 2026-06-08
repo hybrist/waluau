@@ -1,0 +1,50 @@
+-- Browser DOM event handlers can call Waluau callbacks through the host
+-- trampoline while preserving captured state and Event externrefs.
+
+function install_event_handlers(): unit
+    local window = require("dom:window")
+    local document: Document = window.document
+    local body: HTMLElement = document.body
+    local click_count: i32 = 0
+    local input_count: i32 = 0
+
+    local button: Element = document:create_element("button")
+    button.id = "callback-button"
+    button.text_content = "idle"
+    button:on_click(function(event: Event): unit
+        click_count = click_count + 1
+        if Element(target) = event.target then
+            if target.id == "callback-button" then
+                if click_count == 1 then
+                    button.text_content = "clicked once"
+                else
+                    button.text_content = "clicked twice"
+                end
+            end
+        end
+    end)
+    body:append_child(button)
+
+    local status: Element = document:create_element("p")
+    status.id = "callback-status"
+    status.text_content = "waiting"
+
+    local input_element: Element = document:create_element("input")
+    input_element.id = "callback-input"
+    input_element:on_input(function(event: Event): unit
+        input_count = input_count + 1
+        if HTMLInputElement(target) = event.target then
+            if target.value == "typed card" then
+                if input_count == 1 then
+                    status.text_content = "input once"
+                else
+                    status.text_content = "input again"
+                end
+            end
+        end
+    end)
+    body:append_child(input_element)
+    body:append_child(status)
+end
+
+install_event_handlers()

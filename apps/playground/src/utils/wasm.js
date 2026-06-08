@@ -26,6 +26,8 @@ const DOM_IMPORT_NAMES = new Set([
   'Element.get_class_name',
   'Element.get_id',
   'Element.get_inner_text',
+  'Element.on_click',
+  'Element.on_input',
   'Element.query_selector',
   'Element.set_attr',
   'Element.remove_attribute',
@@ -35,6 +37,9 @@ const DOM_IMPORT_NAMES = new Set([
   'Element.set_attribute',
   'Element.set_inner_text',
   'Element.set_text',
+  'Event.get_target',
+  'Event.set_target',
+  'EventTarget.add_event_listener',
   'HTMLElement.get_inner_text',
   'HTMLElement.get_value',
   'HTMLElement.set_inner_text',
@@ -67,6 +72,32 @@ const BLOCKED_DOM_TAGS = new Set([
 ]);
 
 let printCaptureCallback = null;
+const domEventListeners = new WeakMap();
+
+function rememberDomEventListener(target, type, listener) {
+  let records = domEventListeners.get(target);
+  if (!records) {
+    records = new Set();
+    domEventListeners.set(target, records);
+  }
+  records.add({ type, listener });
+}
+
+function childrenOfDomNode(node) {
+  return Array.from(node?.children ?? node?.childNodes ?? []);
+}
+
+export function cleanupDomEventListeners(node) {
+  if (!node || typeof node !== 'object') return;
+  for (const child of childrenOfDomNode(node)) cleanupDomEventListeners(child);
+  const records = domEventListeners.get(node);
+  if (!records) return;
+  for (const { type, listener } of records) {
+    node.removeEventListener(type, listener);
+  }
+  records.clear();
+  domEventListeners.delete(node);
+}
 
 export function decodeBytesConstantsFromWasm(wasmBuffer) {
   const bytes = wasmBuffer instanceof Uint8Array ? wasmBuffer : new Uint8Array(wasmBuffer);
@@ -235,7 +266,7 @@ export function usesDomImports(wasmBuffer) {
   );
 }
 
-function createPlaygroundDomHost(domOutputRoot) {
+function createPlaygroundDomHost(domOutputRoot, getWasmExports = () => null) {
   const fallbackStorage = new Map();
   const fallbackStorageHost = {
     getItem(key) {
@@ -274,6 +305,24 @@ function createPlaygroundDomHost(domOutputRoot) {
     const NodeCtor = document.defaultView?.Node ?? Node;
     if (!(value instanceof NodeCtor)) {
       throw new Error(`${label} must be a Node`);
+    }
+    return value;
+  };
+
+  const requireEventTarget = (value, label = 'DOM event target') => {
+    const document = requireOutputDocument();
+    const EventTargetCtor = document.defaultView?.EventTarget ?? EventTarget;
+    if (!(value instanceof EventTargetCtor)) {
+      throw new Error(`${label} must be an EventTarget`);
+    }
+    return value;
+  };
+
+  const requireEvent = (value, label = 'DOM event') => {
+    const document = requireOutputDocument();
+    const EventCtor = document.defaultView?.Event ?? Event;
+    if (!(value instanceof EventCtor)) {
+      throw new Error(`${label} must be an Event`);
     }
     return value;
   };
@@ -348,18 +397,24 @@ function createPlaygroundDomHost(domOutputRoot) {
   };
 
   const replaceChild = (parent, newChild, oldChild) => {
-    return requireAppendTarget(parent).replaceChild(
+    const removed = requireAppendTarget(parent).replaceChild(
       requireNode(newChild, 'DOM replacement child'),
       requireNode(oldChild, 'DOM existing child'),
     );
+    cleanupDomEventListeners(removed);
+    return removed;
   };
 
   const removeChild = (parent, child) => {
-    return requireAppendTarget(parent).removeChild(requireNode(child, 'DOM child'));
+    const removed = requireAppendTarget(parent).removeChild(requireNode(child, 'DOM child'));
+    cleanupDomEventListeners(removed);
+    return removed;
   };
 
   const clear = (element) => {
-    clearTarget(element).replaceChildren();
+    const target = clearTarget(element);
+    cleanupDomEventListeners(target);
+    target.replaceChildren();
   };
 
   const setText = (element, text) => {
@@ -446,6 +501,24 @@ function createPlaygroundDomHost(domOutputRoot) {
     requireElement(element).value = String(value);
   };
 
+  const registerEventListener = (target, type, callback, label) => {
+    const eventTarget = requireEventTarget(target, `${label} receiver`);
+    const eventType = String(type);
+    if (eventType !== 'click' && eventType !== 'input') {
+      throw new Error(`${label} only supports click and input events`);
+    }
+    const listener = (event) => {
+      const exports = getWasmExports();
+      const trampoline = exports?.__waluau_call_callback_event_unit;
+      if (typeof trampoline !== 'function') {
+        throw new Error('Missing __waluau_call_callback_event_unit export for DOM event callback');
+      }
+      trampoline(callback, event);
+    };
+    eventTarget.addEventListener(eventType, listener);
+    rememberDomEventListener(eventTarget, eventType, listener);
+  };
+
   const readOnlyProperty = (name) => () => {
     throw new Error(`${name} is read-only in the playground DOM host`);
   };
@@ -485,6 +558,8 @@ function createPlaygroundDomHost(domOutputRoot) {
     'Element.get_class_name': getClassName,
     'Element.get_id': getId,
     'Element.get_inner_text': getInnerText,
+    'Element.on_click': (element, callback) => registerEventListener(element, 'click', callback, 'Element.on_click'),
+    'Element.on_input': (element, callback) => registerEventListener(element, 'input', callback, 'Element.on_input'),
     'Element.query_selector': querySelector,
     'Element.remove_attribute': removeAttr,
     'Element.set_attribute': setAttr,
@@ -494,6 +569,9 @@ function createPlaygroundDomHost(domOutputRoot) {
     'Element.set_class_name': setClass,
     'Element.set_id': setId,
     'Element.set_attr': setAttr,
+    'Event.get_target': (event) => requireEvent(event, 'Event.get_target receiver').target,
+    'Event.set_target': readOnlyProperty('Event.target'),
+    'EventTarget.add_event_listener': (target, type, callback) => registerEventListener(target, type, callback, 'EventTarget.add_event_listener'),
     'HTMLElement.get_inner_text': getInnerText,
     'HTMLElement.get_value': getValue,
     'HTMLElement.set_inner_text': setText,
@@ -524,7 +602,7 @@ function createPlaygroundDomHost(domOutputRoot) {
 
 export function buildWaluauImports(wasmBuffer, initLogger, options = {}) {
   const bytesConstants = decodeBytesConstantsFromWasm(wasmBuffer);
-  const domHost = createPlaygroundDomHost(options.domOutputRoot);
+  const domHost = createPlaygroundDomHost(options.domOutputRoot, options.getWasmExports);
   const asBytes = (value) => {
     if (value instanceof Uint8Array) return value;
     throw new Error(`Expected Uint8Array bytes value, got ${Object.prototype.toString.call(value)}`);
@@ -534,6 +612,9 @@ export function buildWaluauImports(wasmBuffer, initLogger, options = {}) {
     const view = value?.ownerDocument?.defaultView ?? (value?.nodeType === 9 ? value.defaultView : globalThis);
     if (name === 'EventTarget') {
       return typeof view.EventTarget !== 'undefined' && value instanceof view.EventTarget ? 1 : 0;
+    }
+    if (name === 'Event') {
+      return typeof view.Event !== 'undefined' && value instanceof view.Event ? 1 : 0;
     }
     if (name === 'Node') {
       return typeof view.Node !== 'undefined' && value instanceof view.Node ? 1 : 0;

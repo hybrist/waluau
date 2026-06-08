@@ -97,6 +97,31 @@ describe('browser conformance', () => {
     expect(reported).toEqual([42, 43]);
   });
 
+  it('passes DOM click/input handlers through the exported event trampoline', async () => {
+    const testCase = cases.find(({ name }) => name === 'dom_event_callbacks.walu');
+    const source = sourceForCase(testCase);
+    const { exports, root } = await compileAndInstantiateWithDom({ '/main.walu': source }, '/main.walu');
+    const button = root.children[0];
+    const input = root.children[1];
+    const status = root.children[2];
+
+    expect(typeof exports.__waluau_call_callback_event_unit).toBe('function');
+    expect(button.textContent).toBe('idle');
+    expect(status.textContent).toBe('waiting');
+
+    const clickEvent = typeof Event === 'undefined' ? { type: 'click' } : new Event('click', { bubbles: true });
+    button.dispatchEvent(clickEvent);
+    expect(button.textContent).toBe('clicked once');
+    button.dispatchEvent(clickEvent);
+    expect(button.textContent).toBe('clicked twice');
+
+    input.value = 'typed card';
+    const inputEvent = typeof Event === 'undefined' ? { type: 'input' } : new Event('input', { bubbles: true });
+    input.dispatchEvent(inputEvent);
+
+    expect(status.textContent).toBe('input once');
+  });
+
   it('renders DOM extern handles into the conformance DOM root', async () => {
     const testCase = cases.find(({ name }) => name === 'dom_extern_rendering.walu');
     const source = sourceForCase(testCase);
