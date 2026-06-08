@@ -1,419 +1,398 @@
--- North-star CSR Kanban app fixture.
---
--- This is assumed final Waluau code, not a current conformance fixture. It is
--- the target shape for raw DOM programming with built-in DOM externs, extern
--- methods, extern properties, browser callbacks, storage, crypto, and marshal
--- support available from the standard host surface.
+-- Client-side Kanban demo for the playground DOM output.
+-- Waluau owns DOM rendering, browser events, filtering, and localStorage
+-- persistence through deterministic string fields.
 
-type Card = {
-    id: string,
-    title: string,
-    description: string,
-    status: string,
-    priority: string,
-    tags: {string},
-}
+function install_kanban(_run_once: i32): unit
+    local window = require("dom:window")
+    local document: Document = window.document
+    local storage: Storage = window.local_storage
+    local body: HTMLElement = document.body
 
-type Activity = {
-    message: string,
-    card_id: string,
-}
-
-type BoardState = {
-    cards: {Card},
-    filter: string,
-    activities: {Activity},
-    editing_id: string,
-}
-
-local STORAGE_KEY: string = "waluau.kanban.cards"
-local STATUS_BACKLOG: string = "backlog"
-local STATUS_DOING: string = "doing"
-local STATUS_DONE: string = "done"
-
-local window: Window = dom_window()
-local document: Document = window.document
-local storage: Storage = window.local_storage
-
-function require_app(): Element
-    local found: Element? = document:get_element_by_id("app")
-    if found ~= nil then
-        return found
+    local existing_root: Element? = document:get_element_by_id("app")
+    if existing_root ~= nil then
+        body:remove_child(existing_root)
     end
 
-    assert(false)
-    return document:create_element("div")
-end
+    local root: Element = document:create_element("div")
+    root.id = "app"
+    body:append_child(root)
 
-local app: Element = require_app()
+    local shell: Element = document:create_element("div")
+    shell.class_name = "flex flex-col bg-slate-100 text-slate-950"
+    root:append_child(shell)
 
-local state: BoardState = {
-    cards = {},
-    filter = "",
-    activities = {},
-    editing_id = "",
-}
+    local header: Element = document:create_element("header")
+    header.class_name = "flex flex-col gap-3 border-b border-slate-200 bg-white px-6 py-4 md:flex-row md:items-center md:justify-between"
+    shell:append_child(header)
 
-function status_label(status: string): string
-    if status == STATUS_BACKLOG then
-        return "Backlog"
-    elseif status == STATUS_DOING then
-        return "Doing"
-    elseif status == STATUS_DONE then
-        return "Done"
-    end
-
-    return status
-end
-
-function next_status(status: string): string
-    if status == STATUS_BACKLOG then
-        return STATUS_DOING
-    elseif status == STATUS_DOING then
-        return STATUS_DONE
-    end
-
-    return STATUS_DONE
-end
-
-function previous_status(status: string): string
-    if status == STATUS_DONE then
-        return STATUS_DOING
-    elseif status == STATUS_DOING then
-        return STATUS_BACKLOG
-    end
-
-    return STATUS_BACKLOG
-end
-
-function empty_card(): Card
-    return {
-        id = random_id(),
-        title = "New task",
-        description = "",
-        status = STATUS_BACKLOG,
-        priority = "Medium",
-        tags = {},
-    }
-end
-
-function random_id(): string
-    return window.crypto:random_uuid()
-end
-
-function cards_from_json(json: string): {Card}
-    return marshal.decode<{Card}>(json)
-end
-
-function cards_to_json(cards: {Card}): string
-    return marshal.encode<{Card}>(cards)
-end
-
-function seed_cards(): {Card}
-    return {
-        {
-            id = "seed-1",
-            title = "Expose raw DOM imports",
-            description = "Render nodes, set classes, and wire events from Waluau.",
-            status = STATUS_DOING,
-            priority = "High",
-            tags = {"dom", "interop"},
-        },
-        {
-            id = "seed-2",
-            title = "Persist board state",
-            description = "Round-trip cards through localStorage without server logic.",
-            status = STATUS_BACKLOG,
-            priority = "Medium",
-            tags = {"storage"},
-        },
-        {
-            id = "seed-3",
-            title = "Ship the north-star fixture",
-            description = "Keep the final app shape visible while the blockers land.",
-            status = STATUS_DONE,
-            priority = "Low",
-            tags = {"demo"},
-        },
-    }
-end
-
-function load_cards(): {Card}
-    local encoded: string? = storage:get_item(STORAGE_KEY)
-    if encoded ~= nil then
-        return cards_from_json(encoded)
-    end
-
-    return seed_cards()
-end
-
-function save_cards(): unit
-    storage:set_item(STORAGE_KEY, cards_to_json(state.cards))
-end
-
-function activity(message: string, card_id: string): unit
-    local next: Activity = {
-        message = message,
-        card_id = card_id,
-    }
-
-    local items: {Activity} = {next}
-    local count: i32 = 0
-    for old in state.activities do
-        if count < 5 then
-            items[#items] = old
-        end
-        count = count + 1
-    end
-
-    state.activities = items
-end
-
-function find_card_index(card_id: string): i32
-    local index: i32 = 0
-    for card in state.cards do
-        if card.id == card_id then
-            return index
-        end
-        index = index + 1
-    end
-
-    return -1
-end
-
-function card_matches_filter(card: Card): bool
-    if state.filter == "" then
-        return true
-    end
-
-    if card.title:find(state.filter) ~= nil then
-        return true
-    elseif card.description:find(state.filter) ~= nil then
-        return true
-    elseif table.concat(card.tags, " "):find(state.filter) ~= nil then
-        return true
-    end
-
-    return false
-end
-
-function add_card(): unit
-    local card: Card = empty_card()
-    state.cards[#state.cards] = card
-    state.editing_id = card.id
-    activity("Created card", card.id)
-    save_cards()
-    render()
-end
-
-function delete_card(card_id: string): unit
-    local next_cards: {Card} = {}
-    for card in state.cards do
-        if card.id ~= card_id then
-            next_cards[#next_cards] = card
-        end
-    end
-
-    state.cards = next_cards
-    activity("Deleted card", card_id)
-    save_cards()
-    render()
-end
-
-function move_card(card_id: string, status: string): unit
-    local index: i32 = find_card_index(card_id)
-    if index >= 0 then
-        state.cards[index].status = status
-        activity("Moved to " .. status_label(status), card_id)
-        save_cards()
-        render()
-    end
-end
-
-function update_card_text(card_id: string, title: string, description: string): unit
-    local index: i32 = find_card_index(card_id)
-    if index >= 0 then
-        state.cards[index].title = title
-        state.cards[index].description = description
-        state.editing_id = ""
-        activity("Updated card", card_id)
-        save_cards()
-        render()
-    end
-end
-
-function set_filter(value: string): unit
-    state.filter = value
-    render()
-end
-
-function el(tag: string, class_name: string): Element
-    local node: Element = document:create_element(tag)
-    node.class_name = class_name
-    return node
-end
-
-function text_el(tag: string, class_name: string, text: string): Element
-    local node: Element = el(tag, class_name)
-    node.text_content = text
-    return node
-end
-
-function button(label: string, class_name: string, on_click: (Event) -> unit): Element
-    local node: Element = text_el("button", class_name, label)
-    node:set_attribute("type", "button")
-    node:add_event_listener("click", on_click)
-    return node
-end
-
-function input(value: string, placeholder: string, on_input: (string) -> unit): Element
-    local node: Element = el("input", "w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none focus:border-teal-600")
-    node:set_attribute("value", value)
-    node:set_attribute("placeholder", placeholder)
-    node:add_event_listener("input", function(event: Event): unit
-        if HTMLInputElement(target) = event.target then
-            on_input(target.value)
-        end
-    end)
-    return node
-end
-
-function render_header(parent: Element): unit
-    local header: Element = el("header", "flex flex-col gap-3 border-b border-slate-200 bg-white px-6 py-4 md:flex-row md:items-center md:justify-between")
-    local title_group: Element = el("div", "space-y-1")
-    title_group:append_child(text_el("h1", "text-xl font-semibold text-slate-950", "Waluau Kanban"))
-    title_group:append_child(text_el("p", "text-sm text-slate-600", "Client-side board rendered from Waluau state"))
-
-    local actions: Element = el("div", "flex gap-2")
-    actions:append_child(input(state.filter, "Filter cards", function(value: string): unit
-        set_filter(value)
-    end))
-    actions:append_child(button("Add card", "rounded-md bg-teal-700 px-3 py-2 text-sm font-medium text-white hover:bg-teal-800", function(_event: Event): unit
-        add_card()
-    end))
-
+    local title_group: Element = document:create_element("div")
+    title_group.class_name = "space-y-1"
     header:append_child(title_group)
+
+    local heading: Element = document:create_element("h1")
+    heading.class_name = "text-xl font-semibold text-slate-950"
+    heading.text_content = "Waluau Kanban"
+    title_group:append_child(heading)
+
+    local subtitle: Element = document:create_element("p")
+    subtitle.class_name = "text-sm text-slate-600"
+    subtitle.text_content = "Client-side board rendered, filtered, and persisted by Waluau"
+    title_group:append_child(subtitle)
+
+    local actions: Element = document:create_element("div")
+    actions.class_name = "flex flex-col gap-2 md:flex-row"
     header:append_child(actions)
-    parent:append_child(header)
-end
 
-function render_card_view(parent: Element, card: Card): unit
-    local card_node: Element = el("article", "rounded-md border border-slate-200 bg-white p-3 shadow-sm")
-    local top: Element = el("div", "flex items-start justify-between gap-3")
-    local copy: Element = el("div", "min-w-0")
+    local filter_input: Element = document:create_element("input")
+    filter_input.id = "kanban-filter"
+    filter_input.class_name = "w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none focus:border-teal-600"
+    filter_input:set_attribute("placeholder", "Filter text or tag")
+    actions:append_child(filter_input)
 
-    copy:append_child(text_el("h3", "truncate text-sm font-semibold text-slate-950", card.title))
-    copy:append_child(text_el("p", "mt-1 text-sm leading-5 text-slate-600", card.description))
-    copy:append_child(text_el("p", "mt-2 text-xs font-medium uppercase tracking-wide text-slate-500", card.priority .. " priority"))
+    local add_button: Element = document:create_element("button")
+    add_button.id = "kanban-add-card"
+    add_button.class_name = "rounded-md bg-teal-700 px-3 py-2 text-sm font-medium text-white hover:bg-teal-800"
+    add_button:set_attribute("type", "button")
+    add_button.text_content = "Add card"
+    actions:append_child(add_button)
 
-    local edit_button: Element = button("Edit", "rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50", function(_event: Event): unit
-        state.editing_id = card.id
-        render()
+    local board: Element = document:create_element("main")
+    board.id = "kanban-board"
+    board.class_name = "grid grid-cols-1 gap-4 p-4 md:grid-cols-3"
+    shell:append_child(board)
+
+    local backlog: Element = document:create_element("section")
+    backlog.class_name = "kanban-column flex flex-col rounded-md border border-slate-200 bg-slate-50"
+    backlog:set_attribute("data-column", "backlog")
+    local backlog_header: Element = document:create_element("div")
+    backlog_header.class_name = "border-b border-slate-200 px-4 py-3"
+    local backlog_title: Element = document:create_element("h2")
+    backlog_title.class_name = "text-sm font-semibold text-slate-900"
+    backlog_title.text_content = "Backlog"
+    backlog_header:append_child(backlog_title)
+    backlog:append_child(backlog_header)
+    local backlog_list: Element = document:create_element("div")
+    backlog_list.id = "kanban-backlog-list"
+    backlog_list.class_name = "flex flex-col gap-3 p-3"
+    backlog:append_child(backlog_list)
+    board:append_child(backlog)
+
+    local doing: Element = document:create_element("section")
+    doing.class_name = "kanban-column flex flex-col rounded-md border border-slate-200 bg-slate-50"
+    doing:set_attribute("data-column", "doing")
+    local doing_header: Element = document:create_element("div")
+    doing_header.class_name = "border-b border-slate-200 px-4 py-3"
+    local doing_title: Element = document:create_element("h2")
+    doing_title.class_name = "text-sm font-semibold text-slate-900"
+    doing_title.text_content = "Doing"
+    doing_header:append_child(doing_title)
+    doing:append_child(doing_header)
+    local doing_list: Element = document:create_element("div")
+    doing_list.id = "kanban-doing-list"
+    doing_list.class_name = "flex flex-col gap-3 p-3"
+    doing:append_child(doing_list)
+    board:append_child(doing)
+
+    local done: Element = document:create_element("section")
+    done.class_name = "kanban-column flex flex-col rounded-md border border-slate-200 bg-slate-50"
+    done:set_attribute("data-column", "done")
+    local done_header: Element = document:create_element("div")
+    done_header.class_name = "border-b border-slate-200 px-4 py-3"
+    local done_title: Element = document:create_element("h2")
+    done_title.class_name = "text-sm font-semibold text-slate-900"
+    done_title.text_content = "Done"
+    done_header:append_child(done_title)
+    done:append_child(done_header)
+    local done_list: Element = document:create_element("div")
+    done_list.id = "kanban-done-list"
+    done_list.class_name = "flex flex-col gap-3 p-3"
+    done:append_child(done_list)
+    board:append_child(done)
+
+    local activity_panel: Element = document:create_element("aside")
+    activity_panel.id = "kanban-activity"
+    activity_panel.class_name = "border-t border-slate-200 bg-white px-6 py-3"
+    shell:append_child(activity_panel)
+
+    local activity_title: Element = document:create_element("h2")
+    activity_title.class_name = "text-xs font-semibold uppercase text-slate-500"
+    activity_title.text_content = "Activity"
+    activity_panel:append_child(activity_title)
+
+    local activity_log: Element = document:create_element("div")
+    activity_log.id = "kanban-activity-log"
+    activity_log.class_name = "mt-2 flex flex-wrap gap-2"
+    activity_panel:append_child(activity_log)
+
+    local saved_activity: string? = storage:get_item("waluau-kanban:activity:0")
+    if saved_activity ~= nil then
+        activity_log.text_content = saved_activity
+    else
+        activity_log.text_content = "No activity yet"
+    end
+
+    local seed_backlog: Element = document:create_element("article")
+    seed_backlog.class_name = "kanban-card rounded-md border border-slate-200 bg-white p-3 shadow-sm"
+    seed_backlog:set_attribute("data-card-id", "seed-2")
+    seed_backlog:set_attribute("data-status", "backlog")
+    seed_backlog.text_content = "Persist board state Store the board in localStorage using Waluau string fields. Medium priority storage"
+    backlog_list:append_child(seed_backlog)
+
+    local seed_doing: Element = document:create_element("article")
+    seed_doing.class_name = "kanban-card rounded-md border border-slate-200 bg-white p-3 shadow-sm"
+    seed_doing:set_attribute("data-card-id", "seed-1")
+    seed_doing:set_attribute("data-status", "doing")
+    seed_doing.text_content = "Expose DOM callbacks Render cards and respond to browser events from Waluau. High priority dom events"
+    doing_list:append_child(seed_doing)
+
+    local seed_done: Element = document:create_element("article")
+    seed_done.class_name = "kanban-card rounded-md border border-slate-200 bg-white p-3 shadow-sm"
+    seed_done:set_attribute("data-card-id", "seed-3")
+    seed_done:set_attribute("data-status", "done")
+    seed_done.text_content = "Ship Kanban preset Load this demo from the playground preset toolbar. Low priority demo"
+    done_list:append_child(seed_done)
+
+    local editor: Element = document:create_element("article")
+    editor.id = "kanban-editor"
+    editor.class_name = "rounded-md border border-teal-300 bg-white p-3 shadow-sm"
+
+    local title_input: Element = document:create_element("input")
+    title_input.id = "kanban-edit-title"
+    title_input.class_name = "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-950"
+    title_input:set_attribute("value", "New task")
+    editor:append_child(title_input)
+
+    local description_input: Element = document:create_element("textarea")
+    description_input.id = "kanban-edit-description"
+    description_input.class_name = "mt-2 min-h-24 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-950"
+    editor:append_child(description_input)
+
+    local priority_input: Element = document:create_element("input")
+    priority_input.id = "kanban-edit-priority"
+    priority_input.class_name = "mt-2 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-950"
+    priority_input:set_attribute("value", "Medium")
+    editor:append_child(priority_input)
+
+    local tags_input: Element = document:create_element("input")
+    tags_input.id = "kanban-edit-tags"
+    tags_input.class_name = "mt-2 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-950"
+    tags_input:set_attribute("value", "client")
+    editor:append_child(tags_input)
+
+    local editor_controls: Element = document:create_element("div")
+    editor_controls.class_name = "mt-3 flex justify-end gap-2"
+    editor:append_child(editor_controls)
+
+    local save_button: Element = document:create_element("button")
+    save_button.id = "kanban-save-card"
+    save_button.class_name = "rounded bg-teal-700 px-3 py-2 text-sm font-medium text-white"
+    save_button:set_attribute("type", "button")
+    save_button.text_content = "Save"
+    editor_controls:append_child(save_button)
+
+    local card_node: Element = document:create_element("article")
+    card_node.id = "kanban-card-1"
+    card_node.class_name = "kanban-card rounded-md border border-slate-200 bg-white p-3 shadow-sm"
+    card_node:set_attribute("data-card-id", "card-1")
+
+    local card_controls: Element = document:create_element("div")
+    card_controls.class_name = "mt-3 flex justify-between gap-2"
+
+    local edit_button: Element = document:create_element("button")
+    edit_button.id = "kanban-edit-card"
+    edit_button.class_name = "rounded border border-slate-300 px-2 py-1 text-xs text-slate-700"
+    edit_button:set_attribute("type", "button")
+    edit_button.text_content = "Edit"
+    card_controls:append_child(edit_button)
+
+    local delete_button: Element = document:create_element("button")
+    delete_button.id = "kanban-delete-card"
+    delete_button.class_name = "rounded border border-rose-200 px-2 py-1 text-xs text-rose-700 hover:bg-rose-50"
+    delete_button:set_attribute("type", "button")
+    delete_button.text_content = "Delete"
+    card_controls:append_child(delete_button)
+
+    local next_button: Element = document:create_element("button")
+    next_button.id = "kanban-next-card"
+    next_button.class_name = "rounded border border-slate-300 px-2 py-1 text-xs text-slate-700"
+    next_button:set_attribute("type", "button")
+    next_button.text_content = "Next"
+    card_controls:append_child(next_button)
+
+    local editor_visible: bool = false
+    local card_visible: bool = false
+    local card_status: string = "backlog"
+    local card_title: string = ""
+    local card_description: string = ""
+    local card_priority: string = "Medium"
+    local card_tags: string = ""
+    local seed_backlog_visible: bool = true
+    local seed_doing_visible: bool = true
+    local seed_done_visible: bool = true
+
+    local saved_title: string? = storage:get_item("waluau-kanban:card:0:title")
+    if saved_title ~= nil then
+        local saved_description: string? = storage:get_item("waluau-kanban:card:0:description")
+        local saved_priority: string? = storage:get_item("waluau-kanban:card:0:priority")
+        local saved_tags: string? = storage:get_item("waluau-kanban:card:0:tags")
+        local saved_status: string? = storage:get_item("waluau-kanban:card:0:status")
+        card_title = saved_title
+        if saved_description ~= nil then
+            card_description = saved_description
+        end
+        if saved_priority ~= nil then
+            card_priority = saved_priority
+        end
+        if saved_tags ~= nil then
+            card_tags = saved_tags
+        end
+        if saved_status ~= nil then
+            card_status = saved_status
+        end
+        card_node:set_attribute("data-status", card_status)
+        card_node.text_content = card_title .. " " .. card_description .. " " .. card_priority .. " priority " .. card_tags
+        card_node:append_child(card_controls)
+        if card_status == "doing" then
+            doing_list:append_child(card_node)
+        elseif card_status == "done" then
+            done_list:append_child(card_node)
+        else
+            backlog_list:append_child(card_node)
+        end
+        card_visible = true
+    end
+
+    add_button:on_click(function(_event: Event): unit
+        if editor_visible == false then
+            title_input:set_attribute("value", "New task")
+            description_input.text_content = ""
+            priority_input:set_attribute("value", "Medium")
+            tags_input:set_attribute("value", "client")
+            backlog_list:append_child(editor)
+            editor_visible = true
+        end
     end)
 
-    top:append_child(copy)
-    top:append_child(edit_button)
-    card_node:append_child(top)
+    edit_button:on_click(function(_event: Event): unit
+        if editor_visible == false then
+            backlog_list:append_child(editor)
+            editor_visible = true
+        end
+    end)
 
-    local tags: Element = el("div", "mt-3 flex flex-wrap gap-1")
-    for tag in card.tags do
-        tags:append_child(text_el("span", "rounded bg-slate-100 px-2 py-1 text-xs text-slate-700", tag))
-    end
-    card_node:append_child(tags)
-
-    local controls: Element = el("div", "mt-3 flex justify-between gap-2")
-    controls:append_child(button("Back", "rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 disabled:opacity-40", function(_event: Event): unit
-        move_card(card.id, previous_status(card.status))
-    end))
-    controls:append_child(button("Delete", "rounded border border-rose-200 px-2 py-1 text-xs text-rose-700 hover:bg-rose-50", function(_event: Event): unit
-        delete_card(card.id)
-    end))
-    controls:append_child(button("Next", "rounded border border-slate-300 px-2 py-1 text-xs text-slate-700", function(_event: Event): unit
-        move_card(card.id, next_status(card.status))
-    end))
-    card_node:append_child(controls)
-
-    parent:append_child(card_node)
-end
-
-function render_card_editor(parent: Element, card: Card): unit
-    local editor: Element = el("article", "rounded-md border border-teal-300 bg-white p-3 shadow-sm")
-    local title_input: Element = el("input", "w-full rounded-md border border-slate-300 px-3 py-2 text-sm")
-    local description_input: Element = el("textarea", "mt-2 min-h-24 w-full rounded-md border border-slate-300 px-3 py-2 text-sm")
-
-    title_input:set_attribute("value", card.title)
-    description_input.text_content = card.description
-
-    local controls: Element = el("div", "mt-3 flex justify-end gap-2")
-    controls:append_child(button("Cancel", "rounded border border-slate-300 px-3 py-2 text-sm text-slate-700", function(_event: Event): unit
-        state.editing_id = ""
-        render()
-    end))
-    controls:append_child(button("Save", "rounded bg-teal-700 px-3 py-2 text-sm font-medium text-white", function(_event: Event): unit
+    save_button:on_click(function(_event: Event): unit
         if HTMLInputElement(title) = title_input then
             if HTMLTextAreaElement(description) = description_input then
-                update_card_text(card.id, title.value, description.value)
+                if HTMLInputElement(priority) = priority_input then
+                    if HTMLInputElement(tags) = tags_input then
+                        card_title = title.value
+                        card_description = description.value
+                        card_priority = priority.value
+                        card_tags = tags.value
+                        if card_title == "" then
+                            card_title = "Untitled card"
+                        end
+                        if card_priority == "" then
+                            card_priority = "Medium"
+                        end
+
+                        card_status = "backlog"
+                        card_node:set_attribute("data-status", "backlog")
+                        card_node.text_content = card_title .. " " .. card_description .. " " .. card_priority .. " priority " .. card_tags
+                        card_node:append_child(card_controls)
+                        backlog_list:append_child(card_node)
+                        card_visible = true
+
+                        storage:set_item("waluau-kanban:card:0:id", "card-1")
+                        storage:set_item("waluau-kanban:card:0:title", card_title)
+                        storage:set_item("waluau-kanban:card:0:description", card_description)
+                        storage:set_item("waluau-kanban:card:0:priority", card_priority)
+                        storage:set_item("waluau-kanban:card:0:tags", card_tags)
+                        storage:set_item("waluau-kanban:card:0:status", card_status)
+                        storage:set_item("waluau-kanban:activity:0", "Updated " .. card_title)
+                        activity_log.text_content = "Updated " .. card_title
+                    end
+                end
             end
         end
-    end))
+    end)
 
-    editor:append_child(title_input)
-    editor:append_child(description_input)
-    editor:append_child(controls)
-    parent:append_child(editor)
-end
+    next_button:on_click(function(_event: Event): unit
+        if card_visible then
+            if card_status == "backlog" then
+                backlog_list:remove_child(card_node)
+                card_status = "doing"
+                card_node:set_attribute("data-status", "doing")
+                doing_list:append_child(card_node)
+                storage:set_item("waluau-kanban:card:0:status", "doing")
+                storage:set_item("waluau-kanban:activity:0", "Moved " .. card_title .. " to Doing")
+                activity_log.text_content = "Moved " .. card_title .. " to Doing"
+            elseif card_status == "doing" then
+                doing_list:remove_child(card_node)
+                card_status = "done"
+                card_node:set_attribute("data-status", "done")
+                done_list:append_child(card_node)
+                storage:set_item("waluau-kanban:card:0:status", "done")
+                storage:set_item("waluau-kanban:activity:0", "Moved " .. card_title .. " to Done")
+                activity_log.text_content = "Moved " .. card_title .. " to Done"
+            end
+        end
+    end)
 
-function render_column(parent: Element, status: string): unit
-    local column: Element = el("section", "flex min-h-0 flex-col rounded-md border border-slate-200 bg-slate-50")
-    local header: Element = el("div", "border-b border-slate-200 px-4 py-3")
-    header:append_child(text_el("h2", "text-sm font-semibold text-slate-900", status_label(status)))
-    column:append_child(header)
-
-    local list: Element = el("div", "flex flex-1 flex-col gap-3 overflow-y-auto p-3")
-    for card in state.cards do
-        if card.status == status and card_matches_filter(card) then
-            if state.editing_id == card.id then
-                render_card_editor(list, card)
+    delete_button:on_click(function(_event: Event): unit
+        if card_visible then
+            if card_status == "doing" then
+                doing_list:remove_child(card_node)
+            elseif card_status == "done" then
+                done_list:remove_child(card_node)
             else
-                render_card_view(list, card)
+                backlog_list:remove_child(card_node)
             end
+            card_visible = false
+            storage:remove_item("waluau-kanban:card:0:id")
+            storage:remove_item("waluau-kanban:card:0:title")
+            storage:remove_item("waluau-kanban:card:0:description")
+            storage:remove_item("waluau-kanban:card:0:priority")
+            storage:remove_item("waluau-kanban:card:0:tags")
+            storage:remove_item("waluau-kanban:card:0:status")
+            storage:set_item("waluau-kanban:activity:0", "Deleted " .. card_title)
+            activity_log.text_content = "Deleted " .. card_title
         end
-    end
+    end)
 
-    column:append_child(list)
-    parent:append_child(column)
+    filter_input:on_input(function(event: Event): unit
+        if HTMLInputElement(target) = event.target then
+            local value: string = target.value
+            if value == "" then
+                if seed_backlog_visible == false then
+                    backlog_list:append_child(seed_backlog)
+                    seed_backlog_visible = true
+                end
+                if seed_doing_visible == false then
+                    doing_list:append_child(seed_doing)
+                    seed_doing_visible = true
+                end
+                if seed_done_visible == false then
+                    done_list:append_child(seed_done)
+                    seed_done_visible = true
+                end
+            else
+                if seed_backlog_visible then
+                    backlog_list:remove_child(seed_backlog)
+                    seed_backlog_visible = false
+                end
+                if seed_doing_visible then
+                    doing_list:remove_child(seed_doing)
+                    seed_doing_visible = false
+                end
+                if seed_done_visible then
+                    done_list:remove_child(seed_done)
+                    seed_done_visible = false
+                end
+            end
+            storage:set_item("waluau-kanban:filter", value)
+        end
+    end)
 end
 
-function render_activity(parent: Element): unit
-    local panel: Element = el("aside", "border-t border-slate-200 bg-white px-6 py-3")
-    panel:append_child(text_el("h2", "text-xs font-semibold uppercase tracking-wide text-slate-500", "Activity"))
-
-    local list: Element = el("div", "mt-2 flex flex-wrap gap-2")
-    for item in state.activities do
-        list:append_child(text_el("span", "rounded bg-slate-100 px-2 py-1 text-xs text-slate-700", item.message))
-    end
-
-    panel:append_child(list)
-    parent:append_child(panel)
-end
-
-function render_board(parent: Element): unit
-    local board: Element = el("main", "grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden p-4 md:grid-cols-3")
-    render_column(board, STATUS_BACKLOG)
-    render_column(board, STATUS_DOING)
-    render_column(board, STATUS_DONE)
-    parent:append_child(board)
-end
-
-function render(): unit
-    app.text_content = ""
-
-    local shell: Element = el("div", "flex h-screen flex-col bg-slate-100 text-slate-950")
-    render_header(shell)
-    render_board(shell)
-    render_activity(shell)
-    app:append_child(shell)
-end
-
-state.cards = load_cards()
-render()
+install_kanban(0::i32)
