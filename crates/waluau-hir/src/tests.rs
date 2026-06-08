@@ -1829,6 +1829,27 @@ fn type_checks_tagged_union_constructor_named_alias() {
 }
 
 #[test]
+fn type_checks_tagged_union_constructor_mixed_payloads() {
+    let source = r#"
+        type Either = Left(i32) | Right(f64) | Text(string)
+
+        function int_value(): Either
+            return Left(42)
+        end
+
+        function float_value(): Either
+            return Right(3.5)
+        end
+
+        function text_value(): Either
+            return Text("ok")
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
 fn rejects_tagged_union_constructor_for_unknown_variant() {
     let source = r#"
         function test(): i32

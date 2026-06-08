@@ -2,20 +2,20 @@
 -- checks the tag and binds `name` to the unboxed payload, scoped to the
 -- `then` branch. This complements `is Variant` (a plain boolean tag test).
 
-type Either = Left(i32) | Right(i32)
+type Either = Left(i32) | Right(f64)
 
 function describe(value: Either): i32
     if Left(n) = value then
         return n
     end
     if Right(n) = value then
-        return 1000 + n
+        return 1000 + (n :: i32)
     end
     return 0
 end
 
 assert(describe(Left(42)) == 42)
-assert(describe(Right(7)) == 1007)
+assert(describe(Right(7.5)) == 1007)
 
 -- The binding is scoped to the `then` branch and does not leak past `end`.
 local a: Either = Left(5)
