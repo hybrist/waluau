@@ -363,26 +363,29 @@ impl Parser {
     }
 
     fn try_parse_if_cast_clause(&mut self) -> Result<Option<Stmt>, Diagnostic> {
-        let checkpoint = self.index;
-        let target_name = match self.peek().map(|token| &token.kind) {
-            Some(TokenKind::Identifier(name)) => name.clone(),
-            _ => return Ok(None),
-        };
-        if !matches!(
+        let (
+            Some(TokenKind::Identifier(target_name)),
+            Some(TokenKind::LParen),
+            Some(TokenKind::Identifier(binding)),
+            Some(TokenKind::RParen),
+            Some(TokenKind::Equal),
+        ) = (
+            self.peek().map(|token| &token.kind),
             self.peek_n(1).map(|token| &token.kind),
-            Some(TokenKind::LParen)
-        ) {
+            self.peek_n(2).map(|token| &token.kind),
+            self.peek_n(3).map(|token| &token.kind),
+            self.peek_n(4).map(|token| &token.kind),
+        )
+        else {
             return Ok(None);
-        }
+        };
 
+        let target_name = target_name.clone();
+        let binding = binding.clone();
         self.advance();
-        self.expect_simple(TokenKind::LParen, "expected '(' after cast target")?;
-        let binding = self.expect_identifier()?;
-        self.expect_simple(TokenKind::RParen, "expected ')' after cast binding")?;
-        if !self.check_simple(&TokenKind::Equal) {
-            self.index = checkpoint;
-            return Ok(None);
-        }
+        self.advance();
+        self.advance();
+        self.advance();
         self.advance();
         let value = self.parse_expr()?;
         self.expect_simple(TokenKind::Then, "expected 'then' after if-cast")?;
