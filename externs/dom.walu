@@ -3,6 +3,7 @@
 -- Inheritance is emitted with extern extends and mirrored in externs/dom.metadata.json.
 
 type EventTarget = extern
+type Event = extern
 type Node = extern extends EventTarget
 type Document = extern extends Node
 type Window = extern
@@ -13,6 +14,8 @@ type HTMLInputElement = extern extends HTMLElement
 type HTMLTextAreaElement = extern extends HTMLElement
 type Storage = extern
 
+declare function EventTarget:add_event_listener(type: string, callback: (Event) -> unit): unit
+declare property Event:target: EventTarget
 declare property Node:node_name: string
 declare property Node:text_content: string
 declare function Node:append_child(node: Node): Node
@@ -32,6 +35,8 @@ declare function Element:set_attribute(name: string, value: string): unit
 declare function Element:remove_attribute(name: string): unit
 declare function Element:append_class(class_name: string): unit
 declare function Element:query_selector(selectors: string): Element?
+declare function Element:on_click(callback: (Event) -> unit): unit
+declare function Element:on_input(callback: (Event) -> unit): unit
 declare property HTMLElement:inner_text: string
 declare property HTMLElement:value: string
 declare function Storage:get_item(key: string): string?

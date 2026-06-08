@@ -2,6 +2,10 @@ interface EventTarget {
   undefined addEventListener(DOMString type, EventListener callback);
 };
 
+interface Event {
+  readonly attribute EventTarget target;
+};
+
 interface Node : EventTarget {
   readonly attribute DOMString nodeName;
   attribute DOMString textContent;
@@ -31,6 +35,8 @@ interface Element : Node {
   undefined removeAttribute(DOMString qualifiedName);
   undefined appendClass(DOMString className);
   Element? querySelector(DOMString selectors);
+  undefined onClick(EventListener callback);
+  undefined onInput(EventListener callback);
 };
 
 interface HTMLElement : Element {

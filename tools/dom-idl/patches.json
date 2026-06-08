@@ -1,5 +1,6 @@
 {
   "memberRenames": {
+    "addEventListener": "add_event_listener",
     "appendChild": "append_child",
     "appendClass": "append_class",
     "className": "class_name",
@@ -11,6 +12,8 @@
     "innerText": "inner_text",
     "localStorage": "local_storage",
     "nodeName": "node_name",
+    "onClick": "on_click",
+    "onInput": "on_input",
     "querySelector": "query_selector",
     "removeAttribute": "remove_attribute",
     "removeChild": "remove_child",

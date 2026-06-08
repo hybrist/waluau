@@ -6,6 +6,10 @@
       "parent": null
     },
     {
+      "interface": "Event",
+      "parent": null
+    },
+    {
       "interface": "Node",
       "parent": "EventTarget"
     },
@@ -43,6 +47,25 @@
     }
   ],
   "emittedMembers": [
+    {
+      "interface": "EventTarget",
+      "kind": "operation",
+      "idlName": "addEventListener",
+      "emittedName": "add_event_listener",
+      "params": [
+        "type: string",
+        "callback: (Event) -> unit"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "Event",
+      "kind": "attribute",
+      "idlName": "target",
+      "emittedName": "target",
+      "type": "EventTarget",
+      "readonly": true
+    },
     {
       "interface": "Node",
       "kind": "attribute",
@@ -220,6 +243,26 @@
       "returnType": "Element?"
     },
     {
+      "interface": "Element",
+      "kind": "operation",
+      "idlName": "onClick",
+      "emittedName": "on_click",
+      "params": [
+        "callback: (Event) -> unit"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "Element",
+      "kind": "operation",
+      "idlName": "onInput",
+      "emittedName": "on_input",
+      "params": [
+        "callback: (Event) -> unit"
+      ],
+      "returnType": "unit"
+    },
+    {
       "interface": "HTMLElement",
       "kind": "attribute",
       "idlName": "innerText",
@@ -273,11 +316,5 @@
       "returnType": "Window"
     }
   ],
-  "skippedMembers": [
-    {
-      "interface": "EventTarget",
-      "member": "addEventListener",
-      "reason": "callback: unsupported Web IDL type EventListener"
-    }
-  ]
+  "skippedMembers": []
 }

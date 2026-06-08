@@ -1,6 +1,7 @@
 {
   "interfaces": [
     "EventTarget",
+    "Event",
     "Node",
     "Document",
     "Window",
@@ -14,6 +15,9 @@
   "members": {
     "EventTarget": [
       "operation:addEventListener"
+    ],
+    "Event": [
+      "attribute:target"
     ],
     "Node": [
       "attribute:nodeName",
@@ -40,7 +44,9 @@
       "operation:setAttribute",
       "operation:removeAttribute",
       "operation:appendClass",
-      "operation:querySelector"
+      "operation:querySelector",
+      "operation:onClick",
+      "operation:onInput"
     ],
     "HTMLElement": [
       "attribute:innerText",
@@ -66,6 +72,7 @@
     "USVString": "string",
     "boolean": "bool",
     "undefined": "unit",
-    "void": "unit"
+    "void": "unit",
+    "EventListener": "(Event) -> unit"
   }
 }

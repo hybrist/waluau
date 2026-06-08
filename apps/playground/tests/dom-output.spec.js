@@ -58,6 +58,43 @@ body:remove_child(new_child)
 body:append_child(new_child)
 `;
 
+const DOM_EVENT_CALLBACK_SAMPLE = `local window = require("dom:window")
+local document = window.document
+local body: HTMLElement = document.body
+
+local status: Element = document:create_element("p")
+status.id = "event-status"
+status.text_content = "idle"
+
+local button: Element = document:create_element("button")
+button.id = "event-button"
+button.text_content = "Click"
+
+local click_count: i32 = 0
+button:on_click(function(event: Event): unit
+    click_count = click_count + 1
+    if Element(target) = event.target then
+        if click_count == 1 then
+            status.text_content = "clicked " .. target.id
+        else
+            status.text_content = "clicked twice " .. target.id
+        end
+    end
+end)
+
+local input: Element = document:create_element("input")
+input.id = "event-input"
+input:on_input(function(event: Event): unit
+    if HTMLInputElement(target) = event.target then
+        status.text_content = "input " .. target.value
+    end
+end)
+
+body:append_child(button)
+body:append_child(input)
+body:append_child(status)
+`;
+
 test.describe('DOM Output in Run tab', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
@@ -125,6 +162,28 @@ test.describe('DOM Output in Run tab', () => {
     await expect(outputFrame.locator('section#new-child')).toHaveClass(/panel ready selected/);
     await expect(outputFrame.locator('section#new-child')).toHaveAttribute('data-state', 'ready');
     await expect(outputFrame.locator('section#new-child')).toHaveText('typed card ready persisted');
+  });
+
+  test('runs Waluau click and input callbacks from DOM Output events', async ({ page }) => {
+    await page.locator('.code-textarea').fill(DOM_EVENT_CALLBACK_SAMPLE);
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    const domOutput = page.getByLabel('DOM Output');
+    await expect(domOutput).toBeVisible();
+
+    const outputFrame = page.frameLocator('.dom-output-frame');
+    await expect(outputFrame.locator('#event-status')).toHaveText('idle');
+
+    await outputFrame.locator('#event-button').click();
+    await expect(outputFrame.locator('#event-status')).toHaveText('clicked event-button');
+
+    await outputFrame.locator('#event-button').click();
+    await expect(outputFrame.locator('#event-status')).toHaveText('clicked twice event-button');
+
+    await outputFrame.locator('#event-input').fill('typed card');
+    await expect(outputFrame.locator('#event-status')).toHaveText('input typed card');
   });
 
   test('loads DOM externs for the dom_extern_rendering conformance preset', async ({ page }) => {
