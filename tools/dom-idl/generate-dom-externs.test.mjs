@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,25 +13,86 @@ function readRepoFile(relativePath) {
   return readFileSync(path.join(repoRoot, relativePath), 'utf8');
 }
 
-test('DOM extern generation is stable', () => {
+function runGenerator({
+  input,
+  filter = 'tools/dom-idl/filter.json',
+  patches = 'tools/dom-idl/patches.json',
+} = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), 'waluau-dom-idl-'));
   const externs = path.join(dir, 'dom.walu');
   const metadata = path.join(dir, 'dom.metadata.json');
   const diagnostics = path.join(dir, 'dom.diagnostics.txt');
 
-  execFileSync(process.execPath, [
+  const args = [
     script,
+    '--filter',
+    filter,
+    '--patches',
+    patches,
     '--out',
     externs,
     '--metadata-out',
     metadata,
     '--diagnostics-out',
     diagnostics,
-  ], { cwd: repoRoot });
+  ];
+  if (input) {
+    args.splice(1, 0, '--input', input);
+  }
 
-  assert.equal(readFileSync(externs, 'utf8'), readRepoFile('externs/dom.walu'));
-  assert.equal(readFileSync(metadata, 'utf8'), readRepoFile('externs/dom.metadata.json'));
-  assert.equal(readFileSync(diagnostics, 'utf8'), readRepoFile('externs/dom.diagnostics.txt'));
+  execFileSync(process.execPath, args, { cwd: repoRoot });
+
+  return {
+    externs: readFileSync(externs, 'utf8'),
+    metadata: readFileSync(metadata, 'utf8'),
+    diagnostics: readFileSync(diagnostics, 'utf8'),
+  };
+}
+
+test('DOM extern generation is stable', () => {
+  const { externs, metadata, diagnostics } = runGenerator();
+
+  assert.equal(externs, readRepoFile('externs/dom.walu'));
+  assert.equal(metadata, readRepoFile('externs/dom.metadata.json'));
+  assert.equal(diagnostics, readRepoFile('externs/dom.diagnostics.txt'));
+});
+
+test('selected DOM interfaces are emitted in parent-before-child order', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'waluau-dom-idl-order-'));
+  const input = path.join(dir, 'custom.webidl');
+  const filter = path.join(dir, 'filter.json');
+  const patches = path.join(dir, 'patches.json');
+
+  writeFileSync(input, [
+    'interface Parent {',
+    '};',
+    'interface Child : Parent {',
+    '  attribute Parent? owner;',
+    '};',
+    '',
+  ].join('\n'));
+  writeFileSync(filter, JSON.stringify({
+    interfaces: ['Child', 'Parent'],
+    typeMap: {},
+    disabledMembers: {},
+    hostFunctions: [],
+    skipIssueRefs: {},
+  }));
+  writeFileSync(patches, JSON.stringify({}));
+
+  const generated = runGenerator({
+    input: path.relative(repoRoot, input),
+    filter: path.relative(repoRoot, filter),
+    patches: path.relative(repoRoot, patches),
+  });
+  const inheritance = JSON.parse(generated.metadata).inheritance.map((entry) => entry.interface);
+
+  assert.ok(
+    generated.externs.indexOf('type Parent = extern') < generated.externs.indexOf('type Child = extern extends Parent'),
+    'parent extern should be emitted before child extern',
+  );
+  assert.match(generated.externs, /^declare property Child:owner: Parent\?$/m);
+  assert.deepEqual(inheritance, ['Parent', 'Child']);
 });
 
 test('unsupported Web IDL members are diagnosed deterministically', () => {
@@ -82,6 +143,37 @@ test('generated externs emit DOM inheritance syntax', () => {
   assert.match(externs, /^type Element = extern extends Node$/m);
   assert.match(externs, /^type HTMLElement = extern extends Element$/m);
   assert.match(externs, /^type HTMLHeadingElement = extern extends HTMLElement$/m);
+});
+
+test('generated DOM externs keep nullable-parent inheritance chains parent-first', () => {
+  const externs = readRepoFile('externs/dom.walu');
+  const metadata = JSON.parse(readRepoFile('externs/dom.metadata.json'));
+  const inheritance = metadata.inheritance.map((entry) => entry.interface);
+
+  assert.ok(
+    externs.indexOf('type AbstractRange = extern') < externs.indexOf('type Range = extern extends AbstractRange'),
+    'AbstractRange should precede Range in generated externs',
+  );
+  assert.ok(
+    externs.indexOf('type DOMRectReadOnly = extern') < externs.indexOf('type DOMRect = extern extends DOMRectReadOnly'),
+    'DOMRectReadOnly should precede DOMRect in generated externs',
+  );
+  assert.ok(
+    externs.indexOf('type StyleSheet = extern') < externs.indexOf('type CSSStyleSheet = extern extends StyleSheet'),
+    'StyleSheet should precede CSSStyleSheet in generated externs',
+  );
+  assert.ok(
+    inheritance.indexOf('AbstractRange') < inheritance.indexOf('Range'),
+    'metadata should mirror parent-before-child ordering for AbstractRange/Range',
+  );
+  assert.ok(
+    inheritance.indexOf('DOMRectReadOnly') < inheritance.indexOf('DOMRect'),
+    'metadata should mirror parent-before-child ordering for DOMRectReadOnly/DOMRect',
+  );
+  assert.ok(
+    inheritance.indexOf('StyleSheet') < inheritance.indexOf('CSSStyleSheet'),
+    'metadata should mirror parent-before-child ordering for StyleSheet/CSSStyleSheet',
+  );
 });
 
 test('generated externs expose the DOM window root', () => {
