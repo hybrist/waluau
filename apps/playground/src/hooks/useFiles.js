@@ -6,13 +6,29 @@ import {
   filesForConformancePreset,
   MULTI_PRESET,
   KANBAN_PRESET,
-  DEFAULT_PRESET
+  DEFAULT_PRESET,
+  PRESETS
 } from '../utils/presets.js';
 
+const EXAMPLE_QUERY_PARAM = 'example';
+
+function presetFromUrl() {
+  const key = new URLSearchParams(window.location.search).get(EXAMPLE_QUERY_PARAM);
+  if (!key) return null;
+  return PRESETS.find((preset) => preset.key === key) ?? null;
+}
+
+function setExampleQueryParam(key) {
+  const url = new URL(window.location.href);
+  url.searchParams.set(EXAMPLE_QUERY_PARAM, key);
+  window.history.replaceState(null, '', url);
+}
+
 export default function useFiles() {
-  const [files, setFiles] = useState(DEFAULT_PRESET.files);
-  const [activeFile, setActiveFile] = useState(DEFAULT_PRESET.entryFile);
-  const [entryFile, setEntryFile] = useState(DEFAULT_PRESET.entryFile);
+  const initialPreset = useMemo(() => presetFromUrl() ?? DEFAULT_PRESET, []);
+  const [files, setFiles] = useState(initialPreset.files);
+  const [activeFile, setActiveFile] = useState(initialPreset.entryFile);
+  const [entryFile, setEntryFile] = useState(initialPreset.entryFile);
   const [editingFile, setEditingFile] = useState(null);
   const [editingValue, setEditingValue] = useState('');
 
@@ -20,6 +36,7 @@ export default function useFiles() {
     setFiles(preset.files);
     setActiveFile(preset.entryFile);
     setEntryFile(preset.entryFile);
+    setExampleQueryParam(preset.key);
   }, []);
 
   const handleAddFile = useCallback((name) => {
@@ -155,8 +172,7 @@ export default function useFiles() {
         source,
         category: 'Module',
         onSelect: () => {
-          setFiles(MULTI_PRESET.files);
-          setEntryFile(MULTI_PRESET.entryFile);
+          selectPreset(MULTI_PRESET);
           setActiveFile(`/${filename}`);
         }
       });
