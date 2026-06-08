@@ -125,21 +125,25 @@ describe('browser conformance', () => {
   it('renders DOM extern handles into the conformance DOM root', async () => {
     const testCase = cases.find(({ name }) => name === 'dom_extern_rendering.walu');
     const source = sourceForCase(testCase);
-    const { root } = await compileAndInstantiateWithDom({ '/main.walu': source }, '/main.walu');
+    const { root, cleanup } = await compileAndInstantiateWithDom({ '/main.walu': source }, '/main.walu');
 
-    expect(root.children).toHaveLength(2);
-    expect(root.children[0].tagName).toBe('H1');
-    expect(root.children[0].id).toBe('generated-heading');
-    expect(root.children[0].className).toBe('title');
-    expect(root.children[0].textContent).toBe('Hello from generated DOM externsleaf');
-    expect(root.children[0].children).toHaveLength(1);
-    expect(root.children[0].children[0].tagName).toBe('SPAN');
-    expect(root.children[0].children[0].className).toBe('leaf');
-    expect(root.children[0].children[0].textContent).toBe('leaf');
-    expect(root.children[1].tagName).toBe('P');
-    expect(root.children[1].id).toBe('generated-paragraph');
-    expect(root.children[1].className).toBe('body');
-    expect(root.children[1].textContent).toBe('Rendered through generated extern DOM handles');
+    try {
+      expect(root.children).toHaveLength(2);
+      expect(root.children[0].tagName).toBe('H1');
+      expect(root.children[0].id).toBe('generated-heading');
+      expect(root.children[0].className).toBe('title');
+      expect(root.children[0].textContent).toBe('Hello from generated DOM externsleaf');
+      expect(root.children[0].children).toHaveLength(1);
+      expect(root.children[0].children[0].tagName).toBe('SPAN');
+      expect(root.children[0].children[0].className).toBe('leaf');
+      expect(root.children[0].children[0].textContent).toBe('leaf');
+      expect(root.children[1].tagName).toBe('P');
+      expect(root.children[1].id).toBe('generated-paragraph');
+      expect(root.children[1].className).toBe('body');
+      expect(root.children[1].textContent).toBe('Rendered through generated extern DOM handles');
+    } finally {
+      cleanup();
+    }
   });
 
   it('passes DOM mutation and localStorage host API checks', async () => {

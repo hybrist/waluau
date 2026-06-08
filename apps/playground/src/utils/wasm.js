@@ -321,7 +321,9 @@ function createPlaygroundDomHost(domOutputRoot, getWasmExports = () => null) {
   const requireEvent = (value, label = 'DOM event') => {
     const document = requireOutputDocument();
     const EventCtor = document.defaultView?.Event ?? Event;
-    if (!(value instanceof EventCtor)) {
+    const parentEventCtor = typeof Event !== 'undefined' ? Event : null;
+    const isInstance = (value instanceof EventCtor) || (parentEventCtor && value instanceof parentEventCtor);
+    if (!isInstance && !(value && typeof value === 'object' && 'target' in value)) {
       throw new Error(`${label} must be an Event`);
     }
     return value;
@@ -603,6 +605,7 @@ function createPlaygroundDomHost(domOutputRoot, getWasmExports = () => null) {
 export function buildWaluauImports(wasmBuffer, initLogger, options = {}) {
   const bytesConstants = decodeBytesConstantsFromWasm(wasmBuffer);
   const domHost = createPlaygroundDomHost(options.domOutputRoot, options.getWasmExports);
+  const hostImports = options.hostImports ?? {};
   const asBytes = (value) => {
     if (value instanceof Uint8Array) return value;
     throw new Error(`Expected Uint8Array bytes value, got ${Object.prototype.toString.call(value)}`);
@@ -641,13 +644,16 @@ export function buildWaluauImports(wasmBuffer, initLogger, options = {}) {
       return typeof view.HTMLTextAreaElement !== 'undefined' && value instanceof view.HTMLTextAreaElement ? 1 : 0;
     }
     if (name === 'Storage') {
-      return value && typeof value.getItem === 'function' && typeof value.setItem === 'function' && typeof value.removeItem === 'function' ? 1 : 0;
+      return typeof view.Storage !== 'undefined' && value instanceof view.Storage ? 1 : 0;
     }
     throw new Error(`Unsupported extern cast target: ${name}`);
   };
   const waluauImports = new Proxy({}, {
     get(_target, prop) {
       const name = String(prop);
+      if (Object.prototype.hasOwnProperty.call(hostImports, name)) {
+        return hostImports[name];
+      }
       if (name.startsWith('js_tostring_')) {
         return (value) => String(value);
       }
