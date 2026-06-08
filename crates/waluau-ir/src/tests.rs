@@ -281,6 +281,30 @@ fn widened_method_receiver_writes_back_mutations() {
 }
 
 #[test]
+fn canonicalizes_snake_case_dom_import_members_without_interface_allowlist() {
+    let source = r#"
+        type Node = extern
+        type Selection = extern
+
+        declare property Selection:anchor_node: Node?
+        declare property Selection:focus_node: Node?
+        declare function Selection:select_all_children(node: Node): unit
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("ir build should succeed");
+    let host_names = module
+        .declared_imports
+        .iter()
+        .map(|declared| declared.host_name.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(host_names.contains(&"Selection.get/anchorNode"));
+    assert!(host_names.contains(&"Selection.get/focusNode"));
+    assert!(host_names.contains(&"Selection.selectAllChildren"));
+}
+
+#[test]
 fn threads_assert_call_span_to_trap_terminator() {
     let source = r#"
         function entry(): i32
