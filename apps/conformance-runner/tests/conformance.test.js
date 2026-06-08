@@ -154,4 +154,16 @@ describe('browser conformance', () => {
     expect(root.children).toHaveLength(0);
     expect(storage.getItem('waluau-dom-storage-key')).toBeNull();
   });
+
+  it('passes DOM Selection snake_case member rename checks', async () => {
+    const testCase = cases.find(({ name }) => name === 'dom_selection_member_rename.walu');
+    const source = sourceForCase(testCase);
+    const { root, cleanup } = await compileAndInstantiateWithDom({ '/main.walu': source }, '/main.walu');
+
+    try {
+      expect(root.tagName).toBe('BODY');
+    } finally {
+      cleanup();
+    }
+  });
 });

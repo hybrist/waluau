@@ -1,0 +1,21 @@
+declare function Selection:select_all_children(node: Node): unit
+declare property Selection:anchor_node: Node?
+
+local window = require("dom:window")
+local document: Document = window.document
+local body: HTMLElement = document.body
+local text: Text = document:createTextNode("selection target")
+
+body:append_child(text)
+
+local selection: Selection? = window:getSelection()
+assert(selection ~= nil)
+
+if selection ~= nil then
+    selection:select_all_children(body)
+    assert(selection.rangeCount == 1)
+    local anchor: Node? = selection.anchor_node
+    assert(anchor ~= nil)
+else
+    assert(false)
+end

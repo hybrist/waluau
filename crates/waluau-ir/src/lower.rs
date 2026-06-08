@@ -100,27 +100,16 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
 }
 
 fn canonical_dom_import_host_name(name: &str) -> Option<String> {
-    const DOM_INTERFACES: &[&str] = &[
-        "Document",
-        "Element",
-        "Event",
-        "EventTarget",
-        "HTMLElement",
-        "HTMLHeadingElement",
-        "HTMLInputElement",
-        "HTMLTextAreaElement",
-        "Node",
-        "Storage",
-        "Window",
-    ];
-
     let (interface, member) = name.split_once('.')?;
-    if !DOM_INTERFACES.contains(&interface) {
-        return None;
-    }
     let host_member = if let Some(property) = member.strip_prefix("get/") {
+        if !property.contains('_') {
+            return None;
+        }
         format!("get/{}", snake_to_lower_camel(property))
     } else if let Some(property) = member.strip_prefix("set/") {
+        if !property.contains('_') {
+            return None;
+        }
         format!("set/{}", snake_to_lower_camel(property))
     } else if member.contains('_') {
         snake_to_lower_camel(member)
