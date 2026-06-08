@@ -443,6 +443,11 @@ impl Parser {
                 }
                 Ok(Expr::Name(name, None, span))
             }
+            // `string` is lexed as a reserved type keyword, but it also
+            // doubles as the namespace for builtins like `string.find`.
+            // Treat it as a plain name in expression position so
+            // `string.find(...)` can parse like `math.floor(...)`.
+            TokenKind::StringType => Ok(Expr::Name("string".to_string(), None, span)),
             TokenKind::Str(value) => Ok(Expr::String(value, span)),
             TokenKind::Bytes(value) => Ok(Expr::Bytes(value, span)),
             TokenKind::Function => {

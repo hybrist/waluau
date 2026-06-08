@@ -2907,6 +2907,20 @@ impl Builder<'_> {
                 ..
             } => {
                 let receiver_ty = self.infer_expr_type(receiver, types, None)?;
+                if receiver_ty == Type::String && name == "find" {
+                    let mut call_args = Vec::with_capacity(args.len() + 1);
+                    call_args.push((**receiver).clone());
+                    call_args.extend_from_slice(args);
+                    if let Some(result) = self.lower_string_builtin_call(
+                        STRING_FIND,
+                        &call_args,
+                        env,
+                        types,
+                        expected.clone(),
+                    ) {
+                        return result;
+                    }
+                }
                 let type_method =
                     type_method_signature(&receiver_ty, name, self.field_call_signatures);
                 let (param_types, return_type) = if let Some((_, params, return_type)) =
@@ -3952,6 +3966,16 @@ impl Builder<'_> {
                 ..
             } => {
                 let receiver_ty = self.infer_expr_type(receiver, types, None)?;
+                if receiver_ty == Type::String && name == "find" {
+                    let mut call_args = Vec::with_capacity(args.len() + 1);
+                    call_args.push((**receiver).clone());
+                    call_args.extend_from_slice(args);
+                    if let Some(result) =
+                        self.infer_string_builtin_call_type(STRING_FIND, &call_args, types)
+                    {
+                        return result;
+                    }
+                }
                 let (params, return_type) = if let Some((_, params, return_type)) =
                     type_method_signature(&receiver_ty, name, self.field_call_signatures)
                 {
@@ -4125,7 +4149,7 @@ impl Builder<'_> {
                     if let Some(result) = self.infer_print_builtin_call_type(&name, expr, types) {
                         return result;
                     }
-                    if let Some(result) = self.infer_string_builtin_call_type(&name, expr, types) {
+                    if let Some(result) = self.infer_string_builtin_call_type(&name, args, types) {
                         return result;
                     }
                 }
@@ -5147,76 +5171,90 @@ impl Builder<'_> {
         if name != STRING_FIND {
             return None;
         }
-        
-        // Validate argument count
-        if args.len() != 2 {
+
+        // string.find(haystack, needle, init?, plain?) — `init` (search start
+        // offset) and `plain` default to 0 and true when the caller omits them.
+        if args.len() < 2 || args.len() > 4 {
             return Some(Err(Diagnostic::new(format!(
-                "{STRING_FIND} expects 2 arguments, got {}",
+                "{STRING_FIND} expects 2 to 4 arguments, got {}",
                 args.len()
             ))));
         }
 
-        // Lower haystack argument
         let haystack = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
             Ok(val) => val,
             Err(error) => return Some(Err(error)),
         };
-
-        // Lower needle argument  
         let needle = match self.lower_expr(&args[1], env, types, Some(Type::String)) {
             Ok(val) => val,
             Err(error) => return Some(Err(error)),
         };
+        let i32_ty = Type::Numeric(NumericType::I32);
+        let init = match args.get(2) {
+            Some(arg) => match self.lower_expr(arg, env, types, Some(i32_ty.clone())) {
+                Ok(val) => val,
+                Err(error) => return Some(Err(error)),
+            },
+            None => self.emit(Instruction::Number {
+                ty: NumericType::I32,
+                literal: NumberLiteral { raw: "0".into() },
+            }),
+        };
+        let plain = match args.get(3) {
+            Some(arg) => match self.lower_expr(arg, env, types, Some(Type::Bool)) {
+                Ok(val) => val,
+                Err(error) => return Some(Err(error)),
+            },
+            None => self.emit(Instruction::Bool(true)),
+        };
 
-        // Call the string_find host function
-        let call_args = vec![haystack, needle];
+        let call_args = vec![haystack, needle, init, plain];
 
-        // The result type: i32 (position or -1 if not found)
+        // The result type: i32 (0-based position, or -1 if not found)
         let result_ty = Type::Numeric(NumericType::I32);
 
-        // Get the symbol_id for the string_find host function
-        let symbol_id = self.host_import_names.get(STRING_FIND).copied().ok_or_else(|| {
-            Diagnostic::new(format!(
-                "declared function '{STRING_FIND}' is missing a host import symbol"
-            ))
-        });
+        let symbol_id = self
+            .host_import_names
+            .get(STRING_FIND_HOST)
+            .copied()
+            .ok_or_else(|| {
+                Diagnostic::new(format!(
+                    "declared function '{STRING_FIND_HOST}' is missing a host import symbol"
+                ))
+            });
         let symbol_id = match symbol_id {
             Ok(id) => id,
             Err(error) => return Some(Err(error)),
         };
 
         let result_value = self.emit(Instruction::HostCall {
-            name: STRING_FIND.to_string(),
+            name: STRING_FIND_HOST.to_string(),
             symbol_id,
             args: call_args,
             return_type: result_ty.clone(),
         });
-        
+
         Some(self.coerce_value(result_value, result_ty, expected))
     }
 
     fn infer_string_builtin_call_type(
         &self,
         name: &str,
-        call: &Expr,
+        args: &[Expr],
         types: &HashMap<SymbolId, Type>,
     ) -> Option<Result<Type, Diagnostic>> {
         if name != STRING_FIND {
             return None;
         }
-        let Expr::Call { args, .. } = call else {
-            return None;
-        };
-        if args.len() != 2 {
+        if args.len() < 2 || args.len() > 4 {
             return Some(Err(Diagnostic::new(format!(
-                "{STRING_FIND} expects 2 arguments, got {}",
+                "{STRING_FIND} expects 2 to 4 arguments, got {}",
                 args.len()
             ))));
         }
 
-        // Check argument types
         match self.infer_expr_type(&args[0], types, Some(Type::String)) {
-            Ok(Type::String) => {},
+            Ok(Type::String) => {}
             Ok(actual) => return Some(Err(Diagnostic::new(format!(
                 "{STRING_FIND} expects haystack to be string, got {actual}",
             )))),
@@ -5224,15 +5262,36 @@ impl Builder<'_> {
         }
 
         match self.infer_expr_type(&args[1], types, Some(Type::String)) {
-            Ok(Type::String) => {},
+            Ok(Type::String) => {}
             Ok(actual) => return Some(Err(Diagnostic::new(format!(
                 "{STRING_FIND} expects needle to be string, got {actual}",
             )))),
             Err(error) => return Some(Err(error)),
         }
 
-        // Return type: i32 (position or -1 if not found)
-        Some(Ok(Type::Numeric(NumericType::I32)))
+        let i32_ty = Type::Numeric(NumericType::I32);
+        if let Some(init_arg) = args.get(2) {
+            match self.infer_expr_type(init_arg, types, Some(i32_ty.clone())) {
+                Ok(ty) if ty == i32_ty => {}
+                Ok(actual) => return Some(Err(Diagnostic::new(format!(
+                    "{STRING_FIND} expects init to be an i32, got {actual}",
+                )))),
+                Err(error) => return Some(Err(error)),
+            }
+        }
+
+        if let Some(plain_arg) = args.get(3) {
+            match self.infer_expr_type(plain_arg, types, Some(Type::Bool)) {
+                Ok(Type::Bool) => {}
+                Ok(actual) => return Some(Err(Diagnostic::new(format!(
+                    "{STRING_FIND} expects plain to be a bool, got {actual}",
+                )))),
+                Err(error) => return Some(Err(error)),
+            }
+        }
+
+        // Return type: i32 (0-based position, or -1 if not found)
+        Some(Ok(i32_ty))
     }
 }
 
