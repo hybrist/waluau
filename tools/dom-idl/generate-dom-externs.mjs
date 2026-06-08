@@ -321,6 +321,15 @@ function toSnake(name) {
   return name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 }
 
+function sanitizeParamName(name, usedNames) {
+  let candidate = name;
+  while (RESERVED_WORDS.has(candidate) || usedNames.has(candidate)) {
+    candidate = `${candidate}_`;
+  }
+  usedNames.add(candidate);
+  return candidate;
+}
+
 function emitInterfaceMember(iface, member, context) {
   const { filter, patches, knownInterfaces, include } = context;
   const rename = patchedName(member.name, patches);
@@ -345,18 +354,16 @@ function emitInterfaceMember(iface, member, context) {
     const returnType = mapType(member.idlType, filter, knownInterfaces, include);
     if (returnType.error) return { skipped: returnType.error, category: returnType.category };
     const params = [];
+    const usedParamNames = new Set();
     for (const param of member.params) {
       if (param.unsupported) return { skipped: `unsupported parameter syntax ${param.source}` };
       if (param.optional) return { skipped: `unsupported optional parameter ${param.name}` };
       const mapped = mapType(param.idlType, filter, knownInterfaces, include);
       if (mapped.error) return { skipped: `${param.name}: ${mapped.error}`, category: mapped.category };
-      const paramName = patchedParamName(iface.name, member.name, param.name, patches);
-      if (RESERVED_WORDS.has(paramName)) {
-        return {
-          skipped: `parameter name '${param.name}' becomes reserved word '${paramName}' after snake_case conversion`,
-          category: 'reserved-keyword-param',
-        };
-      }
+      const paramName = sanitizeParamName(
+        patchedParamName(iface.name, member.name, param.name, patches),
+        usedParamNames,
+      );
       params.push(`${paramName}: ${mapped.type}`);
     }
     return {

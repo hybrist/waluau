@@ -68,7 +68,6 @@ test('skip diagnostics reference tracked compiler/tooling limitations where appl
   assert.match(diagnostics, /unsupported union Web IDL type \([^)]*\) \(waluau-b3hl\)/);
   assert.match(diagnostics, /nullable callback Web IDL type .+ has no extern syntax representation \(waluau-lqjs\)/);
   assert.match(diagnostics, /nullable modifier rejects primitive Web IDL type .+ \(waluau-pq7p\)/);
-  assert.match(diagnostics, /becomes reserved word '[a-z_]+' after snake_case conversion \(waluau-9szs\)/);
   assert.match(diagnostics, /unsupported Web IDL type (any|object\??) \(waluau-lxdd\)/);
   assert.match(diagnostics, /collides with .* \(waluau-1l02\)/);
 });
@@ -109,4 +108,30 @@ test('generated externs expose minimal DOM mutation and storage APIs', () => {
   assert.match(externs, /^declare function Element:get_attribute\(name: string\): string\?$/m);
   assert.match(externs, /^declare property Window:local_storage: Storage$/m);
   assert.match(externs, /^declare function Storage:get_item\(key: string\): string\?$/m);
+});
+
+test('generated externs sanitize reserved DOM parameter names deterministically', () => {
+  const externs = readRepoFile('externs/dom.walu');
+  const metadata = JSON.parse(readRepoFile('externs/dom.metadata.json'));
+  const diagnostics = readRepoFile('externs/dom.diagnostics.txt');
+
+  assert.match(
+    externs,
+    /^declare function HTMLInputElement:setRangeText\(replacement: string, start: u32, end_: u32\): unit$/m,
+  );
+  assert.match(
+    externs,
+    /^declare function HTMLInputElement:setSelectionRange\(start: u32, end_: u32\): unit$/m,
+  );
+  assert.match(
+    externs,
+    /^declare function HTMLTextAreaElement:setRangeText\(replacement: string, start: u32, end_: u32\): unit$/m,
+  );
+  assert.doesNotMatch(diagnostics, /skip HTMLInputElement\.setRangeText: .*waluau-9szs/);
+  assert.doesNotMatch(diagnostics, /skip HTMLTextAreaElement\.setRangeText: .*waluau-9szs/);
+
+  const inputSetRangeText = metadata.emittedMembers.find(
+    (entry) => entry.interface === 'HTMLInputElement' && entry.idlName === 'setRangeText',
+  );
+  assert.deepEqual(inputSetRangeText?.params, ['replacement: string', 'start: u32', 'end_: u32']);
 });

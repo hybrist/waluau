@@ -5762,6 +5762,29 @@
     {
       "interface": "HTMLInputElement",
       "kind": "operation",
+      "idlName": "setRangeText",
+      "emittedName": "setRangeText",
+      "params": [
+        "replacement: string",
+        "start: u32",
+        "end_: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "HTMLInputElement",
+      "kind": "operation",
+      "idlName": "setSelectionRange",
+      "emittedName": "setSelectionRange",
+      "params": [
+        "start: u32",
+        "end_: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "HTMLInputElement",
+      "kind": "operation",
       "idlName": "showPicker",
       "emittedName": "showPicker",
       "params": [],
@@ -6142,6 +6165,29 @@
       "emittedName": "selectionEnd",
       "type": "u32",
       "readonly": false
+    },
+    {
+      "interface": "HTMLTextAreaElement",
+      "kind": "operation",
+      "idlName": "setRangeText",
+      "emittedName": "setRangeText",
+      "params": [
+        "replacement: string",
+        "start: u32",
+        "end_: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "HTMLTextAreaElement",
+      "kind": "operation",
+      "idlName": "setSelectionRange",
+      "emittedName": "setSelectionRange",
+      "params": [
+        "start: u32",
+        "end_: u32"
+      ],
+      "returnType": "unit"
     },
     {
       "interface": "ValidityState",
@@ -10263,18 +10309,6 @@
     },
     {
       "interface": "HTMLInputElement",
-      "member": "setRangeText",
-      "reason": "parameter name 'end' becomes reserved word 'end' after snake_case conversion",
-      "issue": "waluau-9szs"
-    },
-    {
-      "interface": "HTMLInputElement",
-      "member": "setSelectionRange",
-      "reason": "parameter name 'end' becomes reserved word 'end' after snake_case conversion",
-      "issue": "waluau-9szs"
-    },
-    {
-      "interface": "HTMLInputElement",
       "member": "webkitEntries",
       "reason": "unsupported generic Web IDL type FrozenArray<FileSystemEntry>",
       "issue": "waluau-utyc"
@@ -10608,18 +10642,6 @@
       "reason": "member 'attribute:selectionDirection' collides with the same-named member kept on HTMLInputElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
       "issue": "waluau-1l02",
       "disabled": true
-    },
-    {
-      "interface": "HTMLTextAreaElement",
-      "member": "setRangeText",
-      "reason": "parameter name 'end' becomes reserved word 'end' after snake_case conversion",
-      "issue": "waluau-9szs"
-    },
-    {
-      "interface": "HTMLTextAreaElement",
-      "member": "setSelectionRange",
-      "reason": "parameter name 'end' becomes reserved word 'end' after snake_case conversion",
-      "issue": "waluau-9szs"
     },
     {
       "interface": "HTMLSlotElement",
