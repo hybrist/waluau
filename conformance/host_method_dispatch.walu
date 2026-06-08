@@ -1,14 +1,8 @@
 -- Declared host methods on extern types dispatch through host imports.
 
-type Node = extern
-type Element = extern extends Node
+local window = require("dom:window")
+local document: Document = window.document
 
-declare function dom_document(): Element
-declare function dom_create_element(document: Element, tag_name: string): Element
-declare function Element:set_id(id: string): unit
-declare function Element:get_id(): string
-
-local doc = dom_document()
-local el = dom_create_element(doc, "div")
-el:set_id("my-id")
-assert(el:get_id() == "my-id")
+local el: Element = document:create_element("div")
+el.id = "my-id"
+assert(el.id == "my-id")

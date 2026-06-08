@@ -2,6 +2,7 @@
 
 local window = require("dom:window")
 local document: Document = window.document
+local body: HTMLElement = document.body
 
 function take_node(value: Node): i32
     return 7
@@ -22,7 +23,7 @@ heading.id = "generated-heading"
 heading.class_name = "title"
 assert(heading.id == "generated-heading")
 assert(heading.class_name == "title")
-document:append_child(heading)
+body:append_child(heading)
 
 if HTMLHeadingElement(actual_heading) = heading then
     local html_heading: HTMLElement = actual_heading
@@ -40,7 +41,7 @@ paragraph.id = "generated-paragraph"
 paragraph.class_name = "body"
 paragraph.text_content = "Rendered through generated extern DOM handles"
 assert(paragraph.text_content == "Rendered through generated extern DOM handles")
-document:append_child(paragraph)
+body:append_child(paragraph)
 
 if HTMLHeadingElement(not_heading) = paragraph then
     assert(false)

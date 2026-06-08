@@ -16,6 +16,7 @@ pub struct Module {
 pub struct DeclaredImport {
     pub module: String,
     pub name: String,
+    pub host_name: String,
     pub params: Vec<Type>,
     pub return_type: Type,
     pub symbol_id: SymbolId,

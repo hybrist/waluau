@@ -26,9 +26,6 @@ declare property Element:class_name: string
 declare function Element:get_attribute(name: string): string?
 declare function Element:set_attribute(name: string, value: string): unit
 declare function Element:remove_attribute(name: string): unit
-declare function Element:append_class(class_name: string): unit
-declare function Element:on_click(callback: (Event) -> unit): unit
-declare function Element:on_input(callback: (Event) -> unit): unit
 declare function Element:query_selector(selectors: string): Element?
 declare property HTMLElement:inner_text: string
 declare property HTMLElement:value: string

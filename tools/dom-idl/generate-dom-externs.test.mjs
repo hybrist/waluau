@@ -60,8 +60,6 @@ test('generated externs expose minimal DOM event callbacks', () => {
   const externs = readRepoFile('externs/dom.walu');
   assert.match(externs, /^declare property Event:target: EventTarget$/m);
   assert.match(externs, /^declare function EventTarget:add_event_listener\(type: string, callback: \(Event\) -> unit\): unit$/m);
-  assert.match(externs, /^declare function Element:on_click\(callback: \(Event\) -> unit\): unit$/m);
-  assert.match(externs, /^declare function Element:on_input\(callback: \(Event\) -> unit\): unit$/m);
 });
 
 test('generated externs expose minimal DOM mutation and storage APIs', () => {
@@ -75,7 +73,6 @@ test('generated externs expose minimal DOM mutation and storage APIs', () => {
   assert.match(externs, /^declare function Node:replace_child\(new_child: Node, old_child: Node\): Node$/m);
   assert.match(externs, /^declare function Node:remove_child\(child: Node\): Node$/m);
   assert.match(externs, /^declare function Element:get_attribute\(name: string\): string\?$/m);
-  assert.match(externs, /^declare function Element:append_class\(class_name: string\): unit$/m);
   assert.match(externs, /^declare property Window:local_storage: Storage$/m);
   assert.match(externs, /^declare function Storage:get_item\(key: string\): string\?$/m);
 });

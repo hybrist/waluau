@@ -28,21 +28,22 @@ export async function compileAndInstantiateWithExports(files, entryFile = '/main
     await module.default();
     const output = module.compile_multi(files, entryFile);
     const wasmBuffer = new Uint8Array(output.wasm);
+    const wasmModule = await WebAssembly.compile(wasmBuffer, {
+      builtins: ['js-string'],
+      importedStringConstants: WALUAU_STRING_CONSTANTS_MODULE,
+    });
 
     let instanceExports = null;
-    const imports = buildWaluauImports(wasmBuffer, undefined, {
+    const imports = buildWaluauImports(wasmModule, undefined, {
       ...options,
       domOutputRoot,
       getWasmExports: () => instanceExports,
     });
 
-    const result = await WebAssembly.instantiate(wasmBuffer, imports, {
-      builtins: ['js-string'],
-      importedStringConstants: WALUAU_STRING_CONSTANTS_MODULE,
-    });
+    const instance = await WebAssembly.instantiate(wasmModule, imports);
 
-    instanceExports = result.instance.exports;
-    return result.instance.exports;
+    instanceExports = instance.exports;
+    return instance.exports;
   } finally {
     if (tempIframe) {
       tempIframe.remove();
@@ -65,21 +66,22 @@ export async function compileAndInstantiateWithDom(files, entryFile = '/main.wal
     await module.default();
     const output = module.compile_multi(files, entryFile);
     const wasmBuffer = new Uint8Array(output.wasm);
-
-    let instanceExports = null;
-    const imports = buildWaluauImports(wasmBuffer, undefined, {
-      domOutputRoot,
-      getWasmExports: () => instanceExports,
-    });
-
-    const result = await WebAssembly.instantiate(wasmBuffer, imports, {
+    const wasmModule = await WebAssembly.compile(wasmBuffer, {
       builtins: ['js-string'],
       importedStringConstants: WALUAU_STRING_CONSTANTS_MODULE,
     });
 
-    instanceExports = result.instance.exports;
+    let instanceExports = null;
+    const imports = buildWaluauImports(wasmModule, undefined, {
+      domOutputRoot,
+      getWasmExports: () => instanceExports,
+    });
 
-    const storage = imports[WALUAU_IMPORT_MODULE]['Window.get_local_storage'](domOutputRoot.defaultView);
+    const instance = await WebAssembly.instantiate(wasmModule, imports);
+
+    instanceExports = instance.exports;
+
+    const storage = imports[WALUAU_IMPORT_MODULE]['Window.get/localStorage'](domOutputRoot.defaultView);
 
     return {
       exports: instanceExports,

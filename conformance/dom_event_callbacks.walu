@@ -11,7 +11,7 @@ function install_event_handlers(): unit
     local button: Element = document:create_element("button")
     button.id = "callback-button"
     button.text_content = "idle"
-    button:on_click(function(event: Event): unit
+    button:add_event_listener("click", function(event: Event): unit
         click_count = click_count + 1
         if Element(target) = event.target then
             if target.id == "callback-button" then
@@ -31,7 +31,7 @@ function install_event_handlers(): unit
 
     local input_element: Element = document:create_element("input")
     input_element.id = "callback-input"
-    input_element:on_input(function(event: Event): unit
+    input_element:add_event_listener("input", function(event: Event): unit
         input_count = input_count + 1
         if HTMLInputElement(target) = event.target then
             if target.value == "typed card" then

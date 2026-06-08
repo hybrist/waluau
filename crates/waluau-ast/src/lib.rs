@@ -31,6 +31,7 @@ pub struct TypeDeclaration {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeclaredImport {
     pub name: String,
+    pub host_name: String,
     pub symbol_id: Option<SymbolId>,
     pub params: Vec<Param>,
     pub return_type: Type,

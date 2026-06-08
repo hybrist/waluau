@@ -12,9 +12,6 @@ partial interface Node {
 
 partial interface Element {
   undefined setAttribute(DOMString qualifiedName, DOMString value);
-  undefined appendClass(DOMString className);
-  undefined onClick(EventListener callback);
-  undefined onInput(EventListener callback);
 };
 
 partial interface HTMLElement {

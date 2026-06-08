@@ -175,12 +175,12 @@ fn parses_declared_property_as_getter_and_setter_imports() {
     let program = parse(source).expect("parse should succeed");
     assert_eq!(program.declared_imports.len(), 2);
     let getter = &program.declared_imports[0];
-    assert_eq!(getter.name, "Element.get_inner_text");
+    assert_eq!(getter.name, "Element.get/inner_text");
     assert_eq!(getter.params.len(), 1);
     assert_eq!(getter.return_type, Type::String);
 
     let setter = &program.declared_imports[1];
-    assert_eq!(setter.name, "Element.set_inner_text");
+    assert_eq!(setter.name, "Element.set/inner_text");
     assert_eq!(setter.params.len(), 2);
     assert_eq!(setter.params[1].ty, Type::String);
     assert_eq!(setter.return_type, Type::Unit);

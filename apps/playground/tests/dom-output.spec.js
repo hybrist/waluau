@@ -2,22 +2,17 @@ import { test, expect } from '@playwright/test';
 
 const COMPILER_READY_TIMEOUT = 20_000;
 
-const DOM_SAMPLE = `type Document = extern
-type Element = extern
+const DOM_SAMPLE = `local window = require("dom:window")
+local document: Document = window.document
+local output_body: HTMLElement = document.body
 
-declare function dom_document(): Document
-declare property Element:inner_text: string
-declare function Document:create_element(tag: string): Element
-declare function Document:append_child(child: Element): unit
-
-local document: Document = dom_document()
 local title: Element = document:create_element("h2")
-title.inner_text = "Hello from Waluau DOM"
-document:append_child(title)
+title.text_content = "Hello from Waluau DOM"
+output_body:append_child(title)
 
 local body: Element = document:create_element("p")
-body.inner_text = title.inner_text .. " rendered inside the playground Run tab"
-document:append_child(body)
+body.text_content = title.text_content .. " rendered inside the playground Run tab"
+output_body:append_child(body)
 `;
 
 const DOM_HOST_API_SAMPLE = `local window = require("dom:window")
@@ -35,8 +30,7 @@ body:append_child(old_child)
 
 local new_child: Element = document:create_element("section")
 new_child.id = "new-child"
-new_child.class_name = "panel"
-new_child:append_class("ready selected")
+new_child.class_name = "panel ready selected"
 new_child:set_attribute("data-state", "ready")
 body:replace_child(new_child, old_child)
 
@@ -45,8 +39,8 @@ storage:set_item("waluau-playground-dom-host-api", "persisted")
 local saved: string? = storage:get_item("waluau-playground-dom-host-api")
 
 local input_element: Element = document:create_element("input")
-input_element:set_attribute("value", "typed card")
 if HTMLInputElement(input) = input_element then
+    input.value = "typed card"
     if state ~= nil then
         if saved ~= nil then
             new_child.text_content = input.value .. " " .. state .. " " .. saved
@@ -71,7 +65,7 @@ button.id = "event-button"
 button.text_content = "Click"
 
 local click_count: i32 = 0
-button:on_click(function(event: Event): unit
+button:add_event_listener("click", function(event: Event): unit
     click_count = click_count + 1
     if Element(target) = event.target then
         if click_count == 1 then
@@ -84,7 +78,7 @@ end)
 
 local input: Element = document:create_element("input")
 input.id = "event-input"
-input:on_input(function(event: Event): unit
+input:add_event_listener("input", function(event: Event): unit
     if HTMLInputElement(target) = event.target then
         status.text_content = "input " .. target.value
     end
@@ -251,4 +245,3 @@ test.describe('DOM Output in Run tab', () => {
     await expect(domOutput).not.toHaveClass(/fullscreen/);
   });
 });
-

@@ -262,7 +262,7 @@ function install_kanban(_run_once: i32): unit
         card_visible = true
     end
 
-    add_button:on_click(function(_event: Event): unit
+    add_button:add_event_listener("click", function(_event: Event): unit
         if editor_visible == false then
             title_input:set_attribute("value", "New task")
             description_input.text_content = ""
@@ -273,14 +273,14 @@ function install_kanban(_run_once: i32): unit
         end
     end)
 
-    edit_button:on_click(function(_event: Event): unit
+    edit_button:add_event_listener("click", function(_event: Event): unit
         if editor_visible == false then
             backlog_list:append_child(editor)
             editor_visible = true
         end
     end)
 
-    save_button:on_click(function(_event: Event): unit
+    save_button:add_event_listener("click", function(_event: Event): unit
         if HTMLInputElement(title) = title_input then
             if HTMLTextAreaElement(description) = description_input then
                 if HTMLInputElement(priority) = priority_input then
@@ -317,7 +317,7 @@ function install_kanban(_run_once: i32): unit
         end
     end)
 
-    next_button:on_click(function(_event: Event): unit
+    next_button:add_event_listener("click", function(_event: Event): unit
         if card_visible then
             if card_status == "backlog" then
                 backlog_list:remove_child(card_node)
@@ -339,7 +339,7 @@ function install_kanban(_run_once: i32): unit
         end
     end)
 
-    delete_button:on_click(function(_event: Event): unit
+    delete_button:add_event_listener("click", function(_event: Event): unit
         if card_visible then
             if card_status == "doing" then
                 doing_list:remove_child(card_node)
@@ -360,7 +360,7 @@ function install_kanban(_run_once: i32): unit
         end
     end)
 
-    filter_input:on_input(function(event: Event): unit
+    filter_input:add_event_listener("input", function(event: Event): unit
         if HTMLInputElement(target) = event.target then
             local value: string = target.value
             if value == "" then

@@ -509,6 +509,8 @@ mod tests {
                 function main(): unit
                     local window = require("dom:window")
                     local document: Document = window.document
+                    local root: Element = document.document_element
+                    local child: Element = document:create_element("div")
                 end
             "#
             .to_string(),
@@ -518,7 +520,9 @@ mod tests {
             super::compile_sources(&files, "main.walu").expect("dom window require should compile");
         assert!(result.wat.contains("(module"));
         assert!(result.wat.contains("dom_window"));
-        assert!(result.wat.contains("Window.get_document"));
+        assert!(result.wat.contains("Window.get/document"));
+        assert!(result.wat.contains("Document.get/documentElement"));
+        assert!(result.wat.contains("Document.createElement"));
     }
 
     #[test]
@@ -540,7 +544,7 @@ mod tests {
             super::compile_sources(&files, "main.walu").expect("dom window require should compile");
         assert!(result.wat.contains("(module"));
         assert!(result.wat.contains("dom_window"));
-        assert!(result.wat.contains("Window.get_document"));
+        assert!(result.wat.contains("Window.get/document"));
     }
 
     #[test]

@@ -3,74 +3,6 @@ export const WALUAU_IMPORT_MODULE = 'waluau';
 // Must match waluau_codegen_wasm::host::HOST_IMPORT_COUNT
 export const WALUAU_HOST_IMPORT_COUNT = 18;
 
-const DOM_IMPORT_NAMES = new Set([
-  'dom_append_child',
-  'dom_clear',
-  'dom_create_element',
-  'dom_document',
-  'dom_window',
-  'dom_set_text',
-  'Document.append_child',
-  'Document.get_body',
-  'Document.get_document_element',
-  'Document.create_element',
-  'Document.get_element_by_id',
-  'Document.query_selector',
-  'Document.set_body',
-  'Document.set_document_element',
-  'Element.append',
-  'Element.append_class',
-  'Element.append_child',
-  'Element.clear',
-  'Element.get_attribute',
-  'Element.get_class_name',
-  'Element.get_id',
-  'Element.get_inner_text',
-  'Element.on_click',
-  'Element.on_input',
-  'Element.query_selector',
-  'Element.set_attr',
-  'Element.remove_attribute',
-  'Element.set_class',
-  'Element.set_class_name',
-  'Element.set_id',
-  'Element.set_attribute',
-  'Element.set_inner_text',
-  'Element.set_text',
-  'Event.get_target',
-  'Event.set_target',
-  'EventTarget.add_event_listener',
-  'HTMLElement.get_inner_text',
-  'HTMLElement.get_value',
-  'HTMLElement.set_inner_text',
-  'HTMLElement.set_value',
-  'Node.append_child',
-  'Node.get_node_name',
-  'Node.get_text_content',
-  'Node.remove_child',
-  'Node.replace_child',
-  'Node.set_node_name',
-  'Node.set_text_content',
-  'Storage.get_item',
-  'Storage.remove_item',
-  'Storage.set_item',
-  'Window.get_document',
-  'Window.get_local_storage',
-  'Window.set_document',
-  'Window.set_local_storage',
-]);
-
-const BLOCKED_DOM_TAGS = new Set([
-  'base',
-  'embed',
-  'iframe',
-  'link',
-  'meta',
-  'object',
-  'script',
-  'style',
-]);
-
 let printCaptureCallback = null;
 const domEventListeners = new WeakMap();
 
@@ -99,21 +31,12 @@ export function cleanupDomEventListeners(node) {
   domEventListeners.delete(node);
 }
 
-export function decodeBytesConstantsFromWasm(wasmBuffer) {
-  const bytes = wasmBuffer instanceof Uint8Array ? wasmBuffer : new Uint8Array(wasmBuffer);
-  let pos = 8;
+export function decodeBytesConstantsFromWasm(wasmModule) {
+  const section = WebAssembly.Module.customSections(wasmModule, 'waluau.bytc')[0];
+  if (!section) return [];
 
-  function readVaruint() {
-    let result = 0;
-    let shift = 0;
-    while (pos < bytes.length) {
-      const byte = bytes[pos++];
-      result |= (byte & 0x7f) << shift;
-      if ((byte & 0x80) === 0) return result >>> 0;
-      shift += 7;
-    }
-    throw new Error('truncated wasm leb128');
-  }
+  const bytes = new Uint8Array(section);
+  let pos = 0;
 
   function readU32Le(offset) {
     return (
@@ -124,39 +47,16 @@ export function decodeBytesConstantsFromWasm(wasmBuffer) {
     ) >>> 0;
   }
 
-  while (pos < bytes.length) {
-    const sectionId = bytes[pos++];
-    const sectionLength = readVaruint();
-    const sectionStart = pos;
-    const sectionEnd = sectionStart + sectionLength;
-    if (sectionEnd > bytes.length) break;
-
-    if (sectionId === 0) {
-      const nameLen = readVaruint();
-      const nameStart = pos;
-      const nameEnd = nameStart + nameLen;
-      const nameBytes = bytes.subarray(nameStart, nameEnd);
-      const name = new TextDecoder().decode(nameBytes);
-      pos = nameEnd;
-      if (name === 'waluau.bytc') {
-        let offset = pos;
-        const count = readU32Le(offset);
-        offset += 4;
-        const values = [];
-        for (let i = 0; i < count; i++) {
-          const len = readU32Le(offset);
-          offset += 4;
-          values.push(bytes.slice(offset, offset + len));
-          offset += len;
-        }
-        return values;
-      }
-    }
-
-    pos = sectionEnd;
+  const count = readU32Le(pos);
+  pos += 4;
+  const values = [];
+  for (let i = 0; i < count; i++) {
+    const len = readU32Le(pos);
+    pos += 4;
+    values.push(bytes.slice(pos, pos + len));
+    pos += len;
   }
-
-  return [];
+  return values;
 }
 
 export function parseBytesInput(valStr) {
@@ -176,97 +76,32 @@ export function parseBytesInput(valStr) {
 }
 
 export function isDomImportName(name) {
-  return name.startsWith('dom_') || DOM_IMPORT_NAMES.has(name);
+  return name.startsWith('dom_') || /^[A-Z][A-Za-z0-9]*\.[a-z][A-Za-z0-9_]*(?:\/[A-Za-z0-9_]+)?$/.test(name);
 }
 
-export function getWasmImports(buffer) {
-  if (!buffer) return [];
-  const bytes = new Uint8Array(buffer);
-  let pos = 8;
-  const imports = [];
-
-  function readVaruint() {
-    let result = 0;
-    let shift = 0;
-    while (pos < bytes.length) {
-      const byte = bytes[pos++];
-      result |= (byte & 0x7f) << shift;
-      if ((byte & 0x80) === 0) return result >>> 0;
-      shift += 7;
-    }
-    throw new Error('truncated wasm leb128');
-  }
-
-  function readName() {
-    const len = readVaruint();
-    const value = new TextDecoder().decode(bytes.subarray(pos, pos + len));
-    pos += len;
-    return value;
-  }
-
-  function skipLimits() {
-    const flags = readVaruint();
-    readVaruint();
-    if (flags & 0x01) readVaruint();
-  }
-
-  function skipValType() {
-    const byte = bytes[pos++];
-    if (byte === 0x63 || byte === 0x64) {
-      pos += 1;
-    }
-  }
-
-  while (pos < bytes.length) {
-    const sectionId = bytes[pos++];
-    const sectionLength = readVaruint();
-    const sectionEnd = pos + sectionLength;
-    if (sectionEnd > bytes.length) break;
-
-    if (sectionId !== 2) {
-      pos = sectionEnd;
-      continue;
-    }
-
-    const numImports = readVaruint();
-    for (let i = 0; i < numImports; i++) {
-      const module = readName();
-      const name = readName();
-      const kind = bytes[pos++];
-      if (kind === 0) {
-        const typeIndex = readVaruint();
-        imports.push({ module, name, kind: 'function', typeIndex });
-      } else if (kind === 1) {
-        skipValType();
-        skipLimits();
-        imports.push({ module, name, kind: 'table' });
-      } else if (kind === 2) {
-        skipLimits();
-        imports.push({ module, name, kind: 'memory' });
-      } else if (kind === 3) {
-        skipValType();
-        pos += 1;
-        imports.push({ module, name, kind: 'global' });
-      } else {
-        pos = sectionEnd;
-        break;
-      }
-    }
-    pos = sectionEnd;
-  }
-
-  return imports;
+export function getWasmImports(wasmModule) {
+  if (!wasmModule) return [];
+  return WebAssembly.Module.imports(wasmModule);
 }
 
-export function usesDomImports(wasmBuffer) {
-  return getWasmImports(wasmBuffer).some((wasmImport) =>
+export function usesDomImports(wasmModule) {
+  return getWasmImports(wasmModule).some((wasmImport) =>
     wasmImport.module === WALUAU_IMPORT_MODULE &&
     wasmImport.kind === 'function' &&
     isDomImportName(wasmImport.name)
   );
 }
 
-function createPlaygroundDomHost(domOutputRoot, getWasmExports = () => null) {
+function parseDomInterfaceImport(name) {
+  const match = /^([A-Z][A-Za-z0-9]*)\.([a-z][A-Za-z0-9_]*(?:\/[A-Za-z0-9_]+)?)$/.exec(name);
+  if (!match) return null;
+  return {
+    interfaceName: match[1],
+    memberName: match[2],
+  };
+}
+
+function createPlaygroundDomHost(wasmModule, domOutputRoot, getWasmExports = () => null) {
   const fallbackStorage = new Map();
   const fallbackStorageHost = {
     getItem(key) {
@@ -281,104 +116,15 @@ function createPlaygroundDomHost(domOutputRoot, getWasmExports = () => null) {
     },
   };
 
-  const requireOutputDocument = () => {
+  const outputDocument = () => {
     if (!domOutputRoot) {
       throw new Error('DOM Output root is not mounted');
-    }
-    if (domOutputRoot.nodeType !== Node.DOCUMENT_NODE || typeof domOutputRoot.createElement !== 'function') {
-      throw new Error('DOM Output root must be a Document');
     }
     return domOutputRoot;
   };
 
-  const requireElement = (value, label = 'DOM host value') => {
-    const document = requireOutputDocument();
-    const ElementCtor = document.defaultView?.Element ?? Element;
-    if (!(value instanceof ElementCtor)) {
-      throw new Error(`${label} must be an Element`);
-    }
-    return value;
-  };
-
-  const requireNode = (value, label = 'DOM host value') => {
-    const document = requireOutputDocument();
-    const NodeCtor = document.defaultView?.Node ?? Node;
-    if (!(value instanceof NodeCtor)) {
-      throw new Error(`${label} must be a Node`);
-    }
-    return value;
-  };
-
-  const requireEventTarget = (value, label = 'DOM event target') => {
-    const document = requireOutputDocument();
-    const EventTargetCtor = document.defaultView?.EventTarget ?? EventTarget;
-    if (!(value instanceof EventTargetCtor)) {
-      throw new Error(`${label} must be an EventTarget`);
-    }
-    return value;
-  };
-
-  const requireEvent = (value, label = 'DOM event') => {
-    const document = requireOutputDocument();
-    const EventCtor = document.defaultView?.Event ?? Event;
-    const parentEventCtor = typeof Event !== 'undefined' ? Event : null;
-    const isInstance = (value instanceof EventCtor) || (parentEventCtor && value instanceof parentEventCtor);
-    if (!isInstance && !(value && typeof value === 'object' && 'target' in value)) {
-      throw new Error(`${label} must be an Event`);
-    }
-    return value;
-  };
-
-  const requireWindow = (value, label = 'DOM window') => {
-    const document = requireOutputDocument();
-    if (value !== document.defaultView) {
-      throw new Error(`${label} must be the DOM Output window`);
-    }
-    return value;
-  };
-
-  const requireStorage = (value, label = 'DOM storage') => {
-    const storage = playgroundStorage();
-    if (value !== storage) {
-      throw new Error(`${label} must be the DOM Output localStorage`);
-    }
-    return storage;
-  };
-
-  const requireAppendTarget = (value, label = 'DOM parent') => {
-    const document = requireOutputDocument();
-    if (value === document) {
-      return document.body;
-    }
-    return requireNode(value, label);
-  };
-
-  const clearTarget = (value) => {
-    const document = requireOutputDocument();
-    if (value === document) {
-      return document.body;
-    }
-    return requireElement(value);
-  };
-
-  const normalizeTag = (tag) => {
-    const normalized = String(tag).trim().toLowerCase();
-    if (!/^[a-z][a-z0-9-]*$/.test(normalized) || BLOCKED_DOM_TAGS.has(normalized)) {
-      throw new Error(`Unsupported DOM tag: ${tag}`);
-    }
-    return normalized;
-  };
-
-  const validateAttrName = (name) => {
-    const attrName = String(name).trim().toLowerCase();
-    if (!/^[a-z_:][a-z0-9_:.-]*$/.test(attrName) || attrName.startsWith('on')) {
-      throw new Error(`Unsupported DOM attribute: ${name}`);
-    }
-    return attrName;
-  };
-
   const playgroundStorage = () => {
-    const document = requireOutputDocument();
+    const document = outputDocument();
     try {
       const storage = document.defaultView?.localStorage;
       if (storage?.getItem && storage?.setItem && storage?.removeItem) {
@@ -390,125 +136,19 @@ function createPlaygroundDomHost(domOutputRoot, getWasmExports = () => null) {
     return fallbackStorageHost;
   };
 
-  const createElement = (_document, tag) => {
-    return requireOutputDocument().createElement(normalizeTag(tag));
-  };
-
-  const appendChild = (parent, child) => {
-    return requireAppendTarget(parent).appendChild(requireNode(child, 'DOM child'));
-  };
-
   const replaceChild = (parent, newChild, oldChild) => {
-    const removed = requireAppendTarget(parent).replaceChild(
-      requireNode(newChild, 'DOM replacement child'),
-      requireNode(oldChild, 'DOM existing child'),
-    );
+    const removed = parent.replaceChild(newChild, oldChild);
     cleanupDomEventListeners(removed);
     return removed;
   };
 
   const removeChild = (parent, child) => {
-    const removed = requireAppendTarget(parent).removeChild(requireNode(child, 'DOM child'));
+    const removed = parent.removeChild(child);
     cleanupDomEventListeners(removed);
     return removed;
   };
 
-  const clear = (element) => {
-    const target = clearTarget(element);
-    cleanupDomEventListeners(target);
-    target.replaceChildren();
-  };
-
-  const setText = (element, text) => {
-    requireNode(element).textContent = String(text);
-  };
-
-  const getInnerText = (element) => {
-    return requireElement(element).textContent;
-  };
-
-  const getTextContent = (node) => {
-    return requireNode(node).textContent ?? '';
-  };
-
-  const getNodeName = (node) => {
-    return requireNode(node).nodeName;
-  };
-
-  const setNodeName = () => {
-    throw new Error('node_name is read-only in the playground DOM host');
-  };
-
-  const setClass = (element, className) => {
-    requireElement(element).className = String(className);
-  };
-
-  const appendClass = (element, className) => {
-    const tokens = String(className).trim().split(/\s+/).filter(Boolean);
-    if (tokens.length > 0) {
-      requireElement(element).classList.add(...tokens);
-    }
-  };
-
-  const getClassName = (element) => {
-    return requireElement(element).className;
-  };
-
-  const setId = (element, id) => {
-    requireElement(element).id = String(id);
-  };
-
-  const getId = (element) => {
-    return requireElement(element).id;
-  };
-
-  const getElementById = (document, id) => {
-    if (document !== requireOutputDocument()) {
-      throw new Error('Document.get_element_by_id receiver must be the DOM Output document');
-    }
-    return document.getElementById(String(id));
-  };
-
-  const querySelector = (target, selectors) => {
-    const selector = String(selectors);
-    if (target === requireOutputDocument()) {
-      return target.body.querySelector(selector);
-    }
-    return requireElement(target).querySelector(selector);
-  };
-
-  const getAttr = (element, name) => {
-    return requireElement(element).getAttribute(validateAttrName(name));
-  };
-
-  const setAttr = (element, name, value) => {
-    const target = requireElement(element);
-    const attrName = validateAttrName(name);
-    const attrValue = String(value);
-    target.setAttribute(attrName, attrValue);
-    if (attrName === 'value' && 'value' in target) {
-      target.value = attrValue;
-    }
-  };
-
-  const removeAttr = (element, name) => {
-    requireElement(element).removeAttribute(validateAttrName(name));
-  };
-
-  const getValue = (element) => {
-    return String(requireElement(element).value ?? '');
-  };
-
-  const setValue = (element, value) => {
-    requireElement(element).value = String(value);
-  };
-
-  const registerEventListener = (target, type, callback, label) => {
-    const eventTarget = requireEventTarget(target, `${label} receiver`);
-    const eventType = String(type);
-    if (eventType !== 'click' && eventType !== 'input') {
-      throw new Error(`${label} only supports click and input events`);
-    }
+  const registerEventListener = (target, type, callback) => {
     const listener = (event) => {
       const exports = getWasmExports();
       const trampoline = exports?.__waluau_call_callback_event_unit;
@@ -517,94 +157,75 @@ function createPlaygroundDomHost(domOutputRoot, getWasmExports = () => null) {
       }
       trampoline(callback, event);
     };
-    eventTarget.addEventListener(eventType, listener);
-    rememberDomEventListener(eventTarget, eventType, listener);
+    target.addEventListener(type, listener);
+    rememberDomEventListener(target, type, listener);
   };
 
-  const readOnlyProperty = (name) => () => {
-    throw new Error(`${name} is read-only in the playground DOM host`);
+  const getProperty = (interfaceName, propertyName, receiver) => {
+    if (interfaceName === 'Window' && propertyName === 'localStorage') {
+      return playgroundStorage();
+    }
+    return receiver[propertyName];
   };
+
+  const setProperty = (_interfaceName, propertyName, receiver, value) => {
+    receiver[propertyName] = value;
+  };
+
+  const forwardMethod = (_interfaceName, methodName, receiver, args) => {
+    return receiver[methodName](...args);
+  };
+
+  const specialImports = {
+    dom_window: () => outputDocument().defaultView,
+    'EventTarget.addEventListener': (target, type, callback) => registerEventListener(target, String(type), callback),
+    'Node.removeChild': removeChild,
+    'Node.replaceChild': replaceChild,
+    'Window.get/localStorage': () => playgroundStorage(),
+  };
+
+  const domImports = {};
+  for (const wasmImport of getWasmImports(wasmModule)) {
+    if (
+      wasmImport.module !== WALUAU_IMPORT_MODULE ||
+      wasmImport.kind !== 'function' ||
+      !isDomImportName(wasmImport.name)
+    ) {
+      continue;
+    }
+    if (Object.prototype.hasOwnProperty.call(specialImports, wasmImport.name)) {
+      domImports[wasmImport.name] = specialImports[wasmImport.name];
+      continue;
+    }
+
+    const parsed = parseDomInterfaceImport(wasmImport.name);
+    if (!parsed) continue;
+
+    const { interfaceName, memberName } = parsed;
+    if (memberName.startsWith('get/')) {
+      const propertyName = memberName.slice(4);
+      domImports[wasmImport.name] = (receiver) =>
+        getProperty(interfaceName, propertyName, receiver);
+    } else if (memberName.startsWith('set/')) {
+      const propertyName = memberName.slice(4);
+      domImports[wasmImport.name] = (receiver, value) =>
+        setProperty(interfaceName, propertyName, receiver, value);
+    } else {
+      const methodName = memberName;
+      domImports[wasmImport.name] = (receiver, ...args) =>
+        forwardMethod(interfaceName, methodName, receiver, args);
+    }
+  }
 
   return {
-    dom_document: () => requireOutputDocument(),
-    dom_window: () => requireOutputDocument().defaultView,
-    dom_root: () => requireOutputDocument().body,
-    dom_output_root: () => requireOutputDocument().body,
-    dom_create_element: createElement,
-    dom_append_child: appendChild,
-    dom_clear: clear,
-    dom_set_text: setText,
-    'Document.append_child': appendChild,
-    'Document.get_body': (document) => {
-      if (document !== requireOutputDocument()) {
-        throw new Error('Document.body receiver must be the DOM Output document');
-      }
-      return document.body;
-    },
-    'Document.set_body': readOnlyProperty('Document.body'),
-    'Document.get_document_element': (document) => {
-      if (document !== requireOutputDocument()) {
-        throw new Error('Document.document_element receiver must be the DOM Output document');
-      }
-      return document.documentElement;
-    },
-    'Document.set_document_element': readOnlyProperty('Document.document_element'),
-    'Document.create_element': createElement,
-    'Document.get_element_by_id': getElementById,
-    'Document.query_selector': querySelector,
-    'Element.append': appendChild,
-    'Element.append_class': appendClass,
-    'Element.append_child': appendChild,
-    'Element.clear': clear,
-    'Element.get_attribute': getAttr,
-    'Element.get_class_name': getClassName,
-    'Element.get_id': getId,
-    'Element.get_inner_text': getInnerText,
-    'Element.on_click': (element, callback) => registerEventListener(element, 'click', callback, 'Element.on_click'),
-    'Element.on_input': (element, callback) => registerEventListener(element, 'input', callback, 'Element.on_input'),
-    'Element.query_selector': querySelector,
-    'Element.remove_attribute': removeAttr,
-    'Element.set_attribute': setAttr,
-    'Element.set_inner_text': setText,
-    'Element.set_text': setText,
-    'Element.set_class': setClass,
-    'Element.set_class_name': setClass,
-    'Element.set_id': setId,
-    'Element.set_attr': setAttr,
-    'Event.get_target': (event) => requireEvent(event, 'Event.get_target receiver').target,
-    'Event.set_target': readOnlyProperty('Event.target'),
-    'EventTarget.add_event_listener': (target, type, callback) => registerEventListener(target, type, callback, 'EventTarget.add_event_listener'),
-    'HTMLElement.get_inner_text': getInnerText,
-    'HTMLElement.get_value': getValue,
-    'HTMLElement.set_inner_text': setText,
-    'HTMLElement.set_value': setValue,
-    'Node.append_child': appendChild,
-    'Node.get_node_name': getNodeName,
-    'Node.get_text_content': getTextContent,
-    'Node.remove_child': removeChild,
-    'Node.replace_child': replaceChild,
-    'Node.set_node_name': setNodeName,
-    'Node.set_text_content': setText,
-    'Storage.get_item': (storage, key) => requireStorage(storage, 'Storage.get_item receiver').getItem(String(key)),
-    'Storage.remove_item': (storage, key) => {
-      requireStorage(storage, 'Storage.remove_item receiver').removeItem(String(key));
-    },
-    'Storage.set_item': (storage, key, value) => {
-      requireStorage(storage, 'Storage.set_item receiver').setItem(String(key), String(value));
-    },
-    'Window.get_document': (window) => requireWindow(window).document,
-    'Window.set_document': readOnlyProperty('Window.document'),
-    'Window.get_local_storage': (window) => {
-      requireWindow(window);
-      return playgroundStorage();
-    },
-    'Window.set_local_storage': readOnlyProperty('Window.local_storage'),
+    ...specialImports,
+    ...domImports,
   };
 }
 
-export function buildWaluauImports(wasmBuffer, initLogger, options = {}) {
-  const bytesConstants = decodeBytesConstantsFromWasm(wasmBuffer);
-  const domHost = createPlaygroundDomHost(options.domOutputRoot, options.getWasmExports);
+export function buildWaluauImports(wasmModule, initLogger, options = {}) {
+  const bytesConstants = decodeBytesConstantsFromWasm(wasmModule);
+  const domHost = createPlaygroundDomHost(wasmModule, options.domOutputRoot, options.getWasmExports);
   const hostImports = options.hostImports ?? {};
   const asBytes = (value) => {
     if (value instanceof Uint8Array) return value;
@@ -613,139 +234,105 @@ export function buildWaluauImports(wasmBuffer, initLogger, options = {}) {
   const externIs = (value, typeName) => {
     const name = String(typeName);
     const view = value?.ownerDocument?.defaultView ?? (value?.nodeType === 9 ? value.defaultView : globalThis);
-    if (name === 'EventTarget') {
-      return typeof view.EventTarget !== 'undefined' && value instanceof view.EventTarget ? 1 : 0;
-    }
-    if (name === 'Event') {
-      return typeof view.Event !== 'undefined' && value instanceof view.Event ? 1 : 0;
-    }
-    if (name === 'Node') {
-      return typeof view.Node !== 'undefined' && value instanceof view.Node ? 1 : 0;
-    }
-    if (name === 'Document') {
-      return typeof view.Document !== 'undefined' && value instanceof view.Document ? 1 : 0;
-    }
-    if (name === 'Window') {
-      return typeof view.Window !== 'undefined' && value instanceof view.Window ? 1 : 0;
-    }
-    if (name === 'Element') {
-      return typeof view.Element !== 'undefined' && value instanceof view.Element ? 1 : 0;
-    }
-    if (name === 'HTMLElement') {
-      return typeof view.HTMLElement !== 'undefined' && value instanceof view.HTMLElement ? 1 : 0;
-    }
-    if (name === 'HTMLHeadingElement') {
-      return typeof view.HTMLHeadingElement !== 'undefined' && value instanceof view.HTMLHeadingElement ? 1 : 0;
-    }
-    if (name === 'HTMLInputElement') {
-      return typeof view.HTMLInputElement !== 'undefined' && value instanceof view.HTMLInputElement ? 1 : 0;
-    }
-    if (name === 'HTMLTextAreaElement') {
-      return typeof view.HTMLTextAreaElement !== 'undefined' && value instanceof view.HTMLTextAreaElement ? 1 : 0;
-    }
-    if (name === 'Storage') {
-      return typeof view.Storage !== 'undefined' && value instanceof view.Storage ? 1 : 0;
-    }
-    throw new Error(`Unsupported extern cast target: ${name}`);
+    const ctor = view?.[name] ?? globalThis[name];
+    return typeof ctor === 'function' && value instanceof ctor ? 1 : 0;
   };
-  const waluauImports = new Proxy({}, {
-    get(_target, prop) {
-      const name = String(prop);
-      if (Object.prototype.hasOwnProperty.call(hostImports, name)) {
-        return hostImports[name];
+  const waluauImports = {
+    ...domHost,
+    ...hostImports,
+    print: (value) => {
+      if (printCaptureCallback) {
+        printCaptureCallback(String(value));
+      } else if (initLogger) {
+        initLogger(String(value));
+      } else {
+        console.log(value);
       }
-      if (name.startsWith('js_tostring_')) {
-        return (value) => String(value);
-      }
-      if (name === 'print' || name === 'js_log') {
-        return (value) => {
-          if (printCaptureCallback) {
-            printCaptureCallback(String(value));
-          } else if (initLogger) {
-            initLogger(String(value));
-          } else {
-            console.log(value);
-          }
-        };
-      }
-      if (name === 'string_find') {
-        return (haystack, needle, init, plain) => {
-          const hay = String(haystack);
-          const needleStr = String(needle);
-          let start = Number(init);
-          if (start < 0) start = Math.max(0, hay.length + start);
-          // Pattern matching is not supported; only plain substring search.
-          void plain;
-          return hay.indexOf(needleStr, start);
-        };
-      }
-      if (Object.prototype.hasOwnProperty.call(domHost, name)) {
-        return domHost[name];
-      }
-      if (name === 'extern_is') {
-        return externIs;
-      }
-      if (name === 'bytes_literal') {
-        return (index) => {
-          const literal = bytesConstants[index];
-          if (!literal) {
-            throw new Error(`Unknown bytes literal index ${index}`);
-          }
-          return literal.slice();
-        };
-      }
-      if (name === 'bytes_get') {
-        return (value, index) => {
-          const bytes = asBytes(value);
-          if (index < 0 || index >= bytes.length) {
-            throw new Error(`bytes index out of bounds: ${index}`);
-          }
-          return bytes[index];
-        };
-      }
-      if (name === 'bytes_len') {
-        return (value) => asBytes(value).length;
-      }
-      if (name === 'bytes_concat') {
-        return (left, right) => {
-          const a = asBytes(left);
-          const b = asBytes(right);
-          const merged = new Uint8Array(a.length + b.length);
-          merged.set(a, 0);
-          merged.set(b, a.length);
-          return merged;
-        };
-      }
-      if (name === 'bytes_eq') {
-        return (left, right) => {
-          const a = asBytes(left);
-          const b = asBytes(right);
-          if (a.length !== b.length) return 0;
-          for (let i = 0; i < a.length; i++) {
-            if (a[i] !== b[i]) return 0;
-          }
-          return 1;
-        };
-      }
-      if (name === 'bytes_compare') {
-        return (left, right) => {
-          const a = asBytes(left);
-          const b = asBytes(right);
-          const len = Math.min(a.length, b.length);
-          for (let i = 0; i < len; i++) {
-            if (a[i] < b[i]) return -1;
-            if (a[i] > b[i]) return 1;
-          }
-          if (a.length < b.length) return -1;
-          if (a.length > b.length) return 1;
-          return 0;
-        };
-      }
-      return () => {
-        throw new Error(`Unsupported waluau import: ${name}`);
-      };
     },
-  });
+    js_log: (value) => {
+      if (printCaptureCallback) {
+        printCaptureCallback(String(value));
+      } else if (initLogger) {
+        initLogger(String(value));
+      } else {
+        console.log(value);
+      }
+    },
+    string_find: (haystack, needle, init, plain) => {
+      const hay = String(haystack);
+      const needleStr = String(needle);
+      let start = Number(init);
+      if (start < 0) start = Math.max(0, hay.length + start);
+      // Pattern matching is not supported; only plain substring search.
+      void plain;
+      return hay.indexOf(needleStr, start);
+    },
+    extern_is: externIs,
+    bytes_literal: (index) => {
+      const literal = bytesConstants[index];
+      if (!literal) {
+        throw new Error(`Unknown bytes literal index ${index}`);
+      }
+      return literal.slice();
+    },
+    bytes_get: (value, index) => {
+      const bytes = asBytes(value);
+      if (index < 0 || index >= bytes.length) {
+        throw new Error(`bytes index out of bounds: ${index}`);
+      }
+      return bytes[index];
+    },
+    bytes_len: (value) => asBytes(value).length,
+    bytes_concat: (left, right) => {
+      const a = asBytes(left);
+      const b = asBytes(right);
+      const merged = new Uint8Array(a.length + b.length);
+      merged.set(a, 0);
+      merged.set(b, a.length);
+      return merged;
+    },
+    bytes_eq: (left, right) => {
+      const a = asBytes(left);
+      const b = asBytes(right);
+      if (a.length !== b.length) return 0;
+      for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) return 0;
+      }
+      return 1;
+    },
+    bytes_compare: (left, right) => {
+      const a = asBytes(left);
+      const b = asBytes(right);
+      const len = Math.min(a.length, b.length);
+      for (let i = 0; i < len; i++) {
+        if (a[i] < b[i]) return -1;
+        if (a[i] > b[i]) return 1;
+      }
+      if (a.length < b.length) return -1;
+      if (a.length > b.length) return 1;
+      return 0;
+    },
+  };
+  for (const wasmImport of getWasmImports(wasmModule)) {
+    if (
+      wasmImport.module === WALUAU_IMPORT_MODULE &&
+      wasmImport.kind === 'function' &&
+      wasmImport.name.startsWith('js_tostring_')
+    ) {
+      waluauImports[wasmImport.name] = (value) => String(value);
+    }
+  }
+  for (const wasmImport of getWasmImports(wasmModule)) {
+    if (
+      wasmImport.module === WALUAU_IMPORT_MODULE &&
+      wasmImport.kind === 'function' &&
+      !Object.prototype.hasOwnProperty.call(waluauImports, wasmImport.name)
+    ) {
+      waluauImports[wasmImport.name] = () => {
+        throw new Error(`Unsupported waluau import: ${wasmImport.name}`);
+      };
+    }
+  }
   return {
     [WALUAU_IMPORT_MODULE]: waluauImports,
   };

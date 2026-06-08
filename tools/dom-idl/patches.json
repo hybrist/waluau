@@ -2,7 +2,6 @@
   "memberRenames": {
     "addEventListener": "add_event_listener",
     "appendChild": "append_child",
-    "appendClass": "append_class",
     "className": "class_name",
     "createElement": "create_element",
     "documentElement": "document_element",
@@ -12,8 +11,6 @@
     "innerText": "inner_text",
     "localStorage": "local_storage",
     "nodeName": "node_name",
-    "onClick": "on_click",
-    "onInput": "on_input",
     "querySelector": "query_selector",
     "removeAttribute": "remove_attribute",
     "removeChild": "remove_child",
@@ -26,7 +23,6 @@
   "parameterRenames": {
     "Document.createElement.localName": "tag_name",
     "Document.getElementById.elementId": "element_id",
-    "Element.appendClass.className": "class_name",
     "Element.getAttribute.qualifiedName": "name",
     "Element.removeAttribute.qualifiedName": "name",
     "Element.setAttribute.qualifiedName": "name",

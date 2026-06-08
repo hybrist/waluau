@@ -101,8 +101,7 @@ local output_body: HTMLElement = document.body
 
 local heading: Element = document:create_element("h2")
 heading.id = "playground-title"
-heading.class_name = "waluau-dom-title"
-heading:append_class("generated")
+heading.class_name = "waluau-dom-title generated"
 heading:set_attribute("data-source", "waluau")
 
 if HTMLHeadingElement(title) = heading then
@@ -111,7 +110,7 @@ else
     heading.text_content = "Generated DOM extern cast failed"
 end
 
-document:append_child(heading)
+output_body:append_child(heading)
 
 local body: Element = document:create_element("p")
 local found: Element? = document:get_element_by_id("playground-title")
@@ -131,11 +130,11 @@ else
     body.text_content = "DOM lookup failed"
 end
 
-document:append_child(body)
+output_body:append_child(body)
 
 local input_element: Element = document:create_element("input")
-input_element:set_attribute("value", "typed value")
 if HTMLInputElement(input) = input_element then
+    input.value = "typed value"
     local value: Element = document:create_element("span")
     value.id = "input-value"
     value.text_content = input.value

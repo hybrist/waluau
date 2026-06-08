@@ -32,8 +32,7 @@ assert(removed_item == nil)
 
 local first: Element = document:create_element("section")
 first.id = "first-dom-child"
-first.class_name = "kanban"
-first:append_class("column selected")
+first.class_name = "kanban column selected"
 first:set_attribute("data-state", "draft")
 assert(first.class_name == "kanban column selected")
 
@@ -63,16 +62,16 @@ body:remove_child(replacement)
 assert(document:get_element_by_id("replacement-dom-child") == nil)
 
 local input_element: Element = document:create_element("input")
-input_element:set_attribute("value", "typed card")
 if HTMLInputElement(input) = input_element then
+    input.value = "typed card"
     assert(input.value == "typed card")
 else
     assert(false)
 end
 
 local textarea_element: Element = document:create_element("textarea")
-textarea_element:set_attribute("value", "notes")
 if HTMLTextAreaElement(textarea) = textarea_element then
+    textarea.value = "notes"
     assert(textarea.value == "notes")
 else
     assert(false)
