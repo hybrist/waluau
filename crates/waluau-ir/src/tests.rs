@@ -829,6 +829,54 @@ fn lowers_function_expression_with_capture_and_indirect_call() {
 }
 
 #[test]
+fn lowers_lifted_unit_function_expression_with_implicit_return() {
+    let source = r#"
+        type Event = extern
+
+        declare function report_event_count(value: i32): unit
+
+        function entry(seed: i32): unit
+            local count: i32 = seed
+            local handler: (Event) -> unit = function(event: Event): unit
+                count = count + 1
+                report_event_count(count)
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    let lambda = module
+        .functions
+        .iter()
+        .find(|function| function.name == "entry$lambda0")
+        .expect("expected lifted lambda function in module");
+    let entry = lambda
+        .blocks
+        .get(&lambda.entry)
+        .expect("lambda entry block should exist");
+
+    assert!(
+        entry.instructions.iter().any(|(_, instruction)| {
+            matches!(
+                instruction,
+                Instruction::HostCall {
+                    return_type: Type::Unit,
+                    ..
+                }
+            )
+        }),
+        "expected lifted lambda to end with unit host-call statement:\n{}",
+        lambda.dump()
+    );
+    assert!(
+        matches!(entry.terminator, Terminator::Return(_)),
+        "expected lifted unit lambda to return normally:\n{}",
+        lambda.dump()
+    );
+}
+
+#[test]
 fn lowers_named_function_expression_recursion() {
     let source = r#"
         function entry(): i32

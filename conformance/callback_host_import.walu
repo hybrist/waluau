@@ -11,6 +11,6 @@ function register_counter(seed: i32): unit
     local count: i32 = seed
     register_event_callback(function(event: Event): unit
         count = count + 1
-        return report_event_count(count)
+        report_event_count(count)
     end)
 end

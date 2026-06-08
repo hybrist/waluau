@@ -3841,6 +3841,11 @@ impl Builder<'_> {
             }
             nested.lower_stmt(stmt, &mut nested_env, &mut nested_types)?;
         }
+        if nested.current_block != DEAD_BLOCK && nested.function.return_type == Type::Unit {
+            let value = nested.emit(Instruction::Unit);
+            nested.set_terminator(nested.current_block, Terminator::Return(value));
+            nested.current_block = DEAD_BLOCK;
+        }
         self.lifted_functions.push(nested.function);
         self.lifted_functions.extend(nested.lifted_functions);
 
