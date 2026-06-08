@@ -382,6 +382,39 @@ function emitExternTypeLine(iface, include) {
   return `type ${iface.name} = extern`;
 }
 
+function sortSelectedInterfaceNames(selectedNames, interfacesByName, include) {
+  const ordered = [];
+  const permanent = new Set();
+  const visiting = new Set();
+
+  function visit(name) {
+    if (permanent.has(name)) {
+      return;
+    }
+    const iface = interfacesByName.get(name);
+    if (!iface) {
+      return;
+    }
+    if (visiting.has(name)) {
+      throw new Error(`cyclic DOM inheritance detected for ${name}`);
+    }
+
+    visiting.add(name);
+    if (iface.parent && include.has(iface.parent)) {
+      visit(iface.parent);
+    }
+    visiting.delete(name);
+    permanent.add(name);
+    ordered.push(name);
+  }
+
+  for (const name of selectedNames) {
+    visit(name);
+  }
+
+  return ordered;
+}
+
 async function generate({ customSource, filter, patches }) {
   const parsed = await parseAndMergeIdls(customSource);
   const include = new Set(filter.interfaces);
@@ -402,23 +435,21 @@ async function generate({ customSource, filter, patches }) {
     skippedMembers: [],
   };
 
-  for (const iface of parsed) {
-    if (!include.has(iface.name)) {
-      continue;
+  const interfacesByName = new Map(parsed.map((iface) => [iface.name, iface]));
+  const selectedInterfaceNames = sortSelectedInterfaceNames(filter.interfaces, interfacesByName, include);
+
+  for (const name of filter.interfaces) {
+    if (!interfacesByName.has(name)) {
+      diagnostics.push(`skip interface ${name}: selected by filter but missing from IDL`);
     }
-    metadata.inheritance.push({ interface: iface.name, parent: iface.parent });
   }
 
-  const interfacesByName = new Map(parsed.map((iface) => [iface.name, iface]));
-  for (const name of filter.interfaces) {
+  for (const name of selectedInterfaceNames) {
     const iface = interfacesByName.get(name);
-    if (!iface) {
-      diagnostics.push(`skip interface ${name}: selected by filter but missing from IDL`);
-      continue;
-    }
     if (iface.parent && !include.has(iface.parent)) {
       diagnostics.push(`skip inheritance ${iface.name} -> ${iface.parent}: parent not selected by filter`);
     }
+    metadata.inheritance.push({ interface: iface.name, parent: iface.parent });
     output.push(emitExternTypeLine(iface, include));
   }
   output.push('');

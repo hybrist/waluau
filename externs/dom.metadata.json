@@ -2,6 +2,210 @@
   "source": "@webref/idl",
   "inheritance": [
     {
+      "interface": "EventTarget",
+      "parent": null
+    },
+    {
+      "interface": "Event",
+      "parent": null
+    },
+    {
+      "interface": "Node",
+      "parent": "EventTarget"
+    },
+    {
+      "interface": "Document",
+      "parent": "Node"
+    },
+    {
+      "interface": "DocumentFragment",
+      "parent": "Node"
+    },
+    {
+      "interface": "DocumentType",
+      "parent": "Node"
+    },
+    {
+      "interface": "CharacterData",
+      "parent": "Node"
+    },
+    {
+      "interface": "Text",
+      "parent": "CharacterData"
+    },
+    {
+      "interface": "Comment",
+      "parent": "CharacterData"
+    },
+    {
+      "interface": "CDATASection",
+      "parent": "Text"
+    },
+    {
+      "interface": "ProcessingInstruction",
+      "parent": "CharacterData"
+    },
+    {
+      "interface": "Attr",
+      "parent": "Node"
+    },
+    {
+      "interface": "NamedNodeMap",
+      "parent": null
+    },
+    {
+      "interface": "NodeList",
+      "parent": null
+    },
+    {
+      "interface": "HTMLCollection",
+      "parent": null
+    },
+    {
+      "interface": "HTMLAllCollection",
+      "parent": null
+    },
+    {
+      "interface": "HTMLFormControlsCollection",
+      "parent": "HTMLCollection"
+    },
+    {
+      "interface": "DOMTokenList",
+      "parent": null
+    },
+    {
+      "interface": "DOMStringMap",
+      "parent": null
+    },
+    {
+      "interface": "ShadowRoot",
+      "parent": "DocumentFragment"
+    },
+    {
+      "interface": "AbstractRange",
+      "parent": null
+    },
+    {
+      "interface": "Range",
+      "parent": "AbstractRange"
+    },
+    {
+      "interface": "NodeIterator",
+      "parent": null
+    },
+    {
+      "interface": "TreeWalker",
+      "parent": null
+    },
+    {
+      "interface": "CustomElementRegistry",
+      "parent": null
+    },
+    {
+      "interface": "Element",
+      "parent": "Node"
+    },
+    {
+      "interface": "HTMLElement",
+      "parent": "Element"
+    },
+    {
+      "interface": "HTMLHeadingElement",
+      "parent": "HTMLElement"
+    },
+    {
+      "interface": "HTMLInputElement",
+      "parent": "HTMLElement"
+    },
+    {
+      "interface": "HTMLTextAreaElement",
+      "parent": "HTMLElement"
+    },
+    {
+      "interface": "HTMLFormElement",
+      "parent": "HTMLElement"
+    },
+    {
+      "interface": "HTMLDataListElement",
+      "parent": "HTMLElement"
+    },
+    {
+      "interface": "HTMLHeadElement",
+      "parent": "HTMLElement"
+    },
+    {
+      "interface": "HTMLSlotElement",
+      "parent": "HTMLElement"
+    },
+    {
+      "interface": "ValidityState",
+      "parent": null
+    },
+    {
+      "interface": "Window",
+      "parent": "EventTarget"
+    },
+    {
+      "interface": "Location",
+      "parent": null
+    },
+    {
+      "interface": "History",
+      "parent": null
+    },
+    {
+      "interface": "Navigator",
+      "parent": null
+    },
+    {
+      "interface": "Screen",
+      "parent": null
+    },
+    {
+      "interface": "ScreenOrientation",
+      "parent": "EventTarget"
+    },
+    {
+      "interface": "BarProp",
+      "parent": null
+    },
+    {
+      "interface": "VirtualKeyboard",
+      "parent": "EventTarget"
+    },
+    {
+      "interface": "Storage",
+      "parent": null
+    },
+    {
+      "interface": "DOMRectReadOnly",
+      "parent": null
+    },
+    {
+      "interface": "DOMRect",
+      "parent": "DOMRectReadOnly"
+    },
+    {
+      "interface": "DOMRectList",
+      "parent": null
+    },
+    {
+      "interface": "DOMPointReadOnly",
+      "parent": null
+    },
+    {
+      "interface": "DOMPoint",
+      "parent": "DOMPointReadOnly"
+    },
+    {
+      "interface": "DOMQuad",
+      "parent": null
+    },
+    {
+      "interface": "Selection",
+      "parent": null
+    },
+    {
       "interface": "Blob",
       "parent": null
     },
@@ -14,51 +218,35 @@
       "parent": null
     },
     {
-      "interface": "Document",
-      "parent": "Node"
-    },
-    {
-      "interface": "Window",
-      "parent": "EventTarget"
-    },
-    {
-      "interface": "Navigator",
+      "interface": "MimeType",
       "parent": null
     },
     {
-      "interface": "Element",
-      "parent": "Node"
+      "interface": "MimeTypeArray",
+      "parent": null
+    },
+    {
+      "interface": "Plugin",
+      "parent": null
+    },
+    {
+      "interface": "PluginArray",
+      "parent": null
+    },
+    {
+      "interface": "CSSStyleDeclaration",
+      "parent": null
+    },
+    {
+      "interface": "CSSStyleProperties",
+      "parent": "CSSStyleDeclaration"
     },
     {
       "interface": "CSSRule",
       "parent": null
     },
     {
-      "interface": "CSSPseudoElement",
-      "parent": null
-    },
-    {
-      "interface": "StylePropertyMapReadOnly",
-      "parent": null
-    },
-    {
-      "interface": "StylePropertyMap",
-      "parent": "StylePropertyMapReadOnly"
-    },
-    {
-      "interface": "Screen",
-      "parent": null
-    },
-    {
-      "interface": "HTMLElement",
-      "parent": "Element"
-    },
-    {
-      "interface": "Range",
-      "parent": "AbstractRange"
-    },
-    {
-      "interface": "MediaList",
+      "interface": "CSSRuleList",
       "parent": null
     },
     {
@@ -74,208 +262,20 @@
       "parent": null
     },
     {
-      "interface": "CSSRuleList",
+      "interface": "MediaList",
       "parent": null
     },
     {
-      "interface": "CSSStyleDeclaration",
+      "interface": "CSSPseudoElement",
       "parent": null
     },
     {
-      "interface": "CSSStyleProperties",
-      "parent": "CSSStyleDeclaration"
-    },
-    {
-      "interface": "Event",
+      "interface": "StylePropertyMapReadOnly",
       "parent": null
     },
     {
-      "interface": "EventTarget",
-      "parent": null
-    },
-    {
-      "interface": "NodeList",
-      "parent": null
-    },
-    {
-      "interface": "HTMLCollection",
-      "parent": null
-    },
-    {
-      "interface": "Node",
-      "parent": "EventTarget"
-    },
-    {
-      "interface": "DocumentType",
-      "parent": "Node"
-    },
-    {
-      "interface": "DocumentFragment",
-      "parent": "Node"
-    },
-    {
-      "interface": "ShadowRoot",
-      "parent": "DocumentFragment"
-    },
-    {
-      "interface": "NamedNodeMap",
-      "parent": null
-    },
-    {
-      "interface": "Attr",
-      "parent": "Node"
-    },
-    {
-      "interface": "CharacterData",
-      "parent": "Node"
-    },
-    {
-      "interface": "Text",
-      "parent": "CharacterData"
-    },
-    {
-      "interface": "CDATASection",
-      "parent": "Text"
-    },
-    {
-      "interface": "ProcessingInstruction",
-      "parent": "CharacterData"
-    },
-    {
-      "interface": "Comment",
-      "parent": "CharacterData"
-    },
-    {
-      "interface": "AbstractRange",
-      "parent": null
-    },
-    {
-      "interface": "NodeIterator",
-      "parent": null
-    },
-    {
-      "interface": "TreeWalker",
-      "parent": null
-    },
-    {
-      "interface": "DOMTokenList",
-      "parent": null
-    },
-    {
-      "interface": "HTMLInputElement",
-      "parent": "HTMLElement"
-    },
-    {
-      "interface": "DOMPointReadOnly",
-      "parent": null
-    },
-    {
-      "interface": "DOMPoint",
-      "parent": "DOMPointReadOnly"
-    },
-    {
-      "interface": "DOMRectReadOnly",
-      "parent": null
-    },
-    {
-      "interface": "DOMRect",
-      "parent": "DOMRectReadOnly"
-    },
-    {
-      "interface": "DOMRectList",
-      "parent": null
-    },
-    {
-      "interface": "DOMQuad",
-      "parent": null
-    },
-    {
-      "interface": "HTMLAllCollection",
-      "parent": null
-    },
-    {
-      "interface": "HTMLFormControlsCollection",
-      "parent": "HTMLCollection"
-    },
-    {
-      "interface": "DOMStringMap",
-      "parent": null
-    },
-    {
-      "interface": "HTMLHeadElement",
-      "parent": "HTMLElement"
-    },
-    {
-      "interface": "HTMLHeadingElement",
-      "parent": "HTMLElement"
-    },
-    {
-      "interface": "HTMLFormElement",
-      "parent": "HTMLElement"
-    },
-    {
-      "interface": "HTMLDataListElement",
-      "parent": "HTMLElement"
-    },
-    {
-      "interface": "HTMLTextAreaElement",
-      "parent": "HTMLElement"
-    },
-    {
-      "interface": "ValidityState",
-      "parent": null
-    },
-    {
-      "interface": "HTMLSlotElement",
-      "parent": "HTMLElement"
-    },
-    {
-      "interface": "CustomElementRegistry",
-      "parent": null
-    },
-    {
-      "interface": "BarProp",
-      "parent": null
-    },
-    {
-      "interface": "Location",
-      "parent": null
-    },
-    {
-      "interface": "History",
-      "parent": null
-    },
-    {
-      "interface": "PluginArray",
-      "parent": null
-    },
-    {
-      "interface": "MimeTypeArray",
-      "parent": null
-    },
-    {
-      "interface": "Plugin",
-      "parent": null
-    },
-    {
-      "interface": "MimeType",
-      "parent": null
-    },
-    {
-      "interface": "Storage",
-      "parent": null
-    },
-    {
-      "interface": "ScreenOrientation",
-      "parent": "EventTarget"
-    },
-    {
-      "interface": "Selection",
-      "parent": null
-    },
-    {
-      "interface": "VirtualKeyboard",
-      "parent": "EventTarget"
+      "interface": "StylePropertyMap",
+      "parent": "StylePropertyMapReadOnly"
     }
   ],
   "emittedMembers": [
