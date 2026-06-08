@@ -720,6 +720,8 @@ declare function HTMLInputElement:setCustomValidity(error: string): unit
 declare property HTMLInputElement:labels: NodeList?
 declare function HTMLInputElement:select(): unit
 declare property HTMLInputElement:selectionDirection: string?
+declare function HTMLInputElement:setRangeText(replacement: string, start: u32, end_: u32): unit
+declare function HTMLInputElement:setSelectionRange(start: u32, end_: u32): unit
 declare function HTMLInputElement:showPicker(): unit
 declare property HTMLInputElement:webkitdirectory: bool
 declare property HTMLInputElement:capture: string
@@ -768,6 +770,8 @@ declare property HTMLTextAreaElement:wrap: string
 declare property HTMLTextAreaElement:textLength: u32
 declare property HTMLTextAreaElement:selectionStart: u32
 declare property HTMLTextAreaElement:selectionEnd: u32
+declare function HTMLTextAreaElement:setRangeText(replacement: string, start: u32, end_: u32): unit
+declare function HTMLTextAreaElement:setSelectionRange(start: u32, end_: u32): unit
 declare property ValidityState:valueMissing: bool
 declare property ValidityState:typeMismatch: bool
 declare property ValidityState:patternMismatch: bool
