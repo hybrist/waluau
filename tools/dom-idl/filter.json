@@ -4,59 +4,2103 @@
     "Event",
     "Node",
     "Document",
-    "Window",
+    "DocumentFragment",
+    "DocumentType",
+    "CharacterData",
+    "Text",
+    "Comment",
+    "CDATASection",
+    "ProcessingInstruction",
+    "Attr",
+    "NamedNodeMap",
+    "NodeList",
+    "HTMLCollection",
+    "HTMLAllCollection",
+    "HTMLFormControlsCollection",
+    "DOMTokenList",
+    "DOMStringMap",
+    "ShadowRoot",
+    "AbstractRange",
+    "Range",
+    "NodeIterator",
+    "TreeWalker",
+    "CustomElementRegistry",
     "Element",
     "HTMLElement",
     "HTMLHeadingElement",
     "HTMLInputElement",
     "HTMLTextAreaElement",
-    "Storage"
+    "HTMLFormElement",
+    "HTMLDataListElement",
+    "HTMLHeadElement",
+    "HTMLSlotElement",
+    "ValidityState",
+    "Window",
+    "Location",
+    "History",
+    "Navigator",
+    "Screen",
+    "ScreenOrientation",
+    "BarProp",
+    "VirtualKeyboard",
+    "Storage",
+    "DOMRectReadOnly",
+    "DOMRect",
+    "DOMRectList",
+    "DOMPointReadOnly",
+    "DOMPoint",
+    "DOMQuad",
+    "Selection",
+    "Blob",
+    "File",
+    "FileList",
+    "MimeType",
+    "MimeTypeArray",
+    "Plugin",
+    "PluginArray",
+    "CSSStyleDeclaration",
+    "CSSStyleProperties",
+    "CSSRule",
+    "CSSRuleList",
+    "StyleSheet",
+    "CSSStyleSheet",
+    "StyleSheetList",
+    "MediaList",
+    "CSSPseudoElement",
+    "StylePropertyMapReadOnly",
+    "StylePropertyMap"
   ],
-  "members": {
-    "EventTarget": [
-      "operation:addEventListener"
-    ],
+  "disabledMembers": {
     "Event": [
-      "attribute:target"
+      {
+        "member": "attribute:type",
+        "reason": "member 'attribute:type' collides with the same-named member kept on Blob (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "HTMLInputElement": [
+      {
+        "member": "attribute:type",
+        "reason": "member 'attribute:type' collides with the same-named member kept on Blob (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:name",
+        "reason": "member 'attribute:name' collides with the same-named member kept on Plugin (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:value",
+        "reason": "member 'attribute:value' is also declared on ancestor interface HTMLElement; cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:align",
+        "reason": "member 'attribute:align' collides with the same-named member kept on HTMLHeadingElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:autocomplete",
+        "reason": "member 'attribute:autocomplete' collides with the same-named member kept on HTMLFormElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:disabled",
+        "reason": "member 'attribute:disabled' collides with the same-named member kept on StyleSheet (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:height",
+        "reason": "member 'attribute:height' collides with the same-named member kept on DOMRectReadOnly (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:size",
+        "reason": "member 'attribute:size' collides with the same-named member kept on Blob (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:width",
+        "reason": "member 'attribute:width' collides with the same-named member kept on DOMRectReadOnly (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:checkValidity",
+        "reason": "member 'operation:checkValidity' collides with the same-named member kept on HTMLFormElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:reportValidity",
+        "reason": "member 'operation:reportValidity' collides with the same-named member kept on HTMLFormElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "HTMLTextAreaElement": [
+      {
+        "member": "attribute:type",
+        "reason": "member 'attribute:type' collides with the same-named member kept on Blob (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:name",
+        "reason": "member 'attribute:name' collides with the same-named member kept on Plugin (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:value",
+        "reason": "member 'attribute:value' is also declared on ancestor interface HTMLElement; cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:autocomplete",
+        "reason": "member 'attribute:autocomplete' collides with the same-named member kept on HTMLFormElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:dirName",
+        "reason": "member 'attribute:dirName' collides with the same-named member kept on HTMLInputElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:disabled",
+        "reason": "member 'attribute:disabled' collides with the same-named member kept on StyleSheet (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:form",
+        "reason": "member 'attribute:form' collides with the same-named member kept on HTMLInputElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:maxLength",
+        "reason": "member 'attribute:maxLength' collides with the same-named member kept on HTMLInputElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:minLength",
+        "reason": "member 'attribute:minLength' collides with the same-named member kept on HTMLInputElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:placeholder",
+        "reason": "member 'attribute:placeholder' collides with the same-named member kept on HTMLInputElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:readOnly",
+        "reason": "member 'attribute:readOnly' collides with the same-named member kept on HTMLInputElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:required",
+        "reason": "member 'attribute:required' collides with the same-named member kept on HTMLInputElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:defaultValue",
+        "reason": "member 'attribute:defaultValue' collides with the same-named member kept on HTMLInputElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:willValidate",
+        "reason": "member 'attribute:willValidate' collides with the same-named member kept on HTMLInputElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:validity",
+        "reason": "member 'attribute:validity' collides with the same-named member kept on HTMLInputElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:validationMessage",
+        "reason": "member 'attribute:validationMessage' collides with the same-named member kept on HTMLInputElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:checkValidity",
+        "reason": "member 'operation:checkValidity' collides with the same-named member kept on HTMLFormElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:reportValidity",
+        "reason": "member 'operation:reportValidity' collides with the same-named member kept on HTMLFormElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:setCustomValidity",
+        "reason": "member 'operation:setCustomValidity' collides with the same-named member kept on HTMLInputElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:labels",
+        "reason": "member 'attribute:labels' collides with the same-named member kept on HTMLInputElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:select",
+        "reason": "member 'operation:select' collides with the same-named member kept on HTMLInputElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:selectionDirection",
+        "reason": "member 'attribute:selectionDirection' collides with the same-named member kept on HTMLInputElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "ScreenOrientation": [
+      {
+        "member": "attribute:type",
+        "reason": "member 'attribute:type' collides with the same-named member kept on Blob (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onchange",
+        "reason": "member 'attribute:onchange' collides with the same-named member kept on Screen (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "Selection": [
+      {
+        "member": "attribute:type",
+        "reason": "member 'attribute:type' collides with the same-named member kept on Blob (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "MimeType": [
+      {
+        "member": "attribute:type",
+        "reason": "member 'attribute:type' collides with the same-named member kept on Blob (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "CSSRule": [
+      {
+        "member": "attribute:type",
+        "reason": "member 'attribute:type' collides with the same-named member kept on Blob (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "StyleSheet": [
+      {
+        "member": "attribute:type",
+        "reason": "member 'attribute:type' collides with the same-named member kept on Blob (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:href",
+        "reason": "member 'attribute:href' collides with the same-named member kept on Location (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:parentStyleSheet",
+        "reason": "member 'attribute:parentStyleSheet' collides with the same-named member kept on CSSRule (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "CSSPseudoElement": [
+      {
+        "member": "attribute:type",
+        "reason": "member 'attribute:type' collides with the same-named member kept on Blob (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "ProcessingInstruction": [
+      {
+        "member": "attribute:target",
+        "reason": "member 'attribute:target' collides with the same-named member kept on Event (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "HTMLFormElement": [
+      {
+        "member": "attribute:target",
+        "reason": "member 'attribute:target' collides with the same-named member kept on Event (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:name",
+        "reason": "member 'attribute:name' collides with the same-named member kept on Plugin (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:length",
+        "reason": "member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
     ],
     "Node": [
-      "attribute:nodeName",
-      "attribute:textContent",
-      "operation:appendChild",
-      "operation:replaceChild",
-      "operation:removeChild"
-    ],
-    "Document": [
-      "attribute:body",
-      "attribute:documentElement",
-      "operation:createElement",
-      "operation:getElementById",
-      "operation:querySelector"
-    ],
-    "Window": [
-      "attribute:document",
-      "attribute:localStorage"
+      {
+        "member": "operation:contains",
+        "reason": "member 'operation:contains' collides with the same-named member kept on DOMTokenList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
     ],
     "Element": [
-      "attribute:id",
-      "attribute:className",
-      "operation:getAttribute",
-      "operation:setAttribute",
-      "operation:removeAttribute",
-      "operation:querySelector"
+      {
+        "member": "operation:getElementsByTagName",
+        "reason": "member 'operation:getElementsByTagName' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:getElementsByTagNameNS",
+        "reason": "member 'operation:getElementsByTagNameNS' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:getElementsByClassName",
+        "reason": "member 'operation:getElementsByClassName' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onfullscreenchange",
+        "reason": "member 'attribute:onfullscreenchange' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onfullscreenerror",
+        "reason": "member 'attribute:onfullscreenerror' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:customElementRegistry",
+        "reason": "member 'attribute:customElementRegistry' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:children",
+        "reason": "member 'attribute:children' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:firstElementChild",
+        "reason": "member 'attribute:firstElementChild' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:lastElementChild",
+        "reason": "member 'attribute:lastElementChild' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:childElementCount",
+        "reason": "member 'attribute:childElementCount' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:moveBefore",
+        "reason": "member 'operation:moveBefore' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:querySelector",
+        "reason": "member 'operation:querySelector' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:querySelectorAll",
+        "reason": "member 'operation:querySelectorAll' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:ariaNotify",
+        "reason": "member 'operation:ariaNotify' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:remove",
+        "reason": "member 'operation:remove' collides with the same-named member kept on DOMTokenList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:previousElementSibling",
+        "reason": "member 'attribute:previousElementSibling' collides with the same-named member kept on CharacterData (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:nextElementSibling",
+        "reason": "member 'attribute:nextElementSibling' collides with the same-named member kept on CharacterData (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:namespaceURI",
+        "reason": "member 'attribute:namespaceURI' collides with the same-named member kept on Attr (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:prefix",
+        "reason": "member 'attribute:prefix' collides with the same-named member kept on Attr (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:localName",
+        "reason": "member 'attribute:localName' collides with the same-named member kept on Attr (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:getClientRects",
+        "reason": "member 'operation:getClientRects' collides with the same-named member kept on Range (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:getBoundingClientRect",
+        "reason": "member 'operation:getBoundingClientRect' collides with the same-named member kept on Range (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:pseudo",
+        "reason": "member 'operation:pseudo' collides with the same-named member kept on CSSPseudoElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "Document": [
+      {
+        "member": "attribute:location",
+        "reason": "member 'attribute:location' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:lastModified",
+        "reason": "member 'attribute:lastModified' collides with the same-named member kept on File (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:title",
+        "reason": "member 'attribute:title' collides with the same-named member kept on StyleSheet (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:plugins",
+        "reason": "member 'attribute:plugins' collides with the same-named member kept on Navigator (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:open",
+        "reason": "member 'operation:open' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:close",
+        "reason": "member 'operation:close' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:clear",
+        "reason": "member 'operation:clear' collides with the same-named member kept on Storage (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:captureEvents",
+        "reason": "member 'operation:captureEvents' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:releaseEvents",
+        "reason": "member 'operation:releaseEvents' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:getSelection",
+        "reason": "member 'operation:getSelection' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onabort",
+        "reason": "member 'attribute:onabort' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onauxclick",
+        "reason": "member 'attribute:onauxclick' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onbeforeinput",
+        "reason": "member 'attribute:onbeforeinput' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onbeforematch",
+        "reason": "member 'attribute:onbeforematch' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onbeforetoggle",
+        "reason": "member 'attribute:onbeforetoggle' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onblur",
+        "reason": "member 'attribute:onblur' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oncancel",
+        "reason": "member 'attribute:oncancel' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oncanplay",
+        "reason": "member 'attribute:oncanplay' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oncanplaythrough",
+        "reason": "member 'attribute:oncanplaythrough' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onchange",
+        "reason": "member 'attribute:onchange' collides with the same-named member kept on Screen (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onclick",
+        "reason": "member 'attribute:onclick' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onclose",
+        "reason": "member 'attribute:onclose' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oncommand",
+        "reason": "member 'attribute:oncommand' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oncontextlost",
+        "reason": "member 'attribute:oncontextlost' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oncontextmenu",
+        "reason": "member 'attribute:oncontextmenu' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oncontextrestored",
+        "reason": "member 'attribute:oncontextrestored' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oncopy",
+        "reason": "member 'attribute:oncopy' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oncuechange",
+        "reason": "member 'attribute:oncuechange' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oncut",
+        "reason": "member 'attribute:oncut' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ondblclick",
+        "reason": "member 'attribute:ondblclick' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ondrag",
+        "reason": "member 'attribute:ondrag' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ondragend",
+        "reason": "member 'attribute:ondragend' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ondragenter",
+        "reason": "member 'attribute:ondragenter' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ondragleave",
+        "reason": "member 'attribute:ondragleave' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ondragover",
+        "reason": "member 'attribute:ondragover' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ondragstart",
+        "reason": "member 'attribute:ondragstart' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ondrop",
+        "reason": "member 'attribute:ondrop' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ondurationchange",
+        "reason": "member 'attribute:ondurationchange' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onemptied",
+        "reason": "member 'attribute:onemptied' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onended",
+        "reason": "member 'attribute:onended' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onfocus",
+        "reason": "member 'attribute:onfocus' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onformdata",
+        "reason": "member 'attribute:onformdata' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oninput",
+        "reason": "member 'attribute:oninput' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oninvalid",
+        "reason": "member 'attribute:oninvalid' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onkeydown",
+        "reason": "member 'attribute:onkeydown' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onkeypress",
+        "reason": "member 'attribute:onkeypress' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onkeyup",
+        "reason": "member 'attribute:onkeyup' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onload",
+        "reason": "member 'attribute:onload' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onloadeddata",
+        "reason": "member 'attribute:onloadeddata' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onloadedmetadata",
+        "reason": "member 'attribute:onloadedmetadata' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onloadstart",
+        "reason": "member 'attribute:onloadstart' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onmousedown",
+        "reason": "member 'attribute:onmousedown' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onmouseenter",
+        "reason": "member 'attribute:onmouseenter' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onmouseleave",
+        "reason": "member 'attribute:onmouseleave' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onmousemove",
+        "reason": "member 'attribute:onmousemove' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onmouseout",
+        "reason": "member 'attribute:onmouseout' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onmouseover",
+        "reason": "member 'attribute:onmouseover' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onmouseup",
+        "reason": "member 'attribute:onmouseup' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpaste",
+        "reason": "member 'attribute:onpaste' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpause",
+        "reason": "member 'attribute:onpause' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onplay",
+        "reason": "member 'attribute:onplay' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onplaying",
+        "reason": "member 'attribute:onplaying' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onprogress",
+        "reason": "member 'attribute:onprogress' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onratechange",
+        "reason": "member 'attribute:onratechange' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onreset",
+        "reason": "member 'attribute:onreset' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onresize",
+        "reason": "member 'attribute:onresize' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onscroll",
+        "reason": "member 'attribute:onscroll' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onscrollend",
+        "reason": "member 'attribute:onscrollend' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onsecuritypolicyviolation",
+        "reason": "member 'attribute:onsecuritypolicyviolation' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onseeked",
+        "reason": "member 'attribute:onseeked' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onseeking",
+        "reason": "member 'attribute:onseeking' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onselect",
+        "reason": "member 'attribute:onselect' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onslotchange",
+        "reason": "member 'attribute:onslotchange' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onstalled",
+        "reason": "member 'attribute:onstalled' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onsubmit",
+        "reason": "member 'attribute:onsubmit' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onsuspend",
+        "reason": "member 'attribute:onsuspend' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ontimeupdate",
+        "reason": "member 'attribute:ontimeupdate' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ontoggle",
+        "reason": "member 'attribute:ontoggle' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onvolumechange",
+        "reason": "member 'attribute:onvolumechange' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onwaiting",
+        "reason": "member 'attribute:onwaiting' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onwebkitanimationend",
+        "reason": "member 'attribute:onwebkitanimationend' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onwebkitanimationiteration",
+        "reason": "member 'attribute:onwebkitanimationiteration' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onwebkitanimationstart",
+        "reason": "member 'attribute:onwebkitanimationstart' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onwebkittransitionend",
+        "reason": "member 'attribute:onwebkittransitionend' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onwheel",
+        "reason": "member 'attribute:onwheel' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onanimationstart",
+        "reason": "member 'attribute:onanimationstart' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onanimationiteration",
+        "reason": "member 'attribute:onanimationiteration' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onanimationend",
+        "reason": "member 'attribute:onanimationend' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onanimationcancel",
+        "reason": "member 'attribute:onanimationcancel' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onsnapchanged",
+        "reason": "member 'attribute:onsnapchanged' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onsnapchanging",
+        "reason": "member 'attribute:onsnapchanging' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ontransitionrun",
+        "reason": "member 'attribute:ontransitionrun' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ontransitionstart",
+        "reason": "member 'attribute:ontransitionstart' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ontransitionend",
+        "reason": "member 'attribute:ontransitionend' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ontransitioncancel",
+        "reason": "member 'attribute:ontransitioncancel' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onfencedtreeclick",
+        "reason": "member 'attribute:onfencedtreeclick' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpointerover",
+        "reason": "member 'attribute:onpointerover' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpointerenter",
+        "reason": "member 'attribute:onpointerenter' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpointerdown",
+        "reason": "member 'attribute:onpointerdown' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpointermove",
+        "reason": "member 'attribute:onpointermove' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpointerrawupdate",
+        "reason": "member 'attribute:onpointerrawupdate' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpointerup",
+        "reason": "member 'attribute:onpointerup' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpointercancel",
+        "reason": "member 'attribute:onpointercancel' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpointerout",
+        "reason": "member 'attribute:onpointerout' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpointerleave",
+        "reason": "member 'attribute:onpointerleave' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ongotpointercapture",
+        "reason": "member 'attribute:ongotpointercapture' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onlostpointercapture",
+        "reason": "member 'attribute:onlostpointercapture' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onselectstart",
+        "reason": "member 'attribute:onselectstart' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onselectionchange",
+        "reason": "member 'attribute:onselectionchange' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ontouchstart",
+        "reason": "member 'attribute:ontouchstart' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ontouchend",
+        "reason": "member 'attribute:ontouchend' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ontouchmove",
+        "reason": "member 'attribute:ontouchmove' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ontouchcancel",
+        "reason": "member 'attribute:ontouchcancel' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onbeforexrselect",
+        "reason": "member 'attribute:onbeforexrselect' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
     ],
     "HTMLElement": [
-      "attribute:innerText",
-      "attribute:value"
+      {
+        "member": "attribute:title",
+        "reason": "member 'attribute:title' collides with the same-named member kept on StyleSheet (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:dir",
+        "reason": "member 'attribute:dir' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onabort",
+        "reason": "member 'attribute:onabort' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onauxclick",
+        "reason": "member 'attribute:onauxclick' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onbeforeinput",
+        "reason": "member 'attribute:onbeforeinput' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onbeforematch",
+        "reason": "member 'attribute:onbeforematch' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onbeforetoggle",
+        "reason": "member 'attribute:onbeforetoggle' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onblur",
+        "reason": "member 'attribute:onblur' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oncancel",
+        "reason": "member 'attribute:oncancel' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oncanplay",
+        "reason": "member 'attribute:oncanplay' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oncanplaythrough",
+        "reason": "member 'attribute:oncanplaythrough' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onchange",
+        "reason": "member 'attribute:onchange' collides with the same-named member kept on Screen (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onclick",
+        "reason": "member 'attribute:onclick' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onclose",
+        "reason": "member 'attribute:onclose' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oncommand",
+        "reason": "member 'attribute:oncommand' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oncontextlost",
+        "reason": "member 'attribute:oncontextlost' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oncontextmenu",
+        "reason": "member 'attribute:oncontextmenu' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oncontextrestored",
+        "reason": "member 'attribute:oncontextrestored' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oncopy",
+        "reason": "member 'attribute:oncopy' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oncuechange",
+        "reason": "member 'attribute:oncuechange' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oncut",
+        "reason": "member 'attribute:oncut' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ondblclick",
+        "reason": "member 'attribute:ondblclick' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ondrag",
+        "reason": "member 'attribute:ondrag' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ondragend",
+        "reason": "member 'attribute:ondragend' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ondragenter",
+        "reason": "member 'attribute:ondragenter' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ondragleave",
+        "reason": "member 'attribute:ondragleave' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ondragover",
+        "reason": "member 'attribute:ondragover' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ondragstart",
+        "reason": "member 'attribute:ondragstart' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ondrop",
+        "reason": "member 'attribute:ondrop' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ondurationchange",
+        "reason": "member 'attribute:ondurationchange' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onemptied",
+        "reason": "member 'attribute:onemptied' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onended",
+        "reason": "member 'attribute:onended' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onfocus",
+        "reason": "member 'attribute:onfocus' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onformdata",
+        "reason": "member 'attribute:onformdata' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oninput",
+        "reason": "member 'attribute:oninput' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:oninvalid",
+        "reason": "member 'attribute:oninvalid' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onkeydown",
+        "reason": "member 'attribute:onkeydown' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onkeypress",
+        "reason": "member 'attribute:onkeypress' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onkeyup",
+        "reason": "member 'attribute:onkeyup' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onload",
+        "reason": "member 'attribute:onload' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onloadeddata",
+        "reason": "member 'attribute:onloadeddata' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onloadedmetadata",
+        "reason": "member 'attribute:onloadedmetadata' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onloadstart",
+        "reason": "member 'attribute:onloadstart' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onmousedown",
+        "reason": "member 'attribute:onmousedown' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onmouseenter",
+        "reason": "member 'attribute:onmouseenter' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onmouseleave",
+        "reason": "member 'attribute:onmouseleave' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onmousemove",
+        "reason": "member 'attribute:onmousemove' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onmouseout",
+        "reason": "member 'attribute:onmouseout' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onmouseover",
+        "reason": "member 'attribute:onmouseover' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onmouseup",
+        "reason": "member 'attribute:onmouseup' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpaste",
+        "reason": "member 'attribute:onpaste' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpause",
+        "reason": "member 'attribute:onpause' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onplay",
+        "reason": "member 'attribute:onplay' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onplaying",
+        "reason": "member 'attribute:onplaying' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onprogress",
+        "reason": "member 'attribute:onprogress' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onratechange",
+        "reason": "member 'attribute:onratechange' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onreset",
+        "reason": "member 'attribute:onreset' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onresize",
+        "reason": "member 'attribute:onresize' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onscroll",
+        "reason": "member 'attribute:onscroll' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onscrollend",
+        "reason": "member 'attribute:onscrollend' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onsecuritypolicyviolation",
+        "reason": "member 'attribute:onsecuritypolicyviolation' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onseeked",
+        "reason": "member 'attribute:onseeked' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onseeking",
+        "reason": "member 'attribute:onseeking' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onselect",
+        "reason": "member 'attribute:onselect' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onslotchange",
+        "reason": "member 'attribute:onslotchange' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onstalled",
+        "reason": "member 'attribute:onstalled' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onsubmit",
+        "reason": "member 'attribute:onsubmit' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onsuspend",
+        "reason": "member 'attribute:onsuspend' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ontimeupdate",
+        "reason": "member 'attribute:ontimeupdate' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ontoggle",
+        "reason": "member 'attribute:ontoggle' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onvolumechange",
+        "reason": "member 'attribute:onvolumechange' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onwaiting",
+        "reason": "member 'attribute:onwaiting' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onwebkitanimationend",
+        "reason": "member 'attribute:onwebkitanimationend' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onwebkitanimationiteration",
+        "reason": "member 'attribute:onwebkitanimationiteration' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onwebkitanimationstart",
+        "reason": "member 'attribute:onwebkitanimationstart' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onwebkittransitionend",
+        "reason": "member 'attribute:onwebkittransitionend' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onwheel",
+        "reason": "member 'attribute:onwheel' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onanimationstart",
+        "reason": "member 'attribute:onanimationstart' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onanimationiteration",
+        "reason": "member 'attribute:onanimationiteration' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onanimationend",
+        "reason": "member 'attribute:onanimationend' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onanimationcancel",
+        "reason": "member 'attribute:onanimationcancel' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onsnapchanged",
+        "reason": "member 'attribute:onsnapchanged' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onsnapchanging",
+        "reason": "member 'attribute:onsnapchanging' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ontransitionrun",
+        "reason": "member 'attribute:ontransitionrun' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ontransitionstart",
+        "reason": "member 'attribute:ontransitionstart' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ontransitionend",
+        "reason": "member 'attribute:ontransitionend' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ontransitioncancel",
+        "reason": "member 'attribute:ontransitioncancel' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onfencedtreeclick",
+        "reason": "member 'attribute:onfencedtreeclick' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpointerover",
+        "reason": "member 'attribute:onpointerover' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpointerenter",
+        "reason": "member 'attribute:onpointerenter' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpointerdown",
+        "reason": "member 'attribute:onpointerdown' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpointermove",
+        "reason": "member 'attribute:onpointermove' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpointerrawupdate",
+        "reason": "member 'attribute:onpointerrawupdate' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpointerup",
+        "reason": "member 'attribute:onpointerup' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpointercancel",
+        "reason": "member 'attribute:onpointercancel' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpointerout",
+        "reason": "member 'attribute:onpointerout' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onpointerleave",
+        "reason": "member 'attribute:onpointerleave' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ongotpointercapture",
+        "reason": "member 'attribute:ongotpointercapture' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onlostpointercapture",
+        "reason": "member 'attribute:onlostpointercapture' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onselectstart",
+        "reason": "member 'attribute:onselectstart' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onselectionchange",
+        "reason": "member 'attribute:onselectionchange' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ontouchstart",
+        "reason": "member 'attribute:ontouchstart' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ontouchend",
+        "reason": "member 'attribute:ontouchend' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ontouchmove",
+        "reason": "member 'attribute:ontouchmove' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:ontouchcancel",
+        "reason": "member 'attribute:ontouchcancel' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onbeforexrselect",
+        "reason": "member 'attribute:onbeforexrselect' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:focus",
+        "reason": "member 'operation:focus' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:blur",
+        "reason": "member 'operation:blur' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
     ],
-    "HTMLHeadingElement": [],
-    "HTMLInputElement": [],
-    "HTMLTextAreaElement": [],
+    "StylePropertyMap": [
+      {
+        "member": "operation:clear",
+        "reason": "member 'operation:clear' collides with the same-named member kept on Storage (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "DocumentFragment": [
+      {
+        "member": "operation:getElementById",
+        "reason": "member 'operation:getElementById' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:children",
+        "reason": "member 'attribute:children' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:firstElementChild",
+        "reason": "member 'attribute:firstElementChild' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:lastElementChild",
+        "reason": "member 'attribute:lastElementChild' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:childElementCount",
+        "reason": "member 'attribute:childElementCount' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:moveBefore",
+        "reason": "member 'operation:moveBefore' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:querySelector",
+        "reason": "member 'operation:querySelector' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:querySelectorAll",
+        "reason": "member 'operation:querySelectorAll' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "ShadowRoot": [
+      {
+        "member": "attribute:customElementRegistry",
+        "reason": "member 'attribute:customElementRegistry' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:styleSheets",
+        "reason": "member 'attribute:styleSheets' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:fullscreenElement",
+        "reason": "member 'attribute:fullscreenElement' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:activeElement",
+        "reason": "member 'attribute:activeElement' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:pictureInPictureElement",
+        "reason": "member 'attribute:pictureInPictureElement' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:pointerLockElement",
+        "reason": "member 'attribute:pointerLockElement' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:onslotchange",
+        "reason": "member 'attribute:onslotchange' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:host",
+        "reason": "member 'attribute:host' collides with the same-named member kept on Location (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:setHTML",
+        "reason": "member 'operation:setHTML' collides with the same-named member kept on Element (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:getHTML",
+        "reason": "member 'operation:getHTML' collides with the same-named member kept on Element (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "Window": [
+      {
+        "member": "attribute:onchange",
+        "reason": "member 'attribute:onchange' collides with the same-named member kept on Screen (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:name",
+        "reason": "member 'attribute:name' collides with the same-named member kept on Plugin (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:length",
+        "reason": "member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:top",
+        "reason": "member 'attribute:top' collides with the same-named member kept on DOMRectReadOnly (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:orientation",
+        "reason": "member 'attribute:orientation' collides with the same-named member kept on Screen (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:origin",
+        "reason": "member 'attribute:origin' collides with the same-named member kept on Location (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "DocumentType": [
+      {
+        "member": "attribute:name",
+        "reason": "member 'attribute:name' collides with the same-named member kept on Plugin (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:remove",
+        "reason": "member 'operation:remove' collides with the same-named member kept on DOMTokenList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "Attr": [
+      {
+        "member": "attribute:name",
+        "reason": "member 'attribute:name' collides with the same-named member kept on Plugin (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:value",
+        "reason": "member 'attribute:value' collides with the same-named member kept on HTMLElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "HTMLSlotElement": [
+      {
+        "member": "attribute:name",
+        "reason": "member 'attribute:name' collides with the same-named member kept on Plugin (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "File": [
+      {
+        "member": "attribute:name",
+        "reason": "member 'attribute:name' collides with the same-named member kept on Plugin (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "CharacterData": [
+      {
+        "member": "operation:remove",
+        "reason": "member 'operation:remove' collides with the same-named member kept on DOMTokenList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:length",
+        "reason": "member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "NamedNodeMap": [
+      {
+        "member": "attribute:length",
+        "reason": "member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:item",
+        "reason": "member 'operation:item' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "NodeList": [
+      {
+        "member": "attribute:length",
+        "reason": "member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:item",
+        "reason": "member 'operation:item' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "HTMLCollection": [
+      {
+        "member": "attribute:length",
+        "reason": "member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:item",
+        "reason": "member 'operation:item' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "HTMLAllCollection": [
+      {
+        "member": "attribute:length",
+        "reason": "member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "DOMTokenList": [
+      {
+        "member": "attribute:length",
+        "reason": "member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:value",
+        "reason": "member 'attribute:value' collides with the same-named member kept on HTMLElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:item",
+        "reason": "member 'operation:item' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "History": [
+      {
+        "member": "attribute:length",
+        "reason": "member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
     "Storage": [
-      "operation:getItem",
-      "operation:setItem",
-      "operation:removeItem"
+      {
+        "member": "attribute:length",
+        "reason": "member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "DOMRectList": [
+      {
+        "member": "attribute:length",
+        "reason": "member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:item",
+        "reason": "member 'operation:item' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "FileList": [
+      {
+        "member": "attribute:length",
+        "reason": "member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:item",
+        "reason": "member 'operation:item' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "MimeTypeArray": [
+      {
+        "member": "attribute:length",
+        "reason": "member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:item",
+        "reason": "member 'operation:item' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:namedItem",
+        "reason": "member 'operation:namedItem' collides with the same-named member kept on HTMLCollection (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "Plugin": [
+      {
+        "member": "attribute:length",
+        "reason": "member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:item",
+        "reason": "member 'operation:item' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:namedItem",
+        "reason": "member 'operation:namedItem' collides with the same-named member kept on HTMLCollection (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:description",
+        "reason": "member 'attribute:description' collides with the same-named member kept on MimeType (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "PluginArray": [
+      {
+        "member": "attribute:length",
+        "reason": "member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:item",
+        "reason": "member 'operation:item' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:namedItem",
+        "reason": "member 'operation:namedItem' collides with the same-named member kept on HTMLCollection (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "CSSStyleDeclaration": [
+      {
+        "member": "attribute:length",
+        "reason": "member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:item",
+        "reason": "member 'operation:item' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:cssText",
+        "reason": "member 'attribute:cssText' collides with the same-named member kept on CSSRule (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:parentRule",
+        "reason": "member 'attribute:parentRule' collides with the same-named member kept on CSSRule (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "StyleSheetList": [
+      {
+        "member": "attribute:length",
+        "reason": "member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:item",
+        "reason": "member 'operation:item' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "MediaList": [
+      {
+        "member": "attribute:length",
+        "reason": "member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:item",
+        "reason": "member 'operation:item' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "Text": [
+      {
+        "member": "attribute:assignedSlot",
+        "reason": "member 'attribute:assignedSlot' collides with the same-named member kept on Element (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "Location": [
+      {
+        "member": "operation:replace",
+        "reason": "member 'operation:replace' collides with the same-named member kept on DOMTokenList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "Range": [
+      {
+        "member": "operation:collapse",
+        "reason": "member 'operation:collapse' collides with the same-named member kept on Selection (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:detach",
+        "reason": "member 'operation:detach' collides with the same-named member kept on NodeIterator (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "TreeWalker": [
+      {
+        "member": "attribute:root",
+        "reason": "member 'attribute:root' collides with the same-named member kept on NodeIterator (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:whatToShow",
+        "reason": "member 'attribute:whatToShow' collides with the same-named member kept on NodeIterator (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:nextNode",
+        "reason": "member 'operation:nextNode' collides with the same-named member kept on NodeIterator (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:previousNode",
+        "reason": "member 'operation:previousNode' collides with the same-named member kept on NodeIterator (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "Screen": [
+      {
+        "member": "attribute:height",
+        "reason": "member 'attribute:height' collides with the same-named member kept on DOMRectReadOnly (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:width",
+        "reason": "member 'attribute:width' collides with the same-named member kept on DOMRectReadOnly (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "DOMRect": [
+      {
+        "member": "attribute:height",
+        "reason": "member 'attribute:height' is also declared on ancestor interface DOMRectReadOnly; cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:width",
+        "reason": "member 'attribute:width' is also declared on ancestor interface DOMRectReadOnly; cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:fromRect",
+        "reason": "member 'operation:fromRect' is also declared on ancestor interface DOMRectReadOnly; cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:x",
+        "reason": "member 'attribute:x' collides with the same-named member kept on DOMPointReadOnly (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:y",
+        "reason": "member 'attribute:y' collides with the same-named member kept on DOMPointReadOnly (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "StylePropertyMapReadOnly": [
+      {
+        "member": "attribute:size",
+        "reason": "member 'attribute:size' collides with the same-named member kept on Blob (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "DOMQuad": [
+      {
+        "member": "operation:fromRect",
+        "reason": "member 'operation:fromRect' collides with the same-named member kept on DOMRectReadOnly (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "DOMRectReadOnly": [
+      {
+        "member": "attribute:x",
+        "reason": "member 'attribute:x' collides with the same-named member kept on DOMPointReadOnly (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:y",
+        "reason": "member 'attribute:y' collides with the same-named member kept on DOMPointReadOnly (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
+    ],
+    "DOMPoint": [
+      {
+        "member": "attribute:x",
+        "reason": "member 'attribute:x' is also declared on ancestor interface DOMPointReadOnly; cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:y",
+        "reason": "member 'attribute:y' is also declared on ancestor interface DOMPointReadOnly; cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "operation:fromPoint",
+        "reason": "member 'operation:fromPoint' is also declared on ancestor interface DOMPointReadOnly; cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:z",
+        "reason": "member 'attribute:z' is also declared on ancestor interface DOMPointReadOnly; cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      },
+      {
+        "member": "attribute:w",
+        "reason": "member 'attribute:w' is also declared on ancestor interface DOMPointReadOnly; cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
+        "issue": "waluau-1l02"
+      }
     ]
+  },
+  "skipIssueRefs": {
+    "unsupported-generic:sequence": "waluau-utyc",
+    "unsupported-generic:FrozenArray": "waluau-utyc",
+    "unsupported-generic:ObservableArray": "waluau-utyc",
+    "unsupported-generic:record": "waluau-utyc",
+    "unsupported-generic:Promise": "waluau-2c6n",
+    "unsupported-union": "waluau-b3hl",
+    "nullable-callback-type": "waluau-lqjs",
+    "nullable-primitive-type": "waluau-pq7p",
+    "reserved-keyword-param": "waluau-9szs",
+    "untyped-dynamic-type": "waluau-lxdd"
   },
   "hostFunctions": [
     {
@@ -70,6 +2114,33 @@
     "boolean": "bool",
     "undefined": "unit",
     "void": "unit",
-    "EventListener": "(Event) -> unit"
+    "EventListener": "(Event) -> unit",
+    "EventHandler": "(Event) -> unit",
+    "CSSOMString": "string",
+    "ByteString": "string",
+    "DOMHighResTimeStamp": "f64",
+    "unsigned short": "u32",
+    "short": "i32",
+    "unsigned long": "u32",
+    "long": "i32",
+    "unsigned long long": "u64",
+    "long long": "i64",
+    "double": "f64",
+    "float": "f32",
+    "unrestricted double": "f64",
+    "unrestricted float": "f32",
+    "octet": "u32",
+    "byte": "i32",
+    "WindowProxy": "Window",
+    "VoidFunction": "() -> unit",
+    "FrameRequestCallback": "(f64) -> unit",
+    "DocumentReadyState": "string",
+    "DocumentVisibilityState": "string",
+    "ShadowRootMode": "string",
+    "SlotAssignmentMode": "string",
+    "ScrollRestoration": "string",
+    "OrientationType": "string",
+    "AutoplayPolicy": "string",
+    "SpatialNavigationDirection": "string"
   }
 }

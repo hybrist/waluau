@@ -240,18 +240,74 @@ async function parseAndMergeIdls(customSource) {
   return result;
 }
 
-function mapType(idlType, filter, knownInterfaces) {
+function mapType(idlType, filter, knownInterfaces, include) {
   const nullable = idlType.endsWith('?');
   const base = nullable ? idlType.slice(0, -1).trim() : idlType;
-  if (/^(sequence|FrozenArray|Promise)\s*</.test(base)) {
-    return { error: `unsupported generic Web IDL type ${idlType}` };
+  const genericMatch = base.match(/^(sequence|FrozenArray|Promise|ObservableArray|record)\s*</);
+  if (genericMatch) {
+    return {
+      error: `unsupported generic Web IDL type ${idlType}`,
+      category: `unsupported-generic:${genericMatch[1]}`,
+    };
   }
-  const mapped = filter.typeMap[base] ?? (knownInterfaces.has(base) ? base : null);
-  if (!mapped) {
-    return { error: `unsupported Web IDL type ${idlType}` };
+  if (base.startsWith('(')) {
+    return { error: `unsupported union Web IDL type ${idlType}`, category: 'unsupported-union' };
+  }
+  // waluau-lxdd: the extern type system has no `any`/`object`/dynamic value type, so
+  // Web IDL 'any' and 'object' (e.g. OnErrorEventHandler returns, postMessage payloads,
+  // CustomElementConstructor) have no signature representation.
+  if (base === 'any' || base === 'object') {
+    return { error: `unsupported Web IDL type ${idlType}`, category: 'untyped-dynamic-type' };
+  }
+  if (filter.typeMap[base]) {
+    const mapped = filter.typeMap[base];
+    return finishMapType(idlType, mapped, nullable);
+  }
+  // An interface name is only a valid extern type reference if it's part of the selected
+  // surface -- referencing a known-but-unselected IDL interface (e.g. ReadableStream) would
+  // emit a type name with no matching `type X = extern` declaration, producing externs that
+  // fail to compile ("unknown type 'X'").
+  if (include.has(base)) {
+    return finishMapType(idlType, base, nullable);
+  }
+  if (knownInterfaces.has(base)) {
+    return { error: `Web IDL type ${idlType} is not part of the selected DOM interface surface`, category: 'out-of-surface-type' };
+  }
+  return { error: `unsupported Web IDL type ${idlType}`, category: 'unrepresented-type' };
+}
+
+function finishMapType(idlType, mapped, nullable) {
+  if (nullable) {
+    // waluau-lqjs: '?' has no syntax for function/callback types (EventListener?, EventHandler?)
+    if (mapped.includes('->')) {
+      return {
+        error: `nullable callback Web IDL type ${idlType} has no extern syntax representation`,
+        category: 'nullable-callback-type',
+      };
+    }
+    // waluau-pq7p: '?' is only supported on host reference types (string, extern); the type
+    // checker rejects nullable numerics/bool/unit (e.g. unsigned long?, double?, boolean?)
+    if (NULLABLE_REJECTED_TYPES.has(mapped)) {
+      return {
+        error: `nullable modifier rejects primitive Web IDL type ${idlType}`,
+        category: 'nullable-primitive-type',
+      };
+    }
   }
   return { type: nullable ? `${mapped}?` : mapped };
 }
+
+const NULLABLE_REJECTED_TYPES = new Set(['u32', 'u64', 'i32', 'i64', 'f32', 'f64', 'bool', 'unit']);
+
+// Mirrors crates/waluau-lexer/src/lib.rs keyword table. Generated extern parameter
+// names are snake_cased from the IDL name; if the result collides with a reserved
+// word, the whole externs file fails to parse (waluau-9szs).
+const RESERVED_WORDS = new Set([
+  'fn', 'let', 'function', 'local', 'if', 'then', 'elseif', 'else', 'end', 'while', 'for', 'in',
+  'repeat', 'until', 'do', 'return', 'break', 'continue', 'not', 'and', 'or',
+  'number', 'u32', 'u64', 'i32', 'i64', 'f32', 'f64', 'unit', 'void', 'bool', 'unknown', 'string',
+  'bytes', 'extern', 'thread', 'nil', 'true', 'false',
+]);
 
 function patchedName(name, patches) {
   return patches.memberRenames?.[name] ?? name;
@@ -266,12 +322,12 @@ function toSnake(name) {
 }
 
 function emitInterfaceMember(iface, member, context) {
-  const { filter, patches, knownInterfaces } = context;
+  const { filter, patches, knownInterfaces, include } = context;
   const rename = patchedName(member.name, patches);
 
   if (member.kind === 'attribute') {
-    const mapped = mapType(member.idlType, filter, knownInterfaces);
-    if (mapped.error) return { skipped: mapped.error };
+    const mapped = mapType(member.idlType, filter, knownInterfaces, include);
+    if (mapped.error) return { skipped: mapped.error, category: mapped.category };
     return {
       line: `declare property ${iface.name}:${rename}: ${mapped.type}`,
       metadata: {
@@ -286,15 +342,22 @@ function emitInterfaceMember(iface, member, context) {
   }
 
   if (member.kind === 'operation') {
-    const returnType = mapType(member.idlType, filter, knownInterfaces);
-    if (returnType.error) return { skipped: returnType.error };
+    const returnType = mapType(member.idlType, filter, knownInterfaces, include);
+    if (returnType.error) return { skipped: returnType.error, category: returnType.category };
     const params = [];
     for (const param of member.params) {
       if (param.unsupported) return { skipped: `unsupported parameter syntax ${param.source}` };
       if (param.optional) return { skipped: `unsupported optional parameter ${param.name}` };
-      const mapped = mapType(param.idlType, filter, knownInterfaces);
-      if (mapped.error) return { skipped: `${param.name}: ${mapped.error}` };
-      params.push(`${patchedParamName(iface.name, member.name, param.name, patches)}: ${mapped.type}`);
+      const mapped = mapType(param.idlType, filter, knownInterfaces, include);
+      if (mapped.error) return { skipped: `${param.name}: ${mapped.error}`, category: mapped.category };
+      const paramName = patchedParamName(iface.name, member.name, param.name, patches);
+      if (RESERVED_WORDS.has(paramName)) {
+        return {
+          skipped: `parameter name '${param.name}' becomes reserved word '${paramName}' after snake_case conversion`,
+          category: 'reserved-keyword-param',
+        };
+      }
+      params.push(`${paramName}: ${mapped.type}`);
     }
     return {
       line: `declare function ${iface.name}:${rename}(${params.join(', ')}): ${returnType.type}`,
@@ -360,18 +423,44 @@ async function generate({ customSource, filter, patches }) {
   }
   output.push('');
 
+  // Negative filter: every member of a selected interface is emitted by default.
+  // filter.disabledMembers documents the (interface, member) pairs that are held back,
+  // each with a human-readable reason and -- where the cause is a tracked compiler/tooling
+  // limitation rather than a deliberate scoping choice -- a beads issue reference.
   for (const iface of parsed.filter((candidate) => include.has(candidate.name))) {
-    const selectedMembers = new Set(filter.members[iface.name] ?? []);
+    const disabledMembers = new Map((filter.disabledMembers?.[iface.name] ?? []).map((entry) => [entry.member, entry]));
+    const seen = new Set();
     for (const member of iface.members) {
+      if (!member.name) continue;
       const key = `${member.kind}:${member.name}`;
-      if (!selectedMembers.has(key)) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const disabledEntry = disabledMembers.get(key);
+      if (disabledEntry) {
+        const suffix = disabledEntry.issue ? ` (${disabledEntry.issue})` : '';
+        diagnostics.push(`skip ${iface.name}.${member.name}: disabled -- ${disabledEntry.reason}${suffix}`);
+        metadata.skippedMembers.push({
+          interface: iface.name,
+          member: member.name,
+          reason: disabledEntry.reason,
+          issue: disabledEntry.issue ?? null,
+          disabled: true,
+        });
         continue;
       }
-      const emitted = emitInterfaceMember(iface, member, { filter, patches, knownInterfaces });
+
+      const emitted = emitInterfaceMember(iface, member, { filter, patches, knownInterfaces, include });
       if (emitted.skipped) {
-        const diagnostic = `skip ${iface.name}.${member.name ?? '<anonymous>'}: ${emitted.skipped}`;
-        diagnostics.push(diagnostic);
-        metadata.skippedMembers.push({ interface: iface.name, member: member.name ?? null, reason: emitted.skipped });
+        const issue = filter.skipIssueRefs?.[emitted.category] ?? null;
+        const suffix = issue ? ` (${issue})` : '';
+        diagnostics.push(`skip ${iface.name}.${member.name ?? '<anonymous>'}: ${emitted.skipped}${suffix}`);
+        metadata.skippedMembers.push({
+          interface: iface.name,
+          member: member.name ?? null,
+          reason: emitted.skipped,
+          issue,
+        });
         continue;
       }
       output.push(emitted.line);
@@ -380,7 +469,7 @@ async function generate({ customSource, filter, patches }) {
   }
 
   for (const hostFunction of filter.hostFunctions ?? []) {
-    const returnType = mapType(hostFunction.returnType, filter, knownInterfaces);
+    const returnType = mapType(hostFunction.returnType, filter, knownInterfaces, include);
     if (returnType.error) {
       diagnostics.push(`skip host function ${hostFunction.name}: ${returnType.error}`);
       continue;
