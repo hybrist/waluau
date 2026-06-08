@@ -5,6 +5,7 @@ import {
   conformanceModules,
   filesForConformancePreset,
   MULTI_PRESET,
+  KANBAN_PRESET,
   DEFAULT_PRESET
 } from '../utils/presets.js';
 
@@ -160,6 +161,17 @@ export default function useFiles() {
         }
       });
     }
+
+    items.push({
+      type: 'fixture',
+      path: 'fixtures/kanban/app.walu',
+      name: 'kanban/app.walu',
+      source: KANBAN_PRESET.files[KANBAN_PRESET.entryFile],
+      category: 'Fixture',
+      onSelect: () => {
+        selectPreset(KANBAN_PRESET);
+      }
+    });
 
     return items.sort((left, right) => left.name.localeCompare(right.name));
   }, [selectPreset]);

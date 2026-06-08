@@ -2,6 +2,48 @@ import { useCallback } from 'react';
 import { getDefaultParamValue, renderType } from '../utils/wasm.js';
 import { ParamField } from './ParamFields.jsx';
 
+const DOM_OUTPUT_SRC_DOC = `<!doctype html>
+<html>
+  <head>
+    <meta name="tailwind-compatible-polyfill" content="local deterministic utility subset">
+    <style>
+      *{box-sizing:border-box}
+      html{color:#1f2937;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:16px;line-height:1.5}
+      body{margin:0;padding:0;background:#f8fafc}
+      h1,h2,h3,p{margin:0}
+      button,input,textarea{font:inherit}
+      button{cursor:pointer}
+      .flex{display:flex}.grid{display:grid}.hidden{display:none}
+      .flex-col{flex-direction:column}.flex-wrap{flex-wrap:wrap}.items-start{align-items:flex-start}.items-center{align-items:center}.justify-between{justify-content:space-between}.justify-end{justify-content:flex-end}
+      .flex-1{flex:1 1 0%}.min-w-0{min-width:0}.min-h-0{min-height:0}.h-screen{height:100vh}.w-full{width:100%}.min-h-24{min-height:6rem}
+      .grid-cols-1{grid-template-columns:repeat(1,minmax(0,1fr))}
+      .gap-1{gap:.25rem}.gap-2{gap:.5rem}.gap-3{gap:.75rem}.gap-4{gap:1rem}
+      .space-y-1>:not([hidden])~:not([hidden]){margin-top:.25rem}
+      .overflow-hidden{overflow:hidden}.overflow-y-auto{overflow-y:auto}.truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .rounded{border-radius:.25rem}.rounded-md{border-radius:.375rem}
+      .border{border-width:1px;border-style:solid}.border-b{border-bottom-width:1px;border-bottom-style:solid}.border-t{border-top-width:1px;border-top-style:solid}
+      .border-slate-200{border-color:#e2e8f0}.border-slate-300{border-color:#cbd5e1}.border-teal-300{border-color:#5eead4}.border-rose-200{border-color:#fecdd3}
+      .bg-white{background-color:#fff}.bg-slate-50{background-color:#f8fafc}.bg-slate-100{background-color:#f1f5f9}.bg-teal-700{background-color:#0f766e}
+      .text-white{color:#fff}.text-slate-950{color:#020617}.text-slate-900{color:#0f172a}.text-slate-700{color:#334155}.text-slate-600{color:#475569}.text-slate-500{color:#64748b}.text-rose-700{color:#be123c}
+      .p-3{padding:.75rem}.p-4{padding:1rem}.px-2{padding-left:.5rem;padding-right:.5rem}.px-3{padding-left:.75rem;padding-right:.75rem}.px-4{padding-left:1rem;padding-right:1rem}.px-6{padding-left:1.5rem;padding-right:1.5rem}
+      .py-1{padding-top:.25rem;padding-bottom:.25rem}.py-2{padding-top:.5rem;padding-bottom:.5rem}.py-3{padding-top:.75rem;padding-bottom:.75rem}.py-4{padding-top:1rem;padding-bottom:1rem}
+      .mt-1{margin-top:.25rem}.mt-2{margin-top:.5rem}.mt-3{margin-top:.75rem}
+      .text-xs{font-size:.75rem;line-height:1rem}.text-sm{font-size:.875rem;line-height:1.25rem}.text-xl{font-size:1.25rem;line-height:1.75rem}
+      .font-medium{font-weight:500}.font-semibold{font-weight:600}.uppercase{text-transform:uppercase}.leading-5{line-height:1.25rem}
+      .outline-none{outline:2px solid transparent;outline-offset:2px}.shadow-sm{box-shadow:0 1px 2px 0 rgb(0 0 0 / .05)}
+      .hover\\:bg-teal-800:hover{background-color:#115e59}.hover\\:bg-slate-50:hover{background-color:#f8fafc}.hover\\:bg-rose-50:hover{background-color:#fff1f2}
+      .focus\\:border-teal-600:focus{border-color:#0d9488}
+      @media (min-width:768px){
+        .md\\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+        .md\\:flex-row{flex-direction:row}
+        .md\\:items-center{align-items:center}
+        .md\\:justify-between{justify-content:space-between}
+      }
+    </style>
+  </head>
+  <body></body>
+</html>`;
+
 function DomOutputFrame({ setDomOutputRoot }) {
   const setFrame = useCallback((node) => {
     if (!node) {
@@ -25,7 +67,7 @@ function DomOutputFrame({ setDomOutputRoot }) {
       ref={setFrame}
       title="DOM Output"
       sandbox="allow-same-origin"
-      srcDoc="<!doctype html><html><head><style>html{color:#1f2937;font-family:system-ui,-apple-system,BlinkMacSystemFont,&quot;Segoe UI&quot;,sans-serif;font-size:16px;line-height:1.5}body{margin:0;padding:14px}h1,h2,h3,p{margin:0 0 8px}body>:last-child{margin-bottom:0}</style></head><body></body></html>"
+      srcDoc={DOM_OUTPUT_SRC_DOC}
     />
   );
 }

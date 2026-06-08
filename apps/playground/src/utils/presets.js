@@ -1,4 +1,5 @@
 import { conformanceIncludePaths } from '../../../../tools/conformance/includes.js';
+import kanbanAppSource from '../../../../fixtures/kanban/app.walu?raw';
 
 const fixtureModules = import.meta.glob('../../../../fixtures/*.walu', {
   eager: true,
@@ -145,7 +146,16 @@ end
   entryFile: '/main.walu'
 };
 
-export const PRESETS = [...SINGLE_PRESETS, MULTI_PRESET, DOM_PRESET, ...CONFORMANCE_PRESETS].sort((left, right) =>
+export const KANBAN_PRESET = {
+  key: 'kanban-board',
+  label: 'Kanban Board',
+  files: {
+    '/app.walu': kanbanAppSource
+  },
+  entryFile: '/app.walu'
+};
+
+export const PRESETS = [...SINGLE_PRESETS, MULTI_PRESET, DOM_PRESET, KANBAN_PRESET, ...CONFORMANCE_PRESETS].sort((left, right) =>
   left.label.localeCompare(right.label)
 );
 
