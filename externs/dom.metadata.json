@@ -159,36 +159,6 @@
     {
       "interface": "Element",
       "kind": "operation",
-      "idlName": "appendClass",
-      "emittedName": "append_class",
-      "params": [
-        "class_name: string"
-      ],
-      "returnType": "unit"
-    },
-    {
-      "interface": "Element",
-      "kind": "operation",
-      "idlName": "onClick",
-      "emittedName": "on_click",
-      "params": [
-        "callback: (Event) -> unit"
-      ],
-      "returnType": "unit"
-    },
-    {
-      "interface": "Element",
-      "kind": "operation",
-      "idlName": "onInput",
-      "emittedName": "on_input",
-      "params": [
-        "callback: (Event) -> unit"
-      ],
-      "returnType": "unit"
-    },
-    {
-      "interface": "Element",
-      "kind": "operation",
       "idlName": "querySelector",
       "emittedName": "query_selector",
       "params": [

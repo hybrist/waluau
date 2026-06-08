@@ -236,7 +236,7 @@ fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
 }
 
 fn property_getter_name(base: &str, property: &str) -> String {
-    format!("{base}.get_{property}")
+    format!("{base}.get/{property}")
 }
 
 fn type_property_getter_signature(
@@ -254,7 +254,7 @@ fn type_property_getter_signature(
         }
     }
 
-    let suffix = format!(".get_{name}");
+    let suffix = format!(".get/{name}");
     let mut matches = signatures
         .iter()
         .filter_map(|(direct_name, (params, return_type))| {

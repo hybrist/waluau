@@ -213,6 +213,7 @@ impl Parser {
             params.insert(0, receiver_param);
         }
         Ok(DeclaredImport {
+            host_name: name.clone(),
             name,
             symbol_id: None,
             params,
@@ -240,7 +241,8 @@ impl Parser {
         };
         Ok(vec![
             DeclaredImport {
-                name: format!("{receiver}.get_{property}"),
+                host_name: format!("{receiver}.get/{property}"),
+                name: format!("{receiver}.get/{property}"),
                 symbol_id: None,
                 params: vec![Param {
                     name: "self".to_string(),
@@ -250,7 +252,8 @@ impl Parser {
                 return_type: property_type.clone(),
             },
             DeclaredImport {
-                name: format!("{receiver}.set_{property}"),
+                host_name: format!("{receiver}.set/{property}"),
+                name: format!("{receiver}.set/{property}"),
                 symbol_id: None,
                 params: vec![
                     Param {

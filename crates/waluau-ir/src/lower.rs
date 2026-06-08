@@ -24,9 +24,12 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
         );
         signatures.insert(symbol_id, sig.clone());
         field_call_signatures.insert(declared.name.clone(), sig);
+        let host_name = canonical_dom_import_host_name(&declared.host_name)
+            .unwrap_or_else(|| declared.host_name.clone());
         declared_imports.push(DeclaredImport {
             module: "waluau".to_string(),
             name: declared.name.clone(),
+            host_name,
             params: declared
                 .params
                 .iter()
@@ -94,6 +97,53 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
     };
     verify(&module)?;
     Ok(module)
+}
+
+fn canonical_dom_import_host_name(name: &str) -> Option<String> {
+    const DOM_INTERFACES: &[&str] = &[
+        "Document",
+        "Element",
+        "Event",
+        "EventTarget",
+        "HTMLElement",
+        "HTMLHeadingElement",
+        "HTMLInputElement",
+        "HTMLTextAreaElement",
+        "Node",
+        "Storage",
+        "Window",
+    ];
+
+    let (interface, member) = name.split_once('.')?;
+    if !DOM_INTERFACES.contains(&interface) {
+        return None;
+    }
+    let host_member = if let Some(property) = member.strip_prefix("get/") {
+        format!("get/{}", snake_to_lower_camel(property))
+    } else if let Some(property) = member.strip_prefix("set/") {
+        format!("set/{}", snake_to_lower_camel(property))
+    } else if member.contains('_') {
+        snake_to_lower_camel(member)
+    } else {
+        return None;
+    };
+    Some(format!("{interface}.{host_member}"))
+}
+
+fn snake_to_lower_camel(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut uppercase_next = false;
+    for ch in name.chars() {
+        if ch == '_' {
+            uppercase_next = true;
+        } else if uppercase_next {
+            out.extend(ch.to_uppercase());
+            uppercase_next = false;
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 struct IfCastParts<'a> {
@@ -400,6 +450,7 @@ fn erase_opaque_types(program: &Program) -> Program {
             .iter()
             .map(|declared| waluau_ast::DeclaredImport {
                 name: declared.name.clone(),
+                host_name: declared.host_name.clone(),
                 symbol_id: declared.symbol_id,
                 params: declared
                     .params
@@ -880,11 +931,11 @@ fn method_signature_name(base: &str, method: &str) -> String {
 }
 
 fn property_getter_name(base: &str, property: &str) -> String {
-    format!("{base}.get_{property}")
+    format!("{base}.get/{property}")
 }
 
 fn property_setter_name(base: &str, property: &str) -> String {
-    format!("{base}.set_{property}")
+    format!("{base}.set/{property}")
 }
 
 fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
@@ -950,7 +1001,7 @@ fn type_property_getter_signature(
         }
     }
 
-    let suffix = format!(".get_{name}");
+    let suffix = format!(".get/{name}");
     let mut matches = signatures
         .iter()
         .filter_map(|(direct_name, (params, return_type))| {
@@ -977,7 +1028,7 @@ fn type_property_setter_signature(
         }
     }
 
-    let suffix = format!(".set_{name}");
+    let suffix = format!(".set/{name}");
     let mut matches = signatures
         .iter()
         .filter_map(|(direct_name, (params, return_type))| {

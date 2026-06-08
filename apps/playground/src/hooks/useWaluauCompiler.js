@@ -115,7 +115,11 @@ export default function useWaluauCompiler({ files, entryFile }) {
         return;
       }
       const wasmBuffer = new Uint8Array(outputWasmBytes);
-      const moduleUsesDomOutput = usesDomImports(wasmBuffer);
+      const wasmModule = await WebAssembly.compile(wasmBuffer, {
+        builtins: ["js-string"],
+        importedStringConstants: WALUAU_STRING_CONSTANTS_MODULE,
+      });
+      const moduleUsesDomOutput = usesDomImports(wasmModule);
       if (active) {
         setUsesDomOutput(moduleUsesDomOutput);
       }
@@ -159,20 +163,17 @@ export default function useWaluauCompiler({ files, entryFile }) {
           domOutputRootRef.current.body.replaceChildren();
         }
         let instanceExports = null;
-        const imports = buildWaluauImports(wasmBuffer, (msg) => {
+        const imports = buildWaluauImports(wasmModule, (msg) => {
           capturedInitLogs.push(msg);
         }, {
           domOutputRoot: moduleUsesDomOutput ? domOutputRootRef.current : null,
           getWasmExports: () => instanceExports,
         });
-        const obj = await WebAssembly.instantiate(wasmBuffer, imports, {
-          builtins: ["js-string"],
-          importedStringConstants: WALUAU_STRING_CONSTANTS_MODULE,
-        });
-        instanceExports = obj.instance.exports;
+        const instance = await WebAssembly.instantiate(wasmModule, imports);
+        instanceExports = instance.exports;
 
         if (active) {
-          setRunInstance(obj.instance);
+          setRunInstance(instance);
           setRunError(null);
           setManualResults({});
           setInitLogs(capturedInitLogs);

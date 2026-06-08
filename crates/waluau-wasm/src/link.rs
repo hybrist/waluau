@@ -1719,7 +1719,7 @@ mod tests {
             program
                 .declared_imports
                 .iter()
-                .any(|declared| declared.name == "Element.get_id"),
+                .any(|declared| declared.name == "Element.get/id"),
             "expected ambient declared property imports: {:?}",
             program.declared_imports
         );

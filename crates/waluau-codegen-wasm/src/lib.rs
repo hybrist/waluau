@@ -604,7 +604,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             })?;
         imports.import(
             &declared.module,
-            &declared.name,
+            &declared.host_name,
             EntityType::Function(user_type_base + sig_index),
         );
         declared_import_indices.insert(declared.symbol_id, import_map.count + offset as u32);

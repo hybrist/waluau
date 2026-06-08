@@ -43,10 +43,7 @@
       "operation:getAttribute",
       "operation:setAttribute",
       "operation:removeAttribute",
-      "operation:appendClass",
-      "operation:querySelector",
-      "operation:onClick",
-      "operation:onInput"
+      "operation:querySelector"
     ],
     "HTMLElement": [
       "attribute:innerText",

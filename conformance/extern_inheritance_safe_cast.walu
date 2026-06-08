@@ -1,21 +1,13 @@
 -- Extern host objects support nominal inheritance plus guarded runtime casts.
 
-type Node = extern
-type Element = extern extends Node
-type HTMLElement = extern extends Element
-type HTMLHeadingElement = extern extends HTMLElement
-
-declare function dom_document(): Element
-declare function dom_create_element(document: Element, tag_name: string): Element
-declare property Element:inner_text: string
-
 function take_node(value: Node): i32
     return 7
 end
 
-local document: Element = dom_document()
+local window = require("dom:window")
+local document: Document = window.document
 
-local heading_element: Element = dom_create_element(document, "h1")
+local heading_element: Element = document:create_element("h1")
 local heading_node: Node = heading_element
 assert(take_node(heading_node) == 7)
 
@@ -29,7 +21,7 @@ else
     assert(false)
 end
 
-local paragraph: Element = dom_create_element(document, "p")
+local paragraph: Element = document:create_element("p")
 if HTMLHeadingElement(not_heading) = paragraph then
     assert(false)
 else
