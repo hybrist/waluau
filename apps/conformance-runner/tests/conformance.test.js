@@ -70,6 +70,58 @@ describe('browser conformance', () => {
     expect(exports.nullable_eq_score(element)).toBe(20);
   });
 
+  it('passes callback_host_import.walu through the exported event trampoline', async () => {
+    const source = cases.find(({ name }) => name === 'callback_host_import.walu').source;
+    let callback;
+    const reported = [];
+    const exports = await compileAndInstantiateWithExports(
+      { '/main.walu': source },
+      '/main.walu',
+      {
+        hostImports: {
+          register_event_callback(handler) {
+            callback = handler;
+          },
+          report_event_count(value) {
+            reported.push(value);
+          },
+        },
+      },
+    );
+
+    expect(typeof exports.__waluau_call_callback_event_unit).toBe('function');
+    exports.register_counter(41);
+    expect(callback).toBeDefined();
+    exports.__waluau_call_callback_event_unit(callback, { type: 'click' });
+    exports.__waluau_call_callback_event_unit(callback, { type: 'click' });
+    expect(reported).toEqual([42, 43]);
+  });
+
+  it('passes DOM click/input handlers through the exported event trampoline', async () => {
+    const testCase = cases.find(({ name }) => name === 'dom_event_callbacks.walu');
+    const source = sourceForCase(testCase);
+    const { exports, root } = await compileAndInstantiateWithDom({ '/main.walu': source }, '/main.walu');
+    const button = root.children[0];
+    const input = root.children[1];
+    const status = root.children[2];
+
+    expect(typeof exports.__waluau_call_callback_event_unit).toBe('function');
+    expect(button.textContent).toBe('idle');
+    expect(status.textContent).toBe('waiting');
+
+    const clickEvent = typeof Event === 'undefined' ? { type: 'click' } : new Event('click', { bubbles: true });
+    button.dispatchEvent(clickEvent);
+    expect(button.textContent).toBe('clicked once');
+    button.dispatchEvent(clickEvent);
+    expect(button.textContent).toBe('clicked twice');
+
+    input.value = 'typed card';
+    const inputEvent = typeof Event === 'undefined' ? { type: 'input' } : new Event('input', { bubbles: true });
+    input.dispatchEvent(inputEvent);
+
+    expect(status.textContent).toBe('input once');
+  });
+
   it('renders DOM extern handles into the conformance DOM root', async () => {
     const testCase = cases.find(({ name }) => name === 'dom_extern_rendering.walu');
     const source = sourceForCase(testCase);
@@ -92,5 +144,14 @@ describe('browser conformance', () => {
     } finally {
       cleanup();
     }
+  });
+
+  it('passes DOM mutation and localStorage host API checks', async () => {
+    const testCase = cases.find(({ name }) => name === 'dom_storage_host_api.walu');
+    const source = sourceForCase(testCase);
+    const { root, storage } = await compileAndInstantiateWithDom({ '/main.walu': source }, '/main.walu');
+
+    expect(root.children).toHaveLength(0);
+    expect(storage.getItem('waluau-dom-storage-key')).toBeNull();
   });
 });

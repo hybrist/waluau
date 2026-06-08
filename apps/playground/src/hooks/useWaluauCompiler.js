@@ -6,7 +6,8 @@ import {
   getDefaultParamValue,
   executeCall,
   classifyWasmInstantiationError,
-  usesDomImports
+  usesDomImports,
+  cleanupDomEventListeners,
 } from '../utils/wasm.js';
 
 export default function useWaluauCompiler({ files, entryFile }) {
@@ -154,17 +155,21 @@ export default function useWaluauCompiler({ files, entryFile }) {
       const capturedInitLogs = [];
       try {
         if (moduleUsesDomOutput) {
+          cleanupDomEventListeners(domOutputRootRef.current.body);
           domOutputRootRef.current.body.replaceChildren();
         }
+        let instanceExports = null;
         const imports = buildWaluauImports(wasmBuffer, (msg) => {
           capturedInitLogs.push(msg);
         }, {
           domOutputRoot: moduleUsesDomOutput ? domOutputRootRef.current : null,
+          getWasmExports: () => instanceExports,
         });
         const obj = await WebAssembly.instantiate(wasmBuffer, imports, {
           builtins: ["js-string"],
           importedStringConstants: WALUAU_STRING_CONSTANTS_MODULE,
         });
+        instanceExports = obj.instance.exports;
 
         if (active) {
           setRunInstance(obj.instance);

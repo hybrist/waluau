@@ -39,6 +39,8 @@ use wasm_types::{
     anyref_val_type, compress_locals, externref_nonnull_val_type, externref_val_type, wasm_type,
 };
 
+const CALLBACK_EVENT_UNIT_TRAMPOLINE_EXPORT: &str = "__waluau_call_callback_event_unit";
+
 /// Collect the ordered set of function names that appear as `Closure` targets in the module.
 /// These each need a wrapper function with the env-based calling convention.
 fn collect_closure_targets(module: &Module) -> Vec<String> {
@@ -58,9 +60,45 @@ fn collect_closure_targets(module: &Module) -> Vec<String> {
     names
 }
 
+fn type_contains_function_value(ty: &Type) -> bool {
+    match ty {
+        Type::Function { .. } => true,
+        Type::Array(inner) | Type::Nullable(inner) => type_contains_function_value(inner),
+        Type::Multi(types) => types.iter().any(type_contains_function_value),
+        Type::Record(fields) => fields.values().any(type_contains_function_value),
+        _ => false,
+    }
+}
+
+fn is_event_unit_callback_type(ty: &Type) -> bool {
+    let Type::Function {
+        params,
+        return_type,
+    } = ty
+    else {
+        return false;
+    };
+
+    matches!(return_type.as_ref(), Type::Unit) && matches!(params.as_slice(), [Type::Extern])
+}
+
+fn needs_callback_event_unit_trampoline(module: &Module) -> bool {
+    module
+        .declared_imports
+        .iter()
+        .any(|declared| declared.params.iter().any(is_event_unit_callback_type))
+}
+
 /// Returns `true` if the module uses any features that require the closure GC types
 /// (`$anyref_array`, `$func_val`, `$boxed_f64`) to be declared in the type section.
 fn needs_closure_gc_types(module: &Module) -> bool {
+    for import in &module.declared_imports {
+        if import.params.iter().any(type_contains_function_value)
+            || type_contains_function_value(&import.return_type)
+        {
+            return true;
+        }
+    }
     for function in &module.functions {
         // A function-typed parameter or return references `$func_val` via `wasm_type`.
         if function
@@ -130,6 +168,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
 
     // Closure GC types ($anyref_array, $func_val, $boxed_f64) are only needed when
     // the program uses closures, function-typed values, or f64 boxing into unknown.
+    let callback_event_unit_trampoline = needs_callback_event_unit_trampoline(module);
     let closure_gc_needed = needs_closure_gc_types(module);
     // Two closure GC types sit after host types (only when needed):
     //   $anyref_array = (array (ref null any) mutable)
@@ -163,7 +202,11 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     );
     array_registry.coroutine_state_type = coroutine_state_type;
 
-    let signature_registry = collect_user_signatures(module, start_thunk.is_some());
+    let signature_registry = collect_user_signatures(
+        module,
+        start_thunk.is_some(),
+        callback_event_unit_trampoline,
+    );
 
     let signatures = module
         .functions
@@ -343,6 +386,24 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     let unique_sig_count = signature_registry.unique_signatures.len() as u32;
     let wrapper_sig_count = signature_registry.wrapper_sigs.len() as u32;
     let mut type_idx_counter = user_type_base + unique_sig_count + wrapper_sig_count;
+    let callback_event_unit_trampoline_type_idx = if callback_event_unit_trampoline {
+        let callback_type = Type::Function {
+            params: vec![Type::Extern],
+            return_type: Box::new(Type::Unit),
+        };
+        types.ty().function(
+            vec![
+                wasm_type(&callback_type, &array_registry)?,
+                externref_val_type(),
+            ],
+            Vec::<ValType>::new(),
+        );
+        let type_idx = type_idx_counter;
+        type_idx_counter += 1;
+        Some(type_idx)
+    } else {
+        None
+    };
 
     struct RecordHelpersInfo {
         record_idx: u32,
@@ -652,9 +713,24 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         let _ = wrapper_idx;
     }
 
-    // Emit record helper functions (constructors and getters)
     let mut helper_func_idx_counter =
         module.functions.len() as u32 + thunk_offset + closure_targets.len() as u32;
+    if let Some(type_idx) = callback_event_unit_trampoline_type_idx {
+        functions.function(type_idx);
+        exports.export(
+            CALLBACK_EVENT_UNIT_TRAMPOLINE_EXPORT,
+            ExportKind::Func,
+            import_func_count + helper_func_idx_counter,
+        );
+        helper_func_idx_counter += 1;
+        codes.function(&emit_callback_event_unit_trampoline(
+            &signature_registry,
+            &array_registry,
+            user_type_base,
+        )?);
+    }
+
+    // Emit record helper functions (constructors and getters)
     let mut record_helper_idx = 0;
     for record_ty in &record_types {
         let Type::Record(fields) = record_ty else {
@@ -939,6 +1015,41 @@ fn emit_closure_wrapper(
 
     // Call the original function (which takes capture_cells... + logical_params...).
     out.instruction(&Instruction::Call(import_count + target_sig.index));
+    out.instruction(&Instruction::End);
+    Ok(out)
+}
+
+/// Exported browser-host ABI helper for MVP DOM events.
+///
+/// Signature: `(callback: (extern) -> unit, event: externref) -> unit`.
+/// It uses the same `$func_val` wrapper table slot that normal Waluau `CallValue`
+/// dispatch uses, so captured closures keep the existing representation.
+fn emit_callback_event_unit_trampoline(
+    signature_registry: &SignatureRegistry,
+    array_registry: &ArrayTypeRegistry,
+    user_type_base: u32,
+) -> Result<Function, Diagnostic> {
+    let wrapper_type_idx = signature_registry
+        .get_wrapper_type_index(user_type_base, &[Type::Extern], &Type::Unit)
+        .ok_or_else(|| Diagnostic::new("missing (extern) -> unit callback wrapper type"))?;
+
+    let mut out = Function::new(Vec::new());
+    // Push wrapper env, logical event argument, and wrapper table slot.
+    out.instruction(&Instruction::LocalGet(0));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: array_registry.func_val_struct_type,
+        field_index: 1,
+    });
+    out.instruction(&Instruction::LocalGet(1));
+    out.instruction(&Instruction::LocalGet(0));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: array_registry.func_val_struct_type,
+        field_index: 2,
+    });
+    out.instruction(&Instruction::CallIndirect {
+        type_index: wrapper_type_idx,
+        table_index: 0,
+    });
     out.instruction(&Instruction::End);
     Ok(out)
 }
@@ -2316,6 +2427,9 @@ fn emit_cast(
     array_registry: &ArrayTypeRegistry,
 ) -> Result<(), Diagnostic> {
     if from == to {
+        return Ok(());
+    }
+    if from.nullable_inner().as_ref() == Some(&to) {
         return Ok(());
     }
 

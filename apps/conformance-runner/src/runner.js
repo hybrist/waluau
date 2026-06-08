@@ -1,6 +1,7 @@
 import {
   WALUAU_STRING_CONSTANTS_MODULE,
   buildWaluauImports,
+  WALUAU_IMPORT_MODULE,
 } from '../../playground/src/utils/wasm.js';
 
 export async function compileAndInstantiate(files, entryFile = '/main.walu') {
@@ -27,11 +28,20 @@ export async function compileAndInstantiateWithExports(files, entryFile = '/main
     await module.default();
     const output = module.compile_multi(files, entryFile);
     const wasmBuffer = new Uint8Array(output.wasm);
-    const imports = buildWaluauImports(wasmBuffer, undefined, { domOutputRoot });
+
+    let instanceExports = null;
+    const imports = buildWaluauImports(wasmBuffer, undefined, {
+      ...options,
+      domOutputRoot,
+      getWasmExports: () => instanceExports,
+    });
+
     const result = await WebAssembly.instantiate(wasmBuffer, imports, {
       builtins: ['js-string'],
       importedStringConstants: WALUAU_STRING_CONSTANTS_MODULE,
     });
+
+    instanceExports = result.instance.exports;
     return result.instance.exports;
   } finally {
     if (tempIframe) {
@@ -51,10 +61,30 @@ export async function compileAndInstantiateWithDom(files, entryFile = '/main.wal
   domOutputRoot.close();
 
   try {
-    const exports = await compileAndInstantiateWithExports(files, entryFile, { domOutputRoot });
+    const module = await import('./waluau-wasm/waluau_wasm.js');
+    await module.default();
+    const output = module.compile_multi(files, entryFile);
+    const wasmBuffer = new Uint8Array(output.wasm);
+
+    let instanceExports = null;
+    const imports = buildWaluauImports(wasmBuffer, undefined, {
+      domOutputRoot,
+      getWasmExports: () => instanceExports,
+    });
+
+    const result = await WebAssembly.instantiate(wasmBuffer, imports, {
+      builtins: ['js-string'],
+      importedStringConstants: WALUAU_STRING_CONSTANTS_MODULE,
+    });
+
+    instanceExports = result.instance.exports;
+
+    const storage = imports[WALUAU_IMPORT_MODULE]['Window.get_local_storage'](domOutputRoot.defaultView);
+
     return {
-      exports,
+      exports: instanceExports,
       root: domOutputRoot.body,
+      storage,
       cleanup: () => {
         iframe.remove();
       },

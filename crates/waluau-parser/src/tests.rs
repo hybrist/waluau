@@ -668,6 +668,76 @@ fn parses_generic_method_call_syntax() {
 }
 
 #[test]
+fn parses_call_with_string_sugar() {
+    let source = r#"
+        function main(): i32
+            return greet "world"
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert!(matches!(
+        &program.functions[0].body[0],
+        Stmt::Return(waluau_ast::Expr::Call { args, .. })
+            if args.len() == 1
+                && matches!(&args[0], waluau_ast::Expr::String(value, _) if value == "world")
+    ));
+}
+
+#[test]
+fn parses_call_with_table_sugar() {
+    let source = r#"
+        function main(): i32
+            return make_thing { x = 0, y = 1 }
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert!(matches!(
+        &program.functions[0].body[0],
+        Stmt::Return(waluau_ast::Expr::Call { args, .. })
+            if args.len() == 1
+                && matches!(&args[0], waluau_ast::Expr::TableLiteral { .. })
+    ));
+}
+
+#[test]
+fn parses_method_call_with_string_sugar() {
+    let source = r#"
+        function main(obj: { value: i32 }): i32
+            return obj:log "hello"
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert!(matches!(
+        &program.functions[0].body[0],
+        Stmt::Return(waluau_ast::Expr::MethodCall { name, args, .. })
+            if name == "log"
+                && args.len() == 1
+                && matches!(&args[0], waluau_ast::Expr::String(value, _) if value == "hello")
+    ));
+}
+
+#[test]
+fn parses_method_call_with_table_sugar() {
+    let source = r#"
+        function main(obj: { value: i32 }): i32
+            return obj:configure { enabled = true }
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert!(matches!(
+        &program.functions[0].body[0],
+        Stmt::Return(waluau_ast::Expr::MethodCall { name, args, .. })
+            if name == "configure"
+                && args.len() == 1
+                && matches!(&args[0], waluau_ast::Expr::TableLiteral { .. })
+    ));
+}
+
+#[test]
 fn records_call_span() {
     let source = r#"
         function main(): i32
@@ -1155,6 +1225,18 @@ fn rejects_top_level_return_that_is_not_last() {
 fn parses_require_as_a_dedicated_node() {
     let source = r#"
         local add: (i32, i32) -> i32 = require("./add")
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let waluau_ast::Stmt::Let { value, .. } = &program.top_level[0] else {
+        panic!("expected a let binding");
+    };
+    assert!(matches!(value, waluau_ast::Expr::Require(path, _) if path == "./add"));
+}
+
+#[test]
+fn parses_require_with_string_sugar() {
+    let source = r#"
+        local add: (i32, i32) -> i32 = require "./add"
     "#;
     let program = parse(source).expect("parse should succeed");
     let waluau_ast::Stmt::Let { value, .. } = &program.top_level[0] else {

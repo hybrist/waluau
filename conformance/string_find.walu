@@ -1,0 +1,33 @@
+-- string.find / string:find: Lua-compatible plain substring search.
+
+function find_via_namespace(): bool
+    local message: string = "Welcome to Lua!"
+    local start_idx: i32 = string.find(message, "Lua", 0, true)
+    return start_idx == 11
+end
+
+function find_via_method(): bool
+    local message: string = "Welcome to Lua!"
+    return message:find("Lua", 0, true) == 11
+end
+
+function find_with_default_args(): bool
+    local message: string = "Welcome to Lua!"
+    return string.find(message, "Lua") == 11
+end
+
+function find_respects_init(): bool
+    local message: string = "Lua Lua Lua"
+    return string.find(message, "Lua", 4, true) == 4
+end
+
+function find_not_found(): bool
+    local message: string = "Welcome to Lua!"
+    return message:find("xyz") == -1
+end
+
+assert(find_via_namespace())
+assert(find_via_method())
+assert(find_with_default_args())
+assert(find_respects_init())
+assert(find_not_found())

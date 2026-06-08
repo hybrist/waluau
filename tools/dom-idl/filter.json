@@ -1,39 +1,65 @@
 {
   "interfaces": [
     "EventTarget",
+    "Event",
     "Node",
     "Document",
     "Window",
     "Element",
     "HTMLElement",
-    "HTMLHeadingElement"
+    "HTMLHeadingElement",
+    "HTMLInputElement",
+    "HTMLTextAreaElement",
+    "Storage"
   ],
   "members": {
     "EventTarget": [
       "operation:addEventListener"
     ],
+    "Event": [
+      "attribute:target"
+    ],
     "Node": [
       "attribute:nodeName",
       "attribute:textContent",
-      "operation:appendChild"
+      "operation:appendChild",
+      "operation:replaceChild",
+      "operation:removeChild"
     ],
     "Document": [
+      "attribute:body",
+      "attribute:documentElement",
       "operation:createElement",
       "operation:getElementById",
       "operation:querySelector"
     ],
     "Window": [
-      "attribute:document"
+      "attribute:document",
+      "attribute:localStorage"
     ],
     "Element": [
       "attribute:id",
       "attribute:className",
-      "operation:querySelector"
+      "operation:getAttribute",
+      "operation:setAttribute",
+      "operation:removeAttribute",
+      "operation:appendClass",
+      "operation:querySelector",
+      "operation:onClick",
+      "operation:onInput"
     ],
     "HTMLElement": [
-      "attribute:innerText"
+      "attribute:innerText",
+      "attribute:value"
     ],
-    "HTMLHeadingElement": []
+    "HTMLHeadingElement": [],
+    "HTMLInputElement": [],
+    "HTMLTextAreaElement": [],
+    "Storage": [
+      "operation:getItem",
+      "operation:setItem",
+      "operation:removeItem"
+    ]
   },
   "hostFunctions": [
     {
@@ -46,6 +72,7 @@
     "USVString": "string",
     "boolean": "bool",
     "undefined": "unit",
-    "void": "unit"
+    "void": "unit",
+    "EventListener": "(Event) -> unit"
   }
 }

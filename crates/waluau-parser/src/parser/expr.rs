@@ -14,11 +14,44 @@ impl Parser {
             (Some(TokenKind::Colon), Some(TokenKind::Identifier(_)),)
         ) && (matches!(
             self.peek_n(2).map(|token| &token.kind),
-            Some(TokenKind::LParen) | Some(TokenKind::Less)
+            Some(TokenKind::LParen)
+                | Some(TokenKind::Less)
+                | Some(TokenKind::Str(_))
+                | Some(TokenKind::LBrace)
         ))
     }
 
+    /// Lua's call-argument sugar: a call may take a single string literal or
+    /// table constructor in place of a parenthesized argument list, e.g.
+    /// `obj:method "text"` or `make_thing { x = 0, y = 1 }`.
+    fn check_call_args_start(&self) -> bool {
+        matches!(
+            self.peek().map(|token| &token.kind),
+            Some(TokenKind::LParen) | Some(TokenKind::Str(_)) | Some(TokenKind::LBrace)
+        )
+    }
+
     fn parse_call_args(&mut self) -> Result<(Vec<Expr>, u32, u32), Diagnostic> {
+        if let Some(Token {
+            kind: TokenKind::Str(_),
+            span,
+        }) = self.peek()
+        {
+            let span = *span;
+            let value = match self.advance().expect("peeked string token").kind {
+                TokenKind::Str(value) => value,
+                _ => unreachable!("peeked string token"),
+            };
+            return Ok((vec![Expr::String(value, Some(span))], span.start, span.end));
+        }
+        if self.check_simple(&TokenKind::LBrace) {
+            let start_pos = self.peek().map(|token| token.span.start).unwrap_or(0);
+            self.advance();
+            let arg = self.parse_brace_literal(start_pos)?;
+            let end_pos = arg.span().map(|s| s.end).unwrap_or(start_pos);
+            return Ok((vec![arg], start_pos, end_pos));
+        }
+
         let call_start = self.peek().map(|token| token.span.start).unwrap_or(0);
         self.expect_simple(TokenKind::LParen, "expected '('")?;
         let mut args = Vec::new();
@@ -326,7 +359,7 @@ impl Parser {
             } else {
                 Vec::new()
             };
-            if self.check_simple(&TokenKind::LParen) {
+            if self.check_call_args_start() {
                 let (args, call_start, call_end) = self.parse_call_args()?;
                 expr = Expr::Call {
                     callee: Box::new(expr),
@@ -397,17 +430,24 @@ impl Parser {
             TokenKind::False => Ok(Expr::Bool(false, span)),
             TokenKind::Nil => Ok(Expr::Nil(span)),
             TokenKind::Identifier(name) => {
-                // `require("...")` is parsed as a dedicated node so the
-                // linker can resolve module ids before IR lowering.
+                // `require("...")` (or the sugared `require "..."`) is parsed
+                // as a dedicated node so the linker can resolve module ids
+                // before IR lowering.
                 if name == "require"
-                    && self.peek().is_some_and(|token| {
-                        super::tokens::same_variant(&token.kind, &TokenKind::LParen)
-                    })
+                    && matches!(
+                        self.peek().map(|token| &token.kind),
+                        Some(TokenKind::LParen) | Some(TokenKind::Str(_))
+                    )
                 {
                     return self.parse_require(token.span.start);
                 }
                 Ok(Expr::Name(name, None, span))
             }
+            // `string` is lexed as a reserved type keyword, but it also
+            // doubles as the namespace for builtins like `string.find`.
+            // Treat it as a plain name in expression position so
+            // `string.find(...)` can parse like `math.floor(...)`.
+            TokenKind::StringType => Ok(Expr::Name("string".to_string(), None, span)),
             TokenKind::Str(value) => Ok(Expr::String(value, span)),
             TokenKind::Bytes(value) => Ok(Expr::Bytes(value, span)),
             TokenKind::Function => {
@@ -442,6 +482,27 @@ impl Parser {
     }
 
     fn parse_require(&mut self, start_pos: u32) -> Result<Expr, Diagnostic> {
+        // Lua's call-argument sugar allows `require "./module"` as shorthand
+        // for `require("./module")`.
+        if let Some(Token {
+            kind: TokenKind::Str(_),
+            span,
+        }) = self.peek()
+        {
+            let span = *span;
+            let path = match self.advance().expect("peeked string token").kind {
+                TokenKind::Str(path) => path,
+                _ => unreachable!("peeked string token"),
+            };
+            return Ok(Expr::Require(
+                path,
+                Some(Span {
+                    start: start_pos,
+                    end: span.end,
+                }),
+            ));
+        }
+
         self.expect_simple(TokenKind::LParen, "expected '(' after require")?;
         let path = match self.advance() {
             Some(Token {
