@@ -1500,6 +1500,36 @@ fn lowers_record_field_assignment() {
 }
 
 #[test]
+fn lowers_negative_literal_in_typed_i32_context() {
+    let source = r#"
+        function entry(): i32
+            local value: i32 = -1
+            return value
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+
+    let saw_i32_neg = module.functions.iter().any(|function| {
+        function.blocks.values().any(|block| {
+            block.instructions.iter().any(|(_, instruction)| {
+                matches!(
+                    instruction,
+                    Instruction::Binary {
+                        op: BinaryOp::Sub,
+                        operand_ty: Type::Numeric(NumericType::I32),
+                        result_ty: Type::Numeric(NumericType::I32),
+                        ..
+                    }
+                )
+            })
+        })
+    });
+    assert!(saw_i32_neg, "expected i32 subtraction-based unary negation");
+}
+
+#[test]
 fn lowers_tagged_union_resume_to_coroutine_resume_tagged() {
     let source = r#"
         function run(): i32

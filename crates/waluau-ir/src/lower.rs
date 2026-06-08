@@ -3064,7 +3064,7 @@ impl Builder<'_> {
                 self.coerce_value(value, actual, expected)?
             }
             Expr::Unary { op, expr, .. } => {
-                let actual = self.infer_expr_type(expr, types, None)?;
+                let actual = self.infer_expr_type(expr, types, expected.clone())?;
                 match op {
                     UnaryOp::Neg => {
                         let operand_ty = match actual {

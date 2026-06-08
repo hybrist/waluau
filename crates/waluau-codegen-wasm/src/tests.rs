@@ -161,6 +161,21 @@ fn emits_valid_wasm_for_capturing_closure_values() {
 }
 
 #[test]
+fn emits_valid_wasm_for_negative_literal_in_typed_i32_context() {
+    let source = r#"
+        function entry(): i32
+            return -1
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+}
+
+#[test]
 fn emits_structured_if_for_simple_branch() {
     let source = r#"
         function choose(x: i32, y: i32): i32
