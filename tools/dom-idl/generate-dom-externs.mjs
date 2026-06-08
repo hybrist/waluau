@@ -2,11 +2,13 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import idl from '@webref/idl';
+import { parse as parseWebIdl } from 'webidl2';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 const defaults = {
-  input: 'tools/dom-idl/input/dom-first-slice.webidl',
+  input: 'tools/dom-idl/input/custom.webidl',
   filter: 'tools/dom-idl/filter.json',
   patches: 'tools/dom-idl/patches.json',
   out: 'externs/dom.walu',
@@ -39,82 +41,203 @@ function resolveRepoPath(value) {
   return path.resolve(repoRoot, value);
 }
 
-function stripComments(source) {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+function memberKey(member) {
+  return `${member.type}:${member.name || ''}`;
 }
 
-function splitMembers(body) {
-  return body
-    .split(';')
-    .map((member) => member.trim())
-    .filter(Boolean)
-    .map((member) => member.replace(/^\[[^\]]+\]\s*/g, '').trim());
-}
-
-function parseIdl(source) {
-  const interfaces = [];
-  const clean = stripComments(source);
-  const interfacePattern = /interface\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*([A-Za-z_][A-Za-z0-9_]*))?\s*\{([\s\S]*?)\};/g;
-  let match;
-  while ((match = interfacePattern.exec(clean)) !== null) {
-    const [, name, parent = null, body] = match;
-    const members = splitMembers(body).map((member) => parseMember(member));
-    interfaces.push({ name, parent, members });
+function stringifyType(node) {
+  if (!node) {
+    throw new Error('stringifyType called with null/undefined node');
   }
-  return interfaces;
+  if (node.union) {
+    const members = node.idlType.map(stringifyType).join(' or ');
+    return node.nullable ? `(${members})?` : `(${members})`;
+  }
+  if (node.generic) {
+    const parameters = node.idlType.map(stringifyType).join(', ');
+    const base = `${node.generic}<${parameters}>`;
+    return node.nullable ? `${base}?` : base;
+  }
+  const base = node.idlType;
+  return node.nullable ? `${base}?` : base;
 }
 
-function parseMember(member) {
-  const attribute = /^(readonly\s+)?attribute\s+(.+?)\s+([A-Za-z_][A-Za-z0-9_]*)$/.exec(member);
-  if (attribute) {
+function convertAstMember(member) {
+  if (member.type === 'attribute') {
+    if (!member.idlType) return null;
     return {
       kind: 'attribute',
-      readonly: Boolean(attribute[1]),
-      idlType: normalizeIdlType(attribute[2]),
-      name: attribute[3],
-      source: member,
+      readonly: member.readonly,
+      idlType: stringifyType(member.idlType),
+      name: member.name,
+      source: member.type,
     };
   }
 
-  const operation = /^(.+?)\s+([A-Za-z_][A-Za-z0-9_]*)\((.*)\)$/.exec(member);
-  if (operation) {
+  if (member.type === 'operation') {
+    if (!member.idlType) return null;
+    const params = [];
+    for (const arg of member.arguments) {
+      if (arg.optional) {
+        break;
+      }
+      if (!arg.idlType) {
+        return null;
+      }
+      params.push({
+        optional: false,
+        idlType: stringifyType(arg.idlType),
+        name: arg.name,
+        source: arg.type,
+      });
+    }
+
     return {
       kind: 'operation',
-      idlType: normalizeIdlType(operation[1]),
-      name: operation[2],
-      params: parseParams(operation[3]),
-      source: member,
+      idlType: stringifyType(member.idlType),
+      name: member.name,
+      params,
+      source: member.type,
     };
   }
 
-  return { kind: 'unsupported', source: member };
+  return null;
 }
 
-function parseParams(source) {
-  const trimmed = source.trim();
-  if (!trimmed) return [];
-  return trimmed.split(',').map((param) => {
-    const parts = param.trim().split(/\s+/);
-    const optional = parts[0] === 'optional';
-    const useful = optional ? parts.slice(1) : parts;
-    if (useful.length < 2) {
-      return { unsupported: true, source: param.trim() };
+async function parseAndMergeIdls(customSource) {
+  const allSpecs = await idl.parseAll();
+  const interfaces = new Map();
+  const mixins = new Map();
+  const includes = [];
+
+  // 1. Process standard Web IDL specs
+  for (const [spec, ast] of Object.entries(allSpecs)) {
+    for (const def of ast) {
+      processDef(def);
     }
-    return {
-      optional,
-      idlType: normalizeIdlType(useful.slice(0, -1).join(' ')),
-      name: useful[useful.length - 1],
-      source: param.trim(),
-    };
-  });
-}
+  }
 
-function normalizeIdlType(idlType) {
-  return idlType.replace(/\s+/g, ' ').trim();
-}
+  // 2. Process custom Web IDL spec
+  if (customSource) {
+    const customAst = parseWebIdl(customSource);
+    for (const def of customAst) {
+      processDef(def);
+    }
+  }
 
-function memberKey(member) {
-  return `${member.kind}:${member.name}`;
+  function processDef(def) {
+    if (def.type === 'interface') {
+      if (!interfaces.has(def.name)) {
+        interfaces.set(def.name, {
+          name: def.name,
+          type: 'interface',
+          partials: [],
+          members: []
+        });
+      }
+      const entry = interfaces.get(def.name);
+      if (def.partial) {
+        entry.partials.push(def);
+      } else {
+        entry.main = def;
+        entry.parent = def.inheritance;
+      }
+    } else if (def.type === 'interface mixin') {
+      if (!mixins.has(def.name)) {
+        mixins.set(def.name, {
+          name: def.name,
+          type: 'interface mixin',
+          partials: [],
+          members: []
+        });
+      }
+      const entry = mixins.get(def.name);
+      if (def.partial) {
+        entry.partials.push(def);
+      } else {
+        entry.main = def;
+      }
+    } else if (def.type === 'includes') {
+      includes.push(def);
+    }
+  }
+
+  // 3. Resolve members
+  const mergedInterfaces = new Map();
+
+  for (const [name, info] of interfaces.entries()) {
+    const membersMap = new Map();
+
+    if (info.main) {
+      for (const member of info.main.members) {
+        const key = memberKey(member);
+        if (key) membersMap.set(key, member);
+      }
+    }
+
+    for (const partial of info.partials) {
+      for (const member of partial.members) {
+        const key = memberKey(member);
+        if (key) membersMap.set(key, member);
+      }
+    }
+
+    mergedInterfaces.set(name, {
+      name,
+      parent: info.parent || null,
+      membersMap,
+    });
+  }
+
+  const mergedMixins = new Map();
+  for (const [name, info] of mixins.entries()) {
+    const membersMap = new Map();
+    if (info.main) {
+      for (const member of info.main.members) {
+        const key = memberKey(member);
+        if (key) membersMap.set(key, member);
+      }
+    }
+    for (const partial of info.partials) {
+      for (const member of partial.members) {
+        const key = memberKey(member);
+        if (key) membersMap.set(key, member);
+      }
+    }
+    mergedMixins.set(name, { name, membersMap });
+  }
+
+  // Apply includes
+  for (const inc of includes) {
+    const target = mergedInterfaces.get(inc.target);
+    const mixin = mergedMixins.get(inc.includes);
+    if (target && mixin) {
+      for (const [key, member] of mixin.membersMap.entries()) {
+        if (!target.membersMap.has(key)) {
+          target.membersMap.set(key, member);
+        }
+      }
+    }
+  }
+
+  // Convert to simplified structures expected by generator
+  const result = [];
+  for (const [name, info] of mergedInterfaces.entries()) {
+    const members = [];
+    for (const astMember of info.membersMap.values()) {
+      const converted = convertAstMember(astMember);
+      if (converted) {
+        members.push(converted);
+      }
+    }
+    result.push({
+      name,
+      parent: info.parent,
+      members,
+    });
+  }
+
+  return result;
 }
 
 function mapType(idlType, filter, knownInterfaces) {
@@ -196,20 +319,20 @@ function emitExternTypeLine(iface, include) {
   return `type ${iface.name} = extern`;
 }
 
-function generate({ idlSource, filter, patches }) {
-  const parsed = parseIdl(idlSource);
+async function generate({ customSource, filter, patches }) {
+  const parsed = await parseAndMergeIdls(customSource);
   const include = new Set(filter.interfaces);
   const knownInterfaces = new Set(parsed.map((iface) => iface.name));
   const diagnostics = [];
   const emittedMembers = [];
   const output = [
     '-- Generated by tools/dom-idl/generate-dom-externs.mjs; DO NOT EDIT.',
-    '-- Source: tools/dom-idl/input/dom-first-slice.webidl',
+    '-- Source: @webref/idl (W3C Webref)',
     '-- Inheritance is emitted with extern extends and mirrored in externs/dom.metadata.json.',
     '',
   ];
   const metadata = {
-    source: defaults.input,
+    source: '@webref/idl',
     inheritance: [],
     emittedMembers,
     emittedHostFunctions: [],
@@ -218,7 +341,6 @@ function generate({ idlSource, filter, patches }) {
 
   for (const iface of parsed) {
     if (!include.has(iface.name)) {
-      diagnostics.push(`skip interface ${iface.name}: not selected by filter`);
       continue;
     }
     metadata.inheritance.push({ interface: iface.name, parent: iface.parent });
@@ -241,8 +363,8 @@ function generate({ idlSource, filter, patches }) {
   for (const iface of parsed.filter((candidate) => include.has(candidate.name))) {
     const selectedMembers = new Set(filter.members[iface.name] ?? []);
     for (const member of iface.members) {
-      if (!selectedMembers.has(memberKey(member))) {
-        diagnostics.push(`skip ${iface.name}.${member.name ?? '<anonymous>'}: not selected by filter`);
+      const key = `${member.kind}:${member.name}`;
+      if (!selectedMembers.has(key)) {
         continue;
       }
       const emitted = emitInterfaceMember(iface, member, { filter, patches, knownInterfaces });
@@ -280,13 +402,20 @@ function generate({ idlSource, filter, patches }) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const [idlSource, filterRaw, patchesRaw] = await Promise.all([
-    readFile(resolveRepoPath(options.input), 'utf8'),
+  let customSource = null;
+  try {
+    customSource = await readFile(resolveRepoPath(options.input), 'utf8');
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      throw err;
+    }
+  }
+  const [filterRaw, patchesRaw] = await Promise.all([
     readFile(resolveRepoPath(options.filter), 'utf8'),
     readFile(resolveRepoPath(options.patches), 'utf8'),
   ]);
-  const generated = generate({
-    idlSource,
+  const generated = await generate({
+    customSource,
     filter: JSON.parse(filterRaw),
     patches: JSON.parse(patchesRaw),
   });
@@ -302,9 +431,9 @@ async function main() {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((error) => {
-    console.error(error.message);
+    console.error(error);
     process.exitCode = 1;
   });
 }
 
-export { generate, parseIdl };
+export { generate, parseAndMergeIdls };
