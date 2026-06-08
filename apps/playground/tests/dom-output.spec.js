@@ -203,4 +203,52 @@ test.describe('DOM Output in Run tab', () => {
     await expect(outputFrame.locator('h1#generated-heading span.leaf')).toHaveText('leaf');
     await expect(outputFrame.locator('p#generated-paragraph')).toHaveText('Rendered through generated extern DOM handles');
   });
+
+  test('supports fullscreen mode and escaping back to normal', async ({ page }) => {
+    await page.locator('.code-textarea').fill(DOM_SAMPLE);
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    const domOutput = page.getByLabel('DOM Output');
+    await expect(domOutput).toBeVisible();
+
+    // Verify fullscreen button is present
+    const fullscreenBtn = domOutput.locator('.dom-output-fullscreen-btn');
+    await expect(fullscreenBtn).toBeVisible();
+    await expect(fullscreenBtn).toHaveText('Full Screen');
+
+    // Click fullscreen button
+    await fullscreenBtn.click();
+
+    // The section should now have the "fullscreen" class
+    await expect(domOutput).toHaveClass(/fullscreen/);
+
+    // The close button/bar should be visible
+    const exitBtn = domOutput.locator('.dom-output-exit-btn');
+    await expect(exitBtn).toBeVisible();
+    await expect(exitBtn).toHaveText('Close Full Screen');
+
+    // Clicking close button exits fullscreen
+    await exitBtn.click();
+    await expect(domOutput).not.toHaveClass(/fullscreen/);
+    await expect(exitBtn).not.toBeVisible();
+
+    // Click fullscreen button again to test Escape key from main window
+    await fullscreenBtn.click();
+    await expect(domOutput).toHaveClass(/fullscreen/);
+    await page.keyboard.press('Escape');
+    await expect(domOutput).not.toHaveClass(/fullscreen/);
+
+    // Click fullscreen button again to test Escape key from iframe
+    await fullscreenBtn.click();
+    await expect(domOutput).toHaveClass(/fullscreen/);
+    
+    // Focus inside iframe and press Escape
+    const frame = page.frameLocator('.dom-output-frame');
+    await frame.locator('body').click(); // focus frame
+    await page.keyboard.press('Escape');
+    await expect(domOutput).not.toHaveClass(/fullscreen/);
+  });
 });
+

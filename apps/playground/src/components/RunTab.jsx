@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import { getDefaultParamValue, renderType } from '../utils/wasm.js';
 import { ParamField } from './ParamFields.jsx';
 
@@ -44,18 +44,39 @@ const DOM_OUTPUT_SRC_DOC = `<!doctype html>
   <body></body>
 </html>`;
 
-function DomOutputFrame({ setDomOutputRoot }) {
+function DomOutputFrame({ setDomOutputRoot, onEscape }) {
+  const onEscapeRef = useRef(onEscape);
+  useEffect(() => {
+    onEscapeRef.current = onEscape;
+  }, [onEscape]);
+
   const setFrame = useCallback((node) => {
     if (!node) {
       setDomOutputRoot(null);
       return;
     }
+    let doc = null;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && onEscapeRef.current) {
+        onEscapeRef.current();
+      }
+    };
     const syncDocument = () => {
-      setDomOutputRoot(node.contentDocument);
+      if (doc) {
+        doc.removeEventListener('keydown', handleKeyDown);
+      }
+      doc = node.contentDocument;
+      if (doc) {
+        doc.addEventListener('keydown', handleKeyDown);
+      }
+      setDomOutputRoot(doc);
     };
     syncDocument();
     node.addEventListener('load', syncDocument);
     return () => {
+      if (doc) {
+        doc.removeEventListener('keydown', handleKeyDown);
+      }
       node.removeEventListener('load', syncDocument);
       setDomOutputRoot(null);
     };
@@ -87,6 +108,21 @@ export default function RunTab({
   handleManualRun,
   getResult,
 }) {
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setIsFullscreen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isFullscreen]);
+
   return (
     <div className="func-calling-container">
       <div className="func-calling-header">
@@ -109,9 +145,39 @@ export default function RunTab({
       )}
 
       {usesDomOutput && (
-        <section className="dom-output-section" aria-label="DOM Output">
-          <div className="dom-output-label">DOM Output</div>
-          <DomOutputFrame setDomOutputRoot={setDomOutputRoot} />
+        <section className={`dom-output-section ${isFullscreen ? 'fullscreen' : ''}`} aria-label="DOM Output">
+          <div className="dom-output-header">
+            <div className="dom-output-label">DOM Output</div>
+            <button
+              type="button"
+              className="dom-output-fullscreen-btn"
+              onClick={() => setIsFullscreen(true)}
+              title="Full Screen"
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+              </svg>
+              <span>Full Screen</span>
+            </button>
+          </div>
+          {isFullscreen && (
+            <div className="dom-output-fullscreen-bar">
+              <span className="dom-output-fullscreen-title">DOM Output (Full Screen)</span>
+              <button
+                type="button"
+                className="dom-output-exit-btn"
+                onClick={() => setIsFullscreen(false)}
+                title="Exit Full Screen"
+              >
+                <span>Close Full Screen</span>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+          )}
+          <DomOutputFrame setDomOutputRoot={setDomOutputRoot} onEscape={() => setIsFullscreen(false)} />
         </section>
       )}
 
