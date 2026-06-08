@@ -20,6 +20,44 @@ body.inner_text = title.inner_text .. " rendered inside the playground Run tab"
 document:append_child(body)
 `;
 
+const DOM_HOST_API_SAMPLE = `local window = require("dom:window")
+local document = window.document
+local storage: Storage = window.local_storage
+local body: HTMLElement = document.body
+
+storage:remove_item("waluau-playground-dom-host-api")
+local missing: string? = storage:get_item("waluau-playground-dom-host-api")
+assert(missing == nil)
+
+local old_child: Element = document:create_element("span")
+old_child.id = "old-child"
+body:append_child(old_child)
+
+local new_child: Element = document:create_element("section")
+new_child.id = "new-child"
+new_child.class_name = "panel"
+new_child:append_class("ready selected")
+new_child:set_attribute("data-state", "ready")
+body:replace_child(new_child, old_child)
+
+local state: string? = new_child:get_attribute("data-state")
+storage:set_item("waluau-playground-dom-host-api", "persisted")
+local saved: string? = storage:get_item("waluau-playground-dom-host-api")
+
+local input_element: Element = document:create_element("input")
+input_element:set_attribute("value", "typed card")
+if HTMLInputElement(input) = input_element then
+    if state ~= nil then
+        if saved ~= nil then
+            new_child.text_content = input.value .. " " .. state .. " " .. saved
+        end
+    end
+end
+
+body:remove_child(new_child)
+body:append_child(new_child)
+`;
+
 test.describe('DOM Output in Run tab', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
@@ -67,7 +105,26 @@ test.describe('DOM Output in Run tab', () => {
 
     const outputFrame = page.frameLocator('.dom-output-frame');
     await expect(outputFrame.locator('h2#playground-title')).toHaveText('Hello from generated DOM externs');
-    await expect(outputFrame.locator('p')).toHaveText('Hello from generated DOM externs in a sandboxed output document');
+    await expect(outputFrame.locator('h2#playground-title')).toHaveClass(/generated/);
+    await expect(outputFrame.locator('h2#playground-title')).toHaveAttribute('data-source', 'waluau');
+    await expect(outputFrame.locator('p')).toHaveText('Hello from generated DOM externs in a sandboxed output document with persisted state');
+    await expect(outputFrame.locator('span#input-value')).toHaveText('typed value');
+  });
+
+  test('supports generated DOM mutation, attributes, input values, and localStorage', async ({ page }) => {
+    await page.locator('.code-textarea').fill(DOM_HOST_API_SAMPLE);
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    const domOutput = page.getByLabel('DOM Output');
+    await expect(domOutput).toBeVisible();
+
+    const outputFrame = page.frameLocator('.dom-output-frame');
+    await expect(outputFrame.locator('#old-child')).toHaveCount(0);
+    await expect(outputFrame.locator('section#new-child')).toHaveClass(/panel ready selected/);
+    await expect(outputFrame.locator('section#new-child')).toHaveAttribute('data-state', 'ready');
+    await expect(outputFrame.locator('section#new-child')).toHaveText('typed card ready persisted');
   });
 
   test('loads DOM externs for the dom_extern_rendering conformance preset', async ({ page }) => {

@@ -1,0 +1,79 @@
+-- Minimal browser DOM and localStorage host API fixture.
+
+local window = require("dom:window")
+local document: Document = window.document
+local storage: Storage = window.local_storage
+local body: HTMLElement = document.body
+local root: Element = document.document_element
+
+function take_node(value: Node): i32
+    return 1
+end
+
+assert(take_node(body) == 1)
+assert(take_node(root) == 1)
+
+storage:remove_item("waluau-dom-storage-key")
+local missing_item: string? = storage:get_item("waluau-dom-storage-key")
+assert(missing_item == nil)
+
+storage:set_item("waluau-dom-storage-key", "serialized board")
+local saved_item: string? = storage:get_item("waluau-dom-storage-key")
+assert(saved_item ~= nil)
+if saved_item ~= nil then
+    assert(saved_item == "serialized board")
+else
+    assert(false)
+end
+
+storage:remove_item("waluau-dom-storage-key")
+local removed_item: string? = storage:get_item("waluau-dom-storage-key")
+assert(removed_item == nil)
+
+local first: Element = document:create_element("section")
+first.id = "first-dom-child"
+first.class_name = "kanban"
+first:append_class("column selected")
+first:set_attribute("data-state", "draft")
+assert(first.class_name == "kanban column selected")
+
+local first_state: string? = first:get_attribute("data-state")
+assert(first_state ~= nil)
+if first_state ~= nil then
+    assert(first_state == "draft")
+else
+    assert(false)
+end
+
+body:append_child(first)
+assert(document:get_element_by_id("first-dom-child") ~= nil)
+
+local replacement: Element = document:create_element("article")
+replacement.id = "replacement-dom-child"
+replacement.text_content = "replacement"
+body:replace_child(replacement, first)
+assert(document:get_element_by_id("first-dom-child") == nil)
+assert(document:get_element_by_id("replacement-dom-child") ~= nil)
+
+replacement:remove_attribute("data-state")
+local absent_attr: string? = replacement:get_attribute("data-state")
+assert(absent_attr == nil)
+
+body:remove_child(replacement)
+assert(document:get_element_by_id("replacement-dom-child") == nil)
+
+local input_element: Element = document:create_element("input")
+input_element:set_attribute("value", "typed card")
+if HTMLInputElement(input) = input_element then
+    assert(input.value == "typed card")
+else
+    assert(false)
+end
+
+local textarea_element: Element = document:create_element("textarea")
+textarea_element:set_attribute("value", "notes")
+if HTMLTextAreaElement(textarea) = textarea_element then
+    assert(textarea.value == "notes")
+else
+    assert(false)
+end

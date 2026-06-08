@@ -42,12 +42,16 @@ fn is_extern_opaque_type(ty: &Type) -> bool {
     )
 }
 
-fn require_nullable_extern_type(ty: &Type) -> Result<(), Diagnostic> {
-    if is_extern_opaque_type(ty) {
+fn is_nullable_host_ref_type(ty: &Type) -> bool {
+    matches!(ty, Type::String) || is_extern_opaque_type(ty)
+}
+
+fn require_nullable_host_ref_type(ty: &Type) -> Result<(), Diagnostic> {
+    if is_nullable_host_ref_type(ty) {
         Ok(())
     } else {
         Err(Diagnostic::new(format!(
-            "nullable modifier '?' is only supported on extern opaque types, got {ty}"
+            "nullable modifier '?' is only supported on host reference types, got {ty}"
         )))
     }
 }
@@ -279,7 +283,7 @@ fn resolve_type_refs_allowing_forward_refs(
                 opaque_cache,
                 stack,
             )?;
-            require_nullable_extern_type(&parent)?;
+            require_nullable_host_ref_type(&parent)?;
             Ok(Type::ExternSubtype(Box::new(parent)))
         }
         Type::Nullable(inner) => {
@@ -291,7 +295,7 @@ fn resolve_type_refs_allowing_forward_refs(
                 opaque_cache,
                 stack,
             )?;
-            require_nullable_extern_type(&inner)?;
+            require_nullable_host_ref_type(&inner)?;
             Ok(Type::Nullable(Box::new(inner)))
         }
         Type::Array(inner) => Ok(Type::Array(Box::new(
@@ -628,7 +632,7 @@ fn resolve_type_refs_fixpoint(
                 stack,
                 fixpoint_mode,
             )?;
-            require_nullable_extern_type(&parent)?;
+            require_nullable_host_ref_type(&parent)?;
             Ok(Type::ExternSubtype(Box::new(parent)))
         }
         Type::Nullable(inner) => {
@@ -641,7 +645,7 @@ fn resolve_type_refs_fixpoint(
                 stack,
                 fixpoint_mode,
             )?;
-            require_nullable_extern_type(&inner)?;
+            require_nullable_host_ref_type(&inner)?;
             Ok(Type::Nullable(Box::new(inner)))
         }
         Type::Array(inner) => Ok(Type::Array(Box::new(resolve_type_refs_fixpoint(

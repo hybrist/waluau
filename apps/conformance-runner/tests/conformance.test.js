@@ -116,4 +116,13 @@ describe('browser conformance', () => {
     expect(root.children[1].className).toBe('body');
     expect(root.children[1].textContent).toBe('Rendered through generated extern DOM handles');
   });
+
+  it('passes DOM mutation and localStorage host API checks', async () => {
+    const testCase = cases.find(({ name }) => name === 'dom_storage_host_api.walu');
+    const source = sourceForCase(testCase);
+    const { root, storage } = await compileAndInstantiateWithDom({ '/main.walu': source }, '/main.walu');
+
+    expect(root.children).toHaveLength(0);
+    expect(storage.getItem('waluau-dom-storage-key')).toBeNull();
+  });
 });

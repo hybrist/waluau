@@ -11,30 +11,48 @@ const DOM_IMPORT_NAMES = new Set([
   'dom_window',
   'dom_set_text',
   'Document.append_child',
+  'Document.get_body',
+  'Document.get_document_element',
   'Document.create_element',
   'Document.get_element_by_id',
   'Document.query_selector',
+  'Document.set_body',
+  'Document.set_document_element',
   'Element.append',
+  'Element.append_class',
   'Element.append_child',
   'Element.clear',
+  'Element.get_attribute',
   'Element.get_class_name',
   'Element.get_id',
   'Element.get_inner_text',
   'Element.query_selector',
   'Element.set_attr',
+  'Element.remove_attribute',
   'Element.set_class',
   'Element.set_class_name',
   'Element.set_id',
+  'Element.set_attribute',
   'Element.set_inner_text',
   'Element.set_text',
   'HTMLElement.get_inner_text',
+  'HTMLElement.get_value',
   'HTMLElement.set_inner_text',
+  'HTMLElement.set_value',
   'Node.append_child',
   'Node.get_node_name',
   'Node.get_text_content',
+  'Node.remove_child',
+  'Node.replace_child',
   'Node.set_node_name',
   'Node.set_text_content',
+  'Storage.get_item',
+  'Storage.remove_item',
+  'Storage.set_item',
   'Window.get_document',
+  'Window.get_local_storage',
+  'Window.set_document',
+  'Window.set_local_storage',
 ]);
 
 const BLOCKED_DOM_TAGS = new Set([
@@ -218,6 +236,20 @@ export function usesDomImports(wasmBuffer) {
 }
 
 function createPlaygroundDomHost(domOutputRoot) {
+  const fallbackStorage = new Map();
+  const fallbackStorageHost = {
+    getItem(key) {
+      const normalized = String(key);
+      return fallbackStorage.has(normalized) ? fallbackStorage.get(normalized) : null;
+    },
+    setItem(key, value) {
+      fallbackStorage.set(String(key), String(value));
+    },
+    removeItem(key) {
+      fallbackStorage.delete(String(key));
+    },
+  };
+
   const requireOutputDocument = () => {
     if (!domOutputRoot) {
       throw new Error('DOM Output root is not mounted');
@@ -254,6 +286,14 @@ function createPlaygroundDomHost(domOutputRoot) {
     return value;
   };
 
+  const requireStorage = (value, label = 'DOM storage') => {
+    const storage = playgroundStorage();
+    if (value !== storage) {
+      throw new Error(`${label} must be the DOM Output localStorage`);
+    }
+    return storage;
+  };
+
   const requireAppendTarget = (value, label = 'DOM parent') => {
     const document = requireOutputDocument();
     if (value === document) {
@@ -278,12 +318,44 @@ function createPlaygroundDomHost(domOutputRoot) {
     return normalized;
   };
 
+  const validateAttrName = (name) => {
+    const attrName = String(name).trim().toLowerCase();
+    if (!/^[a-z_:][a-z0-9_:.-]*$/.test(attrName) || attrName.startsWith('on')) {
+      throw new Error(`Unsupported DOM attribute: ${name}`);
+    }
+    return attrName;
+  };
+
+  const playgroundStorage = () => {
+    const document = requireOutputDocument();
+    try {
+      const storage = document.defaultView?.localStorage;
+      if (storage?.getItem && storage?.setItem && storage?.removeItem) {
+        return storage;
+      }
+    } catch {
+      // Fall back below for sandboxed documents where localStorage is unavailable.
+    }
+    return fallbackStorageHost;
+  };
+
   const createElement = (_document, tag) => {
     return requireOutputDocument().createElement(normalizeTag(tag));
   };
 
   const appendChild = (parent, child) => {
     return requireAppendTarget(parent).appendChild(requireNode(child, 'DOM child'));
+  };
+
+  const replaceChild = (parent, newChild, oldChild) => {
+    return requireAppendTarget(parent).replaceChild(
+      requireNode(newChild, 'DOM replacement child'),
+      requireNode(oldChild, 'DOM existing child'),
+    );
+  };
+
+  const removeChild = (parent, child) => {
+    return requireAppendTarget(parent).removeChild(requireNode(child, 'DOM child'));
   };
 
   const clear = (element) => {
@@ -314,6 +386,13 @@ function createPlaygroundDomHost(domOutputRoot) {
     requireElement(element).className = String(className);
   };
 
+  const appendClass = (element, className) => {
+    const tokens = String(className).trim().split(/\s+/).filter(Boolean);
+    if (tokens.length > 0) {
+      requireElement(element).classList.add(...tokens);
+    }
+  };
+
   const getClassName = (element) => {
     return requireElement(element).className;
   };
@@ -341,12 +420,34 @@ function createPlaygroundDomHost(domOutputRoot) {
     return requireElement(target).querySelector(selector);
   };
 
+  const getAttr = (element, name) => {
+    return requireElement(element).getAttribute(validateAttrName(name));
+  };
+
   const setAttr = (element, name, value) => {
-    const attrName = String(name).trim().toLowerCase();
-    if (!/^[a-z_:][a-z0-9_:.-]*$/.test(attrName) || attrName.startsWith('on')) {
-      throw new Error(`Unsupported DOM attribute: ${name}`);
+    const target = requireElement(element);
+    const attrName = validateAttrName(name);
+    const attrValue = String(value);
+    target.setAttribute(attrName, attrValue);
+    if (attrName === 'value' && 'value' in target) {
+      target.value = attrValue;
     }
-    requireElement(element).setAttribute(attrName, String(value));
+  };
+
+  const removeAttr = (element, name) => {
+    requireElement(element).removeAttribute(validateAttrName(name));
+  };
+
+  const getValue = (element) => {
+    return String(requireElement(element).value ?? '');
+  };
+
+  const setValue = (element, value) => {
+    requireElement(element).value = String(value);
+  };
+
+  const readOnlyProperty = (name) => () => {
+    throw new Error(`${name} is read-only in the playground DOM host`);
   };
 
   return {
@@ -359,16 +460,34 @@ function createPlaygroundDomHost(domOutputRoot) {
     dom_clear: clear,
     dom_set_text: setText,
     'Document.append_child': appendChild,
+    'Document.get_body': (document) => {
+      if (document !== requireOutputDocument()) {
+        throw new Error('Document.body receiver must be the DOM Output document');
+      }
+      return document.body;
+    },
+    'Document.set_body': readOnlyProperty('Document.body'),
+    'Document.get_document_element': (document) => {
+      if (document !== requireOutputDocument()) {
+        throw new Error('Document.document_element receiver must be the DOM Output document');
+      }
+      return document.documentElement;
+    },
+    'Document.set_document_element': readOnlyProperty('Document.document_element'),
     'Document.create_element': createElement,
     'Document.get_element_by_id': getElementById,
     'Document.query_selector': querySelector,
     'Element.append': appendChild,
+    'Element.append_class': appendClass,
     'Element.append_child': appendChild,
     'Element.clear': clear,
+    'Element.get_attribute': getAttr,
     'Element.get_class_name': getClassName,
     'Element.get_id': getId,
     'Element.get_inner_text': getInnerText,
     'Element.query_selector': querySelector,
+    'Element.remove_attribute': removeAttr,
+    'Element.set_attribute': setAttr,
     'Element.set_inner_text': setText,
     'Element.set_text': setText,
     'Element.set_class': setClass,
@@ -376,13 +495,30 @@ function createPlaygroundDomHost(domOutputRoot) {
     'Element.set_id': setId,
     'Element.set_attr': setAttr,
     'HTMLElement.get_inner_text': getInnerText,
+    'HTMLElement.get_value': getValue,
     'HTMLElement.set_inner_text': setText,
+    'HTMLElement.set_value': setValue,
     'Node.append_child': appendChild,
     'Node.get_node_name': getNodeName,
     'Node.get_text_content': getTextContent,
+    'Node.remove_child': removeChild,
+    'Node.replace_child': replaceChild,
     'Node.set_node_name': setNodeName,
     'Node.set_text_content': setText,
+    'Storage.get_item': (storage, key) => requireStorage(storage, 'Storage.get_item receiver').getItem(String(key)),
+    'Storage.remove_item': (storage, key) => {
+      requireStorage(storage, 'Storage.remove_item receiver').removeItem(String(key));
+    },
+    'Storage.set_item': (storage, key, value) => {
+      requireStorage(storage, 'Storage.set_item receiver').setItem(String(key), String(value));
+    },
     'Window.get_document': (window) => requireWindow(window).document,
+    'Window.set_document': readOnlyProperty('Window.document'),
+    'Window.get_local_storage': (window) => {
+      requireWindow(window);
+      return playgroundStorage();
+    },
+    'Window.set_local_storage': readOnlyProperty('Window.local_storage'),
   };
 }
 
@@ -416,6 +552,15 @@ export function buildWaluauImports(wasmBuffer, initLogger, options = {}) {
     }
     if (name === 'HTMLHeadingElement') {
       return typeof view.HTMLHeadingElement !== 'undefined' && value instanceof view.HTMLHeadingElement ? 1 : 0;
+    }
+    if (name === 'HTMLInputElement') {
+      return typeof view.HTMLInputElement !== 'undefined' && value instanceof view.HTMLInputElement ? 1 : 0;
+    }
+    if (name === 'HTMLTextAreaElement') {
+      return typeof view.HTMLTextAreaElement !== 'undefined' && value instanceof view.HTMLTextAreaElement ? 1 : 0;
+    }
+    if (name === 'Storage') {
+      return value && typeof value.getItem === 'function' && typeof value.setItem === 'function' && typeof value.removeItem === 'function' ? 1 : 0;
     }
     throw new Error(`Unsupported extern cast target: ${name}`);
   };

@@ -61,15 +61,75 @@ function decodeBytesConstantsFromWasm(wasmBuffer) {
 }
 
 function createMockElement(tagName) {
-  return {
+  const attributes = new Map();
+  const element = {
     tagName: String(tagName).toUpperCase(),
     id: '',
     className: '',
     childNodes: [],
+    parentNode: null,
     textContent: '',
+    value: '',
+    attributes,
+    classList: {
+      add(...tokens) {
+        const existing = new Set(String(this.owner.className).split(/\s+/).filter(Boolean));
+        for (const token of tokens) {
+          const normalized = String(token).trim();
+          if (normalized) existing.add(normalized);
+        }
+        this.owner.className = Array.from(existing).join(' ');
+      },
+      owner: null,
+    },
     appendChild(child) {
+      if (child.parentNode?.removeChild) child.parentNode.removeChild(child);
       this.childNodes.push(child);
+      child.parentNode = this;
       return child;
+    },
+    replaceChild(node, child) {
+      const index = this.childNodes.indexOf(child);
+      if (index < 0) throw new Error('child not found');
+      if (node.parentNode?.removeChild) node.parentNode.removeChild(node);
+      this.childNodes[index] = node;
+      node.parentNode = this;
+      child.parentNode = null;
+      return child;
+    },
+    removeChild(child) {
+      const index = this.childNodes.indexOf(child);
+      if (index < 0) throw new Error('child not found');
+      this.childNodes.splice(index, 1);
+      child.parentNode = null;
+      return child;
+    },
+    replaceChildren(...children) {
+      for (const child of this.childNodes) child.parentNode = null;
+      this.childNodes = [];
+      for (const child of children) this.appendChild(child);
+    },
+    setAttribute(name, value) {
+      const normalized = String(name);
+      attributes.set(normalized, String(value));
+      if (normalized === 'id') this.id = String(value);
+      if (normalized === 'class') this.className = String(value);
+      if (normalized === 'value') this.value = String(value);
+    },
+    getAttribute(name) {
+      const normalized = String(name);
+      if (normalized === 'id') return this.id || null;
+      if (normalized === 'class') return this.className || null;
+      return attributes.has(normalized) ? attributes.get(normalized) : null;
+    },
+    removeAttribute(name) {
+      const normalized = String(name);
+      attributes.delete(normalized);
+      if (normalized === 'id') this.id = '';
+      if (normalized === 'class') this.className = '';
+    },
+    querySelector(selector) {
+      return queryMockSelector(this, String(selector));
     },
     get children() {
       return this.childNodes;
@@ -84,6 +144,25 @@ function createMockElement(tagName) {
       return `<${tag}>${this.innerHTML}</${tag}>`;
     },
   };
+  element.classList.owner = element;
+  return element;
+}
+
+function queryMockSelector(root, selector) {
+  const matches = (node) => {
+    if (!node || typeof node !== 'object') return false;
+    if (selector.startsWith('#')) return node.id === selector.slice(1);
+    if (selector.startsWith('.')) {
+      return String(node.className).split(/\s+/).includes(selector.slice(1));
+    }
+    return String(node.tagName).toLowerCase() === selector.toLowerCase();
+  };
+  for (const child of Array.from(root.children ?? root.childNodes ?? [])) {
+    if (matches(child)) return child;
+    const found = queryMockSelector(child, selector);
+    if (found) return found;
+  }
+  return null;
 }
 
 function escapeHtml(value) {
@@ -94,7 +173,32 @@ function escapeHtml(value) {
     .replaceAll('"', '&quot;');
 }
 
+function createMockStorage() {
+  const values = new Map();
+  return {
+    getItem(key) {
+      const normalized = String(key);
+      return values.has(normalized) ? values.get(normalized) : null;
+    },
+    setItem(key, value) {
+      values.set(String(key), String(value));
+    },
+    removeItem(key) {
+      values.delete(String(key));
+    },
+  };
+}
+
 function createDomHost() {
+  const storage = (() => {
+    try {
+      if (globalThis.localStorage?.getItem) return globalThis.localStorage;
+    } catch {
+      // Fall back below for restricted browser contexts.
+    }
+    return createMockStorage();
+  })();
+
   if (globalThis.document?.createElement) {
     const root = globalThis.document.createElement('div');
     root.dataset.waluauConformanceRoot = '';
@@ -103,6 +207,7 @@ function createDomHost() {
       document: root,
       window: root.ownerDocument.defaultView,
       createElement: (tagName) => globalThis.document.createElement(tagName),
+      storage,
       root,
     };
   }
@@ -111,8 +216,9 @@ function createDomHost() {
   root.id = 'waluau-conformance-root';
   return {
     document: root,
-    window: { document: root },
+    window: { document: root, localStorage: storage },
     createElement: (tagName) => createMockElement(tagName),
+    storage,
     root,
   };
 }
@@ -133,11 +239,32 @@ function buildWaluauImports(wasmBuffer, options = {}) {
     if (value && typeof value === 'object' && typeof value.appendChild === 'function') return value;
     throw new Error(`Expected DOM Node for ${name}`);
   };
+  const asStorage = (value, name) => {
+    if (value && typeof value.getItem === 'function' && typeof value.setItem === 'function' && typeof value.removeItem === 'function') return value;
+    throw new Error(`Expected Storage for ${name}`);
+  };
+  const documentBody = (document, name) => {
+    if (document !== domHost.document) throw new Error(`Expected DOM Document for ${name}`);
+    return domHost.root;
+  };
+  const validateAttrName = (name) => {
+    const attrName = String(name).trim().toLowerCase();
+    if (!/^[a-z_:][a-z0-9_:.-]*$/.test(attrName) || attrName.startsWith('on')) {
+      throw new Error(`Unsupported DOM attribute: ${name}`);
+    }
+    return attrName;
+  };
   const setText = (element, text, name) => {
     asElement(element, name).textContent = String(text);
   };
   const appendChild = (parent, child, name) => {
     return asNode(parent, name).appendChild(asNode(child, name));
+  };
+  const replaceChild = (parent, newChild, oldChild, name) => {
+    return asNode(parent, name).replaceChild(asNode(newChild, name), asNode(oldChild, name));
+  };
+  const removeChild = (parent, child, name) => {
+    return asNode(parent, name).removeChild(asNode(child, name));
   };
   const childrenOf = (node) => Array.from(node.children ?? node.childNodes ?? []);
   const walk = (root, visit) => {
@@ -161,10 +288,27 @@ function buildWaluauImports(wasmBuffer, options = {}) {
       target.textContent = String(text);
     }
   };
+  const appendClass = (element, className, name) => {
+    const target = asElement(element, name);
+    const tokens = String(className).trim().split(/\s+/).filter(Boolean);
+    if (tokens.length > 0 && target.classList?.add) {
+      target.classList.add(...tokens);
+    } else if (tokens.length > 0) {
+      const existing = new Set(String(target.className).split(/\s+/).filter(Boolean));
+      for (const token of tokens) existing.add(token);
+      target.className = Array.from(existing).join(' ');
+    }
+  };
   const externIs = (value, typeName) => {
     const name = String(typeName);
     if (name === 'Node') {
       return (typeof Node !== 'undefined' && value instanceof Node) || (value && typeof value === 'object' && 'childNodes' in value) ? 1 : 0;
+    }
+    if (name === 'Document') {
+      return value === domHost.document ? 1 : 0;
+    }
+    if (name === 'Window') {
+      return value === domHost.window ? 1 : 0;
     }
     if (name === 'Element') {
       return (typeof Element !== 'undefined' && value instanceof Element) || (value && typeof value.appendChild === 'function' && typeof value.tagName === 'string') ? 1 : 0;
@@ -174,6 +318,15 @@ function buildWaluauImports(wasmBuffer, options = {}) {
     }
     if (name === 'HTMLHeadingElement') {
       return (typeof HTMLHeadingElement !== 'undefined' && value instanceof HTMLHeadingElement) || (value && /^H[1-6]$/.test(String(value.tagName))) ? 1 : 0;
+    }
+    if (name === 'HTMLInputElement') {
+      return (typeof HTMLInputElement !== 'undefined' && value instanceof HTMLInputElement) || (value && String(value.tagName).toUpperCase() === 'INPUT') ? 1 : 0;
+    }
+    if (name === 'HTMLTextAreaElement') {
+      return (typeof HTMLTextAreaElement !== 'undefined' && value instanceof HTMLTextAreaElement) || (value && String(value.tagName).toUpperCase() === 'TEXTAREA') ? 1 : 0;
+    }
+    if (name === 'Storage') {
+      return value === domHost.storage ? 1 : 0;
     }
     throw new Error(`Unsupported extern cast target: ${name}`);
   };
@@ -219,14 +372,44 @@ function buildWaluauImports(wasmBuffer, options = {}) {
       if (name === 'Document.create_element') {
         return (_document, tagName) => domHost.createElement(String(tagName));
       }
+      if (name === 'Document.get_body' || name === 'Document.get_document_element') {
+        return (document) => documentBody(document, name);
+      }
+      if (name === 'Document.set_body' || name === 'Document.set_document_element') {
+        return () => {
+          throw new Error(`${name} is read-only`);
+        };
+      }
       if (name === 'Document.get_element_by_id') {
         return (document, id) => getElementById(asElement(document, name), String(id));
+      }
+      if (name === 'Document.query_selector') {
+        return (document, selectors) => asElement(documentBody(document, name), name).querySelector(String(selectors));
       }
       if (name === 'Window.get_document') {
         return () => domHost.document;
       }
+      if (name === 'Window.set_document') {
+        return () => {
+          throw new Error('Window.document is read-only');
+        };
+      }
+      if (name === 'Window.get_local_storage') {
+        return () => domHost.storage;
+      }
+      if (name === 'Window.set_local_storage') {
+        return () => {
+          throw new Error('Window.local_storage is read-only');
+        };
+      }
       if (name === 'Document.append_child' || name === 'Element.append_child' || name === 'Node.append_child') {
         return (parent, child) => appendChild(parent, child, name);
+      }
+      if (name === 'Node.replace_child') {
+        return (parent, newChild, oldChild) => replaceChild(parent, newChild, oldChild, name);
+      }
+      if (name === 'Node.remove_child') {
+        return (parent, child) => removeChild(parent, child, name);
       }
       if (name === 'Element.set_text') {
         return (element, text) => setText(element, text, name);
@@ -258,6 +441,31 @@ function buildWaluauImports(wasmBuffer, options = {}) {
           asElement(element, name).className = String(className);
         };
       }
+      if (name === 'Element.append_class') {
+        return (element, className) => appendClass(element, className, name);
+      }
+      if (name === 'Element.get_attribute') {
+        return (element, attrName) => asElement(element, name).getAttribute(validateAttrName(attrName));
+      }
+      if (name === 'Element.set_attribute' || name === 'Element.set_attr') {
+        return (element, attrName, value) => {
+          const target = asElement(element, name);
+          const normalized = validateAttrName(attrName);
+          const attrValue = String(value);
+          target.setAttribute(normalized, attrValue);
+          if (normalized === 'value' && 'value' in target) {
+            target.value = attrValue;
+          }
+        };
+      }
+      if (name === 'Element.remove_attribute') {
+        return (element, attrName) => {
+          asElement(element, name).removeAttribute(validateAttrName(attrName));
+        };
+      }
+      if (name === 'Element.query_selector') {
+        return (element, selectors) => asElement(element, name).querySelector(String(selectors));
+      }
       if (name === 'Element.get_inner_text') {
         return (element) => asElement(element, name).textContent;
       }
@@ -269,6 +477,27 @@ function buildWaluauImports(wasmBuffer, options = {}) {
       }
       if (name === 'HTMLElement.set_inner_text') {
         return (element, text) => setInnerText(element, text, name);
+      }
+      if (name === 'HTMLElement.get_value') {
+        return (element) => String(asElement(element, name).value ?? '');
+      }
+      if (name === 'HTMLElement.set_value') {
+        return (element, value) => {
+          asElement(element, name).value = String(value);
+        };
+      }
+      if (name === 'Storage.get_item') {
+        return (storage, key) => asStorage(storage, name).getItem(String(key));
+      }
+      if (name === 'Storage.set_item') {
+        return (storage, key, value) => {
+          asStorage(storage, name).setItem(String(key), String(value));
+        };
+      }
+      if (name === 'Storage.remove_item') {
+        return (storage, key) => {
+          asStorage(storage, name).removeItem(String(key));
+        };
       }
       if (name === 'bytes_literal') {
         return (index) => {
@@ -355,5 +584,6 @@ export async function compileAndInstantiateWithDom(files, entryFile = '/main.wal
   return {
     exports,
     root: domHost.root,
+    storage: domHost.storage,
   };
 }

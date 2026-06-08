@@ -1,17 +1,34 @@
 {
   "memberRenames": {
     "appendChild": "append_child",
+    "appendClass": "append_class",
     "className": "class_name",
     "createElement": "create_element",
+    "documentElement": "document_element",
+    "getAttribute": "get_attribute",
     "getElementById": "get_element_by_id",
+    "getItem": "get_item",
     "innerText": "inner_text",
+    "localStorage": "local_storage",
     "nodeName": "node_name",
     "querySelector": "query_selector",
+    "removeAttribute": "remove_attribute",
+    "removeChild": "remove_child",
+    "removeItem": "remove_item",
+    "replaceChild": "replace_child",
+    "setAttribute": "set_attribute",
+    "setItem": "set_item",
     "textContent": "text_content"
   },
   "parameterRenames": {
     "Document.createElement.localName": "tag_name",
-    "Document.getElementById.elementId": "element_id"
+    "Document.getElementById.elementId": "element_id",
+    "Element.appendClass.className": "class_name",
+    "Element.getAttribute.qualifiedName": "name",
+    "Element.removeAttribute.qualifiedName": "name",
+    "Element.setAttribute.qualifiedName": "name",
+    "Node.replaceChild.child": "old_child",
+    "Node.replaceChild.node": "new_child"
   },
   "signatureOverrides": {}
 }
