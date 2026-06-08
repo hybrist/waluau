@@ -62,7 +62,7 @@ body,
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  padding: 12px;
+  padding: 0;
   z-index: 1;
   max-width: 100%;
   overflow-x: clip;
@@ -77,9 +77,8 @@ body,
   flex-wrap: nowrap;
   padding: 8px 16px;
   background: var(--bg-card);
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border-light);
+  margin-bottom: 0;
   box-shadow: var(--shadow-premium);
 }
 
@@ -178,11 +177,10 @@ body,
   align-items: center;
   flex-wrap: nowrap;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 0;
   padding: 6px 12px;
   background: var(--bg-card);
-  border-radius: 8px;
-  border: 1px solid var(--border-light);
+  border-bottom: 1px solid var(--border-light);
   overflow-x: auto;
   white-space: nowrap;
   scrollbar-width: thin;
@@ -908,13 +906,13 @@ body,
   }
 
   .app-container {
-    padding: 12px;
+    padding: 0;
   }
 
   .app-header {
     align-items: flex-start;
     padding: 12px 14px;
-    margin-bottom: 12px;
+    margin-bottom: 0;
   }
 
   .header-brand {
@@ -948,7 +946,7 @@ body,
 
   .presets-bar {
     gap: 8px;
-    margin-bottom: 12px;
+    margin-bottom: 0;
     padding: 10px 12px;
   }
 
@@ -1079,30 +1077,59 @@ body,
   position: relative;
 }
 
-.file-explorer {
-  width: 200px;
-  background: rgba(0, 0, 0, 0.15);
-  border-right: 1px solid var(--border-light);
+.file-tabs-container {
   display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  user-select: none;
-}
-
-.explorer-header {
-  display: flex;
+  align-items: stretch;
+  width: 100%;
   justify-content: space-between;
-  align-items: center;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-light);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  color: var(--text-muted);
-  font-weight: 700;
+  overflow: hidden;
 }
 
-.explorer-btn-add {
+.file-tabs-list {
+  display: flex;
+  overflow-x: auto;
+  flex: 1;
+  scrollbar-width: none;
+}
+
+.file-tabs-list::-webkit-scrollbar {
+  display: none;
+}
+
+.file-tab.file-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-right: 1px solid var(--border-light);
+  border-bottom: 2px solid transparent;
+  font-size: 13px;
+  font-family: var(--font-ui);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: var(--transition-smooth);
+  background: rgba(0, 0, 0, 0.08);
+  position: relative;
+  user-select: none;
+  min-width: 120px;
+  max-width: 200px;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.file-tab.file-item:hover {
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-main);
+}
+
+.file-tab.file-item.active {
+  background: var(--bg-dark);
+  color: #ffffff;
+  font-weight: 600;
+  border-bottom: 2px solid var(--accent-cyan);
+}
+
+.file-tab-add-btn {
   background: transparent;
   border: none;
   color: var(--text-muted);
@@ -1110,47 +1137,15 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 4px;
-  border-radius: 4px;
+  padding: 0 16px;
+  border-left: 1px solid var(--border-light);
   transition: var(--transition-smooth);
+  align-self: stretch;
 }
 
-.explorer-btn-add:hover {
+.file-tab-add-btn:hover {
   color: var(--accent-cyan);
-  background: rgba(255, 255, 255, 0.05);
-}
-
-.file-list {
-  display: flex;
-  flex-direction: column;
-  padding: 6px;
-  gap: 2px;
-}
-
-.file-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 10px;
-  border-radius: 4px;
-  font-size: 13px;
-  font-family: var(--font-mono);
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: var(--transition-smooth);
-  position: relative;
-  min-width: 0;
-}
-
-.file-item:hover {
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text-main);
-}
-
-.file-item.active {
-  background: rgba(55, 148, 255, 0.15);
-  color: #ffffff;
-  font-weight: 600;
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .file-item.entry .file-name-text::before {
@@ -1176,7 +1171,8 @@ body,
   padding-left: 6px;
 }
 
-.file-item:hover .file-actions {
+.file-item:hover .file-actions,
+.file-item.active .file-actions {
   display: flex;
 }
 
@@ -1390,7 +1386,7 @@ body,
 @media (min-width: 1025px) {
   .app-container {
     height: 100vh;
-    padding: 12px;
+    padding: 0;
     overflow: hidden;
   }
   
