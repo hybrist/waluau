@@ -415,6 +415,13 @@ mod tests {
     }
 
     #[test]
+    fn compile_promise_await_conformance() {
+        let source = include_str!("../../../conformance/promise_await.walu");
+        let result = compile_source(source).expect("Promise await conformance should compile");
+        assert!(result.wat.contains("(module"));
+    }
+
+    #[test]
     fn compile_multi_coroutine_await_promise_fixture() {
         let source = r#"
             declare function make_string_promise(): extern

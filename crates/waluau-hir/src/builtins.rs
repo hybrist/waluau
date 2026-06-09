@@ -20,6 +20,7 @@ pub(super) const COROUTINE_RESUME: &str = "coroutine.resume";
 pub(super) const COROUTINE_CLOSE: &str = "coroutine.close";
 pub(super) const COROUTINE_YIELD: &str = "coroutine.yield";
 pub(super) const COROUTINE_AWAIT_PROMISE: &str = "coroutine.await_promise";
+pub(super) const PROMISE_AWAIT: &str = "promise.await";
 pub(super) const MATH_ABS: &str = "math.abs";
 pub(super) const MATH_MIN: &str = "math.min";
 pub(super) const MATH_MAX: &str = "math.max";
@@ -34,6 +35,107 @@ pub(super) const TO_STRING: &str = "tostring";
 pub(super) const ASSERT: &str = "assert";
 pub(super) const STRING_FIND: &str = "string.find";
 // pub(super) const PRINT: &str = "print"; // now handled via extern declaration
+
+fn promise_resolved_type(ty: &Type) -> Option<Type> {
+    let Type::Opaque { name, ty } = ty else {
+        return None;
+    };
+    if !is_promise_like_extern(ty) {
+        return None;
+    }
+    let inner = name.strip_prefix("Promise<")?.strip_suffix('>')?;
+    Some(match inner {
+        "unit" => Type::Unit,
+        "bool" => Type::Bool,
+        "string" => Type::String,
+        "bytes" => Type::Bytes,
+        "extern" => Type::Extern,
+        "unknown" => Type::Unknown,
+        "thread" => Type::Thread,
+        "i32" => Type::Numeric(NumericType::I32),
+        "i64" => Type::Numeric(NumericType::I64),
+        "u32" => Type::Numeric(NumericType::U32),
+        "u64" => Type::Numeric(NumericType::U64),
+        "f32" => Type::Numeric(NumericType::F32),
+        "f64" => Type::Numeric(NumericType::F64),
+        name => Type::Opaque {
+            name: name.to_string(),
+            ty: Box::new(Type::Extern),
+        },
+    })
+}
+
+fn infer_promise_await_arg(
+    arg: &Expr,
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Result<Type, Diagnostic> {
+    let promise_ty =
+        super::expressions::infer_expr(arg, vars, fn_signatures, active_type_params, None)?;
+    let Some(resolved_ty) = promise_resolved_type(&promise_ty) else {
+        return Err(Diagnostic::new(
+            "promise.await expects a Promise<T> extern value",
+        ));
+    };
+    coerce_type(resolved_ty, expected)
+}
+
+pub(super) fn infer_promise_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    match name {
+        PROMISE_AWAIT => {
+            if args.len() != 1 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{PROMISE_AWAIT} expects 1 argument, got {}",
+                    args.len()
+                ))));
+            }
+            Some(infer_promise_await_arg(
+                &args[0],
+                vars,
+                fn_signatures,
+                active_type_params,
+                expected,
+            ))
+        }
+        _ => None,
+    }
+}
+
+pub(super) fn infer_promise_await_method_call(
+    receiver: &Expr,
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    if name != "await" {
+        return None;
+    }
+    if !args.is_empty() {
+        return Some(Err(Diagnostic::new(format!(
+            "Promise<T>:await expects 0 arguments, got {}",
+            args.len()
+        ))));
+    }
+    Some(infer_promise_await_arg(
+        receiver,
+        vars,
+        fn_signatures,
+        active_type_params,
+        expected,
+    ))
+}
 
 pub(super) fn infer_coroutine_builtin_call(
     name: &str,

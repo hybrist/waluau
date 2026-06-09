@@ -38,6 +38,9 @@ function optionsForCase(name) {
   if (name === 'coroutine_await_promise.walu') {
     return createPromiseAwaitHarness().options;
   }
+  if (name === 'promise_await.walu') {
+    return createTypedPromiseAwaitHarness().options;
+  }
 
   if (name !== 'extern_member_collisions.walu') {
     return undefined;
@@ -117,6 +120,44 @@ function createPromiseAwaitHarness() {
       },
       onAsyncError(error) {
         asyncErrors.push(error);
+      },
+    },
+    async flush() {
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    },
+  };
+}
+
+function createTypedPromiseAwaitHarness() {
+  let responseCount = 0;
+  const strings = [];
+  const responseValue = { ok: true, url: '/test.json' };
+
+  return {
+    get responseCount() {
+      return responseCount;
+    },
+    strings,
+    responseValue,
+    options: {
+      hostImports: {
+        fetch(url) {
+          return Promise.resolve({ ...responseValue, url });
+        },
+        make_response() {
+          return Promise.resolve({ ...responseValue });
+        },
+        make_text() {
+          return Promise.resolve('typed body');
+        },
+        record_response(_value) {
+          responseCount += 1;
+        },
+        record_string(value) {
+          strings.push(value);
+        },
       },
     },
     async flush() {
@@ -215,6 +256,23 @@ describe('browser conformance', () => {
     expect(harness.statuses).toEqual([]);
     expect(harness.asyncErrors).toHaveLength(1);
     expect(String(harness.asyncErrors[0])).toContain('unreachable');
+  });
+
+  it('passes promise_await.walu typed function and method forms', async () => {
+    const source = cases.find(({ name }) => name === 'promise_await.walu').source;
+    const harness = createTypedPromiseAwaitHarness();
+    const exports = await compileAndInstantiateWithExports(
+      { '/main.walu': source },
+      '/main.walu',
+      harness.options,
+    );
+
+    exports.run_function_form();
+    exports.run_method_form();
+    await harness.flush();
+
+    expect(harness.responseCount).toBe(2);
+    expect(harness.strings).toEqual(['typed body', 'typed body']);
   });
 
   it('passes DOM click/input handlers through the exported event trampoline', async () => {

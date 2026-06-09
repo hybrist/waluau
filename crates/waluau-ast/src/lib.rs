@@ -623,6 +623,7 @@ impl Resolver {
             "tostring",
             "math",
             "coroutine",
+            "promise",
             "table",
             "string",
         ] {

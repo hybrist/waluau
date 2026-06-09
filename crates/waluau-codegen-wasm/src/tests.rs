@@ -1256,6 +1256,60 @@ fn promise_await_bridge_imports_and_exports_runtime_helpers() {
 }
 
 #[test]
+fn typed_promise_await_forms_lower_through_coroutine_bridge() {
+    let source = r#"
+        type Response = extern
+        type Promise<T> = extern
+
+        declare function fetch(url: string): Promise<Response>
+        declare function make_text(): Promise<string>
+        declare function record_response(value: Response): unit
+        declare function record_string(value: string): unit
+
+        function run_function_form(): unit
+            local co: thread = coroutine.create(function(): i32
+                local res = promise.await(fetch("/test.json"))
+                local body = promise.await(make_text())
+                record_response(res)
+                record_string(body)
+                return 0
+            end)
+            coroutine.resume(co)
+        end
+
+        function run_method_form(): unit
+            local co: thread = coroutine.create(function(): i32
+                local res = fetch("/test.json"):await()
+                local body = make_text():await()
+                record_response(res)
+                record_string(body)
+                return 0
+            end)
+            coroutine.resume(co)
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        wat.contains(r#"(import "waluau" "__waluau_attach_promise""#),
+        "typed Promise await forms should import the Promise bridge helper"
+    );
+    assert!(
+        wasm_export_func_index(&wasm, super::PROMISE_RESUME_TRAMPOLINE_EXPORT).is_some(),
+        "promise settlement resume helper should be exported"
+    );
+}
+
+#[test]
 fn emits_valid_wasm_for_coroutine_await_promise_conformance_fixture() {
     let source = r#"
         declare function make_string_promise(): extern

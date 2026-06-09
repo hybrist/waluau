@@ -3006,6 +3006,16 @@ impl Builder<'_> {
                         return result;
                     }
                 }
+                if let Some(result) = self.lower_promise_await_method_call(
+                    receiver,
+                    name,
+                    args,
+                    env,
+                    types,
+                    expected.clone(),
+                ) {
+                    return result;
+                }
                 let type_method =
                     type_method_signature(
                         &receiver_ty,
@@ -3455,6 +3465,11 @@ impl Builder<'_> {
                     }
                 }
                 if let Some(name) = builtin_name(callee.as_ref()) {
+                    if let Some(result) =
+                        self.lower_promise_builtin_call(&name, args, env, types, expected.clone())
+                    {
+                        return result;
+                    }
                     if let Some(result) =
                         self.lower_math_builtin_call(&name, args, env, types, expected.clone())
                     {
@@ -4077,6 +4092,11 @@ impl Builder<'_> {
                         return result;
                     }
                 }
+                if let Some(result) =
+                    self.infer_promise_await_method_call_type(name, args, expected.clone())
+                {
+                    return result;
+                }
                 let (params, return_type) = if let Some((_, params, return_type)) =
                     type_method_signature(
                         &receiver_ty,
@@ -4237,6 +4257,11 @@ impl Builder<'_> {
                     }
                 }
                 if let Some(name) = builtin_name(callee.as_ref()) {
+                    if let Some(result) =
+                        self.infer_promise_builtin_call_type(&name, args, types, expected.clone())
+                    {
+                        return result;
+                    }
                     if let Some(result) = self.infer_math_builtin_call_type(&name, expr, types) {
                         return result;
                     }
@@ -4784,6 +4809,83 @@ impl Builder<'_> {
         }
     }
 
+    fn lower_promise_await_value(
+        &mut self,
+        promise_expr: &Expr,
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        let promise_ty = self.infer_expr_type(promise_expr, types, None)?;
+        if !is_promise_like_extern(&promise_ty) {
+            return Err(Diagnostic::new(
+                "promise.await expects a Promise<T> extern value",
+            ));
+        }
+        let promise = self.lower_expr(promise_expr, env, types, Some(promise_ty))?;
+        let resume_block = self.new_block();
+        self.set_terminator(
+            self.current_block,
+            Terminator::CoroutineAwaitPromise {
+                promise,
+                resume_block,
+            },
+        );
+        self.current_block = resume_block;
+        let value = self.emit(Instruction::CoroutineAwaitResult);
+        match expected {
+            Some(target) if target != Type::Unknown => Ok(self.emit(Instruction::Cast {
+                value,
+                from: Type::Unknown,
+                to: target,
+            })),
+            other => self.coerce_value(value, Type::Unknown, other),
+        }
+    }
+
+    fn lower_promise_builtin_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<ValueId, Diagnostic>> {
+        match name {
+            PROMISE_AWAIT => {
+                if args.len() != 1 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{PROMISE_AWAIT} expects 1 argument, got {}",
+                        args.len()
+                    ))));
+                }
+                Some(self.lower_promise_await_value(&args[0], env, types, expected))
+            }
+            _ => None,
+        }
+    }
+
+    fn lower_promise_await_method_call(
+        &mut self,
+        receiver: &Expr,
+        name: &str,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<ValueId, Diagnostic>> {
+        if name != "await" {
+            return None;
+        }
+        if !args.is_empty() {
+            return Some(Err(Diagnostic::new(format!(
+                "Promise<T>:await expects 0 arguments, got {}",
+                args.len()
+            ))));
+        }
+        Some(self.lower_promise_await_value(receiver, env, types, expected))
+    }
+
     fn infer_coroutine_builtin_call_type(
         &self,
         name: &str,
@@ -4890,6 +4992,55 @@ impl Builder<'_> {
             }
             _ => None,
         }
+    }
+
+    fn infer_promise_builtin_call_type(
+        &self,
+        name: &str,
+        args: &[Expr],
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<Type, Diagnostic>> {
+        match name {
+            PROMISE_AWAIT => {
+                if args.len() != 1 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{PROMISE_AWAIT} expects 1 argument, got {}",
+                        args.len()
+                    ))));
+                }
+                let promise_ty = match self.infer_expr_type(&args[0], types, None) {
+                    Ok(ty) => ty,
+                    Err(error) => return Some(Err(error)),
+                };
+                if is_promise_like_extern(&promise_ty) {
+                    Some(Ok(expected.unwrap_or(Type::Unknown)))
+                } else {
+                    Some(Err(Diagnostic::new(
+                        "promise.await expects a Promise<T> extern value",
+                    )))
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn infer_promise_await_method_call_type(
+        &self,
+        name: &str,
+        args: &[Expr],
+        expected: Option<Type>,
+    ) -> Option<Result<Type, Diagnostic>> {
+        if name != "await" {
+            return None;
+        }
+        if !args.is_empty() {
+            return Some(Err(Diagnostic::new(format!(
+                "Promise<T>:await expects 0 arguments, got {}",
+                args.len()
+            ))));
+        }
+        Some(Ok(expected.unwrap_or(Type::Unknown)))
     }
 
     fn lower_math_builtin_call(

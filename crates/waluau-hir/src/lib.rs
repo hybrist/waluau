@@ -36,6 +36,227 @@ fn binding_for(ty: Type, rebindability: Rebindability) -> Binding {
     }
 }
 
+fn annotate_inferred_expr_locals(
+    expr: &mut Expr,
+    fn_signatures: &HashMap<String, FnSignature>,
+) -> Result<(), Diagnostic> {
+    match expr {
+        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } | Expr::IsVariant { expr, .. } => {
+            annotate_inferred_expr_locals(expr, fn_signatures)
+        }
+        Expr::Binary { left, right, .. } => {
+            annotate_inferred_expr_locals(left, fn_signatures)?;
+            annotate_inferred_expr_locals(right, fn_signatures)
+        }
+        Expr::If {
+            condition,
+            then_expr,
+            else_expr,
+            ..
+        } => {
+            annotate_inferred_expr_locals(condition, fn_signatures)?;
+            annotate_inferred_expr_locals(then_expr, fn_signatures)?;
+            annotate_inferred_expr_locals(else_expr, fn_signatures)
+        }
+        Expr::Call { callee, args, .. } => {
+            annotate_inferred_expr_locals(callee, fn_signatures)?;
+            for arg in args {
+                annotate_inferred_expr_locals(arg, fn_signatures)?;
+            }
+            Ok(())
+        }
+        Expr::MethodCall { receiver, args, .. } => {
+            annotate_inferred_expr_locals(receiver, fn_signatures)?;
+            for arg in args {
+                annotate_inferred_expr_locals(arg, fn_signatures)?;
+            }
+            Ok(())
+        }
+        Expr::Function(function) => {
+            let mut scope = HashMap::new();
+            for param in &function.params {
+                scope.insert(
+                    param.name.clone(),
+                    binding_for(param.ty.clone(), Rebindability::Const),
+                );
+            }
+            let active = active_type_param_set(&function.type_params);
+            annotate_inferred_stmt_locals(&mut function.body, &mut scope, fn_signatures, &active)
+        }
+        Expr::ArrayLiteral { elements, .. } => {
+            for element in elements {
+                annotate_inferred_expr_locals(element, fn_signatures)?;
+            }
+            Ok(())
+        }
+        Expr::TableLiteral { fields, .. } => {
+            for field in fields {
+                annotate_inferred_expr_locals(&mut field.value, fn_signatures)?;
+            }
+            Ok(())
+        }
+        Expr::Field { base, .. } => annotate_inferred_expr_locals(base, fn_signatures),
+        Expr::Index { base, index, .. } => {
+            annotate_inferred_expr_locals(base, fn_signatures)?;
+            annotate_inferred_expr_locals(index, fn_signatures)
+        }
+        Expr::Number(..)
+        | Expr::Bool(..)
+        | Expr::Nil(..)
+        | Expr::String(..)
+        | Expr::Bytes(..)
+        | Expr::Name(..)
+        | Expr::Require(..) => Ok(()),
+    }
+}
+
+fn annotate_inferred_stmt_locals(
+    body: &mut [Stmt],
+    vars: &mut HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+) -> Result<(), Diagnostic> {
+    for stmt in body {
+        match stmt {
+            Stmt::Let {
+                name,
+                rebindability,
+                ty,
+                value,
+                ..
+            } => {
+                annotate_inferred_expr_locals(value, fn_signatures)?;
+                let inferred_ty = if let Some(expected_ty) = ty.clone() {
+                    expected_ty
+                } else if matches!(value, Expr::ArrayLiteral { elements, .. } if elements.is_empty())
+                {
+                    Type::Record(BTreeMap::new())
+                } else {
+                    let inferred =
+                        infer_expr(value, vars, fn_signatures, active_type_params, None)?;
+                    *ty = Some(inferred.clone());
+                    inferred
+                };
+                vars.insert(name.clone(), binding_for(inferred_ty, *rebindability));
+            }
+            Stmt::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                annotate_inferred_expr_locals(condition, fn_signatures)?;
+                annotate_inferred_stmt_locals(
+                    then_body,
+                    &mut vars.clone(),
+                    fn_signatures,
+                    active_type_params,
+                )?;
+                annotate_inferred_stmt_locals(
+                    else_body,
+                    &mut vars.clone(),
+                    fn_signatures,
+                    active_type_params,
+                )?;
+            }
+            Stmt::While { condition, body } => {
+                annotate_inferred_expr_locals(condition, fn_signatures)?;
+                annotate_inferred_stmt_locals(
+                    body,
+                    &mut vars.clone(),
+                    fn_signatures,
+                    active_type_params,
+                )?;
+            }
+            Stmt::Repeat { body, condition } => {
+                annotate_inferred_stmt_locals(
+                    body,
+                    &mut vars.clone(),
+                    fn_signatures,
+                    active_type_params,
+                )?;
+                annotate_inferred_expr_locals(condition, fn_signatures)?;
+            }
+            Stmt::Return(expr) | Stmt::Expr(expr) => {
+                annotate_inferred_expr_locals(expr, fn_signatures)?;
+            }
+            Stmt::ReturnMulti(exprs) => {
+                for expr in exprs {
+                    annotate_inferred_expr_locals(expr, fn_signatures)?;
+                }
+            }
+            Stmt::Assign { value, .. } => {
+                annotate_inferred_expr_locals(value, fn_signatures)?;
+            }
+            Stmt::IndexAssign {
+                base, index, value, ..
+            } => {
+                annotate_inferred_expr_locals(base, fn_signatures)?;
+                annotate_inferred_expr_locals(index, fn_signatures)?;
+                annotate_inferred_expr_locals(value, fn_signatures)?;
+            }
+            Stmt::FieldAssign { base, value, .. } => {
+                annotate_inferred_expr_locals(base, fn_signatures)?;
+                annotate_inferred_expr_locals(value, fn_signatures)?;
+            }
+            Stmt::LetMulti { values, .. } | Stmt::AssignMulti { values, .. } => {
+                for value in values {
+                    annotate_inferred_expr_locals(value, fn_signatures)?;
+                }
+            }
+            Stmt::IfCast {
+                value,
+                then_body,
+                else_body,
+                ..
+            } => {
+                annotate_inferred_expr_locals(value, fn_signatures)?;
+                annotate_inferred_stmt_locals(
+                    then_body,
+                    &mut vars.clone(),
+                    fn_signatures,
+                    active_type_params,
+                )?;
+                annotate_inferred_stmt_locals(
+                    else_body,
+                    &mut vars.clone(),
+                    fn_signatures,
+                    active_type_params,
+                )?;
+            }
+            Stmt::NumericFor {
+                start,
+                stop,
+                step,
+                body,
+                ..
+            } => {
+                annotate_inferred_expr_locals(start, fn_signatures)?;
+                annotate_inferred_expr_locals(stop, fn_signatures)?;
+                if let Some(step) = step {
+                    annotate_inferred_expr_locals(step, fn_signatures)?;
+                }
+                annotate_inferred_stmt_locals(
+                    body,
+                    &mut vars.clone(),
+                    fn_signatures,
+                    active_type_params,
+                )?;
+            }
+            Stmt::ForIn { iterator, body, .. } => {
+                annotate_inferred_expr_locals(iterator, fn_signatures)?;
+                annotate_inferred_stmt_locals(
+                    body,
+                    &mut vars.clone(),
+                    fn_signatures,
+                    active_type_params,
+                )?;
+            }
+            Stmt::Break | Stmt::Continue => {}
+        }
+    }
+    Ok(())
+}
+
 fn is_extern_opaque_type(ty: &Type) -> bool {
     matches!(
         ty,
@@ -2131,6 +2352,21 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
 
     for function in &typed.functions {
         check_function(function, &fn_signatures, &HashSet::new())?;
+    }
+
+    for function in &mut typed.functions {
+        let mut scope = function
+            .params
+            .iter()
+            .map(|param| {
+                (
+                    param.name.clone(),
+                    binding_for(param.ty.clone(), Rebindability::Const),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        let active = active_type_param_set(&function.type_params);
+        annotate_inferred_stmt_locals(&mut function.body, &mut scope, &fn_signatures, &active)?;
     }
 
     annotate_resolved_extern_members(&mut typed, &fn_signatures)?;
