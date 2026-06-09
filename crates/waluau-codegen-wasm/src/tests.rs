@@ -1069,6 +1069,81 @@ fn emits_valid_wasm_for_tagged_union_coroutine_resume() {
 }
 
 #[test]
+fn emits_valid_wasm_for_unknown_coroutine_payloads() {
+    let source = r#"
+        function run(): i32
+            local co: thread = coroutine.create(function(): i32
+                coroutine.yield("hello")
+                coroutine.yield(3.5)
+                return 7
+            end)
+            local ok1: bool, value1: unknown = coroutine.resume(co)
+            local ok2: bool, value2: unknown = coroutine.resume(co)
+            local ok3: bool, value3: unknown = coroutine.resume(co)
+            if ok1 and ok2 and ok3 then
+                if value1::string == "hello" and value2::f64 == 3.5 and value3::i32 == 7 then
+                    return 1
+                end
+            end
+            return 0
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        wat.contains("any.convert_extern"),
+        "should emit externref->anyref boxing for string payloads"
+    );
+    assert!(
+        wat.contains("extern.convert_any"),
+        "should emit anyref->externref unboxing for string payloads"
+    );
+}
+
+#[test]
+fn emits_valid_wasm_for_unknown_coroutine_extern_payloads() {
+    let source = r#"
+        function yield_extern(value: extern): extern
+            local co: thread = coroutine.create(function(): i32
+                coroutine.yield(value)
+                return 11
+            end)
+            local ok: bool, payload: unknown = coroutine.resume(co)
+            if ok then
+                return payload::extern
+            end
+            return value
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        wat.contains("any.convert_extern"),
+        "should emit externref->anyref boxing for extern coroutine payloads"
+    );
+    assert!(
+        wat.contains("extern.convert_any"),
+        "should emit anyref->externref unboxing for extern coroutine payloads"
+    );
+}
+
+#[test]
 fn emits_valid_wasm_for_tagged_union_constructor() {
     let source = include_str!("../../../conformance/tagged_union_constructor.walu");
     let program = waluau_parser::parse(source).expect("parse should succeed");

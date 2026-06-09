@@ -114,7 +114,7 @@ pub enum Instruction {
         callee: ValueId,
     },
     /// Advance the coroutine to its next yield or return.
-    /// Result type: Multi([Bool, I32]) — `(ok, value)`; `(false, 0)` when dead/errored.
+    /// Result type: Multi([Bool, Unknown]) — `(ok, value)`; `value` is null when dead/errored.
     CoroutineResume {
         coroutine: ValueId,
     },

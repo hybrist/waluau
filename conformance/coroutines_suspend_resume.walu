@@ -1,33 +1,32 @@
 -- Coroutine suspension and resumption with `coroutine.yield`.
 
 function counter_job(): i32
-    coroutine.yield(1)
-    coroutine.yield(2)
+    coroutine.yield(1::i32)
+    coroutine.yield(2::i32)
     return 3
 end
 
 local co: thread = coroutine.create(counter_job)
 
-local o1: bool, a: i32 = coroutine.resume(co)
+local o1: bool, a: unknown = coroutine.resume(co)
 assert(o1)
-assert(a == 1)
-local o2: bool, b: i32 = coroutine.resume(co)
+assert(a::i32 == 1)
+local o2: bool, b: unknown = coroutine.resume(co)
 assert(o2)
-assert(b == 2)
-local o3: bool, c: i32 = coroutine.resume(co)
+assert(b::i32 == 2)
+local o3: bool, c: unknown = coroutine.resume(co)
 assert(o3)
-assert(c == 3)
+assert(c::i32 == 3)
 
--- Resuming after the body returns reports (false, 0).
-local o4: bool, d: i32 = coroutine.resume(co)
+-- Resuming after the body returns reports `ok = false`.
+local o4: bool, d: unknown = coroutine.resume(co)
 assert(not o4)
-assert(d == 0)
 
 -- Yield should also work through normal calls, not only when the yield call
 -- appears directly in the coroutine entry function.
 function emit_three_values(): ()
-    coroutine.yield(10)
-    coroutine.yield(20)
+    coroutine.yield(10::i32)
+    coroutine.yield(20::i32)
 end
 
 function delegated_job(): i32
@@ -37,12 +36,12 @@ end
 
 local delegated: thread = coroutine.create(delegated_job)
 
-local e1: bool, e: i32 = coroutine.resume(delegated)
+local e1: bool, e: unknown = coroutine.resume(delegated)
 assert(e1)
-assert(e == 10)
-local e2: bool, f: i32 = coroutine.resume(delegated)
+assert(e::i32 == 10)
+local e2: bool, f: unknown = coroutine.resume(delegated)
 assert(e2)
-assert(f == 20)
-local e3: bool, g: i32 = coroutine.resume(delegated)
+assert(f::i32 == 20)
+local e3: bool, g: unknown = coroutine.resume(delegated)
 assert(e3)
-assert(g == 30)
+assert(g::i32 == 30)

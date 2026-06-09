@@ -89,9 +89,8 @@ pub(super) fn infer_coroutine_builtin_call(
                         Some(Type::Multi(types))
                             if types.len() == 2
                                 && types[0] == Type::Bool
-                                && types[1] == i32_ty
                     ) {
-                        return Some(Ok(Type::Multi(vec![Type::Bool, i32_ty])));
+                        return Some(Ok(Type::Multi(vec![Type::Bool, Type::Unknown])));
                     }
                     Some(coerce_type(
                         Type::TaggedUnion(vec![
@@ -148,12 +147,9 @@ pub(super) fn infer_coroutine_builtin_call(
                 vars,
                 fn_signatures,
                 active_type_params,
-                Some(i32_ty.clone()),
+                Some(Type::Unknown),
             ) {
-                Ok(ty) if ty == i32_ty => {}
-                Ok(_) => {
-                    return Some(Err(Diagnostic::new("coroutine.yield expects an i32 value")));
-                }
+                Ok(_) => {}
                 Err(error) => return Some(Err(error)),
             }
             Some(coerce_type(Type::Unit, expected))

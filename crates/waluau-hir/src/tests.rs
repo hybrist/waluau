@@ -1997,7 +1997,7 @@ fn rejects_tagged_union_value_access_without_narrowing() {
 fn type_checks_coroutine_yield_calls() {
     let source = r#"
         function run_job(): i32
-            coroutine.yield(1)
+            coroutine.yield("tick")
             return 7
         end
     "#;
@@ -2006,16 +2006,45 @@ fn type_checks_coroutine_yield_calls() {
 }
 
 #[test]
-fn rejects_coroutine_yield_with_non_i32_argument() {
+fn type_checks_coroutine_resume_unknown_payloads() {
     let source = r#"
         function run_job(): i32
-            coroutine.yield(true)
-            return 7
+            local co: thread = coroutine.create(function(): i32
+                coroutine.yield(1)
+                return 7
+            end)
+            local ok: bool, value: unknown = coroutine.resume(co)
+            if ok then
+                return value::i32
+            end
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_coroutine_resume_unknown_payload_without_explicit_cast() {
+    let source = r#"
+        function run_job(): i32
+            local co: thread = coroutine.create(function(): i32
+                coroutine.yield(1)
+                return 7
+            end)
+            local ok: bool, value: i32 = coroutine.resume(co)
+            if ok then
+                return value
+            end
+            return 0
         end
     "#;
     let program = parse(source).expect("parse should succeed");
     let error = super::type_check(&program).expect_err("type check should fail");
-    assert_eq!(error.to_string(), "coroutine.yield expects an i32 value");
+    assert_eq!(
+        error.to_string(),
+        "cannot implicitly convert unknown to i32; use an explicit cast"
+    );
 }
 
 #[test]
