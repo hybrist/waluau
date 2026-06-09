@@ -187,7 +187,7 @@ fn compile_sources(
 
     let mut signatures = std::collections::HashMap::new();
     for function in &module.functions {
-        if function.name != "__waluau_top_level_init" {
+        if !function.name.starts_with("__waluau_") {
             let params = function
                 .params
                 .iter()
@@ -232,7 +232,7 @@ fn compile_source(source: &str) -> Result<CompileResult, String> {
 
     let mut signatures = std::collections::HashMap::new();
     for function in &module.functions {
-        if function.name != "__waluau_top_level_init" {
+        if !function.name.starts_with("__waluau_") {
             let params = function
                 .params
                 .iter()

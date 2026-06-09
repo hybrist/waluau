@@ -212,6 +212,28 @@ test.describe('DOM Output in Run tab', () => {
     await expect(outputFrame.locator('#fetch-body')).toHaveText(/^\{"message":"fetch body from playground"\}\s*$/);
   });
 
+  test('supports top-level fetch and await without a manual coroutine wrapper', async ({ page }) => {
+    await page.getByRole('button', { name: 'Top Level Fetch (Test)' }).click();
+
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    const domOutput = page.getByLabel('DOM Output');
+    await expect(domOutput).toBeVisible();
+
+    // All three print statements must appear in the init-logs box.
+    // Allow extra time: the last two arrive after the async fetch resolves.
+    await expect(page.locator('.init-logs-value')).toHaveText(
+      'before fetch\nafter fetch\nafter dom update',
+      { timeout: COMPILER_READY_TIMEOUT },
+    );
+
+    // The fetch body should be written to document.body.text_content
+    const outputFrame = page.frameLocator('.dom-output-frame');
+    await expect(outputFrame.locator('body')).toHaveText(/\{"message":"fetch body from playground"\}/);
+  });
+
   test('loads DOM externs for the dom_extern_rendering conformance preset', async ({ page }) => {
     await page.getByRole('button', { name: 'Dom Extern Rendering (Test)' }).click();
 

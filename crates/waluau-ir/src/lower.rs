@@ -89,6 +89,12 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
     let start = functions
         .iter()
         .position(|function| function.name == "__waluau_top_level_init");
+
+    // If the top-level init function uses promise await, it must run inside a
+    // coroutine (await requires an active coroutine state). Auto-wrap it: rename
+    // the body to `$async_body`, then replace it with a thin coroutine wrapper.
+    let (functions, start) = wrap_async_top_level_init_if_needed(functions, start);
+
     let module = Module {
         functions,
         declared_imports,
@@ -97,6 +103,64 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
     };
     verify(&module)?;
     Ok(module)
+}
+
+fn wrap_async_top_level_init_if_needed(
+    mut functions: Vec<Function>,
+    start: Option<usize>,
+) -> (Vec<Function>, Option<usize>) {
+    let Some(start_idx) = start else {
+        return (functions, start);
+    };
+    let has_await = functions[start_idx].blocks.values().any(|block| {
+        matches!(block.terminator, Terminator::CoroutineAwaitPromise { .. })
+    });
+    if !has_await {
+        return (functions, start);
+    }
+    let async_body_name = "__waluau_top_level_init$async_body".to_string();
+    functions[start_idx].name = async_body_name.clone();
+
+    let entry = BlockId(0);
+    let v_closure = ValueId(0);
+    let v_coroutine = ValueId(1);
+    let v_resume = ValueId(2);
+    let v_unit = ValueId(3);
+    let mut blocks = std::collections::BTreeMap::new();
+    blocks.insert(
+        entry,
+        BasicBlock {
+            id: entry,
+            instructions: vec![
+                (
+                    v_closure,
+                    Instruction::Closure {
+                        name: async_body_name,
+                        captures: vec![],
+                        params: vec![],
+                        return_type: Type::Numeric(NumericType::I32),
+                    },
+                ),
+                (v_coroutine, Instruction::CoroutineCreate { callee: v_closure }),
+                (v_resume, Instruction::CoroutineResume { coroutine: v_coroutine }),
+                (v_unit, Instruction::Unit),
+            ],
+            terminator: Terminator::Return(v_unit),
+        },
+    );
+    let new_start = functions.len();
+    functions.push(Function {
+        name: "__waluau_top_level_init".to_string(),
+        params: vec![],
+        return_type: Type::Unit,
+        entry,
+        blocks,
+        next_value: 4,
+        capture_count: 0,
+        value_symbols: std::collections::BTreeMap::new(),
+        symbol_id: None,
+    });
+    (functions, Some(new_start))
 }
 
 fn canonical_dom_import_host_name(name: &str) -> Option<String> {

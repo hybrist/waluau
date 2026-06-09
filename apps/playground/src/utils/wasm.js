@@ -164,12 +164,16 @@ function createPlaygroundDomHost(wasmModule, domOutputRoot, getWasmExports = () 
   };
 
   const fetchFromDomContext = (input) => {
-    const window = outputDocument().defaultView ?? globalThis;
-    const fetchImpl = window.fetch ?? globalThis.fetch;
+    // Use globalThis.fetch rather than the iframe window's fetch.  The fetch
+    // host import is called from the host-page JS context, not from inside the
+    // iframe, so tying it to the iframe window would cause the request to be
+    // cancelled by the browser if the iframe is removed before the promise
+    // settles (e.g. in the conformance runner's temp-iframe teardown path).
+    const fetchImpl = globalThis.fetch ?? outputDocument()?.defaultView?.fetch;
     if (typeof fetchImpl !== 'function') {
       throw new Error('fetch is not available in this browser context');
     }
-    return fetchImpl.call(window, String(input));
+    return fetchImpl(String(input));
   };
 
   const getProperty = (interfaceName, propertyName, receiver) => {
@@ -262,19 +266,23 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
     ...domHost,
     ...hostImports,
     __waluau_attach_promise: (threadHandle, promise) => {
-      const exports = options.getWasmExports?.();
-      const resume = exports?.[PROMISE_RESUME_TRAMPOLINE_EXPORT];
-      const resetActive = exports?.[PROMISE_RESET_ACTIVE_EXPORT];
-      if (typeof resume !== 'function') {
-        throw new Error(`Missing ${PROMISE_RESUME_TRAMPOLINE_EXPORT} export for Promise await`);
-      }
-      if (typeof resetActive !== 'function') {
-        throw new Error(`Missing ${PROMISE_RESET_ACTIVE_EXPORT} export for Promise await`);
-      }
       if (promise == null || typeof promise.then !== 'function') {
         throw new TypeError('coroutine.await_promise expects a Promise-like extern value');
       }
+      // Resolve exports lazily inside invoke: when __waluau_attach_promise is
+      // called from the Wasm start function (module initialisation), the
+      // instance object doesn't exist yet, so getWasmExports() returns null.
+      // By the time the promise settles the instance is always available.
       const invoke = (payload, rejected) => {
+        const exports = options.getWasmExports?.();
+        const resume = exports?.[PROMISE_RESUME_TRAMPOLINE_EXPORT];
+        const resetActive = exports?.[PROMISE_RESET_ACTIVE_EXPORT];
+        if (typeof resume !== 'function') {
+          throw new Error(`Missing ${PROMISE_RESUME_TRAMPOLINE_EXPORT} export for Promise await`);
+        }
+        if (typeof resetActive !== 'function') {
+          throw new Error(`Missing ${PROMISE_RESET_ACTIVE_EXPORT} export for Promise await`);
+        }
         try {
           resume(threadHandle, payload, rejected);
         } catch (error) {
