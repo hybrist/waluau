@@ -65,6 +65,7 @@ pub(crate) fn collect_user_signatures(
     module: &Module,
     start_thunk: bool,
     callback_event_unit_trampoline: bool,
+    promise_resume_trampoline: bool,
 ) -> SignatureRegistry {
     let mut registry = SignatureRegistry::new();
     for function in &module.functions {
@@ -104,6 +105,17 @@ pub(crate) fn collect_user_signatures(
     }
     if callback_event_unit_trampoline {
         registry.add_wrapper(vec![Type::Extern], Type::Unit);
+    }
+    if promise_resume_trampoline {
+        registry.add(Vec::new(), Type::Unit);
+        registry.add(
+            vec![
+                Type::Thread,
+                Type::Extern,
+                Type::Numeric(waluau_ast::NumericType::I32),
+            ],
+            Type::Unit,
+        );
     }
     registry
 }

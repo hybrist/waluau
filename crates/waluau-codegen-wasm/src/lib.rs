@@ -27,8 +27,10 @@ use arrays::{
     record_storage_type,
 };
 use coroutines::{
-    CoroutinePlan, STATE_CONT_FIELD, STATE_TAG_FIELD, STATE_YIELDED_FIELD, TAG_ERROR, TAG_FINISHED,
-    TAG_SUSPENDED, coroutine_body_ref_type, coroutine_state_ref_type,
+    AWAIT_STATUS_FULFILLED, AWAIT_STATUS_NONE, AWAIT_STATUS_REJECTED, CoroutinePlan,
+    STATE_AWAIT_STATUS_FIELD, STATE_CONT_FIELD, STATE_TAG_FIELD, STATE_YIELDED_FIELD,
+    TAG_AWAITING_PROMISE, TAG_ERROR, TAG_FINISHED, TAG_SUSPENDED, coroutine_body_ref_type,
+    coroutine_state_ref_type,
 };
 use locals::{
     LocalPlan, build_local_plan, build_value_definition_map, emit_value_operand, emit_value_store,
@@ -40,6 +42,8 @@ use wasm_types::{
 };
 
 const CALLBACK_EVENT_UNIT_TRAMPOLINE_EXPORT: &str = "__waluau_call_callback_event_unit";
+const PROMISE_RESUME_TRAMPOLINE_EXPORT: &str = "__waluau_resume_promise_await";
+const PROMISE_RESET_ACTIVE_EXPORT: &str = "__waluau_reset_active_coroutine";
 
 /// Collect the ordered set of function names that appear as `Closure` targets in the module.
 /// These each need a wrapper function with the env-based calling convention.
@@ -82,11 +86,28 @@ fn is_event_unit_callback_type(ty: &Type) -> bool {
     matches!(return_type.as_ref(), Type::Unit) && matches!(params.as_slice(), [Type::Extern])
 }
 
+fn is_promise_like_extern_type(ty: &Type) -> bool {
+    match ty {
+        Type::Extern | Type::ExternSubtype(_) => true,
+        Type::Opaque { ty, .. } => is_promise_like_extern_type(ty),
+        _ => false,
+    }
+}
+
 fn needs_callback_event_unit_trampoline(module: &Module) -> bool {
     module
         .declared_imports
         .iter()
         .any(|declared| declared.params.iter().any(is_event_unit_callback_type))
+}
+
+fn needs_promise_resume_trampoline(module: &Module) -> bool {
+    module.functions.iter().any(|function| {
+        function
+            .blocks
+            .values()
+            .any(|block| matches!(block.terminator, Terminator::CoroutineAwaitPromise { .. }))
+    })
 }
 
 /// Returns `true` if the module uses any features that require the closure GC types
@@ -169,6 +190,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     // Closure GC types ($anyref_array, $func_val, $boxed_f64) are only needed when
     // the program uses closures, function-typed values, or f64 boxing into unknown.
     let callback_event_unit_trampoline = needs_callback_event_unit_trampoline(module);
+    let promise_resume_trampoline = needs_promise_resume_trampoline(module);
     let closure_gc_needed = needs_closure_gc_types(module);
     // Two closure GC types sit after host types (only when needed):
     //   $anyref_array = (array (ref null any) mutable)
@@ -206,6 +228,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         module,
         start_thunk.is_some(),
         callback_event_unit_trampoline,
+        promise_resume_trampoline,
     );
 
     let signatures = module
@@ -235,7 +258,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         types.ty().array(&storage, true);
     }
     // Emit only the host function type entries that are actually used by this module.
-    // The 9 canonical slots and their signatures are documented in `host::needed_host_type_slots`.
+    // The canonical slots and their signatures are documented in `host::needed_host_type_slots`.
     let host_type_specs: [(&[ValType], &[ValType]); host::HOST_TYPE_COUNT as usize] = [
         (
             &[externref_val_type(), externref_val_type()],
@@ -307,7 +330,8 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             .ty()
             .function(Vec::<ValType>::new(), vec![ValType::I32]);
         debug_assert_eq!(body_sig, coroutine_types_base);
-        // State struct: { tag:i32, yielded:anyref, continuation:(ref null body_sig), pc_*:i32 }.
+        // State struct: { tag:i32, yielded:anyref, continuation:(ref null body_sig),
+        // await_status:i32, pc_*:i32 }.
         let mut fields = vec![
             FieldType {
                 element_type: StorageType::Val(ValType::I32),
@@ -319,6 +343,10 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             },
             FieldType {
                 element_type: StorageType::Val(coroutine_body_ref_type(body_sig)),
+                mutable: true,
+            },
+            FieldType {
+                element_type: StorageType::Val(ValType::I32),
                 mutable: true,
             },
         ];
@@ -401,6 +429,46 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         let type_idx = type_idx_counter;
         type_idx_counter += 1;
         Some(type_idx)
+    } else {
+        None
+    };
+    let promise_resume_trampoline_type_idx = if promise_resume_trampoline {
+        Some(
+            signature_registry
+                .get(
+                    &[Type::Thread, Type::Extern, Type::Numeric(NumericType::I32)],
+                    &Type::Unit,
+                )
+                .map(|sig| user_type_base + sig)
+                .ok_or_else(|| Diagnostic::new("missing promise resume trampoline signature"))?,
+        )
+    } else {
+        None
+    };
+    let attach_promise_import_type_idx = if used_imports.attach_promise {
+        Some(type_idx_counter)
+    } else {
+        None
+    };
+    if let Some(type_idx) = attach_promise_import_type_idx {
+        types.ty().function(
+            vec![
+                coroutine_state_ref_type(coroutine_state_type.ok_or_else(|| {
+                    Diagnostic::new("missing coroutine state type for Promise attach import")
+                })?),
+                externref_val_type(),
+            ],
+            Vec::<ValType>::new(),
+        );
+        type_idx_counter = type_idx + 1;
+    }
+    let promise_reset_active_type_idx = if promise_resume_trampoline {
+        Some(
+            signature_registry
+                .get(&[], &Type::Unit)
+                .map(|sig| user_type_base + sig)
+                .ok_or_else(|| Diagnostic::new("missing promise reset trampoline signature"))?,
+        )
     } else {
         None
     };
@@ -592,6 +660,16 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             EntityType::Function(host_slot_type_index[0].unwrap()),
         );
     }
+    if used_imports.attach_promise {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_ATTACH_PROMISE,
+            EntityType::Function(
+                attach_promise_import_type_idx
+                    .ok_or_else(|| Diagnostic::new("missing Promise attach import type index"))?,
+            ),
+        );
+    }
     let mut declared_import_indices = HashMap::new();
     for (offset, declared) in module.declared_imports.iter().enumerate() {
         let sig_index = signature_registry
@@ -727,6 +805,40 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             &signature_registry,
             &array_registry,
             user_type_base,
+        )?);
+    }
+    if let Some(type_idx) = promise_resume_trampoline_type_idx {
+        functions.function(type_idx);
+        exports.export(
+            PROMISE_RESUME_TRAMPOLINE_EXPORT,
+            ExportKind::Func,
+            import_func_count + helper_func_idx_counter,
+        );
+        helper_func_idx_counter += 1;
+        codes.function(&emit_promise_resume_trampoline(
+            &array_registry,
+            &coroutine_plan,
+            coroutine_body_sig_type.ok_or_else(|| {
+                Diagnostic::new("missing coroutine body signature for promise resume trampoline")
+            })?,
+            coroutine_state_type.ok_or_else(|| {
+                Diagnostic::new("missing coroutine state type for promise resume trampoline")
+            })?,
+        )?);
+    }
+    if let Some(type_idx) = promise_reset_active_type_idx {
+        functions.function(type_idx);
+        exports.export(
+            PROMISE_RESET_ACTIVE_EXPORT,
+            ExportKind::Func,
+            import_func_count + helper_func_idx_counter,
+        );
+        helper_func_idx_counter += 1;
+        codes.function(&emit_reset_active_coroutine(
+            &coroutine_plan,
+            coroutine_state_type.ok_or_else(|| {
+                Diagnostic::new("missing coroutine state type for promise reset helper")
+            })?,
         )?);
     }
 
@@ -1050,6 +1162,93 @@ fn emit_callback_event_unit_trampoline(
         type_index: wrapper_type_idx,
         table_index: 0,
     });
+    out.instruction(&Instruction::End);
+    Ok(out)
+}
+
+/// Exported JS-settlement ABI helper for `coroutine.await_promise`.
+///
+/// Signature: `(thread_handle: thread, payload: extern, rejected: i32) -> unit`.
+fn emit_promise_resume_trampoline(
+    _array_registry: &ArrayTypeRegistry,
+    coroutine_plan: &CoroutinePlan,
+    body_sig: u32,
+    state_ty: u32,
+) -> Result<Function, Diagnostic> {
+    let mut out = Function::new(vec![(2, coroutine_state_ref_type(state_ty))]);
+    let active_save_local = 3u32;
+    let state_local = 4u32;
+
+    out.instruction(&Instruction::LocalGet(0));
+    out.instruction(&Instruction::LocalTee(state_local));
+    out.instruction(&Instruction::RefIsNull);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    out.instruction(&Instruction::Return);
+    out.instruction(&Instruction::End);
+
+    out.instruction(&Instruction::LocalGet(state_local));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: state_ty,
+        field_index: STATE_TAG_FIELD,
+    });
+    out.instruction(&Instruction::I32Const(TAG_AWAITING_PROMISE));
+    out.instruction(&Instruction::I32Eq);
+    out.instruction(&Instruction::If(BlockType::Empty));
+
+    out.instruction(&Instruction::LocalGet(state_local));
+    out.instruction(&Instruction::LocalGet(1));
+    out.instruction(&Instruction::AnyConvertExtern);
+    out.instruction(&Instruction::StructSet {
+        struct_type_index: state_ty,
+        field_index: STATE_YIELDED_FIELD,
+    });
+
+    out.instruction(&Instruction::LocalGet(state_local));
+    out.instruction(&Instruction::LocalGet(2));
+    out.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+    out.instruction(&Instruction::I32Const(AWAIT_STATUS_REJECTED));
+    out.instruction(&Instruction::Else);
+    out.instruction(&Instruction::I32Const(AWAIT_STATUS_FULFILLED));
+    out.instruction(&Instruction::End);
+    out.instruction(&Instruction::StructSet {
+        struct_type_index: state_ty,
+        field_index: STATE_AWAIT_STATUS_FIELD,
+    });
+
+    out.instruction(&Instruction::LocalGet(state_local));
+    out.instruction(&Instruction::I32Const(TAG_FINISHED));
+    out.instruction(&Instruction::StructSet {
+        struct_type_index: state_ty,
+        field_index: STATE_TAG_FIELD,
+    });
+
+    out.instruction(&Instruction::GlobalGet(coroutine_plan.active_global()?));
+    out.instruction(&Instruction::LocalSet(active_save_local));
+    out.instruction(&Instruction::LocalGet(state_local));
+    out.instruction(&Instruction::GlobalSet(coroutine_plan.active_global()?));
+
+    out.instruction(&Instruction::LocalGet(state_local));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: state_ty,
+        field_index: STATE_CONT_FIELD,
+    });
+    out.instruction(&Instruction::CallRef(body_sig));
+    out.instruction(&Instruction::Drop);
+
+    out.instruction(&Instruction::LocalGet(active_save_local));
+    out.instruction(&Instruction::GlobalSet(coroutine_plan.active_global()?));
+    out.instruction(&Instruction::End);
+    out.instruction(&Instruction::End);
+    Ok(out)
+}
+
+fn emit_reset_active_coroutine(
+    coroutine_plan: &CoroutinePlan,
+    state_ty: u32,
+) -> Result<Function, Diagnostic> {
+    let mut out = Function::new(Vec::new());
+    out.instruction(&Instruction::RefNull(HeapType::Concrete(state_ty)));
+    out.instruction(&Instruction::GlobalSet(coroutine_plan.active_global()?));
     out.instruction(&Instruction::End);
     Ok(out)
 }
@@ -1517,6 +1716,68 @@ fn emit_block(
             }
             out.instruction(&Instruction::Return);
         }
+        Terminator::CoroutineAwaitPromise {
+            promise,
+            resume_block,
+        } => {
+            let promise_ty = value_types.get(promise).ok_or_else(|| {
+                Diagnostic::new(format!(
+                    "missing type for coroutine await promise {:?}",
+                    promise
+                ))
+            })?;
+            if !is_promise_like_extern_type(promise_ty) {
+                return Err(Diagnostic::new(format!(
+                    "coroutine.await_promise expected extern payload during wasm emission, got {}",
+                    promise_ty
+                )));
+            }
+            let pc_field = ctx.coroutine_plan.pc_field(&function.name).ok_or_else(|| {
+                Diagnostic::new(format!(
+                    "missing coroutine pc field for suspending function '{}'",
+                    function.name
+                ))
+            })?;
+            let state_ty = ctx.coroutine_state_type()?;
+            let promise_tmp = local_plan
+                .coroutine_await_promise_tmp
+                .ok_or_else(|| Diagnostic::new("missing coroutine await promise scratch local"))?;
+            let attach_promise_idx = ctx
+                .import_map
+                .func_index(host::IMPORT_ATTACH_PROMISE_FUNC)?;
+
+            emit_value_operand(out, local_plan, *promise)?;
+            out.instruction(&Instruction::LocalSet(promise_tmp));
+
+            emit_active_state_ref(out, ctx)?;
+            out.instruction(&Instruction::RefIsNull);
+            out.instruction(&Instruction::If(BlockType::Empty));
+            out.instruction(&Instruction::Unreachable);
+            out.instruction(&Instruction::End);
+
+            emit_active_state_ref(out, ctx)?;
+            out.instruction(&Instruction::I32Const(resume_block.0 as i32));
+            out.instruction(&Instruction::StructSet {
+                struct_type_index: state_ty,
+                field_index: pc_field,
+            });
+            emit_active_state_field_set_const(
+                out,
+                ctx,
+                STATE_AWAIT_STATUS_FIELD,
+                AWAIT_STATUS_NONE,
+            )?;
+
+            emit_active_state_ref(out, ctx)?;
+            out.instruction(&Instruction::LocalGet(promise_tmp));
+            out.instruction(&Instruction::Call(attach_promise_idx));
+
+            emit_active_state_field_set_const(out, ctx, STATE_TAG_FIELD, TAG_AWAITING_PROMISE)?;
+            if !matches!(function.return_type, Type::Unit) {
+                emit_default_value(out, &function.return_type, ctx.array_registry)?;
+            }
+            out.instruction(&Instruction::Return);
+        }
         Terminator::Return(value) => {
             let return_ty = value_types.get(value).ok_or_else(|| {
                 Diagnostic::new(format!("missing type for return value {:?}", value))
@@ -1814,7 +2075,9 @@ fn emit_block_instructions(
             IrInstruction::CoroutineCreate { callee } => {
                 let state_ty = ctx.coroutine_state_type()?;
                 let body_sig = ctx.coroutine_body_sig_type()?;
-                // struct.new $coroutine_state { tag=suspended, yielded=null, continuation, pc*=0 }
+                // struct.new $coroutine_state {
+                //   tag=suspended, yielded=null, continuation, await_status=none, pc*=0
+                // }
                 out.instruction(&Instruction::I32Const(TAG_SUSPENDED));
                 out.instruction(&Instruction::RefNull(HeapType::Abstract {
                     shared: false,
@@ -1830,6 +2093,7 @@ fn emit_block_instructions(
                 });
                 out.instruction(&Instruction::TableGet(0));
                 out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(body_sig)));
+                out.instruction(&Instruction::I32Const(AWAIT_STATUS_NONE));
                 for _ in 0..ctx.coroutine_plan.pc_field_count() {
                     out.instruction(&Instruction::I32Const(0));
                 }
@@ -1900,8 +2164,22 @@ fn emit_block_instructions(
                     field_index: STATE_YIELDED_FIELD,
                 });
                 out.instruction(&Instruction::Else);
+                emit_value_operand(out, local_plan, *coroutine)?;
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: state_ty,
+                    field_index: STATE_TAG_FIELD,
+                });
+                out.instruction(&Instruction::I32Const(TAG_AWAITING_PROMISE));
+                out.instruction(&Instruction::I32Eq);
+                out.instruction(&Instruction::If(BlockType::Result(anyref_val_type())));
+                out.instruction(&Instruction::RefNull(HeapType::Abstract {
+                    shared: false,
+                    ty: AbstractHeapType::Any,
+                }));
+                out.instruction(&Instruction::Else);
                 out.instruction(&Instruction::LocalGet(value_tmp));
                 emit_box(out, &Type::Numeric(NumericType::I32), ctx.array_registry)?;
+                out.instruction(&Instruction::End);
                 out.instruction(&Instruction::End);
                 out.instruction(&Instruction::LocalSet(value_slot));
                 // ok = tag != error.
@@ -1999,12 +2277,19 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::I32Const(*yielded_tag));
                 out.instruction(&Instruction::Else);
                 out.instruction(&Instruction::LocalGet(state_tmp));
+                out.instruction(&Instruction::I32Const(TAG_AWAITING_PROMISE));
+                out.instruction(&Instruction::I32Eq);
+                out.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+                out.instruction(&Instruction::I32Const(*yielded_tag));
+                out.instruction(&Instruction::Else);
+                out.instruction(&Instruction::LocalGet(state_tmp));
                 out.instruction(&Instruction::I32Const(TAG_FINISHED));
                 out.instruction(&Instruction::I32Eq);
                 out.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
                 out.instruction(&Instruction::I32Const(*finished_tag));
                 out.instruction(&Instruction::Else);
                 out.instruction(&Instruction::I32Const(*error_tag));
+                out.instruction(&Instruction::End);
                 out.instruction(&Instruction::End);
                 out.instruction(&Instruction::End);
                 // stack: [i32: tag_discriminant]
@@ -2030,8 +2315,18 @@ fn emit_block_instructions(
                     field_index: STATE_YIELDED_FIELD,
                 });
                 out.instruction(&Instruction::Else);
+                out.instruction(&Instruction::LocalGet(state_tmp));
+                out.instruction(&Instruction::I32Const(TAG_AWAITING_PROMISE));
+                out.instruction(&Instruction::I32Eq);
+                out.instruction(&Instruction::If(BlockType::Result(anyref_val_type())));
+                out.instruction(&Instruction::RefNull(HeapType::Abstract {
+                    shared: false,
+                    ty: AbstractHeapType::Any,
+                }));
+                out.instruction(&Instruction::Else);
                 out.instruction(&Instruction::LocalGet(value_tmp));
                 emit_box(out, &Type::Numeric(NumericType::I32), ctx.array_registry)?;
+                out.instruction(&Instruction::End);
                 out.instruction(&Instruction::End);
                 out.instruction(&Instruction::End);
                 // stack: [i32: tag_discriminant, anyref: value]
@@ -2049,6 +2344,35 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::StructNew(record_ty));
 
                 out.instruction(&Instruction::End);
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::CoroutineAwaitResult => {
+                let state_ty = ctx.coroutine_state_type()?;
+                emit_active_state_ref(out, ctx)?;
+                out.instruction(&Instruction::RefIsNull);
+                out.instruction(&Instruction::If(BlockType::Empty));
+                out.instruction(&Instruction::Unreachable);
+                out.instruction(&Instruction::End);
+
+                emit_active_state_field_get(out, ctx, STATE_AWAIT_STATUS_FIELD)?;
+                out.instruction(&Instruction::I32Const(AWAIT_STATUS_REJECTED));
+                out.instruction(&Instruction::I32Eq);
+                out.instruction(&Instruction::If(BlockType::Empty));
+                emit_active_state_field_set_const(out, ctx, STATE_TAG_FIELD, TAG_ERROR)?;
+                out.instruction(&Instruction::Unreachable);
+                out.instruction(&Instruction::End);
+
+                emit_active_state_ref(out, ctx)?;
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: state_ty,
+                    field_index: STATE_YIELDED_FIELD,
+                });
+                emit_active_state_field_set_const(
+                    out,
+                    ctx,
+                    STATE_AWAIT_STATUS_FIELD,
+                    AWAIT_STATUS_NONE,
+                )?;
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::CoroutineClose { coroutine } => {
@@ -2356,8 +2680,8 @@ fn emit_default_value(
     }
 }
 
-/// After calling a function that may yield, unwind toward `coroutine.resume` if the
-/// active instance is now suspended (i.e. a yield happened transitively).
+/// After calling a function that may suspend, unwind toward the current resume entrypoint
+/// if the active instance yielded or started awaiting a Promise transitively.
 fn emit_return_if_coroutine_yielded(
     out: &mut Function,
     function: &IrFunction,
@@ -2371,6 +2695,10 @@ fn emit_return_if_coroutine_yielded(
     emit_active_state_field_get(out, ctx, STATE_TAG_FIELD)?;
     out.instruction(&Instruction::I32Const(TAG_SUSPENDED));
     out.instruction(&Instruction::I32Eq);
+    emit_active_state_field_get(out, ctx, STATE_TAG_FIELD)?;
+    out.instruction(&Instruction::I32Const(TAG_AWAITING_PROMISE));
+    out.instruction(&Instruction::I32Eq);
+    out.instruction(&Instruction::I32Or);
     out.instruction(&Instruction::If(BlockType::Empty));
     if !matches!(function.return_type, Type::Unit) {
         emit_default_value(out, &function.return_type, ctx.array_registry)?;

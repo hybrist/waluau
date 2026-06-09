@@ -10,6 +10,7 @@ const COROUTINE_CREATE: &str = "coroutine.create";
 const COROUTINE_RESUME: &str = "coroutine.resume";
 const COROUTINE_CLOSE: &str = "coroutine.close";
 const COROUTINE_YIELD: &str = "coroutine.yield";
+const COROUTINE_AWAIT_PROMISE: &str = "coroutine.await_promise";
 const MATH_ABS: &str = "math.abs";
 const MATH_MIN: &str = "math.min";
 const MATH_MAX: &str = "math.max";
@@ -25,6 +26,14 @@ const ASSERT: &str = "assert";
 const PRINT: &str = "print";
 const STRING_FIND: &str = "string.find";
 const STRING_FIND_HOST: &str = "string_find";
+
+fn is_promise_like_extern(ty: &Type) -> bool {
+    match ty {
+        Type::Extern | Type::ExternSubtype(_) => true,
+        Type::Opaque { ty, .. } => is_promise_like_extern(ty),
+        _ => false,
+    }
+}
 
 fn inference_diagnostic(
     code: &'static str,

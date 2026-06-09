@@ -10,6 +10,7 @@ use wasm_encoder::{Function, Instruction, ValType};
 use crate::FunctionSignature;
 use crate::arrays::ArrayTypeRegistry;
 use crate::coroutines::coroutine_state_ref_type;
+use crate::wasm_types::externref_val_type;
 use crate::wasm_types::wasm_type;
 
 pub(crate) struct LocalPlan {
@@ -24,6 +25,9 @@ pub(crate) struct LocalPlan {
     pub(crate) coroutine_save_local: Option<u32>,
     /// Scratch anyref local for spilling a yielded value before mutating the state struct.
     pub(crate) coroutine_yield_tmp: Option<u32>,
+    /// Scratch externref local for spilling a Promise operand before await bookkeeping
+    /// reorders the operand stack.
+    pub(crate) coroutine_await_promise_tmp: Option<u32>,
     /// Scratch i32 local for the final body return that `coroutine.resume` boxes on the
     /// finished path.
     pub(crate) coroutine_resume_value_tmp: Option<u32>,
@@ -145,13 +149,26 @@ pub(crate) fn build_local_plan(
         None
     };
 
-    let has_yield = function
+    let has_yield = function.blocks.values().any(|block| {
+        matches!(
+            block.terminator,
+            Terminator::CoroutineYield { .. } | Terminator::CoroutineAwaitPromise { .. }
+        )
+    });
+    let has_await_promise = function
         .blocks
         .values()
-        .any(|block| matches!(block.terminator, Terminator::CoroutineYield { .. }));
+        .any(|block| matches!(block.terminator, Terminator::CoroutineAwaitPromise { .. }));
     let coroutine_yield_tmp = if has_yield {
         let slot = function.params.len() as u32 + extra_locals.len() as u32;
         extra_locals.push(wasm_type(&Type::Unknown, array_registry)?);
+        Some(slot)
+    } else {
+        None
+    };
+    let coroutine_await_promise_tmp = if has_await_promise {
+        let slot = function.params.len() as u32 + extra_locals.len() as u32;
+        extra_locals.push(externref_val_type());
         Some(slot)
     } else {
         None
@@ -189,6 +206,7 @@ pub(crate) fn build_local_plan(
         pc_local,
         coroutine_save_local,
         coroutine_yield_tmp,
+        coroutine_await_promise_tmp,
         coroutine_resume_value_tmp,
         tagged_resume_value_tmp,
         tagged_resume_state_tmp,
@@ -251,6 +269,7 @@ pub(crate) fn infer_value_types(
                 IrInstruction::CoroutineResumeTagged { .. } => {
                     Type::canonical_tagged_union_record()
                 }
+                IrInstruction::CoroutineAwaitResult => Type::Unknown,
                 IrInstruction::CoroutineClose { .. } => Type::Bool,
                 IrInstruction::Closure {
                     params,
@@ -623,6 +642,7 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
         IrInstruction::StructSet { base, value, .. } => vec![*base, *value],
         IrInstruction::PackMulti { values, .. } => values.clone(),
         IrInstruction::MultiGet { value, .. } => vec![*value],
+        IrInstruction::CoroutineAwaitResult => Vec::new(),
         IrInstruction::Phi(_) => Vec::new(),
     }
 }
@@ -632,6 +652,7 @@ fn terminator_operands(terminator: &Terminator) -> Vec<ValueId> {
         Terminator::Jump(_) | Terminator::Unreachable { .. } => Vec::new(),
         Terminator::Branch { condition, .. } => vec![*condition],
         Terminator::CoroutineYield { value, .. } => vec![*value],
+        Terminator::CoroutineAwaitPromise { promise, .. } => vec![*promise],
         Terminator::Return(value) => vec![*value],
     }
 }
@@ -673,6 +694,7 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         IrInstruction::CoroutineResume { coroutine, .. }
         | IrInstruction::CoroutineResumeTagged { coroutine, .. }
         | IrInstruction::CoroutineClose { coroutine, .. } => *coroutine == value,
+        IrInstruction::CoroutineAwaitResult => false,
         IrInstruction::Closure { captures, .. } => captures.first().copied() == Some(value),
         IrInstruction::ArrayNew { elements, .. } => elements.first().copied() == Some(value),
         IrInstruction::ArrayGet { .. } | IrInstruction::ArraySet { .. } => false,

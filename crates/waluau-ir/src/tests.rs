@@ -1790,6 +1790,45 @@ fn lowers_coroutine_resume_multi_value_to_unknown_payload() {
 }
 
 #[test]
+fn lowers_coroutine_await_promise_to_suspend_and_resume_result() {
+    let source = r#"
+        declare function makePromise(): extern
+
+        function run(): string
+            local value: unknown = coroutine.await_promise(makePromise())
+            return value::string
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+
+    let mut saw_await_result = false;
+    let mut saw_await_terminator = false;
+    for function in &module.functions {
+        for block in function.blocks.values() {
+            for (_, instruction) in &block.instructions {
+                if matches!(instruction, Instruction::CoroutineAwaitResult) {
+                    saw_await_result = true;
+                }
+            }
+            if matches!(block.terminator, Terminator::CoroutineAwaitPromise { .. }) {
+                saw_await_terminator = true;
+            }
+        }
+    }
+
+    assert!(
+        saw_await_result,
+        "expected CoroutineAwaitResult instruction"
+    );
+    assert!(
+        saw_await_terminator,
+        "expected CoroutineAwaitPromise terminator"
+    );
+}
+
+#[test]
 fn lowers_tagged_union_pattern_match_binding_to_tag_check_and_unbox() {
     let source = r#"
         type Either = Left(i32) | Right(f64)

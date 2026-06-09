@@ -266,6 +266,7 @@ fn collect_record_types_from_instruction(
         | IrInstruction::HostCall { .. }
         | IrInstruction::CoroutineCreate { .. }
         | IrInstruction::CoroutineResume { .. }
+        | IrInstruction::CoroutineAwaitResult
         | IrInstruction::CoroutineClose { .. }
         | IrInstruction::ArrayLen { .. }
         | IrInstruction::BytesGet { .. }
@@ -300,6 +301,17 @@ pub(crate) fn array_storage_type(
                 heap_type: HeapType::Concrete(index),
             })))
         }
+        Type::Function { .. } => Ok(StorageType::Val(ValType::Ref(RefType {
+            nullable: true,
+            heap_type: HeapType::Concrete(registry.func_val_struct_type),
+        }))),
+        Type::Record(_) => Ok(StorageType::Val(ValType::Ref(RefType {
+            nullable: true,
+            heap_type: HeapType::Concrete(registry.record_index(element_ty)?),
+        }))),
+        Type::Thread => Ok(StorageType::Val(coroutine_state_ref_type(
+            registry.coroutine_state_type()?,
+        ))),
         Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
         Type::Multi(_) => Err(Diagnostic::new(
             "multi-value types are not supported in array storage yet",
@@ -312,9 +324,7 @@ pub(crate) fn array_storage_type(
                 heap_type: HeapType::Concrete(index),
             })))
         }
-        Type::Function { .. } | Type::Record(_) | Type::TypeParam(_) | Type::Thread => {
-            unreachable!()
-        }
+        Type::TypeParam(_) => unreachable!(),
         Type::Unit => unreachable!(),
     }
 }

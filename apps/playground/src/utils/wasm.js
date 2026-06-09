@@ -1,7 +1,9 @@
 export const WALUAU_STRING_CONSTANTS_MODULE = 'string_constants';
 export const WALUAU_IMPORT_MODULE = 'waluau';
 // Must match waluau_codegen_wasm::host::HOST_IMPORT_COUNT
-export const WALUAU_HOST_IMPORT_COUNT = 18;
+export const WALUAU_HOST_IMPORT_COUNT = 19;
+const PROMISE_RESUME_TRAMPOLINE_EXPORT = '__waluau_resume_promise_await';
+const PROMISE_RESET_ACTIVE_EXPORT = '__waluau_reset_active_coroutine';
 
 let printCaptureCallback = null;
 const domEventListeners = new WeakMap();
@@ -227,6 +229,15 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
   const bytesConstants = decodeBytesConstantsFromWasm(wasmModule);
   const domHost = createPlaygroundDomHost(wasmModule, options.domOutputRoot, options.getWasmExports);
   const hostImports = options.hostImports ?? {};
+  const reportAsyncError = (error) => {
+    if (typeof options.onAsyncError === 'function') {
+      options.onAsyncError(error);
+      return;
+    }
+    queueMicrotask(() => {
+      throw error;
+    });
+  };
   const asBytes = (value) => {
     if (value instanceof Uint8Array) return value;
     throw new Error(`Expected Uint8Array bytes value, got ${Object.prototype.toString.call(value)}`);
@@ -240,6 +251,33 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
   const waluauImports = {
     ...domHost,
     ...hostImports,
+    __waluau_attach_promise: (threadHandle, promise) => {
+      const exports = options.getWasmExports?.();
+      const resume = exports?.[PROMISE_RESUME_TRAMPOLINE_EXPORT];
+      const resetActive = exports?.[PROMISE_RESET_ACTIVE_EXPORT];
+      if (typeof resume !== 'function') {
+        throw new Error(`Missing ${PROMISE_RESUME_TRAMPOLINE_EXPORT} export for Promise await`);
+      }
+      if (typeof resetActive !== 'function') {
+        throw new Error(`Missing ${PROMISE_RESET_ACTIVE_EXPORT} export for Promise await`);
+      }
+      if (promise == null || typeof promise.then !== 'function') {
+        throw new TypeError('coroutine.await_promise expects a Promise-like extern value');
+      }
+      const invoke = (payload, rejected) => {
+        try {
+          resume(threadHandle, payload, rejected);
+        } catch (error) {
+          reportAsyncError(error);
+        } finally {
+          resetActive();
+        }
+      };
+      Promise.resolve(promise).then(
+        (value) => invoke(value, 0),
+        (reason) => invoke(reason, 1),
+      );
+    },
     print: (value) => {
       if (printCaptureCallback) {
         printCaptureCallback(String(value));

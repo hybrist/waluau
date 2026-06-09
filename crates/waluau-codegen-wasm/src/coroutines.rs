@@ -7,10 +7,15 @@ use wasm_encoder::{ConstExpr, GlobalSection, GlobalType, HeapType, RefType, ValT
 pub(crate) const STATE_TAG_FIELD: u32 = 0;
 pub(crate) const STATE_YIELDED_FIELD: u32 = 1;
 pub(crate) const STATE_CONT_FIELD: u32 = 2;
-pub(crate) const STATE_PC_FIELD_BASE: u32 = 3;
+pub(crate) const STATE_AWAIT_STATUS_FIELD: u32 = 3;
+pub(crate) const STATE_PC_FIELD_BASE: u32 = 4;
 pub(crate) const TAG_SUSPENDED: i32 = 0;
 pub(crate) const TAG_FINISHED: i32 = 1;
 pub(crate) const TAG_ERROR: i32 = 2;
+pub(crate) const TAG_AWAITING_PROMISE: i32 = 3;
+pub(crate) const AWAIT_STATUS_NONE: i32 = 0;
+pub(crate) const AWAIT_STATUS_FULFILLED: i32 = 1;
+pub(crate) const AWAIT_STATUS_REJECTED: i32 = 2;
 
 #[derive(Clone, Debug)]
 pub(crate) struct CoroutinePlan {
@@ -23,11 +28,12 @@ impl CoroutinePlan {
     pub(crate) fn new(module: &Module, imported_global_count: u32) -> Self {
         let mut directly_yielding = BTreeSet::new();
         for function in &module.functions {
-            if function
-                .blocks
-                .values()
-                .any(|block| matches!(block.terminator, Terminator::CoroutineYield { .. }))
-            {
+            if function.blocks.values().any(|block| {
+                matches!(
+                    block.terminator,
+                    Terminator::CoroutineYield { .. } | Terminator::CoroutineAwaitPromise { .. }
+                )
+            }) {
                 directly_yielding.insert(function.name.clone());
             }
         }

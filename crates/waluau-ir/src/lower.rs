@@ -4710,6 +4710,38 @@ impl Builder<'_> {
                     expected,
                 ))
             }
+            COROUTINE_AWAIT_PROMISE => {
+                if args.len() != 1 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{COROUTINE_AWAIT_PROMISE} expects 1 argument, got {}",
+                        args.len()
+                    ))));
+                }
+                let promise_ty = match self.infer_expr_type(&args[0], types, None) {
+                    Ok(ty) => ty,
+                    Err(error) => return Some(Err(error)),
+                };
+                if !is_promise_like_extern(&promise_ty) {
+                    return Some(Err(Diagnostic::new(
+                        "coroutine.await_promise expects an extern Promise-like value",
+                    )));
+                }
+                let promise = match self.lower_expr(&args[0], env, types, Some(promise_ty)) {
+                    Ok(value) => value,
+                    Err(error) => return Some(Err(error)),
+                };
+                let resume_block = self.new_block();
+                self.set_terminator(
+                    self.current_block,
+                    Terminator::CoroutineAwaitPromise {
+                        promise,
+                        resume_block,
+                    },
+                );
+                self.current_block = resume_block;
+                let value = self.emit(Instruction::CoroutineAwaitResult);
+                Some(self.coerce_value(value, Type::Unknown, expected))
+            }
             COROUTINE_CLOSE => {
                 if args.len() != 1 {
                     return Some(Err(Diagnostic::new(format!(
@@ -4822,6 +4854,25 @@ impl Builder<'_> {
                 match coroutine_ty {
                     Type::Thread => Some(Ok(Type::Bool)),
                     _ => Some(Err(Diagnostic::new("coroutine.close expects a thread"))),
+                }
+            }
+            COROUTINE_AWAIT_PROMISE => {
+                if args.len() != 1 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{COROUTINE_AWAIT_PROMISE} expects 1 argument, got {}",
+                        args.len()
+                    ))));
+                }
+                let promise_ty = match self.infer_expr_type(&args[0], types, None) {
+                    Ok(ty) => ty,
+                    Err(error) => return Some(Err(error)),
+                };
+                if is_promise_like_extern(&promise_ty) {
+                    Some(Ok(Type::Unknown))
+                } else {
+                    Some(Err(Diagnostic::new(
+                        "coroutine.await_promise expects an extern Promise-like value",
+                    )))
                 }
             }
             COROUTINE_YIELD => {

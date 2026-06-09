@@ -7,10 +7,19 @@ use super::Binding;
 use super::numeric::coerce_type;
 use super::signatures::FnSignature;
 
+fn is_promise_like_extern(ty: &Type) -> bool {
+    match ty {
+        Type::Extern | Type::ExternSubtype(_) => true,
+        Type::Opaque { ty, .. } => is_promise_like_extern(ty),
+        _ => false,
+    }
+}
+
 pub(super) const COROUTINE_CREATE: &str = "coroutine.create";
 pub(super) const COROUTINE_RESUME: &str = "coroutine.resume";
 pub(super) const COROUTINE_CLOSE: &str = "coroutine.close";
 pub(super) const COROUTINE_YIELD: &str = "coroutine.yield";
+pub(super) const COROUTINE_AWAIT_PROMISE: &str = "coroutine.await_promise";
 pub(super) const MATH_ABS: &str = "math.abs";
 pub(super) const MATH_MIN: &str = "math.min";
 pub(super) const MATH_MAX: &str = "math.max";
@@ -153,6 +162,31 @@ pub(super) fn infer_coroutine_builtin_call(
                 Err(error) => return Some(Err(error)),
             }
             Some(coerce_type(Type::Unit, expected))
+        }
+        COROUTINE_AWAIT_PROMISE => {
+            if args.len() != 1 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{COROUTINE_AWAIT_PROMISE} expects 1 argument, got {}",
+                    args.len()
+                ))));
+            }
+            let promise_ty = match super::expressions::infer_expr(
+                &args[0],
+                vars,
+                fn_signatures,
+                active_type_params,
+                None,
+            ) {
+                Ok(ty) => ty,
+                Err(error) => return Some(Err(error)),
+            };
+            if is_promise_like_extern(&promise_ty) {
+                Some(coerce_type(Type::Unknown, expected))
+            } else {
+                Some(Err(Diagnostic::new(
+                    "coroutine.await_promise expects an extern Promise-like value",
+                )))
+            }
         }
         _ => None,
     }
