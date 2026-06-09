@@ -210,6 +210,10 @@
       "parent": null
     },
     {
+      "interface": "Response",
+      "parent": null
+    },
+    {
       "interface": "File",
       "parent": "Blob"
     },
@@ -2684,6 +2688,16 @@
         "callback: () -> unit"
       ],
       "returnType": "unit"
+    },
+    {
+      "interface": "Window",
+      "kind": "operation",
+      "idlName": "fetch",
+      "emittedName": "fetch",
+      "params": [
+        "input: string"
+      ],
+      "returnType": "Promise<Response>"
     },
     {
       "interface": "Window",
@@ -5831,6 +5845,88 @@
       "readonly": false
     },
     {
+      "interface": "Response",
+      "kind": "operation",
+      "idlName": "error",
+      "emittedName": "error",
+      "params": [],
+      "returnType": "Response"
+    },
+    {
+      "interface": "Response",
+      "kind": "operation",
+      "idlName": "redirect",
+      "emittedName": "redirect",
+      "params": [
+        "url: string"
+      ],
+      "returnType": "Response"
+    },
+    {
+      "interface": "Response",
+      "kind": "attribute",
+      "idlName": "url",
+      "emittedName": "url",
+      "type": "string",
+      "readonly": true
+    },
+    {
+      "interface": "Response",
+      "kind": "attribute",
+      "idlName": "redirected",
+      "emittedName": "redirected",
+      "type": "bool",
+      "readonly": true
+    },
+    {
+      "interface": "Response",
+      "kind": "attribute",
+      "idlName": "status",
+      "emittedName": "status",
+      "type": "u32",
+      "readonly": true
+    },
+    {
+      "interface": "Response",
+      "kind": "attribute",
+      "idlName": "ok",
+      "emittedName": "ok",
+      "type": "bool",
+      "readonly": true
+    },
+    {
+      "interface": "Response",
+      "kind": "attribute",
+      "idlName": "statusText",
+      "emittedName": "statusText",
+      "type": "string",
+      "readonly": true
+    },
+    {
+      "interface": "Response",
+      "kind": "operation",
+      "idlName": "clone",
+      "emittedName": "clone",
+      "params": [],
+      "returnType": "Response"
+    },
+    {
+      "interface": "Response",
+      "kind": "attribute",
+      "idlName": "bodyUsed",
+      "emittedName": "bodyUsed",
+      "type": "bool",
+      "readonly": true
+    },
+    {
+      "interface": "Response",
+      "kind": "operation",
+      "idlName": "text",
+      "emittedName": "text",
+      "params": [],
+      "returnType": "Promise<string>"
+    },
+    {
       "interface": "DOMPointReadOnly",
       "kind": "operation",
       "idlName": "fromPoint",
@@ -6781,7 +6877,15 @@
   "emittedHostFunctions": [
     {
       "name": "dom_window",
+      "params": [],
       "returnType": "Window"
+    },
+    {
+      "name": "fetch",
+      "params": [
+        "input: string"
+      ],
+      "returnType": "Promise<Response>"
     }
   ],
   "skippedMembers": [
@@ -8095,12 +8199,6 @@
       "member": "indexedDB",
       "reason": "Web IDL type IDBFactory is not part of the selected DOM interface surface",
       "issue": null
-    },
-    {
-      "interface": "Window",
-      "member": "fetch",
-      "reason": "unsupported generic Web IDL type Promise<Response>",
-      "issue": "waluau-2c6n"
     },
     {
       "interface": "Window",
@@ -10319,6 +10417,54 @@
       "reason": "member 'attribute:align' collides with the same-named member kept on HTMLHeadingElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
       "issue": "waluau-1l02",
       "disabled": true
+    },
+    {
+      "interface": "Response",
+      "member": "json",
+      "reason": "data: unsupported Web IDL type any",
+      "issue": "waluau-lxdd"
+    },
+    {
+      "interface": "Response",
+      "member": "type",
+      "reason": "unsupported Web IDL type ResponseType",
+      "issue": null
+    },
+    {
+      "interface": "Response",
+      "member": "headers",
+      "reason": "Web IDL type Headers is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "Response",
+      "member": "body",
+      "reason": "Web IDL type ReadableStream? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "Response",
+      "member": "arrayBuffer",
+      "reason": "unsupported generic Web IDL type Promise<ArrayBuffer>",
+      "issue": "waluau-2c6n"
+    },
+    {
+      "interface": "Response",
+      "member": "blob",
+      "reason": "unsupported generic Web IDL type Promise<Blob>",
+      "issue": "waluau-2c6n"
+    },
+    {
+      "interface": "Response",
+      "member": "bytes",
+      "reason": "unsupported generic Web IDL type Promise<Uint8Array>",
+      "issue": "waluau-2c6n"
+    },
+    {
+      "interface": "Response",
+      "member": "formData",
+      "reason": "unsupported generic Web IDL type Promise<FormData>",
+      "issue": "waluau-2c6n"
     },
     {
       "interface": "DOMPointReadOnly",

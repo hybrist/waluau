@@ -181,6 +181,68 @@ test('generated externs expose the DOM window root', () => {
   assert.match(externs, /^declare function dom_window\(\): Window$/m);
 });
 
+test('generated externs expose narrow DOM Promise APIs for fetch and Response.text', () => {
+  const externs = readRepoFile('externs/dom.walu');
+  const metadata = JSON.parse(readRepoFile('externs/dom.metadata.json'));
+  const diagnostics = readRepoFile('externs/dom.diagnostics.txt');
+
+  assert.match(externs, /^type Promise<T> = extern$/m);
+  assert.match(externs, /^type Response = extern$/m);
+  assert.match(externs, /^declare function Window:fetch\(input: string\): Promise<Response>$/m);
+  assert.match(externs, /^declare function Response:text\(\): Promise<string>$/m);
+  assert.match(externs, /^declare function fetch\(input: string\): Promise<Response>$/m);
+  assert.doesNotMatch(diagnostics, /skip Window\.fetch: unsupported generic Web IDL type Promise<Response>/);
+  assert.doesNotMatch(diagnostics, /skip Response\.text: unsupported generic Web IDL type Promise<USVString>/);
+  assert.match(diagnostics, /skip Blob\.text: unsupported generic Web IDL type Promise<USVString> \(waluau-2c6n\)/);
+
+  const emittedMembers = metadata.emittedMembers.map((entry) => `${entry.interface}.${entry.idlName}`);
+  assert.ok(emittedMembers.includes('Window.fetch'));
+  assert.ok(emittedMembers.includes('Response.text'));
+  assert.ok(metadata.emittedHostFunctions.some((entry) =>
+    entry.name === 'fetch' &&
+    entry.returnType === 'Promise<Response>' &&
+    entry.params?.join(', ') === 'input: string'
+  ));
+});
+
+test('DOM Promise generation keeps nested generic Promise returns disabled', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'waluau-dom-idl-promise-nested-'));
+  const input = path.join(dir, 'custom.webidl');
+  const filter = path.join(dir, 'filter.json');
+  const patches = path.join(dir, 'patches.json');
+
+  writeFileSync(input, [
+    'partial interface Window {',
+    '  Promise<sequence<DOMString>> fetch();',
+    '};',
+    '',
+  ].join('\n'));
+  writeFileSync(filter, JSON.stringify({
+    interfaces: ['Window'],
+    typeMap: {
+      DOMString: 'string',
+    },
+    disabledMembers: {},
+    hostFunctions: [],
+    skipIssueRefs: {
+      'unsupported-generic:Promise': 'waluau-2c6n',
+    },
+  }));
+  writeFileSync(patches, JSON.stringify({}));
+
+  const generated = runGenerator({
+    input: path.relative(repoRoot, input),
+    filter: path.relative(repoRoot, filter),
+    patches: path.relative(repoRoot, patches),
+  });
+
+  assert.doesNotMatch(generated.externs, /^declare function Window:fetch/m);
+  assert.match(
+    generated.diagnostics,
+    /skip Window\.fetch: unsupported generic Web IDL type Promise<sequence<DOMString>> \(waluau-2c6n\)/,
+  );
+});
+
 test('generated externs expose minimal DOM event callbacks', () => {
   const externs = readRepoFile('externs/dom.walu');
   assert.match(externs, /^declare property Event:target: EventTarget$/m);

@@ -52,6 +52,7 @@
     "DOMQuad",
     "Selection",
     "Blob",
+    "Response",
     "File",
     "FileList",
     "MimeType",
@@ -2106,6 +2107,16 @@
     {
       "name": "dom_window",
       "returnType": "Window"
+    },
+    {
+      "name": "fetch",
+      "returnType": "Promise<Response>",
+      "params": [
+        {
+          "name": "input",
+          "idlType": "RequestInfo"
+        }
+      ]
     }
   ],
   "typeMap": {
@@ -2131,6 +2142,7 @@
     "unrestricted float": "f32",
     "octet": "u32",
     "byte": "i32",
+    "RequestInfo": "string",
     "WindowProxy": "Window",
     "VoidFunction": "() -> unit",
     "FrameRequestCallback": "(f64) -> unit",

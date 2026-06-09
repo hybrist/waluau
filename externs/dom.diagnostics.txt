@@ -520,6 +520,14 @@ skip ProcessingInstruction.target: disabled -- member 'attribute:target' collide
 skip Range.collapse: disabled -- member 'operation:collapse' collides with the same-named member kept on Selection (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Range.createContextualFragment: string: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-b3hl)
 skip Range.detach: disabled -- member 'operation:detach' collides with the same-named member kept on NodeIterator (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
+skip Response.arrayBuffer: unsupported generic Web IDL type Promise<ArrayBuffer> (waluau-2c6n)
+skip Response.blob: unsupported generic Web IDL type Promise<Blob> (waluau-2c6n)
+skip Response.body: Web IDL type ReadableStream? is not part of the selected DOM interface surface
+skip Response.bytes: unsupported generic Web IDL type Promise<Uint8Array> (waluau-2c6n)
+skip Response.formData: unsupported generic Web IDL type Promise<FormData> (waluau-2c6n)
+skip Response.headers: Web IDL type Headers is not part of the selected DOM interface surface
+skip Response.json: data: unsupported Web IDL type any (waluau-lxdd)
+skip Response.type: unsupported Web IDL type ResponseType
 skip Screen.height: disabled -- member 'attribute:height' collides with the same-named member kept on DOMRectReadOnly (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Screen.width: disabled -- member 'attribute:width' collides with the same-named member kept on DOMRectReadOnly (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip ScreenOrientation.lock: unsupported generic Web IDL type Promise<undefined> (waluau-2c6n)
@@ -573,7 +581,6 @@ skip Window.documentPictureInPicture: Web IDL type DocumentPictureInPicture is n
 skip Window.event: unsupported union Web IDL type (Event or undefined) (waluau-b3hl)
 skip Window.external: Web IDL type External is not part of the selected DOM interface surface
 skip Window.fence: Web IDL type Fence? is not part of the selected DOM interface surface
-skip Window.fetch: unsupported generic Web IDL type Promise<Response> (waluau-2c6n)
 skip Window.fetchLater: Web IDL type FetchLaterResult is not part of the selected DOM interface surface
 skip Window.getDigitalGoodsService: unsupported generic Web IDL type Promise<DigitalGoodsService> (waluau-2c6n)
 skip Window.getScreenDetails: unsupported generic Web IDL type Promise<ScreenDetails> (waluau-2c6n)

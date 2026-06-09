@@ -240,10 +240,42 @@ async function parseAndMergeIdls(customSource) {
   return result;
 }
 
-function mapType(idlType, filter, knownInterfaces, include) {
+const ALLOWED_PROMISE_RETURNS = new Map([
+  ['Window.fetch', new Set(['Response'])],
+  ['Response.text', new Set(['USVString'])],
+  ['host:fetch', new Set(['Response'])],
+]);
+
+function mapType(idlType, filter, knownInterfaces, include, options = {}) {
   const nullable = idlType.endsWith('?');
   const base = nullable ? idlType.slice(0, -1).trim() : idlType;
-  const genericMatch = base.match(/^(sequence|FrozenArray|Promise|ObservableArray|record)\s*</);
+  const promiseMatch = base.match(/^Promise\s*<(.+)>$/);
+  if (promiseMatch) {
+    if (options.position !== 'return') {
+      return {
+        error: `unsupported generic Web IDL type ${idlType}`,
+        category: 'unsupported-generic:Promise',
+      };
+    }
+    const ownerKey = options.owner ? `${options.owner}.${options.member}` : `host:${options.member}`;
+    const inner = promiseMatch[1].trim();
+    if (!ALLOWED_PROMISE_RETURNS.get(ownerKey)?.has(inner)) {
+      return {
+        error: `unsupported generic Web IDL type ${idlType}`,
+        category: 'unsupported-generic:Promise',
+      };
+    }
+    if (inner.includes('<')) {
+      return {
+        error: `unsupported nested generic Web IDL type ${idlType}`,
+        category: 'unsupported-generic:Promise',
+      };
+    }
+    const mapped = mapType(inner, filter, knownInterfaces, include, options);
+    if (mapped.error) return mapped;
+    return finishMapType(idlType, `Promise<${mapped.type}>`, nullable);
+  }
+  const genericMatch = base.match(/^(sequence|FrozenArray|ObservableArray|record)\s*</);
   if (genericMatch) {
     return {
       error: `unsupported generic Web IDL type ${idlType}`,
@@ -335,7 +367,11 @@ function emitInterfaceMember(iface, member, context) {
   const rename = patchedName(member.name, patches);
 
   if (member.kind === 'attribute') {
-    const mapped = mapType(member.idlType, filter, knownInterfaces, include);
+    const mapped = mapType(member.idlType, filter, knownInterfaces, include, {
+      owner: iface.name,
+      member: member.name,
+      position: 'attribute',
+    });
     if (mapped.error) return { skipped: mapped.error, category: mapped.category };
     return {
       line: `declare property ${iface.name}:${rename}: ${mapped.type}`,
@@ -351,14 +387,22 @@ function emitInterfaceMember(iface, member, context) {
   }
 
   if (member.kind === 'operation') {
-    const returnType = mapType(member.idlType, filter, knownInterfaces, include);
+    const returnType = mapType(member.idlType, filter, knownInterfaces, include, {
+      owner: iface.name,
+      member: member.name,
+      position: 'return',
+    });
     if (returnType.error) return { skipped: returnType.error, category: returnType.category };
     const params = [];
     const usedParamNames = new Set();
     for (const param of member.params) {
       if (param.unsupported) return { skipped: `unsupported parameter syntax ${param.source}` };
       if (param.optional) return { skipped: `unsupported optional parameter ${param.name}` };
-      const mapped = mapType(param.idlType, filter, knownInterfaces, include);
+      const mapped = mapType(param.idlType, filter, knownInterfaces, include, {
+        owner: iface.name,
+        member: member.name,
+        position: 'parameter',
+      });
       if (mapped.error) return { skipped: `${param.name}: ${mapped.error}`, category: mapped.category };
       const paramName = sanitizeParamName(
         patchedParamName(iface.name, member.name, param.name, patches),
@@ -459,6 +503,7 @@ async function generate({ customSource, filter, patches }) {
     metadata.inheritance.push({ interface: iface.name, parent: iface.parent });
     output.push(emitExternTypeLine(iface, include));
   }
+  output.push('type Promise<T> = extern');
   output.push('');
 
   // Negative filter: every member of a selected interface is emitted by default.
@@ -507,14 +552,37 @@ async function generate({ customSource, filter, patches }) {
   }
 
   for (const hostFunction of filter.hostFunctions ?? []) {
-    const returnType = mapType(hostFunction.returnType, filter, knownInterfaces, include);
+    const returnType = mapType(hostFunction.returnType, filter, knownInterfaces, include, {
+      member: hostFunction.name,
+      position: 'return',
+    });
     if (returnType.error) {
       diagnostics.push(`skip host function ${hostFunction.name}: ${returnType.error}`);
       continue;
     }
-    output.push(`declare function ${hostFunction.name}(): ${returnType.type}`);
+    const params = [];
+    const usedParamNames = new Set();
+    let paramError = null;
+    for (const param of hostFunction.params ?? []) {
+      const mapped = mapType(param.idlType, filter, knownInterfaces, include, {
+        member: hostFunction.name,
+        position: 'parameter',
+      });
+      if (mapped.error) {
+        paramError = `${param.name}: ${mapped.error}`;
+        break;
+      }
+      const paramName = sanitizeParamName(toSnake(param.name), usedParamNames);
+      params.push(`${paramName}: ${mapped.type}`);
+    }
+    if (paramError) {
+      diagnostics.push(`skip host function ${hostFunction.name}: ${paramError}`);
+      continue;
+    }
+    output.push(`declare function ${hostFunction.name}(${params.join(', ')}): ${returnType.type}`);
     metadata.emittedHostFunctions.push({
       name: hostFunction.name,
+      params,
       returnType: returnType.type,
     });
   }
