@@ -405,6 +405,14 @@ mod tests {
     }
 
     #[test]
+    fn compile_promise_extern_api_signatures_conformance() {
+        let source = include_str!("../../../conformance/promise_extern_api_signatures.walu");
+        let result =
+            compile_source(source).expect("Promise<T> extern API conformance should compile");
+        assert!(result.wat.contains("(module"));
+    }
+
+    #[test]
     fn compile_records_conformance_with_alias_mutation() {
         let source = include_str!("../../../conformance/records_sealed_tables.walu");
         let result =

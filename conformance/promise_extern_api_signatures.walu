@@ -1,0 +1,21 @@
+-- Promise<T> extern aliases should support fetch-style host functions and
+-- Response:text()-style host methods while erasing to externref-compatible
+-- imports.
+
+type Response = extern
+type Promise<T> = extern
+
+declare function fetch(url: string): Promise<Response>
+declare function take_response_promise(value: Promise<Response>): Promise<Response>
+declare function take_string_promise(value: Promise<string>): Promise<string>
+declare function Response:text(): Promise<string>
+
+function request(url: string): Promise<Response>
+    local response: Promise<Response> = fetch(url)
+    return take_response_promise(response)
+end
+
+function read_text(response: Response): Promise<string>
+    local text: Promise<string> = response:text()
+    return take_string_promise(text)
+end

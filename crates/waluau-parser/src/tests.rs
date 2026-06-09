@@ -191,6 +191,56 @@ fn parses_declared_host_method_with_implicit_receiver_param() {
 }
 
 #[test]
+fn parses_generic_extern_promise_api_declarations() {
+    let source = r#"
+        type Response = extern
+        type Promise<T> = extern
+
+        declare function fetch(url: string): Promise<Response>
+        declare function Response:text(): Promise<string>
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert_eq!(program.type_declarations.len(), 2);
+    assert_eq!(program.type_declarations[1].name, "Promise");
+    assert_eq!(program.type_declarations[1].type_params, vec!["T"]);
+    assert_eq!(program.type_declarations[1].ty, Type::Extern);
+
+    let fetch = &program.declared_imports[0];
+    assert_eq!(fetch.name, "fetch");
+    assert_eq!(fetch.params.len(), 1);
+    assert_eq!(fetch.params[0].ty, Type::String);
+    assert_eq!(
+        fetch.return_type,
+        Type::Named {
+            name: "Promise".into(),
+            type_args: vec![Type::Named {
+                name: "Response".into(),
+                type_args: vec![],
+            }],
+        }
+    );
+
+    let text = &program.declared_imports[1];
+    assert_eq!(text.name, "Response.text");
+    assert_eq!(text.params.len(), 1);
+    assert_eq!(
+        text.params[0].ty,
+        Type::Named {
+            name: "Response".into(),
+            type_args: vec![],
+        }
+    );
+    assert_eq!(
+        text.return_type,
+        Type::Named {
+            name: "Promise".into(),
+            type_args: vec![Type::String],
+        }
+    );
+}
+
+#[test]
 fn parses_declared_property_as_getter_and_setter_imports() {
     let source = r#"
         type Element = extern

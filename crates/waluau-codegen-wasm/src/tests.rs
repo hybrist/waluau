@@ -808,6 +808,46 @@ fn generic_extern_specializations_lower_to_distinct_imports_with_externref_signa
 }
 
 #[test]
+fn promise_extern_api_imports_lower_to_externref_signatures() {
+    let source = r#"
+        type Response = extern
+        type Promise<T> = extern
+
+        declare function fetch(url: string): Promise<Response>
+        declare function Response:text(): Promise<string>
+
+        function request(url: string): Promise<Response>
+            return fetch(url)
+        end
+
+        function read_text(response: Response): Promise<string>
+            return response:text()
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    assert!(
+        wat.contains(r#"(import "waluau" "fetch""#),
+        "expected fetch import in:\n{wat}"
+    );
+    assert!(
+        wat.contains(r#"(import "waluau" "Response.text""#),
+        "expected Response.text import in:\n{wat}"
+    );
+    assert!(
+        wat.contains("externref"),
+        "Promise<T> API imports should lower to externref-compatible signatures"
+    );
+}
+
+#[test]
 fn nullable_extern_nil_check_lowers_to_ref_is_null() {
     let source = r#"
         type Element = extern
