@@ -397,6 +397,14 @@ mod tests {
     }
 
     #[test]
+    fn compile_generic_extern_type_constructors_conformance() {
+        let source = include_str!("../../../conformance/generic_extern_type_constructors.walu");
+        let result = compile_source(source)
+            .expect("generic extern type constructors conformance should compile");
+        assert!(result.wat.contains("(module"));
+    }
+
+    #[test]
     fn compile_records_conformance_with_alias_mutation() {
         let source = include_str!("../../../conformance/records_sealed_tables.walu");
         let result =

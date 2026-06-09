@@ -776,6 +776,38 @@ fn extern_type_alias_lowers_to_externref() {
 }
 
 #[test]
+fn generic_extern_specializations_lower_to_distinct_imports_with_externref_signatures() {
+    let source = r#"
+        type Response = extern
+        type Promise<T> = extern
+
+        declare function take_response(value: Promise<Response>): Promise<Response>
+        declare function take_string(value: Promise<string>): Promise<string>
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    assert!(
+        wat.contains(r#"(import "waluau" "take_response""#),
+        "expected take_response import in:\n{wat}"
+    );
+    assert!(
+        wat.contains(r#"(import "waluau" "take_string""#),
+        "expected take_string import in:\n{wat}"
+    );
+    assert!(
+        wat.contains("externref"),
+        "generic extern specializations should lower to externref in Wasm signatures"
+    );
+}
+
+#[test]
 fn nullable_extern_nil_check_lowers_to_ref_is_null() {
     let source = r#"
         type Element = extern

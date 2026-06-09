@@ -125,6 +125,29 @@ fn substitute_type_params(ty: &Type, subst: &HashMap<String, Type>) -> Type {
     }
 }
 
+fn generic_instantiation_name(name: &str, type_args: &[Type]) -> String {
+    if type_args.is_empty() {
+        return name.to_string();
+    }
+
+    let rendered_args = type_args
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{name}<{rendered_args}>")
+}
+
+fn specialize_generic_extern_constructor(name: &str, type_args: &[Type], resolved: Type) -> Type {
+    match resolved {
+        Type::Extern | Type::ExternSubtype(_) => Type::Opaque {
+            name: generic_instantiation_name(name, type_args),
+            ty: Box::new(resolved),
+        },
+        other => other,
+    }
+}
+
 fn resolve_decl_type_allowing_forward_refs(
     name: &str,
     raw_opaque: &HashMap<String, Type>,
@@ -220,7 +243,7 @@ fn resolve_type_refs_allowing_forward_refs(
                     .type_params
                     .iter()
                     .cloned()
-                    .zip(resolved_args)
+                    .zip(resolved_args.iter().cloned())
                     .collect::<HashMap<_, _>>();
                 stack.push(name.clone());
                 let instantiated = substitute_type_params(&decl.ty, &subst);
@@ -233,7 +256,9 @@ fn resolve_type_refs_allowing_forward_refs(
                     stack,
                 );
                 stack.pop();
-                return resolved;
+                return resolved.map(|resolved| {
+                    specialize_generic_extern_constructor(name, &resolved_args, resolved)
+                });
             }
             if !raw_opaque.contains_key(name) {
                 return Err(Diagnostic::new(format!("unknown type '{name}'")));
@@ -567,7 +592,7 @@ fn resolve_type_refs_fixpoint(
                     .type_params
                     .iter()
                     .cloned()
-                    .zip(resolved_args)
+                    .zip(resolved_args.iter().cloned())
                     .collect::<HashMap<_, _>>();
                 stack.push(name.clone());
                 let instantiated = substitute_type_params(&decl.ty, &subst);
@@ -581,7 +606,9 @@ fn resolve_type_refs_fixpoint(
                     fixpoint_mode,
                 );
                 stack.pop();
-                return resolved;
+                return resolved.map(|resolved| {
+                    specialize_generic_extern_constructor(name, &resolved_args, resolved)
+                });
             }
             if !raw_opaque.contains_key(name) {
                 return Err(Diagnostic::new(format!("unknown type '{name}'")));
