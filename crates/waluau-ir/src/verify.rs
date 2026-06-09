@@ -330,6 +330,7 @@ fn verify_function(
                         )));
                     }
                 }
+                Instruction::CoroutineAwaitResult => {}
                 Instruction::Closure {
                     name,
                     captures,
@@ -801,6 +802,25 @@ fn verify_function(
                 }
                 require_block(function, *resume_block)?;
             }
+            Terminator::CoroutineAwaitPromise {
+                promise,
+                resume_block,
+            } => {
+                let promise_ty = require_dominating_definition(
+                    &definitions,
+                    &dominators,
+                    &seen_in_block,
+                    block.id,
+                    *promise,
+                )?;
+                if !is_promise_like_extern(&promise_ty) {
+                    return Err(Diagnostic::new(format!(
+                        "coroutine await in block {:?} expects extern promise, got {}",
+                        block.id, promise_ty
+                    )));
+                }
+                require_block(function, *resume_block)?;
+            }
             Terminator::Return(value) => {
                 let value_ty = require_dominating_definition(
                     &definitions,
@@ -931,6 +951,7 @@ fn infer_instruction_type(
             Ok(Type::Multi(vec![Type::Bool, Type::Unknown]))
         }
         Instruction::CoroutineResumeTagged { .. } => Ok(Type::canonical_tagged_union_record()),
+        Instruction::CoroutineAwaitResult => Ok(Type::Unknown),
         Instruction::CoroutineClose { .. } => Ok(Type::Bool),
         Instruction::Closure {
             params,
@@ -1096,7 +1117,8 @@ fn predecessors(function: &Function) -> HashMap<BlockId, Vec<BlockId>> {
                 out.entry(*then_block).or_default().push(*id);
                 out.entry(*else_block).or_default().push(*id);
             }
-            Terminator::CoroutineYield { resume_block, .. } => {
+            Terminator::CoroutineYield { resume_block, .. }
+            | Terminator::CoroutineAwaitPromise { resume_block, .. } => {
                 out.entry(*resume_block).or_default().push(*id);
             }
             Terminator::Return(_) | Terminator::Unreachable { .. } => {}

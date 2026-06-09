@@ -1216,6 +1216,112 @@ fn emits_valid_wasm_for_unknown_coroutine_extern_payloads() {
 }
 
 #[test]
+fn promise_await_bridge_imports_and_exports_runtime_helpers() {
+    let source = r#"
+        declare function makePromise(): extern
+        declare function record_string(value: string): unit
+
+        function run(): unit
+            local co: thread = coroutine.create(function(): i32
+                local value: unknown = coroutine.await_promise(makePromise())
+                record_string(value::string)
+                return 0
+            end)
+            coroutine.resume(co)
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        wat.contains(r#"(import "waluau" "__waluau_attach_promise""#),
+        "should import the Promise-attachment runtime helper"
+    );
+    assert!(
+        wasm_export_func_index(&wasm, super::PROMISE_RESUME_TRAMPOLINE_EXPORT).is_some(),
+        "promise settlement resume helper should be exported"
+    );
+    assert!(
+        wasm_export_func_index(&wasm, super::PROMISE_RESET_ACTIVE_EXPORT).is_some(),
+        "promise active-reset helper should be exported"
+    );
+}
+
+#[test]
+fn emits_valid_wasm_for_coroutine_await_promise_conformance_fixture() {
+    let source = r#"
+        declare function make_string_promise(): extern
+        declare function make_object_promise(): extern
+        declare function make_rejected_promise(): extern
+        declare function record_string(value: string): unit
+        declare function record_object(value: extern): unit
+        declare function record_nested(value: string): unit
+        declare function record_status(value: string): unit
+
+        function run_string(): unit
+            local co: thread = coroutine.create(function(): i32
+                local value: string = coroutine.await_promise(make_string_promise())::string
+                record_string(value)
+                return 0
+            end)
+            coroutine.resume(co)
+        end
+
+        function run_object(): unit
+            local co: thread = coroutine.create(function(): i32
+                local value: extern = coroutine.await_promise(make_object_promise())::extern
+                record_object(value)
+                return 0
+            end)
+            coroutine.resume(co)
+        end
+
+        function run_nested(): unit
+            local inner: thread = coroutine.create(function(): i32
+                coroutine.yield("inner-yield")
+                return 17
+            end)
+            local outer: thread = coroutine.create(function(): i32
+                local value: string = coroutine.await_promise(make_string_promise())::string
+                local ok1: bool, payload1: unknown = coroutine.resume(inner)
+                assert(ok1)
+                local ok2: bool, payload2: unknown = coroutine.resume(inner)
+                assert(ok2)
+                record_nested(value .. ":" .. payload1::string .. ":" .. tostring(payload2::i32))
+                return 0
+            end)
+            coroutine.resume(outer)
+        end
+
+        function run_rejected(): unit
+            local co: thread = coroutine.create(function(): i32
+                coroutine.await_promise(make_rejected_promise())
+                record_status("unexpected")
+                return 0
+            end)
+            coroutine.resume(co)
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+}
+
+#[test]
 fn emits_valid_wasm_for_tagged_union_constructor() {
     let source = include_str!("../../../conformance/tagged_union_constructor.walu");
     let program = waluau_parser::parse(source).expect("parse should succeed");

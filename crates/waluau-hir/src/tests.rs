@@ -2109,6 +2109,36 @@ fn type_checks_coroutine_yield_calls() {
 }
 
 #[test]
+fn type_checks_coroutine_await_promise_calls() {
+    let source = r#"
+        declare function makePromise(): extern
+
+        function run_job(): string
+            local value: unknown = coroutine.await_promise(makePromise())
+            return value::string
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_coroutine_await_promise_for_non_extern_value() {
+    let source = r#"
+        function run_job(): i32
+            local value: unknown = coroutine.await_promise(42)
+            return value::i32
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "coroutine.await_promise expects an extern Promise-like value"
+    );
+}
+
+#[test]
 fn type_checks_coroutine_resume_unknown_payloads() {
     let source = r#"
         function run_job(): i32

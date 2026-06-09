@@ -35,6 +35,10 @@ function sourceForCase(testCase) {
 }
 
 function optionsForCase(name) {
+  if (name === 'coroutine_await_promise.walu') {
+    return createPromiseAwaitHarness().options;
+  }
+
   if (name !== 'extern_member_collisions.walu') {
     return undefined;
   }
@@ -68,6 +72,57 @@ function optionsForCase(name) {
       'Beta.value'(receiver, delta) {
         return receiver.size * 9 + delta + 2;
       },
+    },
+  };
+}
+
+function createPromiseAwaitHarness() {
+  const strings = [];
+  const objects = [];
+  const nested = [];
+  const statuses = [];
+  const asyncErrors = [];
+  const objectValue = { id: 'promise-object' };
+
+  return {
+    strings,
+    objects,
+    nested,
+    statuses,
+    asyncErrors,
+    objectValue,
+    options: {
+      hostImports: {
+        make_string_promise() {
+          return Promise.resolve('settled');
+        },
+        make_object_promise() {
+          return Promise.resolve(objectValue);
+        },
+        make_rejected_promise() {
+          return Promise.reject(new Error('promise rejected'));
+        },
+        record_string(value) {
+          strings.push(value);
+        },
+        record_object(value) {
+          objects.push(value);
+        },
+        record_nested(value) {
+          nested.push(value);
+        },
+        record_status(value) {
+          statuses.push(value);
+        },
+      },
+      onAsyncError(error) {
+        asyncErrors.push(error);
+      },
+    },
+    async flush() {
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     },
   };
 }
@@ -137,6 +192,29 @@ describe('browser conformance', () => {
     exports.__waluau_call_callback_event_unit(callback, { type: 'click' });
     exports.__waluau_call_callback_event_unit(callback, { type: 'click' });
     expect(reported).toEqual([42, 43]);
+  });
+
+  it('passes coroutine_await_promise.walu fulfillment, rejection, and nested resume checks', async () => {
+    const source = cases.find(({ name }) => name === 'coroutine_await_promise.walu').source;
+    const harness = createPromiseAwaitHarness();
+    const exports = await compileAndInstantiateWithExports(
+      { '/main.walu': source },
+      '/main.walu',
+      harness.options,
+    );
+
+    exports.run_string();
+    exports.run_object();
+    exports.run_nested();
+    exports.run_rejected();
+    await harness.flush();
+
+    expect(harness.strings).toEqual(['settled']);
+    expect(harness.objects).toEqual([harness.objectValue]);
+    expect(harness.nested).toEqual(['settled:inner-yield:17']);
+    expect(harness.statuses).toEqual([]);
+    expect(harness.asyncErrors).toHaveLength(1);
+    expect(String(harness.asyncErrors[0])).toContain('unreachable');
   });
 
   it('passes DOM click/input handlers through the exported event trampoline', async () => {

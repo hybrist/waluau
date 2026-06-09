@@ -127,6 +127,9 @@ pub enum Instruction {
         finished_tag: i32,
         error_tag: i32,
     },
+    /// Consume the settled payload for a previously-suspended `coroutine.await_promise`.
+    /// Result type: Unknown.
+    CoroutineAwaitResult,
     /// Transition a suspended or dead coroutine to the dead state.
     /// Result type: Bool — true if closed cleanly or already dead, false if errored.
     CoroutineClose {
@@ -212,6 +215,10 @@ pub enum Terminator {
     },
     CoroutineYield {
         value: ValueId,
+        resume_block: BlockId,
+    },
+    CoroutineAwaitPromise {
+        promise: ValueId,
         resume_block: BlockId,
     },
     Return(ValueId),
