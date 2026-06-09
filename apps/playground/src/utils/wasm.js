@@ -164,12 +164,16 @@ function createPlaygroundDomHost(wasmModule, domOutputRoot, getWasmExports = () 
   };
 
   const fetchFromDomContext = (input) => {
-    const window = outputDocument().defaultView ?? globalThis;
-    const fetchImpl = window.fetch ?? globalThis.fetch;
+    // Use globalThis.fetch rather than the iframe window's fetch.  The fetch
+    // host import is called from the host-page JS context, not from inside the
+    // iframe, so tying it to the iframe window would cause the request to be
+    // cancelled by the browser if the iframe is removed before the promise
+    // settles (e.g. in the conformance runner's temp-iframe teardown path).
+    const fetchImpl = globalThis.fetch ?? outputDocument()?.defaultView?.fetch;
     if (typeof fetchImpl !== 'function') {
       throw new Error('fetch is not available in this browser context');
     }
-    return fetchImpl.call(window, String(input));
+    return fetchImpl(String(input));
   };
 
   const getProperty = (interfaceName, propertyName, receiver) => {
