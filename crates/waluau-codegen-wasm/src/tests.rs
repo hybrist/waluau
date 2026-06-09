@@ -1219,14 +1219,20 @@ fn emits_valid_wasm_for_unknown_coroutine_extern_payloads() {
 fn promise_await_bridge_imports_and_exports_runtime_helpers() {
     let source = r#"
         declare function makePromise(): extern
+        declare function record_string(value: string): unit
 
-        function run(): string
-            local value: unknown = coroutine.await_promise(makePromise())
-            return value::string
+        function run(): unit
+            local co: thread = coroutine.create(function(): i32
+                local value: unknown = coroutine.await_promise(makePromise())
+                record_string(value::string)
+                return 0
+            end)
+            coroutine.resume(co)
         end
     "#;
     let program = waluau_parser::parse(source).expect("parse should succeed");
-    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
     waluau_ir::verify(&ir).expect("ir should verify");
 
     let wasm = emit(&ir).expect("emit should succeed");
@@ -1250,7 +1256,6 @@ fn promise_await_bridge_imports_and_exports_runtime_helpers() {
 }
 
 #[test]
-#[ignore = "blocked by waluau-owzg linked/browser type-index failure"]
 fn emits_valid_wasm_for_coroutine_await_promise_conformance_fixture() {
     let source = r#"
         declare function make_string_promise(): extern
@@ -1306,7 +1311,8 @@ fn emits_valid_wasm_for_coroutine_await_promise_conformance_fixture() {
         end
     "#;
     let program = waluau_parser::parse(source).expect("parse should succeed");
-    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
     waluau_ir::verify(&ir).expect("ir should verify");
 
     let wasm = emit(&ir).expect("emit should succeed");

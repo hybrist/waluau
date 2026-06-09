@@ -667,6 +667,9 @@ fn instruction_use_requires_local(instruction: &IrInstruction) -> bool {
             | IrInstruction::ArraySet { .. }
             | IrInstruction::StructGet { .. }
             | IrInstruction::StructSet { .. }
+            | IrInstruction::CoroutineResume { .. }
+            | IrInstruction::CoroutineResumeTagged { .. }
+            | IrInstruction::CoroutineClose { .. }
     )
 }
 

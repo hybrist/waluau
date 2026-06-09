@@ -1,0 +1,51 @@
+declare function make_string_promise(): extern
+declare function make_object_promise(): extern
+declare function make_rejected_promise(): extern
+declare function record_string(value: string): unit
+declare function record_object(value: extern): unit
+declare function record_nested(value: string): unit
+declare function record_status(value: string): unit
+
+function run_string(): unit
+    local co: thread = coroutine.create(function(): i32
+        local value: string = coroutine.await_promise(make_string_promise())::string
+        record_string(value)
+        return 0
+    end)
+    coroutine.resume(co)
+end
+
+function run_object(): unit
+    local co: thread = coroutine.create(function(): i32
+        local value: extern = coroutine.await_promise(make_object_promise())::extern
+        record_object(value)
+        return 0
+    end)
+    coroutine.resume(co)
+end
+
+function run_nested(): unit
+    local inner: thread = coroutine.create(function(): i32
+        coroutine.yield("inner-yield")
+        return 17
+    end)
+    local outer: thread = coroutine.create(function(): i32
+        local value: string = coroutine.await_promise(make_string_promise())::string
+        local ok1: bool, payload1: unknown = coroutine.resume(inner)
+        assert(ok1)
+        local ok2: bool, payload2: unknown = coroutine.resume(inner)
+        assert(ok2)
+        record_nested(value .. ":" .. payload1::string .. ":" .. tostring(payload2::i32))
+        return 0
+    end)
+    coroutine.resume(outer)
+end
+
+function run_rejected(): unit
+    local co: thread = coroutine.create(function(): i32
+        coroutine.await_promise(make_rejected_promise())
+        record_status("unexpected")
+        return 0
+    end)
+    coroutine.resume(co)
+end

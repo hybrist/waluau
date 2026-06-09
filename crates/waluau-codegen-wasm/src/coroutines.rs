@@ -135,10 +135,3 @@ pub(crate) fn coroutine_state_ref_type(state_type_index: u32) -> ValType {
         heap_type: HeapType::Concrete(state_type_index),
     })
 }
-
-pub(crate) fn coroutine_body_ref_type(body_sig_index: u32) -> ValType {
-    ValType::Ref(RefType {
-        nullable: true,
-        heap_type: HeapType::Concrete(body_sig_index),
-    })
-}

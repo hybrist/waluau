@@ -309,9 +309,11 @@ pub(crate) fn array_storage_type(
             nullable: true,
             heap_type: HeapType::Concrete(registry.record_index(element_ty)?),
         }))),
-        Type::Thread => Ok(StorageType::Val(coroutine_state_ref_type(
-            registry.coroutine_state_type()?,
-        ))),
+        // Thread capture cells must not point at the coroutine-state struct type directly:
+        // array types are emitted before the coroutine state type exists in the Wasm type
+        // section, so `(array (ref null $coroutine_state))` would create an invalid forward
+        // reference. Store thread handles as `anyref` and cast on `array.get` instead.
+        Type::Thread => Ok(StorageType::Val(crate::wasm_types::anyref_val_type())),
         Type::Named { .. } | Type::Opaque { .. } => unreachable!(),
         Type::Multi(_) => Err(Diagnostic::new(
             "multi-value types are not supported in array storage yet",

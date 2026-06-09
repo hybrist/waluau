@@ -29,8 +29,7 @@ use arrays::{
 use coroutines::{
     AWAIT_STATUS_FULFILLED, AWAIT_STATUS_NONE, AWAIT_STATUS_REJECTED, CoroutinePlan,
     STATE_AWAIT_STATUS_FIELD, STATE_CONT_FIELD, STATE_TAG_FIELD, STATE_YIELDED_FIELD,
-    TAG_AWAITING_PROMISE, TAG_ERROR, TAG_FINISHED, TAG_SUSPENDED, coroutine_body_ref_type,
-    coroutine_state_ref_type,
+    TAG_AWAITING_PROMISE, TAG_ERROR, TAG_FINISHED, TAG_SUSPENDED, coroutine_state_ref_type,
 };
 use locals::{
     LocalPlan, build_local_plan, build_value_definition_map, emit_value_operand, emit_value_store,
@@ -205,11 +204,8 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     let closure_gc_count = if closure_gc_needed { 3 } else { 0 };
     // Coroutine GC types sit after the closure GC types.
     let coroutine_types_base = closure_gc_base + closure_gc_count;
-    let coroutine_body_sig_type = coroutine_plan.has_state().then_some(coroutine_types_base);
-    let coroutine_state_type = coroutine_plan
-        .has_state()
-        .then_some(coroutine_types_base + 1);
-    let coroutine_type_count = if coroutine_plan.has_state() { 2 } else { 0 };
+    let coroutine_state_type = coroutine_plan.has_state().then_some(coroutine_types_base);
+    let coroutine_type_count = if coroutine_plan.has_state() { 1 } else { 0 };
     let record_types_base = coroutine_types_base + coroutine_type_count;
     let user_type_base = record_types_base + record_types.len() as u32;
     // Array types come first in the type section (indices 0..N-1).
@@ -230,6 +226,15 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         callback_event_unit_trampoline,
         promise_resume_trampoline,
     );
+    let coroutine_body_wrapper_type = if coroutine_plan.has_state() {
+        Some(
+            signature_registry
+                .get_wrapper_type_index(user_type_base, &[], &Type::Numeric(NumericType::I32))
+                .ok_or_else(|| Diagnostic::new("missing () -> i32 coroutine wrapper signature"))?,
+        )
+    } else {
+        None
+    };
 
     let signatures = module
         .functions
@@ -324,13 +329,8 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         }]);
     }
     // Coroutine GC types (before user function types so `thread` params can reference them).
-    if let (Some(body_sig), Some(state_type)) = (coroutine_body_sig_type, coroutine_state_type) {
-        // Body signature: () -> i32 (the continuation funcref type).
-        types
-            .ty()
-            .function(Vec::<ValType>::new(), vec![ValType::I32]);
-        debug_assert_eq!(body_sig, coroutine_types_base);
-        // State struct: { tag:i32, yielded:anyref, continuation:(ref null body_sig),
+    if let Some(state_type) = coroutine_state_type {
+        // State struct: { tag:i32, yielded:anyref, continuation:func_val,
         // await_status:i32, pc_*:i32 }.
         let mut fields = vec![
             FieldType {
@@ -342,7 +342,10 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
                 mutable: true,
             },
             FieldType {
-                element_type: StorageType::Val(coroutine_body_ref_type(body_sig)),
+                element_type: StorageType::Val(ValType::Ref(RefType {
+                    nullable: true,
+                    heap_type: HeapType::Concrete(func_val_struct_type),
+                })),
                 mutable: true,
             },
             FieldType {
@@ -734,7 +737,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             &bytes_constants,
             user_type_base,
             &coroutine_plan,
-            coroutine_body_sig_type,
+            coroutine_body_wrapper_type,
             &closure_wrapper_slots,
             &import_map,
             &declared_import_indices,
@@ -816,14 +819,14 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         );
         helper_func_idx_counter += 1;
         codes.function(&emit_promise_resume_trampoline(
-            &array_registry,
             &coroutine_plan,
-            coroutine_body_sig_type.ok_or_else(|| {
-                Diagnostic::new("missing coroutine body signature for promise resume trampoline")
+            coroutine_body_wrapper_type.ok_or_else(|| {
+                Diagnostic::new("missing coroutine body wrapper type for promise resume trampoline")
             })?,
             coroutine_state_type.ok_or_else(|| {
                 Diagnostic::new("missing coroutine state type for promise resume trampoline")
             })?,
+            func_val_struct_type,
         )?);
     }
     if let Some(type_idx) = promise_reset_active_type_idx {
@@ -967,8 +970,8 @@ struct EmissionContext<'a> {
     bytes_constants: &'a [Vec<u8>],
     user_type_base: u32,
     coroutine_plan: &'a CoroutinePlan,
-    /// Type index of the coroutine body signature `() -> i32` (continuation funcref type).
-    coroutine_body_sig_type: Option<u32>,
+    /// Wrapper type index for zero-arg coroutine bodies stored as `func_val` continuations.
+    coroutine_body_wrapper_type: Option<u32>,
     /// Map from closure-target function name to its wrapper table slot index.
     closure_wrapper_slots: &'a HashMap<String, u32>,
     /// Remapping from canonical host-import slots to actual Wasm function indices.
@@ -1004,9 +1007,9 @@ impl EmissionContext<'_> {
         self.array_registry.coroutine_state_type()
     }
 
-    fn coroutine_body_sig_type(&self) -> Result<u32, Diagnostic> {
-        self.coroutine_body_sig_type
-            .ok_or_else(|| Diagnostic::new("missing coroutine body signature type"))
+    fn coroutine_body_wrapper_type(&self) -> Result<u32, Diagnostic> {
+        self.coroutine_body_wrapper_type
+            .ok_or_else(|| Diagnostic::new("missing coroutine body wrapper type"))
     }
 }
 
@@ -1020,7 +1023,7 @@ fn emit_function(
     bytes_constants: &[Vec<u8>],
     user_type_base: u32,
     coroutine_plan: &CoroutinePlan,
-    coroutine_body_sig_type: Option<u32>,
+    coroutine_body_wrapper_type: Option<u32>,
     closure_wrapper_slots: &HashMap<String, u32>,
     import_map: &host::HostImportMap,
     declared_import_indices: &HashMap<SymbolId, u32>,
@@ -1034,7 +1037,7 @@ fn emit_function(
         bytes_constants,
         user_type_base,
         coroutine_plan,
-        coroutine_body_sig_type,
+        coroutine_body_wrapper_type,
         closure_wrapper_slots,
         import_map,
         declared_import_indices,
@@ -1169,11 +1172,42 @@ fn emit_callback_event_unit_trampoline(
 /// Exported JS-settlement ABI helper for `coroutine.await_promise`.
 ///
 /// Signature: `(thread_handle: thread, payload: extern, rejected: i32) -> unit`.
-fn emit_promise_resume_trampoline(
-    _array_registry: &ArrayTypeRegistry,
-    coroutine_plan: &CoroutinePlan,
-    body_sig: u32,
+fn emit_call_coroutine_continuation(
+    out: &mut Function,
+    state_local: u32,
     state_ty: u32,
+    func_val_ty: u32,
+    wrapper_type_idx: u32,
+) {
+    out.instruction(&Instruction::LocalGet(state_local));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: state_ty,
+        field_index: STATE_CONT_FIELD,
+    });
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: func_val_ty,
+        field_index: 1,
+    });
+    out.instruction(&Instruction::LocalGet(state_local));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: state_ty,
+        field_index: STATE_CONT_FIELD,
+    });
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: func_val_ty,
+        field_index: 2,
+    });
+    out.instruction(&Instruction::CallIndirect {
+        type_index: wrapper_type_idx,
+        table_index: 0,
+    });
+}
+
+fn emit_promise_resume_trampoline(
+    coroutine_plan: &CoroutinePlan,
+    body_wrapper_type: u32,
+    state_ty: u32,
+    func_val_ty: u32,
 ) -> Result<Function, Diagnostic> {
     let mut out = Function::new(vec![(2, coroutine_state_ref_type(state_ty))]);
     let active_save_local = 3u32;
@@ -1227,12 +1261,13 @@ fn emit_promise_resume_trampoline(
     out.instruction(&Instruction::LocalGet(state_local));
     out.instruction(&Instruction::GlobalSet(coroutine_plan.active_global()?));
 
-    out.instruction(&Instruction::LocalGet(state_local));
-    out.instruction(&Instruction::StructGet {
-        struct_type_index: state_ty,
-        field_index: STATE_CONT_FIELD,
-    });
-    out.instruction(&Instruction::CallRef(body_sig));
+    emit_call_coroutine_continuation(
+        &mut out,
+        state_local,
+        state_ty,
+        func_val_ty,
+        body_wrapper_type,
+    );
     out.instruction(&Instruction::Drop);
 
     out.instruction(&Instruction::LocalGet(active_save_local));
@@ -2074,7 +2109,6 @@ fn emit_block_instructions(
             }
             IrInstruction::CoroutineCreate { callee } => {
                 let state_ty = ctx.coroutine_state_type()?;
-                let body_sig = ctx.coroutine_body_sig_type()?;
                 // struct.new $coroutine_state {
                 //   tag=suspended, yielded=null, continuation, await_status=none, pc*=0
                 // }
@@ -2083,16 +2117,9 @@ fn emit_block_instructions(
                     shared: false,
                     ty: AbstractHeapType::Any,
                 }));
-                // Continuation: extract orig_idx (field 0) from $func_val, look up funcref.
-                // The original function has the coroutine body signature () -> i32; the
-                // wrapper (field 2) would have a different type and cause a cast failure.
+                // Continuation: store the full func_val so resume can dispatch captured and
+                // non-capturing coroutine bodies through the zero-arg wrapper uniformly.
                 emit_value_operand(out, local_plan, *callee)?;
-                out.instruction(&Instruction::StructGet {
-                    struct_type_index: ctx.array_registry.func_val_struct_type,
-                    field_index: 0,
-                });
-                out.instruction(&Instruction::TableGet(0));
-                out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(body_sig)));
                 out.instruction(&Instruction::I32Const(AWAIT_STATUS_NONE));
                 for _ in 0..ctx.coroutine_plan.pc_field_count() {
                     out.instruction(&Instruction::I32Const(0));
@@ -2102,8 +2129,9 @@ fn emit_block_instructions(
             }
             IrInstruction::CoroutineResume { coroutine } => {
                 let state_ty = ctx.coroutine_state_type()?;
-                let body_sig = ctx.coroutine_body_sig_type()?;
+                let body_wrapper_type = ctx.coroutine_body_wrapper_type()?;
                 let active = ctx.coroutine_plan.active_global()?;
+                let coroutine_local = local(local_plan, *coroutine)?;
                 let save_local = local_plan
                     .coroutine_save_local
                     .ok_or_else(|| Diagnostic::new("missing coroutine save local for resume"))?;
@@ -2139,12 +2167,13 @@ fn emit_block_instructions(
                 emit_value_operand(out, local_plan, *coroutine)?;
                 out.instruction(&Instruction::GlobalSet(active));
                 // Run the continuation; its i32 result is the yielded or returned value.
-                emit_value_operand(out, local_plan, *coroutine)?;
-                out.instruction(&Instruction::StructGet {
-                    struct_type_index: state_ty,
-                    field_index: STATE_CONT_FIELD,
-                });
-                out.instruction(&Instruction::CallRef(body_sig));
+                emit_call_coroutine_continuation(
+                    out,
+                    coroutine_local,
+                    state_ty,
+                    ctx.array_registry.func_val_struct_type,
+                    body_wrapper_type,
+                );
                 out.instruction(&Instruction::LocalSet(value_tmp));
                 // Restore the outer active instance.
                 out.instruction(&Instruction::LocalGet(save_local));
@@ -2209,8 +2238,9 @@ fn emit_block_instructions(
                 error_tag,
             } => {
                 let state_ty = ctx.coroutine_state_type()?;
-                let body_sig = ctx.coroutine_body_sig_type()?;
+                let body_wrapper_type = ctx.coroutine_body_wrapper_type()?;
                 let active = ctx.coroutine_plan.active_global()?;
+                let coroutine_local = local(local_plan, *coroutine)?;
                 let save_local = local_plan.coroutine_save_local.ok_or_else(|| {
                     Diagnostic::new("missing coroutine save local for tagged resume")
                 })?;
@@ -2251,12 +2281,13 @@ fn emit_block_instructions(
                 emit_value_operand(out, local_plan, *coroutine)?;
                 out.instruction(&Instruction::GlobalSet(active));
                 // Run the continuation; i32 result is the yielded or returned value.
-                emit_value_operand(out, local_plan, *coroutine)?;
-                out.instruction(&Instruction::StructGet {
-                    struct_type_index: state_ty,
-                    field_index: STATE_CONT_FIELD,
-                });
-                out.instruction(&Instruction::CallRef(body_sig));
+                emit_call_coroutine_continuation(
+                    out,
+                    coroutine_local,
+                    state_ty,
+                    ctx.array_registry.func_val_struct_type,
+                    body_wrapper_type,
+                );
                 out.instruction(&Instruction::LocalSet(value_tmp));
                 // Restore outer active.
                 out.instruction(&Instruction::LocalGet(save_local));
@@ -2377,7 +2408,6 @@ fn emit_block_instructions(
             }
             IrInstruction::CoroutineClose { coroutine } => {
                 let state_ty = ctx.coroutine_state_type()?;
-                let body_sig = ctx.coroutine_body_sig_type()?;
                 // result = (tag != error); if not errored, transition to dead and drop the
                 // continuation.
                 emit_value_operand(out, local_plan, *coroutine)?;
@@ -2397,7 +2427,9 @@ fn emit_block_instructions(
                     field_index: STATE_TAG_FIELD,
                 });
                 emit_value_operand(out, local_plan, *coroutine)?;
-                out.instruction(&Instruction::RefNull(HeapType::Concrete(body_sig)));
+                out.instruction(&Instruction::RefNull(HeapType::Concrete(
+                    ctx.array_registry.func_val_struct_type,
+                )));
                 out.instruction(&Instruction::StructSet {
                     struct_type_index: state_ty,
                     field_index: STATE_CONT_FIELD,
@@ -2475,6 +2507,11 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::LocalGet(array_local));
                 out.instruction(&Instruction::LocalGet(index_local));
                 out.instruction(&Instruction::ArrayGet(array_type_index));
+                if thread_array_storage_needs_cast(element_ty) {
+                    out.instruction(&Instruction::RefCastNullable(HeapType::Concrete(
+                        ctx.array_registry.coroutine_state_type()?,
+                    )));
+                }
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::ArraySet {
@@ -3017,6 +3054,14 @@ fn emit_unbox(
         other => Err(Diagnostic::new(format!(
             "unboxing unknown into {other} is not yet supported during wasm emission",
         ))),
+    }
+}
+
+fn thread_array_storage_needs_cast(ty: &Type) -> bool {
+    match ty {
+        Type::Thread => true,
+        Type::Nullable(inner) => thread_array_storage_needs_cast(inner),
+        _ => false,
     }
 }
 
