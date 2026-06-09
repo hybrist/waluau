@@ -163,6 +163,15 @@ function createPlaygroundDomHost(wasmModule, domOutputRoot, getWasmExports = () 
     rememberDomEventListener(target, type, listener);
   };
 
+  const fetchFromDomContext = (input) => {
+    const window = outputDocument().defaultView ?? globalThis;
+    const fetchImpl = window.fetch ?? globalThis.fetch;
+    if (typeof fetchImpl !== 'function') {
+      throw new Error('fetch is not available in this browser context');
+    }
+    return fetchImpl.call(window, String(input));
+  };
+
   const getProperty = (interfaceName, propertyName, receiver) => {
     if (interfaceName === 'Window' && propertyName === 'localStorage') {
       return playgroundStorage();
@@ -180,6 +189,7 @@ function createPlaygroundDomHost(wasmModule, domOutputRoot, getWasmExports = () 
 
   const specialImports = {
     dom_window: () => outputDocument().defaultView,
+    fetch: fetchFromDomContext,
     'EventTarget.addEventListener': (target, type, callback) => registerEventListener(target, String(type), callback),
     'Node.removeChild': removeChild,
     'Node.replaceChild': replaceChild,

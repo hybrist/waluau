@@ -54,6 +54,7 @@ type DOMPoint = extern extends DOMPointReadOnly
 type DOMQuad = extern
 type Selection = extern
 type Blob = extern
+type Response = extern
 type File = extern extends Blob
 type FileList = extern
 type MimeType = extern
@@ -71,6 +72,7 @@ type MediaList = extern
 type CSSPseudoElement = extern
 type StylePropertyMapReadOnly = extern
 type StylePropertyMap = extern extends StylePropertyMapReadOnly
+type Promise<T> = extern
 
 declare property Blob:size: u64
 declare property Blob:type: string
@@ -361,6 +363,7 @@ declare function Window:atob(data: string): string
 declare function Window:clearTimeout(): unit
 declare function Window:clearInterval(): unit
 declare function Window:queueMicrotask(callback: () -> unit): unit
+declare function Window:fetch(input: string): Promise<Response>
 declare function Window:requestAnimationFrame(callback: (f64) -> unit): u32
 declare function Window:cancelAnimationFrame(handle: u32): unit
 declare property Window:sessionStorage: Storage
@@ -728,6 +731,16 @@ declare property HTMLInputElement:capture: string
 declare property HTMLInputElement:useMap: string
 declare property HTMLInputElement:popoverTargetElement: Element?
 declare property HTMLInputElement:popoverTargetAction: string
+declare function Response:error(): Response
+declare function Response:redirect(url: string): Response
+declare property Response:url: string
+declare property Response:redirected: bool
+declare property Response:status: u32
+declare property Response:ok: bool
+declare property Response:statusText: string
+declare function Response:clone(): Response
+declare property Response:bodyUsed: bool
+declare function Response:text(): Promise<string>
 declare function DOMPointReadOnly:fromPoint(): DOMPointReadOnly
 declare property DOMPointReadOnly:x: f64
 declare property DOMPointReadOnly:y: f64
@@ -842,3 +855,4 @@ declare property VirtualKeyboard:boundingRect: DOMRect
 declare property VirtualKeyboard:overlaysContent: bool
 declare property VirtualKeyboard:ongeometrychange: (Event) -> unit
 declare function dom_window(): Window
+declare function fetch(input: string): Promise<Response>

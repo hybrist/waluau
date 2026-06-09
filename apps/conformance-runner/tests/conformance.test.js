@@ -275,6 +275,21 @@ describe('browser conformance', () => {
     expect(harness.strings).toEqual(['typed body', 'typed body']);
   });
 
+  it('passes generated DOM fetch and Response.text await flow', async () => {
+    const testCase = cases.find(({ name }) => name === 'dom_fetch_response_text.walu');
+    const source = sourceForCase(testCase);
+    const { exports, root, cleanup } = await compileAndInstantiateWithDom({ '/main.walu': source }, '/main.walu');
+
+    try {
+      exports.run_fetch_response_text();
+      await expect.poll(() => root.querySelector('#fetch-body')?.textContent?.trim()).toBe(
+        '{"message":"fetch body from conformance"}',
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
   it('passes DOM click/input handlers through the exported event trampoline', async () => {
     const testCase = cases.find(({ name }) => name === 'dom_event_callbacks.walu');
     const source = sourceForCase(testCase);

@@ -89,6 +89,25 @@ body:append_child(input)
 body:append_child(status)
 `;
 
+const DOM_FETCH_RESPONSE_TEXT_SAMPLE = `function fetch_body(): unit
+    local co: thread = coroutine.create(function(): i32
+        local res = fetch("/test.json"):await()
+        local response_body = res:text():await()
+
+        local window = require("dom:window")
+        local document: Document = window.document
+        local body: HTMLElement = document.body
+        local output: Element = document:create_element("p")
+        output.id = "fetch-body"
+        output.text_content = response_body
+        body:append_child(output)
+
+        return 0
+    end)
+    coroutine.resume(co)
+end
+`;
+
 test.describe('DOM Output in Run tab', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
@@ -178,6 +197,19 @@ test.describe('DOM Output in Run tab', () => {
 
     await outputFrame.locator('#event-input').fill('typed card');
     await expect(outputFrame.locator('#event-status')).toHaveText('input typed card');
+  });
+
+  test('runs Waluau fetch and Response.text awaits in DOM Output', async ({ page }) => {
+    await page.locator('.code-textarea').fill(DOM_FETCH_RESPONSE_TEXT_SAMPLE);
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    const domOutput = page.getByLabel('DOM Output');
+    await expect(domOutput).toBeVisible();
+
+    const outputFrame = page.frameLocator('.dom-output-frame');
+    await expect(outputFrame.locator('#fetch-body')).toHaveText(/^\{"message":"fetch body from playground"\}\s*$/);
   });
 
   test('loads DOM externs for the dom_extern_rendering conformance preset', async ({ page }) => {
