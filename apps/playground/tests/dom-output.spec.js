@@ -222,9 +222,11 @@ test.describe('DOM Output in Run tab', () => {
     const domOutput = page.getByLabel('DOM Output');
     await expect(domOutput).toBeVisible();
 
-    // All three print statements must appear in the init-logs box
+    // All three print statements must appear in the init-logs box.
+    // Allow extra time: the last two arrive after the async fetch resolves.
     await expect(page.locator('.init-logs-value')).toHaveText(
       'before fetch\nafter fetch\nafter dom update',
+      { timeout: COMPILER_READY_TIMEOUT },
     );
 
     // The fetch body should be written to document.body.text_content

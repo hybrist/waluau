@@ -262,19 +262,23 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
     ...domHost,
     ...hostImports,
     __waluau_attach_promise: (threadHandle, promise) => {
-      const exports = options.getWasmExports?.();
-      const resume = exports?.[PROMISE_RESUME_TRAMPOLINE_EXPORT];
-      const resetActive = exports?.[PROMISE_RESET_ACTIVE_EXPORT];
-      if (typeof resume !== 'function') {
-        throw new Error(`Missing ${PROMISE_RESUME_TRAMPOLINE_EXPORT} export for Promise await`);
-      }
-      if (typeof resetActive !== 'function') {
-        throw new Error(`Missing ${PROMISE_RESET_ACTIVE_EXPORT} export for Promise await`);
-      }
       if (promise == null || typeof promise.then !== 'function') {
         throw new TypeError('coroutine.await_promise expects a Promise-like extern value');
       }
+      // Resolve exports lazily inside invoke: when __waluau_attach_promise is
+      // called from the Wasm start function (module initialisation), the
+      // instance object doesn't exist yet, so getWasmExports() returns null.
+      // By the time the promise settles the instance is always available.
       const invoke = (payload, rejected) => {
+        const exports = options.getWasmExports?.();
+        const resume = exports?.[PROMISE_RESUME_TRAMPOLINE_EXPORT];
+        const resetActive = exports?.[PROMISE_RESET_ACTIVE_EXPORT];
+        if (typeof resume !== 'function') {
+          throw new Error(`Missing ${PROMISE_RESUME_TRAMPOLINE_EXPORT} export for Promise await`);
+        }
+        if (typeof resetActive !== 'function') {
+          throw new Error(`Missing ${PROMISE_RESET_ACTIVE_EXPORT} export for Promise await`);
+        }
         try {
           resume(threadHandle, payload, rejected);
         } catch (error) {
