@@ -336,6 +336,64 @@ fn erases_generic_extern_specializations_in_declared_import_signatures() {
 }
 
 #[test]
+fn erases_promise_api_import_signatures_and_lowers_response_text_host_calls() {
+    let source = r#"
+        type Response = extern
+        type Promise<T> = extern
+
+        declare function fetch(url: string): Promise<Response>
+        declare function Response:text(): Promise<string>
+
+        function request(url: string): Promise<Response>
+            return fetch(url)
+        end
+
+        function read_text(response: Response): Promise<string>
+            return response:text()
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+
+    let fetch = module
+        .declared_imports
+        .iter()
+        .find(|declared| declared.name == "fetch")
+        .expect("fetch import should exist");
+    assert_eq!(fetch.params, vec![Type::String]);
+    assert_eq!(fetch.return_type, Type::Extern);
+
+    let text = module
+        .declared_imports
+        .iter()
+        .find(|declared| declared.name == "Response.text")
+        .expect("Response.text import should exist");
+    assert_eq!(text.params, vec![Type::Extern]);
+    assert_eq!(text.return_type, Type::Extern);
+
+    let host_calls = module
+        .functions
+        .iter()
+        .flat_map(|function| function.blocks.values())
+        .flat_map(|block| block.instructions.iter())
+        .filter_map(|(_, instruction)| match instruction {
+            Instruction::HostCall { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        host_calls.contains(&"fetch"),
+        "expected fetch host call, got {host_calls:?}"
+    );
+    assert!(
+        host_calls.contains(&"Response.text"),
+        "expected Response.text host call, got {host_calls:?}"
+    );
+}
+
+#[test]
 fn threads_assert_call_span_to_trap_terminator() {
     let source = r#"
         function entry(): i32

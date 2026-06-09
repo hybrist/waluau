@@ -547,6 +547,37 @@ fn generic_extern_type_declarations_validate_arity() {
 }
 
 #[test]
+fn promise_extern_api_declarations_type_check_with_nominal_specializations() {
+    let source = r#"
+        type Response = extern
+        type Promise<T> = extern
+
+        declare function fetch(url: string): Promise<Response>
+        declare function Response:text(): Promise<string>
+
+        function request(url: string): Promise<Response>
+            return fetch(url)
+        end
+
+        function read_text(response: Response): Promise<string>
+            return response:text()
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+
+    assert!(matches!(
+        typed.functions[0].return_type.as_ref(),
+        Some(Type::Opaque { name, ty }) if name == "Promise<Response>" && ty.as_ref() == &Type::Extern
+    ));
+    assert!(matches!(
+        typed.functions[1].return_type.as_ref(),
+        Some(Type::Opaque { name, ty }) if name == "Promise<string>" && ty.as_ref() == &Type::Extern
+    ));
+}
+
+#[test]
 fn generic_type_declarations_reject_recursive_cycles() {
     let source = r#"
         type Loop<T> = Loop<T>
