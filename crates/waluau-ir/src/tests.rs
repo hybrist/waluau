@@ -305,6 +305,37 @@ fn canonicalizes_snake_case_dom_import_members_without_interface_allowlist() {
 }
 
 #[test]
+fn erases_generic_extern_specializations_in_declared_import_signatures() {
+    let source = r#"
+        type Response = extern
+        type Promise<T> = extern
+
+        declare function take_response(value: Promise<Response>): Promise<Response>
+        declare function take_string(value: Promise<string>): Promise<string>
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+
+    let take_response = module
+        .declared_imports
+        .iter()
+        .find(|declared| declared.name == "take_response")
+        .expect("take_response import should exist");
+    assert_eq!(take_response.params, vec![Type::Extern]);
+    assert_eq!(take_response.return_type, Type::Extern);
+
+    let take_string = module
+        .declared_imports
+        .iter()
+        .find(|declared| declared.name == "take_string")
+        .expect("take_string import should exist");
+    assert_eq!(take_string.params, vec![Type::Extern]);
+    assert_eq!(take_string.return_type, Type::Extern);
+}
+
+#[test]
 fn threads_assert_call_span_to_trap_terminator() {
     let source = r#"
         function entry(): i32

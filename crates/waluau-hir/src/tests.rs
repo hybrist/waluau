@@ -475,6 +475,78 @@ fn generic_type_declarations_resolve_transparently() {
 }
 
 #[test]
+fn generic_extern_type_declarations_instantiate_nominally() {
+    let source = r#"
+        type Response = extern
+        type Promise<T> = extern
+
+        function take_response(value: Promise<Response>): Promise<Response>
+            return value
+        end
+
+        function take_string(value: Promise<string>): Promise<string>
+            return value
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+
+    assert!(matches!(
+        &typed.functions[0].params[0].ty,
+        Type::Opaque { name, ty } if name == "Promise<Response>" && ty.as_ref() == &Type::Extern
+    ));
+    assert!(matches!(
+        &typed.functions[1].params[0].ty,
+        Type::Opaque { name, ty } if name == "Promise<string>" && ty.as_ref() == &Type::Extern
+    ));
+    assert_ne!(
+        typed.functions[0].params[0].ty,
+        typed.functions[1].params[0].ty
+    );
+}
+
+#[test]
+fn generic_extern_type_declarations_reject_cross_specialization_assignment() {
+    let source = r#"
+        type Response = extern
+        type Promise<T> = extern
+
+        function take_response(value: Promise<Response>): Promise<Response>
+            return value
+        end
+
+        function entry(value: Promise<string>): Promise<Response>
+            return take_response(value)
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "cannot implicitly convert Promise<string> to Promise<Response>"
+    );
+}
+
+#[test]
+fn generic_extern_type_declarations_validate_arity() {
+    let source = r#"
+        type Promise<T> = extern
+
+        function entry(value: Promise<i32, bool>): unit
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "type declaration 'Promise' expects 1 type argument, got 2"
+    );
+}
+
+#[test]
 fn generic_type_declarations_reject_recursive_cycles() {
     let source = r#"
         type Loop<T> = Loop<T>

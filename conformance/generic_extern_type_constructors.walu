@@ -1,0 +1,18 @@
+-- Generic extern aliases instantiate as nominally distinct source types while
+-- still compiling through externref-compatible host imports.
+
+type Response = extern
+type Promise<T> = extern
+
+declare function get_response_promise(): Promise<Response>
+declare function get_string_promise(): Promise<string>
+declare function take_response_promise(value: Promise<Response>): Promise<Response>
+declare function take_string_promise(value: Promise<string>): Promise<string>
+
+function entry(response: Promise<Response>, text: Promise<string>): Promise<Response>
+    local echoed_response: Promise<Response> = take_response_promise(get_response_promise())
+    local echoed_text: Promise<string> = take_string_promise(get_string_promise())
+    local roundtrip_text: Promise<string> = take_string_promise(text)
+    local roundtrip_response: Promise<Response> = take_response_promise(response)
+    return take_response_promise(roundtrip_response)
+end
