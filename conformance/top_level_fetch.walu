@@ -1,0 +1,9 @@
+print("before fetch")
+local res = fetch("/test.json"):await()
+local body = res:text():await()
+print("after fetch")
+
+local window = require("dom:window")
+local document: Document = window.document
+document.body.text_content = body
+print("after dom update")
