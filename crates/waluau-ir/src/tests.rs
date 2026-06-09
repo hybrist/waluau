@@ -1829,6 +1829,47 @@ fn lowers_coroutine_await_promise_to_suspend_and_resume_result() {
 }
 
 #[test]
+fn lowers_typed_promise_await_forms_to_suspend_and_resume_result() {
+    let source = r#"
+        type Response = extern
+        type Promise<T> = extern
+
+        declare function fetch(url: string): Promise<Response>
+        declare function make_text(): Promise<string>
+
+        function function_form(): Response
+            return promise.await(fetch("/test.json"))
+        end
+
+        function method_form(): string
+            return make_text():await()
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+
+    let mut await_result_count = 0;
+    let mut await_terminator_count = 0;
+    for function in &module.functions {
+        for block in function.blocks.values() {
+            await_result_count += block
+                .instructions
+                .iter()
+                .filter(|(_, instruction)| matches!(instruction, Instruction::CoroutineAwaitResult))
+                .count();
+            if matches!(block.terminator, Terminator::CoroutineAwaitPromise { .. }) {
+                await_terminator_count += 1;
+            }
+        }
+    }
+
+    assert_eq!(await_result_count, 2);
+    assert_eq!(await_terminator_count, 2);
+}
+
+#[test]
 fn lowers_tagged_union_pattern_match_binding_to_tag_check_and_unbox() {
     let source = r#"
         type Either = Left(i32) | Right(f64)

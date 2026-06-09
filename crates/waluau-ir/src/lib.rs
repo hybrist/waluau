@@ -11,6 +11,7 @@ const COROUTINE_RESUME: &str = "coroutine.resume";
 const COROUTINE_CLOSE: &str = "coroutine.close";
 const COROUTINE_YIELD: &str = "coroutine.yield";
 const COROUTINE_AWAIT_PROMISE: &str = "coroutine.await_promise";
+const PROMISE_AWAIT: &str = "promise.await";
 const MATH_ABS: &str = "math.abs";
 const MATH_MIN: &str = "math.min";
 const MATH_MAX: &str = "math.max";

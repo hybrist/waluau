@@ -1,0 +1,30 @@
+type Response = extern
+type Promise<T> = extern
+
+declare function fetch(url: string): Promise<Response>
+declare function make_response(): Promise<Response>
+declare function make_text(): Promise<string>
+declare function record_response(value: Response): unit
+declare function record_string(value: string): unit
+
+function run_function_form(): unit
+    local co: thread = coroutine.create(function(): i32
+        local res = promise.await(fetch("/test.json"))
+        local body = promise.await(make_text())
+        record_response(res)
+        record_string(body)
+        return 0
+    end)
+    coroutine.resume(co)
+end
+
+function run_method_form(): unit
+    local co: thread = coroutine.create(function(): i32
+        local res = make_response():await()
+        local body = make_text():await()
+        record_response(res)
+        record_string(body)
+        return 0
+    end)
+    coroutine.resume(co)
+end

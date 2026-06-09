@@ -578,6 +578,54 @@ fn promise_extern_api_declarations_type_check_with_nominal_specializations() {
 }
 
 #[test]
+fn typed_promise_await_function_returns_resolved_type() {
+    let source = r#"
+        type Response = extern
+        type Promise<T> = extern
+
+        declare function fetch(url: string): Promise<Response>
+        declare function make_text(): Promise<string>
+
+        function request(): Response
+            local res = promise.await(fetch("/test.json"))
+            return res
+        end
+
+        function text(): string
+            local body = promise.await(make_text())
+            return body
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn typed_promise_await_method_returns_resolved_type() {
+    let source = r#"
+        type Response = extern
+        type Promise<T> = extern
+
+        declare function fetch(url: string): Promise<Response>
+        declare function make_text(): Promise<string>
+
+        function request(): Response
+            local res = fetch("/test.json"):await()
+            return res
+        end
+
+        function text(): string
+            local body = make_text():await()
+            return body
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
 fn generic_type_declarations_reject_recursive_cycles() {
     let source = r#"
         type Loop<T> = Loop<T>

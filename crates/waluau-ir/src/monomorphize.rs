@@ -1455,6 +1455,9 @@ impl<'a> Monomorphizer<'a> {
                 if receiver_ty == Type::String && name == "find" {
                     return Ok(Type::Numeric(waluau_ast::NumericType::I32));
                 }
+                if name == "await" && crate::is_promise_like_extern(&receiver_ty) {
+                    return Ok(Type::Unknown);
+                }
                 if let Expr::Name(_, Some(table_symbol_id), _) = receiver.as_ref() {
                     let key = (*table_symbol_id, name.clone());
                     if let Some(function) = self.generic_methods.get(&key) {
@@ -1697,6 +1700,7 @@ impl<'a> Monomorphizer<'a> {
             "coroutine.create" => Ok(Some(Type::Thread)),
             "coroutine.resume" => Ok(Some(Type::Multi(vec![Type::Bool, Type::Unknown]))),
             "coroutine.close" => Ok(Some(Type::Bool)),
+            "coroutine.await_promise" | crate::PROMISE_AWAIT => Ok(Some(Type::Unknown)),
             "math.abs" | "math.min" | "math.max" | "math.sqrt" | "math.floor" | "math.ceil"
             | "math.trunc" | "math.nearest" | "math.copysign" => {
                 if let Some(first) = args.first() {
