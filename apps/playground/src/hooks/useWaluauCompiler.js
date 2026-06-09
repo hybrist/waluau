@@ -157,15 +157,21 @@ export default function useWaluauCompiler({ files, entryFile }) {
         });
       }
       const capturedInitLogs = [];
+      const initLogger = (msg) => {
+        capturedInitLogs.push(msg);
+        // Update state on every message so that prints from async continuations
+        // (coroutine resumes after a promise resolves) are visible in the UI.
+        if (active) {
+          setInitLogs([...capturedInitLogs]);
+        }
+      };
       try {
         if (moduleUsesDomOutput) {
           cleanupDomEventListeners(domOutputRootRef.current.body);
           domOutputRootRef.current.body.replaceChildren();
         }
         let instanceExports = null;
-        const imports = buildWaluauImports(wasmModule, (msg) => {
-          capturedInitLogs.push(msg);
-        }, {
+        const imports = buildWaluauImports(wasmModule, initLogger, {
           domOutputRoot: moduleUsesDomOutput ? domOutputRootRef.current : null,
           getWasmExports: () => instanceExports,
         });
@@ -176,7 +182,7 @@ export default function useWaluauCompiler({ files, entryFile }) {
           setRunInstance(instance);
           setRunError(null);
           setManualResults({});
-          setInitLogs(capturedInitLogs);
+          setInitLogs([...capturedInitLogs]);
         }
       } catch (err) {
         if (active) {

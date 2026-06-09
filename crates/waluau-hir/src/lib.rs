@@ -2232,7 +2232,7 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
             symbol_id: None,
             type_params: Vec::new(),
             params: Vec::new(),
-            return_type: Some(Type::number()),
+            return_type: Some(Type::Numeric(NumericType::I32)),
             body: {
                 let mut body = typed.top_level.clone();
                 body.push(Stmt::Return(Expr::Number(
