@@ -22,8 +22,11 @@ pub(crate) struct LocalPlan {
     /// Scratch `(ref null $coroutine_state)` local for saving/restoring the active
     /// instance across a `coroutine.resume` (nested-coroutine support).
     pub(crate) coroutine_save_local: Option<u32>,
-    /// Scratch i32 local for spilling a yielded value before mutating the state struct.
+    /// Scratch anyref local for spilling a yielded value before mutating the state struct.
     pub(crate) coroutine_yield_tmp: Option<u32>,
+    /// Scratch i32 local for the final body return that `coroutine.resume` boxes on the
+    /// finished path.
+    pub(crate) coroutine_resume_value_tmp: Option<u32>,
     /// Scratch i32 local for spilling the i32 continuation result in tagged resume.
     pub(crate) tagged_resume_value_tmp: Option<u32>,
     /// Scratch i32 local for reading the post-continuation state tag in tagged resume.
@@ -148,6 +151,14 @@ pub(crate) fn build_local_plan(
         .any(|block| matches!(block.terminator, Terminator::CoroutineYield { .. }));
     let coroutine_yield_tmp = if has_yield {
         let slot = function.params.len() as u32 + extra_locals.len() as u32;
+        extra_locals.push(wasm_type(&Type::Unknown, array_registry)?);
+        Some(slot)
+    } else {
+        None
+    };
+
+    let coroutine_resume_value_tmp = if has_resume {
+        let slot = function.params.len() as u32 + extra_locals.len() as u32;
         extra_locals.push(ValType::I32);
         Some(slot)
     } else {
@@ -178,6 +189,7 @@ pub(crate) fn build_local_plan(
         pc_local,
         coroutine_save_local,
         coroutine_yield_tmp,
+        coroutine_resume_value_tmp,
         tagged_resume_value_tmp,
         tagged_resume_state_tmp,
     })
@@ -234,7 +246,7 @@ pub(crate) fn infer_value_types(
                 IrInstruction::CallValue { return_type, .. } => return_type.clone(),
                 IrInstruction::CoroutineCreate { .. } => Type::Thread,
                 IrInstruction::CoroutineResume { .. } => {
-                    Type::Multi(vec![Type::Bool, Type::Numeric(NumericType::I32)])
+                    Type::Multi(vec![Type::Bool, Type::Unknown])
                 }
                 IrInstruction::CoroutineResumeTagged { .. } => {
                     Type::canonical_tagged_union_record()

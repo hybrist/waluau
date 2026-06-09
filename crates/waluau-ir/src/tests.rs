@@ -1411,9 +1411,9 @@ fn lowers_coroutine_builtins_to_typed_instructions() {
                 coroutine.yield(1)
                 return 2
             end)
-            local ok: bool, value: i32 = coroutine.resume(co)
+            local ok: bool, value: unknown = coroutine.resume(co)
             local closed: bool = coroutine.close(co)
-            return value
+            return value::i32
         end
     "#;
     let program = parse(source).expect("parse should succeed");
@@ -1657,6 +1657,47 @@ fn lowers_tagged_union_resume_to_coroutine_resume_tagged() {
         "expected CoroutineResumeTagged instruction"
     );
     assert!(saw_is_variant, "expected binary Eq for IsVariant check");
+}
+
+#[test]
+fn lowers_coroutine_resume_multi_value_to_unknown_payload() {
+    let source = r#"
+        function run(): i32
+            local co: thread = coroutine.create(function(): i32
+                coroutine.yield(1)
+                return 2
+            end)
+            local ok: bool, value: unknown = coroutine.resume(co)
+            if ok then
+                return value::i32
+            end
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+
+    let mut saw_resume = false;
+    let mut saw_unbox_cast = false;
+    for function in &module.functions {
+        for block in function.blocks.values() {
+            for (_, instruction) in &block.instructions {
+                match instruction {
+                    Instruction::CoroutineResume { .. } => saw_resume = true,
+                    Instruction::Cast {
+                        from: Type::Unknown,
+                        to,
+                        ..
+                    } if *to == Type::Numeric(NumericType::I32) => saw_unbox_cast = true,
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    assert!(saw_resume, "expected CoroutineResume instruction");
+    assert!(saw_unbox_cast, "expected explicit unknown->i32 cast");
 }
 
 #[test]

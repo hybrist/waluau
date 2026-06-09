@@ -307,14 +307,14 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             .ty()
             .function(Vec::<ValType>::new(), vec![ValType::I32]);
         debug_assert_eq!(body_sig, coroutine_types_base);
-        // State struct: { tag:i32, yielded:i32, continuation:(ref null body_sig), pc_*:i32 }.
+        // State struct: { tag:i32, yielded:anyref, continuation:(ref null body_sig), pc_*:i32 }.
         let mut fields = vec![
             FieldType {
                 element_type: StorageType::Val(ValType::I32),
                 mutable: true,
             },
             FieldType {
-                element_type: StorageType::Val(ValType::I32),
+                element_type: StorageType::Val(anyref_val_type()),
                 mutable: true,
             },
             FieldType {
@@ -1465,9 +1465,9 @@ fn emit_block(
                     value
                 ))
             })?;
-            if !matches!(value_ty, Type::Numeric(NumericType::I32)) {
+            if *value_ty != Type::Unknown {
                 return Err(Diagnostic::new(format!(
-                    "coroutine.yield currently supports i32 values during wasm emission, got {}",
+                    "coroutine.yield expected unknown payload during wasm emission, got {}",
                     value_ty
                 )));
             }
@@ -1509,10 +1509,11 @@ fn emit_block(
                 field_index: STATE_YIELDED_FIELD,
             });
             emit_active_state_field_set_const(out, ctx, STATE_TAG_FIELD, TAG_SUSPENDED)?;
-            // Unwind the call stack back to `coroutine.resume`, propagating the i32 value
-            // for functions that return one.
+            // Unwind the call stack back to `coroutine.resume`. The payload lives in the
+            // coroutine state; returning a typed default only satisfies the surrounding
+            // function's Wasm signature while delegated-yield checks propagate suspension.
             if !matches!(function.return_type, Type::Unit) {
-                out.instruction(&Instruction::LocalGet(yield_tmp));
+                emit_default_value(out, &function.return_type, ctx.array_registry)?;
             }
             out.instruction(&Instruction::Return);
         }
@@ -1813,9 +1814,12 @@ fn emit_block_instructions(
             IrInstruction::CoroutineCreate { callee } => {
                 let state_ty = ctx.coroutine_state_type()?;
                 let body_sig = ctx.coroutine_body_sig_type()?;
-                // struct.new $coroutine_state { tag=suspended, yielded=0, continuation, pc*=0 }
+                // struct.new $coroutine_state { tag=suspended, yielded=null, continuation, pc*=0 }
                 out.instruction(&Instruction::I32Const(TAG_SUSPENDED));
-                out.instruction(&Instruction::I32Const(0));
+                out.instruction(&Instruction::RefNull(HeapType::Abstract {
+                    shared: false,
+                    ty: AbstractHeapType::Any,
+                }));
                 // Continuation: extract orig_idx (field 0) from $func_val, look up funcref.
                 // The original function has the coroutine body signature () -> i32; the
                 // wrapper (field 2) would have a different type and cause a cast failure.
@@ -1839,13 +1843,16 @@ fn emit_block_instructions(
                 let save_local = local_plan
                     .coroutine_save_local
                     .ok_or_else(|| Diagnostic::new("missing coroutine save local for resume"))?;
+                let value_tmp = local_plan.coroutine_resume_value_tmp.ok_or_else(|| {
+                    Diagnostic::new("missing coroutine resume value local for resume")
+                })?;
                 let slots = local_plan.multi_slots.get(value).ok_or_else(|| {
                     Diagnostic::new("coroutine.resume result has no multi-value slots")
                 })?;
                 let ok_slot = slots[0];
                 let value_slot = slots[1];
 
-                // Suspended? Otherwise the coroutine is dead/errored → (false, 0).
+                // Suspended? Otherwise the coroutine is dead/errored → (false, null).
                 emit_value_operand(out, local_plan, *coroutine)?;
                 out.instruction(&Instruction::StructGet {
                     struct_type_index: state_ty,
@@ -1874,10 +1881,29 @@ fn emit_block_instructions(
                     field_index: STATE_CONT_FIELD,
                 });
                 out.instruction(&Instruction::CallRef(body_sig));
-                out.instruction(&Instruction::LocalSet(value_slot));
+                out.instruction(&Instruction::LocalSet(value_tmp));
                 // Restore the outer active instance.
                 out.instruction(&Instruction::LocalGet(save_local));
                 out.instruction(&Instruction::GlobalSet(active));
+                // yielded path -> state payload, finished path -> box final i32 return.
+                emit_value_operand(out, local_plan, *coroutine)?;
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: state_ty,
+                    field_index: STATE_TAG_FIELD,
+                });
+                out.instruction(&Instruction::I32Const(TAG_SUSPENDED));
+                out.instruction(&Instruction::I32Eq);
+                out.instruction(&Instruction::If(BlockType::Result(anyref_val_type())));
+                emit_value_operand(out, local_plan, *coroutine)?;
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: state_ty,
+                    field_index: STATE_YIELDED_FIELD,
+                });
+                out.instruction(&Instruction::Else);
+                out.instruction(&Instruction::LocalGet(value_tmp));
+                emit_box(out, &Type::Numeric(NumericType::I32), ctx.array_registry)?;
+                out.instruction(&Instruction::End);
+                out.instruction(&Instruction::LocalSet(value_slot));
                 // ok = tag != error.
                 emit_value_operand(out, local_plan, *coroutine)?;
                 out.instruction(&Instruction::StructGet {
@@ -1891,7 +1917,10 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::Else);
                 out.instruction(&Instruction::I32Const(0));
                 out.instruction(&Instruction::LocalSet(ok_slot));
-                out.instruction(&Instruction::I32Const(0));
+                out.instruction(&Instruction::RefNull(HeapType::Abstract {
+                    shared: false,
+                    ty: AbstractHeapType::Any,
+                }));
                 out.instruction(&Instruction::LocalSet(value_slot));
                 out.instruction(&Instruction::End);
             }
@@ -1980,7 +2009,8 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::End);
                 // stack: [i32: tag_discriminant]
 
-                // Compute boxed value: error → null anyref; else → box i32 as i31ref.
+                // Compute boxed value: error → null anyref; yielded → state payload;
+                // finished → box the final i32 return.
                 out.instruction(&Instruction::LocalGet(state_tmp));
                 out.instruction(&Instruction::I32Const(TAG_ERROR));
                 out.instruction(&Instruction::I32Eq);
@@ -1990,8 +2020,19 @@ fn emit_block_instructions(
                     ty: AbstractHeapType::Any,
                 }));
                 out.instruction(&Instruction::Else);
+                out.instruction(&Instruction::LocalGet(state_tmp));
+                out.instruction(&Instruction::I32Const(TAG_SUSPENDED));
+                out.instruction(&Instruction::I32Eq);
+                out.instruction(&Instruction::If(BlockType::Result(anyref_val_type())));
+                emit_value_operand(out, local_plan, *coroutine)?;
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: state_ty,
+                    field_index: STATE_YIELDED_FIELD,
+                });
+                out.instruction(&Instruction::Else);
                 out.instruction(&Instruction::LocalGet(value_tmp));
-                out.instruction(&Instruction::RefI31);
+                emit_box(out, &Type::Numeric(NumericType::I32), ctx.array_registry)?;
+                out.instruction(&Instruction::End);
                 out.instruction(&Instruction::End);
                 // stack: [i32: tag_discriminant, anyref: value]
 
@@ -2288,6 +2329,33 @@ fn emit_ref_null(
     }
 }
 
+fn emit_default_value(
+    out: &mut Function,
+    ty: &Type,
+    array_registry: &ArrayTypeRegistry,
+) -> Result<(), Diagnostic> {
+    match ty {
+        Type::Bool | Type::Numeric(NumericType::U32 | NumericType::I32) => {
+            out.instruction(&Instruction::I32Const(0));
+            Ok(())
+        }
+        Type::Numeric(NumericType::U64 | NumericType::I64) => {
+            out.instruction(&Instruction::I64Const(0));
+            Ok(())
+        }
+        Type::Numeric(NumericType::F32) => {
+            out.instruction(&Instruction::F32Const(0.0));
+            Ok(())
+        }
+        Type::Numeric(NumericType::F64) => {
+            out.instruction(&Instruction::F64Const(0.0));
+            Ok(())
+        }
+        Type::Unit => Ok(()),
+        _ => emit_ref_null(out, ty, array_registry),
+    }
+}
+
 /// After calling a function that may yield, unwind toward `coroutine.resume` if the
 /// active instance is now suspended (i.e. a yield happened transitively).
 fn emit_return_if_coroutine_yielded(
@@ -2295,16 +2363,6 @@ fn emit_return_if_coroutine_yielded(
     function: &IrFunction,
     ctx: &EmissionContext<'_>,
 ) -> Result<(), Diagnostic> {
-    if !matches!(
-        function.return_type,
-        Type::Unit | Type::Numeric(NumericType::I32)
-    ) {
-        return Err(Diagnostic::new(format!(
-            "delegated coroutine.yield currently supports i32 or unit returns, got {}",
-            function.return_type
-        )));
-    }
-    let state_ty = ctx.coroutine_state_type()?;
     // Skip entirely when no coroutine is running (the callee was invoked directly).
     emit_active_state_ref(out, ctx)?;
     out.instruction(&Instruction::RefIsNull);
@@ -2314,12 +2372,8 @@ fn emit_return_if_coroutine_yielded(
     out.instruction(&Instruction::I32Const(TAG_SUSPENDED));
     out.instruction(&Instruction::I32Eq);
     out.instruction(&Instruction::If(BlockType::Empty));
-    if matches!(function.return_type, Type::Numeric(NumericType::I32)) {
-        emit_active_state_ref(out, ctx)?;
-        out.instruction(&Instruction::StructGet {
-            struct_type_index: state_ty,
-            field_index: STATE_YIELDED_FIELD,
-        });
+    if !matches!(function.return_type, Type::Unit) {
+        emit_default_value(out, &function.return_type, ctx.array_registry)?;
     }
     out.instruction(&Instruction::Return);
     out.instruction(&Instruction::End);
@@ -2554,6 +2608,11 @@ fn emit_box(
             ));
             Ok(())
         }
+        Type::Extern | Type::ExternSubtype(_) | Type::String | Type::Bytes | Type::Nil => {
+            out.instruction(&Instruction::AnyConvertExtern);
+            Ok(())
+        }
+        Type::Array(_) | Type::Function { .. } | Type::Record(_) | Type::Thread => Ok(()),
         Type::Unit => {
             out.instruction(&Instruction::RefNull(HeapType::Abstract {
                 shared: false,
@@ -2588,6 +2647,39 @@ fn emit_unbox(
                 struct_type_index: array_registry.boxed_f64_struct_type,
                 field_index: 0,
             });
+            Ok(())
+        }
+        Type::Extern | Type::ExternSubtype(_) | Type::String | Type::Bytes => {
+            out.instruction(&Instruction::ExternConvertAny);
+            Ok(())
+        }
+        Type::Array(_) => {
+            out.instruction(&Instruction::RefCastNullable(HeapType::Concrete(
+                array_registry.index(to)?,
+            )));
+            Ok(())
+        }
+        Type::Function { .. } => {
+            out.instruction(&Instruction::RefCastNullable(HeapType::Concrete(
+                array_registry.func_val_struct_type,
+            )));
+            Ok(())
+        }
+        Type::Record(_) | Type::TaggedVariant(_) | Type::TaggedUnion(_) => {
+            let canonical = if matches!(to, Type::TaggedVariant(_) | Type::TaggedUnion(_)) {
+                Type::canonical_tagged_union_record()
+            } else {
+                to.clone()
+            };
+            out.instruction(&Instruction::RefCastNullable(HeapType::Concrete(
+                array_registry.record_index(&canonical)?,
+            )));
+            Ok(())
+        }
+        Type::Thread => {
+            out.instruction(&Instruction::RefCastNullable(HeapType::Concrete(
+                array_registry.coroutine_state_type()?,
+            )));
             Ok(())
         }
         Type::Unit => {

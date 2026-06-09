@@ -784,8 +784,8 @@ fn verify_function(
                 value,
                 resume_block,
             } => {
-                // The yield value must be `i32`. Whether a coroutine is on the call stack is
-                // a runtime check (see design 0007), so there is no static context rule here.
+                // The yield value lowers to `unknown`. Whether a coroutine is on the call stack
+                // is a runtime check, so there is no static context rule here.
                 let value_ty = require_dominating_definition(
                     &definitions,
                     &dominators,
@@ -793,9 +793,9 @@ fn verify_function(
                     block.id,
                     *value,
                 )?;
-                if value_ty != Type::Numeric(NumericType::I32) {
+                if value_ty != Type::Unknown {
                     return Err(Diagnostic::new(format!(
-                        "coroutine yield in block {:?} expects an i32 value, got {}",
+                        "coroutine yield in block {:?} expects unknown, got {}",
                         block.id, value_ty
                     )));
                 }
@@ -927,10 +927,9 @@ fn infer_instruction_type(
         Instruction::HostCall { return_type, .. } => Ok(return_type.clone()),
         Instruction::CallValue { return_type, .. } => Ok(return_type.clone()),
         Instruction::CoroutineCreate { .. } => Ok(Type::Thread),
-        Instruction::CoroutineResume { .. } => Ok(Type::Multi(vec![
-            Type::Bool,
-            Type::Numeric(NumericType::I32),
-        ])),
+        Instruction::CoroutineResume { .. } => {
+            Ok(Type::Multi(vec![Type::Bool, Type::Unknown]))
+        }
         Instruction::CoroutineResumeTagged { .. } => Ok(Type::canonical_tagged_union_record()),
         Instruction::CoroutineClose { .. } => Ok(Type::Bool),
         Instruction::Closure {

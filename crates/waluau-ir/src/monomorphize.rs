@@ -1695,10 +1695,7 @@ impl<'a> Monomorphizer<'a> {
             "print" | "assert" => Ok(Some(Type::Unit)),
             "tostring" => Ok(Some(Type::String)),
             "coroutine.create" => Ok(Some(Type::Thread)),
-            "coroutine.resume" => Ok(Some(Type::Multi(vec![
-                Type::Bool,
-                Type::Numeric(waluau_ast::NumericType::I32),
-            ]))),
+            "coroutine.resume" => Ok(Some(Type::Multi(vec![Type::Bool, Type::Unknown]))),
             "coroutine.close" => Ok(Some(Type::Bool)),
             "math.abs" | "math.min" | "math.max" | "math.sqrt" | "math.floor" | "math.ceil"
             | "math.trunc" | "math.nearest" | "math.copysign" => {

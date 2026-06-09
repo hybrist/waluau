@@ -2920,7 +2920,10 @@ impl Builder<'_> {
                     literal: number.clone(),
                 })
             }
-            Expr::Bool(value, _) => self.emit(Instruction::Bool(*value)),
+            Expr::Bool(value, _) => {
+                let value = self.emit(Instruction::Bool(*value));
+                self.coerce_value(value, Type::Bool, expected)?
+            }
             Expr::Nil(_) => {
                 let ty = match expected.clone() {
                     Some(Type::Nullable(inner)) => *inner,
@@ -2935,8 +2938,14 @@ impl Builder<'_> {
                 let value = self.emit(Instruction::Null { ty: ty.clone() });
                 self.coerce_value(value, ty, expected)?
             }
-            Expr::String(value, _) => self.emit(Instruction::String(value.clone())),
-            Expr::Bytes(value, _) => self.emit(Instruction::Bytes(value.clone())),
+            Expr::String(value, _) => {
+                let value = self.emit(Instruction::String(value.clone()));
+                self.coerce_value(value, Type::String, expected)?
+            }
+            Expr::Bytes(value, _) => {
+                let value = self.emit(Instruction::Bytes(value.clone()));
+                self.coerce_value(value, Type::Bytes, expected)?
+            }
             Expr::Name(name, symbol_id, _) => {
                 let symbol_id = symbol_id.expect("symbol_id should be resolved");
                 if let Some(value) = env.get(&symbol_id).copied() {
@@ -4695,7 +4704,11 @@ impl Builder<'_> {
                     return Some(Ok(value));
                 }
                 let value = self.emit(Instruction::CoroutineResume { coroutine });
-                Some(self.coerce_value(value, Type::Multi(vec![Type::Bool, i32_ty]), expected))
+                Some(self.coerce_value(
+                    value,
+                    Type::Multi(vec![Type::Bool, Type::Unknown]),
+                    expected,
+                ))
             }
             COROUTINE_CLOSE => {
                 if args.len() != 1 {
@@ -4718,7 +4731,8 @@ impl Builder<'_> {
                         args.len()
                     ))));
                 }
-                let yield_value = match self.lower_expr(&args[0], env, types, Some(i32_ty)) {
+                let yield_value = match self.lower_expr(&args[0], env, types, Some(Type::Unknown))
+                {
                     Ok(value) => value,
                     Err(error) => return Some(Err(error)),
                 };
@@ -4789,10 +4803,7 @@ impl Builder<'_> {
                         if matches!(&expected, Some(Type::TaggedUnion(_)) | Some(Type::TaggedVariant(_))) {
                             return Some(Ok(Type::canonical_tagged_union_record()));
                         }
-                        Some(Ok(Type::Multi(vec![
-                            Type::Bool,
-                            Type::Numeric(NumericType::I32),
-                        ])))
+                        Some(Ok(Type::Multi(vec![Type::Bool, Type::Unknown])))
                     }
                     _ => Some(Err(Diagnostic::new("coroutine.resume expects a thread"))),
                 }

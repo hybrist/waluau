@@ -1,0 +1,40 @@
+-- Coroutine payloads move through bare `coroutine.resume` as `unknown`, so
+-- callers explicitly unbox values at use sites.
+
+type Element = extern
+
+function yield_string(): i32
+    coroutine.yield("hello")
+    return 7
+end
+
+function yield_float(): i32
+    coroutine.yield(3.5)
+    return 9
+end
+
+function yield_extern(value: Element): Element
+    local co: thread = coroutine.create(function(): i32
+        coroutine.yield(value)
+        return 11
+    end)
+    local ok: bool, payload: unknown = coroutine.resume(co)
+    assert(ok)
+    return payload::Element
+end
+
+local string_co: thread = coroutine.create(yield_string)
+local ok1: bool, payload1: unknown = coroutine.resume(string_co)
+assert(ok1)
+assert(payload1::string == "hello")
+local ok2: bool, payload2: unknown = coroutine.resume(string_co)
+assert(ok2)
+assert(payload2::i32 == 7)
+
+local float_co: thread = coroutine.create(yield_float)
+local ok3: bool, payload3: unknown = coroutine.resume(float_co)
+assert(ok3)
+assert(payload3::f64 == 3.5)
+local ok4: bool, payload4: unknown = coroutine.resume(float_co)
+assert(ok4)
+assert(payload4::i32 == 9)
