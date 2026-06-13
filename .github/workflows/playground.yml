@@ -2,20 +2,34 @@ name: Playground
 
 on:
   pull_request:
-    paths-ignore:
-      - 'docs/**'
   push:
     branches:
       - main
-    paths-ignore:
-      - 'docs/**'
 
 concurrency:
   group: playground-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - '!docs/**'
+
   playground:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
 
     steps:
