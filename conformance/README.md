@@ -37,7 +37,7 @@ compile), opt a file into other kinds:
   eventually but doesn't yet. The runner only verifies the file currently fails
   (a compile/type error, or a trapping `assert`); it does not care how. When the
   feature lands and the file starts passing, the pending test goes red — that's
-  the signal to remove the directive. See `pending_string_sub.walu`.
+  the signal to remove the directive. See `string_sub.walu`.
 
 - `-- conformance: error=<text>` marks a **fail** test: a file that must never
   pass (typically a syntax or type error, rarely a runtime trap). Each `error=`
@@ -45,14 +45,14 @@ compile), opt a file into other kinds:
   repeated to require several fragments. Matching is fuzzy — runs of whitespace
   are collapsed and each fragment must appear as a substring of the actual
   message. The runner verifies the file fails and that every fragment is
-  present. See `fail_unknown_type.walu`.
+  present. See `unknown_type.walu`.
 
 A file may carry both directives at once. A **fail + pending** test names the
 failure it should eventually produce (`error=`) but doesn't produce it yet, so
 the runner verifies the actual outcome does **not** match the expected failure
 (the file may currently pass, or fail with a different message). When the
 expected failure starts appearing, the test goes red — remove `pending`. See
-`pending_fail_string_subtraction.walu`.
+`string_subtraction.walu`.
 
 | `pending` | `error=` | Kind | Runner verifies |
 |-----------|----------|------|-----------------|
