@@ -243,6 +243,10 @@ function createPlaygroundDomHost(wasmModule, domOutputRoot, getWasmExports = () 
 }
 
 function createTfjsHost(getWasmExports = () => null) {
+  const graphModels = new WeakSet();
+  const layersModels = new WeakSet();
+  const disposedModels = new WeakSet();
+
   const ensureTfjs = () => {
     if (!tf || typeof tf.tensor !== 'function') {
       throw new Error('TensorFlow.js is not available for require("tfjs")');
@@ -259,6 +263,63 @@ function createTfjsHost(getWasmExports = () => null) {
       throw new Error('TensorFlow.js Tensor has been disposed');
     }
     return value;
+  };
+
+  const isObject = (value) => Boolean(value && typeof value === 'object');
+
+  const rememberGraphModel = (model) => {
+    if (!isObject(model)) {
+      throw new TypeError('tf.loadGraphModel did not return a model object');
+    }
+    graphModels.add(model);
+    return model;
+  };
+
+  const rememberLayersModel = (model) => {
+    if (!isObject(model)) {
+      throw new TypeError('tf.loadLayersModel did not return a model object');
+    }
+    layersModels.add(model);
+    return model;
+  };
+
+  const asGraphModel = (value) => {
+    if (!isObject(value) || !graphModels.has(value)) {
+      throw new TypeError('Expected TensorFlow.js GraphModel host object');
+    }
+    if (disposedModels.has(value)) {
+      throw new Error('TensorFlow.js GraphModel has been disposed');
+    }
+    return value;
+  };
+
+  const asLayersModel = (value) => {
+    if (!isObject(value) || !layersModels.has(value)) {
+      throw new TypeError('Expected TensorFlow.js LayersModel host object');
+    }
+    if (disposedModels.has(value)) {
+      throw new Error('TensorFlow.js LayersModel has been disposed');
+    }
+    return value;
+  };
+
+  const asSingleOutputTensor = (value, apiName) => {
+    if (isTensor(value)) return asTensor(value);
+    if (Array.isArray(value)) {
+      throw new Error(`${apiName} returned multiple outputs; the Waluau TFJS model API only supports single-output models`);
+    }
+    if (isObject(value)) {
+      throw new Error(`${apiName} returned a named output map; the Waluau TFJS model API only supports single-output models`);
+    }
+    throw new TypeError(`${apiName} did not return a TensorFlow.js Tensor`);
+  };
+
+  const modelCount = (model, propertyName, modelName) => {
+    const value = model[propertyName];
+    if (!Array.isArray(value)) {
+      throw new Error(`${modelName}.${propertyName} is not available`);
+    }
+    return value.length;
   };
 
   const makeTensorData = (values, dtype = 'float32') => ({
@@ -392,6 +453,36 @@ function createTfjsHost(getWasmExports = () => null) {
     tfjs_matmul: (left, right) => ensureTfjs().matMul(asTensor(left), asTensor(right)),
     tfjs_reshape2d: (tensor, rows, cols) => asTensor(tensor).reshape([checkDim(rows, 'rows'), checkDim(cols, 'cols')]),
     tfjs_transpose: (tensor) => ensureTfjs().transpose(asTensor(tensor)),
+    tfjs_load_graph_model: async (url) => rememberGraphModel(await ensureTfjs().loadGraphModel(String(url))),
+    tfjs_load_layers_model: async (url) => rememberLayersModel(await ensureTfjs().loadLayersModel(String(url))),
+    tfjs_dispose_graph_model: (model) => {
+      const checked = asGraphModel(model);
+      if (typeof checked.dispose !== 'function') {
+        throw new TypeError('TensorFlow.js GraphModel does not support dispose()');
+      }
+      checked.dispose();
+      disposedModels.add(checked);
+    },
+    tfjs_dispose_layers_model: (model) => {
+      const checked = asLayersModel(model);
+      if (typeof checked.dispose !== 'function') {
+        throw new TypeError('TensorFlow.js LayersModel does not support dispose()');
+      }
+      checked.dispose();
+      disposedModels.add(checked);
+    },
+    tfjs_graph_model_predict: (model, input) =>
+      asSingleOutputTensor(asGraphModel(model).predict(asTensor(input)), 'GraphModel.predict'),
+    tfjs_graph_model_predict_async: async (model, input) =>
+      asSingleOutputTensor(await asGraphModel(model).predictAsync(asTensor(input)), 'GraphModel.predictAsync'),
+    tfjs_graph_model_execute: (model, input) =>
+      asSingleOutputTensor(asGraphModel(model).execute(asTensor(input)), 'GraphModel.execute'),
+    tfjs_layers_model_predict: (model, input) =>
+      asSingleOutputTensor(asLayersModel(model).predict(asTensor(input)), 'LayersModel.predict'),
+    tfjs_graph_model_input_count: (model) => modelCount(asGraphModel(model), 'inputs', 'GraphModel'),
+    tfjs_graph_model_output_count: (model) => modelCount(asGraphModel(model), 'outputs', 'GraphModel'),
+    tfjs_layers_model_input_count: (model) => modelCount(asLayersModel(model), 'inputs', 'LayersModel'),
+    tfjs_layers_model_output_count: (model) => modelCount(asLayersModel(model), 'outputs', 'LayersModel'),
     'Tensor.__add': (left, right) => ensureTfjs().add(asTensor(left), asTensor(right)),
     'Tensor.__sub': (left, right) => ensureTfjs().sub(asTensor(left), asTensor(right)),
     'Tensor.__mul': (left, right) => ensureTfjs().mul(asTensor(left), asTensor(right)),

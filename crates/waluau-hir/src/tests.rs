@@ -254,6 +254,60 @@ fn extern_type_aliases_are_nominal_and_lower_to_extern() {
 }
 
 #[test]
+fn tfjs_model_extern_types_are_nominally_distinct() {
+    let source = r#"
+        type Promise<T> = extern
+        type Tensor = extern
+        type GraphModel = extern
+        type LayersModel = extern
+
+        declare function load_graph_model(url: string): Promise<GraphModel>
+        declare function load_layers_model(url: string): Promise<LayersModel>
+        declare function graph_model_predict(model: GraphModel, input: Tensor): Tensor
+        declare function layers_model_predict(model: LayersModel, input: Tensor): Tensor
+
+        function graph(url: string): Promise<GraphModel>
+            return load_graph_model(url)
+        end
+
+        function layers(url: string): Promise<LayersModel>
+            return load_layers_model(url)
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+
+    assert!(matches!(
+        typed.functions[0].return_type.as_ref(),
+        Some(Type::Opaque { name, ty }) if name == "Promise<GraphModel>" && ty.as_ref() == &Type::Extern
+    ));
+    assert!(matches!(
+        typed.functions[1].return_type.as_ref(),
+        Some(Type::Opaque { name, ty }) if name == "Promise<LayersModel>" && ty.as_ref() == &Type::Extern
+    ));
+}
+
+#[test]
+fn tfjs_model_extern_types_reject_cross_assignment() {
+    let source = r#"
+        type GraphModel = extern
+        type LayersModel = extern
+
+        function entry(model: LayersModel): GraphModel
+            return model
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "cannot implicitly convert LayersModel to GraphModel"
+    );
+}
+
+#[test]
 fn resolves_declared_extern_operator_overloads() {
     let source = r#"
         type Tensor = extern

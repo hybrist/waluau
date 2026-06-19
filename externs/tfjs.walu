@@ -1,6 +1,8 @@
 type Promise<T> = extern
 type Tensor = extern
 type TensorData = extern
+type GraphModel = extern
+type LayersModel = extern
 
 declare function tfjs_data_empty(length: i32): TensorData
 declare function tfjs_data_set_f64(data: TensorData, index: i32, value: f64): unit
@@ -41,6 +43,19 @@ declare function tfjs_neg(tensor: Tensor): Tensor
 declare function tfjs_matmul(left: Tensor, right: Tensor): Tensor
 declare function tfjs_reshape2d(tensor: Tensor, rows: i32, cols: i32): Tensor
 declare function tfjs_transpose(tensor: Tensor): Tensor
+
+declare function tfjs_load_graph_model(url: string): Promise<GraphModel>
+declare function tfjs_load_layers_model(url: string): Promise<LayersModel>
+declare function tfjs_dispose_graph_model(model: GraphModel): unit
+declare function tfjs_dispose_layers_model(model: LayersModel): unit
+declare function tfjs_graph_model_predict(model: GraphModel, input: Tensor): Tensor
+declare function tfjs_graph_model_predict_async(model: GraphModel, input: Tensor): Promise<Tensor>
+declare function tfjs_graph_model_execute(model: GraphModel, input: Tensor): Tensor
+declare function tfjs_layers_model_predict(model: LayersModel, input: Tensor): Tensor
+declare function tfjs_graph_model_input_count(model: GraphModel): i32
+declare function tfjs_graph_model_output_count(model: GraphModel): i32
+declare function tfjs_layers_model_input_count(model: LayersModel): i32
+declare function tfjs_layers_model_output_count(model: LayersModel): i32
 
 declare function Tensor:__add(rhs: Tensor): Tensor
 declare function Tensor:__sub(rhs: Tensor): Tensor
