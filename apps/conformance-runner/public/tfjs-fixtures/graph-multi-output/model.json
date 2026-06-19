@@ -1,0 +1,194 @@
+{
+  "format": "graph-model",
+  "generatedBy": "waluau fixture",
+  "convertedBy": "waluau fixture",
+  "modelTopology": {
+    "node": [
+      {
+        "name": "scale",
+        "op": "Const",
+        "attr": {
+          "dtype": {
+            "type": "DT_FLOAT"
+          },
+          "value": {
+            "tensor": {
+              "dtype": "DT_FLOAT",
+              "tensorShape": {
+                "dim": [
+                  {
+                    "size": "1"
+                  },
+                  {
+                    "size": "1"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "bias",
+        "op": "Const",
+        "attr": {
+          "dtype": {
+            "type": "DT_FLOAT"
+          },
+          "value": {
+            "tensor": {
+              "dtype": "DT_FLOAT",
+              "tensorShape": {
+                "dim": [
+                  {
+                    "size": "1"
+                  },
+                  {
+                    "size": "1"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "x",
+        "op": "Placeholder",
+        "attr": {
+          "dtype": {
+            "type": "DT_FLOAT"
+          },
+          "shape": {
+            "shape": {
+              "dim": [
+                {
+                  "size": "-1"
+                },
+                {
+                  "size": "1"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "name": "scaled",
+        "op": "Mul",
+        "input": [
+          "x",
+          "scale"
+        ],
+        "attr": {
+          "T": {
+            "type": "DT_FLOAT"
+          }
+        }
+      },
+      {
+        "name": "y",
+        "op": "AddV2",
+        "input": [
+          "scaled",
+          "bias"
+        ],
+        "attr": {
+          "T": {
+            "type": "DT_FLOAT"
+          }
+        }
+      },
+      {
+        "name": "Identity",
+        "op": "Identity",
+        "input": [
+          "y"
+        ],
+        "attr": {
+          "T": {
+            "type": "DT_FLOAT"
+          }
+        }
+      }
+    ],
+    "library": {},
+    "versions": {
+      "producer": 1,
+      "minConsumer": 0
+    }
+  },
+  "weightsManifest": [
+    {
+      "paths": [
+        "weights.bin"
+      ],
+      "weights": [
+        {
+          "name": "scale",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "float32"
+        },
+        {
+          "name": "bias",
+          "shape": [
+            1,
+            1
+          ],
+          "dtype": "float32"
+        }
+      ]
+    }
+  ],
+  "signature": {
+    "inputs": {
+      "x:0": {
+        "name": "x:0",
+        "dtype": "DT_FLOAT",
+        "tensorShape": {
+          "dim": [
+            {
+              "size": "-1"
+            },
+            {
+              "size": "1"
+            }
+          ]
+        }
+      }
+    },
+    "outputs": {
+      "scaled:0": {
+        "name": "scaled:0",
+        "dtype": "DT_FLOAT",
+        "tensorShape": {
+          "dim": [
+            {
+              "size": "-1"
+            },
+            {
+              "size": "1"
+            }
+          ]
+        }
+      },
+      "Identity:0": {
+        "name": "Identity:0",
+        "dtype": "DT_FLOAT",
+        "tensorShape": {
+          "dim": [
+            {
+              "size": "-1"
+            },
+            {
+              "size": "1"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,29 @@
+function run_model_demo(): unit
+    local _tf = require("tfjs")
+    local co: thread = coroutine.create(function(): i32
+        local model: LayersModel = promise.await(tfjs_load_layers_model("/tfjs-fixtures/layers-double-plus-one/model.json"))::extern::LayersModel
+        local values: TensorData = tfjs_data_empty(1)
+        tfjs_data_set_f64(values, 0, 6.0)
+        local input: Tensor = tfjs_tensor2d(values, 1, 1)
+        local output: Tensor = tfjs_layers_model_predict(model, input)
+        local output_data: TensorData = tfjs_data_sync(output)
+        local prediction: f64 = tfjs_data_get_f64(output_data, 0)
+
+        local window = require("dom:window")
+        local document: Document = window.document
+        local result: Element = document:create_element("p")
+        result.id = "tfjs-model-result"
+        if prediction == 13.0 then
+            result.text_content = "TFJS model prediction: 13"
+        else
+            result.text_content = "TFJS model prediction failed"
+        end
+        document.body:append_child(result)
+
+        tfjs_dispose(input)
+        tfjs_dispose(output)
+        tfjs_dispose_layers_model(model)
+        return 0
+    end)
+    coroutine.resume(co)
+end
