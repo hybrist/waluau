@@ -184,6 +184,33 @@ mod tests {
     }
 
     #[test]
+    fn compile_file_resolves_tfjs_model_loading_namespace() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("app.walu");
+        fs::write(
+            &input_path,
+            r#"
+                function load(url: string): Promise<GraphModel>
+                    local tf = require("tfjs")
+                    return tf.load_graph_model(url)
+                end
+
+                function predict(model: GraphModel, input: Tensor): Tensor
+                    local tf = require("tfjs")
+                    return tf.graph_model_predict(model, input)
+                end
+            "#,
+        )
+        .expect("app should write");
+
+        let wasm = super::compile_file(&input_path).expect("tfjs model require should compile");
+        assert!(
+            wasm.starts_with(b"\0asm"),
+            "compiled wasm should start with the wasm magic bytes"
+        );
+    }
+
+    #[test]
     fn compile_file_resolves_top_level_dom_window_virtual_module() {
         let tempdir = tempdir().expect("tempdir should exist");
         let input_path = tempdir.path().join("app.walu");

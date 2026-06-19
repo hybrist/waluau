@@ -370,6 +370,49 @@ fn erases_generic_extern_specializations_in_declared_import_signatures() {
 }
 
 #[test]
+fn erases_tfjs_model_promise_import_signatures() {
+    let source = r#"
+        type Promise<T> = extern
+        type Tensor = extern
+        type GraphModel = extern
+        type LayersModel = extern
+
+        declare function load_graph_model(url: string): Promise<GraphModel>
+        declare function load_layers_model(url: string): Promise<LayersModel>
+        declare function graph_model_predict(model: GraphModel, input: Tensor): Tensor
+        declare function layers_model_predict(model: LayersModel, input: Tensor): Tensor
+
+        function load_graph(url: string): Promise<GraphModel>
+            return load_graph_model(url)
+        end
+
+        function predict_layers(model: LayersModel, input: Tensor): Tensor
+            return layers_model_predict(model, input)
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+
+    let load_graph_model = module
+        .declared_imports
+        .iter()
+        .find(|declared| declared.name == "load_graph_model")
+        .expect("load_graph_model import should exist");
+    assert_eq!(load_graph_model.params, vec![Type::String]);
+    assert_eq!(load_graph_model.return_type, Type::Extern);
+
+    let graph_model_predict = module
+        .declared_imports
+        .iter()
+        .find(|declared| declared.name == "graph_model_predict")
+        .expect("graph_model_predict import should exist");
+    assert_eq!(graph_model_predict.params, vec![Type::Extern, Type::Extern]);
+    assert_eq!(graph_model_predict.return_type, Type::Extern);
+}
+
+#[test]
 fn erases_promise_api_import_signatures_and_lowers_response_text_host_calls() {
     let source = r#"
         type Response = extern
