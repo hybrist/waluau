@@ -41,6 +41,7 @@ use wasm_types::{
 };
 
 const CALLBACK_EVENT_UNIT_TRAMPOLINE_EXPORT: &str = "__waluau_call_callback_event_unit";
+const CALLBACK_UNIT_EXTERN_TRAMPOLINE_EXPORT: &str = "__waluau_call_callback_unit_extern";
 const PROMISE_RESUME_TRAMPOLINE_EXPORT: &str = "__waluau_resume_promise_await";
 const PROMISE_RESET_ACTIVE_EXPORT: &str = "__waluau_reset_active_coroutine";
 
@@ -85,6 +86,18 @@ fn is_event_unit_callback_type(ty: &Type) -> bool {
     matches!(return_type.as_ref(), Type::Unit) && matches!(params.as_slice(), [Type::Extern])
 }
 
+fn is_unit_extern_callback_type(ty: &Type) -> bool {
+    let Type::Function {
+        params,
+        return_type,
+    } = ty
+    else {
+        return false;
+    };
+
+    params.is_empty() && is_promise_like_extern_type(return_type)
+}
+
 fn is_promise_like_extern_type(ty: &Type) -> bool {
     match ty {
         Type::Extern | Type::ExternSubtype(_) => true,
@@ -98,6 +111,13 @@ fn needs_callback_event_unit_trampoline(module: &Module) -> bool {
         .declared_imports
         .iter()
         .any(|declared| declared.params.iter().any(is_event_unit_callback_type))
+}
+
+fn needs_callback_unit_extern_trampoline(module: &Module) -> bool {
+    module
+        .declared_imports
+        .iter()
+        .any(|declared| declared.params.iter().any(is_unit_extern_callback_type))
 }
 
 fn needs_promise_resume_trampoline(module: &Module) -> bool {
@@ -189,6 +209,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     // Closure GC types ($anyref_array, $func_val, $boxed_f64) are only needed when
     // the program uses closures, function-typed values, or f64 boxing into unknown.
     let callback_event_unit_trampoline = needs_callback_event_unit_trampoline(module);
+    let callback_unit_extern_trampoline = needs_callback_unit_extern_trampoline(module);
     let promise_resume_trampoline = needs_promise_resume_trampoline(module);
     let closure_gc_needed = needs_closure_gc_types(module);
     // Two closure GC types sit after host types (only when needed):
@@ -224,6 +245,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         module,
         start_thunk.is_some(),
         callback_event_unit_trampoline,
+        callback_unit_extern_trampoline,
         promise_resume_trampoline,
     );
     let coroutine_body_wrapper_type = if coroutine_plan.has_state() {
@@ -428,6 +450,21 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
                 externref_val_type(),
             ],
             Vec::<ValType>::new(),
+        );
+        let type_idx = type_idx_counter;
+        type_idx_counter += 1;
+        Some(type_idx)
+    } else {
+        None
+    };
+    let callback_unit_extern_trampoline_type_idx = if callback_unit_extern_trampoline {
+        let callback_type = Type::Function {
+            params: Vec::new(),
+            return_type: Box::new(Type::Extern),
+        };
+        types.ty().function(
+            vec![wasm_type(&callback_type, &array_registry)?],
+            vec![externref_val_type()],
         );
         let type_idx = type_idx_counter;
         type_idx_counter += 1;
@@ -810,6 +847,20 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             user_type_base,
         )?);
     }
+    if let Some(type_idx) = callback_unit_extern_trampoline_type_idx {
+        functions.function(type_idx);
+        exports.export(
+            CALLBACK_UNIT_EXTERN_TRAMPOLINE_EXPORT,
+            ExportKind::Func,
+            import_func_count + helper_func_idx_counter,
+        );
+        helper_func_idx_counter += 1;
+        codes.function(&emit_callback_unit_extern_trampoline(
+            &signature_registry,
+            &array_registry,
+            user_type_base,
+        )?);
+    }
     if let Some(type_idx) = promise_resume_trampoline_type_idx {
         functions.function(type_idx);
         exports.export(
@@ -1156,6 +1207,37 @@ fn emit_callback_event_unit_trampoline(
         field_index: 1,
     });
     out.instruction(&Instruction::LocalGet(1));
+    out.instruction(&Instruction::LocalGet(0));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: array_registry.func_val_struct_type,
+        field_index: 2,
+    });
+    out.instruction(&Instruction::CallIndirect {
+        type_index: wrapper_type_idx,
+        table_index: 0,
+    });
+    out.instruction(&Instruction::End);
+    Ok(out)
+}
+
+/// Exported browser-host ABI helper for synchronous host callbacks.
+///
+/// Signature: `(callback: () -> extern) -> externref`.
+fn emit_callback_unit_extern_trampoline(
+    signature_registry: &SignatureRegistry,
+    array_registry: &ArrayTypeRegistry,
+    user_type_base: u32,
+) -> Result<Function, Diagnostic> {
+    let wrapper_type_idx = signature_registry
+        .get_wrapper_type_index(user_type_base, &[], &Type::Extern)
+        .ok_or_else(|| Diagnostic::new("missing () -> extern callback wrapper type"))?;
+
+    let mut out = Function::new(Vec::new());
+    out.instruction(&Instruction::LocalGet(0));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: array_registry.func_val_struct_type,
+        field_index: 1,
+    });
     out.instruction(&Instruction::LocalGet(0));
     out.instruction(&Instruction::StructGet {
         struct_type_index: array_registry.func_val_struct_type,

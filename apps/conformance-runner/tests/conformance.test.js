@@ -280,6 +280,39 @@ describe('browser conformance', () => {
     expect(harness.strings).toEqual(['typed body', 'typed body']);
   });
 
+  it('passes tfjs_host_api.walu async data readback checks', async () => {
+    const source = cases.find(({ name }) => name === 'tfjs_host_api.walu').source;
+    const values = [];
+    const exports = await compileAndInstantiateWithExports(
+      { '/main.walu': sourceForCase({ name: 'tfjs_host_api.walu', source }) },
+      '/main.walu',
+      {
+        hostImports: {
+          record_tfjs_async(value) {
+            values.push(value);
+          },
+        },
+      },
+    );
+
+    exports.run_async_readback();
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(values).toEqual([13]);
+  });
+
+  it('passes tfjs_host_api.walu tidy and keep lifetime checks', async () => {
+    const source = cases.find(({ name }) => name === 'tfjs_host_api.walu').source;
+    const exports = await compileAndInstantiateWithExports(
+      { '/main.walu': sourceForCase({ name: 'tfjs_host_api.walu', source }) },
+      '/main.walu',
+    );
+
+    exports.run_lifetime_checks();
+  });
+
   it('passes top_level_fetch.walu with async start-function fetch and DOM write', async () => {
     const testCase = cases.find(({ name }) => name === 'top_level_fetch.walu');
     const source = sourceForCase(testCase);
