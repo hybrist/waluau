@@ -1461,6 +1461,12 @@ body,
   border-radius: 4px;
 }
 
+.repl-toolbar-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .repl-reset-btn {
   flex-shrink: 0;
   font-size: 12px;
@@ -1471,6 +1477,7 @@ body,
   border-radius: 6px;
   padding: 5px 10px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .repl-reset-btn:disabled {
@@ -1504,6 +1511,19 @@ body,
 
 .repl-cell-error {
   border-left-color: rgba(248, 113, 113, 0.5);
+}
+
+.repl-cell-seed {
+  border-left-color: rgba(148, 163, 184, 0.45);
+}
+
+.repl-seed-label {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .repl-cell-input {

@@ -63,8 +63,17 @@ export default function App() {
     entryFile
   });
 
-  // Hook 2b: Standalone REPL session (accumulate-and-recompile)
+  // Hook 2b: Standalone REPL session (accumulate-and-recompile), optionally
+  // seeded from the current editor program.
   const repl = useWaluauRepl();
+
+  // Auto-seed the REPL from the editor the first time the tab is opened.
+  const { ready: replReady, maybeAutoSeed: replMaybeAutoSeed } = repl;
+  useEffect(() => {
+    if (activeTab === 'repl' && replReady) {
+      replMaybeAutoSeed(files, entryFile);
+    }
+  }, [activeTab, replReady, replMaybeAutoSeed, files, entryFile]);
 
   // Hook 3: Monaco Editor wrapper logic (view zones, markers, model disposal)
   const {
@@ -319,6 +328,8 @@ export default function App() {
                 busy={repl.busy}
                 evaluate={repl.evaluate}
                 reset={repl.reset}
+                onLoadScript={() => repl.seed(files, entryFile)}
+                scriptName={entryFile.replace(/^\//, '')}
               />
             )}
 

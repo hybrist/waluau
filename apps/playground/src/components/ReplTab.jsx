@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-export default function ReplTab({ ready, loadError, cells, busy, evaluate, reset }) {
+export default function ReplTab({ ready, loadError, cells, busy, evaluate, reset, onLoadScript, scriptName }) {
   const [draft, setDraft] = useState('');
   const [historyIndex, setHistoryIndex] = useState(null);
   const transcriptRef = useRef(null);
@@ -82,9 +82,21 @@ export default function ReplTab({ ready, loadError, cells, busy, evaluate, reset
           Each cell is appended to the session and the whole program is recompiled. Use{' '}
           <code>print(...)</code> to see output. Enter runs, Shift+Enter for a new line.
         </span>
-        <button className="repl-reset-btn" onClick={reset} disabled={cells.length === 0}>
-          Reset session
-        </button>
+        <div className="repl-toolbar-actions">
+          {onLoadScript && (
+            <button
+              className="repl-reset-btn"
+              onClick={onLoadScript}
+              disabled={busy}
+              title={`Restart the session seeded with ${scriptName || 'the editor script'}`}
+            >
+              Load editor script
+            </button>
+          )}
+          <button className="repl-reset-btn" onClick={reset} disabled={busy || cells.length === 0}>
+            Reset session
+          </button>
+        </div>
       </div>
 
       <div className="repl-transcript" ref={transcriptRef}>
@@ -95,10 +107,16 @@ export default function ReplTab({ ready, loadError, cells, busy, evaluate, reset
           </div>
         )}
         {cells.map((cell, idx) => (
-          <div className={`repl-cell ${cell.ok ? '' : 'repl-cell-error'}`} key={idx}>
+          <div className={`repl-cell ${cell.ok ? '' : 'repl-cell-error'} ${cell.isSeed ? 'repl-cell-seed' : ''}`} key={idx}>
             <div className="repl-cell-input">
-              <span className="repl-prompt">&gt;</span>
-              <pre className="repl-cell-source">{cell.input}</pre>
+              {cell.isSeed ? (
+                <span className="repl-seed-label">— {cell.input} —</span>
+              ) : (
+                <>
+                  <span className="repl-prompt">&gt;</span>
+                  <pre className="repl-cell-source">{cell.input}</pre>
+                </>
+              )}
             </div>
             {cell.error ? (
               <pre className="repl-cell-output repl-output-error">{cell.error}</pre>
