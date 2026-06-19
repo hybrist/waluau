@@ -104,6 +104,25 @@ test.describe('preset selector', () => {
     ).toHaveText('TFJS model prediction: 13');
   });
 
+  test('TFJS Layers Model Training preset trains a local model and writes loss output', async ({ page }) => {
+    await page.getByRole('button', { name: 'Tfjs Layers Model Training', exact: true }).click();
+
+    await expect(page.locator('.code-textarea')).toContainText('tf.layers_model_compile_sgd(model, "meanSquaredError", 0.01)');
+    await expect(page.locator('.code-textarea')).toContainText('promise.await(tf.layers_model_fit_one(model, xs, ys, 8, 1))');
+    await expect(page.locator('.code-textarea')).toContainText('tf.training_history_loss(history, epochs - 1)');
+    await expect(page.locator('.code-textarea')).toContainText('tf.dispose_layers_model(model)');
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    await page.getByRole('button', { name: 'Run' }).click();
+
+    const result = page.frameLocator('iframe').locator('#tfjs-training-result').first();
+    await expect(result).toContainText('TFJS training final loss:');
+    await expect(result).toContainText('prediction:');
+    await expect(result).toContainText(' -> ');
+  });
+
   test('global Ctrl+P/Cmd+P opens file search modal and lets user select a file', async ({ page }) => {
     await page.evaluate(() => {
       const event = new KeyboardEvent('keydown', {
