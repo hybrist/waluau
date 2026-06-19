@@ -141,6 +141,8 @@ export default function ReplTab({ ready, loadError, cells, busy, evaluate, reset
           rows={Math.min(8, Math.max(1, draft.split('\n').length))}
           spellCheck={false}
           autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
         />
         <button className="repl-run-btn" onClick={runDraft} disabled={busy || !draft.trim()}>
           {busy ? 'Running…' : 'Run'}
