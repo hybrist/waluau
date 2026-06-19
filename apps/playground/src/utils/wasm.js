@@ -247,14 +247,16 @@ function createTfjsHost(getWasmExports = () => null) {
   const layersModels = new Map();
   const disposedModels = new Set();
   const tensors = new Map();
+  const trainingHistories = new Map();
   let nextTensorHandle = 1;
   let nextModelHandle = 1;
+  let nextTrainingHistoryHandle = 1;
   let currentTensor = null;
   let currentGraphModel = null;
   let currentLayersModel = null;
 
   // Promise-resolved externrefs can lose object identity when they cross the
-  // coroutine bridge, so async model/tensor results are retained by host handle.
+  // coroutine bridge, so async TFJS results are retained by host handle.
   const ensureTfjs = () => {
     if (!tf || typeof tf.tensor !== 'function') {
       throw new Error('TensorFlow.js is not available for require("tfjs")');
@@ -357,6 +359,74 @@ function createTfjsHost(getWasmExports = () => null) {
       throw new Error(`${modelName}.${propertyName} is not available`);
     }
     return value.length;
+  };
+
+  const checkPositiveFinite = (value, name) => {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) {
+      throw new RangeError(`${name} must be a finite positive number, got ${value}`);
+    }
+    return n;
+  };
+
+  const checkPositiveInteger = (value, name) => {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n <= 0) {
+      throw new RangeError(`${name} must be a positive integer, got ${value}`);
+    }
+    return n;
+  };
+
+  const assertBuiltinLossName = (tfjs, loss) => {
+    const name = String(loss);
+    if (!name) {
+      throw new TypeError('TFJS loss name must be a non-empty string');
+    }
+    if (!tfjs.losses || typeof tfjs.losses[name] !== 'function') {
+      throw new RangeError(`Unknown TensorFlow.js built-in loss: ${name}`);
+    }
+    return name;
+  };
+
+  const rememberTrainingHistory = (history) => {
+    if (!isObject(history) || !isObject(history.history)) {
+      throw new TypeError('tf.LayersModel.fit did not return a TrainingHistory object');
+    }
+    const handle = nextTrainingHistoryHandle++;
+    trainingHistories.set(handle, history);
+    return handle;
+  };
+
+  const asTrainingHistory = (value) => {
+    const remembered = trainingHistories.get(Number(value));
+    const checked = remembered ?? value;
+    if (!isObject(checked) || !isObject(checked.history)) {
+      throw new TypeError('Expected TensorFlow.js TrainingHistory host object');
+    }
+    return checked;
+  };
+
+  const lossHistory = (history) => {
+    const checked = asTrainingHistory(history);
+    const losses = checked.history.loss;
+    if (!Array.isArray(losses)) {
+      throw new Error('TrainingHistory is missing numeric loss history');
+    }
+    for (let i = 0; i < losses.length; i += 1) {
+      if (!Number.isFinite(Number(losses[i]))) {
+        throw new Error(`TrainingHistory loss at index ${i} is not numeric`);
+      }
+    }
+    return losses;
+  };
+
+  const historyLossAt = (history, index) => {
+    const losses = lossHistory(history);
+    const i = Number(index);
+    if (!Number.isInteger(i) || i < 0 || i >= losses.length) {
+      throw new RangeError(`TrainingHistory loss index out of bounds: ${index}`);
+    }
+    return Number(losses[i]);
   };
 
   const makeTensorData = (values, dtype = 'float32') => ({
@@ -518,6 +588,32 @@ function createTfjsHost(getWasmExports = () => null) {
       asSingleOutputTensor(asGraphModel(model).execute(asTensor(input)), 'GraphModel.execute'),
     tfjs_layers_model_predict: (model, input) =>
       asSingleOutputTensor(asLayersModel(model).predict(asTensor(input)), 'LayersModel.predict'),
+    tfjs_layers_model_compile_sgd: (model, loss, learningRate) => {
+      const tfjs = ensureTfjs();
+      const checked = asLayersModel(model);
+      if (typeof checked.compile !== 'function') {
+        throw new TypeError('TensorFlow.js LayersModel does not support compile()');
+      }
+      checked.compile({
+        optimizer: tfjs.train.sgd(checkPositiveFinite(learningRate, 'learning_rate')),
+        loss: assertBuiltinLossName(tfjs, loss),
+      });
+    },
+    tfjs_layers_model_fit_one: async (model, x, y, epochs, batchSize) => {
+      const checked = asLayersModel(model);
+      if (typeof checked.fit !== 'function') {
+        throw new TypeError('TensorFlow.js LayersModel does not support fit()');
+      }
+      return checked.fit(asTensor(x), asTensor(y), {
+        epochs: checkPositiveInteger(epochs, 'epochs'),
+        batchSize: checkPositiveInteger(batchSize, 'batch_size'),
+        shuffle: false,
+        verbose: 0,
+        yieldEvery: 'auto',
+      }).then(rememberTrainingHistory);
+    },
+    tfjs_training_history_len: (history) => lossHistory(history).length,
+    tfjs_training_history_loss: historyLossAt,
     tfjs_graph_model_input_count: (model) => modelCount(asGraphModel(model), 'inputs', 'GraphModel'),
     tfjs_graph_model_output_count: (model) => modelCount(asGraphModel(model), 'outputs', 'GraphModel'),
     tfjs_layers_model_input_count: (model) => modelCount(asLayersModel(model), 'inputs', 'LayersModel'),

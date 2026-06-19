@@ -376,11 +376,16 @@ fn erases_tfjs_model_promise_import_signatures() {
         type Tensor = extern
         type GraphModel = extern
         type LayersModel = extern
+        type TrainingHistory = extern
 
         declare function load_graph_model(url: string): Promise<GraphModel>
         declare function load_layers_model(url: string): Promise<LayersModel>
         declare function graph_model_predict(model: GraphModel, input: Tensor): Tensor
         declare function layers_model_predict(model: LayersModel, input: Tensor): Tensor
+        declare function layers_model_compile_sgd(model: LayersModel, loss: string, learning_rate: f64): unit
+        declare function layers_model_fit_one(model: LayersModel, x: Tensor, y: Tensor, epochs: i32, batch_size: i32): Promise<TrainingHistory>
+        declare function training_history_len(history: TrainingHistory): i32
+        declare function training_history_loss(history: TrainingHistory, index: i32): f64
 
         function load_graph(url: string): Promise<GraphModel>
             return load_graph_model(url)
@@ -388,6 +393,18 @@ fn erases_tfjs_model_promise_import_signatures() {
 
         function predict_layers(model: LayersModel, input: Tensor): Tensor
             return layers_model_predict(model, input)
+        end
+
+        function train_layers(model: LayersModel, input: Tensor, target: Tensor): Promise<TrainingHistory>
+            layers_model_compile_sgd(model, "meanSquaredError", 0.1)
+            return layers_model_fit_one(model, input, target, 3, 1)
+        end
+
+        function loss_at(history: TrainingHistory, index: i32): f64
+            if training_history_len(history) == 0 then
+                return 0.0
+            end
+            return training_history_loss(history, index)
         end
     "#;
 
@@ -410,6 +427,48 @@ fn erases_tfjs_model_promise_import_signatures() {
         .expect("graph_model_predict import should exist");
     assert_eq!(graph_model_predict.params, vec![Type::Extern, Type::Extern]);
     assert_eq!(graph_model_predict.return_type, Type::Extern);
+
+    let layers_model_compile_sgd = module
+        .declared_imports
+        .iter()
+        .find(|declared| declared.name == "layers_model_compile_sgd")
+        .expect("layers_model_compile_sgd import should exist");
+    assert_eq!(
+        layers_model_compile_sgd.params,
+        vec![Type::Extern, Type::String, Type::Numeric(NumericType::F64),]
+    );
+    assert_eq!(layers_model_compile_sgd.return_type, Type::Unit);
+
+    let layers_model_fit_one = module
+        .declared_imports
+        .iter()
+        .find(|declared| declared.name == "layers_model_fit_one")
+        .expect("layers_model_fit_one import should exist");
+    assert_eq!(
+        layers_model_fit_one.params,
+        vec![
+            Type::Extern,
+            Type::Extern,
+            Type::Extern,
+            Type::Numeric(NumericType::I32),
+            Type::Numeric(NumericType::I32),
+        ]
+    );
+    assert_eq!(layers_model_fit_one.return_type, Type::Extern);
+
+    let training_history_loss = module
+        .declared_imports
+        .iter()
+        .find(|declared| declared.name == "training_history_loss")
+        .expect("training_history_loss import should exist");
+    assert_eq!(
+        training_history_loss.params,
+        vec![Type::Extern, Type::Numeric(NumericType::I32)]
+    );
+    assert_eq!(
+        training_history_loss.return_type,
+        Type::Numeric(NumericType::F64)
+    );
 }
 
 #[test]

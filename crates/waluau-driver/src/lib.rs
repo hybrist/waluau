@@ -211,6 +211,37 @@ mod tests {
     }
 
     #[test]
+    fn compile_file_resolves_tfjs_training_namespace() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("app.walu");
+        fs::write(
+            &input_path,
+            r#"
+                function train(model: LayersModel, input: Tensor, target: Tensor): Promise<TrainingHistory>
+                    local tf = require("tfjs")
+                    tf.layers_model_compile_sgd(model, "meanSquaredError", 0.01)
+                    return tf.layers_model_fit_one(model, input, target, 2, 1)
+                end
+
+                function first_loss(history: TrainingHistory): f64
+                    local tf = require("tfjs")
+                    if tf.training_history_len(history) == 0 then
+                        return 0.0
+                    end
+                    return tf.training_history_loss(history, 0)
+                end
+            "#,
+        )
+        .expect("app should write");
+
+        let wasm = super::compile_file(&input_path).expect("tfjs training require should compile");
+        assert!(
+            wasm.starts_with(b"\0asm"),
+            "compiled wasm should start with the wasm magic bytes"
+        );
+    }
+
+    #[test]
     fn compile_file_resolves_top_level_dom_window_virtual_module() {
         let tempdir = tempdir().expect("tempdir should exist");
         let input_path = tempdir.path().join("app.walu");
