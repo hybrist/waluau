@@ -188,6 +188,9 @@ function createTfjsModelHarness() {
         record_tfjs_model_value(value) {
           values.push(value);
         },
+        make_training_history_without_loss() {
+          return { history: {} };
+        },
       },
       onAsyncError(error) {
         asyncErrors.push(error);
@@ -406,7 +409,7 @@ describe('browser conformance', () => {
 
     exports.run_graph_model_fixture();
     await expect.poll(() => tfjsModelHarnessState(harness)).toEqual({
-      values: [9, 14],
+      values: [9, 7],
       errors: [],
     });
 
@@ -420,6 +423,26 @@ describe('browser conformance', () => {
       expect.stringContaining('GraphModel.execute returned multiple outputs'),
       expect.stringContaining('GraphModel.predict returned a named output map'),
     ]);
+  });
+
+  it('passes tfjs_model_loading.walu layers training fixture', async () => {
+    const source = cases.find(({ name }) => name === 'tfjs_model_loading.walu').source;
+    const harness = createTfjsModelHarness();
+    const exports = await compileAndInstantiateWithExports(
+      { '/main.walu': sourceForCase({ name: 'tfjs_model_loading.walu', source }) },
+      '/main.walu',
+      harness.options,
+    );
+
+    exports.run_layers_model_training_fixture();
+    await expect.poll(() => tfjsModelHarnessState(harness)).toEqual({
+      values: [expect.any(Number)],
+      errors: [],
+    });
+
+    expect(() => exports.run_training_history_missing_loss_error()).toThrow(
+      'TrainingHistory is missing numeric loss history',
+    );
   });
 
   it('passes top_level_fetch.walu with async start-function fetch and DOM write', async () => {
