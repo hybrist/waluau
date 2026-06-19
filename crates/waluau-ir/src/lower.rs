@@ -165,6 +165,9 @@ fn wrap_async_top_level_init_if_needed(
 
 fn canonical_dom_import_host_name(name: &str) -> Option<String> {
     let (interface, member) = name.split_once('.')?;
+    if member.starts_with("__") {
+        return None;
+    }
     let host_member = if let Some(property) = member.strip_prefix("get/") {
         if !property.contains('_') {
             return None;
@@ -694,9 +697,15 @@ fn erase_expr_opaque_types(expr: &Expr) -> Expr {
             tag: tag.clone(),
             span: *span,
         },
-        Expr::Unary { op, expr, span } => Expr::Unary {
+        Expr::Unary {
+            op,
+            expr,
+            resolved_name,
+            span,
+        } => Expr::Unary {
             op: *op,
             expr: Box::new(erase_expr_opaque_types(expr)),
+            resolved_name: resolved_name.clone(),
             span: *span,
         },
         Expr::Cast { expr, ty, span } => Expr::Cast {
@@ -708,11 +717,13 @@ fn erase_expr_opaque_types(expr: &Expr) -> Expr {
             op,
             left,
             right,
+            resolved_name,
             span,
         } => Expr::Binary {
             op: *op,
             left: Box::new(erase_expr_opaque_types(left)),
             right: Box::new(erase_expr_opaque_types(right)),
+            resolved_name: resolved_name.clone(),
             span: *span,
         },
         Expr::If {
@@ -1171,6 +1182,44 @@ impl Builder<'_> {
             .instructions
             .push((value, instruction));
         value
+    }
+
+    fn lower_resolved_host_call(
+        &mut self,
+        name: &str,
+        args: &[&Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+    ) -> Result<(ValueId, Type), Diagnostic> {
+        let (param_types, return_type) = self
+            .field_call_signatures
+            .get(name)
+            .cloned()
+            .ok_or_else(|| Diagnostic::new(format!("operator overload '{name}' is not declared")))?;
+        if param_types.len() != args.len() {
+            return Err(Diagnostic::new(format!(
+                "operator overload '{name}' expects {} operands, got {}",
+                param_types.len(),
+                args.len()
+            )));
+        }
+        let symbol_id = self.host_import_names.get(name).copied().ok_or_else(|| {
+            Diagnostic::new(format!(
+                "operator overload '{name}' must resolve to a declared host import"
+            ))
+        })?;
+        let lowered_args = args
+            .iter()
+            .zip(param_types.iter())
+            .map(|(arg, param_ty)| self.lower_expr(arg, env, types, Some(param_ty.clone())))
+            .collect::<Result<Vec<_>, _>>()?;
+        let value = self.emit(Instruction::HostCall {
+            name: name.to_string(),
+            symbol_id,
+            args: lowered_args,
+            return_type: return_type.clone(),
+        });
+        Ok((value, return_type))
     }
 
     /// Return the stable i32 discriminant for a tagged-union variant name.
@@ -3187,7 +3236,17 @@ impl Builder<'_> {
                 let actual = self.infer_expr_type(expr, types, None)?;
                 self.coerce_value(value, actual, expected)?
             }
-            Expr::Unary { op, expr, .. } => {
+            Expr::Unary {
+                op,
+                expr,
+                resolved_name,
+                ..
+            } => {
+                if let Some(name) = resolved_name {
+                    let (value, return_type) =
+                        self.lower_resolved_host_call(name, &[expr.as_ref()], env, types)?;
+                    return self.coerce_value(value, return_type, expected);
+                }
                 let actual = self.infer_expr_type(expr, types, expected.clone())?;
                 match op {
                     UnaryOp::Neg => {
@@ -3376,7 +3435,11 @@ impl Builder<'_> {
                 ]))
             }
             Expr::Binary {
-                op, left, right, ..
+                op,
+                left,
+                right,
+                resolved_name,
+                ..
             } => match op {
                 BinaryOp::And | BinaryOp::Or => {
                     let result_ty = self.infer_expr_type(expr, types, expected.clone())?;
@@ -3428,6 +3491,15 @@ impl Builder<'_> {
                     self.coerce_value(value, result_ty, expected)?
                 }
                 _ => {
+                    if let Some(name) = resolved_name {
+                        let (value, return_type) = self.lower_resolved_host_call(
+                            name,
+                            &[left.as_ref(), right.as_ref()],
+                            env,
+                            types,
+                        )?;
+                        return self.coerce_value(value, return_type, expected);
+                    }
                     if matches!(op, BinaryOp::Eq | BinaryOp::NotEq)
                         && (matches!(left.as_ref(), Expr::Nil(..))
                             || matches!(right.as_ref(), Expr::Nil(..)))
@@ -4221,8 +4293,19 @@ impl Builder<'_> {
                 }
                 coerce_type(*return_type, expected)
             }
-            Expr::Unary { op, expr, .. } => match op {
+            Expr::Unary {
+                op,
+                expr,
+                resolved_name,
+                ..
+            } => match op {
                 UnaryOp::Neg => {
+                    if let Some(name) = resolved_name {
+                        let (_, return_type) = self.field_call_signatures.get(name).cloned().ok_or_else(
+                            || Diagnostic::new(format!("operator overload '{name}' is not declared")),
+                        )?;
+                        return coerce_type(return_type, expected);
+                    }
                     let actual = self.infer_expr_type(expr, types, expected.clone())?;
                     match actual {
                         Type::Numeric(_) => coerce_type(actual, expected),
@@ -4423,7 +4506,11 @@ impl Builder<'_> {
                 coerce_type(element_ty, expected)
             }
             Expr::Binary {
-                op, left, right, ..
+                op,
+                left,
+                right,
+                resolved_name,
+                ..
             } => match op {
                 BinaryOp::Add
                 | BinaryOp::Sub
@@ -4432,6 +4519,12 @@ impl Builder<'_> {
                 | BinaryOp::FloorDiv
                 | BinaryOp::Mod
                 | BinaryOp::Concat => {
+                    if let Some(name) = resolved_name {
+                        let (_, return_type) = self.field_call_signatures.get(name).cloned().ok_or_else(
+                            || Diagnostic::new(format!("operator overload '{name}' is not declared")),
+                        )?;
+                        return coerce_type(return_type, expected);
+                    }
                     let raw = self.infer_binary_operand_type(left, right, op, types, expected.clone())?;
                     coerce_type(raw, expected)
                 }

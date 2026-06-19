@@ -189,6 +189,7 @@ impl Parser {
                 op,
                 left: Box::new(expr),
                 right: Box::new(right),
+                resolved_name: None,
                 span: Some(Span {
                     start: start_pos,
                     end: end_pos,
@@ -261,6 +262,7 @@ impl Parser {
             return Ok(Expr::Unary {
                 op: UnaryOp::Neg,
                 expr: Box::new(operand),
+                resolved_name: None,
                 span: Some(Span {
                     start: start_pos,
                     end: end_pos,
@@ -275,6 +277,7 @@ impl Parser {
             return Ok(Expr::Unary {
                 op: UnaryOp::Not,
                 expr: Box::new(operand),
+                resolved_name: None,
                 span: Some(Span {
                     start: start_pos,
                     end: end_pos,
@@ -289,6 +292,7 @@ impl Parser {
             return Ok(Expr::Unary {
                 op: UnaryOp::Len,
                 expr: Box::new(operand),
+                resolved_name: None,
                 span: Some(Span {
                     start: start_pos,
                     end: end_pos,
@@ -409,6 +413,7 @@ impl Parser {
                     op,
                     left: Box::new(expr),
                     right: Box::new(right),
+                    resolved_name: None,
                     span: Some(Span {
                         start: start_pos,
                         end: end_pos,

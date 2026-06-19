@@ -1,4 +1,4 @@
-use waluau_ast::{Expr, FunctionName, NumericType, Stmt, Type};
+use waluau_ast::{BinaryOp, Expr, FunctionName, NumericType, Stmt, Type, UnaryOp};
 use waluau_diagnostics::DiagnosticCategory;
 use waluau_parser::parse;
 
@@ -251,6 +251,75 @@ fn extern_type_aliases_are_nominal_and_lower_to_extern() {
         &typed.functions[0].params[0].ty,
         Type::Opaque { name, ty } if name == "Element" && **ty == Type::Extern
     ));
+}
+
+#[test]
+fn resolves_declared_extern_operator_overloads() {
+    let source = r#"
+        type Tensor = extern
+        declare function make_tensor(): Tensor
+        declare function Tensor:__add(rhs: Tensor): Tensor
+        declare function Tensor:__neg(): Tensor
+
+        function add(): Tensor
+            return make_tensor() + make_tensor()
+        end
+
+        function neg(): Tensor
+            return -make_tensor()
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+    let add_fn = typed
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "add")
+        .expect("add function should exist");
+    let Stmt::Return(Expr::Binary {
+        op: BinaryOp::Add,
+        resolved_name: Some(add_name),
+        ..
+    }) = &add_fn.body[0]
+    else {
+        panic!("expected resolved binary overload");
+    };
+    assert_eq!(add_name, "Tensor.__add");
+
+    let neg_fn = typed
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "neg")
+        .expect("neg function should exist");
+    let Stmt::Return(Expr::Unary {
+        op: UnaryOp::Neg,
+        resolved_name: Some(neg_name),
+        ..
+    }) = &neg_fn.body[0]
+    else {
+        panic!("expected resolved unary overload");
+    };
+    assert_eq!(neg_name, "Tensor.__neg");
+}
+
+#[test]
+fn rejects_missing_extern_operator_overload_with_clear_diagnostic() {
+    let source = r#"
+        type Tensor = extern
+        declare function make_tensor(): Tensor
+
+        function add(): Tensor
+            return make_tensor() + make_tensor()
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "operator '+' is not defined for Tensor and Tensor"
+    );
 }
 
 #[test]

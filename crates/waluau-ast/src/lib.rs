@@ -472,6 +472,7 @@ pub enum Expr {
     Unary {
         op: UnaryOp,
         expr: Box<Expr>,
+        resolved_name: Option<String>,
         span: Option<Span>,
     },
     Cast {
@@ -483,6 +484,7 @@ pub enum Expr {
         op: BinaryOp,
         left: Box<Expr>,
         right: Box<Expr>,
+        resolved_name: Option<String>,
         span: Option<Span>,
     },
     IsVariant {

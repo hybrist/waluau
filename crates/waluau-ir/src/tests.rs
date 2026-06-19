@@ -37,6 +37,40 @@ fn inserts_phi_after_if_merge() {
 }
 
 #[test]
+fn lowers_declared_extern_operator_overload_to_host_call() {
+    let source = r#"
+        type Tensor = extern
+        declare function make_tensor(): Tensor
+        declare function Tensor:__add(rhs: Tensor): Tensor
+
+        function entry(): Tensor
+            return make_tensor() + make_tensor()
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.name == "entry")
+        .expect("entry function should exist");
+    let has_operator_host_call = function.blocks.values().any(|block| {
+        block.instructions.iter().any(|(_, instruction)| {
+            matches!(
+                instruction,
+                Instruction::HostCall { name, .. } if name == "Tensor.__add"
+            )
+        })
+    });
+    assert!(
+        has_operator_host_call,
+        "expected Tensor.__add host call in function:\n{}",
+        function.dump()
+    );
+}
+
+#[test]
 fn lowers_if_expression_with_phi_result() {
     let source = r#"
         function entry(flag: bool, x: i32, y: i32): i32
