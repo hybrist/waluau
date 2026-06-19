@@ -67,9 +67,20 @@ in docs or bead design notes and create follow-up beads for discovered work.
 
 1. Verify all requested beads are closed with `bd show` or `bd list`.
 2. Push beads: `bd dolt push`.
-3. Run final git checks from the primary checkout:
+3. Clean up only the worktrees and branches owned by this run:
+   - Inspect worktrees with `git worktree list`.
+   - Remove completed temporary worktrees with `git worktree remove <path>`.
+   - Delete known completed local branches after their worktrees are removed.
+   - Prune stale remote-tracking refs with `git fetch --prune origin`.
+   - Do not remove unrelated user, Gemini, Claude, Codex, or long-lived
+     worktrees/branches unless the user explicitly asks.
+4. Verify cleanup:
+   - no task-owned `/private/tmp` worktrees remain
+   - no task-owned local or remote-tracking branches remain
+   - unrelated worktrees and branches are still present
+5. Run final git checks from the primary checkout:
    - `git pull --rebase`
    - `git push`
    - `git status --short --branch`
-4. Final response should summarize merged PRs, closed beads, follow-ups created,
+6. Final response should summarize merged PRs, closed beads, follow-ups created,
    validation, and final checkout state.
