@@ -249,8 +249,8 @@ function createTfjsHost(getWasmExports = () => null) {
   const tensors = new Map();
   const trainingHistories = new Map();
   let nextTensorHandle = 1;
-  let nextModelHandle = 1;
-  let nextTrainingHistoryHandle = 1;
+  let nextModelHandle = 1_000_000;
+  let nextTrainingHistoryHandle = 2_000_000;
   let currentTensor = null;
   let currentGraphModel = null;
   let currentLayersModel = null;
@@ -265,6 +265,7 @@ function createTfjsHost(getWasmExports = () => null) {
   };
 
   const isTensor = (value) => Boolean(value && typeof value === 'object' && value.isDisposedInternal !== undefined && Array.isArray(value.shape));
+  const isHostHandle = (value) => typeof value === 'number' && Number.isFinite(value);
   const rememberTensor = (tensor) => {
     if (!isTensor(tensor)) return tensor;
     const handle = nextTensorHandle++;
@@ -274,7 +275,7 @@ function createTfjsHost(getWasmExports = () => null) {
   };
   const asTensor = (value) => {
     const remembered = tensors.get(Number(value));
-    const checked = remembered ?? (isTensor(value) ? value : currentTensor);
+    const checked = remembered ?? (isHostHandle(value) ? null : (isTensor(value) ? value : currentTensor));
     if (!checked) {
       throw new TypeError('Expected TensorFlow.js Tensor host object');
     }
@@ -314,7 +315,7 @@ function createTfjsHost(getWasmExports = () => null) {
       typeof value.execute === 'function' &&
       Array.isArray(value.inputs) &&
       Array.isArray(value.outputs);
-    const fallback = currentGraphModel;
+    const fallback = isHostHandle(value) ? null : currentGraphModel;
     if (!remembered && !isGraphModelLike && !fallback) {
       throw new TypeError('Expected TensorFlow.js GraphModel host object');
     }
@@ -331,7 +332,7 @@ function createTfjsHost(getWasmExports = () => null) {
       typeof value.predict === 'function' &&
       Array.isArray(value.inputs) &&
       Array.isArray(value.outputs);
-    const fallback = currentLayersModel;
+    const fallback = isHostHandle(value) ? null : currentLayersModel;
     if (!remembered && !isLayersModelLike && !fallback) {
       throw new TypeError('Expected TensorFlow.js LayersModel host object');
     }
@@ -399,7 +400,7 @@ function createTfjsHost(getWasmExports = () => null) {
 
   const asTrainingHistory = (value) => {
     const remembered = trainingHistories.get(Number(value));
-    const checked = remembered ?? value;
+    const checked = remembered ?? (isHostHandle(value) ? null : value);
     if (!isObject(checked) || !isObject(checked.history)) {
       throw new TypeError('Expected TensorFlow.js TrainingHistory host object');
     }
@@ -473,7 +474,7 @@ function createTfjsHost(getWasmExports = () => null) {
     if (tensorData.values.length !== expected) {
       throw new RangeError(`TensorData length ${tensorData.values.length} does not match shape [${shape.join(', ')}]`);
     }
-    return tfjs.tensor(tensorData.values, shape, dtype);
+    return rememberTensor(tfjs.tensor(tensorData.values, shape, dtype));
   };
 
   const scalarValue = (tensor) => {
@@ -512,18 +513,18 @@ function createTfjsHost(getWasmExports = () => null) {
     tfjs_data_len: (data) => asTensorData(data).values.length,
     tfjs_data_get_f64: (data, index) => asTensorData(data).values[checkDataIndex(asTensorData(data), index)],
     tfjs_data_get_i32: (data, index) => asTensorData(data).values[checkDataIndex(asTensorData(data), index)] | 0,
-    tfjs_scalar: (value) => ensureTfjs().scalar(Number(value), 'float32'),
-    tfjs_scalar_i32: (value) => ensureTfjs().scalar(Number(value) | 0, 'int32'),
-    tfjs_scalar_bool: (value) => ensureTfjs().scalar(Boolean(value), 'bool'),
+    tfjs_scalar: (value) => rememberTensor(ensureTfjs().scalar(Number(value), 'float32')),
+    tfjs_scalar_i32: (value) => rememberTensor(ensureTfjs().scalar(Number(value) | 0, 'int32')),
+    tfjs_scalar_bool: (value) => rememberTensor(ensureTfjs().scalar(Boolean(value), 'bool')),
     tfjs_tensor1d: (data) => tensorFromData(data, [asTensorData(data).values.length], 'float32'),
     tfjs_tensor1d_i32: (data) => tensorFromData(data, [asTensorData(data).values.length], 'int32'),
     tfjs_tensor2d: (data, rows, cols) => tensorFromData(data, [checkDim(rows, 'rows'), checkDim(cols, 'cols')], 'float32'),
     tfjs_tensor2d_i32: (data, rows, cols) => tensorFromData(data, [checkDim(rows, 'rows'), checkDim(cols, 'cols')], 'int32'),
-    tfjs_zeros: (rows, cols) => ensureTfjs().zeros([checkDim(rows, 'rows'), checkDim(cols, 'cols')], 'float32'),
-    tfjs_ones: (rows, cols) => ensureTfjs().ones([checkDim(rows, 'rows'), checkDim(cols, 'cols')], 'float32'),
+    tfjs_zeros: (rows, cols) => rememberTensor(ensureTfjs().zeros([checkDim(rows, 'rows'), checkDim(cols, 'cols')], 'float32')),
+    tfjs_ones: (rows, cols) => rememberTensor(ensureTfjs().ones([checkDim(rows, 'rows'), checkDim(cols, 'cols')], 'float32')),
     tfjs_eye: (size) => {
       const n = checkDim(size, 'size');
-      return ensureTfjs().eye(n, n);
+      return rememberTensor(ensureTfjs().eye(n, n));
     },
     tfjs_data: async (tensor) => {
       const checked = asTensor(tensor);
@@ -544,22 +545,26 @@ function createTfjsHost(getWasmExports = () => null) {
     },
     tfjs_dtype: (tensor) => asTensor(tensor).dtype,
     tfjs_dispose: (tensor) => {
-      if (!isTensor(tensor)) {
+      const checked = tensors.get(Number(tensor)) ?? (isHostHandle(tensor) ? null : (isTensor(tensor) ? tensor : currentTensor));
+      if (!checked) {
         throw new TypeError('Expected TensorFlow.js Tensor host object');
       }
-      tensor.dispose();
+      if (!checked.isDisposedInternal) {
+        checked.dispose();
+      }
     },
-    tfjs_keep: (tensor) => ensureTfjs().keep(asTensor(tensor)),
-    tfjs_tidy: (callback) => ensureTfjs().tidy(() => asTensor(callUnitExternCallback(callback))),
+    tfjs_keep: (tensor) => rememberTensor(ensureTfjs().keep(asTensor(tensor))),
+    tfjs_tidy: (callback) => rememberTensor(ensureTfjs().tidy(() => asTensor(callUnitExternCallback(callback)))),
     tfjs_memory_num_tensors: () => ensureTfjs().memory().numTensors,
-    tfjs_add: (left, right) => ensureTfjs().add(asTensor(left), asTensor(right)),
-    tfjs_sub: (left, right) => ensureTfjs().sub(asTensor(left), asTensor(right)),
-    tfjs_mul: (left, right) => ensureTfjs().mul(asTensor(left), asTensor(right)),
-    tfjs_div: (left, right) => ensureTfjs().div(asTensor(left), asTensor(right)),
-    tfjs_neg: (tensor) => ensureTfjs().neg(asTensor(tensor)),
-    tfjs_matmul: (left, right) => ensureTfjs().matMul(asTensor(left), asTensor(right)),
-    tfjs_reshape2d: (tensor, rows, cols) => asTensor(tensor).reshape([checkDim(rows, 'rows'), checkDim(cols, 'cols')]),
-    tfjs_transpose: (tensor) => ensureTfjs().transpose(asTensor(tensor)),
+    tfjs_add: (left, right) => rememberTensor(ensureTfjs().add(asTensor(left), asTensor(right))),
+    tfjs_sub: (left, right) => rememberTensor(ensureTfjs().sub(asTensor(left), asTensor(right))),
+    tfjs_mul: (left, right) => rememberTensor(ensureTfjs().mul(asTensor(left), asTensor(right))),
+    tfjs_div: (left, right) => rememberTensor(ensureTfjs().div(asTensor(left), asTensor(right))),
+    tfjs_neg: (tensor) => rememberTensor(ensureTfjs().neg(asTensor(tensor))),
+    tfjs_matmul: (left, right) => rememberTensor(ensureTfjs().matMul(asTensor(left), asTensor(right))),
+    tfjs_reshape2d: (tensor, rows, cols) =>
+      rememberTensor(asTensor(tensor).reshape([checkDim(rows, 'rows'), checkDim(cols, 'cols')])),
+    tfjs_transpose: (tensor) => rememberTensor(ensureTfjs().transpose(asTensor(tensor))),
     tfjs_load_graph_model: async (url) => rememberGraphModel(await ensureTfjs().loadGraphModel(String(url))),
     tfjs_load_layers_model: async (url) => rememberLayersModel(await ensureTfjs().loadLayersModel(String(url))),
     tfjs_dispose_graph_model: (model) => {
@@ -581,13 +586,13 @@ function createTfjsHost(getWasmExports = () => null) {
       disposedModels.add(Number(model));
     },
     tfjs_graph_model_predict: (model, input) =>
-      asSingleOutputTensor(asGraphModel(model).predict(asTensor(input)), 'GraphModel.predict'),
+      rememberTensor(asSingleOutputTensor(asGraphModel(model).predict(asTensor(input)), 'GraphModel.predict')),
     tfjs_graph_model_predict_async: async (model, input) =>
       rememberTensor(asSingleOutputTensor(await asGraphModel(model).predictAsync(asTensor(input)), 'GraphModel.predictAsync')),
     tfjs_graph_model_execute: (model, input) =>
-      asSingleOutputTensor(asGraphModel(model).execute(asTensor(input)), 'GraphModel.execute'),
+      rememberTensor(asSingleOutputTensor(asGraphModel(model).execute(asTensor(input)), 'GraphModel.execute')),
     tfjs_layers_model_predict: (model, input) =>
-      asSingleOutputTensor(asLayersModel(model).predict(asTensor(input)), 'LayersModel.predict'),
+      rememberTensor(asSingleOutputTensor(asLayersModel(model).predict(asTensor(input)), 'LayersModel.predict')),
     tfjs_layers_model_compile_sgd: (model, loss, learningRate) => {
       const tfjs = ensureTfjs();
       const checked = asLayersModel(model);
@@ -618,11 +623,11 @@ function createTfjsHost(getWasmExports = () => null) {
     tfjs_graph_model_output_count: (model) => modelCount(asGraphModel(model), 'outputs', 'GraphModel'),
     tfjs_layers_model_input_count: (model) => modelCount(asLayersModel(model), 'inputs', 'LayersModel'),
     tfjs_layers_model_output_count: (model) => modelCount(asLayersModel(model), 'outputs', 'LayersModel'),
-    'Tensor.__add': (left, right) => ensureTfjs().add(asTensor(left), asTensor(right)),
-    'Tensor.__sub': (left, right) => ensureTfjs().sub(asTensor(left), asTensor(right)),
-    'Tensor.__mul': (left, right) => ensureTfjs().mul(asTensor(left), asTensor(right)),
-    'Tensor.__div': (left, right) => ensureTfjs().div(asTensor(left), asTensor(right)),
-    'Tensor.__neg': (tensor) => ensureTfjs().neg(asTensor(tensor)),
+    'Tensor.__add': (left, right) => rememberTensor(ensureTfjs().add(asTensor(left), asTensor(right))),
+    'Tensor.__sub': (left, right) => rememberTensor(ensureTfjs().sub(asTensor(left), asTensor(right))),
+    'Tensor.__mul': (left, right) => rememberTensor(ensureTfjs().mul(asTensor(left), asTensor(right))),
+    'Tensor.__div': (left, right) => rememberTensor(ensureTfjs().div(asTensor(left), asTensor(right))),
+    'Tensor.__neg': (tensor) => rememberTensor(ensureTfjs().neg(asTensor(tensor))),
   };
 }
 
