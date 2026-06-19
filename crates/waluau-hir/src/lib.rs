@@ -12,7 +12,10 @@ mod numeric;
 mod signatures;
 mod statements;
 
-use expressions::{infer_expr, resolved_type_method_name, resolved_type_property_getter_name};
+use expressions::{
+    infer_expr, resolve_operator_overload, resolved_type_method_name,
+    resolved_type_property_getter_name,
+};
 use signatures::{
     FnSignature, GenericScheme, active_type_param_set, infer_function_expr_return_type,
     infer_top_level_function_return_type, inference_diagnostic,
@@ -2129,12 +2132,55 @@ fn annotate_expr_resolved_members(
     active_type_params: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
     match expr {
-        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } | Expr::IsVariant { expr, .. } => {
+        Expr::Unary {
+            op,
+            expr,
+            resolved_name,
+            ..
+        } => {
+            annotate_expr_resolved_members(expr, vars, fn_signatures, active_type_params)?;
+            if matches!(op, waluau_ast::UnaryOp::Neg) {
+                if let Ok(operand_ty) =
+                    infer_expr(expr, vars, fn_signatures, active_type_params, None)
+                {
+                    *resolved_name = resolve_operator_overload(
+                        "__neg",
+                        std::slice::from_ref(&operand_ty),
+                        fn_signatures,
+                    )?
+                    .map(|(name, _)| name);
+                }
+            }
+        }
+        Expr::Cast { expr, .. } | Expr::IsVariant { expr, .. } => {
             annotate_expr_resolved_members(expr, vars, fn_signatures, active_type_params)?
         }
-        Expr::Binary { left, right, .. } => {
+        Expr::Binary {
+            op,
+            left,
+            right,
+            resolved_name,
+            ..
+        } => {
             annotate_expr_resolved_members(left, vars, fn_signatures, active_type_params)?;
             annotate_expr_resolved_members(right, vars, fn_signatures, active_type_params)?;
+            let method = match op {
+                waluau_ast::BinaryOp::Add => Some("__add"),
+                waluau_ast::BinaryOp::Sub => Some("__sub"),
+                waluau_ast::BinaryOp::Mul => Some("__mul"),
+                waluau_ast::BinaryOp::Div => Some("__div"),
+                _ => None,
+            };
+            if let Some(method) = method {
+                if let (Ok(left_ty), Ok(right_ty)) = (
+                    infer_expr(left, vars, fn_signatures, active_type_params, None),
+                    infer_expr(right, vars, fn_signatures, active_type_params, None),
+                ) {
+                    *resolved_name =
+                        resolve_operator_overload(method, &[left_ty, right_ty], fn_signatures)?
+                            .map(|(name, _)| name);
+                }
+            }
         }
         Expr::If {
             condition,

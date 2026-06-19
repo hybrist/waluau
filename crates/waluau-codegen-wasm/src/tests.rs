@@ -568,6 +568,31 @@ fn declared_host_method_call_imports_declared_method() {
 }
 
 #[test]
+fn declared_extern_operator_overload_imports_declared_method() {
+    let source = r#"
+        type Tensor = extern
+        declare function make_tensor(): Tensor
+        declare function Tensor:__add(rhs: Tensor): Tensor
+
+        function entry(): Tensor
+            return make_tensor() + make_tensor()
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        wat.contains(r#"(import "waluau" "Tensor.__add""#),
+        "expected declared host operator import in:\n{wat}"
+    );
+}
+
+#[test]
 fn safe_extern_if_cast_imports_runtime_check() {
     let source = r#"
         type Node = extern

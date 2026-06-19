@@ -76,6 +76,118 @@ fn type_method_signature<'a>(
     Some((signature, method_name))
 }
 
+fn binary_operator_method(op: &BinaryOp) -> Option<&'static str> {
+    match op {
+        BinaryOp::Add => Some("__add"),
+        BinaryOp::Sub => Some("__sub"),
+        BinaryOp::Mul => Some("__mul"),
+        BinaryOp::Div => Some("__div"),
+        BinaryOp::FloorDiv
+        | BinaryOp::Mod
+        | BinaryOp::Concat
+        | BinaryOp::Less
+        | BinaryOp::Greater
+        | BinaryOp::Eq
+        | BinaryOp::NotEq
+        | BinaryOp::And
+        | BinaryOp::Or => None,
+    }
+}
+
+fn binary_operator_symbol(op: &BinaryOp) -> Option<&'static str> {
+    match op {
+        BinaryOp::Add => Some("+"),
+        BinaryOp::Sub => Some("-"),
+        BinaryOp::Mul => Some("*"),
+        BinaryOp::Div => Some("/"),
+        _ => None,
+    }
+}
+
+fn unary_operator_method(op: &UnaryOp) -> Option<&'static str> {
+    match op {
+        UnaryOp::Neg => Some("__neg"),
+        UnaryOp::Not | UnaryOp::Len => None,
+    }
+}
+
+fn overload_eligible_type(ty: &Type) -> bool {
+    match ty {
+        Type::Opaque { .. } | Type::Extern | Type::ExternSubtype(_) => true,
+        Type::Nullable(inner) => overload_eligible_type(inner),
+        _ => false,
+    }
+}
+
+pub(super) fn resolve_operator_overload(
+    method: &str,
+    operands: &[Type],
+    fn_signatures: &HashMap<String, FnSignature>,
+) -> Result<Option<(String, Type)>, Diagnostic> {
+    let Some(receiver_ty) = operands.first() else {
+        return Ok(None);
+    };
+    let exact_receiver_name = match receiver_ty {
+        Type::Opaque { name, .. } => Some(method_signature_name(name, method)),
+        _ => None,
+    };
+    let suffix = format!(".{method}");
+    let mut matches = fn_signatures
+        .iter()
+        .filter_map(|(method_name, signature)| {
+            if !method_name.ends_with(&suffix) {
+                return None;
+            }
+            let FnSignature::Mono {
+                params,
+                return_type,
+            } = signature
+            else {
+                return None;
+            };
+            if params.len() != operands.len() {
+                return None;
+            }
+            if !params
+                .iter()
+                .zip(operands.iter())
+                .all(|(expected, actual)| method_receiver_matches(expected, actual))
+            {
+                return None;
+            }
+            let score = if exact_receiver_name.as_deref() == Some(method_name.as_str()) {
+                0
+            } else {
+                1
+            };
+            Some((score, method_name.clone(), return_type.clone()))
+        })
+        .collect::<Vec<_>>();
+
+    if matches.is_empty() {
+        return Ok(None);
+    }
+    matches.sort_by_key(|(score, name, _)| (*score, name.clone()));
+    let best_score = matches[0].0;
+    let mut best = matches
+        .into_iter()
+        .filter(|(score, _, _)| *score == best_score)
+        .collect::<Vec<_>>();
+    if best.len() > 1 {
+        let mut names = best
+            .iter()
+            .map(|(_, name, _)| name.as_str())
+            .collect::<Vec<_>>();
+        names.sort_unstable();
+        return Err(Diagnostic::new(format!(
+            "ambiguous overload for operator method '{method}': {}",
+            names.join(", ")
+        )));
+    }
+    let (_, name, return_type) = best.remove(0);
+    Ok(Some((name, return_type)))
+}
+
 pub(super) fn resolved_type_method_name(
     receiver_ty: &Type,
     name: &str,
@@ -212,6 +324,20 @@ pub(super) fn infer_expr(
                     active_type_params,
                     expected.clone(),
                 )?;
+                if let Some(method) = unary_operator_method(op) {
+                    if let Some((_, return_type)) = resolve_operator_overload(
+                        method,
+                        std::slice::from_ref(&actual),
+                        fn_signatures,
+                    )? {
+                        return coerce_type(return_type, expected);
+                    }
+                }
+                if overload_eligible_type(&actual) {
+                    return Err(Diagnostic::new(format!(
+                        "unary '-' is not defined for {actual}"
+                    )));
+                }
                 match actual {
                     Type::Numeric(_) => coerce_type(actual, expected),
                     Type::Bool => Err(Diagnostic::new("unary '-' requires a numeric operand")),
@@ -771,6 +897,25 @@ pub(super) fn infer_expr(
                 ))
             }
             BinaryOp::Add => {
+                let left_ty = infer_expr(left, vars, fn_signatures, active_type_params, None)?;
+                let right_ty = infer_expr(right, vars, fn_signatures, active_type_params, None)?;
+                if !left_ty.is_numeric() || !right_ty.is_numeric() {
+                    if let Some(method) = binary_operator_method(op) {
+                        if let Some((_, return_type)) = resolve_operator_overload(
+                            method,
+                            &[left_ty.clone(), right_ty.clone()],
+                            fn_signatures,
+                        )? {
+                            return coerce_type(return_type, expected);
+                        }
+                    }
+                    if overload_eligible_type(&left_ty) || overload_eligible_type(&right_ty) {
+                        let symbol = binary_operator_symbol(op).unwrap_or("?");
+                        return Err(Diagnostic::new(format!(
+                            "operator '{symbol}' is not defined for {left_ty} and {right_ty}"
+                        )));
+                    }
+                }
                 let operand_ty = infer_numeric_common_type(
                     left,
                     right,
@@ -782,6 +927,26 @@ pub(super) fn infer_expr(
                 coerce_type(operand_ty, expected)
             }
             BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::FloorDiv | BinaryOp::Mod => {
+                if let Some(method) = binary_operator_method(op) {
+                    let left_ty = infer_expr(left, vars, fn_signatures, active_type_params, None)?;
+                    let right_ty =
+                        infer_expr(right, vars, fn_signatures, active_type_params, None)?;
+                    if !left_ty.is_numeric() || !right_ty.is_numeric() {
+                        if let Some((_, return_type)) = resolve_operator_overload(
+                            method,
+                            &[left_ty.clone(), right_ty.clone()],
+                            fn_signatures,
+                        )? {
+                            return coerce_type(return_type, expected);
+                        }
+                        if overload_eligible_type(&left_ty) || overload_eligible_type(&right_ty) {
+                            let symbol = binary_operator_symbol(op).unwrap_or("?");
+                            return Err(Diagnostic::new(format!(
+                                "operator '{symbol}' is not defined for {left_ty} and {right_ty}"
+                            )));
+                        }
+                    }
+                }
                 let operand_ty = infer_numeric_common_type(
                     left,
                     right,

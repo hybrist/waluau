@@ -773,9 +773,15 @@ impl<'a> Monomorphizer<'a> {
             | Expr::Bytes(..)
             | Expr::Require(..) => expr.clone(),
             Expr::Name(name, symbol_id, span) => Expr::Name(name.clone(), *symbol_id, *span),
-            Expr::Unary { op, expr, span } => Expr::Unary {
+            Expr::Unary {
+                op,
+                expr,
+                resolved_name,
+                span,
+            } => Expr::Unary {
                 op: *op,
                 expr: Box::new(self.rewrite_expr(expr, subst, active, types)?),
+                resolved_name: resolved_name.clone(),
                 span: *span,
             },
             Expr::Cast { expr, ty, span } => Expr::Cast {
@@ -787,11 +793,13 @@ impl<'a> Monomorphizer<'a> {
                 op,
                 left,
                 right,
+                resolved_name,
                 span,
             } => Expr::Binary {
                 op: *op,
                 left: Box::new(self.rewrite_expr(left, subst, active, types)?),
                 right: Box::new(self.rewrite_expr(right, subst, active, types)?),
+                resolved_name: resolved_name.clone(),
                 span: *span,
             },
             Expr::IsVariant { expr, tag, span } => Expr::IsVariant {
