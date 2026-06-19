@@ -1,0 +1,49 @@
+type Promise<T> = extern
+type Tensor = extern
+type TensorData = extern
+
+declare function tfjs_data_empty(length: i32): TensorData
+declare function tfjs_data_set_f64(data: TensorData, index: i32, value: f64): unit
+declare function tfjs_data_set_i32(data: TensorData, index: i32, value: i32): unit
+declare function tfjs_data_len(data: TensorData): i32
+declare function tfjs_data_get_f64(data: TensorData, index: i32): f64
+declare function tfjs_data_get_i32(data: TensorData, index: i32): i32
+
+declare function tfjs_scalar(value: f64): Tensor
+declare function tfjs_scalar_i32(value: i32): Tensor
+declare function tfjs_scalar_bool(value: bool): Tensor
+declare function tfjs_tensor1d(data: TensorData): Tensor
+declare function tfjs_tensor1d_i32(data: TensorData): Tensor
+declare function tfjs_tensor2d(data: TensorData, rows: i32, cols: i32): Tensor
+declare function tfjs_tensor2d_i32(data: TensorData, rows: i32, cols: i32): Tensor
+declare function tfjs_zeros(rows: i32, cols: i32): Tensor
+declare function tfjs_ones(rows: i32, cols: i32): Tensor
+declare function tfjs_eye(size: i32): Tensor
+
+declare function tfjs_data(tensor: Tensor): Promise<TensorData>
+declare function tfjs_data_sync(tensor: Tensor): TensorData
+declare function tfjs_scalar_value(tensor: Tensor): f64
+declare function tfjs_scalar_value_i32(tensor: Tensor): i32
+declare function tfjs_shape_rank(tensor: Tensor): i32
+declare function tfjs_shape_dim(tensor: Tensor, index: i32): i32
+declare function tfjs_dtype(tensor: Tensor): string
+
+declare function tfjs_dispose(tensor: Tensor): unit
+declare function tfjs_keep(tensor: Tensor): Tensor
+declare function tfjs_tidy(callback: () -> extern): Tensor
+declare function tfjs_memory_num_tensors(): i32
+
+declare function tfjs_add(left: Tensor, right: Tensor): Tensor
+declare function tfjs_sub(left: Tensor, right: Tensor): Tensor
+declare function tfjs_mul(left: Tensor, right: Tensor): Tensor
+declare function tfjs_div(left: Tensor, right: Tensor): Tensor
+declare function tfjs_neg(tensor: Tensor): Tensor
+declare function tfjs_matmul(left: Tensor, right: Tensor): Tensor
+declare function tfjs_reshape2d(tensor: Tensor, rows: i32, cols: i32): Tensor
+declare function tfjs_transpose(tensor: Tensor): Tensor
+
+declare function Tensor:__add(rhs: Tensor): Tensor
+declare function Tensor:__sub(rhs: Tensor): Tensor
+declare function Tensor:__mul(rhs: Tensor): Tensor
+declare function Tensor:__div(rhs: Tensor): Tensor
+declare function Tensor:__neg(): Tensor

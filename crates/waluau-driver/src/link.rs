@@ -17,12 +17,15 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use waluau_ast::{Expr, Function, FunctionExpr, FunctionName, Program, Stmt, TableField, Type};
+use waluau_ast::{
+    Expr, Function, FunctionExpr, FunctionName, Program, Stmt, TableField, Type, TypeDeclaration,
+};
 use waluau_diagnostics::Diagnostic;
 
 const DOM_WINDOW_REQUIRE: &str = "dom:window";
 const DOM_WINDOW_FUNCTION: &str = "dom_window";
 const DOM_WINDOW_TYPE: &str = "Window";
+const TFJS_REQUIRE: &str = "tfjs";
 
 /// Resolve the module graph rooted at `entry` and merge it into one program.
 pub fn link_program(entry: &Path) -> Result<Program, Diagnostic> {
@@ -43,7 +46,18 @@ pub fn link_program(entry: &Path) -> Result<Program, Diagnostic> {
     } else {
         None
     };
-    merge_with_builtins(&loader.modules, entry_id, builtin_imports, dom_externs)
+    let tfjs_externs = if loader.requires_tfjs_externs {
+        Some(loader.load_tfjs_externs()?)
+    } else {
+        None
+    };
+    merge_with_builtins(
+        &loader.modules,
+        entry_id,
+        builtin_imports,
+        dom_externs,
+        tfjs_externs,
+    )
 }
 
 struct LoadedModule {
@@ -60,6 +74,7 @@ struct Loader {
     by_path: HashMap<PathBuf, usize>,
     stack: Vec<PathBuf>,
     requires_dom_externs: bool,
+    requires_tfjs_externs: bool,
 }
 
 impl Loader {
@@ -99,8 +114,16 @@ impl Loader {
                 virtual_requires.insert(raw);
                 continue;
             }
+            if raw == TFJS_REQUIRE {
+                self.requires_tfjs_externs = true;
+                virtual_requires.insert(raw);
+                continue;
+            }
             if raw.starts_with("dom:") {
                 return Err(unsupported_dom_require(&raw));
+            }
+            if is_unsupported_virtual_require(&raw) {
+                return Err(unsupported_virtual_require(&raw));
             }
             if requires.contains_key(&raw) {
                 continue;
@@ -146,11 +169,28 @@ impl Loader {
             "externs/dom.walu",
         )
     }
+
+    fn load_tfjs_externs(&mut self) -> Result<Program, Diagnostic> {
+        waluau_parser::parse_with_path(
+            include_str!("../../../externs/tfjs.walu"),
+            "externs/tfjs.walu",
+        )
+    }
 }
 
 fn unsupported_dom_require(raw: &str) -> Diagnostic {
     Diagnostic::new(format!(
         "unsupported DOM virtual module \"{raw}\"; supported specifiers: \"{DOM_WINDOW_REQUIRE}\""
+    ))
+}
+
+fn is_unsupported_virtual_require(raw: &str) -> bool {
+    raw.starts_with("tf") || raw.starts_with("tensorflow")
+}
+
+fn unsupported_virtual_require(raw: &str) -> Diagnostic {
+    Diagnostic::new(format!(
+        "unsupported virtual module \"{raw}\"; supported specifiers: \"{DOM_WINDOW_REQUIRE}\", \"{TFJS_REQUIRE}\""
     ))
 }
 
@@ -182,6 +222,7 @@ fn merge_with_builtins(
     entry_id: usize,
     builtin_imports: Vec<waluau_ast::DeclaredImport>,
     dom_externs: Option<Program>,
+    tfjs_externs: Option<Program>,
 ) -> Result<Program, Diagnostic> {
     let mut functions = Vec::new();
     let mut declared_imports = builtin_imports;
@@ -189,8 +230,13 @@ fn merge_with_builtins(
     let mut extern_sources = BTreeMap::new();
     if let Some(dom_program) = dom_externs {
         declared_imports.extend(dom_program.declared_imports);
-        type_declarations.extend(dom_program.type_declarations);
+        extend_unique_type_declarations(&mut type_declarations, dom_program.type_declarations)?;
         extern_sources.extend(dom_program.sources);
+    }
+    if let Some(tfjs_program) = tfjs_externs {
+        declared_imports.extend(tfjs_program.declared_imports);
+        extend_unique_type_declarations(&mut type_declarations, tfjs_program.type_declarations)?;
+        extern_sources.extend(tfjs_program.sources);
     }
     let mut top_level = Vec::new();
     let mut export_cache = HashMap::new();
@@ -223,7 +269,7 @@ fn merge_with_builtins(
             imports.insert(raw.clone(), export_cache[&target_id].clone());
         }
         for raw in &module.virtual_requires {
-            imports.insert(raw.clone(), ResolvedImport::DomWindow);
+            imports.insert(raw.clone(), resolve_virtual_import(raw)?);
         }
 
         let mut rewriter = Rewriter {
@@ -296,11 +342,84 @@ fn merge_with_builtins(
     })
 }
 
+fn extend_unique_type_declarations(
+    target: &mut Vec<TypeDeclaration>,
+    declarations: Vec<TypeDeclaration>,
+) -> Result<(), Diagnostic> {
+    for declaration in declarations {
+        if let Some(existing) = target
+            .iter()
+            .find(|existing| existing.name == declaration.name)
+        {
+            if existing == &declaration {
+                continue;
+            }
+            return Err(Diagnostic::new(format!(
+                "conflicting ambient type declaration '{}'",
+                declaration.name
+            )));
+        }
+        target.push(declaration);
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 enum ResolvedImport {
     Function(String),
     Namespace(BTreeMap<String, String>),
     DomWindow,
+}
+
+fn resolve_virtual_import(raw: &str) -> Result<ResolvedImport, Diagnostic> {
+    match raw {
+        DOM_WINDOW_REQUIRE => Ok(ResolvedImport::DomWindow),
+        TFJS_REQUIRE => Ok(ResolvedImport::Namespace(tfjs_namespace())),
+        _ => Err(unsupported_virtual_require(raw)),
+    }
+}
+
+fn tfjs_namespace() -> BTreeMap<String, String> {
+    [
+        ("data_empty", "tfjs_data_empty"),
+        ("data_set_f64", "tfjs_data_set_f64"),
+        ("data_set_i32", "tfjs_data_set_i32"),
+        ("data_len", "tfjs_data_len"),
+        ("data_get_f64", "tfjs_data_get_f64"),
+        ("data_get_i32", "tfjs_data_get_i32"),
+        ("scalar", "tfjs_scalar"),
+        ("scalar_i32", "tfjs_scalar_i32"),
+        ("scalar_bool", "tfjs_scalar_bool"),
+        ("tensor1d", "tfjs_tensor1d"),
+        ("tensor1d_i32", "tfjs_tensor1d_i32"),
+        ("tensor2d", "tfjs_tensor2d"),
+        ("tensor2d_i32", "tfjs_tensor2d_i32"),
+        ("zeros", "tfjs_zeros"),
+        ("ones", "tfjs_ones"),
+        ("eye", "tfjs_eye"),
+        ("data", "tfjs_data"),
+        ("data_sync", "tfjs_data_sync"),
+        ("scalar_value", "tfjs_scalar_value"),
+        ("scalar_value_i32", "tfjs_scalar_value_i32"),
+        ("shape_rank", "tfjs_shape_rank"),
+        ("shape_dim", "tfjs_shape_dim"),
+        ("dtype", "tfjs_dtype"),
+        ("dispose", "tfjs_dispose"),
+        ("keep", "tfjs_keep"),
+        ("tidy", "tfjs_tidy"),
+        ("memory_num_tensors", "tfjs_memory_num_tensors"),
+        ("add", "tfjs_add"),
+        ("sub", "tfjs_sub"),
+        ("mul", "tfjs_mul"),
+        ("div", "tfjs_div"),
+        ("neg", "tfjs_neg"),
+        ("matmul", "tfjs_matmul"),
+        ("reshape2d", "tfjs_reshape2d"),
+        ("transpose", "tfjs_transpose"),
+    ]
+    .into_iter()
+    .map(|(field, function)| (field.to_string(), function.to_string()))
+    .collect()
 }
 
 fn hoist_table_export_functions(

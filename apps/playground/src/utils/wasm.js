@@ -1,9 +1,12 @@
+import * as tf from '@tensorflow/tfjs';
+
 export const WALUAU_STRING_CONSTANTS_MODULE = 'string_constants';
 export const WALUAU_IMPORT_MODULE = 'waluau';
 // Must match waluau_codegen_wasm::host::HOST_IMPORT_COUNT
 export const WALUAU_HOST_IMPORT_COUNT = 19;
 const PROMISE_RESUME_TRAMPOLINE_EXPORT = '__waluau_resume_promise_await';
 const PROMISE_RESET_ACTIVE_EXPORT = '__waluau_reset_active_coroutine';
+const CALLBACK_UNIT_EXTERN_TRAMPOLINE_EXPORT = '__waluau_call_callback_unit_extern';
 
 let printCaptureCallback = null;
 const domEventListeners = new WeakMap();
@@ -239,9 +242,168 @@ function createPlaygroundDomHost(wasmModule, domOutputRoot, getWasmExports = () 
   };
 }
 
+function createTfjsHost(getWasmExports = () => null) {
+  const ensureTfjs = () => {
+    if (!tf || typeof tf.tensor !== 'function') {
+      throw new Error('TensorFlow.js is not available for require("tfjs")');
+    }
+    return tf;
+  };
+
+  const isTensor = (value) => Boolean(value && typeof value === 'object' && value.isDisposedInternal !== undefined && Array.isArray(value.shape));
+  const asTensor = (value) => {
+    if (!isTensor(value)) {
+      throw new TypeError('Expected TensorFlow.js Tensor host object');
+    }
+    if (value.isDisposedInternal) {
+      throw new Error('TensorFlow.js Tensor has been disposed');
+    }
+    return value;
+  };
+
+  const makeTensorData = (values, dtype = 'float32') => ({
+    __waluauTfjsTensorData: true,
+    dtype,
+    values: Array.from(values, (value) => Number(value)),
+  });
+
+  const asTensorData = (value) => {
+    if (!value || value.__waluauTfjsTensorData !== true || !Array.isArray(value.values)) {
+      throw new TypeError('Expected TensorData host object');
+    }
+    return value;
+  };
+
+  const checkDataIndex = (data, index) => {
+    const i = Number(index);
+    if (!Number.isInteger(i) || i < 0 || i >= data.values.length) {
+      throw new RangeError(`TensorData index out of bounds: ${index}`);
+    }
+    return i;
+  };
+
+  const checkLength = (length) => {
+    const n = Number(length);
+    if (!Number.isInteger(n) || n < 0) {
+      throw new RangeError(`TensorData length must be a non-negative integer, got ${length}`);
+    }
+    return n;
+  };
+
+  const checkDim = (dim, name) => {
+    const n = Number(dim);
+    if (!Number.isInteger(n) || n < 0) {
+      throw new RangeError(`${name} must be a non-negative integer, got ${dim}`);
+    }
+    return n;
+  };
+
+  const tensorFromData = (data, shape, dtype) => {
+    const tfjs = ensureTfjs();
+    const tensorData = asTensorData(data);
+    const expected = shape.reduce((product, dim) => product * dim, 1);
+    if (tensorData.values.length !== expected) {
+      throw new RangeError(`TensorData length ${tensorData.values.length} does not match shape [${shape.join(', ')}]`);
+    }
+    return tfjs.tensor(tensorData.values, shape, dtype);
+  };
+
+  const scalarValue = (tensor) => {
+    const checked = asTensor(tensor);
+    if (checked.rank !== 0) {
+      throw new Error(`Expected scalar Tensor, got rank ${checked.rank}`);
+    }
+    return checked.dataSync()[0];
+  };
+
+  const dataFromTensor = (tensor) => {
+    const checked = asTensor(tensor);
+    return makeTensorData(checked.dataSync(), checked.dtype);
+  };
+
+  const callUnitExternCallback = (callback) => {
+    const exports = getWasmExports();
+    const trampoline = exports?.[CALLBACK_UNIT_EXTERN_TRAMPOLINE_EXPORT];
+    if (typeof trampoline !== 'function') {
+      throw new Error(`Missing ${CALLBACK_UNIT_EXTERN_TRAMPOLINE_EXPORT} export for synchronous host callback`);
+    }
+    return trampoline(callback);
+  };
+
+  return {
+    tfjs_data_empty: (length) => makeTensorData(new Array(checkLength(length)).fill(0)),
+    tfjs_data_set_f64: (data, index, value) => {
+      const tensorData = asTensorData(data);
+      tensorData.values[checkDataIndex(tensorData, index)] = Number(value);
+    },
+    tfjs_data_set_i32: (data, index, value) => {
+      const tensorData = asTensorData(data);
+      tensorData.values[checkDataIndex(tensorData, index)] = Number(value) | 0;
+      tensorData.dtype = 'int32';
+    },
+    tfjs_data_len: (data) => asTensorData(data).values.length,
+    tfjs_data_get_f64: (data, index) => asTensorData(data).values[checkDataIndex(asTensorData(data), index)],
+    tfjs_data_get_i32: (data, index) => asTensorData(data).values[checkDataIndex(asTensorData(data), index)] | 0,
+    tfjs_scalar: (value) => ensureTfjs().scalar(Number(value), 'float32'),
+    tfjs_scalar_i32: (value) => ensureTfjs().scalar(Number(value) | 0, 'int32'),
+    tfjs_scalar_bool: (value) => ensureTfjs().scalar(Boolean(value), 'bool'),
+    tfjs_tensor1d: (data) => tensorFromData(data, [asTensorData(data).values.length], 'float32'),
+    tfjs_tensor1d_i32: (data) => tensorFromData(data, [asTensorData(data).values.length], 'int32'),
+    tfjs_tensor2d: (data, rows, cols) => tensorFromData(data, [checkDim(rows, 'rows'), checkDim(cols, 'cols')], 'float32'),
+    tfjs_tensor2d_i32: (data, rows, cols) => tensorFromData(data, [checkDim(rows, 'rows'), checkDim(cols, 'cols')], 'int32'),
+    tfjs_zeros: (rows, cols) => ensureTfjs().zeros([checkDim(rows, 'rows'), checkDim(cols, 'cols')], 'float32'),
+    tfjs_ones: (rows, cols) => ensureTfjs().ones([checkDim(rows, 'rows'), checkDim(cols, 'cols')], 'float32'),
+    tfjs_eye: (size) => {
+      const n = checkDim(size, 'size');
+      return ensureTfjs().eye(n, n);
+    },
+    tfjs_data: async (tensor) => {
+      const checked = asTensor(tensor);
+      const dtype = checked.dtype;
+      return makeTensorData(await checked.data(), dtype);
+    },
+    tfjs_data_sync: dataFromTensor,
+    tfjs_scalar_value: (tensor) => Number(scalarValue(tensor)),
+    tfjs_scalar_value_i32: (tensor) => Number(scalarValue(tensor)) | 0,
+    tfjs_shape_rank: (tensor) => asTensor(tensor).rank,
+    tfjs_shape_dim: (tensor, index) => {
+      const checked = asTensor(tensor);
+      const i = Number(index);
+      if (!Number.isInteger(i) || i < 0 || i >= checked.shape.length) {
+        throw new RangeError(`Tensor shape index out of bounds: ${index}`);
+      }
+      return checked.shape[i];
+    },
+    tfjs_dtype: (tensor) => asTensor(tensor).dtype,
+    tfjs_dispose: (tensor) => {
+      if (!isTensor(tensor)) {
+        throw new TypeError('Expected TensorFlow.js Tensor host object');
+      }
+      tensor.dispose();
+    },
+    tfjs_keep: (tensor) => ensureTfjs().keep(asTensor(tensor)),
+    tfjs_tidy: (callback) => ensureTfjs().tidy(() => asTensor(callUnitExternCallback(callback))),
+    tfjs_memory_num_tensors: () => ensureTfjs().memory().numTensors,
+    tfjs_add: (left, right) => ensureTfjs().add(asTensor(left), asTensor(right)),
+    tfjs_sub: (left, right) => ensureTfjs().sub(asTensor(left), asTensor(right)),
+    tfjs_mul: (left, right) => ensureTfjs().mul(asTensor(left), asTensor(right)),
+    tfjs_div: (left, right) => ensureTfjs().div(asTensor(left), asTensor(right)),
+    tfjs_neg: (tensor) => ensureTfjs().neg(asTensor(tensor)),
+    tfjs_matmul: (left, right) => ensureTfjs().matMul(asTensor(left), asTensor(right)),
+    tfjs_reshape2d: (tensor, rows, cols) => asTensor(tensor).reshape([checkDim(rows, 'rows'), checkDim(cols, 'cols')]),
+    tfjs_transpose: (tensor) => ensureTfjs().transpose(asTensor(tensor)),
+    'Tensor.__add': (left, right) => ensureTfjs().add(asTensor(left), asTensor(right)),
+    'Tensor.__sub': (left, right) => ensureTfjs().sub(asTensor(left), asTensor(right)),
+    'Tensor.__mul': (left, right) => ensureTfjs().mul(asTensor(left), asTensor(right)),
+    'Tensor.__div': (left, right) => ensureTfjs().div(asTensor(left), asTensor(right)),
+    'Tensor.__neg': (tensor) => ensureTfjs().neg(asTensor(tensor)),
+  };
+}
+
 export function buildWaluauImports(wasmModule, initLogger, options = {}) {
   const bytesConstants = decodeBytesConstantsFromWasm(wasmModule);
   const domHost = createPlaygroundDomHost(wasmModule, options.domOutputRoot, options.getWasmExports);
+  const tfjsHost = createTfjsHost(options.getWasmExports);
   const hostImports = options.hostImports ?? {};
   const reportAsyncError = (error) => {
     if (typeof options.onAsyncError === 'function') {
@@ -264,6 +426,7 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
   };
   const waluauImports = {
     ...domHost,
+    ...tfjsHost,
     ...hostImports,
     __waluau_attach_promise: (threadHandle, promise) => {
       if (promise == null || typeof promise.then !== 'function') {
