@@ -4,7 +4,12 @@ import {
   compileAndInstantiateWithDom,
   compileAndInstantiateWithExports,
 } from '../src/runner.js';
-import { conformanceIncludePaths } from '../../../tools/conformance/includes.js';
+import {
+  conformanceIncludePaths,
+  conformanceExpectations,
+  normalizeWhitespace,
+  failureMatchesExpected,
+} from '../../../tools/conformance/includes.js';
 
 const conformanceModules = import.meta.glob('../../../conformance/**/*.walu', {
   eager: true,
@@ -179,18 +184,59 @@ const cases = Object.entries(conformanceModules)
 // the iframe to stay alive until the async work completes).
 const DEDICATED_ASYNC_DOM_CASES = new Set(['top_level_fetch.walu']);
 
+// Runs a case and reports whether it failed (compile/type error, or a trapping
+// top-level assert) along with the failure message. Compile errors surface as
+// thrown strings from compile_multi; instantiation traps surface as a
+// WebAssembly.RuntimeError, so we read .message when present and fall back to
+// String(err) otherwise.
+async function runConformanceOutcome(fullSource, options) {
+  try {
+    await compileAndInstantiate({ '/main.walu': fullSource }, '/main.walu', options);
+    return { failed: false, message: null };
+  } catch (err) {
+    return { failed: true, message: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 describe('browser conformance', () => {
   for (const { name, source } of cases) {
     if (DEDICATED_ASYNC_DOM_CASES.has(name)) continue;
-    it(`passes ${name}`, async () => {
-      await expect(
-        compileAndInstantiate(
-          { '/main.walu': sourceForCase({ name, source }) },
-          '/main.walu',
-          optionsForCase(name),
-        ),
-      ).resolves.toBeUndefined();
-    });
+
+    const { pending, expectedErrors } = conformanceExpectations(source);
+    const fullSource = sourceForCase({ name, source });
+    const options = optionsForCase(name);
+
+    if (expectedErrors.length > 0 && pending) {
+      // Fail test that is also pending: the expected failure is not produced
+      // yet, so verify the actual outcome does NOT match it. When the bug is
+      // fixed and the expected failure appears, this test breaks, prompting
+      // removal of the `pending` marker.
+      it(`pending fail ${name} (not yet producing expected failure)`, async () => {
+        const outcome = await runConformanceOutcome(fullSource, options);
+        expect(failureMatchesExpected(outcome.message ?? '', expectedErrors)).toBe(false);
+      });
+    } else if (expectedErrors.length > 0) {
+      it(`fails ${name} with expected error`, async () => {
+        const outcome = await runConformanceOutcome(fullSource, options);
+        expect(outcome.failed).toBe(true);
+        for (const fragment of expectedErrors) {
+          expect(normalizeWhitespace(outcome.message)).toContain(normalizeWhitespace(fragment));
+        }
+      });
+    } else if (pending) {
+      // Pending test: should pass eventually but does not yet. Only verify it
+      // currently fails; we do not care how.
+      it(`pending ${name} (currently fails)`, async () => {
+        const outcome = await runConformanceOutcome(fullSource, options);
+        expect(outcome.failed).toBe(true);
+      });
+    } else {
+      it(`passes ${name}`, async () => {
+        await expect(
+          compileAndInstantiate({ '/main.walu': fullSource }, '/main.walu', options),
+        ).resolves.toBeUndefined();
+      });
+    }
   }
 
   it('passes extern_host_object.walu round-trip identity checks', async () => {

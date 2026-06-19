@@ -1,0 +1,10 @@
+-- A pending test: this program should pass once `string:sub` is supported, but
+-- the method is not implemented yet (the `string:find` form already works). The
+-- runner only verifies that a pending test currently fails; it does not care
+-- how it fails. Remove this directive once `string:sub` lands and the program
+-- passes.
+-- conformance: pending
+
+local s: string = "hello"
+local prefix: string = s:sub(0, 2)
+assert(prefix == "he")
