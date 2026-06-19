@@ -66,6 +66,28 @@ test.describe('preset selector', () => {
     await expect(page.locator('.ir-output')).toContainText('compute');
   });
 
+  test('TFJS Tensor Math preset runs overloaded arithmetic and matmul', async ({ page }) => {
+    await page.getByRole('button', { name: 'Tfjs Tensor Math' }).click();
+
+    await expect(page.locator('.code-textarea')).toContainText('local tf = require("tfjs")');
+    await expect(page.locator('.code-textarea')).toContainText('local result: Tensor = (a + b) * scale');
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    await page.getByRole('button', { name: 'Run' }).click();
+
+    await expect(
+      page.locator('.func-card').filter({ hasText: 'overloaded_vector_result' }).locator('.func-result-value.success'),
+    ).toHaveText('66');
+    await expect(
+      page.locator('.func-card').filter({ hasText: 'matmul_bottom_right' }).locator('.func-result-value.success'),
+    ).toHaveText('22');
+    await expect(
+      page.locator('.func-card').filter({ hasText: 'tidy_memory_delta' }).locator('.func-result-value.success'),
+    ).toHaveText('1');
+  });
+
   test('global Ctrl+P/Cmd+P opens file search modal and lets user select a file', async ({ page }) => {
     await page.evaluate(() => {
       const event = new KeyboardEvent('keydown', {
