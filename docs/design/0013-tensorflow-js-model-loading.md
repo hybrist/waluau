@@ -307,4 +307,5 @@ should add `GraphModel` / `LayersModel`, URL loaders, disposal, and
 single-input/single-output inference wrappers. A second bead should add local
 model fixtures plus conformance/playground coverage. Training should remain a
 separate follow-up design after the model object and Promise boundaries are
-proven in CI.
+proven in CI. See [0014](0014-tensorflow-js-layers-training-slice.md) for the
+minimal `LayersModel` training slice.
