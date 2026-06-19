@@ -242,6 +242,35 @@ mod tests {
     }
 
     #[test]
+    fn compile_file_resolves_tfjs_namespace_inside_coroutine_callback() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("app.walu");
+        fs::write(
+            &input_path,
+            r#"
+                function run(): unit
+                    local co: thread = coroutine.create(function(): i32
+                        local tf = require("tfjs")
+                        local values: TensorData = tf.data_empty(4)
+                        tf.data_set_f64(values, 0, 1.0)
+                        local tensor: Tensor = tf.tensor2d(values, 2, 2)
+                        tf.dispose(tensor)
+                        return 0
+                    end)
+                    coroutine.resume(co)
+                end
+            "#,
+        )
+        .expect("app should write");
+
+        let wasm = super::compile_file(&input_path).expect("nested tfjs require should compile");
+        assert!(
+            wasm.starts_with(b"\0asm"),
+            "compiled wasm should start with the wasm magic bytes"
+        );
+    }
+
+    #[test]
     fn compile_file_resolves_top_level_dom_window_virtual_module() {
         let tempdir = tempdir().expect("tempdir should exist");
         let input_path = tempdir.path().join("app.walu");

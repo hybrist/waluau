@@ -662,6 +662,35 @@ mod tests {
     }
 
     #[test]
+    fn compile_multi_resolves_tfjs_namespace_inside_coroutine_callback() {
+        let mut files = std::collections::HashMap::new();
+        files.insert(
+            "main.walu".to_string(),
+            r#"
+                function run(): unit
+                    local co: thread = coroutine.create(function(): i32
+                        local tf = require("tfjs")
+                        local values: TensorData = tf.data_empty(4)
+                        tf.data_set_f64(values, 0, 1.0)
+                        local tensor: Tensor = tf.tensor2d(values, 2, 2)
+                        tf.dispose(tensor)
+                        return 0
+                    end)
+                    coroutine.resume(co)
+                end
+            "#
+            .to_string(),
+        );
+
+        let result = super::compile_sources(&files, "main.walu")
+            .expect("nested tfjs require should compile");
+        assert!(result.wat.contains("(module"));
+        assert!(result.wat.contains("tfjs_data_empty"));
+        assert!(result.wat.contains("tfjs_tensor2d"));
+        assert!(result.wat.contains("tfjs_dispose"));
+    }
+
+    #[test]
     fn compile_multi_rejects_unknown_dom_virtual_module() {
         let mut files = std::collections::HashMap::new();
         files.insert(
