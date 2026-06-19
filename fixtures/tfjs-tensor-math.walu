@@ -1,0 +1,66 @@
+function overloaded_vector_result(): f64
+    local tf = require("tfjs")
+    local values: TensorData = tf.data_empty(3)
+    tf.data_set_f64(values, 0, 1.0)
+    tf.data_set_f64(values, 1, 2.0)
+    tf.data_set_f64(values, 2, 3.0)
+
+    local bias_values: TensorData = tf.data_empty(3)
+    tf.data_set_f64(bias_values, 0, 10.0)
+    tf.data_set_f64(bias_values, 1, 20.0)
+    tf.data_set_f64(bias_values, 2, 30.0)
+
+    local a: Tensor = tf.tensor1d(values)
+    local b: Tensor = tf.tensor1d(bias_values)
+    local scale: Tensor = tf.scalar(2.0)
+    local result: Tensor = (a + b) * scale
+    local data: TensorData = tf.data_sync(result)
+    local value: f64 = tf.data_get_f64(data, 2)
+
+    tf.dispose(a)
+    tf.dispose(b)
+    tf.dispose(scale)
+    tf.dispose(result)
+    return value
+end
+
+function matmul_bottom_right(): f64
+    local tf = require("tfjs")
+    local left_values: TensorData = tf.data_empty(4)
+    tf.data_set_f64(left_values, 0, 1.0)
+    tf.data_set_f64(left_values, 1, 2.0)
+    tf.data_set_f64(left_values, 2, 3.0)
+    tf.data_set_f64(left_values, 3, 4.0)
+
+    local right_values: TensorData = tf.data_empty(4)
+    tf.data_set_f64(right_values, 0, 1.0)
+    tf.data_set_f64(right_values, 1, 2.0)
+    tf.data_set_f64(right_values, 2, 3.0)
+    tf.data_set_f64(right_values, 3, 4.0)
+
+    local left: Tensor = tf.tensor2d(left_values, 2, 2)
+    local right: Tensor = tf.tensor2d(right_values, 2, 2)
+    local product: Tensor = tf.matmul(left, right)
+    local data: TensorData = tf.data_sync(product)
+    local value: f64 = tf.data_get_f64(data, 3)
+
+    tf.dispose(left)
+    tf.dispose(right)
+    tf.dispose(product)
+    return value
+end
+
+function tidy_memory_delta(): i32
+    local tf = require("tfjs")
+    local before: i32 = tf.memory_num_tensors()
+    local kept: Tensor = tf.tidy(function(): extern
+        local a: Tensor = tf.scalar(8.0)
+        local b: Tensor = tf.scalar(4.0)
+        local c: Tensor = (a - b) / b
+        return tf.keep(c)::extern
+    end)
+    local during: i32 = tf.memory_num_tensors()
+    assert(tf.scalar_value(kept) == 1.0)
+    tf.dispose(kept)
+    return during - before
+end
