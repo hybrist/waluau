@@ -27,6 +27,40 @@ assert(add(2, 3) == 5)
 assert(add(-1, 1) == 0)
 ```
 
+## Test kinds
+
+By default a file is a **pass** test as described above. Two directives, parsed
+from the raw source (so they work even in files that intentionally don't
+compile), opt a file into other kinds:
+
+- `-- conformance: pending` marks a **pending** test: one that *should* pass
+  eventually but doesn't yet. The runner only verifies the file currently fails
+  (a compile/type error, or a trapping `assert`); it does not care how. When the
+  feature lands and the file starts passing, the pending test goes red — that's
+  the signal to remove the directive. See `string_sub.walu`.
+
+- `-- conformance: error=<text>` marks a **fail** test: a file that must never
+  pass (typically a syntax or type error, rarely a runtime trap). Each `error=`
+  line is a required fragment of the failure message; the directive may be
+  repeated to require several fragments. Matching is fuzzy — runs of whitespace
+  are collapsed and each fragment must appear as a substring of the actual
+  message. The runner verifies the file fails and that every fragment is
+  present. See `unknown_type.walu`.
+
+A file may carry both directives at once. A **fail + pending** test names the
+failure it should eventually produce (`error=`) but doesn't produce it yet, so
+the runner verifies the actual outcome does **not** match the expected failure
+(the file may currently pass, or fail with a different message). When the
+expected failure starts appearing, the test goes red — remove `pending`. See
+`string_subtraction.walu`.
+
+| `pending` | `error=` | Kind | Runner verifies |
+|-----------|----------|------|-----------------|
+| no  | no  | pass | compiles and instantiates without trapping |
+| yes | no  | pending | currently fails (any way) |
+| no  | yes | fail | fails, and every `error=` fragment is in the message |
+| yes | yes | fail + pending | the expected failure is **not** produced (yet) |
+
 ## Adding a test
 
 1. Create a new `*.walu` file in this directory (group related files into a

@@ -1,0 +1,11 @@
+-- A fail test that is also pending. Subtracting two strings must never be
+-- valid, and eventually we want a dedicated diagnostic naming the operation.
+-- That diagnostic is not produced yet (the operands are rejected with a
+-- generic numeric-operand message instead), so this is marked pending: the
+-- runner verifies the expected failure below is NOT produced. When the
+-- dedicated diagnostic lands, this test breaks, prompting removal of `pending`.
+-- conformance: pending
+-- conformance: error=cannot subtract strings
+
+local result: string = "a" - "b"
+assert(result == "")
