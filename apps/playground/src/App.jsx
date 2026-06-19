@@ -6,12 +6,14 @@ import FileTabs from './components/FileTabs.jsx';
 import FileSearchModal from './components/FileSearchModal.jsx';
 import InlineRunner from './components/InlineRunner.jsx';
 import RunTab from './components/RunTab.jsx';
+import ReplTab from './components/ReplTab.jsx';
 import PresetsBar from './components/PresetsBar.jsx';
 
 import { PRESETS } from './utils/presets.js';
 import useFiles from './hooks/useFiles.js';
 import useMonacoEditor from './hooks/useMonacoEditor.js';
 import useWaluauCompiler from './hooks/useWaluauCompiler.js';
+import useWaluauRepl from './hooks/useWaluauRepl.js';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('run'); // 'run', 'ir', 'wat', 'logs'
@@ -60,6 +62,9 @@ export default function App() {
     files,
     entryFile
   });
+
+  // Hook 2b: Standalone REPL session (accumulate-and-recompile)
+  const repl = useWaluauRepl();
 
   // Hook 3: Monaco Editor wrapper logic (view zones, markers, model disposal)
   const {
@@ -198,6 +203,12 @@ export default function App() {
                 Run
               </button>
               <button
+                className={`tab-btn ${activeTab === 'repl' ? 'active' : ''}`}
+                onClick={() => setActiveTab('repl')}
+              >
+                REPL
+              </button>
+              <button
                 className={`tab-btn ${activeTab === 'ir' ? 'active' : ''}`}
                 onClick={() => setActiveTab('ir')}
               >
@@ -298,6 +309,17 @@ export default function App() {
                   </div>
                 </div>
               </div>
+            )}
+
+            {activeTab === 'repl' && (
+              <ReplTab
+                ready={repl.ready}
+                loadError={repl.loadError}
+                cells={repl.cells}
+                busy={repl.busy}
+                evaluate={repl.evaluate}
+                reset={repl.reset}
+              />
             )}
 
             {activeTab === 'run' && (

@@ -29,8 +29,8 @@ test.describe('page load', () => {
     await expect(page.locator('.code-textarea')).toContainText('function add');
   });
 
-  test('four output tabs are visible', async ({ page }) => {
-    for (const label of ['Run', 'Generated IR', 'Wasm Text (WAT)', 'Compiler Diagnostics']) {
+  test('output tabs are visible', async ({ page }) => {
+    for (const label of ['Run', 'REPL', 'Generated IR', 'Wasm Text (WAT)', 'Compiler Diagnostics']) {
       await expect(page.getByRole('button', { name: label })).toBeVisible();
     }
   });
