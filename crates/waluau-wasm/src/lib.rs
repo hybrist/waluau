@@ -634,6 +634,34 @@ mod tests {
     }
 
     #[test]
+    fn compile_multi_resolves_tfjs_training_namespace() {
+        let mut files = std::collections::HashMap::new();
+        files.insert(
+            "main.walu".to_string(),
+            r#"
+                function train(model: LayersModel, input: Tensor, target: Tensor): Promise<TrainingHistory>
+                    local tf = require("tfjs")
+                    tf.layers_model_compile_sgd(model, "meanSquaredError", 0.01)
+                    return tf.layers_model_fit_one(model, input, target, 2, 1)
+                end
+
+                function first_loss(history: TrainingHistory): f64
+                    local tf = require("tfjs")
+                    return tf.training_history_loss(history, 0)
+                end
+            "#
+            .to_string(),
+        );
+
+        let result = super::compile_sources(&files, "main.walu")
+            .expect("tfjs training require should compile");
+        assert!(result.wat.contains("(module"));
+        assert!(result.wat.contains("tfjs_layers_model_compile_sgd"));
+        assert!(result.wat.contains("tfjs_layers_model_fit_one"));
+        assert!(result.wat.contains("tfjs_training_history_loss"));
+    }
+
+    #[test]
     fn compile_multi_rejects_unknown_dom_virtual_module() {
         let mut files = std::collections::HashMap::new();
         files.insert(

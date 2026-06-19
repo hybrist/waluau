@@ -3,6 +3,7 @@ type Tensor = extern
 type TensorData = extern
 type GraphModel = extern
 type LayersModel = extern
+type TrainingHistory = extern
 
 declare function tfjs_data_empty(length: i32): TensorData
 declare function tfjs_data_set_f64(data: TensorData, index: i32, value: f64): unit
@@ -52,6 +53,10 @@ declare function tfjs_graph_model_predict(model: GraphModel, input: Tensor): Ten
 declare function tfjs_graph_model_predict_async(model: GraphModel, input: Tensor): Promise<Tensor>
 declare function tfjs_graph_model_execute(model: GraphModel, input: Tensor): Tensor
 declare function tfjs_layers_model_predict(model: LayersModel, input: Tensor): Tensor
+declare function tfjs_layers_model_compile_sgd(model: LayersModel, loss: string, learning_rate: f64): unit
+declare function tfjs_layers_model_fit_one(model: LayersModel, x: Tensor, y: Tensor, epochs: i32, batch_size: i32): Promise<TrainingHistory>
+declare function tfjs_training_history_len(history: TrainingHistory): i32
+declare function tfjs_training_history_loss(history: TrainingHistory, index: i32): f64
 declare function tfjs_graph_model_input_count(model: GraphModel): i32
 declare function tfjs_graph_model_output_count(model: GraphModel): i32
 declare function tfjs_layers_model_input_count(model: LayersModel): i32
