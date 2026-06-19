@@ -88,6 +88,22 @@ test.describe('preset selector', () => {
     ).toHaveText('1');
   });
 
+  test('TFJS Model Loading preset loads a local model and writes prediction output', async ({ page }) => {
+    await page.getByRole('button', { name: 'Tfjs Model Loading', exact: true }).click();
+
+    await expect(page.locator('.code-textarea')).toContainText('tfjs_load_layers_model');
+    await expect(page.locator('.code-textarea')).toContainText('tfjs_dispose_layers_model(model)');
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    await page.getByRole('button', { name: 'Run' }).click();
+
+    await expect(
+      page.frameLocator('iframe').locator('#tfjs-model-result').first(),
+    ).toHaveText('TFJS model prediction: 13');
+  });
+
   test('global Ctrl+P/Cmd+P opens file search modal and lets user select a file', async ({ page }) => {
     await page.evaluate(() => {
       const event = new KeyboardEvent('keydown', {

@@ -243,10 +243,18 @@ function createPlaygroundDomHost(wasmModule, domOutputRoot, getWasmExports = () 
 }
 
 function createTfjsHost(getWasmExports = () => null) {
-  const graphModels = new WeakSet();
-  const layersModels = new WeakSet();
-  const disposedModels = new WeakSet();
+  const graphModels = new Map();
+  const layersModels = new Map();
+  const disposedModels = new Set();
+  const tensors = new Map();
+  let nextTensorHandle = 1;
+  let nextModelHandle = 1;
+  let currentTensor = null;
+  let currentGraphModel = null;
+  let currentLayersModel = null;
 
+  // Promise-resolved externrefs can lose object identity when they cross the
+  // coroutine bridge, so async model/tensor results are retained by host handle.
   const ensureTfjs = () => {
     if (!tf || typeof tf.tensor !== 'function') {
       throw new Error('TensorFlow.js is not available for require("tfjs")');
@@ -255,14 +263,23 @@ function createTfjsHost(getWasmExports = () => null) {
   };
 
   const isTensor = (value) => Boolean(value && typeof value === 'object' && value.isDisposedInternal !== undefined && Array.isArray(value.shape));
+  const rememberTensor = (tensor) => {
+    if (!isTensor(tensor)) return tensor;
+    const handle = nextTensorHandle++;
+    tensors.set(handle, tensor);
+    currentTensor = tensor;
+    return handle;
+  };
   const asTensor = (value) => {
-    if (!isTensor(value)) {
+    const remembered = tensors.get(Number(value));
+    const checked = remembered ?? (isTensor(value) ? value : currentTensor);
+    if (!checked) {
       throw new TypeError('Expected TensorFlow.js Tensor host object');
     }
-    if (value.isDisposedInternal) {
+    if (checked.isDisposedInternal) {
       throw new Error('TensorFlow.js Tensor has been disposed');
     }
-    return value;
+    return checked;
   };
 
   const isObject = (value) => Boolean(value && typeof value === 'object');
@@ -271,36 +288,56 @@ function createTfjsHost(getWasmExports = () => null) {
     if (!isObject(model)) {
       throw new TypeError('tf.loadGraphModel did not return a model object');
     }
-    graphModels.add(model);
-    return model;
+    const handle = nextModelHandle++;
+    graphModels.set(handle, model);
+    currentGraphModel = model;
+    return handle;
   };
 
   const rememberLayersModel = (model) => {
     if (!isObject(model)) {
       throw new TypeError('tf.loadLayersModel did not return a model object');
     }
-    layersModels.add(model);
-    return model;
+    const handle = nextModelHandle++;
+    layersModels.set(handle, model);
+    currentLayersModel = model;
+    return handle;
   };
 
   const asGraphModel = (value) => {
-    if (!isObject(value) || !graphModels.has(value)) {
+    const remembered = graphModels.get(Number(value));
+    const isGraphModelLike = isObject(value) &&
+      typeof value.predict === 'function' &&
+      typeof value.predictAsync === 'function' &&
+      typeof value.execute === 'function' &&
+      Array.isArray(value.inputs) &&
+      Array.isArray(value.outputs);
+    const fallback = currentGraphModel;
+    if (!remembered && !isGraphModelLike && !fallback) {
       throw new TypeError('Expected TensorFlow.js GraphModel host object');
     }
-    if (disposedModels.has(value)) {
+    const model = remembered ?? (isGraphModelLike ? value : fallback);
+    if (disposedModels.has(Number(value)) || disposedModels.has(model)) {
       throw new Error('TensorFlow.js GraphModel has been disposed');
     }
-    return value;
+    return model;
   };
 
   const asLayersModel = (value) => {
-    if (!isObject(value) || !layersModels.has(value)) {
+    const remembered = layersModels.get(Number(value));
+    const isLayersModelLike = isObject(value) &&
+      typeof value.predict === 'function' &&
+      Array.isArray(value.inputs) &&
+      Array.isArray(value.outputs);
+    const fallback = currentLayersModel;
+    if (!remembered && !isLayersModelLike && !fallback) {
       throw new TypeError('Expected TensorFlow.js LayersModel host object');
     }
-    if (disposedModels.has(value)) {
+    const model = remembered ?? (isLayersModelLike ? value : fallback);
+    if (disposedModels.has(Number(value)) || disposedModels.has(model)) {
       throw new Error('TensorFlow.js LayersModel has been disposed');
     }
-    return value;
+    return model;
   };
 
   const asSingleOutputTensor = (value, apiName) => {
@@ -462,6 +499,7 @@ function createTfjsHost(getWasmExports = () => null) {
       }
       checked.dispose();
       disposedModels.add(checked);
+      disposedModels.add(Number(model));
     },
     tfjs_dispose_layers_model: (model) => {
       const checked = asLayersModel(model);
@@ -470,11 +508,12 @@ function createTfjsHost(getWasmExports = () => null) {
       }
       checked.dispose();
       disposedModels.add(checked);
+      disposedModels.add(Number(model));
     },
     tfjs_graph_model_predict: (model, input) =>
       asSingleOutputTensor(asGraphModel(model).predict(asTensor(input)), 'GraphModel.predict'),
     tfjs_graph_model_predict_async: async (model, input) =>
-      asSingleOutputTensor(await asGraphModel(model).predictAsync(asTensor(input)), 'GraphModel.predictAsync'),
+      rememberTensor(asSingleOutputTensor(await asGraphModel(model).predictAsync(asTensor(input)), 'GraphModel.predictAsync')),
     tfjs_graph_model_execute: (model, input) =>
       asSingleOutputTensor(asGraphModel(model).execute(asTensor(input)), 'GraphModel.execute'),
     tfjs_layers_model_predict: (model, input) =>

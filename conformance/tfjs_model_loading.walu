@@ -1,0 +1,75 @@
+local tf = require("tfjs")
+
+declare function record_tfjs_model_value(value: f64): unit
+
+function make_single_value_input(value: f64): Tensor
+    local values: TensorData = tfjs_data_empty(1)
+    tfjs_data_set_f64(values, 0, value)
+    return tfjs_tensor2d(values, 1, 1)
+end
+
+function first_value(tensor: Tensor): f64
+    local data: TensorData = tfjs_data_sync(tensor)
+    return tfjs_data_get_f64(data, 0)
+end
+
+function run_graph_model_fixture(): unit
+    local co: thread = coroutine.create(function(): i32
+        local model: GraphModel = promise.await(tfjs_load_graph_model("/tfjs-fixtures/graph-double-plus-one/model.json"))::extern::GraphModel
+        assert(tfjs_graph_model_input_count(model) == 1)
+        assert(tfjs_graph_model_output_count(model) == 1)
+
+        local input: Tensor = make_single_value_input(3.0)
+        local predicted: Tensor = tfjs_graph_model_predict(model, input)
+        local predicted_async: Tensor = promise.await(tfjs_graph_model_predict_async(model, input))::extern::Tensor
+        local executed: Tensor = tfjs_graph_model_execute(model, input)
+
+        assert(first_value(predicted) == 7.0)
+        assert(first_value(predicted_async) == 7.0)
+        record_tfjs_model_value(first_value(predicted) + first_value(predicted_async))
+
+        tfjs_dispose_graph_model(model)
+        return 0
+    end)
+    coroutine.resume(co)
+end
+
+function run_layers_model_fixture(): unit
+    local co: thread = coroutine.create(function(): i32
+        local model: LayersModel = promise.await(tfjs_load_layers_model("/tfjs-fixtures/layers-double-plus-one/model.json"))::extern::LayersModel
+        assert(tfjs_layers_model_input_count(model) == 1)
+        assert(tfjs_layers_model_output_count(model) == 1)
+
+        local input: Tensor = make_single_value_input(4.0)
+        local predicted: Tensor = tfjs_layers_model_predict(model, input)
+
+        assert(first_value(predicted) == 9.0)
+        record_tfjs_model_value(first_value(predicted))
+
+        tfjs_dispose(input)
+        tfjs_dispose(predicted)
+        tfjs_dispose_layers_model(model)
+        return 0
+    end)
+    coroutine.resume(co)
+end
+
+function run_graph_multi_output_error(): unit
+    local co: thread = coroutine.create(function(): i32
+        local model: GraphModel = promise.await(tfjs_load_graph_model("/tfjs-fixtures/graph-multi-output/model.json"))::extern::GraphModel
+        local input: Tensor = make_single_value_input(5.0)
+        local _output: Tensor = tfjs_graph_model_execute(model, input)
+        return 0
+    end)
+    coroutine.resume(co)
+end
+
+function run_graph_named_output_error(): unit
+    local co: thread = coroutine.create(function(): i32
+        local model: GraphModel = promise.await(tfjs_load_graph_model("/tfjs-fixtures/graph-named-output/model.json"))::extern::GraphModel
+        local input: Tensor = make_single_value_input(5.0)
+        local _output: Tensor = tfjs_graph_model_predict(model, input)
+        return 0
+    end)
+    coroutine.resume(co)
+end

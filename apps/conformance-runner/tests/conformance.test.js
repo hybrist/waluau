@@ -41,6 +41,9 @@ function optionsForCase(name) {
   if (name === 'promise_await.walu') {
     return createTypedPromiseAwaitHarness().options;
   }
+  if (name === 'tfjs_model_loading.walu') {
+    return createTfjsModelHarness().options;
+  }
 
   if (name !== 'extern_member_collisions.walu') {
     return undefined;
@@ -165,6 +168,33 @@ function createTypedPromiseAwaitHarness() {
       await Promise.resolve();
       await new Promise((resolve) => setTimeout(resolve, 0));
     },
+  };
+}
+
+function createTfjsModelHarness() {
+  const values = [];
+  const asyncErrors = [];
+
+  return {
+    values,
+    asyncErrors,
+    options: {
+      hostImports: {
+        record_tfjs_model_value(value) {
+          values.push(value);
+        },
+      },
+      onAsyncError(error) {
+        asyncErrors.push(error);
+      },
+    },
+  };
+}
+
+function tfjsModelHarnessState(harness) {
+  return {
+    values: harness.values,
+    errors: harness.asyncErrors.map(String),
   };
 }
 
@@ -311,6 +341,39 @@ describe('browser conformance', () => {
     );
 
     exports.run_lifetime_checks();
+  });
+
+  it('passes tfjs_model_loading.walu graph/layers fixtures and multi-output errors', async () => {
+    const source = cases.find(({ name }) => name === 'tfjs_model_loading.walu').source;
+    const harness = createTfjsModelHarness();
+    const exports = await compileAndInstantiateWithExports(
+      { '/main.walu': sourceForCase({ name: 'tfjs_model_loading.walu', source }) },
+      '/main.walu',
+      harness.options,
+    );
+
+    exports.run_layers_model_fixture();
+    await expect.poll(() => tfjsModelHarnessState(harness)).toEqual({
+      values: [9],
+      errors: [],
+    });
+
+    exports.run_graph_model_fixture();
+    await expect.poll(() => tfjsModelHarnessState(harness)).toEqual({
+      values: [9, 14],
+      errors: [],
+    });
+
+    exports.run_graph_multi_output_error();
+    await expect.poll(() => harness.asyncErrors.map(String)).toEqual([
+      expect.stringContaining('GraphModel.execute returned multiple outputs'),
+    ]);
+
+    exports.run_graph_named_output_error();
+    await expect.poll(() => harness.asyncErrors.map(String)).toEqual([
+      expect.stringContaining('GraphModel.execute returned multiple outputs'),
+      expect.stringContaining('GraphModel.predict returned a named output map'),
+    ]);
   });
 
   it('passes top_level_fetch.walu with async start-function fetch and DOM write', async () => {

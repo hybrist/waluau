@@ -477,6 +477,24 @@ fn tfjs_namespace() -> BTreeMap<String, String> {
         ("matmul", "tfjs_matmul"),
         ("reshape2d", "tfjs_reshape2d"),
         ("transpose", "tfjs_transpose"),
+        ("load_graph_model", "tfjs_load_graph_model"),
+        ("load_layers_model", "tfjs_load_layers_model"),
+        ("dispose_graph_model", "tfjs_dispose_graph_model"),
+        ("dispose_layers_model", "tfjs_dispose_layers_model"),
+        ("graph_model_predict", "tfjs_graph_model_predict"),
+        (
+            "graph_model_predict_async",
+            "tfjs_graph_model_predict_async",
+        ),
+        ("graph_model_execute", "tfjs_graph_model_execute"),
+        ("layers_model_predict", "tfjs_layers_model_predict"),
+        ("graph_model_input_count", "tfjs_graph_model_input_count"),
+        ("graph_model_output_count", "tfjs_graph_model_output_count"),
+        ("layers_model_input_count", "tfjs_layers_model_input_count"),
+        (
+            "layers_model_output_count",
+            "tfjs_layers_model_output_count",
+        ),
     ]
     .into_iter()
     .map(|(field, function)| (field.to_string(), function.to_string()))
