@@ -1162,6 +1162,9 @@ impl Rewriter<'_> {
 }
 
 fn strip_unused_namespace_lets(stmts: &mut Vec<Stmt>) {
+    for stmt in stmts.iter_mut() {
+        strip_unused_namespace_lets_in_stmt(stmt);
+    }
     let unused: HashSet<String> = stmts
         .iter()
         .filter_map(|stmt| {
@@ -1177,6 +1180,138 @@ fn strip_unused_namespace_lets(stmts: &mut Vec<Stmt>) {
         return;
     }
     stmts.retain(|stmt| !matches!(stmt, Stmt::Let { name, .. } if unused.contains(name)));
+}
+
+fn strip_unused_namespace_lets_in_stmt(stmt: &mut Stmt) {
+    match stmt {
+        Stmt::Let { value, .. }
+        | Stmt::Assign { value, .. }
+        | Stmt::Return(value)
+        | Stmt::Expr(value) => {
+            strip_unused_namespace_lets_in_expr(value);
+        }
+        Stmt::IndexAssign {
+            base, index, value, ..
+        } => {
+            strip_unused_namespace_lets_in_expr(base);
+            strip_unused_namespace_lets_in_expr(index);
+            strip_unused_namespace_lets_in_expr(value);
+        }
+        Stmt::FieldAssign { base, value, .. } => {
+            strip_unused_namespace_lets_in_expr(base);
+            strip_unused_namespace_lets_in_expr(value);
+        }
+        Stmt::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
+            strip_unused_namespace_lets_in_expr(condition);
+            strip_unused_namespace_lets(then_body);
+            strip_unused_namespace_lets(else_body);
+        }
+        Stmt::IfCast {
+            value,
+            then_body,
+            else_body,
+            ..
+        } => {
+            strip_unused_namespace_lets_in_expr(value);
+            strip_unused_namespace_lets(then_body);
+            strip_unused_namespace_lets(else_body);
+        }
+        Stmt::While { condition, body } => {
+            strip_unused_namespace_lets_in_expr(condition);
+            strip_unused_namespace_lets(body);
+        }
+        Stmt::Repeat { body, condition } => {
+            strip_unused_namespace_lets(body);
+            strip_unused_namespace_lets_in_expr(condition);
+        }
+        Stmt::NumericFor {
+            start,
+            stop,
+            step,
+            body,
+            ..
+        } => {
+            strip_unused_namespace_lets_in_expr(start);
+            strip_unused_namespace_lets_in_expr(stop);
+            if let Some(step) = step {
+                strip_unused_namespace_lets_in_expr(step);
+            }
+            strip_unused_namespace_lets(body);
+        }
+        Stmt::ForIn { iterator, body, .. } => {
+            strip_unused_namespace_lets_in_expr(iterator);
+            strip_unused_namespace_lets(body);
+        }
+        Stmt::ReturnMulti(values)
+        | Stmt::LetMulti { values, .. }
+        | Stmt::AssignMulti { values, .. } => {
+            for value in values {
+                strip_unused_namespace_lets_in_expr(value);
+            }
+        }
+        Stmt::Break | Stmt::Continue => {}
+    }
+}
+
+fn strip_unused_namespace_lets_in_expr(expr: &mut Expr) {
+    match expr {
+        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } | Expr::IsVariant { expr, .. } => {
+            strip_unused_namespace_lets_in_expr(expr);
+        }
+        Expr::Binary { left, right, .. } => {
+            strip_unused_namespace_lets_in_expr(left);
+            strip_unused_namespace_lets_in_expr(right);
+        }
+        Expr::If {
+            condition,
+            then_expr,
+            else_expr,
+            ..
+        } => {
+            strip_unused_namespace_lets_in_expr(condition);
+            strip_unused_namespace_lets_in_expr(then_expr);
+            strip_unused_namespace_lets_in_expr(else_expr);
+        }
+        Expr::Call { callee, args, .. } => {
+            strip_unused_namespace_lets_in_expr(callee);
+            for arg in args {
+                strip_unused_namespace_lets_in_expr(arg);
+            }
+        }
+        Expr::MethodCall { receiver, args, .. } => {
+            strip_unused_namespace_lets_in_expr(receiver);
+            for arg in args {
+                strip_unused_namespace_lets_in_expr(arg);
+            }
+        }
+        Expr::Function(function) => strip_unused_namespace_lets(&mut function.body),
+        Expr::ArrayLiteral { elements, .. } => {
+            for element in elements {
+                strip_unused_namespace_lets_in_expr(element);
+            }
+        }
+        Expr::TableLiteral { fields, .. } => {
+            for field in fields {
+                strip_unused_namespace_lets_in_expr(&mut field.value);
+            }
+        }
+        Expr::Field { base, .. } => strip_unused_namespace_lets_in_expr(base),
+        Expr::Index { base, index, .. } => {
+            strip_unused_namespace_lets_in_expr(base);
+            strip_unused_namespace_lets_in_expr(index);
+        }
+        Expr::Name(..)
+        | Expr::Number(..)
+        | Expr::Bool(..)
+        | Expr::Nil(..)
+        | Expr::String(..)
+        | Expr::Bytes(..)
+        | Expr::Require(..) => {}
+    }
 }
 
 fn rename_imported_top_level_locals(stmts: &mut [Stmt], prefix: &str) {
