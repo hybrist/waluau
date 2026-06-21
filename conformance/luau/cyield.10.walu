@@ -1,0 +1,35 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/cyield.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only cyield.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/cyield.walu. Common setup is repeated as needed
+-- so each numbered chunk is independently discoverable by the conformance runner.
+
+-- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+print('testing yields from C functions')
+-- test that error throws correctly restore C call counter
+if not limitedstack then
+	local function errf()
+		error("boom")
+	end
+
+	for i = 1, 100 do
+		local ok, err = pcall(function() passthroughCallVaradic(errf) end)
+		assert(not ok)
+		assert(string.find(err, "boom"), `iter {i}: expected boom, got {err}`)
+	end
+
+	local count = 0
+	local function foo()
+		count += 1
+		pcall(1)
+		coroutine.wrap(foo)()
+	end
+	local ok2 = pcall(foo)
+	assert(not ok2)
+	assert(count == 200, `expected count == 200 (MAXCCALLS), got {count}`)
+end
