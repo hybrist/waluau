@@ -507,6 +507,74 @@ fn parses_floor_division_with_multiplicative_precedence() {
 }
 
 #[test]
+fn parses_exponentiation_tighter_than_unary_minus() {
+    // Lua: `-x ^ y` is `-(x ^ y)`.
+    let source = r#"
+        function entry(x: f64, y: f64): f64
+            return -x ^ y
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let function = &program.functions[0];
+    let waluau_ast::Stmt::Return(waluau_ast::Expr::Unary {
+        op: UnaryOp::Neg,
+        expr,
+        ..
+    }) = &function.body[0]
+    else {
+        panic!("return should be a unary negation");
+    };
+    assert!(
+        matches!(
+            expr.as_ref(),
+            waluau_ast::Expr::Binary {
+                op: BinaryOp::Pow,
+                ..
+            }
+        ),
+        "negation should apply to the exponentiation result"
+    );
+}
+
+#[test]
+fn parses_exponentiation_right_associatively() {
+    // Lua: `x ^ y ^ z` is `x ^ (y ^ z)`, and `x ^ -y` is allowed.
+    let source = r#"
+        function entry(x: f64, y: f64, z: f64): f64
+            return x ^ y ^ -z
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let function = &program.functions[0];
+    let waluau_ast::Stmt::Return(waluau_ast::Expr::Binary {
+        op: BinaryOp::Pow,
+        right,
+        ..
+    }) = &function.body[0]
+    else {
+        panic!("return should be exponentiation");
+    };
+    let waluau_ast::Expr::Binary {
+        op: BinaryOp::Pow,
+        right: inner_right,
+        ..
+    } = right.as_ref()
+    else {
+        panic!("exponentiation should associate to the right");
+    };
+    assert!(
+        matches!(
+            inner_right.as_ref(),
+            waluau_ast::Expr::Unary {
+                op: UnaryOp::Neg,
+                ..
+            }
+        ),
+        "exponent may be a unary expression"
+    );
+}
+
+#[test]
 fn parses_concat_between_add_and_comparison_precedence() {
     let source = r#"
         function entry(a: string, b: string, x: i32): bool

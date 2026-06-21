@@ -665,7 +665,7 @@ fn instruction_use_requires_local(instruction: &IrInstruction) -> bool {
     matches!(
         instruction,
         IrInstruction::Binary {
-            op: BinaryOp::FloorDiv | BinaryOp::Mod,
+            op: BinaryOp::FloorDiv | BinaryOp::Mod | BinaryOp::Pow,
             ..
         } | IrInstruction::ArrayGet { .. }
             | IrInstruction::ArraySet { .. }

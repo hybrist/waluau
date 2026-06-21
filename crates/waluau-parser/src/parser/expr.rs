@@ -299,7 +299,32 @@ impl Parser {
                 }),
             });
         }
-        self.parse_postfix_expr()
+        self.parse_pow()
+    }
+
+    /// Exponentiation binds tighter than the unary operators and is
+    /// right-associative, so `-2 ^ 2` is `-(2 ^ 2)` and `2 ^ 2 ^ 3` is
+    /// `2 ^ (2 ^ 3)`. The exponent is parsed as a unary expression so
+    /// `2 ^ -3` is accepted.
+    fn parse_pow(&mut self) -> Result<Expr, Diagnostic> {
+        let base = self.parse_postfix_expr()?;
+        if self.check_simple(&TokenKind::Caret) {
+            let start_pos = base.span().map(|s| s.start).unwrap_or(0);
+            self.advance();
+            let exponent = self.parse_unary()?;
+            let end_pos = exponent.span().map(|s| s.end).unwrap_or(start_pos);
+            return Ok(Expr::Binary {
+                op: BinaryOp::Pow,
+                left: Box::new(base),
+                right: Box::new(exponent),
+                resolved_name: None,
+                span: Some(Span {
+                    start: start_pos,
+                    end: end_pos,
+                }),
+            });
+        }
+        Ok(base)
     }
 
     pub(super) fn parse_postfix_expr(&mut self) -> Result<Expr, Diagnostic> {

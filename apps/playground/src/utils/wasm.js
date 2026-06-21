@@ -718,6 +718,7 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
       return hay.indexOf(needleStr, start);
     },
     extern_is: externIs,
+    math_pow: (base, exponent) => Math.pow(base, exponent),
     bytes_literal: (index) => {
       const literal = bytesConstants[index];
       if (!literal) {

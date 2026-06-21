@@ -1,0 +1,38 @@
+-- Exponentiation with the `^` operator. Like Lua, `^` computes in floating
+-- point, binds tighter than the unary operators, and is right-associative.
+
+-- Basic powers (number literals default to f64). Exponents are kept to
+-- integers so the results are exactly representable in binary floating point.
+assert(2 ^ 10 == 1024)
+assert(5 ^ 0 == 1)
+assert(2 ^ -1 == 0.5)
+assert(2 ^ -2 == 0.25)
+
+-- `^` binds tighter than unary minus: `-2 ^ 2` is `-(2 ^ 2)`.
+assert(-2 ^ 2 == -4)
+
+-- `^` binds tighter than `*`: `2 * 3 ^ 2` is `2 * (3 ^ 2)`.
+assert(2 * 3 ^ 2 == 18)
+
+-- Right-associative: `2 ^ 3 ^ 2` is `2 ^ (3 ^ 2)` = 2 ^ 9 = 512.
+assert(2 ^ 3 ^ 2 == 512)
+
+-- The exponent may itself be a unary expression.
+assert(2 ^ -3 == 0.125)
+
+-- `^` works for explicit integer types too (widened through f64 and back).
+function ipow(base: i32, exp: i32): i32
+    return base ^ exp
+end
+
+assert(ipow(2, 10) == 1024)
+assert(ipow(3, 4) == 81)
+assert(ipow(10, 0) == 1)
+
+-- ...and for f64-typed values.
+function fpow(base: f64, exp: f64): f64
+    return base ^ exp
+end
+
+assert(fpow(2.0, 8.0) == 256.0)
+assert(fpow(2.0, -3.0) == 0.125)

@@ -83,6 +83,7 @@ surprise for people coming from Lua/Luau.
 | `..` (concat) | ✅ (strings) | `string .. string → string`. Numeric operands are **not** auto-coerced (Lua coerces numbers); use `tostring` first. Backed by `wasm:js-string` `concat`. |
 | `#` (length) | ✅ | Works on strings (host `length`, UTF-16 code units on JS hosts) and arrays. |
 | `==`, `<`, `>`, `<=`, `>=` on strings | ✅ | Value/lexicographic comparison via `wasm:js-string` `equals`/`compare`. |
+| `^` (exponentiation) | ✅ | Computes in floating point like Lua (operands widened to `f64`, backed by a host `math_pow` import). Binds tighter than the unary operators and is right-associative. The result is converted back to the operand type, so `i32 ^ i32 → i32` (truncated), matching how `/` keeps the operand type. See `conformance/exponentiation.walu`. |
 
 ---
 

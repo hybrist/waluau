@@ -58,6 +58,36 @@ fn accepts_numeric_alias_and_scalar_types() {
 }
 
 #[test]
+fn type_checks_exponentiation() {
+    let source = r#"
+        function fpow(base: f64, exp: f64): f64
+            return base ^ exp
+        end
+
+        function ipow(base: i32, exp: i32): i32
+            return base ^ exp
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_mixed_numeric_operands_in_exponentiation() {
+    let source = r#"
+        function entry(x: i64, y: f64): i64
+            return x ^ y
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "operation requires compatible numeric operands"
+    );
+}
+
+#[test]
 fn rejects_mixed_numeric_operands() {
     let source = r#"
         function entry(x: i64, y: f64): i64

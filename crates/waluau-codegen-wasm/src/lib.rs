@@ -303,6 +303,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         (&[externref_val_type(), ValType::I32], &[ValType::I32]),
         (&[externref_val_type()], &[ValType::I32]),
         (&[anyref_val_type()], &[externref_val_type()]),
+        (&[ValType::F64, ValType::F64], &[ValType::F64]),
     ];
     for (slot, (params, results)) in host_type_specs.iter().enumerate() {
         if needed_host_slots[slot] {
@@ -716,6 +717,13 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
                 attach_promise_import_type_idx
                     .ok_or_else(|| Diagnostic::new("missing Promise attach import type index"))?,
             ),
+        );
+    }
+    if used_imports.math_pow {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_MATH_POW,
+            EntityType::Function(host_slot_type_index[10].unwrap()),
         );
     }
     let mut declared_import_indices = HashMap::new();
@@ -1983,6 +1991,10 @@ fn emit_block_instructions(
                     let left_local = local(local_plan, *left)?;
                     let right_local = local(local_plan, *right)?;
                     emit_floor_or_mod(out, *op, operand_ty.clone(), left_local, right_local)?;
+                } else if matches!(op, BinaryOp::Pow) {
+                    let left_local = local(local_plan, *left)?;
+                    let right_local = local(local_plan, *right)?;
+                    emit_pow(out, ctx, operand_ty.clone(), left_local, right_local)?;
                 } else {
                     emit_value_operand(out, local_plan, *left)?;
                     emit_value_operand(out, local_plan, *right)?;
@@ -3422,7 +3434,9 @@ fn emit_binary(
             }
             Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
         },
-        BinaryOp::FloorDiv | BinaryOp::Mod => unreachable!("handled before stack binary emission"),
+        BinaryOp::FloorDiv | BinaryOp::Mod | BinaryOp::Pow => {
+            unreachable!("handled before stack binary emission")
+        }
         BinaryOp::Eq => match operand_ty {
             Type::Numeric(NumericType::U32 | NumericType::I32) | Type::Bool => {
                 out.instruction(&Instruction::I32Eq);
@@ -3603,6 +3617,59 @@ fn emit_binary(
         }
     }
     Ok(())
+}
+
+/// Emit `left ^ right` for any numeric `operand_ty`. Lua's `^` always computes
+/// in floating point, so both operands are widened to `f64`, handed to the host
+/// `math_pow` import, and the result is converted back to `operand_ty` (matching
+/// how the language keeps the operand type for other arithmetic such as `/`).
+fn emit_pow(
+    out: &mut Function,
+    ctx: &EmissionContext<'_>,
+    operand_ty: Type,
+    left_local: u32,
+    right_local: u32,
+) -> Result<(), Diagnostic> {
+    let numeric = match operand_ty {
+        Type::Numeric(numeric) => numeric,
+        _ => {
+            return Err(Diagnostic::new(
+                "exponentiation requires numeric operands during wasm emission",
+            ));
+        }
+    };
+    emit_widen_to_f64(out, left_local, numeric);
+    emit_widen_to_f64(out, right_local, numeric);
+    out.instruction(&Instruction::Call(
+        ctx.host_func_index(host::IMPORT_MATH_POW_FUNC)?,
+    ));
+    emit_narrow_from_f64(out, numeric);
+    Ok(())
+}
+
+/// Load `local` (typed `ty`) and convert it to `f64`.
+fn emit_widen_to_f64(out: &mut Function, local: u32, ty: NumericType) {
+    out.instruction(&Instruction::LocalGet(local));
+    match ty {
+        NumericType::U32 => out.instruction(&Instruction::F64ConvertI32U),
+        NumericType::I32 => out.instruction(&Instruction::F64ConvertI32S),
+        NumericType::U64 => out.instruction(&Instruction::F64ConvertI64U),
+        NumericType::I64 => out.instruction(&Instruction::F64ConvertI64S),
+        NumericType::F32 => out.instruction(&Instruction::F64PromoteF32),
+        NumericType::F64 => out,
+    };
+}
+
+/// Convert the `f64` on top of the stack back to `ty`.
+fn emit_narrow_from_f64(out: &mut Function, ty: NumericType) {
+    match ty {
+        NumericType::U32 => out.instruction(&Instruction::I32TruncF64U),
+        NumericType::I32 => out.instruction(&Instruction::I32TruncF64S),
+        NumericType::U64 => out.instruction(&Instruction::I64TruncF64U),
+        NumericType::I64 => out.instruction(&Instruction::I64TruncF64S),
+        NumericType::F32 => out.instruction(&Instruction::F32DemoteF64),
+        NumericType::F64 => out,
+    };
 }
 
 fn emit_floor_or_mod(

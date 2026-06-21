@@ -4693,6 +4693,7 @@ impl Builder<'_> {
                 | BinaryOp::Div
                 | BinaryOp::FloorDiv
                 | BinaryOp::Mod
+                | BinaryOp::Pow
                 | BinaryOp::Concat => {
                     if let Some(name) = resolved_name {
                         let (_, return_type) = self.field_call_signatures.get(name).cloned().ok_or_else(
@@ -4828,6 +4829,7 @@ impl Builder<'_> {
             | BinaryOp::Div
             | BinaryOp::FloorDiv
             | BinaryOp::Mod
+            | BinaryOp::Pow
             | BinaryOp::Less
             | BinaryOp::Greater => {
                 if matches!(op, BinaryOp::Less | BinaryOp::Greater) {
