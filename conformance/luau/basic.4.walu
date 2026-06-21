@@ -2,9 +2,6 @@
 -- tests/conformance/basic.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
--- This chunk contains only checks from basic.luau that currently fail in
--- Waluau. Remove this directive when the whole chunk passes.
 -- Split from conformance/luau/basic.walu. Common helper setup is repeated
 -- so each numbered chunk is independently discoverable by the conformance runner.
 
