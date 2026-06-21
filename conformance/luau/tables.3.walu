@@ -1,0 +1,27 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/tables.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- Split from conformance/luau/tables.walu. Top-level do scope wrappers
+-- are flattened in tail chunks where needed so each numbered chunk is
+-- independently discoverable by the conformance runner.
+
+-- constant folding of table properties must respect aliasing: a mutation through
+-- one local must be visible when the same table is read through any other local.
+	-- mutate via alias, read via original
+	local t = { a = 32 }
+	local copy = t
+	copy.a = 1
+	assert(t.a == 1)
+	-- mutate via original, read via alias
+	local t = { a = 32 }
+	local copy = t
+	t.a = 1
+	assert(copy.a == 1)
+	-- multiple aliases all observe the mutation
+	local t = { a = 1 }
+	local a1 = t
+	local a2 = t
+	a2.a = 99
+	assert(t.a == 99)
+	assert(a1.a == 99)
