@@ -1,0 +1,35 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/math.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only math.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/math.walu. Helper setup is repeated as needed
+-- so each numbered chunk is independently discoverable by the conformance runner.
+
+assert(math.pi - math.pi % 1 == 3)
+assert(math.pi - math.pi % 0.001 == 3.141)
+
+do
+  local a = 3 % 0;
+  assert(a ~= a) -- Expect NaN
+  assert(((2^53+1) % 2) == 0)
+  assert((1234 % (2^53+1)) == 1234)
+end
+
+local function testbit(a, n)
+  return a/2^n % 2 >= 1
+end
+
+assert(eq(math.sin(-9.8)^2 + math.cos(-9.8)^2, 1))
+assert(eq(math.tan(math.pi/4), 1))
+assert(eq(math.sin(math.pi/2), 1) and eq(math.cos(math.pi/2), 0))
+assert(eq(math.atan(1), math.pi/4) and eq(math.acos(0), math.pi/2) and
+       eq(math.asin(1), math.pi/2))
+assert(eq(math.deg(math.pi/2), 90) and eq(math.rad(90), math.pi/2))
+assert(math.abs(-10) == 10)
+assert(eq(math.atan2(1,0), math.pi/2))
+assert(math.ceil(4.5) == 5.0)
+assert(math.floor(4.5) == 4.0)

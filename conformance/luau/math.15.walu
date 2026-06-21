@@ -1,0 +1,101 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/math.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only math.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/math.walu. Helper setup is repeated as needed
+-- so each numbered chunk is independently discoverable by the conformance runner.
+
+function eq (a,b,limit)
+  if not limit then limit = 10E-10 end
+  return math.abs(a-b) <= limit
+end
+
+if rawget(_G, "_soft") then return end
+
+f = "a = {"
+i = 1
+repeat
+  f = f .. "{" .. math.sin(i) .. ", " .. math.cos(i) .. ", " .. (i/3) .. "},\n"
+  i=i+1
+until i > 1000
+f = f .. "}"
+assert(loadstring(f))()
+
+assert(eq(a[300][1], math.sin(300)))
+assert(eq(a[600][1], math.sin(600)))
+assert(eq(a[500][2], math.cos(500)))
+assert(eq(a[800][2], math.cos(800)))
+assert(eq(a[200][3], 200/3))
+assert(eq(a[1000][3], 1000/3, 0.001))
+print('+')
+
+do   -- testing NaN
+  local NaN -- to avoid constant folding
+  NaN = 10e500 - 10e400
+
+  assert(NaN ~= NaN)
+  assert(not (NaN == NaN))
+
+  assert(not (NaN < NaN))
+  assert(not (NaN <= NaN))
+  assert(not (NaN > NaN))
+  assert(not (NaN >= NaN))
+
+  assert(not (0 == NaN))
+  assert(not (0 < NaN))
+  assert(not (0 <= NaN))
+  assert(not (0 > NaN))
+  assert(not (0 >= NaN))
+
+  assert(not (NaN == 0))
+  assert(not (NaN < 0))
+  assert(not (NaN <= 0))
+  assert(not (NaN > 0))
+  assert(not (NaN >= 0))
+
+  assert(if NaN < 0 then false else true)
+  assert(if NaN <= 0 then false else true)
+  assert(if NaN > 0 then false else true)
+  assert(if NaN >= 0 then false else true)
+
+  local a = {}
+  assert(not pcall(function () a[NaN] = 1 end))
+  assert(a[NaN] == nil)
+  a[1] = 1
+  assert(not pcall(function () a[NaN] = 1 end))
+  assert(a[NaN] == nil)
+end
+
+-- extra NaN tests, hidden in a function
+do
+  function neq(a) return a ~= a end
+  function eq(a) return a == a end
+  function lt(a) return a < a end
+  function le(a) return a <= a end
+  function gt(a) return a > a end
+  function ge(a) return a >= a end
+
+  local NaN -- to avoid constant folding
+  NaN = 10e500 - 10e400
+
+  assert(neq(NaN))
+  assert(not eq(NaN))
+  assert(not lt(NaN))
+  assert(not le(NaN))
+  assert(not gt(NaN))
+  assert(not ge(NaN))
+end
+
+-- require "checktable"
+-- stat(a)
+
+a = nil
+
+-- testing implicit conversions
+
+local a,b = '10', '20'
+assert(a*b == 200 and a+b == 30 and a-b == -10 and a/b == 0.5 and -b == -20)
