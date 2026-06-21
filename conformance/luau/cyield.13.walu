@@ -1,0 +1,51 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/cyield.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only cyield.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/cyield.walu. Common setup is repeated as needed
+-- so each numbered chunk is independently discoverable by the conformance runner.
+
+-- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+print('testing yields from C functions')
+function resume(co, ...)
+    local ok, result = coroutine.resume(co)
+    print(ok, result)
+    assert(ok)
+    return result
+end
+
+local function ok_simple()
+    return 100
+end
+
+local function err_simple()
+    error("error_sync")
+end
+
+local function yield_then_ok()
+    coroutine.yield(15)
+    return 5
+end
+
+local function yield_then_err()
+    coroutine.yield(25)
+    error("error_async")
+end
+
+-- extra tests where second call in continuation is also protected
+do
+    local co = coroutine.create(function() return pcallThenPcall(yield_then_ok, ok_simple) end)
+
+    assert(resume(co) == 15)
+    assert(resume(co) == 5 * 100)
+end
+
+assert(pcallThenPcall(ok_simple, err_simple) == 100 * -1)
+
+
+
+return "OK"

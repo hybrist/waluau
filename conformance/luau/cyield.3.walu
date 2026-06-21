@@ -1,0 +1,37 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/cyield.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only cyield.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/cyield.walu. Common setup is repeated as needed
+-- so each numbered chunk is independently discoverable by the conformance runner.
+
+-- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+print('testing yields from C functions')
+-- Multiple yields from nested yieldable C functions
+do
+    local co = coroutine.wrap(multipleYieldsWithNestedCall)
+    assert(co(10, true) == 105)
+    assert(co() == 115)
+    assert(co() == 210)
+    assert(co() == 220)
+end
+
+-- Multiple yields from nested yieldable C functions (unused extra arguments)
+do
+    local co = coroutine.wrap(multipleYieldsWithNestedCall)
+    assert(co(10, true, -1) == 105)
+    assert(co(-1, -2) == 115)
+    assert(co(-1, -2) == 210)
+    assert(co(-1, -2) == 220)
+end
+
+do
+    local co = coroutine.wrap(multipleYieldsWithNestedCall)
+    assert(co(10, false) == 110)
+    assert(co() == 210)
+    assert(co() == 220)
+end
