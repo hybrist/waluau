@@ -1,0 +1,45 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/tpack.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only tpack.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/tpack.walu. Common setup is repeated as needed
+-- so each numbered chunk is independently discoverable by the conformance runner.
+
+-- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+-- This file is based on Lua 5.x tests -- https://github.com/lua/lua/tree/master/testes
+local pack = string.pack
+local packsize = string.packsize
+local unpack = string.unpack
+-- maximum size for integers
+local NB = 16
+-- check errors in arguments
+function checkerror (msg, f, ...)
+  local status, err = pcall(f, ...)
+  -- print(status, err, msg)
+  assert(not status and string.find(err, msg))
+end
+
+print "testing pack/unpack of strings"
+do
+  local s = string.rep("abc", 1000)
+  assert(pack("zB", s, 247) == s .. "\0\xF7")
+  local s1, b = unpack("zB", s .. "\0\xF9")
+  assert(b == 249 and s1 == s)
+  s1 = pack("s", s)
+  assert(unpack("s", s1) == s)
+
+  checkerror("does not fit", pack, "s1", s)
+
+  checkerror("contains zeros", pack, "z", "alo\0");
+
+  checkerror("unfinished string", unpack, "zc10000000", "alo")
+
+  for i = 2, NB do
+    local s1 = pack("s" .. i, s)
+    assert(unpack("s" .. i, s1) == s and #s1 == #s + i)
+  end
+end

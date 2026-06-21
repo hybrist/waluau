@@ -1,0 +1,48 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/tpack.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only tpack.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/tpack.walu. Common setup is repeated as needed
+-- so each numbered chunk is independently discoverable by the conformance runner.
+
+-- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+-- This file is based on Lua 5.x tests -- https://github.com/lua/lua/tree/master/testes
+local pack = string.pack
+local packsize = string.packsize
+local unpack = string.unpack
+-- maximum size for integers
+local NB = 16
+-- check errors in arguments
+function checkerror (msg, f, ...)
+  local status, err = pcall(f, ...)
+  -- print(status, err, msg)
+  assert(not status and string.find(err, msg))
+end
+
+print("testing invalid formats")
+
+checkerror("out of limits", pack, "i0", 0)
+checkerror("out of limits", pack, "i" .. NB + 1, 0)
+checkerror("out of limits", pack, "!" .. NB + 1, 0)
+checkerror("%(17%) out of limits %[1,16%]", pack, "Xi" .. NB + 1)
+checkerror("invalid format option 'r'", pack, "i3r", 0)
+checkerror("16%-byte integer", unpack, "i16", string.rep('\3', 16))
+checkerror("not power of 2", pack, "!4i3", 0);
+checkerror("missing size", pack, "c", "")
+checkerror("variable%-length format", packsize, "s")
+checkerror("variable%-length format", packsize, "z")
+
+if packsize("i") == 4 then
+  -- result would be 2^31  (2^3 repetitions of 2^28 strings)
+  local s = string.rep("c268435456", 2^3)
+  checkerror("too large", packsize, s)
+  -- one less would be OK... except that we limit string sizes to 1GB
+  s = string.rep("c268435456", 2^3 - 1) .. "c268435453"
+  checkerror("too large", packsize, s)
+  -- but 1GB is reachable
+  assert(packsize("c1073741824") == 2^30)
+end
