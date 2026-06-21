@@ -493,6 +493,7 @@ impl<'a> Monomorphizer<'a> {
                     ty: substitute_type(&param.ty, subst),
                 })
                 .collect(),
+            vararg: function.vararg,
             return_type: function
                 .return_type
                 .as_ref()
@@ -866,6 +867,7 @@ impl<'a> Monomorphizer<'a> {
                 index: Box::new(self.rewrite_expr(index, subst, active, types)?),
                 span: *span,
             },
+            Expr::Vararg(span) => Expr::Vararg(*span),
         })
     }
 
@@ -1169,6 +1171,7 @@ impl<'a> Monomorphizer<'a> {
                     ty: substitute_type(&param.ty, subst),
                 })
                 .collect(),
+            vararg: function.vararg,
             return_type: function
                 .return_type
                 .as_ref()
@@ -1229,6 +1232,7 @@ impl<'a> Monomorphizer<'a> {
                     ty: substitute_type(&param.ty, &local_subst),
                 })
                 .collect(),
+            vararg: function.vararg,
             return_type: function
                 .return_type
                 .as_ref()
@@ -1584,6 +1588,7 @@ impl<'a> Monomorphizer<'a> {
                     Diagnostic::new(format!("indexing non-array type '{base_ty}'"))
                 })
             }
+            Expr::Vararg(..) => Ok(Type::Array(Box::new(Type::Unknown))),
         }
     }
 

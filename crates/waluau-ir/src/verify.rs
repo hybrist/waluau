@@ -503,6 +503,39 @@ fn verify_function(
                         )));
                     }
                 }
+                Instruction::ArraySlice {
+                    array,
+                    start,
+                    element_ty,
+                } => {
+                    let array_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *array,
+                    )?;
+                    let expected_array_ty = Type::Array(Box::new(element_ty.clone()));
+                    if array_ty != expected_array_ty {
+                        return Err(Diagnostic::new(format!(
+                            "array slice in block {:?} expects {}, got {}",
+                            block.id, expected_array_ty, array_ty
+                        )));
+                    }
+                    let start_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *start,
+                    )?;
+                    if start_ty != Type::Numeric(NumericType::I32) {
+                        return Err(Diagnostic::new(format!(
+                            "array slice start in block {:?} must be i32",
+                            block.id
+                        )));
+                    }
+                }
                 Instruction::BytesGet { bytes, index } => {
                     let bytes_ty = require_dominating_definition(
                         &definitions,
@@ -747,7 +780,11 @@ fn verify_function(
                             block.id, from, value_ty
                         )));
                     }
-                    if !(from.is_numeric() || *from == Type::Bool || *from == Type::String) {
+                    if !(from.is_numeric()
+                        || *from == Type::Bool
+                        || *from == Type::String
+                        || *from == Type::Unknown)
+                    {
                         return Err(Diagnostic::new(format!(
                             "tostring requires primitive source type, got {}",
                             from
@@ -965,6 +1002,7 @@ fn infer_instruction_type(
         Instruction::ArrayGet { element_ty, .. } => Ok(element_ty.clone()),
         Instruction::ArraySet { .. } => Ok(Type::Numeric(NumericType::I32)),
         Instruction::ArrayLen { .. } => Ok(Type::Numeric(NumericType::I32)),
+        Instruction::ArraySlice { element_ty, .. } => Ok(Type::Array(Box::new(element_ty.clone()))),
         Instruction::BytesGet { .. } => Ok(Type::Numeric(NumericType::I32)),
         Instruction::BytesLen { .. } => Ok(Type::Numeric(NumericType::I32)),
         Instruction::StructNew { struct_ty, .. } => Ok(struct_ty.clone()),

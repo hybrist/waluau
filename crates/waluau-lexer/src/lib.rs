@@ -68,6 +68,7 @@ pub enum TokenKind {
     Colon,
     Dot,
     DoubleDot,
+    TripleDot,
     Comma,
     Hash,
     Question,
@@ -126,7 +127,9 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
             }
             '%' => (TokenKind::Percent, 1),
             '.' => {
-                if matches!(chars.get(i + 1), Some('.')) {
+                if matches!(chars.get(i + 1), Some('.')) && matches!(chars.get(i + 2), Some('.')) {
+                    (TokenKind::TripleDot, 3)
+                } else if matches!(chars.get(i + 1), Some('.')) {
                     (TokenKind::DoubleDot, 2)
                 } else {
                     (TokenKind::Dot, 1)

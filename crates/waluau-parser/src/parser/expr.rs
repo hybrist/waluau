@@ -457,6 +457,7 @@ impl Parser {
             TokenKind::StringType => Ok(Expr::Name("string".to_string(), None, span)),
             TokenKind::Str(value) => Ok(Expr::String(value, span)),
             TokenKind::Bytes(value) => Ok(Expr::Bytes(value, span)),
+            TokenKind::TripleDot => Ok(Expr::Vararg(span)),
             TokenKind::Function => {
                 let start_pos = token.span.start;
                 let name = if let Some(Token {

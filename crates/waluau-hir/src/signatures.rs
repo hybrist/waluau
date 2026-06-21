@@ -19,6 +19,7 @@ pub(super) struct GenericScheme {
 pub(super) enum FnSignature {
     Mono {
         params: Vec<Type>,
+        vararg: bool,
         return_type: Type,
     },
     Generic(GenericScheme),
@@ -525,18 +526,34 @@ pub(super) fn infer_top_level_function_return_type(
         );
     }
 
-    let mut returns = Vec::new();
+    let mut local_signatures = fn_signatures.clone();
     if let Some(function_name) = function.name.simple_name() {
         if unresolved_names.iter().any(|name| name == function_name)
             && function_calls(function, function_name)
+            && !function.vararg
         {
             return Ok(None);
         }
+        if unresolved_names.iter().any(|name| name == function_name) && function.vararg {
+            local_signatures.insert(
+                function_name.to_string(),
+                FnSignature::Mono {
+                    params: function
+                        .params
+                        .iter()
+                        .map(|param| param.ty.clone())
+                        .collect(),
+                    vararg: function.vararg,
+                    return_type: Type::String,
+                },
+            );
+        }
     }
+    let mut returns = Vec::new();
     if let Err(error) = collect_return_types(
         &function.body,
         &vars,
-        fn_signatures,
+        &local_signatures,
         &HashSet::new(),
         &mut returns,
     ) {

@@ -301,6 +301,7 @@ fn collect_expr_captures(
         | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
+        | Expr::Vararg(..)
         | Expr::Require(..) => {}
     }
 }
@@ -475,6 +476,7 @@ fn collect_nested_from_expr(expr: &Expr, out: &mut HashSet<SymbolId>) {
         | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
+        | Expr::Vararg(..)
         | Expr::Require(..) => {}
     }
 }
@@ -676,6 +678,7 @@ fn collect_free_names_in_expr(expr: &Expr, bound: &HashSet<SymbolId>, out: &mut 
         | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
+        | Expr::Vararg(..)
         | Expr::Require(..) => {}
     }
 }

@@ -918,6 +918,7 @@ pub(super) fn check_stmt(
                 let FnSignature::Mono {
                     params,
                     return_type,
+                    ..
                 } = signature
                 else {
                     return Err(generic_diagnostic(
@@ -974,6 +975,7 @@ pub(super) fn check_stmt(
                             symbol_id: None,
                             type_params: function.type_params.clone(),
                             params: function.params.clone(),
+                            vararg: function.vararg,
                             return_type: function.return_type.clone(),
                             body: function.body.clone(),
                             file_path: function.file_path.clone(),
@@ -1517,8 +1519,9 @@ fn stmt_calls_name(stmt: &Stmt, callee: &str) -> bool {
         | Stmt::Assign { value, .. }
         | Stmt::Expr(value)
         | Stmt::Return(value) => expr_calls_name(value, callee),
-        Stmt::ReturnMulti(values) => values.iter().any(|value| expr_calls_name(value, callee)),
-        Stmt::LetMulti { values, .. } | Stmt::AssignMulti { values, .. } => {
+        Stmt::ReturnMulti(values)
+        | Stmt::LetMulti { values, .. }
+        | Stmt::AssignMulti { values, .. } => {
             values.iter().any(|value| expr_calls_name(value, callee))
         }
         Stmt::IndexAssign {
@@ -1588,11 +1591,17 @@ fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
         | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
+        | Expr::Vararg(..)
         | Expr::Require(..) => false,
-        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => expr_calls_name(expr, callee),
-        Expr::Binary { left, right, .. } => {
-            expr_calls_name(left, callee) || expr_calls_name(right, callee)
+        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } | Expr::IsVariant { expr, .. } => {
+            expr_calls_name(expr, callee)
         }
+        Expr::Binary { left, right, .. }
+        | Expr::Index {
+            base: left,
+            index: right,
+            ..
+        } => expr_calls_name(left, callee) || expr_calls_name(right, callee),
         Expr::If {
             condition,
             then_expr,
@@ -1605,7 +1614,6 @@ fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
         }
         Expr::Call {
             callee: called,
-            type_args: _,
             args,
             ..
         } => {
@@ -1620,17 +1628,13 @@ fn expr_calls_name(expr: &Expr, callee: &str) -> bool {
             .body
             .iter()
             .any(|stmt| stmt_calls_name(stmt, callee)),
-        Expr::ArrayLiteral { elements, .. } => {
-            elements.iter().any(|el| expr_calls_name(el, callee))
-        }
+        Expr::ArrayLiteral { elements, .. } => elements
+            .iter()
+            .any(|element| expr_calls_name(element, callee)),
         Expr::TableLiteral { fields, .. } => fields
             .iter()
             .any(|field| expr_calls_name(&field.value, callee)),
         Expr::Field { base, .. } => expr_calls_name(base, callee),
-        Expr::Index { base, index, .. } => {
-            expr_calls_name(base, callee) || expr_calls_name(index, callee)
-        }
-        Expr::IsVariant { expr, .. } => expr_calls_name(expr, callee),
     }
 }
 
@@ -1681,6 +1685,7 @@ fn seal_record_locals_in_expr(expr: &Expr, vars: &mut HashMap<String, Binding>) 
         | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
+        | Expr::Vararg(..)
         | Expr::Require(..) => {}
         Expr::ArrayLiteral { elements, .. } => {
             for element in elements {

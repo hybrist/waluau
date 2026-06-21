@@ -1,0 +1,9 @@
+function concat(head, ...)
+    if select('#', ...) == 0 then
+        return tostring(head)
+    else
+        return tostring(head) .. "," .. concat(...)
+    end
+end
+
+assert(concat(1, "two", false, 3.5) == "1,two,false,3.5")

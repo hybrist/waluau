@@ -27,12 +27,13 @@ pub const IMPORT_JS_TOSTRING_U64: &str = "js_tostring_u64";
 pub const IMPORT_JS_TOSTRING_F32: &str = "js_tostring_f32";
 pub const IMPORT_JS_TOSTRING_F64: &str = "js_tostring_f64";
 pub const IMPORT_JS_TOSTRING_BOOL: &str = "js_tostring_bool";
+pub const IMPORT_JS_TOSTRING_UNKNOWN: &str = "js_tostring_unknown";
 pub const IMPORT_PRINT: &str = "print";
 pub const IMPORT_EXTERN_IS: &str = "extern_is";
 pub const IMPORT_ATTACH_PROMISE: &str = "__waluau_attach_promise";
 
 /// Maximum number of host function imports (when all are used).
-pub const HOST_IMPORT_COUNT: u32 = 19;
+pub const HOST_IMPORT_COUNT: u32 = 20;
 
 /// Canonical function-index slot for each host import.
 /// These are stable identifiers used as keys into [`HostImportMap`].
@@ -53,12 +54,13 @@ pub const IMPORT_JS_TOSTRING_U64_FUNC: u32 = 13;
 pub const IMPORT_JS_TOSTRING_F32_FUNC: u32 = 14;
 pub const IMPORT_JS_TOSTRING_F64_FUNC: u32 = 15;
 pub const IMPORT_JS_TOSTRING_BOOL_FUNC: u32 = 16;
-pub const IMPORT_EXTERN_IS_FUNC: u32 = 17;
-pub const IMPORT_ATTACH_PROMISE_FUNC: u32 = 18;
+pub const IMPORT_JS_TOSTRING_UNKNOWN_FUNC: u32 = 17;
+pub const IMPORT_EXTERN_IS_FUNC: u32 = 18;
+pub const IMPORT_ATTACH_PROMISE_FUNC: u32 = 19;
 
 /// Number of host function types in the canonical type-slot table.
 /// The actual number emitted in a given module may be less if some slots are unused.
-pub const HOST_TYPE_COUNT: u32 = 9;
+pub const HOST_TYPE_COUNT: u32 = 10;
 
 /// Records which host functions are actually referenced by a module.
 #[derive(Clone, Debug, Default)]
@@ -80,6 +82,7 @@ pub struct UsedHostImports {
     pub js_tostring_f32: bool,
     pub js_tostring_f64: bool,
     pub js_tostring_bool: bool,
+    pub js_tostring_unknown: bool,
     pub extern_is: bool,
     pub attach_promise: bool,
 }
@@ -130,6 +133,7 @@ impl UsedHostImports {
             (IMPORT_JS_TOSTRING_F32_FUNC, self.js_tostring_f32),
             (IMPORT_JS_TOSTRING_F64_FUNC, self.js_tostring_f64),
             (IMPORT_JS_TOSTRING_BOOL_FUNC, self.js_tostring_bool),
+            (IMPORT_JS_TOSTRING_UNKNOWN_FUNC, self.js_tostring_unknown),
             (IMPORT_EXTERN_IS_FUNC, self.extern_is),
             (IMPORT_ATTACH_PROMISE_FUNC, self.attach_promise),
         ];
@@ -164,6 +168,7 @@ impl UsedHostImports {
 /// | 6    | (externref) → []                      | print                                        |
 /// | 7    | (externref, i32) → i32                | bytes_get                                    |
 /// | 8    | (externref) → i32                     | bytes_len                                    |
+/// | 9    | (anyref) → externref                  | js_tostring_unknown                         |
 pub fn needed_host_type_slots(used: &UsedHostImports) -> [bool; HOST_TYPE_COUNT as usize] {
     let mut slots = [false; HOST_TYPE_COUNT as usize];
     if used.js_string_eq
@@ -188,6 +193,9 @@ pub fn needed_host_type_slots(used: &UsedHostImports) -> [bool; HOST_TYPE_COUNT 
     }
     if used.js_tostring_f64 {
         slots[5] = true;
+    }
+    if used.js_tostring_unknown {
+        slots[9] = true;
     }
     if used.print {
         slots[6] = true;
@@ -240,6 +248,7 @@ fn mark_used_by_instruction(instruction: &IrInstruction, used: &mut UsedHostImpo
             Type::Numeric(NumericType::F32) => used.js_tostring_f32 = true,
             Type::Numeric(NumericType::F64) => used.js_tostring_f64 = true,
             Type::Bool => used.js_tostring_bool = true,
+            Type::Unknown => used.js_tostring_unknown = true,
             _ => {}
         },
         IrInstruction::Binary { op, operand_ty, .. } => match (op, operand_ty) {

@@ -49,6 +49,7 @@ pub struct Function {
     pub symbol_id: Option<SymbolId>,
     pub type_params: Vec<String>,
     pub params: Vec<Param>,
+    pub vararg: bool,
     pub return_type: Option<Type>,
     pub body: Vec<Stmt>,
     pub file_path: String,
@@ -67,6 +68,7 @@ pub struct FunctionExpr {
     pub implicit_self: Option<String>,
     pub type_params: Vec<String>,
     pub params: Vec<Param>,
+    pub vararg: bool,
     pub return_type: Option<Type>,
     pub body: Vec<Stmt>,
     pub file_path: String,
@@ -508,6 +510,7 @@ pub enum Expr {
         /// The receiver is always the first argument when this is Some.
         method_call_origin: Option<MethodCallOrigin>,
     },
+    Vararg(Option<Span>),
     MethodCall {
         receiver: Box<Expr>,
         name: String,
@@ -556,6 +559,7 @@ impl Expr {
             Expr::String(_, span) => *span,
             Expr::Bytes(_, span) => *span,
             Expr::Name(_, _, span) => *span,
+            Expr::Vararg(span) => *span,
             Expr::Unary { span, .. } => *span,
             Expr::Cast { span, .. } => *span,
             Expr::Binary { span, .. } => *span,
@@ -623,6 +627,7 @@ impl Resolver {
             "print",
             "assert",
             "tostring",
+            "select",
             "math",
             "coroutine",
             "promise",
@@ -947,6 +952,7 @@ impl Resolver {
             | Expr::Nil(..)
             | Expr::String(..)
             | Expr::Bytes(..)
+            | Expr::Vararg(..)
             | Expr::Require(..) => {}
         }
         Ok(())
