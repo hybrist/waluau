@@ -128,6 +128,7 @@ impl Parser {
             symbol_id: None,
             type_params: function_expr.type_params,
             params: function_expr.params,
+            vararg: function_expr.vararg,
             return_type: function_expr.return_type,
             body: function_expr.body,
             file_path: self.file_path.clone(),
@@ -356,16 +357,26 @@ impl Parser {
     ) -> Result<FunctionExpr, Diagnostic> {
         self.expect_simple(TokenKind::LParen, "expected '('")?;
         let mut params = Vec::new();
+        let mut vararg = false;
         if !self.check_simple(&TokenKind::RParen) {
             loop {
+                if self.check_simple(&TokenKind::TripleDot) {
+                    self.advance();
+                    vararg = true;
+                    break;
+                }
                 let param_name = self.expect_identifier()?;
-                self.expect_simple(TokenKind::Colon, "expected ':' after parameter name")?;
-                let param_type = match self.parse_type() {
-                    Ok(ty) => ty,
-                    Err(error) => {
-                        self.record_error(error);
-                        Type::number()
+                let param_type = if self.check_simple(&TokenKind::Colon) {
+                    self.advance();
+                    match self.parse_type() {
+                        Ok(ty) => ty,
+                        Err(error) => {
+                            self.record_error(error);
+                            Type::number()
+                        }
                     }
+                } else {
+                    Type::Unknown
                 };
                 params.push(Param {
                     name: param_name,
@@ -403,6 +414,7 @@ impl Parser {
             implicit_self: None,
             type_params,
             params,
+            vararg,
             return_type,
             body: Vec::new(),
             file_path: self.file_path.clone(),
@@ -422,16 +434,26 @@ impl Parser {
     ) -> Result<FunctionExpr, Diagnostic> {
         self.expect_simple(TokenKind::LParen, "expected '('")?;
         let mut params = Vec::new();
+        let mut vararg = false;
         if !self.check_simple(&TokenKind::RParen) {
             loop {
+                if self.check_simple(&TokenKind::TripleDot) {
+                    self.advance();
+                    vararg = true;
+                    break;
+                }
                 let param_name = self.expect_identifier()?;
-                self.expect_simple(TokenKind::Colon, "expected ':' after parameter name")?;
-                let param_type = match self.parse_type() {
-                    Ok(ty) => ty,
-                    Err(error) => {
-                        self.record_error(error);
-                        Type::number()
+                let param_type = if self.check_simple(&TokenKind::Colon) {
+                    self.advance();
+                    match self.parse_type() {
+                        Ok(ty) => ty,
+                        Err(error) => {
+                            self.record_error(error);
+                            Type::number()
+                        }
                     }
+                } else {
+                    Type::Unknown
                 };
                 params.push(Param {
                     name: param_name,
@@ -470,6 +492,7 @@ impl Parser {
             implicit_self: None,
             type_params,
             params,
+            vararg,
             return_type,
             body,
             file_path: self.file_path.clone(),

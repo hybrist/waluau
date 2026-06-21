@@ -159,6 +159,11 @@ pub enum Instruction {
     ArrayLen {
         array: ValueId,
     },
+    ArraySlice {
+        array: ValueId,
+        start: ValueId,
+        element_ty: Type,
+    },
     BytesGet {
         bytes: ValueId,
         index: ValueId,

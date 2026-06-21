@@ -302,6 +302,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         (&[externref_val_type()], &[]),
         (&[externref_val_type(), ValType::I32], &[ValType::I32]),
         (&[externref_val_type()], &[ValType::I32]),
+        (&[anyref_val_type()], &[externref_val_type()]),
     ];
     for (slot, (params, results)) in host_type_specs.iter().enumerate() {
         if needed_host_slots[slot] {
@@ -691,6 +692,13 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             host::IMPORT_MODULE,
             host::IMPORT_JS_TOSTRING_BOOL,
             EntityType::Function(host_slot_type_index[2].unwrap()),
+        );
+    }
+    if used_imports.js_tostring_unknown {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_JS_TOSTRING_UNKNOWN,
+            EntityType::Function(host_slot_type_index[9].unwrap()),
         );
     }
     if used_imports.extern_is {
@@ -2062,6 +2070,11 @@ fn emit_block_instructions(
                             ctx.host_func_index(host::IMPORT_JS_TOSTRING_BOOL_FUNC)?,
                         ));
                     }
+                    Type::Unknown => {
+                        out.instruction(&Instruction::Call(
+                            ctx.host_func_index(host::IMPORT_JS_TOSTRING_UNKNOWN_FUNC)?,
+                        ));
+                    }
                     Type::String => {}
                     other => {
                         return Err(Diagnostic::new(format!(
@@ -2616,6 +2629,33 @@ fn emit_block_instructions(
                 emit_value_operand(out, local_plan, *array)?;
                 out.instruction(&Instruction::ArrayLen);
                 emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::ArraySlice {
+                array,
+                start,
+                element_ty,
+            } => {
+                let array_local = local(local_plan, *array)?;
+                let start_local = local(local_plan, *start)?;
+                let array_ty = Type::Array(Box::new(element_ty.clone()));
+                let array_type_index = ctx.array_registry.index(&array_ty)?;
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::ArrayLen);
+                out.instruction(&Instruction::LocalGet(start_local));
+                out.instruction(&Instruction::I32Sub);
+                out.instruction(&Instruction::ArrayNewDefault(array_type_index));
+                out.instruction(&Instruction::LocalSet(local(local_plan, *value)?));
+
+                out.instruction(&Instruction::LocalGet(local(local_plan, *value)?));
+                out.instruction(&Instruction::I32Const(0));
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::LocalGet(start_local));
+                out.instruction(&Instruction::LocalGet(local(local_plan, *value)?));
+                out.instruction(&Instruction::ArrayLen);
+                out.instruction(&Instruction::ArrayCopy {
+                    array_type_index_dst: array_type_index,
+                    array_type_index_src: array_type_index,
+                });
             }
             IrInstruction::BytesGet { bytes, index } => {
                 emit_value_operand(out, local_plan, *bytes)?;

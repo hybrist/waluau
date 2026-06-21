@@ -32,6 +32,7 @@ pub(super) const MATH_NEAREST: &str = "math.nearest";
 pub(super) const MATH_COPYSIGN: &str = "math.copysign";
 pub(super) const TABLE_CONCAT: &str = "table.concat";
 pub(super) const TO_STRING: &str = "tostring";
+pub(super) const SELECT: &str = "select";
 pub(super) const ASSERT: &str = "assert";
 pub(super) const STRING_FIND: &str = "string.find";
 // pub(super) const PRINT: &str = "print"; // now handled via extern declaration
@@ -388,12 +389,53 @@ pub(super) fn infer_tostring_builtin_call(
         Ok(ty) => ty,
         Err(error) => return Some(Err(error)),
     };
-    if arg_ty.is_numeric() || arg_ty == Type::Bool || arg_ty == Type::String {
+    if arg_ty.is_numeric()
+        || arg_ty == Type::Bool
+        || arg_ty == Type::String
+        || arg_ty == Type::Unknown
+    {
         Some(coerce_type(Type::String, expected))
     } else {
         Some(Err(Diagnostic::new(format!(
             "{TO_STRING} expects a primitive argument (numeric, bool, or string), got {arg_ty}",
         ))))
+    }
+}
+
+pub(super) fn infer_select_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    if name != SELECT {
+        return None;
+    }
+    if args.len() != 2 {
+        return Some(Err(Diagnostic::new(format!(
+            "{SELECT} expects 2 arguments, got {}",
+            args.len()
+        ))));
+    }
+    match &args[0] {
+        Expr::String(marker, _) if marker == "#" => {}
+        _ => {
+            return Some(Err(Diagnostic::new(
+                "select currently supports only select('#', ...)",
+            )));
+        }
+    }
+    match super::expressions::infer_expr(
+        &args[1],
+        vars,
+        fn_signatures,
+        active_type_params,
+        Some(Type::Array(Box::new(Type::Unknown))),
+    ) {
+        Ok(_) => Some(coerce_type(Type::Numeric(NumericType::I32), expected)),
+        Err(error) => Some(Err(error)),
     }
 }
 

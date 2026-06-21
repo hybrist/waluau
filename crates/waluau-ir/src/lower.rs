@@ -52,10 +52,15 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
                 function.name
             ))
         })?;
-        let sig = (
-            function.params.iter().map(|param| param.ty.clone()).collect::<Vec<_>>(),
-            return_type,
-        );
+        let mut param_types = function
+            .params
+            .iter()
+            .map(|param| param.ty.clone())
+            .collect::<Vec<_>>();
+        if function.vararg {
+            param_types.push(Type::Array(Box::new(Type::Unknown)));
+        }
+        let sig = (param_types, return_type);
         signatures.insert(symbol_id, sig.clone());
         field_call_signatures.insert(function.name.to_string(), sig);
     }
@@ -493,6 +498,7 @@ fn collect_expr_variant_tags(expr: &Expr, tag_ids: &mut BTreeMap<String, i32>) {
         | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
+        | Expr::Vararg(..)
         | Expr::Name(..)
         | Expr::Require(..) => {}
     }
@@ -542,6 +548,7 @@ fn erase_function_opaque_types(function: &AstFunction) -> AstFunction {
                 ty: erase_type_opaque_types(&param.ty),
             })
             .collect(),
+        vararg: function.vararg,
         return_type: function
             .return_type
             .as_ref()
@@ -690,6 +697,7 @@ fn erase_expr_opaque_types(expr: &Expr) -> Expr {
         | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
+        | Expr::Vararg(..)
         | Expr::Name(..)
         | Expr::Require(..) => expr.clone(),
         Expr::IsVariant { expr, tag, span } => Expr::IsVariant {
@@ -779,6 +787,7 @@ fn erase_expr_opaque_types(expr: &Expr) -> Expr {
                     ty: erase_type_opaque_types(&param.ty),
                 })
                 .collect(),
+            vararg: function.vararg,
             return_type: function.return_type.as_ref().map(erase_type_opaque_types),
             body: function.body.iter().map(erase_stmt_opaque_types).collect(),
             file_path: function.file_path.clone(),
@@ -875,11 +884,17 @@ pub(crate) fn build_function(
     })?;
     let mut out = Function {
         name: function.name.to_string(),
-        params: function
-            .params
-            .iter()
-            .map(|param| (param.name.clone(), param.ty.clone()))
-            .collect(),
+        params: {
+            let mut params = function
+                .params
+                .iter()
+                .map(|param| (param.name.clone(), param.ty.clone()))
+                .collect::<Vec<_>>();
+            if function.vararg {
+                params.push(("...".to_string(), Type::Array(Box::new(Type::Unknown))));
+            }
+            params
+        },
         return_type,
         entry: BlockId(0),
         blocks: BTreeMap::new(),
@@ -926,6 +941,15 @@ pub(crate) fn build_function(
         out.value_symbols.insert(value, symbol_id);
         type_env.insert(symbol_id, param.ty.clone());
     }
+    let vararg_value = if function.vararg {
+        let value = out.next_value();
+        block_mut(&mut out, entry)
+            .instructions
+            .push((value, Instruction::Param(function.params.len())));
+        Some(value)
+    } else {
+        None
+    };
 
     let mut builder = Builder {
         function: out,
@@ -942,6 +966,7 @@ pub(crate) fn build_function(
         sources,
         file_path: function.file_path.clone(),
         tag_ids,
+        vararg_value,
     };
     for stmt in &function.body {
         if builder.current_block == DEAD_BLOCK {
@@ -979,6 +1004,7 @@ struct Builder<'a> {
     /// Stable discriminant IDs for tagged-union variant names, shared across the
     /// whole module so constructors and checks in different functions agree.
     tag_ids: &'a BTreeMap<String, i32>,
+    vararg_value: Option<ValueId>,
 }
 
 #[derive(Clone)]
@@ -3059,6 +3085,12 @@ impl Builder<'_> {
                 let value = self.emit(Instruction::Bytes(value.clone()));
                 self.coerce_value(value, Type::Bytes, expected)?
             }
+            Expr::Vararg(_) => {
+                let value = self
+                    .vararg_value
+                    .ok_or_else(|| Diagnostic::new("'...' used outside a vararg function"))?;
+                self.coerce_value(value, Type::Array(Box::new(Type::Unknown)), expected)?
+            }
             Expr::Name(name, symbol_id, _) => {
                 let symbol_id = symbol_id.expect("symbol_id should be resolved");
                 if let Some(value) = env.get(&symbol_id).copied() {
@@ -3621,6 +3653,11 @@ impl Builder<'_> {
                         return result;
                     }
                     if let Some(result) =
+                        self.lower_select_builtin_call(&name, args, env, types, expected.clone())
+                    {
+                        return result;
+                    }
+                    if let Some(result) =
                         self.lower_tostring_builtin_call(&name, args, env, types, expected.clone())
                     {
                         return result;
@@ -3662,13 +3699,67 @@ impl Builder<'_> {
                         return self.coerce_value(value, actual, expected);
                     }
                     if let Some((param_types, _)) = self.signatures.get(symbol_id) {
-                        let args = args
-                            .iter()
-                            .zip(param_types.iter())
-                            .map(|(arg, param_ty)| {
-                                self.lower_expr(arg, env, types, Some(param_ty.clone()))
-                            })
-                            .collect::<Result<Vec<_>, _>>()?;
+                        let args = if matches!(
+                            param_types.last(),
+                            Some(Type::Array(element)) if element.as_ref() == &Type::Unknown
+                        ) && matches!(args.as_slice(), [Expr::Vararg(_)])
+                        {
+                            let varargs = self.lower_expr(
+                                &args[0],
+                                env,
+                                types,
+                                Some(Type::Array(Box::new(Type::Unknown))),
+                            )?;
+                            let zero = self.emit(Instruction::Number {
+                                ty: NumericType::I32,
+                                literal: NumberLiteral { raw: "0".into() },
+                            });
+                            let one = self.emit(Instruction::Number {
+                                ty: NumericType::I32,
+                                literal: NumberLiteral { raw: "1".into() },
+                            });
+                            let head = self.emit(Instruction::ArrayGet {
+                                array: varargs,
+                                index: zero,
+                                element_ty: Type::Unknown,
+                            });
+                            let tail = self.emit(Instruction::ArraySlice {
+                                array: varargs,
+                                start: one,
+                                element_ty: Type::Unknown,
+                            });
+                            vec![head, tail]
+                        } else if matches!(
+                            param_types.last(),
+                            Some(Type::Array(element)) if element.as_ref() == &Type::Unknown
+                        ) {
+                            let fixed_count = param_types.len() - 1;
+                            let mut lowered = Vec::with_capacity(param_types.len());
+                            for (arg, param_ty) in args.iter().take(fixed_count).zip(param_types.iter()) {
+                                if param_ty == &Type::Unknown {
+                                    lowered.push(self.lower_vararg_unknown_arg(arg, env, types)?);
+                                } else {
+                                    lowered.push(self.lower_expr(arg, env, types, Some(param_ty.clone()))?);
+                                }
+                            }
+                            let mut extras = Vec::new();
+                            for arg in args.iter().skip(fixed_count) {
+                                extras.push(self.lower_vararg_unknown_arg(arg, env, types)?);
+                            }
+                            let tail = self.emit(Instruction::ArrayNew {
+                                element_ty: Type::Unknown,
+                                elements: extras,
+                            });
+                            lowered.push(tail);
+                            lowered
+                        } else {
+                            args.iter()
+                                .zip(param_types.iter())
+                                .map(|(arg, param_ty)| {
+                                    self.lower_expr(arg, env, types, Some(param_ty.clone()))
+                                })
+                                .collect::<Result<Vec<_>, _>>()?
+                        };
                         let value = self.emit(Instruction::Call {
                             name: name.clone(),
                             symbol_id: Some(*symbol_id),
@@ -4041,6 +4132,7 @@ impl Builder<'_> {
             symbol_id: function.symbol_id,
             type_params: function.type_params.clone(),
             params: function.params.clone(),
+            vararg: function.vararg,
             return_type: Some(return_ty.clone()),
             body: function.body.clone(),
             file_path: function.file_path.clone(),
@@ -4062,6 +4154,7 @@ impl Builder<'_> {
             sources: self.sources,
             file_path: function.file_path.clone(),
             tag_ids: self.tag_ids,
+            vararg_value: None,
         };
         if let Some(_name) = &function.name {
             let symbol_id = function.symbol_id.expect("resolved symbol_id");
@@ -4192,6 +4285,7 @@ impl Builder<'_> {
             Expr::Bool(..) => Ok(Type::Bool),
             Expr::String(..) => Ok(Type::String),
             Expr::Bytes(..) => Ok(Type::Bytes),
+            Expr::Vararg(..) => Ok(Type::Array(Box::new(Type::Unknown))),
             Expr::Require(path, _) => Err(Diagnostic::new(format!(
                 "unresolved require(\"{path}\") reached IR lowering"
             ))),
@@ -4414,6 +4508,10 @@ impl Builder<'_> {
                     }
                     if let Some(result) =
                         self.infer_coroutine_builtin_call_type(&name, expr, types, expected.clone())
+                    {
+                        return result;
+                    }
+                    if let Some(result) = self.infer_select_builtin_call_type(&name, args, types)
                     {
                         return result;
                     }
@@ -5280,7 +5378,11 @@ impl Builder<'_> {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
-        if !(arg_ty.is_numeric() || arg_ty == Type::Bool || arg_ty == Type::String) {
+        if !(arg_ty.is_numeric()
+            || arg_ty == Type::Bool
+            || arg_ty == Type::String
+            || arg_ty == Type::Unknown)
+        {
             return Some(Err(Diagnostic::new(format!(
                 "{TO_STRING} expects a primitive argument (numeric, bool, or string), got {arg_ty}",
             ))));
@@ -5298,6 +5400,65 @@ impl Builder<'_> {
             })
         };
         Some(self.coerce_value(value, Type::String, expected))
+    }
+
+    fn lower_select_builtin_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<ValueId, Diagnostic>> {
+        if name != SELECT {
+            return None;
+        }
+        if args.len() != 2 {
+            return Some(Err(Diagnostic::new(format!(
+                "{SELECT} expects 2 arguments, got {}",
+                args.len()
+            ))));
+        }
+        match &args[0] {
+            Expr::String(marker, _) if marker == "#" => {}
+            _ => {
+                return Some(Err(Diagnostic::new(
+                    "select currently supports only select('#', ...)",
+                )));
+            }
+        }
+        let array = match self.lower_expr(
+            &args[1],
+            env,
+            types,
+            Some(Type::Array(Box::new(Type::Unknown))),
+        ) {
+            Ok(value) => value,
+            Err(error) => return Some(Err(error)),
+        };
+        let value = self.emit(Instruction::ArrayLen { array });
+        Some(self.coerce_value(value, Type::Numeric(NumericType::I32), expected))
+    }
+
+    fn lower_vararg_unknown_arg(
+        &mut self,
+        arg: &Expr,
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        let arg_ty = self.infer_expr_type(arg, types, None)?;
+        if arg_ty == Type::String {
+            return self.lower_expr(arg, env, types, Some(Type::Unknown));
+        }
+        if arg_ty.is_numeric() || arg_ty == Type::Bool {
+            let value = self.lower_expr(arg, env, types, Some(arg_ty.clone()))?;
+            let string_value = self.emit(Instruction::ToString {
+                value,
+                from: arg_ty,
+            });
+            return self.coerce_value(string_value, Type::String, Some(Type::Unknown));
+        }
+        self.lower_expr(arg, env, types, Some(Type::Unknown))
     }
 
     fn lower_table_builtin_call(
@@ -5560,12 +5721,45 @@ impl Builder<'_> {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
-        if arg_ty.is_numeric() || arg_ty == Type::Bool || arg_ty == Type::String {
+        if arg_ty.is_numeric()
+            || arg_ty == Type::Bool
+            || arg_ty == Type::String
+            || arg_ty == Type::Unknown
+        {
             Some(Ok(Type::String))
         } else {
             Some(Err(Diagnostic::new(format!(
                 "{TO_STRING} expects a primitive argument (numeric, bool, or string), got {arg_ty}",
             ))))
+        }
+    }
+
+    fn infer_select_builtin_call_type(
+        &self,
+        name: &str,
+        args: &[Expr],
+        types: &HashMap<SymbolId, Type>,
+    ) -> Option<Result<Type, Diagnostic>> {
+        if name != SELECT {
+            return None;
+        }
+        if args.len() != 2 {
+            return Some(Err(Diagnostic::new(format!(
+                "{SELECT} expects 2 arguments, got {}",
+                args.len()
+            ))));
+        }
+        match &args[0] {
+            Expr::String(marker, _) if marker == "#" => {}
+            _ => {
+                return Some(Err(Diagnostic::new(
+                    "select currently supports only select('#', ...)",
+                )));
+            }
+        }
+        match self.infer_expr_type(&args[1], types, Some(Type::Array(Box::new(Type::Unknown)))) {
+            Ok(_) => Some(Ok(Type::Numeric(NumericType::I32))),
+            Err(error) => Some(Err(error)),
         }
     }
 

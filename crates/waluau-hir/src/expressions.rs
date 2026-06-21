@@ -6,8 +6,8 @@ use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 use super::Binding;
 use super::builtins::{
     STRING_FIND, infer_coroutine_builtin_call, infer_math_builtin_call,
-    infer_promise_await_method_call, infer_promise_builtin_call, infer_string_builtin_call,
-    infer_table_builtin_call, infer_tostring_builtin_call,
+    infer_promise_await_method_call, infer_promise_builtin_call, infer_select_builtin_call,
+    infer_string_builtin_call, infer_table_builtin_call, infer_tostring_builtin_call,
 };
 use super::numeric::{
     coerce_type, common_element_type, infer_numeric_common_type, is_extern_subtype_of,
@@ -141,6 +141,7 @@ pub(super) fn resolve_operator_overload(
             let FnSignature::Mono {
                 params,
                 return_type,
+                ..
             } = signature
             else {
                 return None;
@@ -285,6 +286,7 @@ pub(super) fn infer_expr(
         }
         Expr::String(..) => coerce_type(Type::String, expected),
         Expr::Bytes(..) => coerce_type(Type::Bytes, expected),
+        Expr::Vararg(..) => coerce_type(Type::Array(Box::new(Type::Unknown)), expected),
         Expr::Require(path, _) => Err(Diagnostic::new(format!(
             "require(\"{path}\") can only be resolved when compiling from a file; \
              relative imports are unavailable when compiling a single source string"
@@ -303,11 +305,20 @@ pub(super) fn infer_expr(
                 local.ty.clone()
             } else if let Some(FnSignature::Mono {
                 params,
+                vararg,
                 return_type,
             }) = fn_signatures.get(name)
             {
                 Type::Function {
-                    params: params.clone(),
+                    params: if *vararg {
+                        params
+                            .iter()
+                            .cloned()
+                            .chain(std::iter::once(Type::Array(Box::new(Type::Unknown))))
+                            .collect()
+                    } else {
+                        params.clone()
+                    },
                     return_type: Box::new(return_type.clone()),
                 }
             } else {
@@ -504,6 +515,18 @@ pub(super) fn infer_expr(
                 }
             }
             if let Some(name) = builtin_name(callee.as_ref()) {
+                if let Some(result) = infer_select_builtin_call(
+                    &name,
+                    args,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    expected.clone(),
+                ) {
+                    return result;
+                }
+            }
+            if let Some(name) = builtin_name(callee.as_ref()) {
                 if let Some(result) = infer_tostring_builtin_call(
                     &name,
                     args,
@@ -589,6 +612,53 @@ pub(super) fn infer_expr(
                     "remove the type argument list or call a generic function",
                 ));
             }
+            if let Expr::Name(name, _, _) = callee.as_ref() {
+                if let Some(FnSignature::Mono {
+                    params,
+                    vararg: true,
+                    return_type,
+                }) = fn_signatures.get(name)
+                {
+                    if !matches!(args.first(), Some(Expr::Vararg(_))) && args.len() < params.len() {
+                        return Err(Diagnostic::new(format!(
+                            "function expects at least {} arguments, got {}",
+                            params.len(),
+                            args.len()
+                        )));
+                    }
+                    for (arg, expected_param) in args.iter().zip(params.iter()) {
+                        if matches!(arg, Expr::Vararg(_)) {
+                            break;
+                        }
+                        let actual = infer_expr(
+                            arg,
+                            vars,
+                            fn_signatures,
+                            active_type_params,
+                            Some(expected_param.clone()),
+                        )?;
+                        if coerce_type(actual.clone(), Some(expected_param.clone())).is_err() {
+                            return Err(Diagnostic::new(format!(
+                                "call expected {}, got {}",
+                                expected_param, actual
+                            )));
+                        }
+                    }
+                    for arg in args.iter().skip(params.len()) {
+                        if matches!(arg, Expr::Vararg(_)) {
+                            continue;
+                        }
+                        let _ = infer_expr(
+                            arg,
+                            vars,
+                            fn_signatures,
+                            active_type_params,
+                            Some(Type::Unknown),
+                        )?;
+                    }
+                    return coerce_type(return_type.clone(), expected);
+                }
+            }
             let callee_ty = infer_expr(callee, vars, fn_signatures, active_type_params, None)?;
             let (params, ret) = match callee_ty {
                 Type::Function {
@@ -662,6 +732,7 @@ pub(super) fn infer_expr(
                     FnSignature::Mono {
                         params,
                         return_type,
+                        ..
                     } => {
                         if !type_args.is_empty() {
                             return Err(generic_diagnostic(
@@ -784,6 +855,7 @@ pub(super) fn infer_expr(
                         FnSignature::Mono {
                             params,
                             return_type,
+                            ..
                         } => coerce_type(
                             Type::Function {
                                 params: params.clone(),
@@ -808,6 +880,7 @@ pub(super) fn infer_expr(
                 let FnSignature::Mono {
                     params,
                     return_type,
+                    ..
                 } = signature
                 else {
                     return Err(generic_diagnostic(

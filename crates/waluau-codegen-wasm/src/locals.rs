@@ -285,6 +285,9 @@ pub(crate) fn infer_value_types(
                 IrInstruction::ArrayGet { element_ty, .. } => element_ty.clone(),
                 IrInstruction::ArraySet { .. } => Type::Numeric(NumericType::I32),
                 IrInstruction::ArrayLen { .. } => Type::Numeric(NumericType::I32),
+                IrInstruction::ArraySlice { element_ty, .. } => {
+                    Type::Array(Box::new(element_ty.clone()))
+                }
                 IrInstruction::BytesGet { .. } => Type::Numeric(NumericType::I32),
                 IrInstruction::BytesLen { .. } => Type::Numeric(NumericType::I32),
                 IrInstruction::StructNew { struct_ty, .. } => struct_ty.clone(),
@@ -635,6 +638,7 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
             ..
         } => vec![*array, *index, *value],
         IrInstruction::ArrayLen { array } => vec![*array],
+        IrInstruction::ArraySlice { array, start, .. } => vec![*array, *start],
         IrInstruction::BytesGet { bytes, index } => vec![*bytes, *index],
         IrInstruction::BytesLen { bytes } => vec![*bytes],
         IrInstruction::StructNew { fields, .. } => fields.clone(),
@@ -665,6 +669,7 @@ fn instruction_use_requires_local(instruction: &IrInstruction) -> bool {
             ..
         } | IrInstruction::ArrayGet { .. }
             | IrInstruction::ArraySet { .. }
+            | IrInstruction::ArraySlice { .. }
             | IrInstruction::StructGet { .. }
             | IrInstruction::StructSet { .. }
             | IrInstruction::CoroutineResume { .. }
@@ -700,7 +705,9 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         IrInstruction::CoroutineAwaitResult => false,
         IrInstruction::Closure { captures, .. } => captures.first().copied() == Some(value),
         IrInstruction::ArrayNew { elements, .. } => elements.first().copied() == Some(value),
-        IrInstruction::ArrayGet { .. } | IrInstruction::ArraySet { .. } => false,
+        IrInstruction::ArrayGet { .. }
+        | IrInstruction::ArraySet { .. }
+        | IrInstruction::ArraySlice { .. } => false,
         IrInstruction::ArrayLen { array } => *array == value,
         IrInstruction::BytesGet { .. } => false,
         IrInstruction::BytesLen { bytes } => *bytes == value,

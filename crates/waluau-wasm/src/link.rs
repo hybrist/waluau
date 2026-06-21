@@ -526,6 +526,7 @@ fn function_expr_to_function(name: &str, function: &FunctionExpr) -> Function {
         symbol_id: function.symbol_id,
         type_params: function.type_params.clone(),
         params: function.params.clone(),
+        vararg: function.vararg,
         return_type: function.return_type.clone(),
         body: function.body.clone(),
         file_path: function.file_path.clone(),
@@ -902,6 +903,7 @@ impl Rewriter<'_> {
             | Expr::Nil(..)
             | Expr::String(..)
             | Expr::Bytes(..)
+            | Expr::Vararg(..)
             | Expr::Name(..)
             | Expr::Require(..) => {}
         }
@@ -1159,7 +1161,8 @@ impl Rewriter<'_> {
             | Expr::Bool(..)
             | Expr::Nil(..)
             | Expr::String(..)
-            | Expr::Bytes(..) => {}
+            | Expr::Bytes(..)
+            | Expr::Vararg(..) => {}
             Expr::Unary { expr, .. } | Expr::Cast { expr, .. } | Expr::IsVariant { expr, .. } => {
                 self.rewrite_expr(expr, bound)
             }
@@ -1367,6 +1370,7 @@ fn strip_unused_namespace_lets_in_expr(expr: &mut Expr) {
             strip_unused_namespace_lets_in_expr(index);
         }
         Expr::Name(..)
+        | Expr::Vararg(..)
         | Expr::Number(..)
         | Expr::Bool(..)
         | Expr::Nil(..)
@@ -1636,6 +1640,7 @@ fn rename_expr(
         | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
+        | Expr::Vararg(..)
         | Expr::Require(..) => {}
     }
 }
@@ -1759,6 +1764,7 @@ fn expr_mentions_name(name: &str, expr: &Expr) -> bool {
             expr_mentions_name(name, base) || expr_mentions_name(name, index)
         }
         Expr::Require(..)
+        | Expr::Vararg(..)
         | Expr::Number(..)
         | Expr::Bool(..)
         | Expr::Nil(..)
@@ -1847,6 +1853,7 @@ fn collect_expr(expr: &Expr, out: &mut Vec<String>) {
     match expr {
         Expr::Require(path, _) => out.push(path.clone()),
         Expr::Name(..)
+        | Expr::Vararg(..)
         | Expr::Number(..)
         | Expr::Bool(..)
         | Expr::Nil(..)

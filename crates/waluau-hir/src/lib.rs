@@ -108,6 +108,7 @@ fn annotate_inferred_expr_locals(
         | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
+        | Expr::Vararg(..)
         | Expr::Name(..)
         | Expr::Require(..) => Ok(()),
     }
@@ -1443,6 +1444,7 @@ fn resolve_expr_type_refs(
         | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
+        | Expr::Vararg(..)
         | Expr::Name(..)
         | Expr::Require(..)
         | Expr::IsVariant { .. } => Ok(()),
@@ -1514,6 +1516,7 @@ fn desugar_method_declarations(program: &Program) -> Result<Program, Diagnostic>
                     symbol_id: None,
                     type_params: function.type_params.clone(),
                     params,
+                    vararg: function.vararg,
                     return_type: function.return_type.clone(),
                     body: function.body.clone(),
                     file_path: function.file_path.clone(),
@@ -1540,6 +1543,7 @@ fn desugar_method_declarations(program: &Program) -> Result<Program, Diagnostic>
                             implicit_self: Some(table.clone()),
                             type_params: function.type_params.clone(),
                             params,
+                            vararg: function.vararg,
                             return_type: function.return_type.clone(),
                             body: function.body.clone(),
                             file_path: function.file_path.clone(),
@@ -1587,6 +1591,7 @@ fn signature_from_function_expr(function: &FunctionExpr) -> Option<FnSignature> 
     Some(if function.type_params.is_empty() {
         FnSignature::Mono {
             params,
+            vararg: function.vararg,
             return_type,
         }
     } else {
@@ -1827,6 +1832,7 @@ fn resolve_expr_implicit_self(
         | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
+        | Expr::Vararg(..)
         | Expr::Require(..)
         | Expr::IsVariant { .. } => Ok(()),
     }
@@ -2258,6 +2264,7 @@ fn annotate_expr_resolved_members(
         | Expr::Nil(..)
         | Expr::String(..)
         | Expr::Bytes(..)
+        | Expr::Vararg(..)
         | Expr::Name(..)
         | Expr::Require(..) => {}
     }
@@ -2278,6 +2285,7 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
             symbol_id: None,
             type_params: Vec::new(),
             params: Vec::new(),
+            vararg: false,
             return_type: Some(Type::Numeric(NumericType::I32)),
             body: {
                 let mut body = typed.top_level.clone();
@@ -2301,6 +2309,7 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
                     .iter()
                     .map(|param| param.ty.clone())
                     .collect(),
+                vararg: false,
                 return_type: declared.return_type.clone(),
             },
         );
@@ -2316,6 +2325,7 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
                             .iter()
                             .map(|param| param.ty.clone())
                             .collect(),
+                        vararg: function.vararg,
                         return_type: ret.clone(),
                     },
                 );
@@ -2355,6 +2365,7 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
         for idx in unresolved {
             let function = &typed.functions[idx];
             let function_name = function.name.to_string();
+            let function_vararg = function.vararg;
             let function_params: Vec<Type> = function
                 .params
                 .iter()
@@ -2368,6 +2379,7 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
                         function_name,
                         FnSignature::Mono {
                             params: function_params,
+                            vararg: function_vararg,
                             return_type: ret,
                         },
                     );

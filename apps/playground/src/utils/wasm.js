@@ -769,7 +769,10 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
       wasmImport.kind === 'function' &&
       wasmImport.name.startsWith('js_tostring_')
     ) {
-      waluauImports[wasmImport.name] = (value) => String(value);
+      waluauImports[wasmImport.name] =
+        wasmImport.name === 'js_tostring_bool'
+          ? (value) => (value ? 'true' : 'false')
+          : (value) => String(value);
     }
   }
   for (const wasmImport of getWasmImports(wasmModule)) {

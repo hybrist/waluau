@@ -23,6 +23,7 @@ const MATH_NEAREST: &str = "math.nearest";
 const MATH_COPYSIGN: &str = "math.copysign";
 const TABLE_CONCAT: &str = "table.concat";
 const TO_STRING: &str = "tostring";
+const SELECT: &str = "select";
 const ASSERT: &str = "assert";
 const PRINT: &str = "print";
 const STRING_FIND: &str = "string.find";
