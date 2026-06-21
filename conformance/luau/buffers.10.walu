@@ -1,0 +1,83 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/buffers.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only buffers.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/buffers.walu. Common helper setup is repeated
+-- as needed so each numbered chunk is independently discoverable by the
+-- conformance runner.
+
+-- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+print("testing byte buffer library")
+
+function call(fn, ...)
+  local ok, res = pcall(fn, ...)
+  assert(ok)
+  return res
+end
+
+function ecall(fn, ...)
+  local ok, err = pcall(fn, ...)
+  assert(not ok)
+  return err:sub((err:find(": ") or -1) + 2, #err)
+end
+
+local function boundcheckssmall()
+  local native_check = is_native_if_supported()
+  local b = buffer.create(1)
+
+  assert(call(function() return buffer.readi8(b, 0) end) == 0)
+  assert(ecall(function() buffer.readi8(b, 1) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.readi8(b, -1) end) == "buffer access out of bounds")
+
+  call(function() buffer.writei8(b, 0, 0) end)
+  assert(ecall(function() buffer.writei8(b, 1, 0) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.writei8(b, -1, 0) end) == "buffer access out of bounds")
+
+  -- i16
+  assert(ecall(function() buffer.readi16(b, 0) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.readi16(b, -1) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.readi16(b, -2) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.writei16(b, 0, 0) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.writei16(b, -1, 0) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.writei16(b, -2, 0) end) == "buffer access out of bounds")
+
+  -- i32
+  assert(ecall(function() buffer.readi32(b, 0) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.readi32(b, -1) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.readi32(b, -4) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.writei32(b, 0, 0) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.writei32(b, -1, 0) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.writei32(b, -4, 0) end) == "buffer access out of bounds")
+
+  -- f32
+  assert(ecall(function() buffer.readf32(b, 0) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.readf32(b, -1) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.readf32(b, -4) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.writef32(b, 0, 0) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.writef32(b, -1, 0) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.writef32(b, -4, 0) end) == "buffer access out of bounds")
+
+  -- f64
+  assert(ecall(function() buffer.readf64(b, 0) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.readf64(b, -1) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.readf64(b, -8) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.writef64(b, 0, 0) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.writef64(b, -1, 0) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.writef64(b, -7, 0) end) == "buffer access out of bounds")
+
+  -- string
+  assert(ecall(function() buffer.readstring(b, 0, 8) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.readstring(b, -1, 8) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.readstring(b, -8, 8) end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.writestring(b, 0, "abcdefgh") end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.writestring(b, -1, "abcdefgh") end) == "buffer access out of bounds")
+  assert(ecall(function() buffer.writestring(b, -7, "abcdefgh") end) == "buffer access out of bounds")
+
+  assert(not native_check or is_native_if_supported())
+end
+
+boundcheckssmall()

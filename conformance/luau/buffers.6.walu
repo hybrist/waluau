@@ -1,0 +1,53 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/buffers.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only buffers.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/buffers.walu. Common helper setup is repeated
+-- as needed so each numbered chunk is independently discoverable by the
+-- conformance runner.
+
+-- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+print("testing byte buffer library")
+
+local function simple_copy_ops()
+  local native_check = is_native_if_supported()
+  local b1 = buffer.create(1024)
+  local b2 = buffer.create(1024)
+
+  buffer.writestring(b1, 200, "hello")
+  buffer.writestring(b1, 100, "world")
+
+  buffer.copy(b1, 300, b1, 100, 5)
+
+  buffer.writei8(b2, 35, string.byte(' '))
+  buffer.writei8(b2, 41, string.byte('!'))
+
+  buffer.copy(b2, 30, b1, 200, 5)
+  buffer.copy(b2, 36, b1, 300, 5)
+
+  assert(buffer.readstring(b2, 30, 12) == "hello world!")
+
+  local b3 = buffer.create(9)
+  buffer.writestring(b3, 0, "say hello")
+  buffer.copy(b2, 36, b3, 4)
+  assert(buffer.readstring(b2, 30, 12) == "hello hello!")
+
+  local b4 = buffer.create(5)
+  buffer.writestring(b4, 0, "world")
+  buffer.copy(b2, 36, b4)
+  assert(buffer.readstring(b2, 30, 12) == "hello world!")
+
+  buffer.writestring(b1, 200, "abcdefgh");
+  buffer.copy(b1, 200, b1, 202, 6)
+  assert(buffer.readstring(b1, 200, 8) == "cdefghgh")
+  buffer.copy(b1, 202, b1, 200, 6)
+  assert(buffer.readstring(b1, 200, 8) == "cdcdefgh")
+
+  assert(not native_check or is_native_if_supported())
+end
+
+simple_copy_ops()

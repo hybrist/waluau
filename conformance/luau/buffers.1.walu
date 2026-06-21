@@ -1,0 +1,44 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/buffers.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only buffers.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/buffers.walu. Common helper setup is repeated
+-- as needed so each numbered chunk is independently discoverable by the
+-- conformance runner.
+
+-- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+print("testing byte buffer library")
+
+local function simple_byte_reads()
+  local native_check = is_native_if_supported()
+  local b = buffer.create(1024)
+
+  assert(buffer.len(b) == 1024)
+
+  assert(buffer.readi8(b, 5) == 0)
+  buffer.writei8(b, 10, 32)
+  assert(buffer.readi8(b, 10) == 32)
+  buffer.writei8(b, 15, 5)
+  buffer.writei8(b, 14, 4)
+  buffer.writei8(b, 13, 3)
+  buffer.writei8(b, 12, 2)
+  buffer.writei8(b, 11, 1)
+  assert(buffer.readi8(b, 11) == 1)
+  assert(buffer.readi8(b, 12) == 2)
+  assert(buffer.readi8(b, 13) == 3)
+  assert(buffer.readi8(b, 14) == 4)
+  assert(buffer.readi8(b, 15) == 5)
+
+  local x = buffer.readi8(b, 14) + buffer.readi8(b, 13)
+  assert(x == 7)
+
+  buffer.writei8(b, 16, x)
+
+  assert(not native_check or is_native_if_supported())
+end
+
+simple_byte_reads()

@@ -1,0 +1,42 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/buffers.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only buffers.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/buffers.walu. Common helper setup is repeated
+-- as needed so each numbered chunk is independently discoverable by the
+-- conformance runner.
+
+-- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+print("testing byte buffer library")
+
+function call(fn, ...)
+  local ok, res = pcall(fn, ...)
+  assert(ok)
+  return res
+end
+
+function ecall(fn, ...)
+  local ok, err = pcall(fn, ...)
+  assert(not ok)
+  return err:sub((err:find(": ") or -1) + 2, #err)
+end
+
+local function boundchecksrangemerge1(buf: buffer, a: number)
+  assert(ecall(function(buf: buffer, a: number)
+    return buffer.readi32(buf, a + 8) + buffer.readi32(buf, a + 4) + buffer.readi32(buf, a + 0)
+  end, buf, a) == "buffer access out of bounds")
+end
+
+boundchecksrangemerge1(buffer.create(4), 0)
+
+local function boundchecksrangemerge2(buf: buffer, a: number)
+  assert(ecall(function(buf: buffer, a: number)
+    return buffer.readi32(buf, a) + buffer.readi32(buf, a - 8)
+  end, buf, a) == "buffer access out of bounds")
+end
+
+boundchecksrangemerge2(buffer.create(16), 4)
