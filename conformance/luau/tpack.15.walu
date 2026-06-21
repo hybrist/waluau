@@ -1,0 +1,41 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/tpack.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only tpack.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/tpack.walu. Common setup is repeated as needed
+-- so each numbered chunk is independently discoverable by the conformance runner.
+
+-- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+-- This file is based on Lua 5.x tests -- https://github.com/lua/lua/tree/master/testes
+local pack = string.pack
+local packsize = string.packsize
+local unpack = string.unpack
+-- maximum size for integers
+local NB = 16
+-- check errors in arguments
+function checkerror (msg, f, ...)
+  local status, err = pcall(f, ...)
+  -- print(status, err, msg)
+  assert(not status and string.find(err, msg))
+end
+
+do
+  assert(pack("c0", "") == "")
+  assert(packsize("c0") == 0)
+  assert(unpack("c0", "") == "")
+  assert(pack("<! c3", "abc") == "abc")
+  assert(packsize("<! c3") == 3)
+  assert(pack(">!4 c6", "abcdef") == "abcdef")
+  assert(pack("c3", "123") == "123")
+  assert(pack("c0", "") == "")
+  assert(pack("c8", "123456") == "123456\0\0")
+  assert(pack("c88", "") == string.rep("\0", 88))
+  assert(pack("c188", "ab") == "ab" .. string.rep("\0", 188 - 2))
+  local a, b, c = unpack("!4 z c3", "abcdefghi\0xyz")
+  assert(a == "abcdefghi" and b == "xyz" and c == 14)
+  checkerror("longer than", pack, "c3", "1234")
+end
