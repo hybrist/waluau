@@ -106,6 +106,9 @@ impl Parser {
         }
         if self.check_simple(&TokenKind::Return) {
             self.advance();
+            if self.is_end_marker(&[TokenKind::ElseIf, TokenKind::Else, TokenKind::End]) {
+                return Ok(Stmt::Return(Expr::Nil(None)));
+            }
             let values = self.parse_expr_list()?;
             return Ok(if values.len() == 1 {
                 Stmt::Return(values.into_iter().next().expect("len checked"))
@@ -154,12 +157,23 @@ impl Parser {
             }];
             self.advance();
             bindings.extend(self.parse_binding_list()?);
+            if self.is_local_decl_boundary() {
+                let values = bindings.iter().map(|_| Expr::Nil(None)).collect();
+                return Ok(Stmt::LetMulti { bindings, values });
+            }
             self.expect_simple(TokenKind::Equal, "expected '=' in local declaration")?;
             let values = self.parse_expr_list()?;
             return Ok(Stmt::LetMulti { bindings, values });
         }
-        self.expect_simple(TokenKind::Equal, "expected '=' in local declaration")?;
-        let value = self.parse_expr()?;
+        let value = if self.check_simple(&TokenKind::Equal) {
+            self.advance();
+            self.parse_expr()?
+        } else if self.is_local_decl_boundary() {
+            Expr::Nil(None)
+        } else {
+            self.expect_simple(TokenKind::Equal, "expected '=' in local declaration")?;
+            unreachable!("expect_simple returned Ok for a non-'=' token")
+        };
         Ok(Stmt::Let {
             name,
             symbol_id: None,
@@ -330,6 +344,33 @@ impl Parser {
             values.push(self.parse_expr()?);
         }
         Ok(values)
+    }
+
+    fn is_end_marker(&self, markers: &[TokenKind]) -> bool {
+        let Some(token) = self.peek() else {
+            return true;
+        };
+        markers
+            .iter()
+            .any(|marker| super::tokens::same_variant(&token.kind, marker))
+    }
+
+    fn is_local_decl_boundary(&self) -> bool {
+        let Some(token) = self.peek() else {
+            return true;
+        };
+        matches!(
+            token.kind,
+            TokenKind::Local
+                | TokenKind::Function
+                | TokenKind::If
+                | TokenKind::While
+                | TokenKind::For
+                | TokenKind::Repeat
+                | TokenKind::Return
+                | TokenKind::Break
+                | TokenKind::Continue
+        ) || self.is_end_marker(&[TokenKind::ElseIf, TokenKind::Else, TokenKind::End])
     }
 
     fn parse_if_stmt(&mut self) -> Result<Stmt, Diagnostic> {

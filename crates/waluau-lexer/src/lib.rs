@@ -193,7 +193,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                     (TokenKind::Pipe, 1)
                 }
             }
-            '"' => {
+            '"' | '\'' => {
                 let (value, end) = parse_string_literal(&chars, i)?;
                 tokens.push(Token {
                     kind: TokenKind::Str(value),
@@ -331,12 +331,13 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
 }
 
 fn parse_string_literal(chars: &[char], quote_index: usize) -> Result<(String, usize), Diagnostic> {
+    let quote = chars[quote_index];
     let mut end = quote_index + 1;
     let mut value = String::new();
     loop {
         match chars.get(end) {
             None | Some('\n') => return Err(Diagnostic::new("unterminated string literal")),
-            Some('"') => {
+            Some(c) if *c == quote => {
                 end += 1;
                 break;
             }
@@ -344,6 +345,7 @@ fn parse_string_literal(chars: &[char], quote_index: usize) -> Result<(String, u
                 end += 1;
                 match chars.get(end) {
                     Some('"') => value.push('"'),
+                    Some('\'') => value.push('\''),
                     Some('\\') => value.push('\\'),
                     Some('n') => value.push('\n'),
                     Some('t') => value.push('\t'),
@@ -596,6 +598,18 @@ mod tests {
                 TokenKind::Str("./math".into()),
                 TokenKind::Str("a\tb\n".into()),
                 TokenKind::Str("quote\"end".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn tokenizes_single_quoted_string_literals_with_escapes() {
+        assert_eq!(
+            kinds(r#"'abc' 'it\'s' 'a\\b\n'"#),
+            vec![
+                TokenKind::Str("abc".into()),
+                TokenKind::Str("it's".into()),
+                TokenKind::Str("a\\b\n".into()),
             ]
         );
     }
