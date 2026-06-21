@@ -1,0 +1,28 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/gc.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only gc.luau checks that currently fail in Waluau.
+-- Remove this directive when the chunk passes.
+--
+-- Split from conformance/luau/gc.walu. Common setup is repeated as needed
+-- so each numbered chunk is independently discoverable by the conformance runner.
+
+lim = 15
+
+a = {}; setmetatable(a, {__mode = 'v'});
+a[1] = string.rep('b', 21)
+collectgarbage()
+assert(a[1])   -- strings are *values*
+a[1] = nil
+-- fill a with some `collectable' values (in both parts of the table)
+for i=1,lim do a[i] = {} end
+for i=1,lim do a[i..'x'] = {} end
+-- and some non-collectable ones
+for i=1,lim do local t={}; a[t]=t end
+for i=1,lim do a[i+lim]=i..'x' end
+collectgarbage()
+local i = 0
+for k,v in pairs(a) do assert(k==v or k-lim..'x' == v); i=i+1 end
+assert(i == 2*lim)
