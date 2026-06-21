@@ -157,22 +157,22 @@ impl Parser {
             }];
             self.advance();
             bindings.extend(self.parse_binding_list()?);
-            if self.is_local_decl_boundary() {
+            // An uninitialized local declaration omits the '=' initializer
+            // entirely; every binding defaults to nil.
+            if !self.check_simple(&TokenKind::Equal) {
                 let values = bindings.iter().map(|_| Expr::Nil(None)).collect();
                 return Ok(Stmt::LetMulti { bindings, values });
             }
-            self.expect_simple(TokenKind::Equal, "expected '=' in local declaration")?;
+            self.advance();
             let values = self.parse_expr_list()?;
             return Ok(Stmt::LetMulti { bindings, values });
         }
+        // Without an '=' the local is declared but uninitialized, defaulting to nil.
         let value = if self.check_simple(&TokenKind::Equal) {
             self.advance();
             self.parse_expr()?
-        } else if self.is_local_decl_boundary() {
-            Expr::Nil(None)
         } else {
-            self.expect_simple(TokenKind::Equal, "expected '=' in local declaration")?;
-            unreachable!("expect_simple returned Ok for a non-'=' token")
+            Expr::Nil(None)
         };
         Ok(Stmt::Let {
             name,
@@ -353,24 +353,6 @@ impl Parser {
         markers
             .iter()
             .any(|marker| super::tokens::same_variant(&token.kind, marker))
-    }
-
-    fn is_local_decl_boundary(&self) -> bool {
-        let Some(token) = self.peek() else {
-            return true;
-        };
-        matches!(
-            token.kind,
-            TokenKind::Local
-                | TokenKind::Function
-                | TokenKind::If
-                | TokenKind::While
-                | TokenKind::For
-                | TokenKind::Repeat
-                | TokenKind::Return
-                | TokenKind::Break
-                | TokenKind::Continue
-        ) || self.is_end_marker(&[TokenKind::ElseIf, TokenKind::Else, TokenKind::End])
     }
 
     fn parse_if_stmt(&mut self) -> Result<Stmt, Diagnostic> {

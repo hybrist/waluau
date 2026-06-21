@@ -1261,6 +1261,51 @@ fn parses_uninitialized_multi_local_as_nil_values() {
 }
 
 #[test]
+fn parses_uninitialized_local_followed_by_call() {
+    // An uninitialized local can be followed by any statement, including one
+    // that begins with an identifier (a call or assignment), not just block
+    // terminators or statement keywords.
+    let source = r#"
+        function entry(value: i32): unit
+            local a
+            host(a)
+            return
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let function = &program.functions[0];
+    assert!(matches!(
+        &function.body[0],
+        waluau_ast::Stmt::Let {
+            name,
+            value: waluau_ast::Expr::Nil(_),
+            ..
+        } if name == "a"
+    ));
+    assert!(matches!(&function.body[1], waluau_ast::Stmt::Expr(_)));
+}
+
+#[test]
+fn parses_uninitialized_multi_local_followed_by_assignment() {
+    let source = r#"
+        function entry(): unit
+            local a, b
+            a = b
+            return
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let function = &program.functions[0];
+    assert!(matches!(
+        &function.body[0],
+        waluau_ast::Stmt::LetMulti { bindings, values }
+            if bindings.len() == 2
+                && values.len() == 2
+                && values.iter().all(|value| matches!(value, waluau_ast::Expr::Nil(_)))
+    ));
+}
+
+#[test]
 fn parses_multi_local_and_multi_assignment() {
     let source = r#"
         function entry(x: i32, y: i32): i32
