@@ -3,15 +3,11 @@
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
 -- conformance: pending
--- This upstream test exercises dynamic Luau semantics that Waluau's typed
--- subset does not support yet, so it currently fails to compile. The runner
--- only checks that a pending test currently fails (it does not care how).
--- Remove this directive if/when Waluau grows enough of the language for this
--- file to compile and instantiate cleanly.
-
--- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
--- This file is based on Lua 5.x tests -- https://github.com/lua/lua/tree/master/testes
-print "testing UTF-8 library"
+-- This chunk contains only utf8.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/utf8.walu. Helper setup is repeated as needed
+-- so each numbered chunk is independently discoverable by the conformance runner.
 
 local function checkerror (msg, f, ...)
   local s, err = pcall(f, ...)
