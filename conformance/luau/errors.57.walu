@@ -1,0 +1,36 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/errors.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only checks from errors.luau that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+-- Split from conformance/luau/errors.walu. Common setup is repeated
+-- as needed so each numbered chunk is independently discoverable by the
+-- conformance runner.
+
+-- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+-- This file is based on Lua 5.x tests -- https://github.com/lua/lua/tree/master/testes
+print("testing errors")
+
+function doit (s)
+  local f, msg = loadstring(s)
+  if f == nil then return msg end
+  local cond, msg = pcall(f)
+  return (not cond) and msg
+end
+
+
+function checkmessage (prog, msg)
+  -- assert(string.find(doit(prog), msg, 1, true))
+end
+
+function checksyntax (prog, extra, token, line)
+  local msg = doit(prog)
+  token = string.gsub(token, "(%p)", "%%%1")
+  local pt = string.format([[^%%[string ".*"%%]:]]) -- only check that an error happened - ignore token/line since Luau error messages differ from Lua substantially
+  assert(string.find(msg, pt))
+  assert(string.find(msg, msg, 1, true))
+end
+
+checksyntax("[[a]]", "", "[[a]]", 1)

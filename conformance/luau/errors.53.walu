@@ -1,0 +1,26 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/errors.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only checks from errors.luau that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+-- Split from conformance/luau/errors.walu. Common setup is repeated
+-- as needed so each numbered chunk is independently discoverable by the
+-- conformance runner.
+
+-- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+-- This file is based on Lua 5.x tests -- https://github.com/lua/lua/tree/master/testes
+
+local function f (x)
+  if x==0 then error('a\n')
+  else
+    local aux = function () return f(x-1) end
+    local a,b = xpcall(aux, aux)
+    return a,b
+  end
+end
+
+do
+  f(3)
+end
