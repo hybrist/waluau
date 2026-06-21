@@ -1,0 +1,23 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/closure.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only closure.luau checks that currently fail in Waluau.
+-- Remove this directive when the chunk passes.
+--
+-- Split from conformance/luau/closure.walu. Common setup is repeated as needed
+-- so each numbered chunk is independently discoverable by the conformance runner.
+
+-- testing closures with 'for' control variable
+a = {}
+for i=1,10 do
+  a[i] = {set = function(x) i=x end, get = function () return i end}
+  if i == 3 then break end
+end
+assert(a[4] == nil)
+a[1].set(10)
+assert(a[2].get() == 2)
+a[2].set('a')
+assert(a[3].get() == 3)
+assert(a[2].get() == 'a')

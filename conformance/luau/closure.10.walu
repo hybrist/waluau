@@ -1,0 +1,19 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/closure.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only closure.luau checks that currently fail in Waluau.
+-- Remove this directive when the chunk passes.
+--
+-- Split from conformance/luau/closure.walu. Common setup is repeated as needed
+-- so each numbered chunk is independently discoverable by the conformance runner.
+
+-- test for correctly closing upvalues in tail calls of vararg functions
+local function t ()
+  local function c(a,b) assert(a=="test" and b=="OK") end
+  local function v(f, ...) c("test", f() ~= 1 and "FAILED" or "OK") end
+  local x = 1
+  return v(function() return x end)
+end
+t()
