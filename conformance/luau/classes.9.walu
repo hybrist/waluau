@@ -1,0 +1,72 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/classes.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains one classes.luau check that currently fails in Waluau.
+-- Remove this directive when the chunk passes.
+--
+-- Split from conformance/luau/classes.walu. Helper and class setup is repeated as needed
+-- so each numbered chunk is independently discoverable by the conformance runner.
+
+--!nocheck
+
+
+local function expectpass(s, f)
+    f()
+    print(`ok: {s}`)
+end
+
+local function expectfail(s, expected, f)
+    local success, actual = pcall(f)
+    assert(not success)
+    assert(type(actual) == "string", `{s}: error message was not a string, but a {type(actual)}`)
+    -- We have pass true for the last argument to string.find to disable pattern matching, since error messages
+    -- can have characters in them that would be interpreted as patterns, and we want to match the error message exactly.
+    -- e.g. parens in error messages can be interpreted as pattern groups
+    assert(string.find(actual, expected, 1, true), `{s} expected:\n\t{expected}\nActual:\n\t{actual}`)
+    print(`ok: {s}`)
+end
+
+class Point
+    public x
+    public y
+
+    function magnitude(self)
+        return math.sqrt(self.x * self.x + self.y * self.y)
+    end
+
+    function __mul(self, other)
+        return Point { x = self.x * other.x, y = self.y * other.y }
+    end
+
+    function __add(self, other)
+        return Point { x = self.x + other.x, y = self.y + other.y }
+    end
+
+    function __eq(self, other)
+        return self.x == other.x and self.y == other.y
+    end
+
+    function zero()
+        return Point { x = 0, y = 0 }
+    end
+
+    function asserttriple(self)
+        local mag = self:magnitude()
+        assert(mag == math.ceil(mag), "Not a pythagorean triple!")
+    end
+
+    function __tostring(self)
+        return `Point(x={self.x}, y={self.y})`
+    end
+
+end
+
+class NotAPoint
+    public x
+end
+
+expectfail("classof raises on missing argument", "missing argument #1", function()
+    class.classof()
+end)
