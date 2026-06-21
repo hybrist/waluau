@@ -1,0 +1,14 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/pm.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only pm.luau checks that currently fail in Waluau.
+-- Remove this directive when the chunk passes.
+--
+-- Split from conformance/luau/pm.walu. Helper setup is repeated as needed
+-- so each numbered chunk is independently discoverable by the conformance runner.
+
+t = {n=0}
+string.gsub("first second word", "%w%w*", function (w) t.n=t.n+1; t[t.n] = w end)
+assert(t[1] == "first" and t[2] == "second" and t[3] == "word" and t.n == 3)
