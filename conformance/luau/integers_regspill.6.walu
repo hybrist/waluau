@@ -1,0 +1,87 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/integers_regspill.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only integers_regspill.luau checks that currently fail in
+-- Waluau. Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/integers_regspill.walu. Common setup is repeated
+-- as needed so each numbered chunk is independently discoverable by the
+-- conformance runner.
+
+-- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+print("testing native integer register spills")
+
+-- 30 live locals must require register spilling
+local function test_extreme_pressure(
+    p0: integer, p1: integer, p2: integer, p3: integer
+): integer
+    assert(is_native())
+
+    local a: integer = integer.add(p0, p1)
+    local b: integer = integer.sub(p0, p1)
+    local c: integer = integer.mul(p2, 3i)
+    local d: integer = integer.bxor(p0, p3)
+    local e: integer = integer.band(p1, p2)
+    local f: integer = integer.bor(p2, p3)
+    local g: integer = integer.bnot(p0)
+    local h: integer = integer.lshift(p1, 3i)
+    local i: integer = integer.rshift(p2, 2i)
+    local j: integer = integer.arshift(p3, 1i)
+    local k: integer = integer.lrotate(p0, 7i)
+    local l: integer = integer.rrotate(p1, 5i)
+    local m: integer = integer.add(a, b)
+    local n: integer = integer.bxor(c, d)
+    local o: integer = integer.band(e, f)
+
+    local p: integer = integer.bor(g, h)
+    local q: integer = integer.add(i, j)
+    local r: integer = integer.sub(k, l)
+    local s: integer = integer.bxor(m, n)
+    local t: integer = integer.band(o, p)
+    local u: integer = integer.bor(q, r)
+    local v: integer = integer.add(s, t)
+    local w: integer = integer.sub(u, a)
+    local x: integer = integer.bxor(v, b)
+    local y: integer = integer.band(w, c)
+    local z: integer = integer.bor(x, d)
+    local a2: integer = integer.add(y, e)
+    local b2: integer = integer.sub(z, f)
+    local c2: integer = integer.bxor(a2, g)
+    local d2: integer = integer.band(b2, h)
+
+    local div1: integer = integer.div(integer.bor(a, 100i), p1)
+    local div2: integer = integer.div(integer.bor(m, 200i), p2)
+
+    local sh: integer = integer.band(p0, 3i)
+    local sh1: integer = integer.lshift(n, sh)
+    local sh2: integer = integer.rshift(o, sh)
+
+    local t1: integer = integer.bxor(integer.bxor(a, b), integer.bxor(c, d))
+    local t2: integer = integer.bxor(integer.bxor(e, f), integer.bxor(g, h))
+    local t3: integer = integer.bxor(integer.bxor(i, j), integer.bxor(k, l))
+    local t4: integer = integer.bxor(integer.bxor(m, n), integer.bxor(o, p))
+    local t5: integer = integer.bxor(integer.bxor(q, r), integer.bxor(s, t))
+    local t6: integer = integer.bxor(integer.bxor(u, v), integer.bxor(w, x))
+    local t7: integer = integer.bxor(integer.bxor(y, z), integer.bxor(a2, b2))
+    local t8: integer = integer.bxor(integer.bxor(c2, d2), integer.bxor(div1, div2))
+    local t9: integer = integer.bxor(sh1, sh2)
+    return integer.bxor(
+        integer.bxor(t1, t2, t3, t4, t5),
+        integer.bxor(t6, t7, t8, t9)
+    )
+end
+
+-- values with significant upper 32 bits to detect truncation for incorrect spill widths
+local V0: integer = 0x1234567890ABCDEFi
+local V1: integer = 0xFEDCBA0987654321i
+local V2: integer = 0x0011223344556677i
+local V3: integer = 0x8899AABBCCDDEEFFi
+local V4: integer = 0xA5A5A5A5_5A5A5A5Ai
+
+local r6 = test_extreme_pressure(V0, V1, V2, V3)
+
+assert(type(r6) == "integer")
+
+return "OK"
