@@ -1269,14 +1269,19 @@ fn infer_function_expr(
             "call the generic function expression with explicit type arguments immediately",
         ));
     }
-    let return_ty = function.return_type.clone().ok_or_else(|| {
-        super::signatures::inference_diagnostic(
-            "inference/unsupported",
-            DiagnosticCategory::Unsupported,
-            "function return inference is only supported for named functions in this MVP",
-            "add an explicit return type annotation to the function expression",
-        )
-    })?;
+    let return_ty = match function.return_type.clone() {
+        Some(return_ty) => return_ty,
+        // Non-generic function expressions (generic ones are rejected above) may
+        // omit their return type; infer it from the body just like named
+        // functions. This is what lets immediately-invoked function expressions
+        // such as `(function() return 1 end)()` type-check.
+        None => super::signatures::infer_function_expr_return_type(
+            function,
+            vars,
+            fn_signatures,
+            active_type_params,
+        )?,
+    };
     let function_ty = Type::Function {
         params: function
             .params
