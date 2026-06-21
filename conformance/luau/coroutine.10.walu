@@ -1,0 +1,32 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/coroutine.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only coroutine.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/coroutine.walu. Common setup is repeated
+-- as needed so each numbered chunk is independently discoverable by the
+-- conformance runner.
+
+-- old bug: attempt to resume itself
+
+function co_func (current_co)
+  assert(coroutine.running() == current_co)
+  assert(coroutine.resume(current_co) == false)
+  coroutine.yield(10, 20)
+  assert(coroutine.resume(current_co) == false)
+  coroutine.yield(23)
+  return 10
+end
+
+local co = coroutine.create(co_func)
+local a,b,c = coroutine.resume(co, co)
+assert(a == true and b == 10 and c == 20)
+a,b = coroutine.resume(co, co)
+assert(a == true and b == 23)
+a,b = coroutine.resume(co, co)
+assert(a == true and b == 10)
+assert(coroutine.resume(co, co) == false)
+assert(coroutine.resume(co, co) == false)
