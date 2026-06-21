@@ -167,6 +167,131 @@ fn lowers_repeat_until_with_post_test_condition() {
     );
 }
 
+// Counts how many blocks jump (or branch) into `target`.
+fn predecessor_count(function: &Function, target: BlockId) -> usize {
+    function
+        .blocks
+        .values()
+        .filter(|block| match &block.terminator {
+            Terminator::Jump(b) => *b == target,
+            Terminator::Branch {
+                then_block,
+                else_block,
+                ..
+            } => *then_block == target || *else_block == target,
+            _ => false,
+        })
+        .count()
+}
+
+// Returns the loop header: the block whose phis carry the most incoming edges.
+fn loop_header(function: &Function) -> &BasicBlock {
+    function
+        .blocks
+        .values()
+        .filter(|block| {
+            block
+                .instructions
+                .iter()
+                .any(|(_, instruction)| matches!(instruction, Instruction::Phi(_)))
+        })
+        .max_by_key(|block| predecessor_count(function, block.id))
+        .expect("function should contain a phi block")
+}
+
+// `continue` inside a numeric for-loop jumps straight back to the loop header,
+// which carries implicit phis for the loop index and stop bound on top of any
+// user phis. Each `continue` site must contribute an incoming edge to all of
+// those phis (advancing the index), otherwise the header phis are malformed and
+// the module fails to verify. Regression test for the continue phi bug surfaced
+// by conformance/luau/basic.6.walu.
+#[test]
+fn numeric_for_continue_completes_loop_header_phis() {
+    let source = r#"
+        function entry(): i32
+            local a: i32 = 1
+            for i = 1, 8 do
+                a = a + 1
+                if a < 5 then
+                    continue
+                end
+                a = a * 2
+            end
+            return a
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("ir build should succeed");
+    let function = &module.functions[0];
+    if let Err(err) = verify(&module) {
+        panic!("verify failed: {err}\n{}", function.dump());
+    }
+
+    let header = loop_header(function);
+    let preds = predecessor_count(function, header.id);
+    assert_eq!(
+        preds,
+        3,
+        "expected loop header to have a preheader, continue, and fall-through \
+         predecessor, got {preds} in:\n{}",
+        function.dump()
+    );
+    for (value, instruction) in &header.instructions {
+        if let Instruction::Phi(incoming) = instruction {
+            assert_eq!(
+                incoming.len(),
+                preds,
+                "phi {value:?} is missing the continue edge in:\n{}",
+                function.dump()
+            );
+        }
+    }
+}
+
+// Same defect for an array `for-in` loop, whose header carries implicit phis for
+// the array index and length.
+#[test]
+fn array_for_in_continue_completes_loop_header_phis() {
+    let source = r#"
+        function entry(xs: {i32}): i32
+            local sum: i32 = 0
+            for i, x in xs do
+                if x < 0 then
+                    continue
+                end
+                sum = sum + x
+            end
+            return sum
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("ir build should succeed");
+    let function = &module.functions[0];
+    if let Err(err) = verify(&module) {
+        panic!("verify failed: {err}\n{}", function.dump());
+    }
+
+    let header = loop_header(function);
+    let preds = predecessor_count(function, header.id);
+    assert_eq!(
+        preds,
+        3,
+        "expected loop header to have a preheader, continue, and fall-through \
+         predecessor, got {preds} in:\n{}",
+        function.dump()
+    );
+    for (value, instruction) in &header.instructions {
+        if let Instruction::Phi(incoming) = instruction {
+            assert_eq!(
+                incoming.len(),
+                preds,
+                "phi {value:?} is missing the continue edge in:\n{}",
+                function.dump()
+            );
+        }
+    }
+}
+
 #[test]
 fn emits_branches_and_returns() {
     let source = r#"
