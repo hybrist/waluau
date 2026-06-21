@@ -106,7 +106,12 @@ impl Parser {
         }
         if self.check_simple(&TokenKind::Return) {
             self.advance();
-            if self.is_end_marker(&[TokenKind::ElseIf, TokenKind::Else, TokenKind::End]) {
+            if self.is_end_marker(&[
+                TokenKind::ElseIf,
+                TokenKind::Else,
+                TokenKind::End,
+                TokenKind::Until,
+            ]) {
                 return Ok(Stmt::Return(Expr::Nil(None)));
             }
             let values = self.parse_expr_list()?;

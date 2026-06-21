@@ -1222,6 +1222,26 @@ fn parses_bare_return_as_nil() {
 }
 
 #[test]
+fn parses_bare_return_before_until_as_nil() {
+    // A bare `return` may be the final statement of a `repeat ... until`
+    // body, so `until` must be treated as a statement terminator.
+    let source = r#"
+        function entry(): unit
+            repeat
+                return
+            until true
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let function = &program.functions[0];
+    assert!(matches!(
+        &function.body[0],
+        waluau_ast::Stmt::Repeat { body, .. }
+            if matches!(body[0], waluau_ast::Stmt::Return(waluau_ast::Expr::Nil(_)))
+    ));
+}
+
+#[test]
 fn parses_uninitialized_local_as_nil() {
     let source = r#"
         function entry(): unit
@@ -1283,6 +1303,27 @@ fn parses_uninitialized_local_followed_by_call() {
         } if name == "a"
     ));
     assert!(matches!(&function.body[1], waluau_ast::Stmt::Expr(_)));
+}
+
+#[test]
+fn parses_uninitialized_local_before_until() {
+    let source = r#"
+        function entry(): unit
+            repeat
+                local a
+            until true
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let function = &program.functions[0];
+    assert!(matches!(
+        &function.body[0],
+        waluau_ast::Stmt::Repeat { body, .. }
+            if matches!(
+                &body[0],
+                waluau_ast::Stmt::Let { value: waluau_ast::Expr::Nil(_), .. }
+            )
+    ));
 }
 
 #[test]
