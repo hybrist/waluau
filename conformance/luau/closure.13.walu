@@ -1,0 +1,21 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/closure.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only closure.luau checks that currently fail in Waluau.
+-- Remove this directive when the chunk passes.
+--
+-- Split from conformance/luau/closure.walu. Common setup is repeated as needed
+-- so each numbered chunk is independently discoverable by the conformance runner.
+
+-- yields in tail calls
+local function foo (i) return coroutine.yield(i) end
+f = coroutine.wrap(function ()
+  for i=1,10 do
+    assert(foo(i) == _G.x)
+  end
+  return 'a'
+end)
+for i=1,10 do _G.x = i; assert(f(i) == i) end
+_G.x = 'xuxu'; assert(f('xuxu') == 'a')

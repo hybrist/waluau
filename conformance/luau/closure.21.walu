@@ -1,0 +1,32 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/closure.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only closure.luau checks that currently fail in Waluau.
+-- Remove this directive when the chunk passes.
+--
+-- Split from conformance/luau/closure.walu. Common setup is repeated as needed
+-- so each numbered chunk is independently discoverable by the conformance runner.
+
+-- coroutine environments
+co = coroutine.create(function ()
+       coroutine.yield(getfenv(0))
+       return loadstring("return a")()
+     end)
+
+-- large closure size
+do
+  local a1, a2, a3, a4, a5, a6, a7, a8, a9, a0
+  local b1, b2, b3, b4, b5, b6, b7, b8, b9, b0
+  local c1, c2, c3, c4, c5, c6, c7, c8, c9, c0
+  local d1, d2, d3, d4, d5, d6, d7, d8, d9, d0
+
+  local f = function()
+    return
+      a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a0 +
+      b1 + b2 + b3 + b4 + b5 + b6 + b7 + b8 + b9 + b0 +
+      c1 + c2 + c3 + c4 + c5 + c6 + c7 + c8 + c9 + c0 +
+      d1 + d2 + d3 + d4 + d5 + d6 + d7 + d8 + d9 + d0
+  end
+end
