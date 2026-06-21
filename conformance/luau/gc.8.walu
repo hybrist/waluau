@@ -1,0 +1,36 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/gc.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only gc.luau checks that currently fail in Waluau.
+-- Remove this directive when the chunk passes.
+--
+-- Split from conformance/luau/gc.walu. Common setup is repeated as needed
+-- so each numbered chunk is independently discoverable by the conformance runner.
+
+local function dosteps (siz)
+  collectgarbage()
+  collectgarbage("stop")
+  local a = {}
+  local b = nil
+  for i=1,100 do
+    a[i] = {{}}
+    b = {}
+  end
+  assert(b)
+  b = nil
+  local x = gcinfo()
+  local i = 0
+  repeat
+    i = i+1
+  until collectgarbage("step", siz)
+  assert(gcinfo() < x)
+  return i
+end
+
+assert(dosteps(0) > 10)
+assert(dosteps(6) < dosteps(2))
+assert(dosteps(10000) == 1)
+-- assert(collectgarbage("step", 1000000) == true)
+-- assert(collectgarbage("step", 1000000))
