@@ -1,0 +1,41 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/strings.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only strings.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/strings.walu. Helper setup is repeated as needed
+-- so each numbered chunk is independently discoverable by the conformance runner.
+
+--[[
+local locales = { "ptb", "ISO-8859-1", "pt_BR" }
+local function trylocale (w)
+  for _, l in ipairs(locales) do
+    if os.setlocale(l, w) then return true end
+  end
+  return false
+end
+
+if not trylocale("collate")  then
+  print("locale not supported")
+else
+  assert("alo" < "álo" and "álo" < "amo")
+end
+
+if not trylocale("ctype") then
+  print("locale not supported")
+else
+  assert(string.gsub("áéíóú", "%a", "x") == "xxxxx")
+  assert(string.gsub("áÁéÉ", "%l", "x") == "xÁxÉ")
+  assert(string.gsub("áÁéÉ", "%u", "x") == "áxéx")
+  assert(string.upper"áÁé{xuxu}ção" == "ÁÁÉ{XUXU}ÇÃO")
+end
+
+os.setlocale("C")
+assert(os.setlocale() == 'C')
+assert(os.setlocale(nil, "numeric") == 'C')
+]]--
+
+return('OK')
