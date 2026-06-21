@@ -31,9 +31,10 @@ pub const IMPORT_JS_TOSTRING_UNKNOWN: &str = "js_tostring_unknown";
 pub const IMPORT_PRINT: &str = "print";
 pub const IMPORT_EXTERN_IS: &str = "extern_is";
 pub const IMPORT_ATTACH_PROMISE: &str = "__waluau_attach_promise";
+pub const IMPORT_MATH_POW: &str = "math_pow";
 
 /// Maximum number of host function imports (when all are used).
-pub const HOST_IMPORT_COUNT: u32 = 20;
+pub const HOST_IMPORT_COUNT: u32 = 21;
 
 /// Canonical function-index slot for each host import.
 /// These are stable identifiers used as keys into [`HostImportMap`].
@@ -57,10 +58,11 @@ pub const IMPORT_JS_TOSTRING_BOOL_FUNC: u32 = 16;
 pub const IMPORT_JS_TOSTRING_UNKNOWN_FUNC: u32 = 17;
 pub const IMPORT_EXTERN_IS_FUNC: u32 = 18;
 pub const IMPORT_ATTACH_PROMISE_FUNC: u32 = 19;
+pub const IMPORT_MATH_POW_FUNC: u32 = 20;
 
 /// Number of host function types in the canonical type-slot table.
 /// The actual number emitted in a given module may be less if some slots are unused.
-pub const HOST_TYPE_COUNT: u32 = 10;
+pub const HOST_TYPE_COUNT: u32 = 11;
 
 /// Records which host functions are actually referenced by a module.
 #[derive(Clone, Debug, Default)]
@@ -85,6 +87,7 @@ pub struct UsedHostImports {
     pub js_tostring_unknown: bool,
     pub extern_is: bool,
     pub attach_promise: bool,
+    pub math_pow: bool,
 }
 
 /// Maps canonical host-import slot indices (0–16) to the actual Wasm function
@@ -136,6 +139,7 @@ impl UsedHostImports {
             (IMPORT_JS_TOSTRING_UNKNOWN_FUNC, self.js_tostring_unknown),
             (IMPORT_EXTERN_IS_FUNC, self.extern_is),
             (IMPORT_ATTACH_PROMISE_FUNC, self.attach_promise),
+            (IMPORT_MATH_POW_FUNC, self.math_pow),
         ];
         let mut indices = [None; HOST_IMPORT_COUNT as usize];
         let mut next = 0u32;
@@ -169,6 +173,7 @@ impl UsedHostImports {
 /// | 7    | (externref, i32) → i32                | bytes_get                                    |
 /// | 8    | (externref) → i32                     | bytes_len                                    |
 /// | 9    | (anyref) → externref                  | js_tostring_unknown                         |
+/// | 10   | (f64, f64) → f64                      | math_pow                                     |
 pub fn needed_host_type_slots(used: &UsedHostImports) -> [bool; HOST_TYPE_COUNT as usize] {
     let mut slots = [false; HOST_TYPE_COUNT as usize];
     if used.js_string_eq
@@ -205,6 +210,9 @@ pub fn needed_host_type_slots(used: &UsedHostImports) -> [bool; HOST_TYPE_COUNT 
     }
     if used.bytes_len {
         slots[8] = true;
+    }
+    if used.math_pow {
+        slots[10] = true;
     }
     slots
 }
@@ -262,6 +270,7 @@ fn mark_used_by_instruction(instruction: &IrInstruction, used: &mut UsedHostImpo
             (BinaryOp::Less | BinaryOp::Greater, Type::Bytes) => {
                 used.bytes_compare = true;
             }
+            (BinaryOp::Pow, _) => used.math_pow = true,
             _ => {}
         },
         _ => {}

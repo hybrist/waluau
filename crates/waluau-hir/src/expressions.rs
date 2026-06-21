@@ -82,6 +82,7 @@ fn binary_operator_method(op: &BinaryOp) -> Option<&'static str> {
         BinaryOp::Sub => Some("__sub"),
         BinaryOp::Mul => Some("__mul"),
         BinaryOp::Div => Some("__div"),
+        BinaryOp::Pow => Some("__pow"),
         BinaryOp::FloorDiv
         | BinaryOp::Mod
         | BinaryOp::Concat
@@ -100,6 +101,7 @@ fn binary_operator_symbol(op: &BinaryOp) -> Option<&'static str> {
         BinaryOp::Sub => Some("-"),
         BinaryOp::Mul => Some("*"),
         BinaryOp::Div => Some("/"),
+        BinaryOp::Pow => Some("^"),
         _ => None,
     }
 }
@@ -999,7 +1001,12 @@ pub(super) fn infer_expr(
                 )?;
                 coerce_type(operand_ty, expected)
             }
-            BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::FloorDiv | BinaryOp::Mod => {
+            BinaryOp::Sub
+            | BinaryOp::Mul
+            | BinaryOp::Div
+            | BinaryOp::FloorDiv
+            | BinaryOp::Mod
+            | BinaryOp::Pow => {
                 if let Some(method) = binary_operator_method(op) {
                     let left_ty = infer_expr(left, vars, fn_signatures, active_type_params, None)?;
                     let right_ty =

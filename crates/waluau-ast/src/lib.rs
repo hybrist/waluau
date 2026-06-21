@@ -591,6 +591,7 @@ pub enum BinaryOp {
     Div,
     FloorDiv,
     Mod,
+    Pow,
     Eq,
     NotEq,
     Less,

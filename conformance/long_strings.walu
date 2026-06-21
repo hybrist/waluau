@@ -1,0 +1,25 @@
+-- Long-bracket string literals: `[[...]]` and the leveled `[=*[...]=*]` form.
+-- Long strings perform no escape processing and a newline immediately after
+-- the opening bracket is dropped.
+
+assert([[hello]] == "hello")
+
+-- No escape processing: `\t` stays two literal characters.
+assert([[a\tb]] == "a\\tb")
+
+-- A leading newline right after the opening bracket is discarded.
+assert([[
+line]] == "line")
+
+-- Leveled brackets let the content contain `]]`.
+assert([==[a]]b]==] == "a]]b")
+
+-- Long strings are ordinary strings: usable as values and concatenable.
+function shout(s: string): string
+    return s .. "!"
+end
+
+assert(shout([[loud]]) == "loud!")
+
+local greeting: string = [[hi there]]
+assert(greeting == "hi there")

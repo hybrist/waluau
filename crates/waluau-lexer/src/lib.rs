@@ -55,6 +55,7 @@ pub enum TokenKind {
     Slash,
     DoubleSlash,
     Percent,
+    Caret,
     Equal,
     EqualEqual,
     TildeEqual,
@@ -96,7 +97,22 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
         let (kind, consumed) = match c {
             '(' => (TokenKind::LParen, 1),
             ')' => (TokenKind::RParen, 1),
-            '[' => (TokenKind::LBracket, 1),
+            '[' => {
+                // Lua long strings: `[[...]]` and the leveled `[=*[...]=*]`.
+                if let Some(level) = long_bracket_level(&chars, i) {
+                    let (value, end) = parse_long_string(&chars, i, level)?;
+                    tokens.push(Token {
+                        kind: TokenKind::Str(value),
+                        span: Span {
+                            start,
+                            end: end as u32,
+                        },
+                    });
+                    i = end;
+                    continue;
+                }
+                (TokenKind::LBracket, 1)
+            }
             ']' => (TokenKind::RBracket, 1),
             '{' => (TokenKind::LBrace, 1),
             '}' => (TokenKind::RBrace, 1),
@@ -126,6 +142,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 }
             }
             '%' => (TokenKind::Percent, 1),
+            '^' => (TokenKind::Caret, 1),
             '.' => {
                 if matches!(chars.get(i + 1), Some('.')) && matches!(chars.get(i + 2), Some('.')) {
                     (TokenKind::TripleDot, 3)
@@ -153,20 +170,15 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
             }
             '-' => {
                 if matches!(chars.get(i + 1), Some('-')) {
-                    if matches!(chars.get(i + 2), Some('['))
-                        && matches!(chars.get(i + 3), Some('['))
-                    {
-                        let mut end = i + 4;
-                        while end + 1 < chars.len() {
-                            if chars[end] == ']' && chars[end + 1] == ']' {
-                                break;
-                            }
-                            end += 1;
-                        }
-                        if end + 1 >= chars.len() {
-                            return Err(Diagnostic::new("unterminated block comment '--[[...]]'"));
-                        }
-                        i = end + 2;
+                    // Long (block) comment: `--[[...]]` or the leveled `--[=*[...]=*]`.
+                    if let Some(level) = long_bracket_level(&chars, i + 2) {
+                        let (_, end) = parse_long_bracket(
+                            &chars,
+                            i + 2,
+                            level,
+                            "unterminated block comment '--[[...]]'",
+                        )?;
+                        i = end;
                         continue;
                     }
                     let mut end = i + 2;
@@ -331,6 +343,81 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
     }
 
     Ok(tokens)
+}
+
+/// Detect a Lua long-bracket opener at `idx`: `[`, then zero or more `=`
+/// (the *level*), then `[`. Returns the level when one is present.
+fn long_bracket_level(chars: &[char], idx: usize) -> Option<usize> {
+    if chars.get(idx) != Some(&'[') {
+        return None;
+    }
+    let mut j = idx + 1;
+    let mut level = 0;
+    while chars.get(j) == Some(&'=') {
+        level += 1;
+        j += 1;
+    }
+    if chars.get(j) == Some(&'[') {
+        Some(level)
+    } else {
+        None
+    }
+}
+
+/// Read a long-bracket region (`[[...]]` / `[=*[...]=*]`) starting at the
+/// opening bracket `idx` with the given `level`. Returns the contained text and
+/// the index just past the closing bracket. Used for both long strings and long
+/// comments; `unterminated_msg` tailors the diagnostic to the caller.
+fn parse_long_bracket(
+    chars: &[char],
+    idx: usize,
+    level: usize,
+    unterminated_msg: &str,
+) -> Result<(String, usize), Diagnostic> {
+    // The opener is `[` + `level` `=` + `[`, i.e. `2 + level` characters.
+    let mut pos = idx + 2 + level;
+    // Lua discards a newline immediately following the opening bracket.
+    match chars.get(pos) {
+        Some('\n') => pos += 1,
+        Some('\r') => {
+            pos += 1;
+            if chars.get(pos) == Some(&'\n') {
+                pos += 1;
+            }
+        }
+        _ => {}
+    }
+    let mut value = String::new();
+    loop {
+        match chars.get(pos) {
+            None => return Err(Diagnostic::new(unterminated_msg.to_string())),
+            Some(']') => {
+                let mut k = pos + 1;
+                let mut eq = 0;
+                while chars.get(k) == Some(&'=') {
+                    eq += 1;
+                    k += 1;
+                }
+                if eq == level && chars.get(k) == Some(&']') {
+                    return Ok((value, k + 1));
+                }
+                value.push(']');
+                pos += 1;
+            }
+            Some(other) => {
+                value.push(*other);
+                pos += 1;
+            }
+        }
+    }
+}
+
+fn parse_long_string(
+    chars: &[char],
+    idx: usize,
+    level: usize,
+) -> Result<(String, usize), Diagnostic> {
+    parse_long_bracket(chars, idx, level, "unterminated long string '[[...]]'")
 }
 
 fn parse_string_literal(chars: &[char], quote_index: usize) -> Result<(String, usize), Diagnostic> {
@@ -696,6 +783,67 @@ mod tests {
                 TokenKind::Equal,
                 TokenKind::Identifier("x".into()),
                 TokenKind::Plus,
+                TokenKind::Number("1".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn tokenizes_caret_operator() {
+        assert_eq!(
+            kinds("2 ^ 3"),
+            vec![
+                TokenKind::Number("2".into()),
+                TokenKind::Caret,
+                TokenKind::Number("3".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn tokenizes_long_strings() {
+        assert_eq!(kinds("[[hello]]"), vec![TokenKind::Str("hello".into())]);
+        // A newline immediately after the opening bracket is dropped.
+        assert_eq!(kinds("[[\nline]]"), vec![TokenKind::Str("line".into())]);
+        // Leveled brackets let the content contain `]]`.
+        assert_eq!(kinds("[==[a]]b]==]"), vec![TokenKind::Str("a]]b".into())]);
+        // No escape processing inside long strings.
+        assert_eq!(kinds(r"[[a\tb]]"), vec![TokenKind::Str(r"a\tb".into())]);
+    }
+
+    #[test]
+    fn distinguishes_index_brackets_from_long_strings() {
+        assert_eq!(
+            kinds("a[b]"),
+            vec![
+                TokenKind::Identifier("a".into()),
+                TokenKind::LBracket,
+                TokenKind::Identifier("b".into()),
+                TokenKind::RBracket,
+            ]
+        );
+    }
+
+    #[test]
+    fn reports_unterminated_long_strings() {
+        assert_eq!(
+            err("[[ never ends").to_string(),
+            "unterminated long string '[[...]]'"
+        );
+        assert_eq!(
+            err("[==[ unmatched ]=]").to_string(),
+            "unterminated long string '[[...]]'"
+        );
+    }
+
+    #[test]
+    fn skips_leveled_block_comments() {
+        assert_eq!(
+            kinds("local x --[==[ a ]] still comment ]==]\n= 1"),
+            vec![
+                TokenKind::Local,
+                TokenKind::Identifier("x".into()),
+                TokenKind::Equal,
                 TokenKind::Number("1".into()),
             ]
         );

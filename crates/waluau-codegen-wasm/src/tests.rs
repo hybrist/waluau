@@ -81,6 +81,49 @@ fn emits_valid_wasm_for_scalar_program() {
 }
 
 #[test]
+fn emits_valid_wasm_for_exponentiation() {
+    // `^` is supported for every numeric type; floats stay in f64, integer
+    // operands are widened through the host pow and truncated back.
+    let source = r#"
+        function powf(base: f64, exp: f64): f64
+            return base ^ exp
+        end
+
+        function powi(base: i32, exp: i32): i32
+            return base ^ exp
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        wat.contains("\"math_pow\""),
+        "exponentiation should import the host 'math_pow' function:\n{wat}"
+    );
+}
+
+#[test]
+fn omits_math_pow_import_when_unused() {
+    let source = r#"
+        function add(a: f64, b: f64): f64
+            return a + b
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        !wat.contains("\"math_pow\""),
+        "programs without '^' should not import 'math_pow'"
+    );
+}
+
+#[test]
 fn emits_valid_wasm_for_array_program() {
     let source = r#"
         function score_count(): i32
