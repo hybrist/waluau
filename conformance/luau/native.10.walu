@@ -1,0 +1,23 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/native.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only native.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/native.walu. Each numbered chunk preserves a
+-- contiguous section of the original test body so the conformance runner can
+-- classify currently passing and pending native checks separately.
+
+local function fuzzfail8(...)
+  local _ = _,_
+  _.n0,_,_,_,_,_,_,_,_._,_,_,_[...],_,_,_ = nil
+  _,n0,_,_,_,_,_,_,_,_,l0,_,_,_,_ = nil
+  function _()
+  end
+  _._,_,_,_,_,_,_,_,_,_,_[...],_,n0[l0],_ = nil
+  _[...],_,_,_,_,_,_,_,_()[_],_,_,_,_,_ = _(),...
+end
+
+assert(pcall(fuzzfail8) == false)

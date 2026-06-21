@@ -1,0 +1,22 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/native.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only native.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/native.walu. Each numbered chunk preserves a
+-- contiguous section of the original test body so the conformance runner can
+-- classify currently passing and pending native checks separately.
+
+local function arraySizeInv2()
+  local t = {1, 2, nil, nil, nil, nil, nil, nil, nil, true}
+
+  local u = {a = t}
+  table.insert(u.a, 3) -- aliased modifiction of 't' register through other value
+
+  return t[10]
+end
+
+assert(arraySizeInv2() == true)
