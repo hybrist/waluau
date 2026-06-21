@@ -106,6 +106,14 @@ impl Parser {
         }
         if self.check_simple(&TokenKind::Return) {
             self.advance();
+            if self.is_end_marker(&[
+                TokenKind::ElseIf,
+                TokenKind::Else,
+                TokenKind::End,
+                TokenKind::Until,
+            ]) {
+                return Ok(Stmt::Return(Expr::Nil(None)));
+            }
             let values = self.parse_expr_list()?;
             return Ok(if values.len() == 1 {
                 Stmt::Return(values.into_iter().next().expect("len checked"))
@@ -154,12 +162,23 @@ impl Parser {
             }];
             self.advance();
             bindings.extend(self.parse_binding_list()?);
-            self.expect_simple(TokenKind::Equal, "expected '=' in local declaration")?;
+            // An uninitialized local declaration omits the '=' initializer
+            // entirely; every binding defaults to nil.
+            if !self.check_simple(&TokenKind::Equal) {
+                let values = bindings.iter().map(|_| Expr::Nil(None)).collect();
+                return Ok(Stmt::LetMulti { bindings, values });
+            }
+            self.advance();
             let values = self.parse_expr_list()?;
             return Ok(Stmt::LetMulti { bindings, values });
         }
-        self.expect_simple(TokenKind::Equal, "expected '=' in local declaration")?;
-        let value = self.parse_expr()?;
+        // Without an '=' the local is declared but uninitialized, defaulting to nil.
+        let value = if self.check_simple(&TokenKind::Equal) {
+            self.advance();
+            self.parse_expr()?
+        } else {
+            Expr::Nil(None)
+        };
         Ok(Stmt::Let {
             name,
             symbol_id: None,
@@ -330,6 +349,15 @@ impl Parser {
             values.push(self.parse_expr()?);
         }
         Ok(values)
+    }
+
+    fn is_end_marker(&self, markers: &[TokenKind]) -> bool {
+        let Some(token) = self.peek() else {
+            return true;
+        };
+        markers
+            .iter()
+            .any(|marker| super::tokens::same_variant(&token.kind, marker))
     }
 
     fn parse_if_stmt(&mut self) -> Result<Stmt, Diagnostic> {
