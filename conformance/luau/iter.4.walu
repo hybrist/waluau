@@ -1,0 +1,33 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/iter.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only iter.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/iter.walu.
+
+-- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+-- This file is based on Lua 5.x tests -- https://github.com/lua/lua/tree/master/testes
+print('testing iteration')
+-- generic for with function iterators
+do
+  local function f (n, p)
+    local t = {}; for i=1,p do t[i] = i*10 end
+    return function (_,n)
+             if n > 0 then
+               n = n-1
+               return n, unpack(t)
+             end
+           end, nil, n
+  end
+
+  local x = 0
+  for n,a,b,c,d in f(5,3) do
+    x = x+1
+    assert(a == 10 and b == 20 and c == 30 and d == nil)
+  end
+  assert(x == 5)
+end
+

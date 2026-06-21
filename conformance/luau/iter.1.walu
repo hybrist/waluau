@@ -1,0 +1,24 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/iter.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only iter.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/iter.walu.
+
+-- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+-- This file is based on Lua 5.x tests -- https://github.com/lua/lua/tree/master/testes
+print('testing iteration')
+-- basic for loop tests
+do
+  local a
+  for a,b in pairs{} do error("not here") end
+  for i=1,0 do error("not here") end
+  for i=0,1,-1 do error("not here") end
+  a = nil; for i=1,1 do assert(not a); a=1 end; assert(a)
+  a = nil; for i=1,1,-1 do assert(not a); a=1 end; assert(a)
+  a = 0; for i=0, 1, 0.1 do a=a+1 end; assert(a==11)
+end
+

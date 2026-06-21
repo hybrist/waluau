@@ -1,0 +1,40 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/iter.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only iter.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/iter.walu.
+
+-- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+-- This file is based on Lua 5.x tests -- https://github.com/lua/lua/tree/master/testes
+print('testing iteration')
+-- yielding generalized iteration: single function iterator that yields without the use of __iter
+do
+  local co = coroutine.create(function()
+    local results = {}
+    local i = 0
+    local function iter()
+      i += 1
+      if i > 3 then return nil end
+      coroutine.yield("yielded " .. i)
+      return i
+    end
+    for v in iter do
+      table.insert(results, v)
+    end
+    return table.concat(results, ",")
+  end)
+
+  local ok, val = coroutine.resume(co)
+  assert(ok and val == "yielded 1")
+  local ok, val = coroutine.resume(co)
+  assert(ok and val == "yielded 2")
+  local ok, val = coroutine.resume(co)
+  assert(ok and val == "yielded 3")
+  local ok, val = coroutine.resume(co)
+  assert(ok and val == "1,2,3")
+end
+
