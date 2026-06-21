@@ -1,0 +1,38 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/integers.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only integers.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/integers.walu. Common helper setup is repeated
+-- as needed so each numbered chunk is independently discoverable by the
+-- conformance runner.
+
+
+-- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+print("testing integers")
+
+-- integer.fromstring with values beyond 32-bit range
+assert(integer.fromstring("4294967296") == 4294967296i)
+assert(integer.fromstring("1000000000000") == 1000000000000i)
+assert(integer.fromstring("-8589934592") == -8589934592i)
+assert(integer.fromstring("9223372036854775807") == 0x7FFFFFFFFFFFFFFFi)
+assert(integer.fromstring("-9223372036854775808") == integer.sub(-0x7FFFFFFFFFFFFFFFi, 1i))
+assert(integer.fromstring("FFFFFFFF", 16) == 4294967295i)
+assert(integer.fromstring("100000000", 16) == 4294967296i)
+assert(integer.fromstring("0x8000000000000000") == 0x8000000000000000i)
+assert(integer.fromstring("0x7FFFFFFFFFFFFFFF") == 0x7FFFFFFFFFFFFFFFi)
+assert(integer.fromstring("0xFFFFFFFFFFFFFFFF") == 0xFFFFFFFFFFFFFFFFi)
+assert(integer.fromstring("-1", 2) == -1i)
+assert(integer.fromstring("-11", 2) == -3i)
+assert(integer.fromstring("-1", 10) == -1i)
+assert(integer.fromstring("-11", 10) == -11i)
+assert(integer.fromstring("-0x1", 10) == -1i)
+assert(integer.fromstring("-0x11", 10) == -17i)
+assert(integer.fromstring("-1", 16) == -1i)
+assert(integer.fromstring("-11", 16) == -17i)
+assert(integer.fromstring("8000000000000000", 16) == 0x8000000000000000i)
+assert(integer.fromstring("7FFFFFFFFFFFFFFF", 16) == 0x7FFFFFFFFFFFFFFFi)
+assert(integer.fromstring("FFFFFFFFFFFFFFFF", 16) == 0xFFFFFFFFFFFFFFFFi)

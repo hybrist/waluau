@@ -1,0 +1,48 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/integers.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only integers.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/integers.walu. Common helper setup is repeated
+-- as needed so each numbered chunk is independently discoverable by the
+-- conformance runner.
+
+
+-- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+print("testing integers")
+
+-- buffers (should eventually move to buffers.luau)
+
+local function simple_integer_ops()
+  local b = buffer.create(16)
+
+  buffer.writeinteger(b, 0, 0x123456789ABCDEF0i)
+  buffer.writeinteger(b, 8, 0x1233211233211233i)
+
+  assert(buffer.readi8(b, 0) == -16)
+  assert(buffer.readi8(b, 1) == -34)
+  assert(buffer.readi8(b, 2) == -68)
+  assert(buffer.readi8(b, 3) == -102)
+  assert(buffer.readi8(b, 4) == 120)
+  assert(buffer.readi8(b, 5) == 86)
+  assert(buffer.readi8(b, 6) == 52)
+  assert(buffer.readi8(b, 7) == 18)
+  assert(buffer.readi8(b, 8) == 0x33)
+  assert(buffer.readi8(b, 9) == 0x12)
+  assert(buffer.readi8(b, 10) == 0x21)
+  assert(buffer.readi8(b, 11) == 0x33)
+  assert(buffer.readi8(b, 12) == 0x12)
+  assert(buffer.readi8(b, 13) == 0x21)
+  assert(buffer.readi8(b, 14) == 0x33)
+  assert(buffer.readi8(b, 15) == 0x12)
+
+  assert(buffer.readinteger(b, 0) == 0x123456789ABCDEF0i)
+  assert(buffer.readinteger(b, 8) == 0x1233211233211233i)
+
+  assert(is_native_if_supported())
+end
+
+simple_integer_ops()
