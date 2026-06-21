@@ -1,0 +1,36 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/bitwise.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only bitwise.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/bitwise.walu. Helper setup is repeated as needed
+-- so each numbered chunk is independently discoverable by the conformance runner.
+
+-- many of the tests above go through fastcall path
+-- to make sure the basic implementations are also correct we test some functions with string->number coercions
+assert(bit32.lrotate("0x12345678", 4) == 0x23456781)
+assert(bit32.rrotate("0x12345678", -4) == 0x23456781)
+assert(bit32.arshift("0x12345678", 1) == 0x12345678 / 2)
+assert(bit32.arshift("-1", 32) == 0xffffffff)
+assert(bit32.arshift("-1", 1) == 0xffffffff)
+assert(bit32.bnot("1") == 0xfffffffe)
+assert(bit32.band("1", 3) == 1)
+assert(bit32.band(1, "3") == 1)
+assert(bit32.band(1, 3, "5") == 1)
+assert(bit32.bor("1", 2) == 3)
+assert(bit32.bor(1, "2") == 3)
+assert(bit32.bor(1, 3, "5") == 7)
+assert(bit32.bxor("1", 3) == 2)
+assert(bit32.bxor(1, "3") == 2)
+assert(bit32.bxor(1, 3, "5") == 7)
+assert(bit32.btest(1, "3") == true)
+assert(bit32.btest("1", 3) == true)
+assert(bit32.countlz("42") == 26)
+assert(bit32.countrz("42") == 1)
+assert(bit32.extract("42", 1, 3) == 5)
+assert(bit32.byteswap("0xa1b2c3d4") == 0xd4c3b2a1)
+
+return('OK')

@@ -1,0 +1,49 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/bitwise.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only bitwise.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/bitwise.walu. Helper setup is repeated as needed
+-- so each numbered chunk is independently discoverable by the conformance runner.
+
+local function noinline(x, ...) local s, r = pcall(function(y) return y end, x) return r end
+
+print("+")
+
+
+-- testing extract/replace
+
+assert(bit32.extract(0x12345678, 0, 4) == 8)
+assert(bit32.extract(0x12345678, 4, 4) == 7)
+assert(bit32.extract(0xa0001111, 28, 4) == 0xa)
+assert(bit32.extract(0xa0001111, 31, 1) == 1)
+assert(bit32.extract(0x50000111, 31, 1) == 0)
+assert(bit32.extract(0xf2345679, 0, 32) == 0xf2345679)
+assert(bit32.extract(0xa0001111, 0) == 1)
+assert(bit32.extract(0xa0001111, 16) == 0)
+assert(bit32.extract(0xa0001111, 31) == 1)
+assert(bit32.extract(42, 1, 3) == 5)
+
+assert(bit32.extract(noinline(0x12345678), 0, 4) == 8)
+assert(bit32.extract(0x12345678, noinline(0), 4) == 8)
+assert(bit32.extract(0x12345678, 0, noinline(4)) == 8)
+assert(bit32.extract(noinline(0x12345678), 4, 4) == 7)
+assert(bit32.extract(noinline(0xa0001111), 28, 4) == 0xa)
+assert(bit32.extract(noinline(0xa0001111), 31, 1) == 1)
+assert(bit32.extract(noinline(0x50000111), 31, 1) == 0)
+assert(bit32.extract(noinline(0xf2345679), 0, 32) == 0xf2345679)
+assert(bit32.extract(noinline(0xa0001111), 0) == 1)
+assert(bit32.extract(noinline(0xa0001111), 16) == 0)
+assert(bit32.extract(noinline(0xa0001111), 31) == 1)
+assert(bit32.extract(noinline(42), 1, 3) == 5)
+
+local pos pos = 1
+assert(bit32.extract(42, pos, 3) == 5) -- test bit32.extract builtin instead of bit32.extractk
+
+assert(not pcall(bit32.extract, 0, -1))
+assert(not pcall(bit32.extract, 0, 32))
+assert(not pcall(bit32.extract, 0, 0, 33))
+assert(not pcall(bit32.extract, 0, 31, 2))
