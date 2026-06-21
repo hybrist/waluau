@@ -1,0 +1,54 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/events.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only checks from events.luau that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/events.walu. The original test body is split into
+-- contiguous numbered chunks so each part is independently discoverable by the
+-- conformance runner.
+
+-- verify that __newindex gets called for frozen tables but only if the assignment is to a key absent from the table
+do
+  local ni = {}
+  local t = table.create(2)
+
+  t[1] = 42
+  -- t[2] is semantically absent with storage allocated for it
+
+  t.a = 1
+  t.b = 2
+  t.b = nil -- this sets 'b' value to nil but leaves key as is to exercise more internal paths -- no observable behavior change expected between b and other absent keys
+
+  setmetatable(t, { __newindex = function(_, k, v)
+    assert(v == 42)
+    table.insert(ni, k)
+  end })
+  table.freeze(t)
+
+  -- "redundant" combinations are there to test all three of SETTABLEN/SETTABLEKS/SETTABLE
+  assert(pcall(function() t.a = 42 end) == false)
+  assert(pcall(function() t[1] = 42 end) == false)
+  assert(pcall(function() local key key = "a" t[key] = 42 end) == false)
+  assert(pcall(function() local key key = 1 t[key] = 42 end) == false)
+
+  -- now repeat the same for keys absent from the table: b (semantically absent), c (physically absent), 2 (semantically absent), 3 (physically absent)
+  assert(pcall(function() t.b = 42 end) == true)
+  assert(pcall(function() t.c = 42 end) == true)
+  assert(pcall(function() local key key = "b" t[key] = 42 end) == true)
+  assert(pcall(function() local key key = "c" t[key] = 42 end) == true)
+  assert(pcall(function() t[2] = 42 end) == true)
+  assert(pcall(function() t[3] = 42 end) == true)
+  assert(pcall(function() local key key = 2 t[key] = 42 end) == true)
+  assert(pcall(function() local key key = 3 t[key] = 42 end) == true)
+
+  -- validate the assignment sequence
+  local ei = { "b", "c", "b", "c", 2, 3, 2, 3 }
+  assert(#ni == #ei)
+  for k,v in ni do
+    assert(ei[k] == v)
+  end
+end
+

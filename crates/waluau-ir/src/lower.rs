@@ -1013,6 +1013,34 @@ struct LoopContext {
     continue_target: BlockId,
     break_target: BlockId,
     phis: HashMap<SymbolId, ValueId>,
+    /// Implicit loop-carried header phis that are not tied to a source symbol
+    /// (the numeric-for index/stop bound, the array for-in index/length). These
+    /// are advanced when control falls off the bottom of the body, but a
+    /// `continue` jumps straight back to the header, so each continue site must
+    /// replay these updates too or the header phis end up missing an incoming
+    /// edge.
+    carries: Vec<LoopCarry>,
+}
+
+#[derive(Clone)]
+struct LoopCarry {
+    /// The header phi that needs an incoming value for every `continue` edge.
+    phi: ValueId,
+    update: CarryUpdate,
+}
+
+#[derive(Clone)]
+enum CarryUpdate {
+    /// A loop-invariant carried value (the numeric-for stop bound, the array
+    /// length): the same SSA value flows along every edge into the header.
+    Invariant(ValueId),
+    /// A per-iteration increment recomputed as `base + step` in the continue
+    /// block (the numeric-for / for-in loop index).
+    Increment {
+        base: ValueId,
+        step: ValueId,
+        ty: Type,
+    },
 }
 
 fn builtin_name(callee: &Expr) -> Option<String> {
@@ -1322,7 +1350,7 @@ impl Builder<'_> {
     }
 
     fn lower_continue(&mut self, env: &HashMap<SymbolId, ValueId>) -> Result<(), Diagnostic> {
-        let Some(loop_ctx) = self.loop_stack.last() else {
+        let Some(loop_ctx) = self.loop_stack.last().cloned() else {
             return Err(Diagnostic::new("continue is only allowed inside loops"));
         };
         if self.current_block == DEAD_BLOCK {
@@ -1333,6 +1361,22 @@ impl Builder<'_> {
             if let Some(value) = env.get(id).copied() {
                 add_phi_incoming(&mut self.function, loop_ctx.header, *phi, (current, value));
             }
+        }
+        // Replay the implicit loop-carried updates (loop index, bounds) so the
+        // header phis gain an incoming edge for this continue predecessor, just
+        // as they would when control falls off the bottom of the body.
+        for carry in &loop_ctx.carries {
+            let value = match &carry.update {
+                CarryUpdate::Invariant(value) => *value,
+                CarryUpdate::Increment { base, step, ty } => self.emit(Instruction::Binary {
+                    op: BinaryOp::Add,
+                    left: *base,
+                    right: *step,
+                    operand_ty: ty.clone(),
+                    result_ty: ty.clone(),
+                }),
+            };
+            add_phi_incoming(&mut self.function, loop_ctx.header, carry.phi, (current, value));
         }
         self.set_terminator(current, Terminator::Jump(loop_ctx.continue_target));
         self.current_block = DEAD_BLOCK;
@@ -2312,6 +2356,7 @@ impl Builder<'_> {
             continue_target: header,
             break_target: exit,
             phis: phis.clone(),
+            carries: Vec::new(),
         });
 
         let cond_value = self.lower_expr(condition, &loop_env, &loop_types, Some(Type::Bool))?;
@@ -2388,6 +2433,7 @@ impl Builder<'_> {
             continue_target: check,
             break_target: exit,
             phis: phis.clone(),
+            carries: Vec::new(),
         });
 
         let mut body_env = loop_env.clone();
@@ -2591,6 +2637,20 @@ impl Builder<'_> {
             continue_target: header,
             break_target: exit,
             phis: phis.clone(),
+            carries: vec![
+                LoopCarry {
+                    phi: stop_phi,
+                    update: CarryUpdate::Invariant(stop_phi),
+                },
+                LoopCarry {
+                    phi: index_phi,
+                    update: CarryUpdate::Increment {
+                        base: index_phi,
+                        step: step_value,
+                        ty: loop_ty.clone(),
+                    },
+                },
+            ],
         });
         self.set_terminator(
             header,
@@ -2719,6 +2779,20 @@ impl Builder<'_> {
                 continue_target: header,
                 break_target: exit,
                 phis: phis.clone(),
+                carries: vec![
+                    LoopCarry {
+                        phi: array_len_phi,
+                        update: CarryUpdate::Invariant(array_len_phi),
+                    },
+                    LoopCarry {
+                        phi: index_phi,
+                        update: CarryUpdate::Increment {
+                            base: index_phi,
+                            step: const_one,
+                            ty: Type::Numeric(NumericType::I32),
+                        },
+                    },
+                ],
             });
             self.set_terminator(
                 header,
@@ -2903,6 +2977,9 @@ impl Builder<'_> {
             continue_target: header,
             break_target: exit,
             phis: phis.clone(),
+            // The iterator call is re-emitted in the header each iteration, so
+            // there are no implicit loop-carried phis beyond the user phis.
+            carries: Vec::new(),
         });
         self.set_terminator(
             header,

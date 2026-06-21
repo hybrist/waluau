@@ -1,0 +1,34 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/closure.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only closure.luau checks that currently fail in Waluau.
+-- Remove this directive when the chunk passes.
+--
+-- Split from conformance/luau/closure.walu. Common setup is repeated as needed
+-- so each numbered chunk is independently discoverable by the conformance runner.
+
+-- errors in coroutines
+function foo ()
+  -- assert(debug.getinfo(1).currentline == debug.getinfo(foo).linedefined + 1)
+  -- assert(debug.getinfo(2).currentline == debug.getinfo(goo).linedefined)
+  coroutine.yield(3)
+  error("foo")
+end
+
+local fooerr = "closure.luau:284: foo"
+
+function goo() foo() end
+x = coroutine.wrap(goo)
+assert(x() == 3)
+local a,b = pcall(x)
+assert(not a and b == fooerr)
+
+x = coroutine.create(goo)
+a,b = coroutine.resume(x)
+assert(a and b == 3)
+a,b = coroutine.resume(x)
+assert(not a and b == fooerr and coroutine.status(x) == "dead")
+a,b = coroutine.resume(x)
+assert(not a and string.find(b, "dead") and coroutine.status(x) == "dead")

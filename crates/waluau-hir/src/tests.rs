@@ -1264,7 +1264,7 @@ fn rejects_if_expression_type_mismatch() {
 }
 
 #[test]
-fn rejects_unannotated_function_expression_returns_for_now() {
+fn infers_unannotated_function_expression_return_type() {
     let source = r#"
         function entry(): i32
             local add1 = function(x: i32)
@@ -1274,11 +1274,23 @@ fn rejects_unannotated_function_expression_returns_for_now() {
         end
     "#;
     let program = parse(source).expect("parse should succeed");
-    let error = super::type_check(&program).expect_err("type check should fail");
-    assert_eq!(
-        error.to_string(),
-        "function return inference is only supported for named functions in this MVP"
-    );
+    let typed = super::type_check_and_infer(&program)
+        .expect("unannotated function expression return type should be inferred");
+    let entry = typed
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "entry")
+        .expect("entry function should exist");
+    let add1_return = entry.body.iter().find_map(|stmt| match stmt {
+        Stmt::Let {
+            value: Expr::Function(function),
+            ..
+        } => Some(function.return_type.clone()),
+        _ => None,
+    });
+    // The function expression's return type is backfilled onto the AST so the IR
+    // can lower it without an explicit annotation.
+    assert_eq!(add1_return, Some(Some(Type::Numeric(NumericType::I32))));
 }
 
 #[test]

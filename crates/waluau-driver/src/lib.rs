@@ -367,6 +367,26 @@ mod tests {
     }
 
     #[test]
+    fn compiles_immediately_invoked_function_expression() {
+        // Anonymous functions that omit a return type annotation now have it
+        // inferred (and backfilled onto the AST) so they lower to wasm. This is
+        // the pattern that pervades the `basic.*` Luau conformance chunks.
+        let source = r#"
+            local answer = (function()
+                local a = 1
+                return a + 41
+            end)()
+            assert(answer == 42)
+        "#;
+        let wasm = super::compile_source(source)
+            .expect("immediately-invoked function expression should compile");
+        assert!(
+            wasm.starts_with(b"\0asm"),
+            "compiled wasm should start with the wasm magic bytes"
+        );
+    }
+
+    #[test]
     fn rejects_invalid_fixture_file() {
         let source = fixture_source("mismatch");
         let err = super::compile_source(source).expect_err("compile should fail");
