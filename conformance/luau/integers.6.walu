@@ -1,0 +1,50 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/integers.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only integers.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/integers.walu. Common helper setup is repeated
+-- as needed so each numbered chunk is independently discoverable by the
+-- conformance runner.
+
+
+-- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+print("testing integers")
+
+local function noinline(x: integer): integer local s, r = pcall(function(y) return y end, x) return r end
+
+-- integer.min and integer.max
+local x = integer.create(99)
+local y = integer.create(5)
+assert(integer.min(x, y) == 5i)
+assert(integer.min(y, x) == 5i)
+assert(integer.max(x, y) == 99i)
+assert(integer.max(y, x) == 99i)
+assert(integer.min(17i, 12i, 48i, 13i, -2i) == -2i)
+assert(integer.max(17i, 12i, 48i, 13i, 94i) == 94i)
+
+assert(integer.min(noinline(99i), 5i) == 5i)
+assert(integer.max(noinline(99i), 5i) == 99i)
+assert(integer.min(noinline(17i), 12i, 48i, 13i, -2i) == -2i)
+assert(integer.max(noinline(17i), 12i, 48i, 13i, 94i) == 94i)
+
+-- integer.clamp
+local mi = integer.create(6)
+local mx = integer.create(18)
+local a1 = integer.create(3)
+local a2 = integer.create(11)
+local a3 = integer.create(47)
+assert(integer.clamp(a1, mi, mx) == 6i)
+assert(integer.clamp(a2, mi, mx) == 11i)
+assert(integer.clamp(a3, mi, mx) == 18i)
+
+assert(integer.clamp(noinline(3i), 6i, 18i) == 6i)
+assert(integer.clamp(noinline(11i), 6i, 18i) == 11i)
+assert(integer.clamp(noinline(47i), 6i, 18i) == 18i)
+
+local success,errmsg = pcall(function() integer.clamp(10i, 20i, 5i) end)
+assert(not success)
+assert(string.find(errmsg, "max must be greater than or equal to min"))

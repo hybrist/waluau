@@ -1,0 +1,47 @@
+-- Imported verbatim from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/integers.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- conformance: pending
+-- This chunk contains only integers.luau checks that currently fail in Waluau.
+-- Remove this directive when the whole chunk passes.
+--
+-- Split from conformance/luau/integers.walu. Common helper setup is repeated
+-- as needed so each numbered chunk is independently discoverable by the
+-- conformance runner.
+
+
+-- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
+print("testing integers")
+
+-- isolate tests which take a VM exit in native code
+function testCreateVmExit()
+    assert(integer.create(2.5) == nil)
+    assert(integer.create(1e30) == nil)
+    assert(integer.create(0/0) == nil)
+    assert(integer.create(math.huge) == nil)
+    assert(integer.create(-math.huge) == nil)
+    assert(integer.create(1.0000000005) == nil)
+    assert(integer.create(0.9999999995) == nil)
+end
+testCreateVmExit()
+
+-- integer.fromstring
+assert(integer.fromstring("30") == 30i)
+assert(integer.fromstring("-4711") == -4711i)
+assert(integer.fromstring("2.5") == nil)
+assert(integer.fromstring("blah") == nil)
+assert(integer.fromstring("  47  ") == 47i)
+assert(integer.fromstring("+2") == 2i)
+assert(integer.fromstring("-2") == -2i)
+assert(integer.fromstring("0x123") == 291i)
+assert(integer.fromstring("0X200") == 512i)
+assert(integer.fromstring("0xFFFFFFFFFF") == 0xFFFFFFFFFFi)
+assert(integer.fromstring("0x100000000") == 4294967296i)
+assert(integer.fromstring("0x1000000000000") == 0x1000000000000i)
+assert(integer.fromstring("0x20000000000001") == 0x20000000000001i)
+assert(integer.fromstring("123", 4) == 27i)
+assert(integer.fromstring("ZZZ", 36) == 46655i)
+assert(not pcall(function() integer.fromstring("123", 1) end))
+assert(not pcall(function() integer.fromstring("123", 37) end))
+assert(not pcall(function() integer.fromstring("123", 0) end))
