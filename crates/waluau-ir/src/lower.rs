@@ -5506,12 +5506,20 @@ impl Builder<'_> {
                 )));
             }
         }
-        let array = match self.lower_expr(
-            &args[1],
-            env,
-            types,
-            Some(Type::Array(Box::new(Type::Unknown))),
-        ) {
+        // First, infer the type to validate it's an array
+        let arg_ty = match self.infer_expr_type(&args[1], types, None) {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        
+        if !arg_ty.is_array() {
+            return Some(Err(Diagnostic::new(format!(
+                "{SELECT} expects an array, got {arg_ty}"
+            ))));
+        }
+        
+        // Now lower the expression with the known array type
+        let array = match self.lower_expr(&args[1], env, types, Some(arg_ty)) {
             Ok(value) => value,
             Err(error) => return Some(Err(error)),
         };
@@ -5836,9 +5844,17 @@ impl Builder<'_> {
                 )));
             }
         }
-        match self.infer_expr_type(&args[1], types, Some(Type::Array(Box::new(Type::Unknown)))) {
-            Ok(_) => Some(Ok(Type::Numeric(NumericType::I32))),
-            Err(error) => Some(Err(error)),
+        let arg_ty = match self.infer_expr_type(&args[1], types, None) {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        
+        if arg_ty.is_array() {
+            Some(Ok(Type::Numeric(NumericType::I32)))
+        } else {
+            Some(Err(Diagnostic::new(format!(
+                "{SELECT} expects an array, got {arg_ty}"
+            ))))
         }
     }
 
