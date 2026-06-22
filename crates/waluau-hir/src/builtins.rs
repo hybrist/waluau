@@ -427,15 +427,23 @@ pub(super) fn infer_select_builtin_call(
             )));
         }
     }
-    match super::expressions::infer_expr(
+    let arg_ty = match super::expressions::infer_expr(
         &args[1],
         vars,
         fn_signatures,
         active_type_params,
-        Some(Type::Array(Box::new(Type::Unknown))),
+        None,
     ) {
-        Ok(_) => Some(coerce_type(Type::Numeric(NumericType::I32), expected)),
-        Err(error) => Some(Err(error)),
+        Ok(ty) => ty,
+        Err(error) => return Some(Err(error)),
+    };
+
+    if arg_ty.is_array() {
+        Some(coerce_type(Type::Numeric(NumericType::I32), expected))
+    } else {
+        Some(Err(Diagnostic::new(format!(
+            "{SELECT} expects an array, got {arg_ty}"
+        ))))
     }
 }
 

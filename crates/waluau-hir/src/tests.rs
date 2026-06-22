@@ -2610,6 +2610,78 @@ fn rejects_array_equality_in_mvp() {
 }
 
 #[test]
+fn type_checks_select_with_typed_array() {
+    let source = r#"
+        function entry(): i32
+            return select('#', {1::i32, 2::i32, 3::i32})
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn type_checks_select_with_different_typed_array() {
+    let source = r#"
+        function entry(): i32
+            local nums: {f64} = {1.0, 2.0, 3.0}
+            return select('#', nums)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn type_checks_select_with_assert_like_user() {
+    let source = r#"
+        function entry(): bool
+            return select('#', {1, 2, 3}) == 3
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_select_with_non_array() {
+    let source = r#"
+        function entry(): i32
+            return select('#', "not an array")
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(error.to_string(), "select expects an array, got string");
+}
+
+#[test]
+fn type_checks_select_integration_test() {
+    let source = r#"
+        function test_select_with_numbers(): bool
+            return select('#', {1, 2, 3}) == 3
+        end
+
+        function test_select_with_integers(): bool
+            return select('#', {1::i32, 2::i32, 3::i32}) == 3::i32
+        end
+
+        function test_select_with_floats(): bool
+            return select('#', {1.0, 2.0, 3.0}) == 3::i32
+        end
+
+        function entry(): bool
+            local test1: bool = test_select_with_numbers()
+            local test2: bool = test_select_with_integers() 
+            local test3: bool = test_select_with_floats()
+            return test1 and test2 and test3
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
 fn rejects_function_equality_in_mvp() {
     let source = r#"
         function entry(): bool
