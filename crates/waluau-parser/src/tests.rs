@@ -1204,17 +1204,55 @@ fn parses_compound_assignments() {
     assert!(matches!(
         &function.body[0],
         waluau_ast::Stmt::Assign {
-            op: AssignOp::Add,
+            op: AssignOp::Compound(BinaryOp::Add),
             ..
         }
     ));
     assert!(matches!(
         &function.body[1],
         waluau_ast::Stmt::IndexAssign {
-            op: AssignOp::Add,
+            op: AssignOp::Compound(BinaryOp::Add),
             ..
         }
     ));
+}
+
+#[test]
+fn parses_all_compound_assignment_operators() {
+    let source = r#"
+        function entry(a: f64, s: string): f64
+            a -= 1
+            a *= 2
+            a /= 3
+            a //= 4
+            a %= 5
+            a ^= 6
+            s ..= "x"
+            return a
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let function = &program.functions[0];
+    let ops: Vec<AssignOp> = function.body[..7]
+        .iter()
+        .map(|stmt| match stmt {
+            waluau_ast::Stmt::Assign { op, .. } => *op,
+            other => panic!("expected assignment, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        ops,
+        vec![
+            AssignOp::Compound(BinaryOp::Sub),
+            AssignOp::Compound(BinaryOp::Mul),
+            AssignOp::Compound(BinaryOp::Div),
+            AssignOp::Compound(BinaryOp::FloorDiv),
+            AssignOp::Compound(BinaryOp::Mod),
+            AssignOp::Compound(BinaryOp::Pow),
+            AssignOp::Compound(BinaryOp::Concat),
+        ]
+    );
 }
 
 #[test]

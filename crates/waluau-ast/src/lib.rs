@@ -454,7 +454,9 @@ pub struct Binding {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AssignOp {
     Set,
-    Add,
+    /// A compound assignment `target op= value`, desugaring to
+    /// `target = target op value` while evaluating `target` only once.
+    Compound(BinaryOp),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -598,6 +600,39 @@ pub enum BinaryOp {
     Greater,
     And,
     Or,
+}
+
+impl BinaryOp {
+    /// Whether `target op= value` is a legal compound assignment for a target of
+    /// type `ty`. Arithmetic ops require a numeric target; `..` requires a
+    /// string target. Other operators are never used in compound assignment.
+    pub fn compound_target_ok(self, ty: &Type) -> bool {
+        match self {
+            BinaryOp::Concat => matches!(ty, Type::String),
+            BinaryOp::Add
+            | BinaryOp::Sub
+            | BinaryOp::Mul
+            | BinaryOp::Div
+            | BinaryOp::FloorDiv
+            | BinaryOp::Mod
+            | BinaryOp::Pow => ty.is_numeric(),
+            BinaryOp::Eq
+            | BinaryOp::NotEq
+            | BinaryOp::Less
+            | BinaryOp::Greater
+            | BinaryOp::And
+            | BinaryOp::Or => false,
+        }
+    }
+
+    /// Human-readable description of the target type a compound assignment with
+    /// this operator requires, used in diagnostics.
+    pub fn compound_target_kind(self) -> &'static str {
+        match self {
+            BinaryOp::Concat => "string",
+            _ => "numeric",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

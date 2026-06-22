@@ -1178,6 +1178,42 @@ fn rejects_compound_assignment_on_non_numeric_targets() {
 }
 
 #[test]
+fn rejects_concat_compound_assignment_on_numeric_target() {
+    let source = r#"
+        function entry(n: i32): i32
+            n ..= "x"
+            return n
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "compound assignment to 'n' requires a string target"
+    );
+}
+
+#[test]
+fn accepts_compound_assignment_operators() {
+    let source = r#"
+        function entry(a: f64, s: string): f64
+            a -= 1
+            a *= 2
+            a /= 3
+            a //= 4
+            a %= 5
+            a ^= 6
+            s ..= "x"
+            return a
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
 fn rejects_rebinding_const_local() {
     let source = r#"
         function entry(x: i32): i32

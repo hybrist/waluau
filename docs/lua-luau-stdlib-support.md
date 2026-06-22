@@ -53,7 +53,7 @@ surprise for people coming from Lua/Luau.
 | Generic `for` iterator protocol | `for vars in f, s, ctl` stops on first `nil` | `for vars in arr` iterates arrays directly; `for vars in f` calls `f` returning `(bool continue, values…)` and stops when the bool is `false` | See `conformance/for_in.walu`. Not the Lua iterator triple. |
 | Metatables / `__index` etc. | full metatable protocol | ❌ none | No `setmetatable`, `getmetatable`, `rawget`, `rawset`, `rawequal`, `rawlen`. |
 | `::` operator | Luau type **assertion** (`expr :: T`) | repurposed as a **numeric cast** | Only valid between numeric scalar types; performs an actual conversion, not an assertion. |
-| Compound assignment | Luau has `+= -= *= /= //= %= ^= ..=` | only `+=` | Other compound operators are unimplemented. |
+| Compound assignment | Luau has `+= -= *= /= //= %= ^= ..=` | all of `+= -= *= /= //= %= ^= ..=` | Arithmetic forms require a numeric target; `..=` requires a string target. The target is evaluated once. See `conformance/compound_assignment.walu`. |
 
 ---
 
