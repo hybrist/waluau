@@ -963,11 +963,23 @@ fn rejects_heterogeneous_array_literals() {
 }
 
 #[test]
-fn rejects_empty_array_literals() {
+fn infers_annotated_empty_array_literals() {
     let source = r#"
         function entry(): i32
             local xs: {i32} = {}
             return #xs
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("annotated empty array literal should type check");
+}
+
+#[test]
+fn rejects_empty_array_literals_without_context() {
+    let source = r#"
+        function entry(): i32
+            return #{}
         end
     "#;
 

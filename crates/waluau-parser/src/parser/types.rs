@@ -11,7 +11,7 @@ impl Parser {
         }
         self.advance();
         let mut params = Vec::new();
-        if !self.check_simple(&TokenKind::Greater) {
+        if !self.check_greater() {
             loop {
                 params.push(self.expect_identifier()?);
                 if self.check_simple(&TokenKind::Comma) {
@@ -21,7 +21,7 @@ impl Parser {
                 }
             }
         }
-        self.expect_simple(TokenKind::Greater, "expected '>' after type parameters")?;
+        self.expect_greater("expected '>' after type parameters")?;
         Ok(params)
     }
 
@@ -238,7 +238,7 @@ impl Parser {
     fn parse_type_arg_list(&mut self) -> Result<Vec<Type>, Diagnostic> {
         self.expect_simple(TokenKind::Less, "expected '<' before type arguments")?;
         let mut type_args = Vec::new();
-        if !self.check_simple(&TokenKind::Greater) {
+        if !self.check_greater() {
             loop {
                 type_args.push(self.parse_type()?);
                 if self.check_simple(&TokenKind::Comma) {
@@ -248,7 +248,7 @@ impl Parser {
                 }
             }
         }
-        self.expect_simple(TokenKind::Greater, "expected '>' after type arguments")?;
+        self.expect_greater("expected '>' after type arguments")?;
         Ok(type_args)
     }
 }

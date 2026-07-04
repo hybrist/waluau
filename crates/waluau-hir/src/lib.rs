@@ -200,13 +200,20 @@ fn annotate_inferred_stmt_locals(
                 )?;
             }
             Stmt::Repeat { body, condition } => {
+                // Lua scoping: the until-condition sees the body's locals.
+                let mut loop_scope = vars.clone();
                 annotate_inferred_stmt_locals(
                     body,
-                    &mut vars.clone(),
+                    &mut loop_scope,
                     fn_signatures,
                     active_type_params,
                 )?;
-                annotate_inferred_expr_locals(condition, vars, fn_signatures, active_type_params)?;
+                annotate_inferred_expr_locals(
+                    condition,
+                    &loop_scope,
+                    fn_signatures,
+                    active_type_params,
+                )?;
             }
             Stmt::Return(expr) | Stmt::Expr(expr) => {
                 annotate_inferred_expr_locals(expr, vars, fn_signatures, active_type_params)?;
@@ -256,6 +263,7 @@ fn annotate_inferred_stmt_locals(
                 )?;
             }
             Stmt::NumericFor {
+                name,
                 start,
                 stop,
                 step,
@@ -267,18 +275,51 @@ fn annotate_inferred_stmt_locals(
                 if let Some(step) = step {
                     annotate_inferred_expr_locals(step, vars, fn_signatures, active_type_params)?;
                 }
+                // Bind the loop variable so `local x = <expr using it>` in the
+                // body can be inferred; the strict passes validate types later.
+                let mut loop_scope = vars.clone();
+                if let Ok(start_ty) =
+                    infer_expr(start, vars, fn_signatures, active_type_params, None)
+                {
+                    loop_scope.insert(name.clone(), binding_for(start_ty, Rebindability::Const));
+                }
                 annotate_inferred_stmt_locals(
                     body,
-                    &mut vars.clone(),
+                    &mut loop_scope,
                     fn_signatures,
                     active_type_params,
                 )?;
             }
-            Stmt::ForIn { iterator, body, .. } => {
+            Stmt::ForIn {
+                names,
+                iterator,
+                body,
+                ..
+            } => {
                 annotate_inferred_expr_locals(iterator, vars, fn_signatures, active_type_params)?;
+                let mut loop_scope = vars.clone();
+                if let Ok(Type::Array(element_ty)) =
+                    infer_expr(iterator, vars, fn_signatures, active_type_params, None)
+                {
+                    if names.len() == 1 {
+                        loop_scope.insert(
+                            names[0].clone(),
+                            binding_for(*element_ty, Rebindability::Const),
+                        );
+                    } else if names.len() == 2 {
+                        loop_scope.insert(
+                            names[0].clone(),
+                            binding_for(Type::Numeric(NumericType::I32), Rebindability::Const),
+                        );
+                        loop_scope.insert(
+                            names[1].clone(),
+                            binding_for(*element_ty, Rebindability::Const),
+                        );
+                    }
+                }
                 annotate_inferred_stmt_locals(
                     body,
-                    &mut vars.clone(),
+                    &mut loop_scope,
                     fn_signatures,
                     active_type_params,
                 )?;

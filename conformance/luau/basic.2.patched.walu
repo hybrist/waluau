@@ -1,0 +1,539 @@
+-- Adapted from the Luau conformance suite (luau-lang/luau),
+-- tests/conformance/basic.luau at commit 86d2a9d.
+-- See README.md and LICENSE in this directory for provenance and licensing.
+--
+-- This is a PATCHED companion to basic.2.walu (which stays verbatim and
+-- pending): every check that can be expressed in Waluau's typed subset is
+-- kept, with the minimal edit needed to compile and pass. Each edit carries a
+-- `-- PATCHED:` marker; checks that need features Waluau deliberately lacks
+-- (metatables, pcall, _G, nil-typed locals, value-semantics and/or, string
+-- coercion, table hash parts, vararg spreading) are listed in DROPPED
+-- comments instead.
+--
+-- Systematic adaptations used throughout:
+--   * untyped lambda params get explicit types (`function(a: f64)`)
+--   * globals become locals; `function foo()` in a body becomes
+--     `local foo = function...` (Waluau has no global environment)
+--   * array indices shift to Waluau's documented 0-based indexing
+--   * `concat(...)` on bools becomes `tostring(...)` joins (bools box as i31
+--     and would stringify as 0/1 through the unknown path)
+
+print("testing language/library basics")
+
+function concat(head, ...)
+    if select('#', ...) == 0 then
+        return tostring(head)
+    else
+        return tostring(head) .. "," .. concat(...)
+    end
+end
+
+-- DROPPED: tostring(nil), select('#') on empty returns — nil/unit are not
+-- first-class values in Waluau.
+
+-- locals
+assert((function() local a = 1 return a end)() == 1)
+assert((function() local a, b, c = 1, 2, 3 return c end)() == 3)
+-- DROPPED: `local a, b, c = 1, 2` and `local a = 1, 2` — declarations must
+-- bind exactly as many values as names, and missing values cannot be nil.
+
+-- function calls
+-- PATCHED: `local function` with untyped params -> typed top-level function;
+-- the nil-padding (`foo(1)`) and extra-argument (`foo(1, 2, 3)`) calls are
+-- dropped because Waluau checks call arity.
+function foo_b2(a: f64, b: f64): f64 return b end
+assert(foo_b2(1, 2) == 2)
+
+-- DROPPED: pcall/error checks — no protected calls in Waluau.
+
+-- assignments
+assert((function() local a = 1 a = 2 return a end)() == 2)
+-- PATCHED: `b` was a global; declared as a local (no global environment).
+assert((function() local a = 1 local b = 2 a, b = b, a return a end)() == 2)
+assert((function() local a = 1 local b = 2 a, b = b, a return b end)() == 1)
+-- PATCHED: statement-start `(` needs a `;` after the previous statement.
+assert((function() local a = 1; (function () a = 2 end)() return a end)() == 2)
+-- DROPPED: _G reads/writes, `a, b = 1` nil padding, and multi-assignment
+-- with table-index targets (targets must be names).
+
+-- upvalues
+-- PATCHED: `function foo()` inside a body creates a global in Luau; Waluau
+-- has no globals, so these use `local foo = function...` closures instead.
+assert((function() local a = 1 local foo = function(): f64 return a end return foo() end)() == 1)
+
+-- check upvalue propagation - foo must have numupvalues=1
+assert((function() local a = 1 local foo = function(): () -> f64 return function(): f64 return a end end return foo()() end)() == 1)
+
+-- check that function args are properly closed over
+assert((function() local foo = function(a: f64): () -> f64 return function (): f64 return a end end return foo(1)() end)() == 1)
+
+-- this checks local aliasing - b & a should share the same local slot, but the capture must return 1 instead of 2
+-- PATCHED: standalone `do ... end` blocks are not supported; the scope
+-- wrapper is removed but the capture-then-shadow shape is kept.
+assert((function() local foo = function(): () -> f64 local f = function(): f64 return 0 end local a = 1 f = function (): f64 return a end local b = 2 return f end return foo()() end)() == 1)
+
+-- this checks local mutability - we capture a ref to 1 but must return 2
+assert((function() local foo = function(): () -> f64 local a = 1 local f = function(): f64 return a end a = 2 return f end return foo()() end)() == 2)
+
+-- this checks upval mutability - we change the value from a context where it's upval
+assert((function() local foo = function(): f64 local a = 1; (function () a = 2 end)() return a end return foo() end)() == 2)
+
+-- check self capture: does self go into any upvalues?
+-- PATCHED: `function t:get()` method sugar and `self` are not supported; the
+-- method becomes a closure capturing the table.
+assert((function() local t = {f=5} local get = function(): f64 return (function(): f64 return t.f end)() end return get() end)() == 5)
+
+-- check self capture & close: is self copied to upval?
+assert((function() local foo = function(): () -> f64 local t = {f=5} return function(): f64 return t.f end end return foo()() end)() == 5)
+
+-- if
+-- PATCHED: conditions must be bool; Luau truthiness (`if a then` on a
+-- number) is spelled as an explicit comparison here.
+assert((function() local a = 1 if a > 0 then a = 2 end return a end)() == 2)
+-- DROPPED: truthiness checks for nil locals and truthy-zero — nil-typed
+-- locals and non-bool conditions are not expressible.
+
+-- binary ops
+assert((function() local a = 1 a = a + 2 return a end)() == 3)
+assert((function() local a = 1 a = a - 2 return a end)() == -1)
+assert((function() local a = 1 a = a * 2 return a end)() == 2)
+assert((function() local a = 1 a = a / 2 return a end)() == 0.5)
+
+-- binary ops with fp specials, neg zero, large constants
+-- argument is passed into anonymous function to prevent constant folding
+-- PATCHED: lambda params are annotated (no call-site parameter inference).
+assert((function(a: f64) return tostring(a + 0) end)(-0) == "0")
+assert((function(a: f64) return tostring(a - 0) end)(-0) == "-0")
+assert((function(a: f64) return tostring(0 - a) end)(0) == "0")
+assert((function(a: f64) return tostring(a - a) end)(1 / 0) == "nan")
+assert((function(a: f64) return tostring(a * 0) end)(0 / 0) == "nan")
+assert((function(a: f64) return tostring(a / (2^1000)) end)(2^1000) == "1")
+assert((function(a: f64) return tostring(a / (2^-1000)) end)(2^-1000) == "1")
+
+-- floor division should always round towards -Infinity
+assert((function() local a = 1 a = a // 2 return a end)() == 0)
+assert((function() local a = 3 a = a // 2 return a end)() == 1)
+assert((function() local a = 3.5 a = a // 2 return a end)() == 1)
+assert((function() local a = -1 a = a // 2 return a end)() == -1)
+assert((function() local a = -3 a = a // 2 return a end)() == -2)
+assert((function() local a = -3.5 a = a // 2 return a end)() == -2)
+
+assert((function() local a = 5 a = a % 2 return a end)() == 1)
+assert((function() local a = 3 a = a ^ 2 return a end)() == 9)
+assert((function() local a = 3 a = a ^ 3 return a end)() == 27)
+assert((function() local a = 9 a = a ^ 0.5 return a end)() == 3)
+assert((function() local a = -2 a = a ^ 2 return a end)() == 4)
+assert((function() local a = -2 a = a ^ 0.5 return tostring(a) end)() == "nan")
+
+assert((function() local a = '1' a = a .. '2' return a end)() == "12")
+assert((function() local a = '1' a = a .. '2' .. '3' return a end)() == "123")
+
+-- DROPPED: concatenating nil (needs pcall + dynamic types).
+
+-- PATCHED: a local cannot change type from number to bool; the comparison
+-- result lands in a fresh local instead.
+assert((function() local a = 1 local r = a == 2 return r end)() == false)
+assert((function() local a = 1 local r = a ~= 2 return r end)() == true)
+assert((function() local a = 1 local r = a < 2 return r end)() == true)
+assert((function() local a = 1 local r = a <= 2 return r end)() == true)
+assert((function() local a = 1 local r = a > 2 return r end)() == false)
+assert((function() local a = 1 local r = a >= 2 return r end)() == false)
+
+-- DROPPED: and/or with number/nil operands (value-semantics and/or needs
+-- dynamic typing; Waluau's and/or is bool-only).
+
+-- PATCHED: lambda param annotated.
+assert((function(a: f64) return 12 % a end)(5) == 2)
+
+-- DROPPED: string-to-number arithmetic coercion (`1 + "2"`).
+
+-- unary ops
+assert((function() local a = true a = not a return a end)() == false)
+assert((function() local a = false a = not a return a end)() == true)
+-- DROPPED: `not nil` (nil-typed local).
+
+-- PATCHED: `#` operand moved into a local (`#_G` and `#'g'` dropped: no
+-- global table, no `#` on strings).
+assert((function() local t = {1,2} return #t end)() == 2)
+
+assert((function() local a = 1 a = -a return a end)() == -1)
+
+-- DROPPED: __len metamethod (no metatables).
+
+-- while/repeat
+assert((function() local a = 10 local b = 1 while a > 1 do b = b * 2 a = a - 1 end return b end)() == 512)
+assert((function() local a = 10 local b = 1 repeat b = b * 2 a = a - 1 until a == 1 return b end)() == 512)
+
+assert((function() local a = 10 local b = 1 while true do b = b * 2 a = a - 1 if a == 1 then break end end return b end)() == 512)
+assert((function() local a = 10 local b = 1 while true do b = b * 2 a = a - 1 if a == 1 then break else end end return b end)() == 512)
+assert((function() local a = 10 local b = 1 repeat b = b * 2 a = a - 1 if a == 1 then break end until false return b end)() == 512)
+assert((function() local a = 10 local b = 1 repeat b = b * 2 a = a - 1 if a == 1 then break else end until false return b end)() == 512)
+
+-- this makes sure a - 4 doesn't clobber a (which would happen if the lifetime of locals inside the repeat..until block is contained within
+-- the block and ends before the condition is evaluated
+-- PATCHED: the IIFE returns true instead of implicit nil (`== nil` on a unit
+-- call is not expressible).
+assert((function() repeat local a = 5 until a - 4 < 0 or a - 4 >= 0 return true end)() == true)
+
+-- numeric for
+-- basic tests with positive/negative step sizes
+assert((function() local a = 1 for b=1,9 do a = a * 2 end return a end)() == 512)
+assert((function() local a = 1 for b=1,9,2 do a = a * 2 end return a end)() == 32)
+assert((function() local a = 1 for b=1,9,-2 do a = a * 2 end return a end)() == 1)
+assert((function() local a = 1 for b=9,1,-2 do a = a * 2 end return a end)() == 32)
+
+-- make sure break works
+assert((function() local a = 1 for b=1,9 do a = a * 2 if a == 128 then break end end return a end)() == 128)
+assert((function() local a = 1 for b=1,9 do a = a * 2 if a == 128 then break else end end return a end)() == 128)
+
+-- DROPPED: "internal index is protected against modification" — Waluau
+-- enforces this statically: loop variables are const and assigning to them
+-- is a compile error, which is strictly stronger than the runtime check.
+
+-- make sure that when step is 0, we treat it as backward iteration (and as such, iterate zero times or indefinitely)
+-- this is consistent with Lua 5.1; future Lua versions emit an error when step is 0; LuaJIT instead treats 0 as forward iteration
+-- we repeat tests twice, with and without constant folding
+-- PATCHED: `tonumber("0")` -> plain 0 (no tonumber builtin).
+local zero = 0
+assert((function() local c = 0 for i=1,10,0 do c += 1 if c > 10 then break end end return c end)() == 0)
+assert((function() local c = 0 for i=10,1,0 do c += 1 if c > 10 then break end end return c end)() == 11)
+assert((function() local c = 0 for i=1,10,zero do c += 1 if c > 10 then break end end return c end)() == 0)
+assert((function() local c = 0 for i=10,1,zero do c += 1 if c > 10 then break end end return c end)() == 11)
+
+-- make sure that when limit is nan, we iterate zero times (this is consistent with Lua 5.1; future Lua versions break this)
+-- we repeat tests twice, with and without constant folding
+-- PATCHED: `tonumber("nan")` -> 0/0 (no tonumber builtin).
+local nan = 0/0
+assert((function() local c = 0 for i=1,0/0 do c += 1 end return c end)() == 0)
+assert((function() local c = 0 for i=1,0/0,-1 do c += 1 end return c end)() == 0)
+assert((function() local c = 0 for i=1,nan do c += 1 end return c end)() == 0)
+assert((function() local c = 0 for i=1,nan,-1 do c += 1 end return c end)() == 0)
+
+-- make sure that when step is nan, we treat it as backward iteration and as such iterate once iff start<=limit
+assert((function() local c = 0 for i=1,10,0/0 do c += 1 end return c end)() == 0)
+assert((function() local c = 0 for i=10,1,0/0 do c += 1 end return c end)() == 1)
+assert((function() local c = 0 for i=1,10,nan do c += 1 end return c end)() == 0)
+assert((function() local c = 0 for i=10,1,nan do c += 1 end return c end)() == 1)
+
+-- make sure that when index becomes nan mid-iteration, we correctly exit the loop (this is broken in Lua 5.1; future Lua versions fix this)
+-- PATCHED: `math.huge` -> 1/0 (no math.huge builtin).
+local huge = 1/0
+assert((function() local c = 0 for i=-huge,0,huge do c += 1 end return c end)() == 1)
+assert((function() local c = 0 for i=huge,huge,-huge do c += 1 end return c end)() == 1)
+
+-- generic for
+-- ipairs
+-- PATCHED: `ipairs(t)` becomes Waluau's array for-in (`for k, v in t`);
+-- indices are 0-based, so the key strings shift accordingly, and number
+-- values go through tostring for concatenation.
+assert((function() local a = '' for k, v in {5, 6, 7} do a = a .. tostring(k) end return a end)() == "012")
+assert((function() local a = '' for k, v in {5, 6, 7} do a = a .. tostring(v) end return a end)() == "567")
+
+-- DROPPED: ipairs with gaps ({5, 6, 7, nil, 8}) — array literals cannot
+-- contain nil holes. Manual ipairs/inext is dropped with ipairs itself.
+
+-- pairs on array
+-- PATCHED: same array for-in adaptation as ipairs above.
+assert((function() local a = '' for k, v in {5, 6, 7} do a = a .. tostring(k) end return a end)() == "012")
+assert((function() local a = '' for k, v in {5, 6, 7} do a = a .. tostring(v) end return a end)() == "567")
+
+-- DROPPED: pairs on hash tables, mixed array/hash tables, pairs-with-gaps,
+-- manual `next` iteration, and the extra-variable (`for k,v,p in pairs`)
+-- check — records are not iterable and tables have no hash part.
+
+-- make sure break works
+-- PATCHED: `pairs({1,2,3})` -> array for-in.
+assert((function() local a = 1 for _ in {1,2,3} do a = a * 2 if a == 4 then break end end return a end)() == 4)
+assert((function() local a = 1 for _ in {1,2,3} do a = a * 2 if a == 4 then break else end end return a end)() == 4)
+
+-- DROPPED: for-in "internal index protected against modification" — loop
+-- variables are const in Waluau (assignment is a compile error).
+
+-- make sure custom iterators work! example is from PIL 7.1
+-- PATCHED: Waluau's iterator protocol returns (continue: bool, value); Luau
+-- iterators signal termination by returning nil instead. table.getn -> #t,
+-- and the array read is 0-based.
+function list_iter(t: {f64}): () -> (bool, f64)
+    local i: i32 = 0
+    local n = #t
+    return function(): (bool, f64)
+        i = i + 1
+        if i <= n then return true, t[i - 1] end
+        return false, 0
+    end
+end
+
+assert((function() local a = '' for e in list_iter({4,2,1}) do a = a .. tostring(e) end return a end)() == "421")
+
+-- make sure multret works in context of pairs() - this is a very painful to handle combination due to complex internal details
+-- PATCHED: `ipairs(f())` -> array for-in over the call result; the trailing
+-- extra return values (8, 9, 0) are dropped along with vararg spreading.
+assert((function() local f = function(): {f64} return {5,6,7} end local a = '' for k, v in f() do a = a .. tostring(v) end return a end)() == "567")
+
+-- table literals
+-- basic tests
+-- PATCHED: `{}` needs the annotation to type as an array.
+assert((function() local t: {f64} = {} return #t end)() == 0)
+
+assert((function() local t = {1, 2} return #t end)() == 2)
+-- PATCHED: 1-based reads -> 0-based.
+assert((function() local t = {1, 2} return t[0] + t[1] end)() == 3)
+
+assert((function() local t = {data = 4} return t.data end)() == 4)
+-- DROPPED: computed keys (`[1+2] = 4`) — table literals support only array
+-- items and record fields.
+
+-- since table ctor is chunked in groups of 16, we should be careful with edge cases around that
+-- PATCHED: table.concat joins string arrays only; the numeric literals
+-- become strings.
+assert((function() return table.concat({}, ',') end)() == "")
+assert((function() return table.concat({'1'}, ',') end)() == "1")
+assert((function() return table.concat({'1','2'}, ',') end)() == "1,2")
+assert((function() return table.concat({'1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'}, ',') end)() ==
+    "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15")
+assert((function() return table.concat({'1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16'}, ',') end)() == "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16")
+assert((function() return table.concat({'1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17'}, ',') end)() == "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17")
+
+-- DROPPED: exact hash-part traversal order and duplicate table literal
+-- fields (hash parts and nil field values are not supported).
+
+-- multiple returns
+-- local=
+-- PATCHED: `function foo()` globals -> typed local closures; the string is
+-- built with tostring (`''..a` relies on number coercion).
+assert((function() local f = function(): (f64, f64, f64) return 2, 3, 4 end local a, b, c = f() return tostring(a)..tostring(b)..tostring(c) end)() == "234")
+assert((function() local f = function(): (f64, f64) return 2, 3 end local a, b, c = 1, f() return tostring(a)..tostring(b)..tostring(c) end)() == "123")
+-- DROPPED: under-returning (`c == nil`), assignments to global lists, and
+-- the varargs sections (`local a, b, c = ...`, `return ...` pass-through,
+-- `{...}` packing) — vararg packs do not spread yet (see waluau issue).
+
+-- table access
+-- PATCHED: reads shifted to 0-based indexing.
+assert((function() local t = {6, 9, 7} return t[1] end)() == 9)
+-- DROPPED: out-of-bounds reads returning nil, fractional keys, string keys
+-- on arrays, and __index/__newindex metamethods.
+
+assert((function() local t = {6, 9, 7} t[1] = 10 return t[1] end)() == 10)
+assert((function() local t = {6, 9, 7} t[0] = 5 return t[0] end)() == 5)
+
+-- DROPPED: userdata access via newproxy (no userdata), and/or with table
+-- and global operands, fake OOP via metatables, evil indexers, fast-path
+-- metatable lookups, and __namecall — all need metatables.
+
+-- comparison
+-- basic types
+-- PATCHED: globals -> locals; bool results go through tostring rather than
+-- concat (bools box as i31 and would print as 0/1 through unknown).
+assert((function() local a = 1 return tostring(a == 1) .. "," .. tostring(a ~= 1) end)() == "true,false")
+assert((function() local a = 1 return tostring(a == 2) .. "," .. tostring(a ~= 2) end)() == "false,true")
+assert((function() local a = true return tostring(a == true) .. "," .. tostring(a ~= true) end)() == "true,false")
+assert((function() local a = true return tostring(a == false) .. "," .. tostring(a ~= false) end)() == "false,true")
+assert((function() local a = 'a' return tostring(a == 'a') .. "," .. tostring(a ~= 'a') end)() == "true,false")
+assert((function() local a = 'a' return tostring(a == 'b') .. "," .. tostring(a ~= 'b') end)() == "false,true")
+
+-- DROPPED: nil comparisons, table/userdata reference equality, __eq
+-- metamethods, and rawequal — no nil values, reference equality on records,
+-- or metatables. The vec3t metatable-ops section is dropped wholesale.
+
+-- string comparison
+-- PATCHED: `function cmp(a,b)` gets string types, and the four bools are
+-- joined with tostring instead of multi-return into concat.
+assert((function() local cmp = function(a: string, b: string): string return tostring(a<b)..","..tostring(a<=b)..","..tostring(a>b)..","..tostring(a>=b) end return cmp('a', 'b') end)() == "true,true,false,false")
+assert((function() local cmp = function(a: string, b: string): string return tostring(a<b)..","..tostring(a<=b)..","..tostring(a>b)..","..tostring(a>=b) end return cmp('a', 'a') end)() == "false,true,false,true")
+assert((function() local cmp = function(a: string, b: string): string return tostring(a<b)..","..tostring(a<=b)..","..tostring(a>b)..","..tostring(a>=b) end return cmp('a', '') end)() == "false,false,true,true")
+assert((function() local cmp = function(a: string, b: string): string return tostring(a<b)..","..tostring(a<=b)..","..tostring(a>b)..","..tostring(a>=b) end return cmp('', '\0') end)() == "true,true,false,false")
+assert((function() local cmp = function(a: string, b: string): string return tostring(a<b)..","..tostring(a<=b)..","..tostring(a>b)..","..tostring(a>=b) end return cmp('abc', 'abd') end)() == "true,true,false,false")
+assert((function() local cmp = function(a: string, b: string): string return tostring(a<b)..","..tostring(a<=b)..","..tostring(a>b)..","..tostring(a>=b) end return cmp('ab\0c', 'ab\0d') end)() == "true,true,false,false")
+assert((function() local cmp = function(a: string, b: string): string return tostring(a<b)..","..tostring(a<=b)..","..tostring(a>b)..","..tostring(a>=b) end return cmp('ab\0c', 'ab\0') end)() == "false,false,true,true")
+assert((function() local cmp = function(a: string, b: string): string return tostring(a<b)..","..tostring(a<=b)..","..tostring(a>b)..","..tostring(a>=b) end return cmp('\0a', '\0b') end)() == "true,true,false,false")
+assert((function() local cmp = function(a: string, b: string): string return tostring(a<b)..","..tostring(a<=b)..","..tostring(a>b)..","..tostring(a>=b) end return cmp('a', 'a\0') end)() == "true,true,false,false")
+assert((function() local cmp = function(a: string, b: string): string return tostring(a<b)..","..tostring(a<=b)..","..tostring(a>b)..","..tostring(a>=b) end return cmp('a', '\200') end)() == "true,true,false,false")
+
+-- array access
+-- PATCHED: reads shifted to 0-based indexing; nil-hole and metatable
+-- variants dropped.
+assert((function() local a = {4,5,6} return a[2] end)() == 6)
+assert((function() local a = {4,5,6} a[2] = 8 return a[2] end)() == 8)
+
+-- DROPPED: loadstring error text (no loadstring), and the many-arguments &
+-- locals stress function (untyped 50-parameter signatures with uninitialized
+-- locals are not expressible).
+
+-- upvalues & loops (validates timely closing)
+-- PATCHED: tables cannot grow (`res[#res+1] = ...`), so each variant
+-- preallocates a function array, overwrites its slots with closures made in
+-- the loop, and only calls them after the loop finishes — preserving the
+-- "capture outlives the iteration" shape with 0-based slots.
+assert((function()
+    local dummy = function(): f64 return 0 end
+    local res = {dummy, dummy, dummy, dummy, dummy}
+    local idx: i32 = 0
+
+    for i=1,5 do
+        res[idx] = (function(): f64 return i end)
+        idx += 1
+    end
+
+    local sum = 0
+    for f in res do sum = sum + f() end
+
+    return sum
+end)() == 15)
+
+assert((function()
+    local dummy = function(): f64 return 0 end
+    local res = {dummy, dummy, dummy, dummy, dummy}
+
+    for i, v in {1,2,3,4,5} do
+        res[i] = (function(): f64 return v end)
+    end
+
+    local sum = 0
+    for f in res do sum = sum + f() end
+
+    return sum
+end)() == 15)
+
+assert((function()
+    local dummy = function(): f64 return 0 end
+    local res = {dummy, dummy, dummy, dummy, dummy, dummy}
+    local idx: i32 = 0
+
+    local i = 0
+    while i <= 5 do
+        local j = i
+        res[idx] = (function(): f64 return j end)
+        idx += 1
+        i = i + 1
+    end
+
+    local sum = 0
+    for f in res do sum = sum + f() end
+
+    return sum
+end)() == 15)
+
+assert((function()
+    local dummy = function(): f64 return 0 end
+    local res = {dummy, dummy, dummy, dummy, dummy, dummy}
+    local idx: i32 = 0
+
+    local i = 0
+    repeat
+        local j = i
+        res[idx] = (function(): f64 return j end)
+        idx += 1
+        i = i + 1
+    until i > 5
+
+    local sum = 0
+    for f in res do sum = sum + f() end
+
+    return sum
+end)() == 15)
+
+-- upvalues & loops & break!
+assert((function()
+    local dummy = function(): f64 return 0 end
+    local res = {dummy, dummy, dummy, dummy, dummy}
+    local idx: i32 = 0
+
+    for i=1,10 do
+        res[idx] = (function(): f64 return i end)
+        idx += 1
+        if i == 5 then
+            break
+        end
+    end
+
+    local sum = 0
+    for f in res do sum = sum + f() end
+
+    return sum
+end)() == 15)
+
+assert((function()
+    local dummy = function(): f64 return 0 end
+    local res = {dummy, dummy, dummy, dummy, dummy}
+
+    for i, v in {1,2,3,4,5,6,7,8,9,10} do
+        res[i] = (function(): f64 return v end)
+        if v == 5 then
+            break
+        end
+    end
+
+    local sum = 0
+    for f in res do sum = sum + f() end
+
+    return sum
+end)() == 15)
+
+assert((function()
+    local dummy = function(): f64 return 0 end
+    local res = {dummy, dummy, dummy, dummy, dummy, dummy}
+    local idx: i32 = 0
+
+    local i = 0
+    while i < 10 do
+        local j = i
+        res[idx] = (function(): f64 return j end)
+        idx += 1
+        if i == 5 then
+            break
+        end
+        i = i + 1
+    end
+
+    local sum = 0
+    for f in res do sum = sum + f() end
+
+    return sum
+end)() == 15)
+
+assert((function()
+    local dummy = function(): f64 return 0 end
+    local res = {dummy, dummy, dummy, dummy, dummy, dummy}
+    local idx: i32 = 0
+
+    local i = 0
+    repeat
+        local j = i
+        res[idx] = (function(): f64 return j end)
+        idx += 1
+        if i == 5 then
+            break
+        end
+        i = i + 1
+    until i >= 10
+
+    local sum = 0
+    for f in res do sum = sum + f() end
+
+    return sum
+end)() == 15)
+
+-- DROPPED: "ipairs will not iterate through hash part" — tables have no
+-- hash part.
+
+-- the reason why this test is interesting is it ensures we do correct mutability analysis for locals
+-- PATCHED: typed signature (`local function` -> `function`), '' instead of
+-- nil initialisers, and tostring for the number-to-string concatenation.
+function chainTest(n: f64): string
+     local first = ''
+     local last = ''
+
+     -- Build chain of n equality constraints
+     for i = 0, n do
+            local name = "v" .. tostring(i);
+            if i == 0 then first = name end
+            if i == n then last = name end
+     end
+
+     return concat(first, last)
+end
+
+assert(chainTest(100) == "v0,v100")
+
+-- DROPPED: import fallbacks (idontexist, math.idontexist, pcall on missing
+-- globals) — undefined names are compile errors in Waluau.

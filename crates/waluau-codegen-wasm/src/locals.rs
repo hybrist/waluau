@@ -513,6 +513,58 @@ fn compute_live_intervals(
         }
     }
 
+    // Live ranges are computed over linear block positions, which is blind to
+    // loop back edges: a value defined before (or early in) a loop whose last
+    // linear use sits mid-loop is still needed on the next iteration, and a
+    // header phi's slot is rewritten by the edge copies at the bottom of the
+    // loop. Conservatively extend any range that ends inside a loop region to
+    // the loop's back-edge position so its local cannot be reused (and
+    // clobbered) within the loop.
+    let mut loop_regions = Vec::new();
+    for block in function.blocks.values() {
+        let src_base = block_bases[&block.id];
+        let src_end = block_end_positions[&block.id];
+        let mut targets = Vec::new();
+        match &block.terminator {
+            Terminator::Jump(target) => targets.push(*target),
+            Terminator::Branch {
+                then_block,
+                else_block,
+                ..
+            } => {
+                targets.push(*then_block);
+                targets.push(*else_block);
+            }
+            Terminator::CoroutineYield { resume_block, .. }
+            | Terminator::CoroutineAwaitPromise { resume_block, .. } => {
+                targets.push(*resume_block);
+            }
+            Terminator::Return(_) | Terminator::Unreachable { .. } => {}
+        }
+        for target in targets {
+            let target_base = block_bases[&target];
+            if target_base <= src_base {
+                loop_regions.push((target_base, src_end));
+            }
+        }
+    }
+    loop {
+        let mut changed = false;
+        for (header_base, back_edge_end) in &loop_regions {
+            for (value, last_use) in last_use_positions.iter_mut() {
+                let def = def_positions.get(value).copied().unwrap_or(0);
+                if def <= *back_edge_end && *last_use >= *header_base && *last_use < *back_edge_end
+                {
+                    *last_use = *back_edge_end;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
     let mut intervals = Vec::new();
     for (value, start) in def_positions {
         let ty = value_types

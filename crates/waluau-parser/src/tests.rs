@@ -1756,3 +1756,62 @@ fn allows_chained_comparisons_not_confused_with_generics() {
     let program = parse(source).expect("parse should succeed");
     assert_eq!(program.functions.len(), 1);
 }
+
+#[test]
+fn parses_less_equal_and_greater_equal_comparisons() {
+    let source = r#"
+        function cmp(a: i32, b: i32): bool
+            local le: bool = a <= b
+            local ge: bool = a >= b
+            return le and ge
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let function = &program.functions[0];
+    let Stmt::Let { value, .. } = &function.body[0] else {
+        panic!("expected local declaration");
+    };
+    let waluau_ast::Expr::Binary { op, .. } = value else {
+        panic!("expected binary expression");
+    };
+    assert_eq!(*op, BinaryOp::LessEq);
+    let Stmt::Let { value, .. } = &function.body[1] else {
+        panic!("expected local declaration");
+    };
+    let waluau_ast::Expr::Binary { op, .. } = value else {
+        panic!("expected binary expression");
+    };
+    assert_eq!(*op, BinaryOp::GreaterEq);
+}
+
+// `local x: Foo<T>=v` greedy-lexes `>=`; the parser must split the token back
+// into the `>` closing the type arguments and the `=` starting the initializer.
+#[test]
+fn splits_greater_equal_closing_type_arguments() {
+    let source = r#"
+        type Box<T> = { value: T }
+        function make(): i32
+            local b: Box<i32>= { value = 3 }
+            return b.value
+        end
+    "#;
+
+    parse(source).expect("parse should succeed");
+}
+
+#[test]
+fn skips_semicolon_statement_separators() {
+    let source = r#"
+        function sum(): i32
+            local a: i32 = 1; local b: i32 = 2;
+            ;
+            return a + b
+        end
+        local total: i32 = sum();
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert_eq!(program.functions[0].body.len(), 3);
+    assert_eq!(program.top_level.len(), 1);
+}

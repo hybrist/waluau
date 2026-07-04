@@ -2307,3 +2307,144 @@ fn lowers_captured_tagged_union_parameter_narrowing() {
     let module = build(&program).expect("ir build should succeed");
     verify(&module).expect("ir should verify");
 }
+
+// `break` jumps straight from the break site to the loop exit block. Code
+// after the loop must observe the values mutated during the breaking
+// iteration, so the exit block carries its own phis (normal exit edge +
+// one edge per break site). Before that fix, post-loop reads resolved to the
+// loop *header* phis, resurrecting start-of-iteration values on break paths
+// (e.g. `local a = 1 for b = 1, 9 do a = a * 2 if a == 128 then break end end`
+// left `a == 64`). Regression tests for the break phi bug surfaced by
+// conformance/luau/basic.2.walu.
+//
+// The structural property checked: the value returned after the loop is
+// defined in the block that returns it (the exit block phi), not in the loop
+// header.
+fn assert_returns_local_exit_phi(source: &str) {
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("ir build should succeed");
+    let function = &module.functions[0];
+    if let Err(err) = verify(&module) {
+        panic!("verify failed: {err}\n{}", function.dump());
+    }
+
+    let (return_block, return_value) = function
+        .blocks
+        .values()
+        .find_map(|block| match block.terminator {
+            Terminator::Return(value) => Some((block.id, value)),
+            _ => None,
+        })
+        .expect("function should return a value");
+    let defining_block = function
+        .blocks
+        .values()
+        .find(|block| {
+            block
+                .instructions
+                .iter()
+                .any(|(value, _)| *value == return_value)
+        })
+        .expect("returned value should have a defining instruction");
+    assert_eq!(
+        defining_block.id,
+        return_block,
+        "returned value should be the loop exit phi, defined in the returning \
+         block, not a header phi from an earlier block:\n{}",
+        function.dump()
+    );
+    let (_, instruction) = defining_block
+        .instructions
+        .iter()
+        .find(|(value, _)| *value == return_value)
+        .expect("definition located above");
+    let Instruction::Phi(incoming) = instruction else {
+        panic!(
+            "returned value should be an exit phi merging the normal exit \
+             and break edges:\n{}",
+            function.dump()
+        );
+    };
+    assert_eq!(
+        incoming.len(),
+        2,
+        "exit phi should merge the normal exit edge and the single break \
+         edge:\n{}",
+        function.dump()
+    );
+}
+
+#[test]
+fn numeric_for_break_reads_breaking_iteration_values() {
+    assert_returns_local_exit_phi(
+        r#"
+        function entry(): i32
+            local a: i32 = 1
+            for b = 1, 9 do
+                a = a * 2
+                if a == 128 then
+                    break
+                end
+            end
+            return a
+        end
+    "#,
+    );
+}
+
+#[test]
+fn while_break_reads_breaking_iteration_values() {
+    assert_returns_local_exit_phi(
+        r#"
+        function entry(): i32
+            local x: i32 = 10
+            local y: i32 = 1
+            while true do
+                y = y * 2
+                x = x - 1
+                if x == 1 then
+                    break
+                end
+            end
+            return y
+        end
+    "#,
+    );
+}
+
+#[test]
+fn repeat_mid_body_break_reads_breaking_iteration_values() {
+    assert_returns_local_exit_phi(
+        r#"
+        function entry(): i32
+            local i: i32 = 0
+            repeat
+                i = i + 1
+                if i == 3 then
+                    break
+                end
+                i = i + 10
+            until i >= 100
+            return i
+        end
+    "#,
+    );
+}
+
+#[test]
+fn array_for_in_break_reads_breaking_iteration_values() {
+    assert_returns_local_exit_phi(
+        r#"
+        function entry(xs: {i32}): i32
+            local sum: i32 = 0
+            for x in xs do
+                sum = sum + x
+                if sum > 3 then
+                    break
+                end
+            end
+            return sum
+        end
+    "#,
+    );
+}

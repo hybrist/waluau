@@ -303,6 +303,21 @@ pub(super) fn collect_return_types(
     active_type_params: &HashSet<String>,
     returns: &mut Vec<Type>,
 ) -> Result<(), Diagnostic> {
+    collect_return_types_with_scope(body, vars, fn_signatures, active_type_params, returns)
+        .map(|_| ())
+}
+
+/// Like `collect_return_types`, but also returns the scope at the end of the
+/// statement list. `repeat ... until <cond>` needs it: the condition is
+/// evaluated in the body's scope (Lua keeps body locals alive for the
+/// condition), so it must be inferred against the accumulated bindings.
+fn collect_return_types_with_scope(
+    body: &[Stmt],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    returns: &mut Vec<Type>,
+) -> Result<HashMap<String, Binding>, Diagnostic> {
     let mut scope = vars.clone();
     for stmt in body {
         match stmt {
@@ -500,10 +515,21 @@ pub(super) fn collect_return_types(
                 collect_return_types(body, &scope, fn_signatures, active_type_params, returns)?;
             }
             Stmt::Repeat { body, condition } => {
-                collect_return_types(body, &scope, fn_signatures, active_type_params, returns)?;
-                let condition_ty =
-                    infer_expr(condition, &scope, fn_signatures, active_type_params, None)?;
-                seal_record_locals_in_expr(condition, &mut scope);
+                let mut loop_scope = collect_return_types_with_scope(
+                    body,
+                    &scope,
+                    fn_signatures,
+                    active_type_params,
+                    returns,
+                )?;
+                let condition_ty = infer_expr(
+                    condition,
+                    &loop_scope,
+                    fn_signatures,
+                    active_type_params,
+                    None,
+                )?;
+                seal_record_locals_in_expr(condition, &mut loop_scope);
                 if condition_ty != Type::Bool {
                     return Err(Diagnostic::new("repeat-until condition must be bool"));
                 }
@@ -757,7 +783,7 @@ pub(super) fn collect_return_types(
             }
         }
     }
-    Ok(())
+    Ok(scope)
 }
 
 pub(super) fn common_return_type(left: Type, right: Type) -> Result<Type, Diagnostic> {

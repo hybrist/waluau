@@ -8,6 +8,11 @@ impl Parser {
     pub(super) fn parse_block_until(&mut self, end_markers: &[TokenKind]) -> Vec<Stmt> {
         let mut statements = Vec::new();
         while let Some(token) = self.peek() {
+            // Luau allows `;` as an optional statement separator.
+            if matches!(token.kind, TokenKind::Semicolon) {
+                self.advance();
+                continue;
+            }
             if end_markers
                 .iter()
                 .any(|marker| super::tokens::same_variant(&token.kind, marker))
@@ -135,7 +140,7 @@ impl Parser {
         let rebindability = if self.check_simple(&TokenKind::Less) {
             self.advance();
             let attr_name = self.expect_identifier()?;
-            self.expect_simple(TokenKind::Greater, "expected '>' after local attribute")?;
+            self.expect_greater("expected '>' after local attribute")?;
             if attr_name != "const" {
                 return Err(Diagnostic::new(format!(
                     "unsupported local attribute '<{}>'",
@@ -325,7 +330,7 @@ impl Parser {
             let rebindability = if self.check_simple(&TokenKind::Less) {
                 self.advance();
                 let attr_name = self.expect_identifier()?;
-                self.expect_simple(TokenKind::Greater, "expected '>' after local attribute")?;
+                self.expect_greater("expected '>' after local attribute")?;
                 if attr_name != "const" {
                     return Err(Diagnostic::new(format!(
                         "unsupported local attribute '<{}>'",

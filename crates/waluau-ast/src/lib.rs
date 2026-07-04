@@ -597,7 +597,9 @@ pub enum BinaryOp {
     Eq,
     NotEq,
     Less,
+    LessEq,
     Greater,
+    GreaterEq,
     And,
     Or,
 }
@@ -619,7 +621,9 @@ impl BinaryOp {
             BinaryOp::Eq
             | BinaryOp::NotEq
             | BinaryOp::Less
+            | BinaryOp::LessEq
             | BinaryOp::Greater
+            | BinaryOp::GreaterEq
             | BinaryOp::And
             | BinaryOp::Or => false,
         }

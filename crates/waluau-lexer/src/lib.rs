@@ -66,7 +66,9 @@ pub enum TokenKind {
     EqualEqual,
     TildeEqual,
     Less,
+    LessEqual,
     Greater,
+    GreaterEqual,
     And,
     Or,
     Pipe,
@@ -78,6 +80,7 @@ pub enum TokenKind {
     DoubleDotEqual,
     TripleDot,
     Comma,
+    Semicolon,
     Hash,
     Question,
     LBrace,
@@ -133,6 +136,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 }
             }
             ',' => (TokenKind::Comma, 1),
+            ';' => (TokenKind::Semicolon, 1),
             '+' => {
                 if matches!(chars.get(i + 1), Some('=')) {
                     (TokenKind::PlusEqual, 2)
@@ -187,8 +191,20 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                     (TokenKind::Dot, 1)
                 }
             }
-            '<' => (TokenKind::Less, 1),
-            '>' => (TokenKind::Greater, 1),
+            '<' => {
+                if matches!(chars.get(i + 1), Some('=')) {
+                    (TokenKind::LessEqual, 2)
+                } else {
+                    (TokenKind::Less, 1)
+                }
+            }
+            '>' => {
+                if matches!(chars.get(i + 1), Some('=')) {
+                    (TokenKind::GreaterEqual, 2)
+                } else {
+                    (TokenKind::Greater, 1)
+                }
+            }
             '=' => {
                 if matches!(chars.get(i + 1), Some('=')) {
                     (TokenKind::EqualEqual, 2)
@@ -285,7 +301,9 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                     }
                     break;
                 }
-                let number = source[i..end].to_string();
+                // `i`/`end` index into `chars`; slicing `source` with them
+                // would use byte offsets and break after any multibyte char.
+                let number: String = chars[i..end].iter().collect();
                 if number.matches('.').count() > 1 {
                     return Err(Diagnostic::new("invalid number literal"));
                 }
@@ -310,8 +328,8 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 {
                     end += 1;
                 }
-                let text = &source[i..end];
-                let kind = match text {
+                let text: String = chars[i..end].iter().collect();
+                let kind = match text.as_str() {
                     "fn" => {
                         return Err(Diagnostic::new("unsupported 'fn', use 'function'"));
                     }
@@ -476,6 +494,29 @@ fn parse_string_literal(chars: &[char], quote_index: usize) -> Result<(String, u
                     Some('\\') => value.push('\\'),
                     Some('n') => value.push('\n'),
                     Some('t') => value.push('\t'),
+                    Some('r') => value.push('\r'),
+                    Some(digit) if digit.is_ascii_digit() => {
+                        // Luau decimal escape: up to three digits, byte value <= 255.
+                        let mut code: u32 = 0;
+                        let mut digits = 0;
+                        while digits < 3 {
+                            match chars.get(end) {
+                                Some(c) if c.is_ascii_digit() => {
+                                    code = code * 10 + c.to_digit(10).unwrap();
+                                    digits += 1;
+                                    end += 1;
+                                }
+                                _ => break,
+                            }
+                        }
+                        if code > 255 {
+                            return Err(Diagnostic::new(format!(
+                                "decimal string escape '\\{code}' exceeds 255"
+                            )));
+                        }
+                        value.push(char::from_u32(code).unwrap());
+                        continue;
+                    }
                     Some(other) => {
                         return Err(Diagnostic::new(format!(
                             "unsupported string escape '\\{other}'"
@@ -749,6 +790,50 @@ mod tests {
                     span: Span { start: 9, end: 10 },
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn skips_comments_containing_multibyte_characters() {
+        assert_eq!(
+            kinds("-- em dash \u{2014} here\nlocal a = 1"),
+            vec![
+                TokenKind::Local,
+                TokenKind::Identifier("a".into()),
+                TokenKind::Equal,
+                TokenKind::Number("1".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn tokenizes_comparison_and_semicolon_punctuation() {
+        assert_eq!(
+            kinds("< <= > >= ;"),
+            vec![
+                TokenKind::Less,
+                TokenKind::LessEqual,
+                TokenKind::Greater,
+                TokenKind::GreaterEqual,
+                TokenKind::Semicolon,
+            ]
+        );
+    }
+
+    #[test]
+    fn tokenizes_decimal_string_escapes() {
+        assert_eq!(
+            kinds(r#"'\0' '\65b' '\200' '\0500'"#),
+            vec![
+                TokenKind::Str("\u{0}".into()),
+                TokenKind::Str("Ab".into()),
+                TokenKind::Str("\u{c8}".into()),
+                TokenKind::Str("20".into()),
+            ]
+        );
+        assert_eq!(
+            err(r#"'\256'"#).to_string(),
+            "decimal string escape '\\256' exceeds 255"
         );
     }
 
