@@ -21,6 +21,15 @@ const MATH_CEIL: &str = "math.ceil";
 const MATH_TRUNC: &str = "math.trunc";
 const MATH_NEAREST: &str = "math.nearest";
 const MATH_COPYSIGN: &str = "math.copysign";
+const BIT32_BNOT: &str = "bit32.bnot";
+const BIT32_BAND: &str = "bit32.band";
+const BIT32_BOR: &str = "bit32.bor";
+const BIT32_BXOR: &str = "bit32.bxor";
+const BIT32_BTEST: &str = "bit32.btest";
+const BIT32_LROTATE: &str = "bit32.lrotate";
+const BIT32_RROTATE: &str = "bit32.rrotate";
+const BIT32_COUNTLZ: &str = "bit32.countlz";
+const BIT32_COUNTRZ: &str = "bit32.countrz";
 const TABLE_CONCAT: &str = "table.concat";
 const TO_STRING: &str = "tostring";
 const SELECT: &str = "select";
@@ -82,8 +91,8 @@ pub use lower::build;
 #[cfg(test)]
 pub(crate) use lower::build_function;
 pub use model::{
-    BasicBlock, BlockId, DeclaredImport, Function, Instruction, MathIntrinsic, Module, Terminator,
-    ValueId,
+    BasicBlock, BitwiseIntrinsic, BlockId, DeclaredImport, Function, Instruction, MathIntrinsic,
+    Module, Terminator, ValueId,
 };
 pub use verify::verify;
 

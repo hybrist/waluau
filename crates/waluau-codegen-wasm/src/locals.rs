@@ -251,6 +251,7 @@ pub(crate) fn infer_value_types(
                 IrInstruction::IsNull { .. } => Type::Bool,
                 IrInstruction::ExternCastTest { .. } => Type::Bool,
                 IrInstruction::MathIntrinsic { result_ty, .. } => result_ty.clone(),
+                IrInstruction::BitwiseIntrinsic { result_ty, .. } => result_ty.clone(),
                 IrInstruction::ToString { .. } => Type::String,
                 IrInstruction::Print { .. } => Type::Unit,
                 IrInstruction::Call { name, .. } => signatures
@@ -616,6 +617,7 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
         IrInstruction::Cast { value, .. } => vec![*value],
         IrInstruction::Binary { left, right, .. } => vec![*left, *right],
         IrInstruction::MathIntrinsic { args, .. } => args.clone(),
+        IrInstruction::BitwiseIntrinsic { args, .. } => args.clone(),
         IrInstruction::Print { value } => vec![*value],
         IrInstruction::Call { args, .. } | IrInstruction::HostCall { args, .. } => args.clone(),
         IrInstruction::CallValue { callee, args, .. } => {
@@ -693,6 +695,7 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         IrInstruction::Cast { value: source, .. } => *source == value,
         IrInstruction::Binary { left, .. } => *left == value,
         IrInstruction::MathIntrinsic { args, .. } => args.first().copied() == Some(value),
+        IrInstruction::BitwiseIntrinsic { args, .. } => args.first().copied() == Some(value),
         IrInstruction::Print { value: printed } => *printed == value,
         IrInstruction::Call { args, .. } | IrInstruction::HostCall { args, .. } => {
             args.first().copied() == Some(value)

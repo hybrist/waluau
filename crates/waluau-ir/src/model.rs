@@ -84,6 +84,11 @@ pub enum Instruction {
         operand_ty: Type,
         result_ty: Type,
     },
+    BitwiseIntrinsic {
+        intrinsic: BitwiseIntrinsic,
+        args: Vec<ValueId>,
+        result_ty: Type,
+    },
     ToString {
         value: ValueId,
         from: Type,
@@ -208,6 +213,19 @@ pub enum MathIntrinsic {
     Trunc,
     Nearest,
     Copysign,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BitwiseIntrinsic {
+    Not,
+    And,
+    Or,
+    Xor,
+    Test,
+    LRotate,
+    RRotate,
+    CountLeadingZeros,
+    CountTrailingZeros,
 }
 
 #[derive(Clone, Debug, PartialEq)]

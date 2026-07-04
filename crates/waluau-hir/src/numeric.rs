@@ -545,24 +545,36 @@ fn validate_numeric_literal(
 }
 
 fn parse_float_literal(value: &NumberLiteral) -> Result<f64, Diagnostic> {
-    value
-        .raw
-        .parse::<f64>()
+    let raw = value.raw.replace('_', "");
+    if let Some(hex) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
+        return u128::from_str_radix(hex, 16)
+            .map(|value| value as f64)
+            .map_err(|_| Diagnostic::new("invalid number literal"));
+    }
+    raw.parse::<f64>()
         .map_err(|_| Diagnostic::new("invalid number literal"))
 }
 
 fn parse_integer_literal<T>(value: &NumberLiteral, ty_name: &str) -> Result<T, Diagnostic>
 where
-    T: std::str::FromStr,
+    T: std::str::FromStr + TryFrom<u128>,
 {
-    if value.raw.contains('.') {
+    let raw = value.raw.replace('_', "");
+    if raw.contains('.') {
         return Err(Diagnostic::new(format!(
             "numeric literal must be an integer for {ty_name}",
         )));
     }
 
-    value
-        .raw
-        .parse::<T>()
-        .map_err(|_| Diagnostic::new(format!("numeric literal is out of range for {ty_name}",)))
+    if let Some(hex) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
+        let value = u128::from_str_radix(hex, 16).map_err(|_| {
+            Diagnostic::new(format!("numeric literal is out of range for {ty_name}"))
+        })?;
+        return T::try_from(value).map_err(|_| {
+            Diagnostic::new(format!("numeric literal is out of range for {ty_name}"))
+        });
+    }
+
+    raw.parse::<T>()
+        .map_err(|_| Diagnostic::new(format!("numeric literal is out of range for {ty_name}")))
 }

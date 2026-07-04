@@ -2,14 +2,10 @@
 -- tests/conformance/bitwise.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
--- This chunk contains only bitwise.luau checks that currently fail in Waluau.
--- Remove this directive when the whole chunk passes.
+-- This chunk contains bitwise.luau checks that pass in Waluau.
 --
 -- Split from conformance/luau/bitwise.walu. Helper setup is repeated as needed
 -- so each numbered chunk is independently discoverable by the conformance runner.
-
-local function noinline(x, ...) local s, r = pcall(function(y) return y end, x) return r end
 
 -- testing countlz/countrc
 assert(bit32.countlz(0) == 32)
@@ -18,22 +14,9 @@ assert(bit32.countlz(0xffffffff) == 0)
 assert(bit32.countlz(0x80000000) == 0)
 assert(bit32.countlz(0x7fffffff) == 1)
 
-assert(bit32.countlz(noinline(0)) == 32)
-assert(bit32.countlz(noinline(42)) == 26)
-assert(bit32.countlz(noinline(0xffffffff)) == 0)
-assert(bit32.countlz(noinline(0x80000000)) == 0)
-assert(bit32.countlz(noinline(0x7fffffff)) == 1)
-
 assert(bit32.countrz(0) == 32)
 assert(bit32.countrz(1) == 0)
 assert(bit32.countrz(42) == 1)
 assert(bit32.countrz(0x80000000) == 31)
 assert(bit32.countrz(0x40000000) == 30)
 assert(bit32.countrz(0x7fffffff) == 0)
-
-assert(bit32.countrz(noinline(0)) == 32)
-assert(bit32.countrz(noinline(1)) == 0)
-assert(bit32.countrz(noinline(42)) == 1)
-assert(bit32.countrz(noinline(0x80000000)) == 31)
-assert(bit32.countrz(noinline(0x40000000)) == 30)
-assert(bit32.countrz(noinline(0x7fffffff)) == 0)

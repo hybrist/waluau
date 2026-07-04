@@ -124,6 +124,34 @@ fn verify_function(
                         )));
                     }
                 }
+                Instruction::BitwiseIntrinsic {
+                    args, result_ty, ..
+                } => {
+                    for arg in args {
+                        let arg_ty = require_dominating_definition(
+                            &definitions,
+                            &dominators,
+                            &seen_in_block,
+                            block.id,
+                            *arg,
+                        )?;
+                        if !matches!(
+                            arg_ty,
+                            Type::Numeric(NumericType::U32) | Type::Numeric(NumericType::I32)
+                        ) {
+                            return Err(Diagnostic::new(format!(
+                                "bitwise intrinsic argument in block {:?} has type {}, expected u32/i32",
+                                block.id, arg_ty
+                            )));
+                        }
+                    }
+                    if !matches!(result_ty, Type::Numeric(NumericType::U32) | Type::Bool) {
+                        return Err(Diagnostic::new(format!(
+                            "bitwise intrinsic in block {:?} must have u32/bool result type",
+                            block.id
+                        )));
+                    }
+                }
                 Instruction::ExternCastTest { value: tested, .. } => {
                     let tested_ty = require_dominating_definition(
                         &definitions,
@@ -973,6 +1001,7 @@ fn infer_instruction_type(
         Instruction::Cast { to, .. } => Ok(to.clone()),
         Instruction::Binary { result_ty, .. } => Ok(result_ty.clone()),
         Instruction::MathIntrinsic { result_ty, .. } => Ok(result_ty.clone()),
+        Instruction::BitwiseIntrinsic { result_ty, .. } => Ok(result_ty.clone()),
         Instruction::ToString { .. } => Ok(Type::String),
         Instruction::IsNull { .. } => Ok(Type::Bool),
         Instruction::ExternCastTest { .. } => Ok(Type::Bool),

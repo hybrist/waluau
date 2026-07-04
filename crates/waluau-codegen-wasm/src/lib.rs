@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, HashMap};
 use waluau_ast::{BinaryOp, NumberLiteral, NumericType, SymbolId, Type};
 use waluau_diagnostics::Diagnostic;
 use waluau_ir::{
-    BasicBlock, Function as IrFunction, Instruction as IrInstruction, MathIntrinsic, Module,
-    Terminator, ValueId,
+    BasicBlock, BitwiseIntrinsic, Function as IrFunction, Instruction as IrInstruction,
+    MathIntrinsic, Module, Terminator, ValueId,
 };
 use wasm_encoder::{
     AbstractHeapType, BlockType, CodeSection, ConstExpr, CustomSection, ElementSection, Elements,
@@ -2034,6 +2034,15 @@ fn emit_block_instructions(
                 emit_math_intrinsic(out, *intrinsic, operand_ty.clone())?;
                 emit_value_store(out, local_plan, *value)?;
             }
+            IrInstruction::BitwiseIntrinsic {
+                intrinsic, args, ..
+            } => {
+                for arg in args {
+                    emit_value_operand(out, local_plan, *arg)?;
+                }
+                emit_bitwise_intrinsic(out, *intrinsic, args.len())?;
+                emit_value_store(out, local_plan, *value)?;
+            }
             IrInstruction::Print { value: printed } => {
                 emit_value_operand(out, local_plan, *printed)?;
                 out.instruction(&Instruction::Call(
@@ -2928,49 +2937,112 @@ fn emit_numeric_const(
 ) -> Result<(), Diagnostic> {
     match ty {
         NumericType::U32 => {
-            out.instruction(&Instruction::I32Const(
-                parse_numeric_literal::<u32>(literal, "u32")? as i32,
-            ));
+            out.instruction(&Instruction::I32Const(parse_u32_literal(literal)? as i32));
         }
         NumericType::I32 => {
-            out.instruction(&Instruction::I32Const(parse_numeric_literal::<i32>(
-                literal, "i32",
-            )?));
+            out.instruction(&Instruction::I32Const(parse_i32_literal(literal)?));
         }
         NumericType::U64 => {
-            out.instruction(&Instruction::I64Const(
-                parse_numeric_literal::<u64>(literal, "u64")? as i64,
-            ));
+            out.instruction(&Instruction::I64Const(parse_u64_literal(literal)? as i64));
         }
         NumericType::I64 => {
-            out.instruction(&Instruction::I64Const(parse_numeric_literal::<i64>(
-                literal, "i64",
-            )?));
+            out.instruction(&Instruction::I64Const(parse_i64_literal(literal)?));
         }
         NumericType::F32 => {
-            out.instruction(&Instruction::F32Const(parse_numeric_literal::<f32>(
-                literal, "f32",
-            )?));
+            out.instruction(&Instruction::F32Const(parse_f64_literal(literal)? as f32));
         }
         NumericType::F64 => {
-            out.instruction(&Instruction::F64Const(parse_numeric_literal::<f64>(
-                literal, "f64",
-            )?));
+            out.instruction(&Instruction::F64Const(parse_f64_literal(literal)?));
         }
     }
 
     Ok(())
 }
 
-fn parse_numeric_literal<T>(literal: &NumberLiteral, ty_name: &str) -> Result<T, Diagnostic>
-where
-    T: std::str::FromStr,
-{
-    literal.raw.parse::<T>().map_err(|_| {
+fn normalized_numeric_literal(literal: &NumberLiteral) -> String {
+    literal.raw.replace('_', "")
+}
+
+fn hex_digits(raw: &str) -> Option<&str> {
+    raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X"))
+}
+
+fn parse_u128_literal(literal: &NumberLiteral, ty_name: &str) -> Result<u128, Diagnostic> {
+    let raw = normalized_numeric_literal(literal);
+    if raw.contains('.') {
+        return Err(Diagnostic::new(format!(
+            "invalid {ty_name} numeric literal during wasm emission"
+        )));
+    }
+    if let Some(hex) = hex_digits(&raw) {
+        return u128::from_str_radix(hex, 16).map_err(|_| {
+            Diagnostic::new(format!(
+                "invalid {ty_name} numeric literal during wasm emission"
+            ))
+        });
+    }
+    raw.parse::<u128>().map_err(|_| {
         Diagnostic::new(format!(
             "invalid {ty_name} numeric literal during wasm emission"
         ))
     })
+}
+
+fn parse_i128_literal(literal: &NumberLiteral, ty_name: &str) -> Result<i128, Diagnostic> {
+    let raw = normalized_numeric_literal(literal);
+    if raw.contains('.') {
+        return Err(Diagnostic::new(format!(
+            "invalid {ty_name} numeric literal during wasm emission"
+        )));
+    }
+    if let Some(hex) = hex_digits(&raw) {
+        let value = u128::from_str_radix(hex, 16).map_err(|_| {
+            Diagnostic::new(format!(
+                "invalid {ty_name} numeric literal during wasm emission"
+            ))
+        })?;
+        return i128::try_from(value).map_err(|_| {
+            Diagnostic::new(format!(
+                "invalid {ty_name} numeric literal during wasm emission"
+            ))
+        });
+    }
+    raw.parse::<i128>().map_err(|_| {
+        Diagnostic::new(format!(
+            "invalid {ty_name} numeric literal during wasm emission"
+        ))
+    })
+}
+
+fn parse_u32_literal(literal: &NumberLiteral) -> Result<u32, Diagnostic> {
+    u32::try_from(parse_u128_literal(literal, "u32")?)
+        .map_err(|_| Diagnostic::new("invalid u32 numeric literal during wasm emission"))
+}
+
+fn parse_i32_literal(literal: &NumberLiteral) -> Result<i32, Diagnostic> {
+    i32::try_from(parse_i128_literal(literal, "i32")?)
+        .map_err(|_| Diagnostic::new("invalid i32 numeric literal during wasm emission"))
+}
+
+fn parse_u64_literal(literal: &NumberLiteral) -> Result<u64, Diagnostic> {
+    u64::try_from(parse_u128_literal(literal, "u64")?)
+        .map_err(|_| Diagnostic::new("invalid u64 numeric literal during wasm emission"))
+}
+
+fn parse_i64_literal(literal: &NumberLiteral) -> Result<i64, Diagnostic> {
+    i64::try_from(parse_i128_literal(literal, "i64")?)
+        .map_err(|_| Diagnostic::new("invalid i64 numeric literal during wasm emission"))
+}
+
+fn parse_f64_literal(literal: &NumberLiteral) -> Result<f64, Diagnostic> {
+    let raw = normalized_numeric_literal(literal);
+    if let Some(hex) = hex_digits(&raw) {
+        return u128::from_str_radix(hex, 16)
+            .map(|value| value as f64)
+            .map_err(|_| Diagnostic::new("invalid f64 numeric literal during wasm emission"));
+    }
+    raw.parse::<f64>()
+        .map_err(|_| Diagnostic::new("invalid f64 numeric literal during wasm emission"))
 }
 
 fn emit_cast(
@@ -3791,6 +3863,75 @@ fn emit_math_intrinsic(
             return Err(Diagnostic::new(format!(
                 "math intrinsic {intrinsic:?} does not support {ty} during wasm emission"
             )));
+        }
+    }
+    Ok(())
+}
+
+fn emit_bitwise_intrinsic(
+    out: &mut Function,
+    intrinsic: BitwiseIntrinsic,
+    arity: usize,
+) -> Result<(), Diagnostic> {
+    match intrinsic {
+        BitwiseIntrinsic::Not => {
+            debug_assert_eq!(arity, 1);
+            out.instruction(&Instruction::I32Const(-1));
+            out.instruction(&Instruction::I32Xor);
+        }
+        BitwiseIntrinsic::And => {
+            if arity == 0 {
+                out.instruction(&Instruction::I32Const(-1));
+            } else {
+                for _ in 1..arity {
+                    out.instruction(&Instruction::I32And);
+                }
+            }
+        }
+        BitwiseIntrinsic::Or => {
+            if arity == 0 {
+                out.instruction(&Instruction::I32Const(0));
+            } else {
+                for _ in 1..arity {
+                    out.instruction(&Instruction::I32Or);
+                }
+            }
+        }
+        BitwiseIntrinsic::Xor => {
+            if arity == 0 {
+                out.instruction(&Instruction::I32Const(0));
+            } else {
+                for _ in 1..arity {
+                    out.instruction(&Instruction::I32Xor);
+                }
+            }
+        }
+        BitwiseIntrinsic::Test => {
+            if arity == 0 {
+                out.instruction(&Instruction::I32Const(1));
+            } else {
+                for _ in 1..arity {
+                    out.instruction(&Instruction::I32And);
+                }
+                out.instruction(&Instruction::I32Eqz);
+                out.instruction(&Instruction::I32Eqz);
+            }
+        }
+        BitwiseIntrinsic::LRotate => {
+            debug_assert_eq!(arity, 2);
+            out.instruction(&Instruction::I32Rotl);
+        }
+        BitwiseIntrinsic::RRotate => {
+            debug_assert_eq!(arity, 2);
+            out.instruction(&Instruction::I32Rotr);
+        }
+        BitwiseIntrinsic::CountLeadingZeros => {
+            debug_assert_eq!(arity, 1);
+            out.instruction(&Instruction::I32Clz);
+        }
+        BitwiseIntrinsic::CountTrailingZeros => {
+            debug_assert_eq!(arity, 1);
+            out.instruction(&Instruction::I32Ctz);
         }
     }
     Ok(())

@@ -669,6 +669,7 @@ impl Resolver {
             "promise",
             "table",
             "string",
+            "bit32",
         ] {
             let id = resolver.next_id();
             global_bindings.insert(builtin.to_string(), id);

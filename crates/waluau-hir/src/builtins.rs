@@ -30,6 +30,15 @@ pub(super) const MATH_CEIL: &str = "math.ceil";
 pub(super) const MATH_TRUNC: &str = "math.trunc";
 pub(super) const MATH_NEAREST: &str = "math.nearest";
 pub(super) const MATH_COPYSIGN: &str = "math.copysign";
+pub(super) const BIT32_BNOT: &str = "bit32.bnot";
+pub(super) const BIT32_BAND: &str = "bit32.band";
+pub(super) const BIT32_BOR: &str = "bit32.bor";
+pub(super) const BIT32_BXOR: &str = "bit32.bxor";
+pub(super) const BIT32_BTEST: &str = "bit32.btest";
+pub(super) const BIT32_LROTATE: &str = "bit32.lrotate";
+pub(super) const BIT32_RROTATE: &str = "bit32.rrotate";
+pub(super) const BIT32_COUNTLZ: &str = "bit32.countlz";
+pub(super) const BIT32_COUNTRZ: &str = "bit32.countrz";
 pub(super) const TABLE_CONCAT: &str = "table.concat";
 pub(super) const TO_STRING: &str = "tostring";
 pub(super) const SELECT: &str = "select";
@@ -360,6 +369,68 @@ pub(super) fn infer_math_builtin_call(
         ))));
     }
     Some(coerce_type(Type::Numeric(first_numeric), expected))
+}
+
+pub(super) fn infer_bit32_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    let u32_ty = Type::Numeric(NumericType::U32);
+    let i32_ty = Type::Numeric(NumericType::I32);
+    let result_ty = match name {
+        BIT32_BNOT | BIT32_COUNTLZ | BIT32_COUNTRZ => {
+            if args.len() != 1 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects 1 argument, got {}",
+                    args.len()
+                ))));
+            }
+            u32_ty.clone()
+        }
+        BIT32_LROTATE | BIT32_RROTATE => {
+            if args.len() != 2 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects 2 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            u32_ty.clone()
+        }
+        BIT32_BAND | BIT32_BOR | BIT32_BXOR => u32_ty.clone(),
+        BIT32_BTEST => Type::Bool,
+        _ => return None,
+    };
+
+    for (index, arg) in args.iter().enumerate() {
+        let expected_arg = if matches!(name, BIT32_LROTATE | BIT32_RROTATE) && index == 1 {
+            i32_ty.clone()
+        } else {
+            u32_ty.clone()
+        };
+        match super::expressions::infer_expr(
+            arg,
+            vars,
+            fn_signatures,
+            active_type_params,
+            Some(expected_arg.clone()),
+        ) {
+            Ok(ty) if ty == expected_arg => {}
+            Ok(ty) => {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects {} argument #{}, got {ty}",
+                    expected_arg,
+                    index + 1
+                ))));
+            }
+            Err(error) => return Some(Err(error)),
+        }
+    }
+
+    Some(coerce_type(result_ty, expected))
 }
 
 pub(super) fn infer_tostring_builtin_call(

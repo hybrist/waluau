@@ -5,7 +5,7 @@ use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
 use super::Binding;
 use super::builtins::{
-    STRING_FIND, infer_coroutine_builtin_call, infer_math_builtin_call,
+    STRING_FIND, infer_bit32_builtin_call, infer_coroutine_builtin_call, infer_math_builtin_call,
     infer_promise_await_method_call, infer_promise_builtin_call, infer_select_builtin_call,
     infer_string_builtin_call, infer_table_builtin_call, infer_tostring_builtin_call,
 };
@@ -494,6 +494,16 @@ pub(super) fn infer_expr(
                     return result;
                 }
                 if let Some(result) = infer_math_builtin_call(
+                    &name,
+                    args,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    expected.clone(),
+                ) {
+                    return result;
+                }
+                if let Some(result) = infer_bit32_builtin_call(
                     &name,
                     args,
                     vars,
