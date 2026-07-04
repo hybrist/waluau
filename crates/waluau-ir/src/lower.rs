@@ -3724,6 +3724,11 @@ impl Builder<'_> {
                     {
                         return result;
                     }
+                    if let Some(result) =
+                        self.lower_bit32_builtin_call(&name, args, env, types, expected.clone())
+                    {
+                        return result;
+                    }
                     if let Some(result) = self.lower_coroutine_builtin_call(
                         &name,
                         args,
@@ -4587,6 +4592,9 @@ impl Builder<'_> {
                     if let Some(result) = self.infer_math_builtin_call_type(&name, expr, types) {
                         return result;
                     }
+                    if let Some(result) = self.infer_bit32_builtin_call_type(&name, args, types) {
+                        return result;
+                    }
                     if let Some(result) =
                         self.infer_coroutine_builtin_call_type(&name, expr, types, expected.clone())
                     {
@@ -5440,6 +5448,66 @@ impl Builder<'_> {
         Some(self.coerce_value(value, operand_ty, expected))
     }
 
+    fn lower_bit32_builtin_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<ValueId, Diagnostic>> {
+        let (intrinsic, arity, result_ty) = match name {
+            BIT32_BNOT => (BitwiseIntrinsic::Not, Some(1), Type::Numeric(NumericType::U32)),
+            BIT32_BAND => (BitwiseIntrinsic::And, None, Type::Numeric(NumericType::U32)),
+            BIT32_BOR => (BitwiseIntrinsic::Or, None, Type::Numeric(NumericType::U32)),
+            BIT32_BXOR => (BitwiseIntrinsic::Xor, None, Type::Numeric(NumericType::U32)),
+            BIT32_BTEST => (BitwiseIntrinsic::Test, None, Type::Bool),
+            BIT32_LROTATE => (BitwiseIntrinsic::LRotate, Some(2), Type::Numeric(NumericType::U32)),
+            BIT32_RROTATE => (BitwiseIntrinsic::RRotate, Some(2), Type::Numeric(NumericType::U32)),
+            BIT32_COUNTLZ => {
+                (BitwiseIntrinsic::CountLeadingZeros, Some(1), Type::Numeric(NumericType::U32))
+            }
+            BIT32_COUNTRZ => {
+                (BitwiseIntrinsic::CountTrailingZeros, Some(1), Type::Numeric(NumericType::U32))
+            }
+            _ => return None,
+        };
+        if let Some(arity) = arity {
+            if args.len() != arity {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects {arity} argument{}, got {}",
+                    if arity == 1 { "" } else { "s" },
+                    args.len()
+                ))));
+            }
+        }
+
+        let u32_ty = Type::Numeric(NumericType::U32);
+        let i32_ty = Type::Numeric(NumericType::I32);
+        let mut lowered = Vec::with_capacity(args.len());
+        for (index, arg) in args.iter().enumerate() {
+            let expected_arg =
+                if matches!(intrinsic, BitwiseIntrinsic::LRotate | BitwiseIntrinsic::RRotate)
+                    && index == 1
+                {
+                    i32_ty.clone()
+                } else {
+                    u32_ty.clone()
+                };
+            match self.lower_expr(arg, env, types, Some(expected_arg)) {
+                Ok(value) => lowered.push(value),
+                Err(error) => return Some(Err(error)),
+            }
+        }
+
+        let value = self.emit(Instruction::BitwiseIntrinsic {
+            intrinsic,
+            args: lowered,
+            result_ty: result_ty.clone(),
+        });
+        Some(self.coerce_value(value, result_ty, expected))
+    }
+
     fn lower_tostring_builtin_call(
         &mut self,
         name: &str,
@@ -5788,6 +5856,53 @@ impl Builder<'_> {
         }
 
         Some(Ok(Type::Numeric(first_numeric)))
+    }
+
+    fn infer_bit32_builtin_call_type(
+        &self,
+        name: &str,
+        args: &[Expr],
+        types: &HashMap<SymbolId, Type>,
+    ) -> Option<Result<Type, Diagnostic>> {
+        let (arity, result_ty) = match name {
+            BIT32_BNOT | BIT32_COUNTLZ | BIT32_COUNTRZ => (Some(1), Type::Numeric(NumericType::U32)),
+            BIT32_LROTATE | BIT32_RROTATE => (Some(2), Type::Numeric(NumericType::U32)),
+            BIT32_BAND | BIT32_BOR | BIT32_BXOR => (None, Type::Numeric(NumericType::U32)),
+            BIT32_BTEST => (None, Type::Bool),
+            _ => return None,
+        };
+        if let Some(arity) = arity {
+            if args.len() != arity {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects {arity} argument{}, got {}",
+                    if arity == 1 { "" } else { "s" },
+                    args.len()
+                ))));
+            }
+        }
+
+        let u32_ty = Type::Numeric(NumericType::U32);
+        let i32_ty = Type::Numeric(NumericType::I32);
+        for (index, arg) in args.iter().enumerate() {
+            let expected_arg =
+                if matches!(name, BIT32_LROTATE | BIT32_RROTATE) && index == 1 {
+                    i32_ty.clone()
+                } else {
+                    u32_ty.clone()
+                };
+            match self.infer_expr_type(arg, types, Some(expected_arg.clone())) {
+                Ok(ty) if ty == expected_arg => {}
+                Ok(ty) => {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{name} expects {} argument #{}, got {ty}",
+                        expected_arg,
+                        index + 1
+                    ))));
+                }
+                Err(error) => return Some(Err(error)),
+            }
+        }
+        Some(Ok(result_ty))
     }
 
     fn infer_tostring_builtin_call_type(

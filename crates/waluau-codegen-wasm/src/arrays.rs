@@ -263,6 +263,7 @@ fn collect_record_types_from_instruction(
         | IrInstruction::Bytes(_)
         | IrInstruction::Binary { .. }
         | IrInstruction::MathIntrinsic { .. }
+        | IrInstruction::BitwiseIntrinsic { .. }
         | IrInstruction::Print { .. }
         | IrInstruction::ToString { .. }
         | IrInstruction::Call { .. }

@@ -271,27 +271,43 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
             }
             d if d.is_ascii_digit() => {
                 let mut end = i + 1;
-                while end < chars.len() {
-                    if chars[end].is_ascii_digit() {
+                if d == '0' && matches!(chars.get(end), Some('x' | 'X')) {
+                    end += 1;
+                    while end < chars.len() && (chars[end].is_ascii_hexdigit() || chars[end] == '_')
+                    {
                         end += 1;
-                        continue;
                     }
-                    if chars[end] == '.' {
-                        if matches!(chars.get(end + 1), Some('.')) {
-                            break;
+                } else {
+                    while end < chars.len() {
+                        if chars[end].is_ascii_digit() || chars[end] == '_' {
+                            end += 1;
+                            continue;
                         }
-                        end += 1;
-                        continue;
+                        if chars[end] == '.' {
+                            if matches!(chars.get(end + 1), Some('.')) {
+                                break;
+                            }
+                            end += 1;
+                            continue;
+                        }
+                        break;
                     }
-                    break;
                 }
                 let number = source[i..end].to_string();
                 if number.matches('.').count() > 1 {
                     return Err(Diagnostic::new("invalid number literal"));
                 }
                 if number.contains('.') {
+                    let normalized = number.replace('_', "");
                     number
                         .parse::<f64>()
+                        .or_else(|_| normalized.parse::<f64>())
+                        .map_err(|_| Diagnostic::new("invalid number literal"))?;
+                } else if matches!(number.as_str(), "0x" | "0X") {
+                    return Err(Diagnostic::new("invalid number literal"));
+                } else if number.starts_with("0x") || number.starts_with("0X") {
+                    let digits = number[2..].replace('_', "");
+                    u128::from_str_radix(&digits, 16)
                         .map_err(|_| Diagnostic::new("invalid number literal"))?;
                 }
                 tokens.push(Token {

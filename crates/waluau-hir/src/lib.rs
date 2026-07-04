@@ -39,6 +39,23 @@ fn binding_for(ty: Type, rebindability: Rebindability) -> Binding {
     }
 }
 
+fn is_builtin_callee(expr: &Expr) -> bool {
+    match expr {
+        Expr::Name(name, _, _) => {
+            matches!(name.as_str(), "assert" | "print" | "select" | "tostring")
+        }
+        Expr::Field { base, .. } => matches!(
+            base.as_ref(),
+            Expr::Name(namespace, _, _)
+                if matches!(
+                    namespace.as_str(),
+                    "bit32" | "coroutine" | "math" | "promise" | "string" | "table"
+                )
+        ),
+        _ => false,
+    }
+}
+
 fn annotate_inferred_expr_locals(
     expr: &mut Expr,
     vars: &HashMap<String, Binding>,
@@ -64,7 +81,9 @@ fn annotate_inferred_expr_locals(
             annotate_inferred_expr_locals(else_expr, vars, fn_signatures, active_type_params)
         }
         Expr::Call { callee, args, .. } => {
-            annotate_inferred_expr_locals(callee, vars, fn_signatures, active_type_params)?;
+            if !is_builtin_callee(callee) {
+                annotate_inferred_expr_locals(callee, vars, fn_signatures, active_type_params)?;
+            }
             for arg in args {
                 annotate_inferred_expr_locals(arg, vars, fn_signatures, active_type_params)?;
             }
@@ -2227,7 +2246,9 @@ fn annotate_expr_resolved_members(
             annotate_expr_resolved_members(else_expr, vars, fn_signatures, active_type_params)?;
         }
         Expr::Call { callee, args, .. } => {
-            annotate_expr_resolved_members(callee, vars, fn_signatures, active_type_params)?;
+            if !is_builtin_callee(callee) {
+                annotate_expr_resolved_members(callee, vars, fn_signatures, active_type_params)?;
+            }
             for arg in args {
                 annotate_expr_resolved_members(arg, vars, fn_signatures, active_type_params)?;
             }
