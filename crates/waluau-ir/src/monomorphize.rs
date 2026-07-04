@@ -1467,8 +1467,12 @@ impl<'a> Monomorphizer<'a> {
                 ..
             } => {
                 let receiver_ty = self.infer_expr_type(receiver, subst, types)?;
-                if receiver_ty == Type::String && name == "find" {
-                    return Ok(Type::Numeric(waluau_ast::NumericType::I32));
+                if receiver_ty == Type::String {
+                    return match name.as_str() {
+                        "find" | "len" | "byte" => Ok(Type::Numeric(waluau_ast::NumericType::I32)),
+                        "sub" | "rep" | "upper" | "lower" | "format" => Ok(Type::String),
+                        _ => Ok(Type::Unknown),
+                    };
                 }
                 if name == "await" && crate::is_promise_like_extern(&receiver_ty) {
                     return Ok(Type::Unknown);
@@ -1730,9 +1734,11 @@ impl<'a> Monomorphizer<'a> {
                     Ok(Some(Type::number()))
                 }
             }
-            "string.find" => {
+            "string.find" | "string.len" | "string.byte" => {
                 Ok(Some(Type::Numeric(waluau_ast::NumericType::I32)))
             }
+            "string.sub" | "string.rep" | "string.char" | "string.upper" | "string.lower"
+            | "string.format" => Ok(Some(Type::String)),
             _ => Ok(None),
         }
     }

@@ -37,6 +37,22 @@ const ASSERT: &str = "assert";
 const PRINT: &str = "print";
 const STRING_FIND: &str = "string.find";
 const STRING_FIND_HOST: &str = "string_find";
+const STRING_LEN: &str = "string.len";
+const STRING_LEN_HOST: &str = "string_len";
+const STRING_SUB: &str = "string.sub";
+const STRING_SUB_HOST: &str = "string_sub";
+const STRING_REP: &str = "string.rep";
+const STRING_REP_HOST: &str = "string_rep";
+const STRING_BYTE: &str = "string.byte";
+const STRING_BYTE_HOST: &str = "string_byte";
+const STRING_CHAR: &str = "string.char";
+const STRING_CHAR_HOST_PREFIX: &str = "string_char";
+const STRING_UPPER: &str = "string.upper";
+const STRING_UPPER_HOST: &str = "string_upper";
+const STRING_LOWER: &str = "string.lower";
+const STRING_LOWER_HOST: &str = "string_lower";
+const STRING_FORMAT: &str = "string.format";
+const STRING_FORMAT_HOST_PREFIX: &str = "string_format";
 
 fn is_promise_like_extern(ty: &Type) -> bool {
     match ty {

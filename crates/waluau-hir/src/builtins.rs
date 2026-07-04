@@ -44,6 +44,14 @@ pub(super) const TO_STRING: &str = "tostring";
 pub(super) const SELECT: &str = "select";
 pub(super) const ASSERT: &str = "assert";
 pub(super) const STRING_FIND: &str = "string.find";
+pub(super) const STRING_LEN: &str = "string.len";
+pub(super) const STRING_SUB: &str = "string.sub";
+pub(super) const STRING_REP: &str = "string.rep";
+pub(super) const STRING_BYTE: &str = "string.byte";
+pub(super) const STRING_CHAR: &str = "string.char";
+pub(super) const STRING_UPPER: &str = "string.upper";
+pub(super) const STRING_LOWER: &str = "string.lower";
+pub(super) const STRING_FORMAT: &str = "string.format";
 // pub(super) const PRINT: &str = "print"; // now handled via extern declaration
 
 fn promise_resolved_type(ty: &Type) -> Option<Type> {
@@ -586,90 +594,292 @@ pub(super) fn infer_string_builtin_call(
     active_type_params: &HashSet<String>,
     expected: Option<Type>,
 ) -> Option<Result<Type, Diagnostic>> {
-    if name != STRING_FIND {
-        return None;
-    }
-
-    // string.find(haystack, needle, init?, plain?): the trailing `init` (search
-    // start offset) and `plain` (plain substring search) arguments are optional.
-    if args.len() < 2 || args.len() > 4 {
-        return Some(Err(Diagnostic::new(format!(
-            "{STRING_FIND} expects 2 to 4 arguments, got {}",
-            args.len()
-        ))));
-    }
-
-    let haystack_ty = match super::expressions::infer_expr(
-        &args[0],
-        vars,
-        fn_signatures,
-        active_type_params,
-        Some(Type::String),
-    ) {
-        Ok(ty) => ty,
-        Err(error) => return Some(Err(error)),
-    };
-    if haystack_ty != Type::String {
-        return Some(Err(Diagnostic::new(format!(
-            "{STRING_FIND} expects haystack to be a string, got {haystack_ty}"
-        ))));
-    }
-
-    let needle_ty = match super::expressions::infer_expr(
-        &args[1],
-        vars,
-        fn_signatures,
-        active_type_params,
-        Some(Type::String),
-    ) {
-        Ok(ty) => ty,
-        Err(error) => return Some(Err(error)),
-    };
-    if needle_ty != Type::String {
-        return Some(Err(Diagnostic::new(format!(
-            "{STRING_FIND} expects needle to be a string, got {needle_ty}"
-        ))));
-    }
-
     let i32_ty = Type::Numeric(NumericType::I32);
-    if let Some(init_arg) = args.get(2) {
-        let init_ty = match super::expressions::infer_expr(
-            init_arg,
-            vars,
-            fn_signatures,
-            active_type_params,
-            Some(i32_ty.clone()),
-        ) {
-            Ok(ty) => ty,
-            Err(error) => return Some(Err(error)),
-        };
-        if init_ty != i32_ty {
-            return Some(Err(Diagnostic::new(format!(
-                "{STRING_FIND} expects init to be an i32, got {init_ty}"
-            ))));
+    match name {
+        STRING_FIND => {
+            if args.len() < 2 || args.len() > 4 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{STRING_FIND} expects 2 to 4 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            if let Err(error) = require_arg_type(
+                STRING_FIND,
+                "haystack",
+                &args[0],
+                Type::String,
+                vars,
+                fn_signatures,
+                active_type_params,
+            ) {
+                return Some(Err(error));
+            }
+            if let Err(error) = require_arg_type(
+                STRING_FIND,
+                "needle",
+                &args[1],
+                Type::String,
+                vars,
+                fn_signatures,
+                active_type_params,
+            ) {
+                return Some(Err(error));
+            }
+            if let Some(init_arg) = args.get(2) {
+                if let Err(error) = require_arg_type(
+                    STRING_FIND,
+                    "init",
+                    init_arg,
+                    i32_ty.clone(),
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                ) {
+                    return Some(Err(error));
+                }
+            }
+            if let Some(plain_arg) = args.get(3) {
+                if let Err(error) = require_arg_type(
+                    STRING_FIND,
+                    "plain",
+                    plain_arg,
+                    Type::Bool,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                ) {
+                    return Some(Err(error));
+                }
+            }
+            Some(coerce_type(i32_ty, expected))
         }
-    }
-
-    if let Some(plain_arg) = args.get(3) {
-        let plain_ty = match super::expressions::infer_expr(
-            plain_arg,
-            vars,
-            fn_signatures,
-            active_type_params,
-            Some(Type::Bool),
-        ) {
-            Ok(ty) => ty,
-            Err(error) => return Some(Err(error)),
-        };
-        if plain_ty != Type::Bool {
-            return Some(Err(Diagnostic::new(format!(
-                "{STRING_FIND} expects plain to be a bool, got {plain_ty}"
-            ))));
+        STRING_LEN | STRING_UPPER | STRING_LOWER => {
+            if args.len() != 1 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} expects 1 argument, got {}",
+                    args.len()
+                ))));
+            }
+            if let Err(error) = require_arg_type(
+                name,
+                "value",
+                &args[0],
+                Type::String,
+                vars,
+                fn_signatures,
+                active_type_params,
+            ) {
+                return Some(Err(error));
+            }
+            let result = if name == STRING_LEN {
+                i32_ty
+            } else {
+                Type::String
+            };
+            Some(coerce_type(result, expected))
         }
+        STRING_SUB => {
+            if args.len() < 2 || args.len() > 3 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{STRING_SUB} expects 2 or 3 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            if let Err(error) = require_arg_type(
+                STRING_SUB,
+                "value",
+                &args[0],
+                Type::String,
+                vars,
+                fn_signatures,
+                active_type_params,
+            ) {
+                return Some(Err(error));
+            }
+            for (index, label) in [(1, "first"), (2, "last")] {
+                if let Some(arg) = args.get(index) {
+                    if let Err(error) = require_arg_type(
+                        STRING_SUB,
+                        label,
+                        arg,
+                        i32_ty.clone(),
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                    ) {
+                        return Some(Err(error));
+                    }
+                }
+            }
+            Some(coerce_type(Type::String, expected))
+        }
+        STRING_REP => {
+            if args.len() < 2 || args.len() > 3 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{STRING_REP} expects 2 or 3 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            if let Err(error) = require_arg_type(
+                STRING_REP,
+                "value",
+                &args[0],
+                Type::String,
+                vars,
+                fn_signatures,
+                active_type_params,
+            ) {
+                return Some(Err(error));
+            }
+            if let Err(error) = require_arg_type(
+                STRING_REP,
+                "count",
+                &args[1],
+                i32_ty.clone(),
+                vars,
+                fn_signatures,
+                active_type_params,
+            ) {
+                return Some(Err(error));
+            }
+            if let Some(separator) = args.get(2) {
+                if let Err(error) = require_arg_type(
+                    STRING_REP,
+                    "separator",
+                    separator,
+                    Type::String,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                ) {
+                    return Some(Err(error));
+                }
+            }
+            Some(coerce_type(Type::String, expected))
+        }
+        STRING_BYTE => {
+            if args.is_empty() || args.len() > 2 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{STRING_BYTE} expects 1 or 2 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            if let Err(error) = require_arg_type(
+                STRING_BYTE,
+                "value",
+                &args[0],
+                Type::String,
+                vars,
+                fn_signatures,
+                active_type_params,
+            ) {
+                return Some(Err(error));
+            }
+            if let Some(index) = args.get(1) {
+                if let Err(error) = require_arg_type(
+                    STRING_BYTE,
+                    "index",
+                    index,
+                    i32_ty.clone(),
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                ) {
+                    return Some(Err(error));
+                }
+            }
+            Some(coerce_type(i32_ty, expected))
+        }
+        STRING_CHAR => {
+            if args.len() > 8 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{STRING_CHAR} expects at most 8 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            for arg in args {
+                if let Err(error) = require_arg_type(
+                    STRING_CHAR,
+                    "code",
+                    arg,
+                    i32_ty.clone(),
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                ) {
+                    return Some(Err(error));
+                }
+            }
+            Some(coerce_type(Type::String, expected))
+        }
+        STRING_FORMAT => {
+            if args.is_empty() || args.len() > 9 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{STRING_FORMAT} expects 1 to 9 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            if let Err(error) = require_arg_type(
+                STRING_FORMAT,
+                "format",
+                &args[0],
+                Type::String,
+                vars,
+                fn_signatures,
+                active_type_params,
+            ) {
+                return Some(Err(error));
+            }
+            for arg in args.iter().skip(1) {
+                let arg_ty = match super::expressions::infer_expr(
+                    arg,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    None,
+                ) {
+                    Ok(ty) => ty,
+                    Err(error) => return Some(Err(error)),
+                };
+                if !(arg_ty.is_numeric()
+                    || arg_ty == Type::Bool
+                    || arg_ty == Type::String
+                    || arg_ty == Type::Unknown)
+                {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_FORMAT} expects primitive format arguments, got {arg_ty}",
+                    ))));
+                }
+            }
+            Some(coerce_type(Type::String, expected))
+        }
+        _ => None,
     }
+}
 
-    // Return type: i32 (0-based position, or -1 if not found)
-    Some(coerce_type(i32_ty, expected))
+fn require_arg_type(
+    builtin: &str,
+    label: &str,
+    arg: &Expr,
+    expected: Type,
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+) -> Result<(), Diagnostic> {
+    let actual = super::expressions::infer_expr(
+        arg,
+        vars,
+        fn_signatures,
+        active_type_params,
+        Some(expected.clone()),
+    )?;
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(Diagnostic::new(format!(
+            "{builtin} expects {label} to be {expected}, got {actual}"
+        )))
+    }
 }
 
 // infer_print_builtin_call removed - now handled via extern function declaration

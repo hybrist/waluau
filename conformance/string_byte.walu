@@ -1,0 +1,7 @@
+-- string.byte / string:byte returns one 0-based code point, or -1 out of range.
+
+local message: string = "ABC"
+
+assert(string.byte(message) == 65)
+assert(message:byte(1) == 66)
+assert(string.byte(message, 9) == -1)

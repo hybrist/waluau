@@ -5,7 +5,8 @@ use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
 use super::Binding;
 use super::builtins::{
-    STRING_FIND, infer_bit32_builtin_call, infer_coroutine_builtin_call, infer_math_builtin_call,
+    STRING_BYTE, STRING_FIND, STRING_FORMAT, STRING_LEN, STRING_LOWER, STRING_REP, STRING_SUB,
+    STRING_UPPER, infer_bit32_builtin_call, infer_coroutine_builtin_call, infer_math_builtin_call,
     infer_promise_await_method_call, infer_promise_builtin_call, infer_select_builtin_call,
     infer_string_builtin_call, infer_table_builtin_call, infer_tostring_builtin_call,
 };
@@ -399,11 +400,13 @@ pub(super) fn infer_expr(
             }
             UnaryOp::Len => {
                 let actual = infer_expr(expr, vars, fn_signatures, active_type_params, None)?;
-                if actual == Type::Bytes {
+                if actual == Type::String || actual == Type::Bytes {
                     return coerce_type(Type::Numeric(NumericType::I32), expected);
                 }
                 if !actual.is_array() {
-                    return Err(Diagnostic::new("# requires an array or bytes operand"));
+                    return Err(Diagnostic::new(
+                        "# requires a string, array, or bytes operand",
+                    ));
                 }
                 coerce_type(Type::Numeric(NumericType::I32), expected)
             }
@@ -712,19 +715,32 @@ pub(super) fn infer_expr(
             ..
         } => {
             let receiver_ty = infer_expr(receiver, vars, fn_signatures, active_type_params, None)?;
-            if receiver_ty == Type::String && name == "find" {
+            if receiver_ty == Type::String {
                 let mut call_args = Vec::with_capacity(args.len() + 1);
                 call_args.push((**receiver).clone());
                 call_args.extend_from_slice(args);
-                if let Some(result) = infer_string_builtin_call(
-                    STRING_FIND,
-                    &call_args,
-                    vars,
-                    fn_signatures,
-                    active_type_params,
-                    expected.clone(),
-                ) {
-                    return result;
+                let builtin = match name.as_str() {
+                    "find" => Some(STRING_FIND),
+                    "len" => Some(STRING_LEN),
+                    "sub" => Some(STRING_SUB),
+                    "rep" => Some(STRING_REP),
+                    "byte" => Some(STRING_BYTE),
+                    "upper" => Some(STRING_UPPER),
+                    "lower" => Some(STRING_LOWER),
+                    "format" => Some(STRING_FORMAT),
+                    _ => None,
+                };
+                if let Some(builtin) = builtin {
+                    if let Some(result) = infer_string_builtin_call(
+                        builtin,
+                        &call_args,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        expected.clone(),
+                    ) {
+                        return result;
+                    }
                 }
             }
             if let Some(result) = infer_promise_await_method_call(

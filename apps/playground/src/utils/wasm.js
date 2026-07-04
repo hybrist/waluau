@@ -24,6 +24,70 @@ export function luauToString(value) {
   return String(Number(value.toPrecision(14)));
 }
 
+function normalizeStringIndex(index, length) {
+  const value = Number(index);
+  if (value < 0) return Math.max(0, length + value);
+  return Math.min(length, value);
+}
+
+function luaQuoteString(value) {
+  return JSON.stringify(String(value))
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
+function formatNumber(value, specifier) {
+  const number = Number(value);
+  switch (specifier) {
+    case 'd':
+      return String(Math.trunc(number));
+    case 'x':
+      return (Math.trunc(number) >>> 0).toString(16);
+    case 'f':
+      return number.toFixed(6);
+    case 'g':
+      return luauToString(number);
+    default:
+      return luauToString(number);
+  }
+}
+
+function stringFormat(format, ...args) {
+  const fmt = String(format);
+  let argIndex = 0;
+  let out = '';
+  for (let i = 0; i < fmt.length; i++) {
+    const ch = fmt[i];
+    if (ch !== '%') {
+      out += ch;
+      continue;
+    }
+    if (i + 1 >= fmt.length) {
+      throw new Error('incomplete string.format specifier');
+    }
+    const specifier = fmt[++i];
+    if (specifier === '%') {
+      out += '%';
+      continue;
+    }
+    if (!'dsfgxq'.includes(specifier)) {
+      throw new Error(`unsupported string.format specifier %${specifier}`);
+    }
+    if (argIndex >= args.length) {
+      throw new Error('not enough arguments for string.format');
+    }
+    const value = args[argIndex++];
+    if (specifier === 's') {
+      out += String(value);
+    } else if (specifier === 'q') {
+      out += luaQuoteString(value);
+    } else {
+      out += formatNumber(value, specifier);
+    }
+  }
+  return out;
+}
+
 function rememberDomEventListener(target, type, listener) {
   let records = domEventListeners.get(target);
   if (!records) {
@@ -730,6 +794,46 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
       void plain;
       return hay.indexOf(needleStr, start);
     },
+    string_len: (value) => String(value).length,
+    string_sub: (value, first, last) => {
+      const str = String(value);
+      const start = normalizeStringIndex(first, str.length);
+      const end =
+        Number(last) === -1
+          ? str.length
+          : Math.min(str.length, normalizeStringIndex(last, str.length) + 1);
+      return str.slice(start, Math.max(start, end));
+    },
+    string_rep: (value, count, separator) => {
+      const n = Math.max(0, Number(count) | 0);
+      return Array(n).fill(String(value)).join(String(separator));
+    },
+    string_byte: (value, index) => {
+      const str = String(value);
+      const offset = normalizeStringIndex(index, str.length);
+      if (offset < 0 || offset >= str.length) return -1;
+      return str.codePointAt(offset);
+    },
+    string_upper: (value) => String(value).toUpperCase(),
+    string_lower: (value) => String(value).toLowerCase(),
+    string_char0: () => '',
+    string_char1: (a) => String.fromCodePoint(Number(a)),
+    string_char2: (a, b) => String.fromCodePoint(Number(a), Number(b)),
+    string_char3: (a, b, c) => String.fromCodePoint(Number(a), Number(b), Number(c)),
+    string_char4: (a, b, c, d) => String.fromCodePoint(Number(a), Number(b), Number(c), Number(d)),
+    string_char5: (a, b, c, d, e) => String.fromCodePoint(Number(a), Number(b), Number(c), Number(d), Number(e)),
+    string_char6: (a, b, c, d, e, f) => String.fromCodePoint(Number(a), Number(b), Number(c), Number(d), Number(e), Number(f)),
+    string_char7: (a, b, c, d, e, f, g) => String.fromCodePoint(Number(a), Number(b), Number(c), Number(d), Number(e), Number(f), Number(g)),
+    string_char8: (a, b, c, d, e, f, g, h) => String.fromCodePoint(Number(a), Number(b), Number(c), Number(d), Number(e), Number(f), Number(g), Number(h)),
+    string_format0: (format) => stringFormat(format),
+    string_format1: (format, a) => stringFormat(format, a),
+    string_format2: (format, a, b) => stringFormat(format, a, b),
+    string_format3: (format, a, b, c) => stringFormat(format, a, b, c),
+    string_format4: (format, a, b, c, d) => stringFormat(format, a, b, c, d),
+    string_format5: (format, a, b, c, d, e) => stringFormat(format, a, b, c, d, e),
+    string_format6: (format, a, b, c, d, e, f) => stringFormat(format, a, b, c, d, e, f),
+    string_format7: (format, a, b, c, d, e, f, g) => stringFormat(format, a, b, c, d, e, f, g),
+    string_format8: (format, a, b, c, d, e, f, g, h) => stringFormat(format, a, b, c, d, e, f, g, h),
     extern_is: externIs,
     math_pow: (base, exponent) => Math.pow(base, exponent),
     bytes_literal: (index) => {

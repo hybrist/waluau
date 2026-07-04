@@ -9,3 +9,33 @@ declare function print(message: string): unit
 -- `init`, or -1 if not found. `plain` selects plain substring search (patterns
 -- are not yet supported, so callers should always pass `true`).
 declare function string_find(haystack: string, needle: string, init: i32, plain: bool): i32
+
+-- Low-level string primitives backing the `string.*` builtin namespace.
+-- Index-taking functions use 0-based indices. `string_sub` treats `last == -1`
+-- as the end of the string.
+declare function string_len(value: string): i32
+declare function string_sub(value: string, first: i32, last: i32): string
+declare function string_rep(value: string, count: i32, separator: string): string
+declare function string_byte(value: string, index: i32): i32
+declare function string_upper(value: string): string
+declare function string_lower(value: string): string
+
+declare function string_char0(): string
+declare function string_char1(a: i32): string
+declare function string_char2(a: i32, b: i32): string
+declare function string_char3(a: i32, b: i32, c: i32): string
+declare function string_char4(a: i32, b: i32, c: i32, d: i32): string
+declare function string_char5(a: i32, b: i32, c: i32, d: i32, e: i32): string
+declare function string_char6(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32): string
+declare function string_char7(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32): string
+declare function string_char8(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32): string
+
+declare function string_format0(format: string): string
+declare function string_format1(format: string, a: string): string
+declare function string_format2(format: string, a: string, b: string): string
+declare function string_format3(format: string, a: string, b: string, c: string): string
+declare function string_format4(format: string, a: string, b: string, c: string, d: string): string
+declare function string_format5(format: string, a: string, b: string, c: string, d: string, e: string): string
+declare function string_format6(format: string, a: string, b: string, c: string, d: string, e: string, f: string): string
+declare function string_format7(format: string, a: string, b: string, c: string, d: string, e: string, f: string, g: string): string
+declare function string_format8(format: string, a: string, b: string, c: string, d: string, e: string, f: string, g: string, h: string): string
