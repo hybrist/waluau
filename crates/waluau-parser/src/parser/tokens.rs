@@ -35,6 +35,34 @@ impl Parser {
             .unwrap_or(false)
     }
 
+    /// True when the next token can close a `<...>` type list: either `>`
+    /// itself, or a `>=` that greedy lexing produced from `Foo<T>=value`.
+    pub(super) fn check_greater(&self) -> bool {
+        matches!(
+            self.peek().map(|token| &token.kind),
+            Some(TokenKind::Greater | TokenKind::GreaterEqual)
+        )
+    }
+
+    /// Consume a `>` closing a `<...>` type list. A `>=` token is split in
+    /// place: the `>` half is consumed and an `=` token is left behind, so
+    /// `local x: Foo<T>=value` parses the same as `local x: Foo<T> = value`.
+    pub(super) fn expect_greater(&mut self, message: &str) -> Result<(), Diagnostic> {
+        match self.peek().map(|token| &token.kind) {
+            Some(TokenKind::Greater) => {
+                self.advance();
+                Ok(())
+            }
+            Some(TokenKind::GreaterEqual) => {
+                let token = &mut self.tokens[self.index];
+                token.kind = TokenKind::Equal;
+                token.span.start += 1;
+                Ok(())
+            }
+            _ => self.expect_simple(TokenKind::Greater, message),
+        }
+    }
+
     pub(super) fn peek(&self) -> Option<&Token> {
         self.tokens.get(self.index)
     }

@@ -535,17 +535,25 @@ pub(super) fn infer_table_builtin_call(
             args.len()
         ))));
     }
-    let list_ty = match super::expressions::infer_expr(
+    // Infer with the expected element type so `{}` literals resolve, but fall
+    // back to a plain inference when that fails so mismatches keep the
+    // table.concat-specific diagnostic.
+    let expected_list = Type::Array(Box::new(Type::String));
+    let list_ty = super::expressions::infer_expr(
         &args[0],
         vars,
         fn_signatures,
         active_type_params,
-        None,
-    ) {
+        Some(expected_list.clone()),
+    )
+    .or_else(|_| {
+        super::expressions::infer_expr(&args[0], vars, fn_signatures, active_type_params, None)
+    });
+    let list_ty = match list_ty {
         Ok(ty) => ty,
         Err(error) => return Some(Err(error)),
     };
-    if list_ty != Type::Array(Box::new(Type::String)) {
+    if list_ty != expected_list {
         return Some(Err(Diagnostic::new(format!(
             "{TABLE_CONCAT} expects an array of strings, got {list_ty}"
         ))));

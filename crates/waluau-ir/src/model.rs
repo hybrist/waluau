@@ -204,6 +204,9 @@ pub enum Instruction {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MathIntrinsic {
+    /// Unary float negation (`f32.neg`/`f64.neg`); preserves -0 and NaN sign,
+    /// unlike lowering `-x` as `0 - x`.
+    Neg,
     Abs,
     Min,
     Max,

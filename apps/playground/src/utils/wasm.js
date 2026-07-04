@@ -11,6 +11,19 @@ const CALLBACK_UNIT_EXTERN_TRAMPOLINE_EXPORT = '__waluau_call_callback_unit_exte
 let printCaptureCallback = null;
 const domEventListeners = new WeakMap();
 
+// Luau formats numbers with `%.14g`: `nan`/`inf`/`-inf` for specials, `-0`
+// preserved, and at most 14 significant digits. JS `String()` disagrees on all
+// of those (`NaN`, `Infinity`, `0`, full precision), so `tostring` host
+// imports route numbers through this instead.
+export function luauToString(value) {
+  if (typeof value !== 'number') return String(value);
+  if (Number.isNaN(value)) return 'nan';
+  if (value === Infinity) return 'inf';
+  if (value === -Infinity) return '-inf';
+  if (Object.is(value, -0)) return '-0';
+  return String(Number(value.toPrecision(14)));
+}
+
 function rememberDomEventListener(target, type, listener) {
   let records = domEventListeners.get(target);
   if (!records) {
@@ -773,7 +786,7 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
       waluauImports[wasmImport.name] =
         wasmImport.name === 'js_tostring_bool'
           ? (value) => (value ? 'true' : 'false')
-          : (value) => String(value);
+          : luauToString;
     }
   }
   for (const wasmImport of getWasmImports(wasmModule)) {

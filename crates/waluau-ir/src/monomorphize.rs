@@ -1353,8 +1353,11 @@ impl<'a> Monomorphizer<'a> {
             Expr::Cast { ty, .. } => Ok(substitute_type(ty, subst)),
             Expr::Binary { op, left, right, .. } => match op {
                 waluau_ast::BinaryOp::Eq
+                | waluau_ast::BinaryOp::NotEq
                 | waluau_ast::BinaryOp::Less
+                | waluau_ast::BinaryOp::LessEq
                 | waluau_ast::BinaryOp::Greater
+                | waluau_ast::BinaryOp::GreaterEq
                 | waluau_ast::BinaryOp::And
                 | waluau_ast::BinaryOp::Or => Ok(Type::Bool),
                 waluau_ast::BinaryOp::Concat => Ok(Type::String),

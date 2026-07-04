@@ -256,7 +256,12 @@ fn mark_used_by_instruction(instruction: &IrInstruction, used: &mut UsedHostImpo
             Type::Numeric(NumericType::F32) => used.js_tostring_f32 = true,
             Type::Numeric(NumericType::F64) => used.js_tostring_f64 = true,
             Type::Bool => used.js_tostring_bool = true,
-            Type::Unknown => used.js_tostring_unknown = true,
+            Type::Unknown => {
+                used.js_tostring_unknown = true;
+                // The unknown path dispatches boxed f64 values to the f64
+                // stringifier when closure GC types are present.
+                used.js_tostring_f64 = true;
+            }
             _ => {}
         },
         IrInstruction::Binary { op, operand_ty, .. } => match (op, operand_ty) {
@@ -264,10 +269,16 @@ fn mark_used_by_instruction(instruction: &IrInstruction, used: &mut UsedHostImpo
             (BinaryOp::Eq, Type::Bytes) => used.bytes_eq = true,
             (BinaryOp::Concat, Type::String) => used.js_string_concat = true,
             (BinaryOp::Concat, Type::Bytes) => used.bytes_concat = true,
-            (BinaryOp::Less | BinaryOp::Greater, Type::String) => {
+            (
+                BinaryOp::Less | BinaryOp::LessEq | BinaryOp::Greater | BinaryOp::GreaterEq,
+                Type::String,
+            ) => {
                 used.js_string_compare = true;
             }
-            (BinaryOp::Less | BinaryOp::Greater, Type::Bytes) => {
+            (
+                BinaryOp::Less | BinaryOp::LessEq | BinaryOp::Greater | BinaryOp::GreaterEq,
+                Type::Bytes,
+            ) => {
                 used.bytes_compare = true;
             }
             (BinaryOp::Pow, _) => used.math_pow = true,

@@ -178,7 +178,9 @@ impl Parser {
                 TokenKind::EqualEqual => BinaryOp::Eq,
                 TokenKind::TildeEqual => BinaryOp::NotEq,
                 TokenKind::Less => BinaryOp::Less,
+                TokenKind::LessEqual => BinaryOp::LessEq,
                 TokenKind::Greater => BinaryOp::Greater,
+                TokenKind::GreaterEqual => BinaryOp::GreaterEq,
                 _ => break,
             };
             let start_pos = expr.span().map(|s| s.start).unwrap_or(0);

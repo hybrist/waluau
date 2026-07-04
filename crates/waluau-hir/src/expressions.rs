@@ -87,7 +87,9 @@ fn binary_operator_method(op: &BinaryOp) -> Option<&'static str> {
         | BinaryOp::Mod
         | BinaryOp::Concat
         | BinaryOp::Less
+        | BinaryOp::LessEq
         | BinaryOp::Greater
+        | BinaryOp::GreaterEq
         | BinaryOp::Eq
         | BinaryOp::NotEq
         | BinaryOp::And
@@ -1047,7 +1049,7 @@ pub(super) fn infer_expr(
                 )?;
                 coerce_type(operand_ty, expected)
             }
-            BinaryOp::Less | BinaryOp::Greater => {
+            BinaryOp::Less | BinaryOp::LessEq | BinaryOp::Greater | BinaryOp::GreaterEq => {
                 let left_ty = infer_expr(left, vars, fn_signatures, active_type_params, None)?;
                 if left_ty == Type::Bytes {
                     let right_ty = infer_expr(
@@ -1238,6 +1240,9 @@ fn infer_array_literal(
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
     if elements.is_empty() {
+        if let Some(element_ty) = expected.as_ref().and_then(Type::element_type) {
+            return Ok(Type::Array(Box::new(element_ty)));
+        }
         return Err(super::signatures::inference_diagnostic(
             "inference/missing-context",
             DiagnosticCategory::MissingContext,

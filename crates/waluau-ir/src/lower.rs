@@ -1020,6 +1020,12 @@ struct LoopContext {
     /// replay these updates too or the header phis end up missing an incoming
     /// edge.
     carries: Vec<LoopCarry>,
+    /// Phis in the loop exit block, one per mutated variable. The exit block is
+    /// reached both from the loop's normal exit edge (with the header phi /
+    /// end-of-body value) and from every `break` site (with the values live at
+    /// the break). Code after the loop must read these exit phis; reading the
+    /// header phis would resurrect start-of-iteration values on break paths.
+    exit_phis: HashMap<SymbolId, ValueId>,
 }
 
 #[derive(Clone)]
@@ -1238,6 +1244,59 @@ impl Builder<'_> {
         value
     }
 
+    /// Bind a loop variable into the body environment. When a nested closure
+    /// captures it, box the per-iteration value into a fresh 1-element cell
+    /// (fresh per iteration, matching Luau's per-iteration bindings) so the
+    /// closure shares storage with body reads.
+    fn bind_loop_var(
+        &mut self,
+        symbol_id: SymbolId,
+        value: ValueId,
+        ty: &Type,
+        body_env: &mut HashMap<SymbolId, ValueId>,
+    ) {
+        if self.cell_names.contains(&symbol_id) {
+            let cell = self.emit(Instruction::ArrayNew {
+                element_ty: to_runtime_type(ty),
+                elements: vec![value],
+            });
+            body_env.insert(symbol_id, cell);
+            self.function.value_symbols.insert(cell, symbol_id);
+        } else {
+            body_env.insert(symbol_id, value);
+        }
+        self.function.value_symbols.insert(value, symbol_id);
+    }
+
+    /// Emit an instruction into a specific block (used for loop exit phis,
+    /// which are created before the exit block becomes the current block).
+    fn emit_in(&mut self, block: BlockId, instruction: Instruction) -> ValueId {
+        let value = self.function.next_value();
+        block_mut(&mut self.function, block)
+            .instructions
+            .push((value, instruction));
+        value
+    }
+
+    /// Create one phi in `exit` per mutated loop variable. The phis start with
+    /// no incoming edges; each loop adds its normal exit edge once it is built,
+    /// and every `break` site adds its own incoming edge via `lower_break`.
+    /// Code after the loop reads these exit phis, not the header phis, so break
+    /// paths observe the values live at the break.
+    fn create_exit_phis(
+        &mut self,
+        exit: BlockId,
+        phis: &HashMap<SymbolId, ValueId>,
+    ) -> HashMap<SymbolId, ValueId> {
+        let mut exit_phis = HashMap::new();
+        for id in phis.keys() {
+            let exit_phi = self.emit_in(exit, Instruction::Phi(Vec::new()));
+            self.function.value_symbols.insert(exit_phi, *id);
+            exit_phis.insert(*id, exit_phi);
+        }
+        exit_phis
+    }
+
     fn lower_resolved_host_call(
         &mut self,
         name: &str,
@@ -1336,14 +1395,30 @@ impl Builder<'_> {
         block_mut(&mut self.function, block).terminator = terminator;
     }
 
-    fn lower_break(&mut self, _env: &HashMap<SymbolId, ValueId>) -> Result<(), Diagnostic> {
-        let Some(loop_ctx) = self.loop_stack.last() else {
+    fn lower_break(&mut self, env: &HashMap<SymbolId, ValueId>) -> Result<(), Diagnostic> {
+        let Some(loop_ctx) = self.loop_stack.last().cloned() else {
             return Err(Diagnostic::new("break is only allowed inside loops"));
         };
         if self.current_block == DEAD_BLOCK {
             return Ok(());
         }
         let current = self.current_block;
+        // Feed the values live at the break into the exit phis so code after
+        // the loop observes this iteration's mutations.
+        for (id, exit_phi) in &loop_ctx.exit_phis {
+            let value = env
+                .get(id)
+                .copied()
+                .or_else(|| loop_ctx.phis.get(id).copied());
+            if let Some(value) = value {
+                add_phi_incoming(
+                    &mut self.function,
+                    loop_ctx.break_target,
+                    *exit_phi,
+                    (current, value),
+                );
+            }
+        }
         self.set_terminator(current, Terminator::Jump(loop_ctx.break_target));
         self.current_block = DEAD_BLOCK;
         Ok(())
@@ -2355,23 +2430,32 @@ impl Builder<'_> {
             }
         }
 
+        let exit_phis = self.create_exit_phis(exit, &phis);
         self.loop_stack.push(LoopContext {
             header,
             continue_target: header,
             break_target: exit,
             phis: phis.clone(),
             carries: Vec::new(),
+            exit_phis: exit_phis.clone(),
         });
 
+        // Short-circuit conditions lower across several blocks; the loop
+        // branch must come from wherever condition lowering ended, not
+        // necessarily the header itself.
         let cond_value = self.lower_expr(condition, &loop_env, &loop_types, Some(Type::Bool))?;
+        let cond_exit = self.current_block;
         self.set_terminator(
-            header,
+            cond_exit,
             Terminator::Branch {
                 condition: cond_value,
                 then_block: loop_body,
                 else_block: exit,
             },
         );
+        for (id, phi) in &phis {
+            add_phi_incoming(&mut self.function, exit, exit_phis[id], (cond_exit, *phi));
+        }
 
         self.current_block = loop_body;
         let mut body_env = loop_env.clone();
@@ -2397,9 +2481,10 @@ impl Builder<'_> {
             }
         }
 
-        for (id, phi) in phis {
-            env.insert(id, phi);
-            self.function.value_symbols.insert(phi, id);
+        for (id, _) in phis {
+            let exit_phi = exit_phis[&id];
+            env.insert(id, exit_phi);
+            self.function.value_symbols.insert(exit_phi, id);
         }
         self.current_block = exit;
         Ok(())
@@ -2432,12 +2517,14 @@ impl Builder<'_> {
             }
         }
 
+        let exit_phis = self.create_exit_phis(exit, &phis);
         self.loop_stack.push(LoopContext {
             header: loop_body,
             continue_target: check,
             break_target: exit,
             phis: phis.clone(),
             carries: Vec::new(),
+            exit_phis: exit_phis.clone(),
         });
 
         let mut body_env = loop_env.clone();
@@ -2455,9 +2542,12 @@ impl Builder<'_> {
         let phis = loop_ctx.phis;
         let body_exit = self.current_block;
         if body_exit == DEAD_BLOCK {
-            for (name, phi) in phis {
-                env.insert(name, phi);
-                self.function.value_symbols.insert(phi, name);
+            // The only edges into the exit block are break edges; expose the
+            // exit phis they feed.
+            for (name, _) in phis {
+                let exit_phi = exit_phis[&name];
+                env.insert(name, exit_phi);
+                self.function.value_symbols.insert(exit_phi, name);
             }
             self.current_block = exit;
             return Ok(());
@@ -2465,9 +2555,12 @@ impl Builder<'_> {
         self.set_terminator(body_exit, Terminator::Jump(check));
 
         self.current_block = check;
+        // Short-circuit conditions lower across several blocks; branch (and
+        // register phi edges) from wherever condition lowering ended.
         let cond_value = self.lower_expr(condition, &body_env, &body_types, Some(Type::Bool))?;
+        let cond_exit = self.current_block;
         self.set_terminator(
-            check,
+            cond_exit,
             Terminator::Branch {
                 condition: cond_value,
                 then_block: exit,
@@ -2477,14 +2570,16 @@ impl Builder<'_> {
 
         for (name, phi) in &phis {
             if let Some(next_value) = body_env.get(name).copied() {
-                add_phi_incoming(&mut self.function, loop_body, *phi, (check, next_value));
+                add_phi_incoming(&mut self.function, loop_body, *phi, (cond_exit, next_value));
             }
         }
 
         for (name, phi) in phis {
             let val = body_env.get(&name).copied().unwrap_or(phi);
-            env.insert(name, val);
-            self.function.value_symbols.insert(val, name);
+            let exit_phi = exit_phis[&name];
+            add_phi_incoming(&mut self.function, exit, exit_phi, (cond_exit, val));
+            env.insert(name, exit_phi);
+            self.function.value_symbols.insert(exit_phi, name);
         }
         self.current_block = exit;
         Ok(())
@@ -2565,13 +2660,6 @@ impl Builder<'_> {
             operand_ty: loop_ty.clone(),
             result_ty: Type::Bool,
         });
-        let step_negative = self.emit(Instruction::Binary {
-            op: BinaryOp::Less,
-            left: step_value,
-            right: zero_value,
-            operand_ty: loop_ty.clone(),
-            result_ty: Type::Bool,
-        });
         let i_lt_stop = self.emit(Instruction::Binary {
             op: BinaryOp::Less,
             left: index_phi,
@@ -2621,9 +2709,20 @@ impl Builder<'_> {
             operand_ty: Type::Bool,
             result_ty: Type::Bool,
         });
+        // Lua 5.1 / Luau semantics: any step that is not positive (including 0
+        // and NaN) iterates backward, so `for i = 10, 1, 0` loops while
+        // i >= stop and `for i = 1, 10, 0` iterates zero times.
+        let false_value = self.emit(Instruction::Bool(false));
+        let step_not_positive = self.emit(Instruction::Binary {
+            op: BinaryOp::Eq,
+            left: step_positive,
+            right: false_value,
+            operand_ty: Type::Bool,
+            result_ty: Type::Bool,
+        });
         let backward_ok = self.emit(Instruction::Binary {
             op: BinaryOp::And,
-            left: step_negative,
+            left: step_not_positive,
             right: i_ge_stop,
             operand_ty: Type::Bool,
             result_ty: Type::Bool,
@@ -2636,6 +2735,10 @@ impl Builder<'_> {
             result_ty: Type::Bool,
         });
 
+        let exit_phis = self.create_exit_phis(exit, &phis);
+        for (id, phi) in &phis {
+            add_phi_incoming(&mut self.function, exit, exit_phis[id], (header, *phi));
+        }
         self.loop_stack.push(LoopContext {
             header,
             continue_target: header,
@@ -2655,6 +2758,7 @@ impl Builder<'_> {
                     },
                 },
             ],
+            exit_phis: exit_phis.clone(),
         });
         self.set_terminator(
             header,
@@ -2668,8 +2772,7 @@ impl Builder<'_> {
         self.current_block = loop_body;
         let mut body_env = loop_env.clone();
         let mut body_types = loop_types.clone();
-        body_env.insert(symbol_id, index_phi);
-        self.function.value_symbols.insert(index_phi, symbol_id);
+        self.bind_loop_var(symbol_id, index_phi, &loop_ty, &mut body_env);
         body_types.insert(symbol_id, loop_ty.clone());
         for stmt in body {
             if self.current_block == DEAD_BLOCK {
@@ -2713,9 +2816,10 @@ impl Builder<'_> {
             }
         }
 
-        for (id, phi) in phis {
-            env.insert(id, phi);
-            self.function.value_symbols.insert(phi, id);
+        for (id, _) in phis {
+            let exit_phi = exit_phis[&id];
+            env.insert(id, exit_phi);
+            self.function.value_symbols.insert(exit_phi, id);
         }
         self.current_block = exit;
         Ok(())
@@ -2778,6 +2882,10 @@ impl Builder<'_> {
                 operand_ty: Type::Numeric(NumericType::I32),
                 result_ty: Type::Bool,
             });
+            let exit_phis = self.create_exit_phis(exit, &phis);
+            for (id, phi) in &phis {
+                add_phi_incoming(&mut self.function, exit, exit_phis[id], (header, *phi));
+            }
             self.loop_stack.push(LoopContext {
                 header,
                 continue_target: header,
@@ -2797,6 +2905,7 @@ impl Builder<'_> {
                         },
                     },
                 ],
+                exit_phis: exit_phis.clone(),
             });
             self.set_terminator(
                 header,
@@ -2818,15 +2927,17 @@ impl Builder<'_> {
             });
 
             if ids.len() == 1 {
-                body_env.insert(ids[0], element_val);
-                self.function.value_symbols.insert(element_val, ids[0]);
+                self.bind_loop_var(ids[0], element_val, element_ty, &mut body_env);
                 body_types.insert(ids[0], *element_ty.clone());
             } else {
-                body_env.insert(ids[0], index_phi);
-                self.function.value_symbols.insert(index_phi, ids[0]);
+                self.bind_loop_var(
+                    ids[0],
+                    index_phi,
+                    &Type::Numeric(NumericType::I32),
+                    &mut body_env,
+                );
                 body_types.insert(ids[0], Type::Numeric(NumericType::I32));
-                body_env.insert(ids[1], element_val);
-                self.function.value_symbols.insert(element_val, ids[1]);
+                self.bind_loop_var(ids[1], element_val, element_ty, &mut body_env);
                 body_types.insert(ids[1], *element_ty.clone());
             }
 
@@ -2878,9 +2989,10 @@ impl Builder<'_> {
                 }
             }
 
-            for (name, phi) in phis {
-                env.insert(name, phi);
-                self.function.value_symbols.insert(phi, name);
+            for (name, _) in phis {
+                let exit_phi = exit_phis[&name];
+                env.insert(name, exit_phi);
+                self.function.value_symbols.insert(exit_phi, name);
             }
             self.current_block = exit;
             return Ok(());
@@ -2976,6 +3088,10 @@ impl Builder<'_> {
             index: 0,
             ty: Type::Bool,
         });
+        let exit_phis = self.create_exit_phis(exit, &phis);
+        for (id, phi) in &phis {
+            add_phi_incoming(&mut self.function, exit, exit_phis[id], (header, *phi));
+        }
         self.loop_stack.push(LoopContext {
             header,
             continue_target: header,
@@ -2984,6 +3100,7 @@ impl Builder<'_> {
             // The iterator call is re-emitted in the header each iteration, so
             // there are no implicit loop-carried phis beyond the user phis.
             carries: Vec::new(),
+            exit_phis: exit_phis.clone(),
         });
         self.set_terminator(
             header,
@@ -3003,8 +3120,7 @@ impl Builder<'_> {
                 index: index + 1,
                 ty: ty.clone(),
             });
-            body_env.insert(*id, value);
-            self.function.value_symbols.insert(value, *id);
+            self.bind_loop_var(*id, value, ty, &mut body_env);
             body_types.insert(*id, ty.clone());
         }
         for stmt in body {
@@ -3029,9 +3145,10 @@ impl Builder<'_> {
             }
         }
 
-        for (id, phi) in phis {
-            env.insert(id, phi);
-            self.function.value_symbols.insert(phi, id);
+        for (id, _) in phis {
+            let exit_phi = exit_phis[&id];
+            env.insert(id, exit_phi);
+            self.function.value_symbols.insert(exit_phi, id);
         }
         self.current_block = exit;
         Ok(())
@@ -3424,21 +3541,31 @@ impl Builder<'_> {
                                 ));
                             }
                         };
-                        let zero = self.emit(Instruction::Number {
-                            ty: operand_ty,
-                            literal: NumberLiteral {
-                                raw: "0".to_string(),
-                            },
-                        });
                         let operand =
                             self.lower_expr(expr, env, types, Some(Type::Numeric(operand_ty)))?;
-                        let value = self.emit(Instruction::Binary {
-                            op: BinaryOp::Sub,
-                            left: zero,
-                            right: operand,
-                            operand_ty: Type::Numeric(operand_ty),
-                            result_ty: Type::Numeric(operand_ty),
-                        });
+                        let value = if matches!(operand_ty, NumericType::F32 | NumericType::F64) {
+                            // Real float negation: `0 - x` would turn -0 into +0.
+                            self.emit(Instruction::MathIntrinsic {
+                                intrinsic: MathIntrinsic::Neg,
+                                args: vec![operand],
+                                operand_ty: Type::Numeric(operand_ty),
+                                result_ty: Type::Numeric(operand_ty),
+                            })
+                        } else {
+                            let zero = self.emit(Instruction::Number {
+                                ty: operand_ty,
+                                literal: NumberLiteral {
+                                    raw: "0".to_string(),
+                                },
+                            });
+                            self.emit(Instruction::Binary {
+                                op: BinaryOp::Sub,
+                                left: zero,
+                                right: operand,
+                                operand_ty: Type::Numeric(operand_ty),
+                                result_ty: Type::Numeric(operand_ty),
+                            })
+                        };
                         self.coerce_value(value, Type::Numeric(operand_ty), expected)?
                     }
                     UnaryOp::Not => {
@@ -4187,32 +4314,15 @@ impl Builder<'_> {
                 .push((value, Instruction::Param(index)));
             nested_env.insert(symbol_id, value);
             lifted.value_symbols.insert(value, symbol_id);
-            // If the lifted param is an array cell for a captured variable, expose
-            // the inner element type within the nested function's type map so that
-            // expressions using the name are treated as the element type during lowering.
-            if let Some(elem) = ty.element_type() {
-                nested_types.insert(symbol_id, elem);
-            } else {
-                nested_types.insert(symbol_id, ty);
-            }
+            // `ty` is the captured variable's source-level type (cell-backed
+            // storage keeps the inner type in the type map), so record it
+            // as-is. Reads still go through the cell via ArrayGet; unwrapping
+            // here would corrupt captures that are themselves arrays.
+            nested_types.insert(symbol_id, ty);
         }
-        let captures_count = captures.len();
-        for (index, param) in function.params.iter().enumerate() {
-            let symbol_id = param.symbol_id.expect("param has resolved symbol_id");
-            let value = lifted.next_value();
-            block_mut(&mut lifted, lifted_entry)
-                .instructions
-                .push((value, Instruction::Param(captures_count + index)));
-            nested_env.insert(symbol_id, value);
-            lifted.value_symbols.insert(value, symbol_id);
-            nested_types.insert(symbol_id, param.ty.clone());
-        }
-
-        // nested builder should treat the capture parameters as cell-backed names
-        // so the nested function will access them via ArrayGet/ArraySet.
-        let mut capture_param_symbols: HashSet<SymbolId> =
-            captures.iter().map(|(id, _)| *id).collect();
-        // Also include any names that the nested function's inner nested functions capture.
+        // Names that this closure's own nested functions capture; the ones that
+        // are our own params must be wrapped into cells below, just like the
+        // params of named functions.
         let nested_inner_captures = collect_nested_function_capture_names(&waluau_ast::Function {
             name: waluau_ast::FunctionName::Simple(function.name.clone().unwrap_or_default()),
             symbol_id: function.symbol_id,
@@ -4223,6 +4333,38 @@ impl Builder<'_> {
             body: function.body.clone(),
             file_path: function.file_path.clone(),
         });
+
+        let captures_count = captures.len();
+        for (index, param) in function.params.iter().enumerate() {
+            let symbol_id = param.symbol_id.expect("param has resolved symbol_id");
+            let value = lifted.next_value();
+            block_mut(&mut lifted, lifted_entry)
+                .instructions
+                .push((value, Instruction::Param(captures_count + index)));
+            if nested_inner_captures.contains(&symbol_id) {
+                // This param is captured by an inner closure: box it into a
+                // 1-element cell so the inner closure shares its storage.
+                let cell = lifted.next_value();
+                block_mut(&mut lifted, lifted_entry).instructions.push((
+                    cell,
+                    Instruction::ArrayNew {
+                        element_ty: to_runtime_type(&param.ty),
+                        elements: vec![value],
+                    },
+                ));
+                nested_env.insert(symbol_id, cell);
+                lifted.value_symbols.insert(cell, symbol_id);
+            } else {
+                nested_env.insert(symbol_id, value);
+            }
+            lifted.value_symbols.insert(value, symbol_id);
+            nested_types.insert(symbol_id, param.ty.clone());
+        }
+
+        // nested builder should treat the capture parameters as cell-backed names
+        // so the nested function will access them via ArrayGet/ArraySet.
+        let mut capture_param_symbols: HashSet<SymbolId> =
+            captures.iter().map(|(id, _)| *id).collect();
         capture_param_symbols.extend(nested_inner_captures);
 
         let mut nested = Builder {
@@ -4717,7 +4859,9 @@ impl Builder<'_> {
                     coerce_type(raw, expected)
                 }
                 BinaryOp::Less
+                | BinaryOp::LessEq
                 | BinaryOp::Greater
+                | BinaryOp::GreaterEq
                 | BinaryOp::Eq
                 | BinaryOp::NotEq
                 | BinaryOp::And
@@ -4843,8 +4987,13 @@ impl Builder<'_> {
             | BinaryOp::Mod
             | BinaryOp::Pow
             | BinaryOp::Less
-            | BinaryOp::Greater => {
-                if matches!(op, BinaryOp::Less | BinaryOp::Greater) {
+            | BinaryOp::LessEq
+            | BinaryOp::Greater
+            | BinaryOp::GreaterEq => {
+                if matches!(
+                    op,
+                    BinaryOp::Less | BinaryOp::LessEq | BinaryOp::Greater | BinaryOp::GreaterEq
+                ) {
                     let left_ty = self.infer_expr_type(left, types, None)?;
                     if left_ty == Type::Bytes {
                         let right_ty = self.infer_expr_type(right, types, Some(Type::Bytes))?;
@@ -4981,6 +5130,9 @@ impl Builder<'_> {
         expected: Option<Type>,
     ) -> Result<Type, Diagnostic> {
         if elements.is_empty() {
+            if let Some(element_ty) = expected.as_ref().and_then(Type::element_type) {
+                return coerce_type(Type::Array(Box::new(element_ty)), expected);
+            }
             return Err(inference_diagnostic(
                 "inference/missing-context",
                 DiagnosticCategory::MissingContext,
@@ -5638,7 +5790,10 @@ impl Builder<'_> {
             ))));
         }
         let array_ty = Type::Array(Box::new(Type::String));
-        let list_ty = match self.infer_expr_type(&args[0], types, None) {
+        let list_ty = match self
+            .infer_expr_type(&args[0], types, Some(array_ty.clone()))
+            .or_else(|_| self.infer_expr_type(&args[0], types, None))
+        {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
@@ -5838,7 +5993,8 @@ impl Builder<'_> {
             MathIntrinsic::Min | MathIntrinsic::Max => {
                 matches!(first_numeric, NumericType::F32 | NumericType::F64)
             }
-            MathIntrinsic::Abs
+            MathIntrinsic::Neg
+            | MathIntrinsic::Abs
             | MathIntrinsic::Sqrt
             | MathIntrinsic::Floor
             | MathIntrinsic::Ceil
@@ -5995,7 +6151,10 @@ impl Builder<'_> {
                 args.len()
             ))));
         }
-        let list_ty = match self.infer_expr_type(&args[0], types, None) {
+        let list_ty = match self
+            .infer_expr_type(&args[0], types, Some(Type::Array(Box::new(Type::String))))
+            .or_else(|_| self.infer_expr_type(&args[0], types, None))
+        {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
@@ -6413,6 +6572,14 @@ fn add_phi_incoming(
         .find(|(value, _)| *value == phi)
         .expect("phi value must exist in header block");
     if let Instruction::Phi(values) = instruction {
-        values.push(incoming);
+        // The verifier expects phi incomings in predecessor order, which is
+        // ascending block id (function.blocks is a BTreeMap). Break edges can
+        // be registered after a later-created normal exit edge, so keep the
+        // list sorted on insert instead of relying on registration order.
+        let position = values
+            .iter()
+            .position(|(pred, _)| *pred > incoming.0)
+            .unwrap_or(values.len());
+        values.insert(position, incoming);
     }
 }

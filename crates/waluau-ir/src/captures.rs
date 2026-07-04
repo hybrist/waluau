@@ -277,7 +277,15 @@ fn collect_expr_captures(
                 collect_expr_captures(arg, bound, env, signatures, captures);
             }
         }
-        Expr::Function(_) => {}
+        Expr::Function(function) => {
+            // Recurse into nested closures so transitively captured names
+            // (used only by an inner closure) still become captures of this
+            // function. Capture detection is symbol-id based, so inner
+            // bindings that shadow outer names cannot be misdetected.
+            for stmt in &function.body {
+                collect_expr_captures_from_stmt(stmt, bound, env, signatures, captures);
+            }
+        }
         Expr::ArrayLiteral { elements, .. } => {
             for element in elements {
                 collect_expr_captures(element, bound, env, signatures, captures);

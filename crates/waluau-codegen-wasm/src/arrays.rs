@@ -20,6 +20,10 @@ pub(crate) struct ArrayTypeRegistry {
     /// Type index of `$boxed_f64 = (struct (field f64))`, used to box `f64` values
     /// into `anyref` (`unknown`). `i32`/`bool` use `i31ref` and need no struct.
     pub(crate) boxed_f64_struct_type: u32,
+    /// Whether the closure GC types (including `$boxed_f64`) were emitted for
+    /// this module. When absent, `boxed_f64_struct_type` is a dummy index and
+    /// no boxed f64 can exist at runtime.
+    pub(crate) closure_gc_present: bool,
 }
 
 impl ArrayTypeRegistry {
@@ -61,6 +65,7 @@ impl ArrayTypeRegistry {
             anyref_array_type,
             func_val_struct_type,
             boxed_f64_struct_type,
+            closure_gc_present: false,
         }
     }
 
@@ -305,14 +310,16 @@ pub(crate) fn array_storage_type(
                 heap_type: HeapType::Concrete(index),
             })))
         }
-        Type::Function { .. } => Ok(StorageType::Val(ValType::Ref(RefType {
-            nullable: true,
-            heap_type: HeapType::Concrete(registry.func_val_struct_type),
-        }))),
-        Type::Record(_) => Ok(StorageType::Val(ValType::Ref(RefType {
-            nullable: true,
-            heap_type: HeapType::Concrete(registry.record_index(element_ty)?),
-        }))),
+        // Function values must not point at the `$func_val` struct type
+        // directly: array types are emitted before the closure GC types in the
+        // Wasm type section, so `(array (ref null $func_val))` would create an
+        // invalid forward reference. Store them as `anyref` and cast on
+        // `array.get` instead (same treatment as `thread`).
+        Type::Function { .. } => Ok(StorageType::Val(crate::wasm_types::anyref_val_type())),
+        // Records (and tagged unions, which lower to the canonical record) are
+        // emitted after the array types, so referencing them here would be an
+        // invalid forward reference; store as `anyref` and cast on `array.get`.
+        Type::Record(_) => Ok(StorageType::Val(crate::wasm_types::anyref_val_type())),
         // Thread capture cells must not point at the coroutine-state struct type directly:
         // array types are emitted before the coroutine state type exists in the Wasm type
         // section, so `(array (ref null $coroutine_state))` would create an invalid forward
@@ -323,12 +330,7 @@ pub(crate) fn array_storage_type(
             "multi-value types are not supported in array storage yet",
         )),
         Type::TaggedVariant(_) | Type::TaggedUnion(_) => {
-            let canonical = Type::canonical_tagged_union_record();
-            let index = registry.record_index(&canonical)?;
-            Ok(StorageType::Val(ValType::Ref(RefType {
-                nullable: true,
-                heap_type: HeapType::Concrete(index),
-            })))
+            Ok(StorageType::Val(crate::wasm_types::anyref_val_type()))
         }
         Type::TypeParam(_) => unreachable!(),
         Type::Unit => unreachable!(),

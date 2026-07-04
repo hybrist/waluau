@@ -240,6 +240,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         boxed_f64_struct_type,
     );
     array_registry.coroutine_state_type = coroutine_state_type;
+    array_registry.closure_gc_present = closure_gc_needed;
 
     let signature_registry = collect_user_signatures(
         module,
@@ -2091,7 +2092,37 @@ fn emit_block_instructions(
                             ctx.host_func_index(host::IMPORT_JS_TOSTRING_BOOL_FUNC)?,
                         ));
                     }
+                    Type::Unknown if ctx.array_registry.closure_gc_present => {
+                        // A boxed f64 reaches the JS host as an opaque GC
+                        // struct that `String()` cannot format; unbox it here
+                        // and use the f64 stringifier instead. (i31-boxed
+                        // i32/u32 values externalize as JS numbers already.)
+                        let boxed_f64 = ctx.array_registry.boxed_f64_struct_type;
+                        out.instruction(&Instruction::RefTestNullable(HeapType::Concrete(
+                            boxed_f64,
+                        )));
+                        out.instruction(&Instruction::If(BlockType::Result(externref_val_type())));
+                        emit_value_operand(out, local_plan, *source)?;
+                        out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
+                            boxed_f64,
+                        )));
+                        out.instruction(&Instruction::StructGet {
+                            struct_type_index: boxed_f64,
+                            field_index: 0,
+                        });
+                        out.instruction(&Instruction::Call(
+                            ctx.host_func_index(host::IMPORT_JS_TOSTRING_F64_FUNC)?,
+                        ));
+                        out.instruction(&Instruction::Else);
+                        emit_value_operand(out, local_plan, *source)?;
+                        out.instruction(&Instruction::Call(
+                            ctx.host_func_index(host::IMPORT_JS_TOSTRING_UNKNOWN_FUNC)?,
+                        ));
+                        out.instruction(&Instruction::End);
+                    }
                     Type::Unknown => {
+                        // No f64 boxing in this module; the anyref is an i31
+                        // number, an externalized string/extern, or a GC ref.
                         out.instruction(&Instruction::Call(
                             ctx.host_func_index(host::IMPORT_JS_TOSTRING_UNKNOWN_FUNC)?,
                         ));
@@ -2626,6 +2657,16 @@ fn emit_block_instructions(
                 if thread_array_storage_needs_cast(element_ty) {
                     out.instruction(&Instruction::RefCastNullable(HeapType::Concrete(
                         ctx.array_registry.coroutine_state_type()?,
+                    )));
+                }
+                if function_array_storage_needs_cast(element_ty) {
+                    out.instruction(&Instruction::RefCastNullable(HeapType::Concrete(
+                        ctx.array_registry.func_val_struct_type,
+                    )));
+                }
+                if let Some(record_ty) = record_array_element_cast_target(element_ty) {
+                    out.instruction(&Instruction::RefCastNullable(HeapType::Concrete(
+                        ctx.array_registry.record_index(&record_ty)?,
                     )));
                 }
                 emit_value_store(out, local_plan, *value)?;
@@ -3271,6 +3312,29 @@ fn thread_array_storage_needs_cast(ty: &Type) -> bool {
     }
 }
 
+/// Function-typed array elements are stored as `anyref` (their `$func_val`
+/// struct type is emitted after the array types), so reads must cast back.
+fn function_array_storage_needs_cast(ty: &Type) -> bool {
+    match ty {
+        Type::Function { .. } => true,
+        Type::Nullable(inner) => function_array_storage_needs_cast(inner),
+        _ => false,
+    }
+}
+
+/// Record-typed array elements are stored as `anyref` (record struct types are
+/// emitted after the array types); reads cast back to this record type.
+fn record_array_element_cast_target(ty: &Type) -> Option<Type> {
+    match ty {
+        Type::Record(_) => Some(ty.clone()),
+        Type::TaggedVariant(_) | Type::TaggedUnion(_) => {
+            Some(Type::canonical_tagged_union_record())
+        }
+        Type::Nullable(inner) => record_array_element_cast_target(inner),
+        _ => None,
+    }
+}
+
 fn emit_binary(
     out: &mut Function,
     ctx: &EmissionContext<'_>,
@@ -3620,6 +3684,67 @@ fn emit_binary(
             }
             Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
         },
+        BinaryOp::LessEq => match operand_ty {
+            Type::Numeric(NumericType::U32) => {
+                out.instruction(&Instruction::I32LeU);
+            }
+            Type::Numeric(NumericType::I32) => {
+                out.instruction(&Instruction::I32LeS);
+            }
+            Type::Numeric(NumericType::U64) => {
+                out.instruction(&Instruction::I64LeU);
+            }
+            Type::Numeric(NumericType::I64) => {
+                out.instruction(&Instruction::I64LeS);
+            }
+            Type::Numeric(NumericType::F32) => {
+                out.instruction(&Instruction::F32Le);
+            }
+            Type::Numeric(NumericType::F64) => {
+                out.instruction(&Instruction::F64Le);
+            }
+            Type::Bool => {
+                return Err(Diagnostic::new(
+                    "bool comparison is not supported during wasm emission",
+                ));
+            }
+            Type::String => {
+                out.instruction(&Instruction::Call(
+                    ctx.host_func_index(host::IMPORT_JS_STRING_COMPARE_FUNC)?,
+                ));
+                out.instruction(&Instruction::I32Const(0));
+                out.instruction(&Instruction::I32LeS);
+            }
+            Type::Bytes => {
+                out.instruction(&Instruction::Call(
+                    ctx.host_func_index(host::IMPORT_BYTES_COMPARE_FUNC)?,
+                ));
+                out.instruction(&Instruction::I32Const(0));
+                out.instruction(&Instruction::I32LeS);
+            }
+            Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
+                unreachable!()
+            }
+            Type::Array(_) => unreachable!(),
+            Type::Multi(_) => {
+                return Err(Diagnostic::new(
+                    "multi-value comparison is not supported during wasm emission",
+                ));
+            }
+            Type::TaggedVariant(_) | Type::TaggedUnion(_) => {
+                return Err(Diagnostic::new(
+                    "tagged unions are not yet supported during wasm emission",
+                ));
+            }
+            Type::Function { .. }
+            | Type::Record(_)
+            | Type::TypeParam(_)
+            | Type::Thread
+            | Type::Unknown => {
+                unreachable!()
+            }
+            Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
+        },
         BinaryOp::Greater => match operand_ty {
             Type::Numeric(NumericType::U32) => {
                 out.instruction(&Instruction::I32GtU);
@@ -3657,6 +3782,67 @@ fn emit_binary(
                 ));
                 out.instruction(&Instruction::I32Const(0));
                 out.instruction(&Instruction::I32GtS);
+            }
+            Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
+                unreachable!()
+            }
+            Type::Array(_) => unreachable!(),
+            Type::Multi(_) => {
+                return Err(Diagnostic::new(
+                    "multi-value comparison is not supported during wasm emission",
+                ));
+            }
+            Type::TaggedVariant(_) | Type::TaggedUnion(_) => {
+                return Err(Diagnostic::new(
+                    "tagged unions are not yet supported during wasm emission",
+                ));
+            }
+            Type::Function { .. }
+            | Type::Record(_)
+            | Type::TypeParam(_)
+            | Type::Thread
+            | Type::Unknown => {
+                unreachable!()
+            }
+            Type::Nil | Type::Nullable(_) | Type::Unit => unreachable!(),
+        },
+        BinaryOp::GreaterEq => match operand_ty {
+            Type::Numeric(NumericType::U32) => {
+                out.instruction(&Instruction::I32GeU);
+            }
+            Type::Numeric(NumericType::I32) => {
+                out.instruction(&Instruction::I32GeS);
+            }
+            Type::Numeric(NumericType::U64) => {
+                out.instruction(&Instruction::I64GeU);
+            }
+            Type::Numeric(NumericType::I64) => {
+                out.instruction(&Instruction::I64GeS);
+            }
+            Type::Numeric(NumericType::F32) => {
+                out.instruction(&Instruction::F32Ge);
+            }
+            Type::Numeric(NumericType::F64) => {
+                out.instruction(&Instruction::F64Ge);
+            }
+            Type::Bool => {
+                return Err(Diagnostic::new(
+                    "bool comparison is not supported during wasm emission",
+                ));
+            }
+            Type::String => {
+                out.instruction(&Instruction::Call(
+                    ctx.host_func_index(host::IMPORT_JS_STRING_COMPARE_FUNC)?,
+                ));
+                out.instruction(&Instruction::I32Const(0));
+                out.instruction(&Instruction::I32GeS);
+            }
+            Type::Bytes => {
+                out.instruction(&Instruction::Call(
+                    ctx.host_func_index(host::IMPORT_BYTES_COMPARE_FUNC)?,
+                ));
+                out.instruction(&Instruction::I32Const(0));
+                out.instruction(&Instruction::I32GeS);
             }
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
@@ -3805,6 +3991,12 @@ fn emit_math_intrinsic(
     operand_ty: Type,
 ) -> Result<(), Diagnostic> {
     match (intrinsic, operand_ty) {
+        (MathIntrinsic::Neg, Type::Numeric(NumericType::F32)) => {
+            out.instruction(&Instruction::F32Neg);
+        }
+        (MathIntrinsic::Neg, Type::Numeric(NumericType::F64)) => {
+            out.instruction(&Instruction::F64Neg);
+        }
         (MathIntrinsic::Abs, Type::Numeric(NumericType::F32)) => {
             out.instruction(&Instruction::F32Abs);
         }

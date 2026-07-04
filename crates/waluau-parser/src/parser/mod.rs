@@ -37,6 +37,11 @@ impl Parser {
         let mut top_level = Vec::new();
         let mut export = None;
         while self.peek().is_some() {
+            // Luau allows `;` as an optional statement separator.
+            if self.check_simple(&TokenKind::Semicolon) {
+                self.advance();
+                continue;
+            }
             if self.is_type_decl_start() {
                 match self.parse_type_decl() {
                     Ok(type_decl) => type_declarations.push(type_decl),
