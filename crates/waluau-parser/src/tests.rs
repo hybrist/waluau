@@ -597,17 +597,68 @@ fn parses_concat_between_add_and_comparison_precedence() {
 }
 
 #[test]
-fn rejects_legacy_function_local_and_return_syntax() {
+fn accepts_fn_and_let_as_identifiers() {
+    // `fn` and `let` are not keywords in Luau; both are valid local names.
     let source = r#"
-        fn entry(x: i32) -> i32
-            let y: i32 = x
-            return y
+        function entry(x: i32): i32
+            local fn = function(y: i32): i32 return y end
+            local let: i32 = fn(x)
+            return let
         end
     "#;
 
-    let error = parse(source).expect_err("parse should fail");
-    let message = error.to_string();
-    assert!(message.contains("unsupported 'fn'") || message.contains("unsupported 'let'"));
+    let program = parse(source).expect("parse should succeed");
+    assert_eq!(program.functions.len(), 1);
+}
+
+#[test]
+fn parses_local_function_as_named_function_expression_let() {
+    let source = r#"
+        function entry(x: i32): i32
+            local function double(y: i32): i32
+                return y * 2
+            end
+            return double(x)
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let Stmt::Let { name, value, .. } = &program.functions[0].body[0] else {
+        panic!("expected local function to desugar to a let statement");
+    };
+    assert_eq!(name, "double");
+    let waluau_ast::Expr::Function(function) = value else {
+        panic!("expected let value to be a function expression");
+    };
+    // The function expression carries its own name so its body can recurse.
+    assert_eq!(function.name.as_deref(), Some("double"));
+}
+
+#[test]
+fn parses_standalone_do_block_as_scoped_body() {
+    let source = r#"
+        function entry(): i32
+            local x: i32 = 1
+            do
+                local y: i32 = 2
+                x = y
+            end
+            return x
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let Stmt::If {
+        condition,
+        then_body,
+        else_body,
+    } = &program.functions[0].body[1]
+    else {
+        panic!("expected do block to desugar to an always-true if");
+    };
+    assert!(matches!(condition, waluau_ast::Expr::Bool(true, _)));
+    assert_eq!(then_body.len(), 2);
+    assert!(else_body.is_empty());
 }
 
 #[test]

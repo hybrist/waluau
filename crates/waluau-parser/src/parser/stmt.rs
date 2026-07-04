@@ -101,6 +101,19 @@ impl Parser {
                 body,
             });
         }
+        if self.check_simple(&TokenKind::Do) {
+            self.advance();
+            let body = self.parse_block_until(&[TokenKind::End]);
+            self.expect_simple(TokenKind::End, "expected 'end' after do block")?;
+            // A standalone `do ... end` block only introduces a scope; reuse
+            // the if-statement machinery (which scopes its branch bodies
+            // everywhere downstream) instead of adding a dedicated AST node.
+            return Ok(Stmt::If {
+                condition: Expr::Bool(true, None),
+                then_body: body,
+                else_body: Vec::new(),
+            });
+        }
         if self.check_simple(&TokenKind::Break) {
             self.advance();
             return Ok(Stmt::Break);
@@ -136,6 +149,9 @@ impl Parser {
 
     fn parse_local_decl(&mut self) -> Result<Stmt, Diagnostic> {
         self.expect_simple(TokenKind::Local, "expected 'local'")?;
+        if self.check_simple(&TokenKind::Function) {
+            return self.parse_local_function_decl();
+        }
         let name = self.expect_identifier()?;
         let rebindability = if self.check_simple(&TokenKind::Less) {
             self.advance();
@@ -190,6 +206,25 @@ impl Parser {
             rebindability,
             ty,
             value,
+        })
+    }
+
+    /// `local function f(...) ... end` declares a local binding whose name is
+    /// visible inside its own body. Desugars to a `let` of a *named* function
+    /// expression: the resolver and IR lowering already bind a named function
+    /// expression's own name inside its body, which is exactly Luau's
+    /// recursion semantics for `local function`.
+    fn parse_local_function_decl(&mut self) -> Result<Stmt, Diagnostic> {
+        let start_pos = self.peek().map(|t| t.span.start).unwrap_or(0);
+        self.expect_simple(TokenKind::Function, "expected 'function' after 'local'")?;
+        let name = self.expect_identifier()?;
+        let function = self.parse_function_expr_tail(Some(name.clone()), false, start_pos)?;
+        Ok(Stmt::Let {
+            name,
+            symbol_id: None,
+            rebindability: Rebindability::Rebindable,
+            ty: None,
+            value: Expr::Function(function),
         })
     }
 

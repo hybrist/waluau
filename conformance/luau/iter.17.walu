@@ -2,10 +2,6 @@
 -- tests/conformance/iter.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
 --
--- conformance: pending
--- This chunk contains only iter.luau checks that currently fail in Waluau.
--- Remove this directive when the whole chunk passes.
---
 -- Split from conformance/luau/iter.walu.
 
 -- This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details

@@ -92,9 +92,23 @@ pub enum TokenKind {
 }
 
 pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
-    let mut tokens = Vec::new();
     let chars: Vec<char> = source.chars().collect();
-    let mut i = 0usize;
+    let (tokens, _) = lex_range(&chars, 0, false)?;
+    Ok(tokens)
+}
+
+/// Lex starting at `start`. With `stop_at_unmatched_rbrace`, lexing stops at
+/// the first `}` that closes no `{` opened within this range and returns its
+/// index; backtick string interpolation uses this to lex the embedded
+/// expression. Otherwise lexes to the end of input.
+fn lex_range(
+    chars: &[char],
+    start: usize,
+    stop_at_unmatched_rbrace: bool,
+) -> Result<(Vec<Token>, usize), Diagnostic> {
+    let mut tokens = Vec::new();
+    let mut i = start;
+    let mut brace_depth = 0usize;
 
     while i < chars.len() {
         let c = chars[i];
@@ -109,8 +123,8 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
             ')' => (TokenKind::RParen, 1),
             '[' => {
                 // Lua long strings: `[[...]]` and the leveled `[=*[...]=*]`.
-                if let Some(level) = long_bracket_level(&chars, i) {
-                    let (value, end) = parse_long_string(&chars, i, level)?;
+                if let Some(level) = long_bracket_level(chars, i) {
+                    let (value, end) = parse_long_string(chars, i, level)?;
                     tokens.push(Token {
                         kind: TokenKind::Str(value),
                         span: Span {
@@ -124,8 +138,21 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 (TokenKind::LBracket, 1)
             }
             ']' => (TokenKind::RBracket, 1),
-            '{' => (TokenKind::LBrace, 1),
-            '}' => (TokenKind::RBrace, 1),
+            '{' => {
+                brace_depth += 1;
+                (TokenKind::LBrace, 1)
+            }
+            '}' => {
+                if stop_at_unmatched_rbrace && brace_depth == 0 {
+                    return Ok((tokens, i));
+                }
+                brace_depth = brace_depth.saturating_sub(1);
+                (TokenKind::RBrace, 1)
+            }
+            '`' => {
+                i = lex_interpolated_string(chars, i, &mut tokens)?;
+                continue;
+            }
             '#' => (TokenKind::Hash, 1),
             '?' => (TokenKind::Question, 1),
             ':' => {
@@ -222,9 +249,9 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
             '-' => {
                 if matches!(chars.get(i + 1), Some('-')) {
                     // Long (block) comment: `--[[...]]` or the leveled `--[=*[...]=*]`.
-                    if let Some(level) = long_bracket_level(&chars, i + 2) {
+                    if let Some(level) = long_bracket_level(chars, i + 2) {
                         let (_, end) = parse_long_bracket(
-                            &chars,
+                            chars,
                             i + 2,
                             level,
                             "unterminated block comment '--[[...]]'",
@@ -262,7 +289,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 }
             }
             '"' | '\'' => {
-                let (value, end) = parse_string_literal(&chars, i)?;
+                let (value, end) = parse_string_literal(chars, i)?;
                 tokens.push(Token {
                     kind: TokenKind::Str(value),
                     span: Span {
@@ -274,7 +301,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 continue;
             }
             'b' if matches!(chars.get(i + 1), Some('"')) => {
-                let (value, end) = parse_bytes_literal(&chars, i + 1)?;
+                let (value, end) = parse_bytes_literal(chars, i + 1)?;
                 tokens.push(Token {
                     kind: TokenKind::Bytes(value),
                     span: Span {
@@ -346,12 +373,6 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 }
                 let text: String = chars[i..end].iter().collect();
                 let kind = match text.as_str() {
-                    "fn" => {
-                        return Err(Diagnostic::new("unsupported 'fn', use 'function'"));
-                    }
-                    "let" => {
-                        return Err(Diagnostic::new("unsupported 'let', use 'local'"));
-                    }
                     "function" => TokenKind::Function,
                     "local" => TokenKind::Local,
                     "if" => TokenKind::If,
@@ -413,7 +434,127 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
         i += consumed;
     }
 
-    Ok(tokens)
+    if stop_at_unmatched_rbrace {
+        return Err(Diagnostic::new(
+            "unterminated interpolation '{...}' in backtick string",
+        ));
+    }
+    Ok((tokens, i))
+}
+
+/// Lex a backtick interpolated string starting at the opening backtick and
+/// desugar it directly into the token stream as a parenthesized concatenation:
+/// `` `a{x}b` `` becomes `("a" .. tostring(x) .. "b")`. Returns the index just
+/// past the closing backtick.
+fn lex_interpolated_string(
+    chars: &[char],
+    backtick_index: usize,
+    tokens: &mut Vec<Token>,
+) -> Result<usize, Diagnostic> {
+    enum Part {
+        Lit(String, Span),
+        Expr(Vec<Token>),
+    }
+
+    let mut parts: Vec<Part> = Vec::new();
+    let mut lit = String::new();
+    let mut lit_start = backtick_index + 1;
+    let mut i = backtick_index + 1;
+    let flush_lit = |lit: &mut String, from: usize, to: usize, parts: &mut Vec<Part>| {
+        if !lit.is_empty() {
+            parts.push(Part::Lit(
+                std::mem::take(lit),
+                Span {
+                    start: from as u32,
+                    end: to as u32,
+                },
+            ));
+        }
+    };
+    loop {
+        match chars.get(i) {
+            None | Some('\n') => {
+                return Err(Diagnostic::new("unterminated interpolated string literal"));
+            }
+            Some('`') => {
+                flush_lit(&mut lit, lit_start, i, &mut parts);
+                i += 1;
+                break;
+            }
+            Some('{') => {
+                flush_lit(&mut lit, lit_start, i, &mut parts);
+                let (expr_tokens, rbrace) = lex_range(chars, i + 1, true)?;
+                if expr_tokens.is_empty() {
+                    return Err(Diagnostic::new(
+                        "empty interpolation '{}' in backtick string",
+                    ));
+                }
+                parts.push(Part::Expr(expr_tokens));
+                i = rbrace + 1;
+                lit_start = i;
+            }
+            Some('\\') => {
+                i = push_string_escape(chars, i + 1, &mut lit)?;
+            }
+            Some(other) => {
+                lit.push(*other);
+                i += 1;
+            }
+        }
+    }
+
+    let whole_span = Span {
+        start: backtick_index as u32,
+        end: i as u32,
+    };
+    tokens.push(Token {
+        kind: TokenKind::LParen,
+        span: whole_span,
+    });
+    if parts.is_empty() {
+        tokens.push(Token {
+            kind: TokenKind::Str(String::new()),
+            span: whole_span,
+        });
+    }
+    for (index, part) in parts.into_iter().enumerate() {
+        if index > 0 {
+            tokens.push(Token {
+                kind: TokenKind::DoubleDot,
+                span: whole_span,
+            });
+        }
+        match part {
+            Part::Lit(value, span) => tokens.push(Token {
+                kind: TokenKind::Str(value),
+                span,
+            }),
+            Part::Expr(expr_tokens) => {
+                let expr_span = Span {
+                    start: expr_tokens.first().map(|t| t.span.start).unwrap_or(0),
+                    end: expr_tokens.last().map(|t| t.span.end).unwrap_or(0),
+                };
+                tokens.push(Token {
+                    kind: TokenKind::Identifier("tostring".to_string()),
+                    span: expr_span,
+                });
+                tokens.push(Token {
+                    kind: TokenKind::LParen,
+                    span: expr_span,
+                });
+                tokens.extend(expr_tokens);
+                tokens.push(Token {
+                    kind: TokenKind::RParen,
+                    span: expr_span,
+                });
+            }
+        }
+    }
+    tokens.push(Token {
+        kind: TokenKind::RParen,
+        span: whole_span,
+    });
+    Ok(i)
 }
 
 /// Detect a Lua long-bracket opener at `idx`: `[`, then zero or more `=`
@@ -503,44 +644,7 @@ fn parse_string_literal(chars: &[char], quote_index: usize) -> Result<(String, u
                 break;
             }
             Some('\\') => {
-                end += 1;
-                match chars.get(end) {
-                    Some('"') => value.push('"'),
-                    Some('\'') => value.push('\''),
-                    Some('\\') => value.push('\\'),
-                    Some('n') => value.push('\n'),
-                    Some('t') => value.push('\t'),
-                    Some('r') => value.push('\r'),
-                    Some(digit) if digit.is_ascii_digit() => {
-                        // Luau decimal escape: up to three digits, byte value <= 255.
-                        let mut code: u32 = 0;
-                        let mut digits = 0;
-                        while digits < 3 {
-                            match chars.get(end) {
-                                Some(c) if c.is_ascii_digit() => {
-                                    code = code * 10 + c.to_digit(10).unwrap();
-                                    digits += 1;
-                                    end += 1;
-                                }
-                                _ => break,
-                            }
-                        }
-                        if code > 255 {
-                            return Err(Diagnostic::new(format!(
-                                "decimal string escape '\\{code}' exceeds 255"
-                            )));
-                        }
-                        value.push(char::from_u32(code).unwrap());
-                        continue;
-                    }
-                    Some(other) => {
-                        return Err(Diagnostic::new(format!(
-                            "unsupported string escape '\\{other}'"
-                        )));
-                    }
-                    None => return Err(Diagnostic::new("unterminated string literal")),
-                }
-                end += 1;
+                end = push_string_escape(chars, end + 1, &mut value)?;
             }
             Some(other) => {
                 value.push(*other);
@@ -549,6 +653,105 @@ fn parse_string_literal(chars: &[char], quote_index: usize) -> Result<(String, u
         }
     }
     Ok((value, end))
+}
+
+/// Handle the string escape whose introducing `\` sits just before `idx`.
+/// Appends the escaped text to `value` and returns the index just past the
+/// escape. Shared by quoted strings and backtick interpolated strings.
+fn push_string_escape(chars: &[char], idx: usize, value: &mut String) -> Result<usize, Diagnostic> {
+    let mut end = idx;
+    match chars.get(end) {
+        Some('"') => value.push('"'),
+        Some('\'') => value.push('\''),
+        Some('`') => value.push('`'),
+        Some('{') => value.push('{'),
+        Some('}') => value.push('}'),
+        Some('\\') => value.push('\\'),
+        Some('n') => value.push('\n'),
+        Some('t') => value.push('\t'),
+        Some('r') => value.push('\r'),
+        Some('a') => value.push('\u{7}'),
+        Some('b') => value.push('\u{8}'),
+        Some('f') => value.push('\u{c}'),
+        Some('v') => value.push('\u{b}'),
+        // An escaped literal newline continues the string on the next line.
+        Some('\n') => value.push('\n'),
+        // `\z` skips all following whitespace, including newlines.
+        Some('z') => {
+            end += 1;
+            while matches!(chars.get(end), Some(c) if c.is_whitespace()) {
+                end += 1;
+            }
+            return Ok(end);
+        }
+        Some('x') => {
+            let hi = chars.get(end + 1).and_then(|c| c.to_digit(16));
+            let lo = chars.get(end + 2).and_then(|c| c.to_digit(16));
+            let (Some(hi), Some(lo)) = (hi, lo) else {
+                return Err(Diagnostic::new("string \\x escape requires two hex digits"));
+            };
+            value.push(char::from_u32((hi << 4) | lo).expect("byte value is a valid char"));
+            end += 2;
+        }
+        Some('u') => {
+            if chars.get(end + 1) != Some(&'{') {
+                return Err(Diagnostic::new(
+                    "string \\u escape requires braces, e.g. '\\u{1F600}'",
+                ));
+            }
+            end += 2;
+            let mut code: u32 = 0;
+            let mut digits = 0;
+            while let Some(digit) = chars.get(end).and_then(|c| c.to_digit(16)) {
+                code = code
+                    .checked_mul(16)
+                    .and_then(|code| code.checked_add(digit))
+                    .ok_or_else(|| Diagnostic::new("string \\u escape exceeds U+10FFFF"))?;
+                digits += 1;
+                end += 1;
+            }
+            if digits == 0 || chars.get(end) != Some(&'}') {
+                return Err(Diagnostic::new(
+                    "string \\u escape requires hex digits followed by '}'",
+                ));
+            }
+            let unicode = char::from_u32(code).ok_or_else(|| {
+                Diagnostic::new(format!(
+                    "string \\u escape 'u{{{code:x}}}' is not a valid codepoint"
+                ))
+            })?;
+            value.push(unicode);
+        }
+        Some(digit) if digit.is_ascii_digit() => {
+            // Luau decimal escape: up to three digits, byte value <= 255.
+            let mut code: u32 = 0;
+            let mut digits = 0;
+            while digits < 3 {
+                match chars.get(end) {
+                    Some(c) if c.is_ascii_digit() => {
+                        code = code * 10 + c.to_digit(10).unwrap();
+                        digits += 1;
+                        end += 1;
+                    }
+                    _ => break,
+                }
+            }
+            if code > 255 {
+                return Err(Diagnostic::new(format!(
+                    "decimal string escape '\\{code}' exceeds 255"
+                )));
+            }
+            value.push(char::from_u32(code).unwrap());
+            return Ok(end);
+        }
+        Some(other) => {
+            return Err(Diagnostic::new(format!(
+                "unsupported string escape '\\{other}'"
+            )));
+        }
+        None => return Err(Diagnostic::new("unterminated string literal")),
+    }
+    Ok(end + 1)
 }
 
 fn parse_bytes_literal(chars: &[char], quote_index: usize) -> Result<(Vec<u8>, usize), Diagnostic> {
@@ -687,9 +890,19 @@ mod tests {
     }
 
     #[test]
-    fn rejects_alternate_keyword_spellings() {
-        assert_eq!(err("fn").to_string(), "unsupported 'fn', use 'function'");
-        assert_eq!(err("let").to_string(), "unsupported 'let', use 'local'");
+    fn treats_fn_and_let_as_plain_identifiers() {
+        assert_eq!(
+            kinds("local fn = 1 let = fn"),
+            vec![
+                TokenKind::Local,
+                TokenKind::Identifier("fn".into()),
+                TokenKind::Equal,
+                TokenKind::Number("1".into()),
+                TokenKind::Identifier("let".into()),
+                TokenKind::Equal,
+                TokenKind::Identifier("fn".into()),
+            ]
+        );
     }
 
     #[test]
@@ -850,6 +1063,133 @@ mod tests {
         assert_eq!(
             err(r#"'\256'"#).to_string(),
             "decimal string escape '\\256' exceeds 255"
+        );
+    }
+
+    #[test]
+    fn tokenizes_hex_unicode_and_skip_escapes() {
+        assert_eq!(
+            kinds(
+                r#"'\x41\x62' '\u{48}\u{1F600}' "a\z
+                     b" '\a\b\f\v'"#
+            ),
+            vec![
+                TokenKind::Str("Ab".into()),
+                TokenKind::Str("H\u{1F600}".into()),
+                TokenKind::Str("ab".into()),
+                TokenKind::Str("\u{7}\u{8}\u{c}\u{b}".into()),
+            ]
+        );
+        assert_eq!(
+            err(r#"'\xg1'"#).to_string(),
+            "string \\x escape requires two hex digits"
+        );
+        assert_eq!(
+            err(r#"'\u{}'"#).to_string(),
+            "string \\u escape requires hex digits followed by '}'"
+        );
+        assert_eq!(
+            err(r#"'\u{110000}'"#).to_string(),
+            "string \\u escape 'u{110000}' is not a valid codepoint"
+        );
+    }
+
+    #[test]
+    fn desugars_backtick_interpolation_to_concat() {
+        // `a{x}b` => ("a" .. tostring(x) .. "b")
+        assert_eq!(
+            kinds("`a{x}b`"),
+            vec![
+                TokenKind::LParen,
+                TokenKind::Str("a".into()),
+                TokenKind::DoubleDot,
+                TokenKind::Identifier("tostring".into()),
+                TokenKind::LParen,
+                TokenKind::Identifier("x".into()),
+                TokenKind::RParen,
+                TokenKind::DoubleDot,
+                TokenKind::Str("b".into()),
+                TokenKind::RParen,
+            ]
+        );
+        // Expression-only and empty strings still produce string-typed results.
+        assert_eq!(
+            kinds("`{1 + 2}`"),
+            vec![
+                TokenKind::LParen,
+                TokenKind::Identifier("tostring".into()),
+                TokenKind::LParen,
+                TokenKind::Number("1".into()),
+                TokenKind::Plus,
+                TokenKind::Number("2".into()),
+                TokenKind::RParen,
+                TokenKind::RParen,
+            ]
+        );
+        assert_eq!(
+            kinds("``"),
+            vec![
+                TokenKind::LParen,
+                TokenKind::Str(String::new()),
+                TokenKind::RParen,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_nested_braces_and_strings_inside_interpolation() {
+        // A table literal inside the interpolation keeps its own braces, and a
+        // string containing '}' does not end the interpolation early.
+        assert_eq!(
+            kinds(r#"`v={#{1}} s={"}"}`"#),
+            vec![
+                TokenKind::LParen,
+                TokenKind::Str("v=".into()),
+                TokenKind::DoubleDot,
+                TokenKind::Identifier("tostring".into()),
+                TokenKind::LParen,
+                TokenKind::Hash,
+                TokenKind::LBrace,
+                TokenKind::Number("1".into()),
+                TokenKind::RBrace,
+                TokenKind::RParen,
+                TokenKind::DoubleDot,
+                TokenKind::Str(" s=".into()),
+                TokenKind::DoubleDot,
+                TokenKind::Identifier("tostring".into()),
+                TokenKind::LParen,
+                TokenKind::Str("}".into()),
+                TokenKind::RParen,
+                TokenKind::RParen,
+            ]
+        );
+    }
+
+    #[test]
+    fn escapes_braces_and_backticks_in_interpolated_strings() {
+        assert_eq!(
+            kinds(r"`\{not expr\} \` done`"),
+            vec![
+                TokenKind::LParen,
+                TokenKind::Str("{not expr} ` done".into()),
+                TokenKind::RParen,
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_interpolated_strings() {
+        assert_eq!(
+            err("`open").to_string(),
+            "unterminated interpolated string literal"
+        );
+        assert_eq!(
+            err("`a{1`").to_string(),
+            "unterminated interpolated string literal"
+        );
+        assert_eq!(
+            err("`a{}b`").to_string(),
+            "empty interpolation '{}' in backtick string"
         );
     }
 

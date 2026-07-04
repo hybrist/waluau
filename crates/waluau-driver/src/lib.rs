@@ -156,6 +156,85 @@ mod tests {
     }
 
     #[test]
+    fn compiles_local_function_with_recursion() {
+        super::compile_source(
+            r#"
+                function entry(n: i32): i32
+                    local function fib(x: i32): i32
+                        if x < 2 then
+                            return x
+                        end
+                        return fib(x - 1) + fib(x - 2)
+                    end
+                    return fib(n)
+                end
+            "#,
+        )
+        .expect("local function with self-recursion should compile");
+    }
+
+    #[test]
+    fn compiles_standalone_do_block_with_scoped_locals() {
+        super::compile_source(
+            r#"
+                function entry(): i32
+                    local x: i32 = 1
+                    do
+                        local y: i32 = 2
+                        x = x + y
+                    end
+                    do
+                        local y: i32 = 39
+                        x = x + y
+                    end
+                    return x
+                end
+            "#,
+        )
+        .expect("standalone do blocks should compile");
+    }
+
+    #[test]
+    fn compiles_fn_and_let_identifiers() {
+        super::compile_source(
+            r#"
+                function entry(x: i32): i32
+                    local fn = function(y: i32): i32 return y + 1 end
+                    local let: i32 = fn(x)
+                    return let
+                end
+            "#,
+        )
+        .expect("fn and let should be usable as identifiers");
+    }
+
+    #[test]
+    fn compiles_backtick_string_interpolation() {
+        super::compile_source(
+            r#"
+                function entry(n: i32): string
+                    local label: string = "count"
+                    return `{label} is {n + 1}!`
+                end
+            "#,
+        )
+        .expect("backtick interpolation should compile");
+    }
+
+    #[test]
+    fn compiles_extended_string_escapes() {
+        super::compile_source(
+            r#"
+                function entry(): string
+                    return "\x41\u{1F600}" .. "a\z
+                           b"
+                end
+            "#,
+        )
+        .expect("\\x, \\u{...}, and \\z escapes should compile");
+    }
+
+    #[test]
     fn compiles_generated_dom_externs_with_inheritance() {
         super::compile_source(include_str!("../../../externs/dom.walu"))
             .expect("generated DOM extern declarations should compile");
