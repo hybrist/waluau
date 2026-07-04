@@ -306,6 +306,13 @@ pub(crate) fn infer_value_types(
                 IrInstruction::ArraySlice { element_ty, .. } => {
                     Type::Array(Box::new(element_ty.clone()))
                 }
+                IrInstruction::GrowableArrayNew { element_ty, .. } => {
+                    Type::Array(Box::new(element_ty.clone()))
+                }
+                IrInstruction::GrowableArrayGet { element_ty, .. } => element_ty.clone(),
+                IrInstruction::GrowableArraySet { .. } => Type::Numeric(NumericType::I32),
+                IrInstruction::GrowableArrayLen { .. } => Type::Numeric(NumericType::I32),
+                IrInstruction::GrowableArrayPush { .. } => Type::Unit,
                 IrInstruction::BytesGet { .. } => Type::Numeric(NumericType::I32),
                 IrInstruction::BytesLen { .. } => Type::Numeric(NumericType::I32),
                 IrInstruction::StructNew { struct_ty, .. } => struct_ty.clone(),
@@ -712,6 +719,18 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
         } => vec![*array, *index, *value],
         IrInstruction::ArrayLen { array } => vec![*array],
         IrInstruction::ArraySlice { array, start, .. } => vec![*array, *start],
+        IrInstruction::GrowableArrayNew {
+            initial_elements, ..
+        } => initial_elements.clone(),
+        IrInstruction::GrowableArrayGet { array, index, .. } => vec![*array, *index],
+        IrInstruction::GrowableArraySet {
+            array,
+            index,
+            value,
+            ..
+        } => vec![*array, *index, *value],
+        IrInstruction::GrowableArrayLen { array, .. } => vec![*array],
+        IrInstruction::GrowableArrayPush { array, value, .. } => vec![*array, *value],
         IrInstruction::BytesGet { bytes, index } => vec![*bytes, *index],
         IrInstruction::BytesLen { bytes } => vec![*bytes],
         IrInstruction::StructNew { fields, .. } => fields.clone(),
@@ -743,6 +762,8 @@ fn instruction_use_requires_local(instruction: &IrInstruction) -> bool {
         } | IrInstruction::ArrayGet { .. }
             | IrInstruction::ArraySet { .. }
             | IrInstruction::ArraySlice { .. }
+            | IrInstruction::GrowableArrayGet { .. }
+            | IrInstruction::GrowableArraySet { .. }
             | IrInstruction::StructGet { .. }
             | IrInstruction::StructSet { .. }
             | IrInstruction::CoroutineResume { .. }
@@ -783,7 +804,14 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         IrInstruction::ArrayGet { .. }
         | IrInstruction::ArraySet { .. }
         | IrInstruction::ArraySlice { .. } => false,
+        IrInstruction::GrowableArrayNew {
+            initial_elements, ..
+        } => initial_elements.first().copied() == Some(value),
+        IrInstruction::GrowableArrayGet { .. }
+        | IrInstruction::GrowableArraySet { .. }
+        | IrInstruction::GrowableArrayPush { .. } => false,
         IrInstruction::ArrayLen { array } => *array == value,
+        IrInstruction::GrowableArrayLen { array, .. } => *array == value,
         IrInstruction::BytesGet { .. } => false,
         IrInstruction::BytesLen { bytes } => *bytes == value,
         IrInstruction::StructNew { fields, .. } => fields.first().copied() == Some(value),

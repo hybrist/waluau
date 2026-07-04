@@ -203,7 +203,11 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     let bytes_constants = host::collect_bytes_constants(module);
     let coroutine_plan = CoroutinePlan::new(module, string_constants.len() as u32);
     let start_thunk = module.start;
-    let host_type_base = array_types.len() as u32;
+
+    // Growable array struct types come after array types but before host types
+    let growable_array_types_base = array_types.len() as u32;
+    let growable_array_types_count = array_types.len() as u32; // One growable struct per array element type
+    let host_type_base = growable_array_types_base + growable_array_types_count;
 
     // Determine which host imports the module actually uses, and build the
     // index remapping so callers can use canonical slot numbers.
@@ -259,6 +263,15 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     array_registry.coroutine_state_type = coroutine_state_type;
     array_registry.closure_gc_present = closure_gc_needed;
 
+    // Populate growable array type indices
+    for (i, array_ty) in array_types.iter().enumerate() {
+        let element_ty = array_ty
+            .element_type()
+            .expect("array type must have element type");
+        let growable_struct_index = growable_array_types_base + i as u32;
+        array_registry.add_growable_array_type(&element_ty, growable_struct_index);
+    }
+
     let signature_registry = collect_user_signatures(
         module,
         start_thunk.is_some(),
@@ -302,6 +315,29 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         let storage = array_storage_type(&element_ty, &array_registry)?;
         types.ty().array(&storage, true);
     }
+
+    // Emit growable array wrapper struct types after regular arrays but before other types
+    for array_ty in &array_types {
+        // Each growable array struct contains:
+        // - storage: ref to the backing array (mutable)
+        // - len: i32 current length (mutable)
+        let storage_array_ref_type = ValType::Ref(RefType {
+            nullable: false, // Make non-nullable since we never store null
+            heap_type: HeapType::Concrete(array_registry.index(array_ty)?),
+        });
+
+        types.ty().struct_(vec![
+            FieldType {
+                element_type: StorageType::Val(storage_array_ref_type),
+                mutable: true,
+            },
+            FieldType {
+                element_type: StorageType::Val(ValType::I32),
+                mutable: true,
+            },
+        ]);
+    }
+
     // Emit only the host function type entries that are actually used by this module.
     // The canonical slots and their signatures are documented in `host::needed_host_type_slots`.
     let host_type_specs: [(&[ValType], &[ValType]); host::HOST_TYPE_COUNT as usize] = [
@@ -2808,15 +2844,31 @@ fn emit_block_instructions(
                 element_ty,
                 elements,
             } => {
-                for element in elements {
-                    emit_value_operand(out, local_plan, *element)?;
+                // Create a growable array instead of a fixed array
+                let growable_struct_index = ctx.array_registry.growable_array_index(element_ty)?;
+                let storage_array_ty = Type::Array(Box::new(element_ty.clone()));
+                let storage_type_index = ctx.array_registry.index(&storage_array_ty)?;
+
+                if elements.is_empty() {
+                    // Create empty growable array with default capacity
+                    out.instruction(&Instruction::I32Const(4)); // Default capacity
+                    out.instruction(&Instruction::ArrayNewDefault(storage_type_index));
+                    out.instruction(&Instruction::I32Const(0)); // Length = 0
+                } else {
+                    // Create growable array with initial elements
+                    for element in elements {
+                        emit_value_operand(out, local_plan, *element)?;
+                    }
+
+                    out.instruction(&Instruction::ArrayNewFixed {
+                        array_type_index: storage_type_index,
+                        array_size: elements.len() as u32,
+                    });
+                    out.instruction(&Instruction::I32Const(elements.len() as i32)); // Length = initial size
                 }
-                let array_ty = Type::Array(Box::new(element_ty.clone()));
-                let array_type_index = ctx.array_registry.index(&array_ty)?;
-                out.instruction(&Instruction::ArrayNewFixed {
-                    array_type_index,
-                    array_size: elements.len() as u32,
-                });
+
+                // Create the growable array struct
+                out.instruction(&Instruction::StructNew(growable_struct_index));
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::ArrayGet {
@@ -2826,12 +2878,40 @@ fn emit_block_instructions(
             } => {
                 let array_local = local(local_plan, *array)?;
                 let index_local = local(local_plan, *index)?;
-                let array_ty = Type::Array(Box::new(element_ty.clone()));
-                let array_type_index = ctx.array_registry.index(&array_ty)?;
-                emit_bounds_check(out, array_local, index_local);
-                out.instruction(&Instruction::LocalGet(array_local));
+                let growable_struct_index = ctx.array_registry.growable_array_index(element_ty)?;
+
+                // Bounds check: index < len and index >= 0
                 out.instruction(&Instruction::LocalGet(index_local));
-                out.instruction(&Instruction::ArrayGet(array_type_index));
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: growable_struct_index,
+                    field_index: 1, // len field
+                });
+                out.instruction(&Instruction::I32GeU);
+                out.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+                out.instruction(&Instruction::Unreachable);
+                out.instruction(&Instruction::End);
+
+                out.instruction(&Instruction::LocalGet(index_local));
+                out.instruction(&Instruction::I32Const(0));
+                out.instruction(&Instruction::I32LtS);
+                out.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+                out.instruction(&Instruction::Unreachable);
+                out.instruction(&Instruction::End);
+
+                // Get element from storage array
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: growable_struct_index,
+                    field_index: 0, // storage field
+                });
+                out.instruction(&Instruction::LocalGet(index_local));
+
+                let storage_array_ty = Type::Array(Box::new(element_ty.clone()));
+                let storage_type_index = ctx.array_registry.index(&storage_array_ty)?;
+                out.instruction(&Instruction::ArrayGet(storage_type_index));
+
+                // Add casts if needed (same as before)
                 if thread_array_storage_needs_cast(element_ty) {
                     out.instruction(&Instruction::RefCastNullable(HeapType::Concrete(
                         ctx.array_registry.coroutine_state_type()?,
@@ -2847,6 +2927,7 @@ fn emit_block_instructions(
                         ctx.array_registry.record_index(&record_ty)?,
                     )));
                 }
+
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::ArraySet {
@@ -2857,17 +2938,96 @@ fn emit_block_instructions(
             } => {
                 let array_local = local(local_plan, *array)?;
                 let index_local = local(local_plan, *index)?;
-                let array_ty = Type::Array(Box::new(element_ty.clone()));
-                let array_type_index = ctx.array_registry.index(&array_ty)?;
-                emit_bounds_check(out, array_local, index_local);
+                let growable_struct_index = ctx.array_registry.growable_array_index(element_ty)?;
+                let storage_array_ty = Type::Array(Box::new(element_ty.clone()));
+                let storage_type_index = ctx.array_registry.index(&storage_array_ty)?;
+
+                // Check if this is an append operation (index == len)
+                out.instruction(&Instruction::LocalGet(index_local));
                 out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: growable_struct_index,
+                    field_index: 1, // len field
+                });
+                out.instruction(&Instruction::I32Eq);
+                out.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+
+                // Append case: set at index and increment length
+                // TODO: Check if we need to grow the storage array first
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: growable_struct_index,
+                    field_index: 0, // storage field
+                });
                 out.instruction(&Instruction::LocalGet(index_local));
                 out.instruction(&Instruction::LocalGet(local(local_plan, *stored)?));
-                out.instruction(&Instruction::ArraySet(array_type_index));
+                out.instruction(&Instruction::ArraySet(storage_type_index));
+
+                // Update length
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::LocalGet(index_local));
+                out.instruction(&Instruction::I32Const(1));
+                out.instruction(&Instruction::I32Add);
+                out.instruction(&Instruction::StructSet {
+                    struct_type_index: growable_struct_index,
+                    field_index: 1, // len field
+                });
+
+                out.instruction(&Instruction::Else);
+
+                // Regular set case: bounds check then set
+                out.instruction(&Instruction::LocalGet(index_local));
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: growable_struct_index,
+                    field_index: 1, // len field
+                });
+                out.instruction(&Instruction::I32GeU);
+                out.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+                out.instruction(&Instruction::Unreachable);
+                out.instruction(&Instruction::End);
+
+                out.instruction(&Instruction::LocalGet(index_local));
+                out.instruction(&Instruction::I32Const(0));
+                out.instruction(&Instruction::I32LtS);
+                out.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+                out.instruction(&Instruction::Unreachable);
+                out.instruction(&Instruction::End);
+
+                // Set element in storage array
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: growable_struct_index,
+                    field_index: 0, // storage field
+                });
+                out.instruction(&Instruction::LocalGet(index_local));
+                out.instruction(&Instruction::LocalGet(local(local_plan, *stored)?));
+                out.instruction(&Instruction::ArraySet(storage_type_index));
+
+                out.instruction(&Instruction::End);
             }
             IrInstruction::ArrayLen { array } => {
+                // For growable arrays, get the length field from the struct
+                // We need to know the element type to get the right struct index
+                // This is a problem - ArrayLen doesn't have element_ty info
+                // For now, let's assume we can get it from the value types
+                let array_ty = value_types.get(array).ok_or_else(|| {
+                    Diagnostic::new(format!("missing type for array len operand {:?}", array))
+                })?;
+                let Type::Array(element_ty) = array_ty else {
+                    return Err(Diagnostic::new(format!(
+                        "array len operand must be an array type, got {}",
+                        array_ty
+                    )));
+                };
+
+                let growable_struct_index = ctx.array_registry.growable_array_index(element_ty)?;
+
                 emit_value_operand(out, local_plan, *array)?;
-                out.instruction(&Instruction::ArrayLen);
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: growable_struct_index,
+                    field_index: 1, // len field
+                });
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::ArraySlice {
@@ -2895,6 +3055,237 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::ArrayCopy {
                     array_type_index_dst: array_type_index,
                     array_type_index_src: array_type_index,
+                });
+            }
+            IrInstruction::GrowableArrayNew {
+                element_ty,
+                initial_elements,
+            } => {
+                // Get the growable array struct type index
+                let growable_struct_index = ctx.array_registry.growable_array_index(element_ty)?;
+
+                // Create initial storage array
+                let storage_array_ty = Type::Array(Box::new(element_ty.clone()));
+                let storage_type_index = ctx.array_registry.index(&storage_array_ty)?;
+
+                if initial_elements.is_empty() {
+                    // Create empty array with default capacity
+                    out.instruction(&Instruction::I32Const(4)); // Default capacity
+                    out.instruction(&Instruction::ArrayNewDefault(storage_type_index));
+                    out.instruction(&Instruction::I32Const(0)); // Length = 0
+                } else {
+                    // Create array with initial elements, but with extra capacity
+                    let _initial_capacity = (initial_elements.len() * 2).max(4);
+
+                    // First, push all initial element values onto the stack
+                    for element in initial_elements {
+                        emit_value_operand(out, local_plan, *element)?;
+                    }
+
+                    // Create array with initial elements
+                    out.instruction(&Instruction::ArrayNewFixed {
+                        array_type_index: storage_type_index,
+                        array_size: initial_elements.len() as u32,
+                    });
+
+                    // For now, we'll just create arrays that are exactly the initial size
+                    // TODO: Implement proper growth when we add growth operations
+                    out.instruction(&Instruction::I32Const(initial_elements.len() as i32)); // Length = initial size
+                }
+
+                // Create the growable array struct
+                out.instruction(&Instruction::StructNew(growable_struct_index));
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::GrowableArrayGet {
+                array,
+                index,
+                element_ty,
+            } => {
+                let array_local = local(local_plan, *array)?;
+                let index_local = local(local_plan, *index)?;
+                let growable_struct_index = ctx.array_registry.growable_array_index(element_ty)?;
+
+                // Bounds check: index < len
+                out.instruction(&Instruction::LocalGet(index_local));
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: growable_struct_index,
+                    field_index: 1, // len field
+                });
+                out.instruction(&Instruction::I32GeU);
+                out.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+                out.instruction(&Instruction::Unreachable);
+                out.instruction(&Instruction::End);
+
+                // Negative index check
+                out.instruction(&Instruction::LocalGet(index_local));
+                out.instruction(&Instruction::I32Const(0));
+                out.instruction(&Instruction::I32LtS);
+                out.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+                out.instruction(&Instruction::Unreachable);
+                out.instruction(&Instruction::End);
+
+                // Get element from storage array
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: growable_struct_index,
+                    field_index: 0, // storage field
+                });
+                out.instruction(&Instruction::LocalGet(index_local));
+
+                let storage_array_ty = Type::Array(Box::new(element_ty.clone()));
+                let storage_type_index = ctx.array_registry.index(&storage_array_ty)?;
+                out.instruction(&Instruction::ArrayGet(storage_type_index));
+
+                // Add casts if needed (same as regular ArrayGet)
+                if thread_array_storage_needs_cast(element_ty) {
+                    out.instruction(&Instruction::RefCastNullable(HeapType::Concrete(
+                        ctx.array_registry.coroutine_state_type()?,
+                    )));
+                }
+                if function_array_storage_needs_cast(element_ty) {
+                    out.instruction(&Instruction::RefCastNullable(HeapType::Concrete(
+                        ctx.array_registry.func_val_struct_type,
+                    )));
+                }
+                if let Some(record_ty) = record_array_element_cast_target(element_ty) {
+                    out.instruction(&Instruction::RefCastNullable(HeapType::Concrete(
+                        ctx.array_registry.record_index(&record_ty)?,
+                    )));
+                }
+
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::GrowableArraySet {
+                array,
+                index,
+                value: stored_value,
+                element_ty,
+            } => {
+                let array_local = local(local_plan, *array)?;
+                let index_local = local(local_plan, *index)?;
+                let growable_struct_index = ctx.array_registry.growable_array_index(element_ty)?;
+
+                // Check for append case (index == len)
+                out.instruction(&Instruction::LocalGet(index_local));
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: growable_struct_index,
+                    field_index: 1, // len field
+                });
+                out.instruction(&Instruction::I32Eq);
+                out.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+
+                // Append case: call GrowableArrayPush logic
+                // TODO: This is a simplified implementation - we'll need to handle growth
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: growable_struct_index,
+                    field_index: 0, // storage field
+                });
+                out.instruction(&Instruction::LocalGet(index_local));
+                out.instruction(&Instruction::LocalGet(local(local_plan, *stored_value)?));
+
+                let storage_array_ty = Type::Array(Box::new(element_ty.clone()));
+                let storage_type_index = ctx.array_registry.index(&storage_array_ty)?;
+                out.instruction(&Instruction::ArraySet(storage_type_index));
+
+                // Update length
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::LocalGet(index_local));
+                out.instruction(&Instruction::I32Const(1));
+                out.instruction(&Instruction::I32Add);
+                out.instruction(&Instruction::StructSet {
+                    struct_type_index: growable_struct_index,
+                    field_index: 1, // len field
+                });
+
+                out.instruction(&Instruction::Else);
+
+                // Regular set case: bounds check then set
+                // Bounds check: index < len
+                out.instruction(&Instruction::LocalGet(index_local));
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: growable_struct_index,
+                    field_index: 1, // len field
+                });
+                out.instruction(&Instruction::I32GeU);
+                out.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+                out.instruction(&Instruction::Unreachable);
+                out.instruction(&Instruction::End);
+
+                // Negative index check
+                out.instruction(&Instruction::LocalGet(index_local));
+                out.instruction(&Instruction::I32Const(0));
+                out.instruction(&Instruction::I32LtS);
+                out.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+                out.instruction(&Instruction::Unreachable);
+                out.instruction(&Instruction::End);
+
+                // Set element in storage array
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: growable_struct_index,
+                    field_index: 0, // storage field
+                });
+                out.instruction(&Instruction::LocalGet(index_local));
+                out.instruction(&Instruction::LocalGet(local(local_plan, *stored_value)?));
+                out.instruction(&Instruction::ArraySet(storage_type_index));
+
+                out.instruction(&Instruction::End);
+            }
+            IrInstruction::GrowableArrayLen { array, element_ty } => {
+                let growable_struct_index = ctx.array_registry.growable_array_index(element_ty)?;
+
+                emit_value_operand(out, local_plan, *array)?;
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: growable_struct_index,
+                    field_index: 1, // len field
+                });
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::GrowableArrayPush {
+                array,
+                value: pushed_value,
+                element_ty,
+            } => {
+                let array_local = local(local_plan, *array)?;
+                let growable_struct_index = ctx.array_registry.growable_array_index(element_ty)?;
+
+                // TODO: Check if we need to grow the storage array (len >= capacity)
+                // For now, assume capacity is sufficient
+
+                // Set element at position [len] (using current length)
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: growable_struct_index,
+                    field_index: 0, // storage field
+                });
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: growable_struct_index,
+                    field_index: 1, // len field
+                });
+                out.instruction(&Instruction::LocalGet(local(local_plan, *pushed_value)?));
+
+                let storage_array_ty = Type::Array(Box::new(element_ty.clone()));
+                let storage_type_index = ctx.array_registry.index(&storage_array_ty)?;
+                out.instruction(&Instruction::ArraySet(storage_type_index));
+
+                // Increment length
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: growable_struct_index,
+                    field_index: 1, // len field
+                });
+                out.instruction(&Instruction::I32Const(1));
+                out.instruction(&Instruction::I32Add);
+                out.instruction(&Instruction::StructSet {
+                    struct_type_index: growable_struct_index,
+                    field_index: 1, // len field
                 });
             }
             IrInstruction::BytesGet { bytes, index } => {

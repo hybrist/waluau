@@ -24,6 +24,9 @@ pub(crate) struct ArrayTypeRegistry {
     /// this module. When absent, `boxed_f64_struct_type` is a dummy index and
     /// no boxed f64 can exist at runtime.
     pub(crate) closure_gc_present: bool,
+    /// Type indices for growable array wrapper structs. Maps element type to struct type index.
+    /// Each growable array is represented as: `(struct (field storage: array) (field len: i32))`
+    pub(crate) growable_array_indices: HashMap<String, u32>,
 }
 
 impl ArrayTypeRegistry {
@@ -66,6 +69,7 @@ impl ArrayTypeRegistry {
             func_val_struct_type,
             boxed_f64_struct_type,
             closure_gc_present: false,
+            growable_array_indices: HashMap::new(),
         }
     }
 
@@ -103,6 +107,18 @@ impl ArrayTypeRegistry {
                 field, record_ty
             ))
         })
+    }
+
+    pub(crate) fn growable_array_index(&self, element_ty: &Type) -> Result<u32, Diagnostic> {
+        self.growable_array_indices
+            .get(&type_key(element_ty))
+            .copied()
+            .ok_or_else(|| Diagnostic::new(format!("missing growable array type for {element_ty}")))
+    }
+
+    pub(crate) fn add_growable_array_type(&mut self, element_ty: &Type, type_index: u32) {
+        self.growable_array_indices
+            .insert(type_key(element_ty), type_index);
     }
 }
 
@@ -204,10 +220,15 @@ fn collect_array_types_from_instruction(
         }
         IrInstruction::ArrayGet { element_ty, .. }
         | IrInstruction::ArraySet { element_ty, .. }
-        | IrInstruction::ArraySlice { element_ty, .. } => {
+        | IrInstruction::ArraySlice { element_ty, .. }
+        | IrInstruction::GrowableArrayNew { element_ty, .. }
+        | IrInstruction::GrowableArrayGet { element_ty, .. }
+        | IrInstruction::GrowableArraySet { element_ty, .. }
+        | IrInstruction::GrowableArrayPush { element_ty, .. } => {
             insert_array_type(&Type::Array(Box::new(element_ty.clone())), seen, out);
         }
         IrInstruction::ArrayLen { .. }
+        | IrInstruction::GrowableArrayLen { .. }
         | IrInstruction::Bytes(_)
         | IrInstruction::BytesGet { .. }
         | IrInstruction::BytesLen { .. } => {}
@@ -226,7 +247,13 @@ fn collect_record_types_from_instruction(
         IrInstruction::ArrayNew { element_ty, .. }
         | IrInstruction::ArrayGet { element_ty, .. }
         | IrInstruction::ArraySet { element_ty, .. }
-        | IrInstruction::ArraySlice { element_ty, .. } => insert_record_type(element_ty, seen, out),
+        | IrInstruction::ArraySlice { element_ty, .. }
+        | IrInstruction::GrowableArrayNew { element_ty, .. }
+        | IrInstruction::GrowableArrayGet { element_ty, .. }
+        | IrInstruction::GrowableArraySet { element_ty, .. }
+        | IrInstruction::GrowableArrayPush { element_ty, .. } => {
+            insert_record_type(element_ty, seen, out)
+        }
         IrInstruction::CallValue {
             params,
             return_type,
@@ -284,6 +311,7 @@ fn collect_record_types_from_instruction(
         | IrInstruction::CoroutineAwaitResult
         | IrInstruction::CoroutineClose { .. }
         | IrInstruction::ArrayLen { .. }
+        | IrInstruction::GrowableArrayLen { .. }
         | IrInstruction::BytesGet { .. }
         | IrInstruction::BytesLen { .. }
         | IrInstruction::StructSet { .. }
