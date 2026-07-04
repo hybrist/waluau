@@ -1,0 +1,65 @@
+-- Compound assignment operators: `+=`, `-=`, `*=`, `/=`, `//=`, `%=`, `^=`, and
+-- `..=`. Each desugars to `target = target op value`, evaluating the target's
+-- subexpressions only once. Arithmetic forms require a numeric target; `..=`
+-- requires a string target.
+
+-- Arithmetic on a local. Number literals default to f64, so `/=` and `//=`
+-- behave like Luau's floating-point division and floor division.
+function arith_local(): f64
+    local a = 2
+    a += 5   -- 7
+    a -= 1   -- 6
+    a *= 3   -- 18
+    a /= 4   -- 4.5
+    a //= 2  -- 2 (floor(2.25))
+    a %= 3   -- 2
+    a ^= 4   -- 16
+    return a
+end
+
+assert(arith_local() == 16)
+
+-- The same operators on explicit integer-typed locals.
+function arith_i32(): i32
+    local n: i32 = 10
+    n += 5   -- 15
+    n -= 3   -- 12
+    n *= 2   -- 24
+    n //= 5  -- 4
+    n %= 3   -- 1
+    return n
+end
+
+assert(arith_i32() == 1)
+
+-- Compound assignment to array elements (Waluau arrays are 0-indexed).
+function array_elements(): i32
+    local xs: {i32} = {10, 20, 30}
+    xs[0] += 5  -- 15
+    xs[1] *= 2  -- 40
+    xs[2] -= 7  -- 23
+    return xs[0] + xs[1] + xs[2]
+end
+
+assert(array_elements() == 78)
+
+-- Compound assignment to record fields.
+function record_fields(): i32
+    local c: { value: i32 } = { value = 3 }
+    c.value *= 3  -- 9
+    c.value += 1  -- 10
+    return c.value
+end
+
+assert(record_fields() == 10)
+
+-- `..=` appends to a string target; the right-hand side may itself be a
+-- concatenation.
+function concat_string(): string
+    local s: string = "a"
+    s ..= "b"
+    s ..= "c" .. "d"
+    return s
+end
+
+assert(concat_string() == "abcd")

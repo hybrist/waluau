@@ -51,11 +51,17 @@ pub enum TokenKind {
     Plus,
     PlusEqual,
     Minus,
+    MinusEqual,
     Star,
+    StarEqual,
     Slash,
+    SlashEqual,
     DoubleSlash,
+    DoubleSlashEqual,
     Percent,
+    PercentEqual,
     Caret,
+    CaretEqual,
     Equal,
     EqualEqual,
     TildeEqual,
@@ -69,6 +75,7 @@ pub enum TokenKind {
     Colon,
     Dot,
     DoubleDot,
+    DoubleDotEqual,
     TripleDot,
     Comma,
     Hash,
@@ -133,21 +140,49 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                     (TokenKind::Plus, 1)
                 }
             }
-            '*' => (TokenKind::Star, 1),
+            '*' => {
+                if matches!(chars.get(i + 1), Some('=')) {
+                    (TokenKind::StarEqual, 2)
+                } else {
+                    (TokenKind::Star, 1)
+                }
+            }
             '/' => {
                 if matches!(chars.get(i + 1), Some('/')) {
-                    (TokenKind::DoubleSlash, 2)
+                    if matches!(chars.get(i + 2), Some('=')) {
+                        (TokenKind::DoubleSlashEqual, 3)
+                    } else {
+                        (TokenKind::DoubleSlash, 2)
+                    }
+                } else if matches!(chars.get(i + 1), Some('=')) {
+                    (TokenKind::SlashEqual, 2)
                 } else {
                     (TokenKind::Slash, 1)
                 }
             }
-            '%' => (TokenKind::Percent, 1),
-            '^' => (TokenKind::Caret, 1),
+            '%' => {
+                if matches!(chars.get(i + 1), Some('=')) {
+                    (TokenKind::PercentEqual, 2)
+                } else {
+                    (TokenKind::Percent, 1)
+                }
+            }
+            '^' => {
+                if matches!(chars.get(i + 1), Some('=')) {
+                    (TokenKind::CaretEqual, 2)
+                } else {
+                    (TokenKind::Caret, 1)
+                }
+            }
             '.' => {
                 if matches!(chars.get(i + 1), Some('.')) && matches!(chars.get(i + 2), Some('.')) {
                     (TokenKind::TripleDot, 3)
                 } else if matches!(chars.get(i + 1), Some('.')) {
-                    (TokenKind::DoubleDot, 2)
+                    if matches!(chars.get(i + 2), Some('=')) {
+                        (TokenKind::DoubleDotEqual, 3)
+                    } else {
+                        (TokenKind::DoubleDot, 2)
+                    }
                 } else {
                     (TokenKind::Dot, 1)
                 }
@@ -190,6 +225,8 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
                 }
                 if matches!(chars.get(i + 1), Some('>')) {
                     (TokenKind::Arrow, 2)
+                } else if matches!(chars.get(i + 1), Some('=')) {
+                    (TokenKind::MinusEqual, 2)
                 } else {
                     (TokenKind::Minus, 1)
                 }
@@ -630,6 +667,41 @@ mod tests {
                 TokenKind::Less,
                 TokenKind::Greater,
                 TokenKind::DoubleDot,
+            ]
+        );
+    }
+
+    #[test]
+    fn tokenizes_compound_assignment_operators() {
+        assert_eq!(
+            kinds("+= -= *= /= //= %= ^= ..="),
+            vec![
+                TokenKind::PlusEqual,
+                TokenKind::MinusEqual,
+                TokenKind::StarEqual,
+                TokenKind::SlashEqual,
+                TokenKind::DoubleSlashEqual,
+                TokenKind::PercentEqual,
+                TokenKind::CaretEqual,
+                TokenKind::DoubleDotEqual,
+            ]
+        );
+    }
+
+    #[test]
+    fn distinguishes_compound_assignment_from_base_operators() {
+        // The non-`=` forms must still tokenize as their plain operators.
+        assert_eq!(
+            kinds("- * / // % ^ .. ..."),
+            vec![
+                TokenKind::Minus,
+                TokenKind::Star,
+                TokenKind::Slash,
+                TokenKind::DoubleSlash,
+                TokenKind::Percent,
+                TokenKind::Caret,
+                TokenKind::DoubleDot,
+                TokenKind::TripleDot,
             ]
         );
     }

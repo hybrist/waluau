@@ -1451,14 +1451,15 @@ impl Builder<'_> {
                                 element_ty: to_runtime_type(&ty),
                             });
                         }
-                        AssignOp::Add => {
-                            if !ty.is_numeric() {
+                        AssignOp::Compound(bin_op) => {
+                            if !bin_op.compound_target_ok(&ty) {
                                 return Err(Diagnostic::new(format!(
-                                    "compound assignment to '{}' requires a numeric target",
-                                    name
+                                    "compound assignment to '{}' requires a {} target",
+                                    name,
+                                    bin_op.compound_target_kind()
                                 )));
                             }
-                            // load current, add, store back
+                            // load current, combine, store back
                             let current = self.emit(Instruction::ArrayGet {
                                 array: cell,
                                 index: index0,
@@ -1466,7 +1467,7 @@ impl Builder<'_> {
                             });
                             let rhs = self.lower_expr(value, env, types, Some(ty.clone()))?;
                             let sum = self.emit(Instruction::Binary {
-                                op: BinaryOp::Add,
+                                op: *bin_op,
                                 left: current,
                                 right: rhs,
                                 operand_ty: ty.clone(),
@@ -1485,11 +1486,12 @@ impl Builder<'_> {
                 } else {
                     let value = match op {
                         AssignOp::Set => self.lower_expr(value, env, types, Some(ty))?,
-                        AssignOp::Add => {
-                            if !ty.is_numeric() {
+                        AssignOp::Compound(bin_op) => {
+                            if !bin_op.compound_target_ok(&ty) {
                                 return Err(Diagnostic::new(format!(
-                                    "compound assignment to '{}' requires a numeric target",
-                                    name
+                                    "compound assignment to '{}' requires a {} target",
+                                    name,
+                                    bin_op.compound_target_kind()
                                 )));
                             }
                             let current = *env.get(&symbol_id).ok_or_else(|| {
@@ -1499,7 +1501,7 @@ impl Builder<'_> {
                             })?;
                             let rhs = self.lower_expr(value, env, types, Some(ty.clone()))?;
                             self.emit(Instruction::Binary {
-                                op: BinaryOp::Add,
+                                op: *bin_op,
                                 left: current,
                                 right: rhs,
                                 operand_ty: ty.clone(),
@@ -1528,11 +1530,12 @@ impl Builder<'_> {
                     AssignOp::Set => {
                         self.lower_expr(value, env, types, Some(element_ty.clone()))?
                     }
-                    AssignOp::Add => {
-                        if !element_ty.is_numeric() {
-                            return Err(Diagnostic::new(
-                                "compound array assignment requires numeric elements",
-                            ));
+                    AssignOp::Compound(bin_op) => {
+                        if !bin_op.compound_target_ok(&element_ty) {
+                            return Err(Diagnostic::new(format!(
+                                "compound array assignment requires {} elements",
+                                bin_op.compound_target_kind()
+                            )));
                         }
                         let current = self.emit(Instruction::ArrayGet {
                             array,
@@ -1541,7 +1544,7 @@ impl Builder<'_> {
                         });
                         let rhs = self.lower_expr(value, env, types, Some(element_ty.clone()))?;
                         self.emit(Instruction::Binary {
-                            op: BinaryOp::Add,
+                            op: *bin_op,
                             left: current,
                             right: rhs,
                             operand_ty: element_ty.clone(),
@@ -1655,11 +1658,12 @@ impl Builder<'_> {
                 let base = self.lower_expr(base, env, types, Some(base_ty))?;
                 let value = match op {
                     AssignOp::Set => self.lower_expr(value, env, types, Some(field_ty.clone()))?,
-                    AssignOp::Add => {
-                        if !field_ty.is_numeric() {
-                            return Err(Diagnostic::new(
-                                "compound field assignment requires a numeric field",
-                            ));
+                    AssignOp::Compound(bin_op) => {
+                        if !bin_op.compound_target_ok(&field_ty) {
+                            return Err(Diagnostic::new(format!(
+                                "compound field assignment requires a {} field",
+                                bin_op.compound_target_kind()
+                            )));
                         }
                         let current = self.emit(Instruction::StructGet {
                             base,
@@ -1668,7 +1672,7 @@ impl Builder<'_> {
                         });
                         let rhs = self.lower_expr(value, env, types, Some(field_ty.clone()))?;
                         self.emit(Instruction::Binary {
-                            op: BinaryOp::Add,
+                            op: *bin_op,
                             left: current,
                             right: rhs,
                             operand_ty: field_ty.clone(),

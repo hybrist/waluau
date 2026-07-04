@@ -831,11 +831,14 @@ pub(super) fn check_stmt(
             let existing = vars
                 .get(name)
                 .ok_or_else(|| Diagnostic::new(format!("unknown local '{name}'")))?;
-            if *op == AssignOp::Add && !existing.ty.is_numeric() {
-                return Err(Diagnostic::new(format!(
-                    "compound assignment to '{}' requires a numeric target",
-                    name
-                )));
+            if let AssignOp::Compound(bin_op) = *op {
+                if !bin_op.compound_target_ok(&existing.ty) {
+                    return Err(Diagnostic::new(format!(
+                        "compound assignment to '{}' requires a {} target",
+                        name,
+                        bin_op.compound_target_kind()
+                    )));
+                }
             }
             if existing.rebindability == Rebindability::Const {
                 return Err(Diagnostic::new(format!(
@@ -869,10 +872,13 @@ pub(super) fn check_stmt(
             let element_ty = base_ty.element_type().ok_or_else(|| {
                 Diagnostic::new("array element assignment requires an array operand")
             })?;
-            if *op == AssignOp::Add && !element_ty.is_numeric() {
-                return Err(Diagnostic::new(
-                    "compound array assignment requires numeric elements",
-                ));
+            if let AssignOp::Compound(bin_op) = *op {
+                if !bin_op.compound_target_ok(&element_ty) {
+                    return Err(Diagnostic::new(format!(
+                        "compound array assignment requires {} elements",
+                        bin_op.compound_target_kind()
+                    )));
+                }
             }
             let index_ty = infer_expr(
                 index,
@@ -998,16 +1004,18 @@ pub(super) fn check_stmt(
                     active_type_params,
                     existing_field.clone(),
                 )?;
-                if *op == AssignOp::Add {
+                if let AssignOp::Compound(bin_op) = *op {
                     let field_ty = existing_field.clone().ok_or_else(|| {
-                        Diagnostic::new(
-                            "compound field assignment requires an existing numeric field",
-                        )
+                        Diagnostic::new(format!(
+                            "compound field assignment requires an existing {} field",
+                            bin_op.compound_target_kind()
+                        ))
                     })?;
-                    if !field_ty.is_numeric() || value_ty != field_ty {
-                        return Err(Diagnostic::new(
-                            "compound field assignment requires a numeric field",
-                        ));
+                    if !bin_op.compound_target_ok(&field_ty) || value_ty != field_ty {
+                        return Err(Diagnostic::new(format!(
+                            "compound field assignment requires a {} field",
+                            bin_op.compound_target_kind()
+                        )));
                     }
                 }
                 if let Some(ty) = fields.get(name) {
@@ -1040,10 +1048,13 @@ pub(super) fn check_stmt(
                 let field_ty = fields
                     .get(name)
                     .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
-                if *op == AssignOp::Add && !field_ty.is_numeric() {
-                    return Err(Diagnostic::new(
-                        "compound field assignment requires a numeric field",
-                    ));
+                if let AssignOp::Compound(bin_op) = *op {
+                    if !bin_op.compound_target_ok(field_ty) {
+                        return Err(Diagnostic::new(format!(
+                            "compound field assignment requires a {} field",
+                            bin_op.compound_target_kind()
+                        )));
+                    }
                 }
                 let value_ty = infer_expr(
                     value,

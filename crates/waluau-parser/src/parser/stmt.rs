@@ -1,4 +1,4 @@
-use waluau_ast::{AssignOp, Binding, Expr, Rebindability, Stmt, Type};
+use waluau_ast::{AssignOp, BinaryOp, Binding, Expr, Rebindability, Stmt, Type};
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::TokenKind;
 
@@ -251,7 +251,21 @@ impl Parser {
         let op = if self.check_simple(&TokenKind::Equal) {
             AssignOp::Set
         } else if self.check_simple(&TokenKind::PlusEqual) {
-            AssignOp::Add
+            AssignOp::Compound(BinaryOp::Add)
+        } else if self.check_simple(&TokenKind::MinusEqual) {
+            AssignOp::Compound(BinaryOp::Sub)
+        } else if self.check_simple(&TokenKind::StarEqual) {
+            AssignOp::Compound(BinaryOp::Mul)
+        } else if self.check_simple(&TokenKind::SlashEqual) {
+            AssignOp::Compound(BinaryOp::Div)
+        } else if self.check_simple(&TokenKind::DoubleSlashEqual) {
+            AssignOp::Compound(BinaryOp::FloorDiv)
+        } else if self.check_simple(&TokenKind::PercentEqual) {
+            AssignOp::Compound(BinaryOp::Mod)
+        } else if self.check_simple(&TokenKind::CaretEqual) {
+            AssignOp::Compound(BinaryOp::Pow)
+        } else if self.check_simple(&TokenKind::DoubleDotEqual) {
+            AssignOp::Compound(BinaryOp::Concat)
         } else {
             self.index = checkpoint;
             return Ok(None);
