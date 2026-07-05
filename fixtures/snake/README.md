@@ -53,9 +53,3 @@ Each workaround in the source carries a `TODO(<beads-id>)` comment. Summary:
   tick the game through the supported `(Event) -> unit` trampoline.
 - `waluau-6i00` — no `math.random`/`math.randomseed`; `rng.walu` hand-rolls an
   LCG seeded from the first tick's `Event.timeStamp`.
-- `waluau-ae6g` — module-local type aliases do not unify across module
-  boundaries; the game-state record type is spelled out inline in every
-  exported signature of `game.walu` and `render.walu`.
-- `waluau-xyx8` — an empty array literal does not adopt the annotated element
-  type of the field it is assigned to, so `reset()` drains the snake array in
-  place instead of assigning `{}`.

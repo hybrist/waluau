@@ -613,6 +613,61 @@ mod tests {
     }
 
     #[test]
+    fn compile_file_unifies_record_type_aliases_across_modules() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("state.walu"),
+            r#"
+                type State = { score: i32 }
+
+                function new_state(): State
+                    return { score = 41::i32 }
+                end
+
+                return {
+                    new_state = new_state,
+                }
+            "#,
+        )
+        .expect("state module should write");
+        fs::write(
+            tempdir.path().join("consumer.walu"),
+            r#"
+                type State = { score: i32 }
+
+                function score(state: State): i32
+                    return state.score
+                end
+
+                return {
+                    score = score,
+                }
+            "#,
+        )
+        .expect("consumer module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local state_mod = require("./state")
+                local consumer = require("./consumer")
+
+                function entry(): i32
+                    local state = state_mod.new_state()
+                    return consumer.score(state)
+                end
+            "#,
+        )
+        .expect("main module should write");
+
+        let wasm = super::compile_file(&input_path).expect("compile should succeed");
+        assert!(
+            !wasm.is_empty(),
+            "successful compilation should produce a wasm module"
+        );
+    }
+
+    #[test]
     fn compiles_array_ops() {
         super::compile_file(&fixture_path("array_ops.walu")).expect("compile should succeed");
     }

@@ -40,6 +40,14 @@ fn property_getter_name(base: &str, property: &str) -> String {
     format!("{base}.get/{property}")
 }
 
+fn record_fields(ty: &Type) -> Option<&BTreeMap<String, Type>> {
+    match ty {
+        Type::Record(fields) => Some(fields),
+        Type::Opaque { ty, .. } => record_fields(ty),
+        _ => None,
+    }
+}
+
 fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
     if expected == actual {
         return true;
@@ -918,11 +926,7 @@ pub(super) fn infer_expr(
             infer_array_literal(elements, vars, fn_signatures, active_type_params, expected)
         }
         Expr::TableLiteral { fields, .. } => {
-            let expected_fields = if let Some(Type::Record(fields)) = expected.as_ref() {
-                Some(fields.clone())
-            } else {
-                None
-            };
+            let expected_fields = expected.as_ref().and_then(record_fields).cloned();
             let mut record_fields = BTreeMap::new();
             for field in fields {
                 let expected_field_ty = expected_fields
