@@ -13,6 +13,7 @@
     "localStorage": "local_storage",
     "nodeName": "node_name",
     "querySelector": "query_selector",
+    "repeat": "repeat_",
     "removeAttribute": "remove_attribute",
     "removeChild": "remove_child",
     "removeItem": "remove_item",

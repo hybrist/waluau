@@ -10,6 +10,14 @@
       "parent": null
     },
     {
+      "interface": "UIEvent",
+      "parent": "Event"
+    },
+    {
+      "interface": "KeyboardEvent",
+      "parent": "UIEvent"
+    },
+    {
       "interface": "Node",
       "parent": "EventTarget"
     },
@@ -7093,6 +7101,40 @@
       "returnType": "unit"
     },
     {
+      "interface": "UIEvent",
+      "kind": "attribute",
+      "idlName": "view",
+      "emittedName": "view",
+      "type": "Window?",
+      "readonly": true
+    },
+    {
+      "interface": "UIEvent",
+      "kind": "attribute",
+      "idlName": "detail",
+      "emittedName": "detail",
+      "type": "i32",
+      "readonly": true
+    },
+    {
+      "interface": "UIEvent",
+      "kind": "operation",
+      "idlName": "initUIEvent",
+      "emittedName": "initUIEvent",
+      "params": [
+        "type_arg: string"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "UIEvent",
+      "kind": "attribute",
+      "idlName": "which",
+      "emittedName": "which",
+      "type": "u32",
+      "readonly": true
+    },
+    {
       "interface": "ScreenOrientation",
       "kind": "operation",
       "idlName": "unlock",
@@ -7304,6 +7346,114 @@
         "node: Node"
       ],
       "returnType": "bool"
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "attribute",
+      "idlName": "key",
+      "emittedName": "key",
+      "type": "string",
+      "readonly": true
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "attribute",
+      "idlName": "code",
+      "emittedName": "code",
+      "type": "string",
+      "readonly": true
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "attribute",
+      "idlName": "location",
+      "emittedName": "location",
+      "type": "u32",
+      "readonly": true
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "attribute",
+      "idlName": "ctrlKey",
+      "emittedName": "ctrlKey",
+      "type": "bool",
+      "readonly": true
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "attribute",
+      "idlName": "shiftKey",
+      "emittedName": "shiftKey",
+      "type": "bool",
+      "readonly": true
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "attribute",
+      "idlName": "altKey",
+      "emittedName": "altKey",
+      "type": "bool",
+      "readonly": true
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "attribute",
+      "idlName": "metaKey",
+      "emittedName": "metaKey",
+      "type": "bool",
+      "readonly": true
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "attribute",
+      "idlName": "repeat",
+      "emittedName": "repeat_",
+      "type": "bool",
+      "readonly": true
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "attribute",
+      "idlName": "isComposing",
+      "emittedName": "isComposing",
+      "type": "bool",
+      "readonly": true
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "operation",
+      "idlName": "getModifierState",
+      "emittedName": "getModifierState",
+      "params": [
+        "key_arg: string"
+      ],
+      "returnType": "bool"
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "operation",
+      "idlName": "initKeyboardEvent",
+      "emittedName": "initKeyboardEvent",
+      "params": [
+        "type_arg: string"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "attribute",
+      "idlName": "charCode",
+      "emittedName": "charCode",
+      "type": "u32",
+      "readonly": true
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "attribute",
+      "idlName": "keyCode",
+      "emittedName": "keyCode",
+      "type": "u32",
+      "readonly": true
     },
     {
       "interface": "VirtualKeyboard",
@@ -11628,6 +11778,12 @@
       "reason": "member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
       "issue": "waluau-1l02",
       "disabled": true
+    },
+    {
+      "interface": "UIEvent",
+      "member": "sourceCapabilities",
+      "reason": "Web IDL type InputDeviceCapabilities? is not part of the selected DOM interface surface",
+      "issue": null
     },
     {
       "interface": "ScreenOrientation",

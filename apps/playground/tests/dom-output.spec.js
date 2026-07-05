@@ -234,7 +234,7 @@ test.describe('DOM Output in Run tab', () => {
     expect(pixel).toEqual([0, 0, 0, 255]);
   });
 
-  test('runs the snake game fixture preset with canvas rendering and controls', async ({ page }) => {
+  test('runs the snake game fixture preset with canvas rendering and keyboard input', async ({ page }) => {
     await page.getByRole('button', { name: 'Snake Game' }).click();
 
     await expect(page.locator('.file-item').getByText('main.walu', { exact: true })).toBeVisible();
@@ -267,12 +267,13 @@ test.describe('DOM Output in Run tab', () => {
         return painted;
       });
 
-    // The requestAnimationFrame loop draws the arena, snake, food, and HUD.
+    // The CSS animation loop draws the arena, snake, food, and HUD.
     await expect.poll(paintedPixels).toBeGreaterThan(0);
 
-    // The on-screen d-pad and restart button drive the game without faulting
-    // the wasm instance; the loop keeps painting afterwards.
-    await outputFrame.locator('#snake-down').click();
+    // KeyboardEvent downcasts expose key data to Waluau and keep the wasm
+    // instance alive while the game loop continues painting.
+    await outputFrame.locator('body').press('ArrowDown');
+    await outputFrame.locator('body').press('Enter');
     await outputFrame.locator('#snake-restart').click();
     await expect.poll(paintedPixels).toBeGreaterThan(0);
   });

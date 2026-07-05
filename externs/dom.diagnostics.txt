@@ -605,6 +605,7 @@ skip TreeWalker.nextNode: disabled -- member 'operation:nextNode' collides with 
 skip TreeWalker.previousNode: disabled -- member 'operation:previousNode' collides with the same-named member kept on NodeIterator (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip TreeWalker.root: disabled -- member 'attribute:root' collides with the same-named member kept on NodeIterator (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip TreeWalker.whatToShow: disabled -- member 'attribute:whatToShow' collides with the same-named member kept on NodeIterator (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
+skip UIEvent.sourceCapabilities: Web IDL type InputDeviceCapabilities? is not part of the selected DOM interface surface
 skip Window.caches: Web IDL type CacheStorage is not part of the selected DOM interface surface
 skip Window.cookieStore: Web IDL type CookieStore is not part of the selected DOM interface surface
 skip Window.crashReport: Web IDL type CrashReportContext is not part of the selected DOM interface surface

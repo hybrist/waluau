@@ -1,6 +1,7 @@
 -- Snake, rendered into a <canvas> by Waluau. Entry point: builds the DOM
--- shell, wires input, and drives the game loop off CSS animationiteration
--- events (see the TODO(waluau-0nge) below for why not requestAnimationFrame).
+-- shell, wires keyboard input, and drives the game loop off CSS
+-- animationiteration events (see the TODO(waluau-0nge) below for why not
+-- requestAnimationFrame).
 
 function make_button(document: Document, id: string, label: string): Element
     local button: Element = document:create_element("button")
@@ -67,54 +68,28 @@ function install_snake(): unit
         -- are externalized.
         local state = game.new_state(cols, rows, 20260705)
 
-        -- Input. On-screen buttons stand in for arrow keys.
-        --
-        -- TODO(waluau-uzdp): KeyboardEvent is not part of the generated DOM
-        -- extern surface, so there is no way to read event.key/event.code
-        -- from a "keydown" listener. Until then the only portable input is a
-        -- clickable d-pad.
-        local controls: Element = document:create_element("div")
-        controls.id = "snake-controls"
-        controls.class_name = "flex gap-2"
-        root:append_child(controls)
-
-        local function handle_control_event(event: Event): unit
-            if event.type == "click" then
-                if Element(target) = event.target then
-                    if target.id == "snake-up" then
-                        game.turn(state, 0, -1)
-                    elseif target.id == "snake-down" then
-                        game.turn(state, 0, 1)
-                    elseif target.id == "snake-left" then
-                        game.turn(state, -1, 0)
-                    elseif target.id == "snake-right" then
-                        game.turn(state, 1, 0)
-                    elseif target.id == "snake-restart" then
-                        game.reset(state)
-                    end
+        -- Input.
+        window:add_event_listener("keydown", function(event: Event): unit
+            if KeyboardEvent(key_event) = event then
+                if key_event.key == "ArrowUp" or key_event.key == "w" or key_event.key == "W" then
+                    game.turn(state, 0, -1)
+                elseif key_event.key == "ArrowDown" or key_event.key == "s" or key_event.key == "S" then
+                    game.turn(state, 0, 1)
+                elseif key_event.key == "ArrowLeft" or key_event.key == "a" or key_event.key == "A" then
+                    game.turn(state, -1, 0)
+                elseif key_event.key == "ArrowRight" or key_event.key == "d" or key_event.key == "D" then
+                    game.turn(state, 1, 0)
+                elseif key_event.key == "Enter" or key_event.key == " " then
+                    game.reset(state)
                 end
             end
-        end
-
-        local up_button: Element = make_button(document, "snake-up", "Up")
-        up_button:add_event_listener("click", handle_control_event)
-        controls:append_child(up_button)
-
-        local down_button: Element = make_button(document, "snake-down", "Down")
-        down_button:add_event_listener("click", handle_control_event)
-        controls:append_child(down_button)
-
-        local left_button: Element = make_button(document, "snake-left", "Left")
-        left_button:add_event_listener("click", handle_control_event)
-        controls:append_child(left_button)
-
-        local right_button: Element = make_button(document, "snake-right", "Right")
-        right_button:add_event_listener("click", handle_control_event)
-        controls:append_child(right_button)
+        end)
 
         local restart_button: Element = make_button(document, "snake-restart", "Restart")
-        restart_button:add_event_listener("click", handle_control_event)
-        controls:append_child(restart_button)
+        restart_button:add_event_listener("click", function(event: Event): unit
+            game.reset(state)
+        end)
+        root:append_child(restart_button)
 
         -- Game loop.
         --

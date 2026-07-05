@@ -2,8 +2,8 @@
 
 A small 2D snake game written in Waluau, rendered through the
 `HTMLCanvasElement` / `CanvasRenderingContext2D` DOM externs added in #317.
-It exercises canvas drawing, DOM construction, event callbacks, records,
-growable arrays, modules, and a CSS-animation-driven game loop (see
+It exercises canvas drawing, DOM construction, keyboard event callbacks,
+records, growable arrays, modules, and a CSS-animation-driven game loop (see
 `waluau-0nge` for why it is not `requestAnimationFrame`).
 
 It is available in the playground as the "Snake Game" preset and covered by
@@ -13,7 +13,7 @@ It is available in the playground as the "Snake Game" preset and covered by
 
 | File | Purpose |
 | --- | --- |
-| `main.walu` | Browser entry point: builds the DOM shell (canvas, d-pad buttons), wires click handlers, runs the tick loop. |
+| `main.walu` | Browser entry point: builds the DOM shell, wires keyboard and restart handlers, runs the tick loop. |
 | `game.walu` | Host-independent game rules: state record, movement, food, collisions. |
 | `render.walu` | Canvas 2D drawing (rectangles and text only, see TODOs). |
 | `rng.walu` | Hand-rolled 31-bit LCG pseudo-random number generator. |
@@ -53,8 +53,6 @@ Each workaround in the source carries a `TODO(<beads-id>)` comment. Summary:
   tick the game through the supported `(Event) -> unit` trampoline.
 - `waluau-6i00` — no `math.random`/`math.randomseed`; `rng.walu` hand-rolls an
   LCG seeded from the first tick's `Event.timeStamp`.
-- `waluau-uzdp` — `KeyboardEvent` is not in the generated DOM surface, so
-  there is no keyboard input; the d-pad is on-screen `<button>` elements.
 - `waluau-ae6g` — module-local type aliases do not unify across module
   boundaries; the game-state record type is spelled out inline in every
   exported signature of `game.walu` and `render.walu`.

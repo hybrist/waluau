@@ -4,6 +4,8 @@
 
 type EventTarget = extern
 type Event = extern
+type UIEvent = extern extends Event
+type KeyboardEvent = extern extends UIEvent
 type Node = extern extends EventTarget
 type Document = extern extends Node
 type DocumentFragment = extern extends Node
@@ -874,6 +876,10 @@ declare function Storage:get_item(key: string): string?
 declare function Storage:set_item(key: string, value: string): unit
 declare function Storage:remove_item(key: string): unit
 declare function Storage:clear(): unit
+declare property UIEvent:view: Window?
+declare property UIEvent:detail: i32
+declare function UIEvent:initUIEvent(type_arg: string): unit
+declare property UIEvent:which: u32
 declare function ScreenOrientation:unlock(): unit
 declare property ScreenOrientation:angle: u32
 declare property Selection:anchorNode: Node?
@@ -898,6 +904,19 @@ declare function Selection:selectAllChildren(node: Node): unit
 declare function Selection:modify(): unit
 declare function Selection:deleteFromDocument(): unit
 declare function Selection:containsNode(node: Node): bool
+declare property KeyboardEvent:key: string
+declare property KeyboardEvent:code: string
+declare property KeyboardEvent:location: u32
+declare property KeyboardEvent:ctrlKey: bool
+declare property KeyboardEvent:shiftKey: bool
+declare property KeyboardEvent:altKey: bool
+declare property KeyboardEvent:metaKey: bool
+declare property KeyboardEvent:repeat_: bool
+declare property KeyboardEvent:isComposing: bool
+declare function KeyboardEvent:getModifierState(key_arg: string): bool
+declare function KeyboardEvent:initKeyboardEvent(type_arg: string): unit
+declare property KeyboardEvent:charCode: u32
+declare property KeyboardEvent:keyCode: u32
 declare function VirtualKeyboard:show(): unit
 declare function VirtualKeyboard:hide(): unit
 declare property VirtualKeyboard:boundingRect: DOMRect

@@ -2,6 +2,8 @@
   "interfaces": [
     "EventTarget",
     "Event",
+    "UIEvent",
+    "KeyboardEvent",
     "Node",
     "Document",
     "DocumentFragment",
