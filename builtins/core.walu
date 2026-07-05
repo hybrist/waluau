@@ -4,11 +4,37 @@
 -- Print a string to stdout
 declare function print(message: string): unit
 
--- Low-level string search primitive backing `string.find`/`string:find`.
--- Returns the 0-based start position of `needle` in `haystack` searching from
--- `init`, or -1 if not found. `plain` selects plain substring search (patterns
--- are not yet supported, so callers should always pass `true`).
-declare function string_find(haystack: string, needle: string, init: i32, plain: bool): i32
+-- Lua pattern-matching primitives backing `string.find`/`string.match`/
+-- `string.gmatch`/`string.gsub`. `pm_find`/`pm_match` return 1 when a match
+-- was found and 0 otherwise; on success the match bounds and captures are
+-- readable through the `pm_match_*`/`pm_capture_*` accessors until the next
+-- pm_* call. All indices crossing this boundary are 1-based, matching Lua.
+declare function pm_find(haystack: string, pattern: string, init: i32, plain: bool): i32
+declare function pm_match(haystack: string, pattern: string, init: i32): i32
+declare function pm_match_start(): i32
+declare function pm_match_end(): i32
+-- Capture accessors: index 0 is the whole match, indices 1..n the pattern's
+-- captures. `pm_capture_position` reads a `()` position capture's value.
+declare function pm_capture_string(index: i32): string
+declare function pm_capture_position(index: i32): i32
+-- One-shot gsub with a replacement-string template (%0-%9, %%). A negative
+-- max_count means "no limit". The match/substitution count of the last
+-- completed gsub is read back with pm_gsub_count.
+declare function pm_gsub(source: string, pattern: string, replacement: string, max_count: i32): string
+declare function pm_gsub_count(): i32
+-- Stepwise gsub used when the replacement is a guest function: begin returns
+-- a handle; each pm_gsub_next positions the next match (captures readable via
+-- pm_capture_*) and expects exactly one pm_gsub_replace/pm_gsub_keep before
+-- the following pm_gsub_next; finish returns the built string.
+declare function pm_gsub_begin(source: string, pattern: string, max_count: i32): i32
+declare function pm_gsub_next(handle: i32): i32
+declare function pm_gsub_replace(handle: i32, replacement: string): unit
+declare function pm_gsub_keep(handle: i32): unit
+declare function pm_gsub_finish(handle: i32): string
+-- string.gmatch iteration: pm_gmatch returns a handle; pm_gmatch_next
+-- advances it, exposing each match through the pm_capture_* accessors.
+declare function pm_gmatch(haystack: string, pattern: string): i32
+declare function pm_gmatch_next(handle: i32): i32
 
 -- Low-level string primitives backing the `string.*` builtin namespace.
 -- Index-taking functions use 0-based indices. `string_sub` treats `last == -1`

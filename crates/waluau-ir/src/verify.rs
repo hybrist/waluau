@@ -86,7 +86,13 @@ fn verify_function(
                         block.id,
                         *right,
                     )?;
-                    if left_ty != *operand_ty || right_ty != *operand_ty {
+                    // Reference-typed nullables share their inner type's wasm
+                    // representation, so a T? operand is valid where the
+                    // operation expects T (e.g. null-safe string equality).
+                    let operand_matches = |ty: &Type| {
+                        ty == operand_ty || ty.nullable_inner().as_ref() == Some(operand_ty)
+                    };
+                    if !operand_matches(&left_ty) || !operand_matches(&right_ty) {
                         return Err(Diagnostic::new(format!(
                             "binary operands in block {:?} must both have type {}",
                             block.id, operand_ty
@@ -196,7 +202,9 @@ fn verify_function(
                             block.id, value_ty, from
                         )));
                     }
-                    if from.nullable_inner().as_ref() != Some(to) {
+                    let widens_to_nullable = to.nullable_inner().as_ref() == Some(from)
+                        || matches!((from, to), (Type::Nil, Type::Nullable(_)));
+                    if from.nullable_inner().as_ref() != Some(to) && !widens_to_nullable {
                         crate::lower::require_numeric_cast(from.clone(), to.clone())?;
                     }
                 }

@@ -3247,6 +3247,14 @@ fn emit_ref_null(
             }));
             Ok(())
         }
+        Type::Nullable(inner) if ty.is_boxed_nullable() => {
+            let _ = inner;
+            out.instruction(&Instruction::RefNull(HeapType::Abstract {
+                shared: false,
+                ty: AbstractHeapType::Any,
+            }));
+            Ok(())
+        }
         Type::Nullable(inner) => emit_ref_null(out, inner, array_registry),
         Type::Unknown => {
             out.instruction(&Instruction::RefNull(HeapType::Abstract {
@@ -3511,7 +3519,28 @@ fn emit_cast(
     if from == to {
         return Ok(());
     }
+    // Boxed nullables (`i32?` etc.) live in anyref, so entering/leaving them
+    // is a box/unbox, exactly like `unknown` (which shares the representation).
+    if to.is_boxed_nullable() {
+        if from == Type::Unknown || from.is_boxed_nullable() {
+            return Ok(());
+        }
+        return emit_box(out, &from, array_registry);
+    }
+    if from.is_boxed_nullable() {
+        if to == Type::Unknown {
+            return Ok(());
+        }
+        return emit_unbox(out, &to, array_registry);
+    }
+    // Reference-typed nullables share the inner type's (already nullable)
+    // wasm representation, so widening and narrowing are both no-ops.
     if from.nullable_inner().as_ref() == Some(&to) {
+        return Ok(());
+    }
+    if to.nullable_inner().as_ref() == Some(&from)
+        || matches!((&from, &to), (Type::Nil, Type::Nullable(_)))
+    {
         return Ok(());
     }
 
@@ -3680,6 +3709,15 @@ fn emit_unbox(
         Type::Extern | Type::ExternSubtype(_) | Type::String | Type::Bytes => {
             out.instruction(&Instruction::ExternConvertAny);
             Ok(())
+        }
+        // A reference-typed nullable unboxes like its inner type; boxed
+        // nullables (i32? etc.) already share anyref's representation.
+        Type::Nullable(inner) => {
+            if matches!(**inner, Type::Numeric(_) | Type::Bool) {
+                Ok(())
+            } else {
+                emit_unbox(out, inner, array_registry)
+            }
         }
         Type::Array(element) => {
             out.instruction(&Instruction::RefCastNullable(HeapType::Concrete(

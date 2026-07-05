@@ -1,7 +1,10 @@
--- string.sub / string:sub use 0-based inclusive indices in Waluau.
+-- string.sub / string:sub use Lua's 1-based inclusive indices; negative
+-- indices count back from the end of the string.
 
 local message: string = "abcdef"
 
-assert(string.sub(message, 1, 3) == "bcd")
-assert(message:sub(2) == "cdef")
+assert(string.sub(message, 2, 4) == "bcd")
+assert(message:sub(3) == "cdef")
 assert(string.sub(message, -3, -1) == "def")
+assert(string.sub(message, 4, 2) == "")
+assert(string.sub(message, -10, 10) == "abcdef")

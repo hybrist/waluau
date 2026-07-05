@@ -681,8 +681,46 @@ impl<'a> Monomorphizer<'a> {
                 ..
             } => {
                 let rewritten_iterator = self.rewrite_expr(iterator, subst, active, types)?;
-                let iterator_ty = self.infer_expr_type(iterator, subst, types)?;
                 let mut body_types = types.clone();
+                // `for ... in string.gmatch(s, p)` loop variables take the
+                // pattern's capture types (whole match when there are none).
+                let gmatch_pattern = match iterator {
+                    Expr::Call { callee, args, .. }
+                        if args.len() == 2
+                            && matches!(
+                                callee.as_ref(),
+                                Expr::Field { base, name, .. }
+                                    if name == "gmatch"
+                                        && matches!(base.as_ref(), Expr::Name(ns, _, _) if ns == "string")
+                            ) =>
+                    {
+                        Some(&args[1])
+                    }
+                    Expr::MethodCall { name, args, .. } if name == "gmatch" && args.len() == 1 => {
+                        Some(&args[0])
+                    }
+                    _ => None,
+                };
+                if let Some(pattern_arg) = gmatch_pattern {
+                    let captures = waluau_ast::expr_pattern_captures(pattern_arg);
+                    let slot_types: Vec<Type> = if captures.is_empty() {
+                        vec![Type::String]
+                    } else {
+                        captures.iter().map(|kind| kind.value_type()).collect()
+                    };
+                    if let Some(symbol_ids) = symbol_ids {
+                        for (symbol_id, ty) in symbol_ids.iter().zip(slot_types) {
+                            body_types.insert(*symbol_id, ty);
+                        }
+                    }
+                    return Ok(Stmt::ForIn {
+                        names: names.clone(),
+                        symbol_ids: symbol_ids.clone(),
+                        iterator: rewritten_iterator,
+                        body: self.rewrite_stmts(body, subst, active, &mut body_types)?,
+                    });
+                }
+                let iterator_ty = self.infer_expr_type(iterator, subst, types)?;
                 if let Type::Array(element_ty) = &iterator_ty {
                     if let Some(symbol_ids) = symbol_ids {
                         if symbol_ids.len() == 1 {
@@ -1735,9 +1773,23 @@ impl<'a> Monomorphizer<'a> {
                     Ok(Some(Type::number()))
                 }
             }
-            "string.find" | "string.len" | "string.byte" => {
-                Ok(Some(Type::Numeric(waluau_ast::NumericType::I32)))
-            }
+            "string.len" | "string.byte" => Ok(Some(Type::Numeric(waluau_ast::NumericType::I32))),
+            "string.find" => Ok(Some(Type::Multi(waluau_ast::string_find_result_types(
+                &args
+                    .get(1)
+                    .map(waluau_ast::expr_pattern_captures)
+                    .unwrap_or_default(),
+            )))),
+            "string.match" => Ok(Some(Type::Multi(waluau_ast::string_match_result_types(
+                &args
+                    .get(1)
+                    .map(waluau_ast::expr_pattern_captures)
+                    .unwrap_or_default(),
+            )))),
+            "string.gsub" => Ok(Some(Type::Multi(vec![
+                Type::String,
+                Type::Numeric(waluau_ast::NumericType::I32),
+            ]))),
             "string.sub" | "string.rep" | "string.char" | "string.upper" | "string.lower"
             | "string.format" => Ok(Some(Type::String)),
             _ => Ok(None),

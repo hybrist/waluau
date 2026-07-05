@@ -158,7 +158,57 @@ fn narrowed_variant_scopes(
     (then_scope, else_scope)
 }
 
+/// Loop-variable types for `for ... in string.gmatch(s, p)`: the pattern's
+/// captures, or the whole match when the pattern has none.
+pub(super) fn gmatch_loop_value_types(
+    iterator: &Expr,
+    names_len: usize,
+) -> Option<Result<Vec<Type>, Diagnostic>> {
+    let pattern_arg = match iterator {
+        Expr::Call { callee, args, .. } if args.len() == 2 => match callee.as_ref() {
+            Expr::Field { base, name, .. }
+                if name == "gmatch"
+                    && matches!(base.as_ref(), Expr::Name(ns, _, _) if ns == "string") =>
+            {
+                &args[1]
+            }
+            _ => return None,
+        },
+        Expr::MethodCall { name, args, .. } if name == "gmatch" && args.len() == 1 => &args[0],
+        _ => return None,
+    };
+    let captures = waluau_ast::expr_pattern_captures(pattern_arg);
+    let slot_types: Vec<Type> = if captures.is_empty() {
+        vec![Type::String]
+    } else {
+        captures.iter().map(|kind| kind.value_type()).collect()
+    };
+    if names_len > slot_types.len() {
+        return Some(Err(Diagnostic::new(format!(
+            "string.gmatch for-in loop binds {} variables, but the pattern only produces {} values",
+            names_len,
+            slot_types.len()
+        ))));
+    }
+    Some(Ok(slot_types))
+}
+
 fn nil_test_subject(condition: &Expr) -> Option<(&str, bool)> {
+    // A bare `if x then` on a nullable value is a truthiness test: the
+    // then-branch sees the non-nil type.
+    if let Expr::Name(name, _, _) = condition {
+        return Some((name, true));
+    }
+    if let Expr::Unary {
+        op: waluau_ast::UnaryOp::Not,
+        expr,
+        ..
+    } = condition
+    {
+        if let Expr::Name(name, _, _) = expr.as_ref() {
+            return Some((name, false));
+        }
+    }
     let Expr::Binary {
         op, left, right, ..
     } = condition
@@ -287,7 +337,8 @@ pub(super) fn check_function(
             saw_return = true;
         }
     }
-    if !saw_return && expected_return != Type::Unit {
+    if !saw_return && expected_return != Type::Unit && !matches!(expected_return, Type::Nullable(_))
+    {
         return Err(Diagnostic::new(format!(
             "function '{}' is missing a return",
             function.name
@@ -340,7 +391,13 @@ fn collect_return_types_with_scope(
                 {
                     Type::Record(BTreeMap::new())
                 } else {
-                    infer_expr(value, &scope, fn_signatures, active_type_params, None)?
+                    super::expressions::first_of_multi(infer_expr(
+                        value,
+                        &scope,
+                        fn_signatures,
+                        active_type_params,
+                        None,
+                    )?)
                 };
                 seal_record_locals_in_expr(value, &mut scope);
                 scope.insert(name.clone(), binding_for(inferred_ty, *rebindability));
@@ -452,7 +509,7 @@ fn collect_return_types_with_scope(
                 let condition_ty =
                     infer_expr(condition, &scope, fn_signatures, active_type_params, None)?;
                 seal_record_locals_in_expr(condition, &mut scope);
-                if condition_ty != Type::Bool {
+                if condition_ty != Type::Bool && !matches!(condition_ty, Type::Nullable(_)) {
                     return Err(Diagnostic::new("if condition must be bool"));
                 }
                 let (then_scope, else_scope) = narrowed_scopes(condition, &scope);
@@ -509,7 +566,7 @@ fn collect_return_types_with_scope(
                 let condition_ty =
                     infer_expr(condition, &scope, fn_signatures, active_type_params, None)?;
                 seal_record_locals_in_expr(condition, &mut scope);
-                if condition_ty != Type::Bool {
+                if condition_ty != Type::Bool && !matches!(condition_ty, Type::Nullable(_)) {
                     return Err(Diagnostic::new("while condition must be bool"));
                 }
                 collect_return_types(body, &scope, fn_signatures, active_type_params, returns)?;
@@ -530,7 +587,7 @@ fn collect_return_types_with_scope(
                     None,
                 )?;
                 seal_record_locals_in_expr(condition, &mut loop_scope);
-                if condition_ty != Type::Bool {
+                if condition_ty != Type::Bool && !matches!(condition_ty, Type::Nullable(_)) {
                     return Err(Diagnostic::new("repeat-until condition must be bool"));
                 }
             }
@@ -572,6 +629,21 @@ fn collect_return_types_with_scope(
                 body,
                 ..
             } => {
+                if let Some(result) = gmatch_loop_value_types(iterator, names.len()) {
+                    let loop_value_types = result?;
+                    let mut loop_scope = scope.clone();
+                    for (name, ty) in names.iter().zip(loop_value_types) {
+                        loop_scope.insert(name.clone(), binding_for(ty, Rebindability::Const));
+                    }
+                    collect_return_types(
+                        body,
+                        &loop_scope,
+                        fn_signatures,
+                        active_type_params,
+                        returns,
+                    )?;
+                    continue;
+                }
                 let iterator_ty =
                     infer_expr(iterator, &scope, fn_signatures, active_type_params, None)?;
                 seal_record_locals_in_expr(iterator, &mut scope);
@@ -677,7 +749,7 @@ fn collect_return_types_with_scope(
                         active_type_params,
                         Some(&expected),
                     )?;
-                    if actual.len() != expected.len() {
+                    if actual.len() < expected.len() {
                         return Err(Diagnostic::new(format!(
                             "multi-binding declaration expects {} values, got {}",
                             expected.len(),
@@ -701,7 +773,7 @@ fn collect_return_types_with_scope(
                 } else {
                     let actual =
                         infer_expr_list(values, &scope, fn_signatures, active_type_params, None)?;
-                    if actual.len() != bindings.len() {
+                    if actual.len() < bindings.len() {
                         return Err(Diagnostic::new(format!(
                             "multi-binding declaration expects {} values, got {}",
                             bindings.len(),
@@ -738,7 +810,7 @@ fn collect_return_types_with_scope(
                 for value in values {
                     seal_record_locals_in_expr(value, &mut scope);
                 }
-                if actual.len() != expected.len() {
+                if actual.len() < expected.len() {
                     return Err(Diagnostic::new(format!(
                         "multi-assignment expects {} values, got {}",
                         expected.len(),
@@ -795,11 +867,49 @@ fn collect_return_types_with_scope(
     Ok(scope)
 }
 
+/// Conservatively decides whether every control path through `stmts` ends in
+/// an explicit return (or an unconditional `error(...)` call). Used to detect
+/// functions that can fall off the end and therefore implicitly return nil.
+pub(super) fn stmts_always_return(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(|stmt| match stmt {
+        Stmt::Return(_) | Stmt::ReturnMulti(_) => true,
+        Stmt::If {
+            then_body,
+            else_body,
+            ..
+        }
+        | Stmt::IfCast {
+            then_body,
+            else_body,
+            ..
+        } => {
+            !else_body.is_empty()
+                && stmts_always_return(then_body)
+                && stmts_always_return(else_body)
+        }
+        Stmt::Expr(Expr::Call { callee, .. }) => {
+            matches!(callee.as_ref(), Expr::Name(name, _, _) if name == "error")
+        }
+        _ => false,
+    })
+}
+
 pub(super) fn common_return_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
     if left == right {
         return Ok(left);
     }
     match (left, right) {
+        // `return x` mixed with `return nil` (or an implicit nil fall-through)
+        // makes the return type nullable.
+        (Type::Nil, Type::Nullable(inner)) | (Type::Nullable(inner), Type::Nil) => {
+            Ok(Type::Nullable(inner))
+        }
+        (Type::Nil, other) | (other, Type::Nil) if other != Type::Unit => {
+            Ok(Type::Nullable(Box::new(other)))
+        }
+        (Type::Nullable(inner), other) | (other, Type::Nullable(inner)) if *inner == other => {
+            Ok(Type::Nullable(inner))
+        }
         (Type::Numeric(a), Type::Numeric(b)) => a
             .common(b)
             .map(Type::Numeric)
@@ -854,7 +964,13 @@ pub(super) fn check_stmt(
             } else if matches!(value, Expr::ArrayLiteral { elements, .. } if elements.is_empty()) {
                 Type::Record(BTreeMap::new())
             } else {
-                infer_expr(value, vars, fn_signatures, active_type_params, None)?
+                super::expressions::first_of_multi(infer_expr(
+                    value,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    None,
+                )?)
             };
             seal_record_locals_in_expr(value, vars);
             vars.insert(name.clone(), binding_for(inferred_ty, *rebindability));
@@ -1115,7 +1231,7 @@ pub(super) fn check_stmt(
             let condition_ty =
                 infer_expr(condition, vars, fn_signatures, active_type_params, None)?;
             seal_record_locals_in_expr(condition, vars);
-            if condition_ty != Type::Bool {
+            if condition_ty != Type::Bool && !matches!(condition_ty, Type::Nullable(_)) {
                 return Err(Diagnostic::new("if condition must be bool"));
             }
             let (mut then_scope, mut else_scope) = narrowed_scopes(condition, vars);
@@ -1200,7 +1316,7 @@ pub(super) fn check_stmt(
             let condition_ty =
                 infer_expr(condition, vars, fn_signatures, active_type_params, None)?;
             seal_record_locals_in_expr(condition, vars);
-            if condition_ty != Type::Bool {
+            if condition_ty != Type::Bool && !matches!(condition_ty, Type::Nullable(_)) {
                 return Err(Diagnostic::new("while condition must be bool"));
             }
             let mut loop_scope = vars.clone();
@@ -1236,7 +1352,7 @@ pub(super) fn check_stmt(
                 None,
             )?;
             seal_record_locals_in_expr(condition, &mut loop_scope);
-            if condition_ty != Type::Bool {
+            if condition_ty != Type::Bool && !matches!(condition_ty, Type::Nullable(_)) {
                 return Err(Diagnostic::new("repeat-until condition must be bool"));
             }
             Ok(false)
@@ -1282,53 +1398,61 @@ pub(super) fn check_stmt(
             body,
             ..
         } => {
-            let iterator_ty = infer_expr(iterator, vars, fn_signatures, active_type_params, None)?;
-            seal_record_locals_in_expr(iterator, vars);
-            let loop_value_types = match iterator_ty {
-                Type::Function {
-                    params,
-                    return_type,
-                } => {
-                    if !params.is_empty() {
+            let loop_value_types = if let Some(result) =
+                gmatch_loop_value_types(iterator, names.len())
+            {
+                seal_record_locals_in_expr(iterator, vars);
+                result?
+            } else {
+                let iterator_ty =
+                    infer_expr(iterator, vars, fn_signatures, active_type_params, None)?;
+                seal_record_locals_in_expr(iterator, vars);
+                match iterator_ty {
+                    Type::Function {
+                        params,
+                        return_type,
+                    } => {
+                        if !params.is_empty() {
+                            return Err(Diagnostic::new(
+                                "for-in iterator function must not require parameters",
+                            ));
+                        }
+                        let return_values = match *return_type {
+                            Type::Multi(values) => values,
+                            other => vec![other],
+                        };
+                        if return_values.len() != names.len() + 1 {
+                            return Err(Diagnostic::new(format!(
+                                "for-in iterator expects {} return values (bool + {} loop values), got {}",
+                                names.len() + 1,
+                                names.len(),
+                                return_values.len()
+                            )));
+                        }
+                        if return_values[0] != Type::Bool {
+                            return Err(Diagnostic::new(
+                                "for-in iterator first return value must be bool",
+                            ));
+                        }
+                        return_values.into_iter().skip(1).collect::<Vec<_>>()
+                    }
+                    Type::Array(element_ty) => {
+                        if names.len() == 1 {
+                            vec![*element_ty]
+                        } else if names.len() == 2 {
+                            vec![Type::Numeric(NumericType::I32), *element_ty]
+                        } else {
+                            return Err(Diagnostic::new(format!(
+                                "array for-in loop expects 1 or 2 loop variables, got {}",
+                                names.len()
+                            )));
+                        }
+                    }
+                    _ => {
                         return Err(Diagnostic::new(
-                            "for-in iterator function must not require parameters",
+                            "for-in iterator must be a function or an array",
                         ));
                     }
-                    let return_values = match *return_type {
-                        Type::Multi(values) => values,
-                        other => vec![other],
-                    };
-                    if return_values.len() != names.len() + 1 {
-                        return Err(Diagnostic::new(format!(
-                            "for-in iterator expects {} return values (bool + {} loop values), got {}",
-                            names.len() + 1,
-                            names.len(),
-                            return_values.len()
-                        )));
-                    }
-                    if return_values[0] != Type::Bool {
-                        return Err(Diagnostic::new(
-                            "for-in iterator first return value must be bool",
-                        ));
-                    }
-                    return_values.into_iter().skip(1).collect::<Vec<_>>()
-                }
-                Type::Array(element_ty) => {
-                    if names.len() == 1 {
-                        vec![*element_ty]
-                    } else if names.len() == 2 {
-                        vec![Type::Numeric(NumericType::I32), *element_ty]
-                    } else {
-                        return Err(Diagnostic::new(format!(
-                            "array for-in loop expects 1 or 2 loop variables, got {}",
-                            names.len()
-                        )));
-                    }
-                }
-                _ => {
-                    return Err(Diagnostic::new(
-                        "for-in iterator must be a function or an array",
-                    ));
                 }
             };
             let mut loop_scope = vars.clone();

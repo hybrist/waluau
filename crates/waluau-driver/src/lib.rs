@@ -380,7 +380,7 @@ mod tests {
             &input_path,
             r#"
                 function contains_text(haystack: string, needle: string): bool
-                    return haystack:find(needle) ~= -1
+                    return haystack:find(needle) ~= nil
                 end
 
                 function install(): unit
@@ -392,7 +392,7 @@ mod tests {
                     input_element:add_event_listener("input", function(event: Event): unit
                         if HTMLInputElement(target) = event.target then
                             local value: string = target.value
-                            local matches_seed: bool = value == "" or seed_text:find(value) ~= -1
+                            local matches_seed: bool = value == "" or seed_text:find(value) ~= nil
                             if contains_text(seed_text, value) then
                             end
                             if matches_seed then

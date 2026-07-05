@@ -979,6 +979,16 @@ pub(crate) fn build_function(
         builder.set_terminator(builder.current_block, Terminator::Return(value));
         builder.current_block = DEAD_BLOCK;
     }
+    // A nullable-returning function that falls off the end returns nil, as in
+    // Lua (functions without an explicit return produce nil).
+    if builder.current_block != DEAD_BLOCK
+        && matches!(builder.function.return_type, Type::Nullable(_))
+    {
+        let return_type = builder.function.return_type.clone();
+        let value = builder.emit(Instruction::Null { ty: return_type });
+        builder.set_terminator(builder.current_block, Terminator::Return(value));
+        builder.current_block = DEAD_BLOCK;
+    }
     let mut functions = vec![builder.function];
     functions.extend(builder.lifted_functions);
     Ok(functions)
@@ -1047,6 +1057,76 @@ enum CarryUpdate {
         step: ValueId,
         ty: Type,
     },
+}
+
+/// Recognizes `string.gmatch(s, p)` / `s:gmatch(p)` in for-in iterator
+/// position and returns the (haystack, pattern) argument expressions.
+fn gmatch_iterator_args(iterator: &Expr) -> Option<(&Expr, &Expr)> {
+    match iterator {
+        Expr::Call { callee, args, .. }
+            if builtin_name(callee).as_deref() == Some(STRING_GMATCH) && args.len() == 2 =>
+        {
+            Some((&args[0], &args[1]))
+        }
+        Expr::MethodCall {
+            receiver,
+            name,
+            args,
+            ..
+        } if name == "gmatch" && args.len() == 1 => Some((receiver.as_ref(), &args[0])),
+        _ => None,
+    }
+}
+
+/// Lua multi-value adjustment for a type in a single-value context.
+fn first_of_multi(ty: Type) -> Type {
+    match ty {
+        Type::Multi(mut parts) if !parts.is_empty() => parts.remove(0),
+        other => other,
+    }
+}
+
+/// One result slot of a `pm_find`/`pm_match` call.
+#[derive(Clone, Copy)]
+enum PmSlot {
+    /// 1-based match start; nil when there is no match.
+    Start,
+    /// 1-based inclusive match end; 0 when there is no match.
+    End,
+    /// A capture (host index 0 is the whole match).
+    Capture {
+        kind: waluau_ast::LuaCaptureKind,
+        index: i32,
+        nullable: bool,
+    },
+}
+
+impl PmSlot {
+    fn capture(kind: waluau_ast::LuaCaptureKind, index: i32, nullable: bool) -> Self {
+        PmSlot::Capture {
+            kind,
+            index,
+            nullable,
+        }
+    }
+
+    fn value_type(&self) -> Type {
+        let i32_ty = Type::Numeric(NumericType::I32);
+        match self {
+            PmSlot::Start => Type::Nullable(Box::new(i32_ty)),
+            PmSlot::End => i32_ty,
+            PmSlot::Capture {
+                kind, nullable, ..
+            } => {
+                let inner = kind.value_type();
+                if *nullable {
+                    Type::Nullable(Box::new(inner))
+                } else {
+                    inner
+                }
+            }
+        }
+    }
 }
 
 fn builtin_name(callee: &Expr) -> Option<String> {
@@ -1480,7 +1560,11 @@ impl Builder<'_> {
                     // as an empty record so subsequent `t.field = ...` can shape it.
                     Type::Record(BTreeMap::new())
                 } else {
-                    self.infer_expr_type(value, types, None)?
+                    // A multi-value initializer collapses to its first value.
+                    match self.infer_expr_type(value, types, None)? {
+                        Type::Multi(mut parts) if !parts.is_empty() => parts.remove(0),
+                        other => other,
+                    }
                 };
                 let value = self.lower_expr(value, env, types, Some(inferred_ty.clone()))?;
                 // If this local is captured by any nested function, represent it as a 1-element
@@ -1825,7 +1909,7 @@ impl Builder<'_> {
                         .map(|binding| binding.ty.clone().expect("checked above"))
                         .collect();
                     let lowered = self.lower_expr_list(values, env, types, Some(&expected))?;
-                    if lowered.len() != expected.len() {
+                    if lowered.len() < expected.len() {
                         return Err(Diagnostic::new(format!(
                             "multi-binding declaration expects {} values, got {}",
                             expected.len(),
@@ -1851,7 +1935,9 @@ impl Builder<'_> {
                             other => inferred_types.push(other),
                         }
                     }
-                    if inferred_types.len() != bindings.len() {
+                    // Extra values from a trailing multi-value call are
+                    // dropped, following Lua's adjustment rules.
+                    if inferred_types.len() < bindings.len() {
                         return Err(Diagnostic::new(format!(
                             "multi-binding declaration expects {} values, got {}",
                             bindings.len(),
@@ -1859,10 +1945,10 @@ impl Builder<'_> {
                         )));
                     }
                     let lowered = self.lower_expr_list(values, env, types, None)?;
-                    if lowered.len() != inferred_types.len() {
+                    if lowered.len() < bindings.len() {
                         return Err(Diagnostic::new(format!(
                             "multi-binding declaration expects {} values, got {}",
-                            inferred_types.len(),
+                            bindings.len(),
                             lowered.len()
                         )));
                     }
@@ -1884,7 +1970,7 @@ impl Builder<'_> {
                     expected.push(ty);
                 }
                 let lowered = self.lower_expr_list(values, env, types, Some(&expected))?;
-                if lowered.len() != expected.len() {
+                if lowered.len() < expected.len() {
                     return Err(Diagnostic::new(format!(
                         "multi-assignment expects {} values, got {}",
                         expected.len(),
@@ -1948,6 +2034,147 @@ impl Builder<'_> {
                 self.lower_for_in(symbol_ids, iterator, body, env, types)?;
             }
         }
+        Ok(())
+    }
+
+    /// `for vars in string.gmatch(s, p) do ... end`: the host holds the
+    /// iteration state behind a handle; each header iteration advances it and
+    /// the body reads the captures through the pm_capture_* accessors.
+    fn lower_for_in_gmatch(
+        &mut self,
+        haystack_expr: &Expr,
+        pattern_expr: &Expr,
+        ids: &[SymbolId],
+        body: &[Stmt],
+        env: &mut HashMap<SymbolId, ValueId>,
+        types: &mut HashMap<SymbolId, Type>,
+    ) -> Result<(), Diagnostic> {
+        let i32_ty = Type::Numeric(NumericType::I32);
+        let captures = waluau_ast::expr_pattern_captures(pattern_expr);
+        // Loop variable slots: the pattern's captures, or the whole match
+        // (host capture index 0) when the pattern has none. Extra captures
+        // beyond the bound variables are dropped, as in Lua.
+        let slot_kinds: Vec<(waluau_ast::LuaCaptureKind, i32)> = if captures.is_empty() {
+            vec![(waluau_ast::LuaCaptureKind::Str, 0)]
+        } else {
+            captures
+                .iter()
+                .enumerate()
+                .map(|(index, kind)| (*kind, index as i32 + 1))
+                .collect()
+        };
+        if ids.len() > slot_kinds.len() {
+            return Err(Diagnostic::new(format!(
+                "{STRING_GMATCH} for-in loop binds {} variables, but the pattern only produces {} values",
+                ids.len(),
+                slot_kinds.len()
+            )));
+        }
+
+        let haystack = self.lower_expr(haystack_expr, env, types, Some(Type::String))?;
+        let pattern = self.lower_expr(pattern_expr, env, types, Some(Type::String))?;
+        let handle = self.emit_string_host_call(
+            PM_GMATCH_HOST,
+            vec![haystack, pattern],
+            i32_ty.clone(),
+        )?;
+
+        let preheader = self.current_block;
+        let header = self.new_block();
+        let loop_body = self.new_block();
+        let exit = self.new_block();
+        self.set_terminator(preheader, Terminator::Jump(header));
+
+        let mutated = collect_assigned_names(body);
+        self.current_block = header;
+        let loop_env = env.clone();
+        let loop_types = types.clone();
+        let mut phis = HashMap::new();
+        for id in &mutated {
+            if let Some(initial) = env.get(id).copied() {
+                let phi = self.emit(Instruction::Phi(vec![(preheader, initial)]));
+                self.function.value_symbols.insert(phi, *id);
+                phis.insert(*id, phi);
+            }
+        }
+        let mut loop_env = loop_env;
+        for (id, phi) in &phis {
+            loop_env.insert(*id, *phi);
+        }
+
+        let has = self.emit_string_host_call(PM_GMATCH_NEXT_HOST, vec![handle], i32_ty.clone())?;
+        let zero = self.emit_i32_const(0);
+        let continue_value = self.emit(Instruction::Binary {
+            op: BinaryOp::NotEq,
+            left: has,
+            right: zero,
+            operand_ty: i32_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        let exit_phis = self.create_exit_phis(exit, &phis);
+        for (id, phi) in &phis {
+            add_phi_incoming(&mut self.function, exit, exit_phis[id], (header, *phi));
+        }
+        self.loop_stack.push(LoopContext {
+            header,
+            continue_target: header,
+            break_target: exit,
+            phis: phis.clone(),
+            // The gmatch handle advance is re-emitted in the header each
+            // iteration; no loop-carried values beyond the user phis.
+            carries: Vec::new(),
+            exit_phis: exit_phis.clone(),
+        });
+        self.set_terminator(
+            header,
+            Terminator::Branch {
+                condition: continue_value,
+                then_block: loop_body,
+                else_block: exit,
+            },
+        );
+
+        self.current_block = loop_body;
+        let mut body_env = loop_env.clone();
+        let mut body_types = loop_types.clone();
+        for (id, (kind, capture_index)) in ids.iter().zip(slot_kinds.iter()) {
+            let index_value = self.emit_i32_const(*capture_index);
+            let (host, value_ty) = match kind {
+                waluau_ast::LuaCaptureKind::Str => (PM_CAPTURE_STRING_HOST, Type::String),
+                waluau_ast::LuaCaptureKind::Position => (PM_CAPTURE_POSITION_HOST, i32_ty.clone()),
+            };
+            let value = self.emit_string_host_call(host, vec![index_value], value_ty.clone())?;
+            self.bind_loop_var(*id, value, &value_ty, &mut body_env);
+            body_types.insert(*id, value_ty);
+        }
+        for stmt in body {
+            if self.current_block == DEAD_BLOCK {
+                break;
+            }
+            self.lower_stmt(stmt, &mut body_env, &mut body_types)?;
+        }
+
+        let loop_ctx = self
+            .loop_stack
+            .pop()
+            .expect("loop stack must contain entry for gmatch for-in loop");
+        let phis = loop_ctx.phis;
+        let body_exit = self.current_block;
+        if body_exit != DEAD_BLOCK {
+            self.set_terminator(body_exit, Terminator::Jump(header));
+            for (id, phi) in &phis {
+                if let Some(next_value) = body_env.get(id).copied() {
+                    add_phi_incoming(&mut self.function, header, *phi, (body_exit, next_value));
+                }
+            }
+        }
+
+        for (id, _) in phis {
+            let exit_phi = exit_phis[&id];
+            env.insert(id, exit_phi);
+            self.function.value_symbols.insert(exit_phi, id);
+        }
+        self.current_block = exit;
         Ok(())
     }
 
@@ -2030,6 +2257,21 @@ impl Builder<'_> {
     }
 
     fn nil_test_subject(condition: &Expr) -> Option<(SymbolId, bool)> {
+        // A bare `if x then` on a nullable value is a truthiness test: the
+        // then-branch sees the non-nil type.
+        if let Expr::Name(_, Some(symbol_id), _) = condition {
+            return Some((*symbol_id, true));
+        }
+        if let Expr::Unary {
+            op: UnaryOp::Not,
+            expr,
+            ..
+        } = condition
+        {
+            if let Expr::Name(_, Some(symbol_id), _) = expr.as_ref() {
+                return Some((*symbol_id, false));
+            }
+        }
         let Expr::Binary {
             op, left, right, ..
         } = condition
@@ -2837,6 +3079,9 @@ impl Builder<'_> {
         types: &mut HashMap<SymbolId, Type>,
     ) -> Result<(), Diagnostic> {
         let ids = symbol_ids.as_ref().expect("symbol_ids should be resolved");
+        if let Some((haystack_expr, pattern_expr)) = gmatch_iterator_args(iterator) {
+            return self.lower_for_in_gmatch(haystack_expr, pattern_expr, ids, body, env, types);
+        }
         let iterator_ty = self.infer_expr_type(iterator, types, None)?;
         if let Type::Array(element_ty) = &iterator_ty {
             if ids.len() != 1 && ids.len() != 2 {
@@ -3187,10 +3432,28 @@ impl Builder<'_> {
                             "numeric literal is not assignable to extern",
                         ));
                     }
-                    Type::Nil | Type::Nullable(_) => {
+                    Type::Nil => {
                         return Err(Diagnostic::new(
-                            "numeric literal is not assignable to nullable extern",
+                            "numeric literal is not assignable to nil",
                         ));
+                    }
+                    nullable @ Type::Nullable(_) => {
+                        // A literal in `i32?` position lowers at the inner
+                        // numeric type and boxes into the nullable.
+                        let Some(Type::Numeric(numeric)) = nullable.nullable_inner() else {
+                            return Err(Diagnostic::new(
+                                "numeric literal is not assignable to nullable extern",
+                            ));
+                        };
+                        let value = self.emit(Instruction::Number {
+                            ty: numeric,
+                            literal: number.clone(),
+                        });
+                        return self.coerce_value(
+                            value,
+                            Type::Numeric(numeric),
+                            Some(nullable),
+                        );
                     }
                     Type::Named { name, .. } => {
                         return Err(Diagnostic::new(format!(
@@ -3266,6 +3529,7 @@ impl Builder<'_> {
             }
             Expr::Nil(_) => {
                 let ty = match expected.clone() {
+                    Some(nullable @ Type::Nullable(_)) if nullable.is_boxed_nullable() => nullable,
                     Some(Type::Nullable(inner)) => *inner,
                     Some(Type::Extern) => Type::Extern,
                     Some(other) => {
@@ -3344,6 +3608,9 @@ impl Builder<'_> {
                     call_args.extend_from_slice(args);
                     let builtin = match name.as_str() {
                         "find" => Some(STRING_FIND),
+                        "match" => Some(STRING_MATCH),
+                        "gmatch" => Some(STRING_GMATCH),
+                        "gsub" => Some(STRING_GSUB),
                         "len" => Some(STRING_LEN),
                         "sub" => Some(STRING_SUB),
                         "rep" => Some(STRING_REP),
@@ -3780,9 +4047,10 @@ impl Builder<'_> {
                         } else {
                             left
                         };
-                        let nullable_ty = self.infer_expr_type(value_expr, types, None)?;
+                        let nullable_ty =
+                            first_of_multi(self.infer_expr_type(value_expr, types, None)?);
                         let inner_ty = nullable_ty.nullable_inner().ok_or_else(|| {
-                            Diagnostic::new("nil comparison requires a nullable extern operand")
+                            Diagnostic::new("nil comparison requires a nullable operand")
                         })?;
                         let lowered =
                             self.lower_expr(value_expr, env, types, Some(nullable_ty))?;
@@ -3804,6 +4072,13 @@ impl Builder<'_> {
                     }
                     let operand_ty =
                         self.infer_binary_operand_type(left, right, op, types, expected.clone())?;
+                    if matches!(operand_ty, Type::Nullable(_))
+                        && matches!(op, BinaryOp::Eq | BinaryOp::NotEq)
+                    {
+                        return self.lower_nullable_equality(
+                            *op, left, right, operand_ty, env, types, expected,
+                        );
+                    }
                     let left = self.lower_expr(left, env, types, Some(operand_ty.clone()))?;
                     let right = self.lower_expr(right, env, types, Some(operand_ty.clone()))?;
                     let raw_result_ty = self.infer_expr_type(expr, types, expected.clone())?;
@@ -4260,7 +4535,11 @@ impl Builder<'_> {
                 .and_then(|types| (!types[out.len()..].is_empty()).then(|| &types[out.len()..]));
             let ty = if let Expr::Call { callee, .. } = expr {
                 let expands_multi = builtin_name(callee.as_ref()).is_some_and(|name| {
-                    name == COROUTINE_RESUME || name == PCALL
+                    name == COROUTINE_RESUME
+                        || name == PCALL
+                        || name == STRING_FIND
+                        || name == STRING_MATCH
+                        || name == STRING_GSUB
                 });
                 if expands_multi {
                     self.infer_expr_type(
@@ -4488,6 +4767,14 @@ impl Builder<'_> {
             nested.set_terminator(nested.current_block, Terminator::Return(value));
             nested.current_block = DEAD_BLOCK;
         }
+        if nested.current_block != DEAD_BLOCK
+            && matches!(nested.function.return_type, Type::Nullable(_))
+        {
+            let return_type = nested.function.return_type.clone();
+            let value = nested.emit(Instruction::Null { ty: return_type });
+            nested.set_terminator(nested.current_block, Terminator::Return(value));
+            nested.current_block = DEAD_BLOCK;
+        }
         self.lifted_functions.push(nested.function);
         self.lifted_functions.extend(nested.lifted_functions);
 
@@ -4530,9 +4817,14 @@ impl Builder<'_> {
                 Some(Type::Nil) => Err(Diagnostic::new(
                     "numeric literal is not assignable to nil",
                 )),
-                Some(Type::Nullable(_)) => Err(Diagnostic::new(
-                    "numeric literal is not assignable to nullable extern",
-                )),
+                Some(Type::Nullable(inner)) => match *inner {
+                    Type::Numeric(numeric) => {
+                        Ok(Type::Nullable(Box::new(Type::Numeric(numeric))))
+                    }
+                    _ => Err(Diagnostic::new(
+                        "numeric literal is not assignable to nullable extern",
+                    )),
+                },
                 Some(Type::Named { name, .. }) => Err(Diagnostic::new(format!(
                     "numeric literal is not assignable to {name}",
                 ))),
@@ -4576,7 +4868,10 @@ impl Builder<'_> {
             Expr::Name(name, symbol_id, _) => {
                 let symbol_id = symbol_id.expect("symbol_id should be resolved");
                 if let Some(ty) = types.get(&symbol_id) {
-                    Ok(ty.clone())
+                    // Coerce toward the expected type when possible (dynamic
+                    // `unknown` values, nullable widening, ...); callers that
+                    // only probe the raw type still get it on mismatch.
+                    Ok(coerce_type(ty.clone(), expected).unwrap_or_else(|_| ty.clone()))
                 } else if let Some((params, ret)) = self.signatures.get(&symbol_id) {
                     Ok(Type::Function {
                         params: params.clone(),
@@ -4602,6 +4897,9 @@ impl Builder<'_> {
                     call_args.extend_from_slice(args);
                     let builtin = match name.as_str() {
                         "find" => Some(STRING_FIND),
+                        "match" => Some(STRING_MATCH),
+                        "gmatch" => Some(STRING_GMATCH),
+                        "gsub" => Some(STRING_GSUB),
                         "len" => Some(STRING_LEN),
                         "sub" => Some(STRING_SUB),
                         "rep" => Some(STRING_REP),
@@ -4971,15 +5269,27 @@ impl Builder<'_> {
                     } else {
                         left
                     };
-                    let value_ty = self.infer_expr_type(value, types, None)?;
+                    let value_ty =
+                        first_of_multi(self.infer_expr_type(value, types, None)?);
                     if matches!(value_ty, Type::Nullable(_)) {
                         return Ok(Type::Bool);
                     }
                     return Err(Diagnostic::new(
-                        "nil comparison requires a nullable extern operand",
+                        "nil comparison requires a nullable operand",
                     ));
                 }
-                let left_ty = self.infer_expr_type(left, types, None)?;
+                let left_ty = first_of_multi(self.infer_expr_type(left, types, None)?);
+                if let Type::Nullable(_) = &left_ty {
+                    return Ok(left_ty);
+                }
+                if let Ok(probe_right) = self
+                    .infer_expr_type(right, types, None)
+                    .map(first_of_multi)
+                {
+                    if matches!(probe_right, Type::Nullable(_)) {
+                        return Ok(probe_right);
+                    }
+                }
                 if left_ty == Type::Bool {
                     let right_ty = self.infer_expr_type(right, types, Some(Type::Bool))?;
                     if right_ty == Type::Bool {
@@ -5018,7 +5328,12 @@ impl Builder<'_> {
                 }
             }
             BinaryOp::Concat => {
-                let left_ty = self.infer_expr_type(left, types, None)?;
+                let mut left_ty = first_of_multi(self.infer_expr_type(left, types, None)?);
+                if left_ty == Type::Unknown || matches!(left_ty, Type::Nullable(ref inner) if **inner == Type::String)
+                {
+                    // Dynamic or nullable-string operands concatenate as strings.
+                    left_ty = Type::String;
+                }
                 if left_ty == Type::String {
                     let right_ty = self.infer_expr_type(right, types, Some(Type::String))?;
                     if right_ty == Type::String {
@@ -5102,6 +5417,39 @@ impl Builder<'_> {
         match expected {
             None => Ok(value),
             Some(expected) if actual == expected => Ok(value),
+            // Multi-value adjustment: take the first value.
+            Some(expected)
+                if matches!(actual, Type::Multi(_)) && !matches!(expected, Type::Multi(_)) =>
+            {
+                let Type::Multi(mut parts) = actual else {
+                    unreachable!()
+                };
+                if parts.is_empty() {
+                    return Err(Diagnostic::new(
+                        "cannot use an empty multi-value result as a value",
+                    ));
+                }
+                let first_ty = parts.remove(0);
+                let first = self.emit(Instruction::MultiGet {
+                    value,
+                    index: 0,
+                    ty: first_ty.clone(),
+                });
+                self.coerce_value(first, first_ty, Some(expected))
+            }
+            // Nullable truthiness: non-nil is true.
+            Some(Type::Bool) if matches!(actual, Type::Nullable(_)) => {
+                let inner = actual.nullable_inner().expect("checked nullable");
+                let is_null = self.emit(Instruction::IsNull { value, ty: inner });
+                let false_value = self.emit(Instruction::Bool(false));
+                Ok(self.emit(Instruction::Binary {
+                    op: BinaryOp::Eq,
+                    left: is_null,
+                    right: false_value,
+                    operand_ty: Type::Bool,
+                    result_ty: Type::Bool,
+                }))
+            }
             Some(expected) => {
                 let target = coerce_type(actual.clone(), Some(expected.clone()))?;
                 if target == actual {
@@ -6969,42 +7317,13 @@ impl Builder<'_> {
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
         let i32_ty = Type::Numeric(NumericType::I32);
-        let lowered = match name {
-            STRING_FIND => {
-                if args.len() < 2 || args.len() > 4 {
-                    return Some(Err(Diagnostic::new(format!(
-                        "{STRING_FIND} expects 2 to 4 arguments, got {}",
-                        args.len()
-                    ))));
-                }
-                let haystack = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
-                    Ok(val) => val,
-                    Err(error) => return Some(Err(error)),
-                };
-                let needle = match self.lower_expr(&args[1], env, types, Some(Type::String)) {
-                    Ok(val) => val,
-                    Err(error) => return Some(Err(error)),
-                };
-                let init = match args.get(2) {
-                    Some(arg) => match self.lower_expr(arg, env, types, Some(i32_ty.clone())) {
-                        Ok(val) => val,
-                        Err(error) => return Some(Err(error)),
-                    },
-                    None => self.emit_i32_const(0),
-                };
-                let plain = match args.get(3) {
-                    Some(arg) => match self.lower_expr(arg, env, types, Some(Type::Bool)) {
-                        Ok(val) => val,
-                        Err(error) => return Some(Err(error)),
-                    },
-                    None => self.emit(Instruction::Bool(true)),
-                };
-                self.emit_string_host_call(
-                    STRING_FIND_HOST,
-                    vec![haystack, needle, init, plain],
-                    i32_ty.clone(),
-                )
+        match name {
+            STRING_FIND | STRING_MATCH | STRING_GSUB | STRING_GMATCH => {
+                return Some(self.lower_pattern_builtin(name, args, env, types, expected));
             }
+            _ => {}
+        }
+        let lowered = match name {
             STRING_LEN => {
                 if args.len() != 1 {
                     return Some(Err(Diagnostic::new(format!(
@@ -7090,7 +7409,7 @@ impl Builder<'_> {
                         Ok(val) => val,
                         Err(error) => return Some(Err(error)),
                     },
-                    None => self.emit_i32_const(0),
+                    None => self.emit_i32_const(1),
                 };
                 self.emit_string_host_call(STRING_BYTE_HOST, vec![value, index], i32_ty.clone())
             }
@@ -7156,7 +7475,7 @@ impl Builder<'_> {
         let (value, result_ty) = match lowered {
             Ok(value) => {
                 let result_ty = match name {
-                    STRING_FIND | STRING_LEN | STRING_BYTE => i32_ty,
+                    STRING_LEN | STRING_BYTE => i32_ty,
                     _ => Type::String,
                 };
                 (value, result_ty)
@@ -7164,6 +7483,576 @@ impl Builder<'_> {
             Err(error) => return Some(Err(error)),
         };
         Some(self.coerce_value(value, result_ty, expected))
+    }
+
+    /// Equality between a nullable value and a value of its inner type (or
+    /// two reference-typed nullables). Reference-typed nullables share their
+    /// inner wasm representation and use the null-safe host equality; boxed
+    /// nullables (`i32?` etc.) branch on nil before unboxing.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_nullable_equality(
+        &mut self,
+        op: BinaryOp,
+        left: &Expr,
+        right: &Expr,
+        nullable_ty: Type,
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        let inner = nullable_ty
+            .nullable_inner()
+            .expect("caller checked nullable operand");
+        if !nullable_ty.is_boxed_nullable() {
+            let left_value = self.lower_expr(left, env, types, Some(nullable_ty.clone()))?;
+            let right_value = self.lower_expr(right, env, types, Some(nullable_ty))?;
+            let value = self.emit(Instruction::Binary {
+                op,
+                left: left_value,
+                right: right_value,
+                operand_ty: inner,
+                result_ty: Type::Bool,
+            });
+            return self.coerce_value(value, Type::Bool, expected);
+        }
+
+        let side_is_nullable = |builder: &Self, side: &Expr| {
+            builder
+                .infer_expr_type(side, types, None)
+                .map(first_of_multi)
+                .map(|ty| matches!(ty, Type::Nullable(_)))
+                .unwrap_or(false)
+        };
+        let left_nullable = side_is_nullable(self, left);
+        let right_nullable = side_is_nullable(self, right);
+        if left_nullable && right_nullable {
+            return Err(Diagnostic::new(
+                "comparing two nullable numeric values is not supported yet",
+            ));
+        }
+        let left_expected = if left_nullable {
+            nullable_ty.clone()
+        } else {
+            inner.clone()
+        };
+        let right_expected = if left_nullable {
+            inner.clone()
+        } else {
+            nullable_ty.clone()
+        };
+        let left_value = self.lower_expr(left, env, types, Some(left_expected))?;
+        let right_value = self.lower_expr(right, env, types, Some(right_expected))?;
+        let (boxed, plain) = if left_nullable {
+            (left_value, right_value)
+        } else {
+            (right_value, left_value)
+        };
+
+        let is_null = self.emit(Instruction::IsNull {
+            value: boxed,
+            ty: inner.clone(),
+        });
+        let null_block = self.new_block();
+        let value_block = self.new_block();
+        let merge_block = self.new_block();
+        self.set_terminator(
+            self.current_block,
+            Terminator::Branch {
+                condition: is_null,
+                then_block: null_block,
+                else_block: value_block,
+            },
+        );
+
+        self.current_block = null_block;
+        // nil == x is false (x is non-nil here); nil ~= x is true.
+        let null_result = self.emit(Instruction::Bool(matches!(op, BinaryOp::NotEq)));
+        let null_exit = self.current_block;
+        self.set_terminator(null_exit, Terminator::Jump(merge_block));
+
+        self.current_block = value_block;
+        let unboxed = self.emit(Instruction::Cast {
+            value: boxed,
+            from: nullable_ty,
+            to: inner.clone(),
+        });
+        let value_result = self.emit(Instruction::Binary {
+            op,
+            left: unboxed,
+            right: plain,
+            operand_ty: inner,
+            result_ty: Type::Bool,
+        });
+        let value_exit = self.current_block;
+        self.set_terminator(value_exit, Terminator::Jump(merge_block));
+
+        self.current_block = merge_block;
+        let mut incoming = vec![(null_exit, null_result), (value_exit, value_result)];
+        incoming.sort_by_key(|(pred, _)| *pred);
+        let value = self.emit(Instruction::Phi(incoming));
+        self.coerce_value(value, Type::Bool, expected)
+    }
+
+    /// Static capture kinds for `string.find`'s pattern argument. A literal
+    /// `plain = true` disables pattern interpretation entirely.
+    fn find_pattern_captures(args: &[Expr]) -> Vec<waluau_ast::LuaCaptureKind> {
+        if matches!(args.get(3), Some(Expr::Bool(true, _))) {
+            return Vec::new();
+        }
+        args.get(1)
+            .map(waluau_ast::expr_pattern_captures)
+            .unwrap_or_default()
+    }
+
+    /// Lua-pattern builtins (`string.find`/`string.match`/`string.gsub`).
+    /// Follows the pcall multi-value convention: with an absent or Multi
+    /// expected type the full PackMulti tuple is produced; with a single
+    /// expected type only the first result is materialized and coerced.
+    fn lower_pattern_builtin(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        match name {
+            STRING_FIND => self.lower_string_find(args, env, types, expected),
+            STRING_MATCH => self.lower_string_match(args, env, types, expected),
+            STRING_GSUB => self.lower_string_gsub(args, env, types, expected),
+            _ => Err(Diagnostic::new(format!(
+                "{STRING_GMATCH} is only supported as a for-in iterator"
+            ))),
+        }
+    }
+
+    fn lower_string_find(
+        &mut self,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        let i32_ty = Type::Numeric(NumericType::I32);
+        if args.len() < 2 || args.len() > 4 {
+            return Err(Diagnostic::new(format!(
+                "{STRING_FIND} expects 2 to 4 arguments, got {}",
+                args.len()
+            )));
+        }
+        let haystack = self.lower_expr(&args[0], env, types, Some(Type::String))?;
+        let pattern = self.lower_expr(&args[1], env, types, Some(Type::String))?;
+        let init = match args.get(2) {
+            Some(arg) => self.lower_expr(arg, env, types, Some(i32_ty.clone()))?,
+            None => self.emit_i32_const(1),
+        };
+        let plain = match args.get(3) {
+            Some(arg) => self.lower_expr(arg, env, types, Some(Type::Bool))?,
+            None => self.emit(Instruction::Bool(false)),
+        };
+        let matched = self.emit_string_host_call(
+            PM_FIND_HOST,
+            vec![haystack, pattern, init, plain],
+            i32_ty,
+        )?;
+        let mut slots = vec![PmSlot::Start, PmSlot::End];
+        for (index, kind) in Self::find_pattern_captures(args).iter().enumerate() {
+            slots.push(PmSlot::capture(*kind, index as i32 + 1, false));
+        }
+        self.finish_pm_call(matched, slots, expected)
+    }
+
+    fn lower_string_match(
+        &mut self,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        let i32_ty = Type::Numeric(NumericType::I32);
+        if args.len() < 2 || args.len() > 3 {
+            return Err(Diagnostic::new(format!(
+                "{STRING_MATCH} expects 2 or 3 arguments, got {}",
+                args.len()
+            )));
+        }
+        let haystack = self.lower_expr(&args[0], env, types, Some(Type::String))?;
+        let pattern = self.lower_expr(&args[1], env, types, Some(Type::String))?;
+        let init = match args.get(2) {
+            Some(arg) => self.lower_expr(arg, env, types, Some(i32_ty.clone()))?,
+            None => self.emit_i32_const(1),
+        };
+        let matched =
+            self.emit_string_host_call(PM_MATCH_HOST, vec![haystack, pattern, init], i32_ty)?;
+        let captures = args
+            .get(1)
+            .map(waluau_ast::expr_pattern_captures)
+            .unwrap_or_default();
+        let slots = if captures.is_empty() {
+            vec![PmSlot::capture(waluau_ast::LuaCaptureKind::Str, 0, true)]
+        } else {
+            captures
+                .iter()
+                .enumerate()
+                .map(|(index, kind)| PmSlot::capture(*kind, index as i32 + 1, true))
+                .collect()
+        };
+        self.finish_pm_call(matched, slots, expected)
+    }
+
+    /// Emits the matched/unmatched diamond around a `pm_find`/`pm_match`
+    /// result and packs the requested result slots.
+    fn finish_pm_call(
+        &mut self,
+        matched: ValueId,
+        slots: Vec<PmSlot>,
+        expected: Option<Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        let want_multi = matches!(expected, None | Some(Type::Multi(_)));
+        let slots = if want_multi {
+            slots
+        } else {
+            slots.into_iter().take(1).collect()
+        };
+        let values = self.lower_pm_result_slots(matched, &slots)?;
+        if want_multi {
+            let (vals, tys): (Vec<_>, Vec<_>) = values.into_iter().unzip();
+            let packed = self.emit(Instruction::PackMulti {
+                values: vals,
+                types: tys.clone(),
+            });
+            self.coerce_value(packed, Type::Multi(tys), expected)
+        } else {
+            let (value, ty) = values.into_iter().next().expect("at least one pm slot");
+            self.coerce_value(value, ty, expected)
+        }
+    }
+
+    /// Branches on `matched != 0` and produces one value per slot: the host
+    /// accessor's value in the matched branch, the slot's miss value (nil,
+    /// zero, or the empty string) otherwise, merged with phis.
+    fn lower_pm_result_slots(
+        &mut self,
+        matched: ValueId,
+        slots: &[PmSlot],
+    ) -> Result<Vec<(ValueId, Type)>, Diagnostic> {
+        let i32_ty = Type::Numeric(NumericType::I32);
+        let zero = self.emit_i32_const(0);
+        let condition = self.emit(Instruction::Binary {
+            op: BinaryOp::NotEq,
+            left: matched,
+            right: zero,
+            operand_ty: i32_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        let then_block = self.new_block();
+        let else_block = self.new_block();
+        let merge_block = self.new_block();
+        self.set_terminator(
+            self.current_block,
+            Terminator::Branch {
+                condition,
+                then_block,
+                else_block,
+            },
+        );
+
+        self.current_block = then_block;
+        let mut then_values = Vec::with_capacity(slots.len());
+        for slot in slots {
+            then_values.push(self.lower_pm_slot_hit(slot)?);
+        }
+        let then_exit = self.current_block;
+        self.set_terminator(then_exit, Terminator::Jump(merge_block));
+
+        self.current_block = else_block;
+        let mut else_values = Vec::with_capacity(slots.len());
+        for slot in slots {
+            else_values.push(self.lower_pm_slot_miss(slot));
+        }
+        let else_exit = self.current_block;
+        self.set_terminator(else_exit, Terminator::Jump(merge_block));
+
+        self.current_block = merge_block;
+        let mut merged = Vec::with_capacity(slots.len());
+        for ((slot, then_value), else_value) in slots.iter().zip(then_values).zip(else_values) {
+            let mut incoming = vec![(then_exit, then_value), (else_exit, else_value)];
+            incoming.sort_by_key(|(pred, _)| *pred);
+            merged.push((self.emit(Instruction::Phi(incoming)), slot.value_type()));
+        }
+        Ok(merged)
+    }
+
+    fn lower_pm_slot_hit(&mut self, slot: &PmSlot) -> Result<ValueId, Diagnostic> {
+        let i32_ty = Type::Numeric(NumericType::I32);
+        match slot {
+            PmSlot::Start => {
+                let raw = self.emit_string_host_call(PM_MATCH_START_HOST, vec![], i32_ty.clone())?;
+                Ok(self.emit(Instruction::Cast {
+                    value: raw,
+                    from: i32_ty.clone(),
+                    to: Type::Nullable(Box::new(i32_ty)),
+                }))
+            }
+            PmSlot::End => self.emit_string_host_call(PM_MATCH_END_HOST, vec![], i32_ty),
+            PmSlot::Capture {
+                kind,
+                index,
+                nullable,
+            } => {
+                let index_value = self.emit_i32_const(*index);
+                let (host, raw_ty) = match kind {
+                    waluau_ast::LuaCaptureKind::Str => (PM_CAPTURE_STRING_HOST, Type::String),
+                    waluau_ast::LuaCaptureKind::Position => {
+                        (PM_CAPTURE_POSITION_HOST, i32_ty.clone())
+                    }
+                };
+                let raw = self.emit_string_host_call(host, vec![index_value], raw_ty.clone())?;
+                if *nullable {
+                    Ok(self.emit(Instruction::Cast {
+                        value: raw,
+                        from: raw_ty.clone(),
+                        to: Type::Nullable(Box::new(raw_ty)),
+                    }))
+                } else {
+                    Ok(raw)
+                }
+            }
+        }
+    }
+
+    fn lower_pm_slot_miss(&mut self, slot: &PmSlot) -> ValueId {
+        match slot {
+            PmSlot::Start => self.emit(Instruction::Null {
+                ty: slot.value_type(),
+            }),
+            PmSlot::End => self.emit_i32_const(0),
+            PmSlot::Capture {
+                kind,
+                nullable,
+                ..
+            } => {
+                if *nullable {
+                    self.emit(Instruction::Null {
+                        ty: slot.value_type(),
+                    })
+                } else {
+                    match kind {
+                        waluau_ast::LuaCaptureKind::Str => {
+                            self.emit(Instruction::String(String::new()))
+                        }
+                        waluau_ast::LuaCaptureKind::Position => self.emit_i32_const(0),
+                    }
+                }
+            }
+        }
+    }
+
+    fn lower_string_gsub(
+        &mut self,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        let i32_ty = Type::Numeric(NumericType::I32);
+        if args.len() < 3 || args.len() > 4 {
+            return Err(Diagnostic::new(format!(
+                "{STRING_GSUB} expects 3 or 4 arguments, got {}",
+                args.len()
+            )));
+        }
+        let source = self.lower_expr(&args[0], env, types, Some(Type::String))?;
+        let pattern = self.lower_expr(&args[1], env, types, Some(Type::String))?;
+        let max_count = match args.get(3) {
+            Some(arg) => self.lower_expr(arg, env, types, Some(i32_ty.clone()))?,
+            None => self.emit_i32_const(-1),
+        };
+
+        let repl_fn_ty = self.gsub_replacement_function_type(&args[1], &args[2], types)?;
+        let (out, count) = if let Some((param_tys, return_ty)) = repl_fn_ty {
+            let repl_ty = Type::Function {
+                params: param_tys.clone(),
+                return_type: Box::new(return_ty.clone()),
+            };
+            let repl = self.lower_expr(&args[2], env, types, Some(repl_ty))?;
+            self.lower_gsub_function_loop(
+                source, pattern, max_count, repl, &args[1], param_tys, return_ty,
+            )?
+        } else {
+            let repl = self.lower_expr(&args[2], env, types, Some(Type::String))?;
+            let out = self.emit_string_host_call(
+                PM_GSUB_HOST,
+                vec![source, pattern, repl, max_count],
+                Type::String,
+            )?;
+            let count = self.emit_string_host_call(PM_GSUB_COUNT_HOST, vec![], i32_ty.clone())?;
+            (out, count)
+        };
+
+        let want_multi = matches!(expected, None | Some(Type::Multi(_)));
+        if want_multi {
+            let tys = vec![Type::String, i32_ty];
+            let packed = self.emit(Instruction::PackMulti {
+                values: vec![out, count],
+                types: tys.clone(),
+            });
+            self.coerce_value(packed, Type::Multi(tys), expected)
+        } else {
+            self.coerce_value(out, Type::String, expected)
+        }
+    }
+
+    /// Decides whether the gsub replacement argument is a function and, if
+    /// so, resolves its parameter/return types. Returns None for
+    /// replacement-string templates.
+    fn gsub_replacement_function_type(
+        &self,
+        pattern_arg: &Expr,
+        repl_arg: &Expr,
+        types: &HashMap<SymbolId, Type>,
+    ) -> Result<Option<(Vec<Type>, Type)>, Diagnostic> {
+        let captures = waluau_ast::expr_pattern_captures(pattern_arg);
+        let expected_params: Vec<Type> = if captures.is_empty() {
+            vec![Type::String]
+        } else {
+            captures.iter().map(|kind| kind.value_type()).collect()
+        };
+        if let Ok(ty) = self.infer_expr_type(repl_arg, types, None) {
+            return match ty {
+                Type::Function {
+                    params,
+                    return_type,
+                } => Ok(Some((params, *return_type))),
+                _ => Ok(None),
+            };
+        }
+        // Unannotated function expressions cannot be inferred without an
+        // expected type; try the two supported replacer shapes.
+        for return_ty in [Type::String, Type::Unit] {
+            let candidate = Type::Function {
+                params: expected_params.clone(),
+                return_type: Box::new(return_ty.clone()),
+            };
+            if self
+                .infer_expr_type(repl_arg, types, Some(candidate))
+                .is_ok()
+            {
+                return Ok(Some((expected_params, return_ty)));
+            }
+        }
+        // Fall through to the replacement-string path, whose lowering will
+        // report the underlying inference error.
+        Ok(None)
+    }
+
+    /// gsub with a function replacement: the host walks the matches
+    /// (pm_gsub_begin/next/finish) while the guest computes each
+    /// replacement via an indirect call.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_gsub_function_loop(
+        &mut self,
+        source: ValueId,
+        pattern: ValueId,
+        max_count: ValueId,
+        repl: ValueId,
+        pattern_arg: &Expr,
+        param_tys: Vec<Type>,
+        return_ty: Type,
+    ) -> Result<(ValueId, ValueId), Diagnostic> {
+        let i32_ty = Type::Numeric(NumericType::I32);
+        let handle = self.emit_string_host_call(
+            PM_GSUB_BEGIN_HOST,
+            vec![source, pattern, max_count],
+            i32_ty.clone(),
+        )?;
+        let captures = waluau_ast::expr_pattern_captures(pattern_arg);
+
+        let header = self.new_block();
+        let body = self.new_block();
+        let exit = self.new_block();
+        self.set_terminator(self.current_block, Terminator::Jump(header));
+
+        self.current_block = header;
+        let has = self.emit_string_host_call(PM_GSUB_NEXT_HOST, vec![handle], i32_ty.clone())?;
+        let zero = self.emit_i32_const(0);
+        let condition = self.emit(Instruction::Binary {
+            op: BinaryOp::NotEq,
+            left: has,
+            right: zero,
+            operand_ty: i32_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        self.set_terminator(
+            self.current_block,
+            Terminator::Branch {
+                condition,
+                then_block: body,
+                else_block: exit,
+            },
+        );
+
+        self.current_block = body;
+        let mut call_args = Vec::with_capacity(param_tys.len());
+        for (index, param_ty) in param_tys.iter().enumerate() {
+            let capture_kind = if captures.is_empty() {
+                waluau_ast::LuaCaptureKind::Str
+            } else {
+                *captures.get(index).ok_or_else(|| {
+                    Diagnostic::new(format!(
+                        "{STRING_GSUB} replacement function takes {} arguments, but the pattern only has {} captures",
+                        param_tys.len(),
+                        captures.len()
+                    ))
+                })?
+            };
+            let capture_index = if captures.is_empty() { 0 } else { index as i32 + 1 };
+            let index_value = self.emit_i32_const(capture_index);
+            let (host, raw_ty) = match capture_kind {
+                waluau_ast::LuaCaptureKind::Str => (PM_CAPTURE_STRING_HOST, Type::String),
+                waluau_ast::LuaCaptureKind::Position => (PM_CAPTURE_POSITION_HOST, i32_ty.clone()),
+            };
+            if *param_ty != raw_ty {
+                return Err(Diagnostic::new(format!(
+                    "{STRING_GSUB} replacement function argument #{} expects {raw_ty}, got {param_ty}",
+                    index + 1
+                )));
+            }
+            call_args.push(self.emit_string_host_call(host, vec![index_value], raw_ty)?);
+        }
+        let call = self.emit(Instruction::CallValue {
+            callee: repl,
+            args: call_args,
+            params: param_tys.clone(),
+            return_type: return_ty.clone(),
+        });
+        match &return_ty {
+            Type::String => {
+                self.emit_string_host_call(PM_GSUB_REPLACE_HOST, vec![handle, call], Type::Unit)?;
+            }
+            Type::Unit => {
+                self.emit_string_host_call(PM_GSUB_KEEP_HOST, vec![handle], Type::Unit)?;
+            }
+            other if other.is_numeric() => {
+                let text = self.emit(Instruction::ToString {
+                    value: call,
+                    from: other.clone(),
+                });
+                self.emit_string_host_call(PM_GSUB_REPLACE_HOST, vec![handle, text], Type::Unit)?;
+            }
+            other => {
+                return Err(Diagnostic::new(format!(
+                    "{STRING_GSUB} replacement function must return a string, a number, or nothing, got {other}"
+                )));
+            }
+        }
+        self.set_terminator(self.current_block, Terminator::Jump(header));
+
+        self.current_block = exit;
+        let out =
+            self.emit_string_host_call(PM_GSUB_FINISH_HOST, vec![handle], Type::String)?;
+        let count = self.emit_string_host_call(PM_GSUB_COUNT_HOST, vec![], i32_ty)?;
+        Ok((out, count))
     }
 
     fn infer_string_builtin_call_type(
@@ -7192,7 +8081,7 @@ impl Builder<'_> {
                 }
                 if let Err(error) = self.require_inferred_arg_type(
                     STRING_FIND,
-                    "needle",
+                    "pattern",
                     &args[1],
                     Type::String,
                     types,
@@ -7221,8 +8110,62 @@ impl Builder<'_> {
                         return Some(Err(error));
                     }
                 }
-                Some(Ok(i32_ty))
+                Some(Ok(Type::Multi(waluau_ast::string_find_result_types(
+                    &Self::find_pattern_captures(args),
+                ))))
             }
+            STRING_MATCH => {
+                if args.len() < 2 || args.len() > 3 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_MATCH} expects 2 or 3 arguments, got {}",
+                        args.len()
+                    ))));
+                }
+                if let Err(error) = self.require_inferred_arg_type(
+                    STRING_MATCH,
+                    "haystack",
+                    &args[0],
+                    Type::String,
+                    types,
+                ) {
+                    return Some(Err(error));
+                }
+                if let Some(init_arg) = args.get(2) {
+                    if let Err(error) = self.require_inferred_arg_type(
+                        STRING_MATCH,
+                        "init",
+                        init_arg,
+                        i32_ty.clone(),
+                        types,
+                    ) {
+                        return Some(Err(error));
+                    }
+                }
+                Some(Ok(Type::Multi(waluau_ast::string_match_result_types(
+                    &waluau_ast::expr_pattern_captures(&args[1]),
+                ))))
+            }
+            STRING_GSUB => {
+                if args.len() < 3 || args.len() > 4 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_GSUB} expects 3 or 4 arguments, got {}",
+                        args.len()
+                    ))));
+                }
+                if let Err(error) = self.require_inferred_arg_type(
+                    STRING_GSUB,
+                    "source",
+                    &args[0],
+                    Type::String,
+                    types,
+                ) {
+                    return Some(Err(error));
+                }
+                Some(Ok(Type::Multi(vec![Type::String, i32_ty])))
+            }
+            STRING_GMATCH => Some(Err(Diagnostic::new(format!(
+                "{STRING_GMATCH} is only supported as a for-in iterator"
+            )))),
             STRING_LEN | STRING_UPPER | STRING_LOWER => {
                 if args.len() != 1 {
                     return Some(Err(Diagnostic::new(format!(
@@ -7456,6 +8399,15 @@ impl Builder<'_> {
     ) -> Result<(), Diagnostic> {
         match self.infer_expr_type(arg, types, Some(expected.clone())) {
             Ok(actual) if actual == expected => Ok(()),
+            // Multi-value results adjust to their first value in argument
+            // position; accept them when that value coerces.
+            Ok(actual)
+                if coerce_type(actual.clone(), Some(expected.clone()))
+                    .map(|ty| ty == expected)
+                    .unwrap_or(false) =>
+            {
+                Ok(())
+            }
             Ok(actual) => Err(Diagnostic::new(format!(
                 "{builtin} expects {label} to be {expected}, got {actual}"
             ))),
@@ -7555,8 +8507,30 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
     match expected {
         None => Ok(actual),
         Some(expected) if actual == expected => Ok(expected),
-        // Any value implicitly boxes into `unknown` (anyref). Unboxing is explicit-only.
+        // A multi-value result in a single-value context collapses to its
+        // first value, following Lua's adjustment rules.
+        Some(expected)
+            if matches!(actual, Type::Multi(_)) && !matches!(expected, Type::Multi(_)) =>
+        {
+            let Type::Multi(mut parts) = actual else {
+                unreachable!()
+            };
+            if parts.is_empty() {
+                return Err(Diagnostic::new(
+                    "cannot use an empty multi-value result as a value",
+                ));
+            }
+            coerce_type(parts.remove(0), Some(expected))
+        }
+        // Nullable values are truthy exactly when non-nil, so they coerce to
+        // bool in condition positions.
+        Some(Type::Bool) if matches!(actual, Type::Nullable(_)) => Ok(Type::Bool),
+        // Any value implicitly boxes into `unknown` (anyref). Symmetrically, an
+        // `unknown` value (e.g. an unannotated Lua parameter) implicitly
+        // unboxes to any concrete type with a runtime-checked cast, mirroring
+        // Lua's dynamic typing.
         Some(Type::Unknown) => Ok(Type::Unknown),
+        Some(expected) if actual == Type::Unknown && expected != Type::Unit => Ok(expected),
         Some(Type::Nullable(expected_inner)) => match actual {
             Type::Nil => Ok(Type::Nullable(expected_inner)),
             Type::Nullable(actual_inner) if actual_inner == expected_inner => {

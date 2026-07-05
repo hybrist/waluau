@@ -61,6 +61,13 @@ pub(crate) fn wasm_type(
         Type::String | Type::Bytes | Type::Extern | Type::ExternSubtype(_) => {
             Ok(externref_val_type())
         }
+        // Nullable numerics/bools have no null representation in their raw
+        // value type, so they are boxed into `anyref` (null = nil, i31/boxed
+        // struct otherwise). Nullable reference types reuse the inner
+        // (already nullable) reference representation.
+        Type::Nullable(inner) if matches!(**inner, Type::Numeric(_) | Type::Bool) => {
+            Ok(anyref_val_type())
+        }
         Type::Nullable(inner) => wasm_type(inner, array_registry),
         Type::Nil => Ok(externref_val_type()),
         Type::Unknown => Ok(anyref_val_type()),

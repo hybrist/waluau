@@ -155,9 +155,30 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
     match expected {
         None => Ok(actual),
         Some(expected) if actual == expected => Ok(expected),
-        // Any value implicitly boxes into `unknown` (anyref). Unboxing back to a
-        // concrete type is never implicit — it requires an explicit cast.
+        // A multi-value result in a single-value context collapses to its
+        // first value, following Lua's adjustment rules.
+        Some(expected)
+            if matches!(actual, Type::Multi(_)) && !matches!(expected, Type::Multi(_)) =>
+        {
+            let Type::Multi(mut parts) = actual else {
+                unreachable!()
+            };
+            if parts.is_empty() {
+                return Err(Diagnostic::new(
+                    "cannot use an empty multi-value result as a value",
+                ));
+            }
+            coerce_type(parts.remove(0), Some(expected))
+        }
+        // Nullable values are truthy exactly when non-nil, so they coerce to
+        // bool in condition positions.
+        Some(Type::Bool) if matches!(actual, Type::Nullable(_)) => Ok(Type::Bool),
+        // Any value implicitly boxes into `unknown` (anyref). Symmetrically, an
+        // `unknown` value (e.g. an unannotated Lua parameter) implicitly
+        // unboxes to any concrete type with a runtime-checked cast, mirroring
+        // Lua's dynamic typing.
         Some(Type::Unknown) => Ok(Type::Unknown),
+        Some(expected) if actual == Type::Unknown && expected != Type::Unit => Ok(expected),
         Some(Type::Nullable(expected_inner)) => match actual {
             Type::Nil => Ok(Type::Nullable(expected_inner)),
             Type::Nullable(actual_inner) if actual_inner == expected_inner => {
@@ -486,9 +507,12 @@ pub(super) fn resolve_number_literal(
             "numeric literal is not assignable to extern",
         )),
         Some(Type::Nil) => Err(Diagnostic::new("numeric literal is not assignable to nil")),
-        Some(Type::Nullable(_)) => Err(Diagnostic::new(
-            "numeric literal is not assignable to nullable extern",
-        )),
+        Some(Type::Nullable(inner)) => match *inner {
+            Type::Numeric(numeric) => Ok(Type::Nullable(Box::new(Type::Numeric(numeric)))),
+            _ => Err(Diagnostic::new(
+                "numeric literal is not assignable to nullable extern",
+            )),
+        },
         Some(Type::Named { name, .. }) => Err(Diagnostic::new(format!(
             "numeric literal is not assignable to {name}",
         ))),

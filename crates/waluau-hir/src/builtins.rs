@@ -50,6 +50,9 @@ pub(super) const ASSERT: &str = "assert";
 pub(super) const ERROR: &str = "error";
 pub(super) const PCALL: &str = "pcall";
 pub(super) const STRING_FIND: &str = "string.find";
+pub(super) const STRING_MATCH: &str = "string.match";
+pub(super) const STRING_GMATCH: &str = "string.gmatch";
+pub(super) const STRING_GSUB: &str = "string.gsub";
 pub(super) const STRING_LEN: &str = "string.len";
 pub(super) const STRING_SUB: &str = "string.sub";
 pub(super) const STRING_REP: &str = "string.rep";
@@ -887,7 +890,7 @@ pub(super) fn infer_string_builtin_call(
             }
             if let Err(error) = require_arg_type(
                 STRING_FIND,
-                "needle",
+                "pattern",
                 &args[1],
                 Type::String,
                 vars,
@@ -922,8 +925,133 @@ pub(super) fn infer_string_builtin_call(
                     return Some(Err(error));
                 }
             }
-            Some(coerce_type(i32_ty, expected))
+            let captures = if matches!(args.get(3), Some(Expr::Bool(true, _))) {
+                Vec::new()
+            } else {
+                waluau_ast::expr_pattern_captures(&args[1])
+            };
+            Some(coerce_type(
+                Type::Multi(waluau_ast::string_find_result_types(&captures)),
+                expected,
+            ))
         }
+        STRING_MATCH => {
+            if args.len() < 2 || args.len() > 3 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{STRING_MATCH} expects 2 or 3 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            if let Err(error) = require_arg_type(
+                STRING_MATCH,
+                "haystack",
+                &args[0],
+                Type::String,
+                vars,
+                fn_signatures,
+                active_type_params,
+            ) {
+                return Some(Err(error));
+            }
+            if let Err(error) = require_arg_type(
+                STRING_MATCH,
+                "pattern",
+                &args[1],
+                Type::String,
+                vars,
+                fn_signatures,
+                active_type_params,
+            ) {
+                return Some(Err(error));
+            }
+            if let Some(init_arg) = args.get(2) {
+                if let Err(error) = require_arg_type(
+                    STRING_MATCH,
+                    "init",
+                    init_arg,
+                    i32_ty.clone(),
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                ) {
+                    return Some(Err(error));
+                }
+            }
+            Some(coerce_type(
+                Type::Multi(waluau_ast::string_match_result_types(
+                    &waluau_ast::expr_pattern_captures(&args[1]),
+                )),
+                expected,
+            ))
+        }
+        STRING_GSUB => {
+            if args.len() < 3 || args.len() > 4 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{STRING_GSUB} expects 3 or 4 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            if let Err(error) = require_arg_type(
+                STRING_GSUB,
+                "source",
+                &args[0],
+                Type::String,
+                vars,
+                fn_signatures,
+                active_type_params,
+            ) {
+                return Some(Err(error));
+            }
+            if let Err(error) = require_arg_type(
+                STRING_GSUB,
+                "pattern",
+                &args[1],
+                Type::String,
+                vars,
+                fn_signatures,
+                active_type_params,
+            ) {
+                return Some(Err(error));
+            }
+            // The replacement is either a template string or a function of
+            // the pattern's captures; its exact shape is validated during IR
+            // lowering.
+            let repl_ty = match super::expressions::infer_expr(
+                &args[2],
+                vars,
+                fn_signatures,
+                active_type_params,
+                None,
+            ) {
+                Ok(ty) => ty,
+                Err(error) => return Some(Err(error)),
+            };
+            if !matches!(repl_ty, Type::String | Type::Function { .. }) {
+                return Some(Err(Diagnostic::new(format!(
+                    "{STRING_GSUB} expects a string or function replacement, got {repl_ty}"
+                ))));
+            }
+            if let Some(max_arg) = args.get(3) {
+                if let Err(error) = require_arg_type(
+                    STRING_GSUB,
+                    "max_count",
+                    max_arg,
+                    i32_ty.clone(),
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                ) {
+                    return Some(Err(error));
+                }
+            }
+            Some(coerce_type(
+                Type::Multi(vec![Type::String, i32_ty]),
+                expected,
+            ))
+        }
+        STRING_GMATCH => Some(Err(Diagnostic::new(format!(
+            "{STRING_GMATCH} is only supported as a for-in iterator"
+        )))),
         STRING_LEN | STRING_UPPER | STRING_LOWER => {
             if args.len() != 1 {
                 return Some(Err(Diagnostic::new(format!(
@@ -1144,7 +1272,11 @@ fn require_arg_type(
         active_type_params,
         Some(expected.clone()),
     )?;
-    if actual == expected {
+    if actual == expected
+        || coerce_type(actual.clone(), Some(expected.clone()))
+            .map(|ty| ty == expected)
+            .unwrap_or(false)
+    {
         Ok(())
     } else {
         Err(Diagnostic::new(format!(

@@ -2367,9 +2367,223 @@ pub fn type_check(program: &Program) -> Result<(), Diagnostic> {
     Ok(())
 }
 
+/// Annotates unannotated `string.gsub` function replacements before type
+/// inference runs: parameters take the pattern's capture types (whole match
+/// when the pattern has no captures), and a missing return type becomes
+/// `string` when the body returns a value or `unit` for purely procedural
+/// replacers. Both HIR body checking and IR lowering then see fully typed
+/// replacement lambdas.
+fn fill_gsub_replacement_annotations(program: &mut Program) {
+    for function in &mut program.functions {
+        fill_gsub_annotations_in_stmts(&mut function.body);
+    }
+    fill_gsub_annotations_in_stmts(&mut program.top_level);
+}
+
+fn fill_gsub_annotations_in_stmts(stmts: &mut [Stmt]) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Let { value, .. }
+            | Stmt::Assign { value, .. }
+            | Stmt::Return(value)
+            | Stmt::Expr(value) => fill_gsub_annotations_in_expr(value),
+            Stmt::FieldAssign { base, value, .. } => {
+                fill_gsub_annotations_in_expr(base);
+                fill_gsub_annotations_in_expr(value);
+            }
+            Stmt::IndexAssign {
+                base, index, value, ..
+            } => {
+                fill_gsub_annotations_in_expr(base);
+                fill_gsub_annotations_in_expr(index);
+                fill_gsub_annotations_in_expr(value);
+            }
+            Stmt::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                fill_gsub_annotations_in_expr(condition);
+                fill_gsub_annotations_in_stmts(then_body);
+                fill_gsub_annotations_in_stmts(else_body);
+            }
+            Stmt::IfCast {
+                value,
+                then_body,
+                else_body,
+                ..
+            } => {
+                fill_gsub_annotations_in_expr(value);
+                fill_gsub_annotations_in_stmts(then_body);
+                fill_gsub_annotations_in_stmts(else_body);
+            }
+            Stmt::While { condition, body } => {
+                fill_gsub_annotations_in_expr(condition);
+                fill_gsub_annotations_in_stmts(body);
+            }
+            Stmt::Repeat { body, condition } => {
+                fill_gsub_annotations_in_stmts(body);
+                fill_gsub_annotations_in_expr(condition);
+            }
+            Stmt::NumericFor {
+                start,
+                stop,
+                step,
+                body,
+                ..
+            } => {
+                fill_gsub_annotations_in_expr(start);
+                fill_gsub_annotations_in_expr(stop);
+                if let Some(step) = step {
+                    fill_gsub_annotations_in_expr(step);
+                }
+                fill_gsub_annotations_in_stmts(body);
+            }
+            Stmt::ForIn { iterator, body, .. } => {
+                fill_gsub_annotations_in_expr(iterator);
+                fill_gsub_annotations_in_stmts(body);
+            }
+            Stmt::ReturnMulti(values)
+            | Stmt::LetMulti { values, .. }
+            | Stmt::AssignMulti { values, .. } => {
+                for value in values {
+                    fill_gsub_annotations_in_expr(value);
+                }
+            }
+            Stmt::Break | Stmt::Continue => {}
+        }
+    }
+}
+
+fn fill_gsub_annotations_in_expr(expr: &mut Expr) {
+    match expr {
+        Expr::Call { callee, args, .. } => {
+            fill_gsub_annotations_in_expr(callee);
+            let is_gsub = matches!(
+                callee.as_ref(),
+                Expr::Field { base, name, .. }
+                    if name == "gsub" && matches!(base.as_ref(), Expr::Name(ns, _, _) if ns == "string")
+            );
+            if is_gsub && args.len() >= 3 {
+                let (head, tail) = args.split_at_mut(2);
+                annotate_gsub_replacement(&head[1], &mut tail[0]);
+            }
+            for arg in args {
+                fill_gsub_annotations_in_expr(arg);
+            }
+        }
+        Expr::MethodCall {
+            receiver,
+            name,
+            args,
+            ..
+        } => {
+            fill_gsub_annotations_in_expr(receiver);
+            if name == "gsub" && args.len() >= 2 {
+                let (head, tail) = args.split_at_mut(1);
+                annotate_gsub_replacement(&head[0], &mut tail[0]);
+            }
+            for arg in args {
+                fill_gsub_annotations_in_expr(arg);
+            }
+        }
+        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } | Expr::IsVariant { expr, .. } => {
+            fill_gsub_annotations_in_expr(expr);
+        }
+        Expr::Binary { left, right, .. } => {
+            fill_gsub_annotations_in_expr(left);
+            fill_gsub_annotations_in_expr(right);
+        }
+        Expr::If {
+            condition,
+            then_expr,
+            else_expr,
+            ..
+        } => {
+            fill_gsub_annotations_in_expr(condition);
+            fill_gsub_annotations_in_expr(then_expr);
+            fill_gsub_annotations_in_expr(else_expr);
+        }
+        Expr::Function(function) => {
+            fill_gsub_annotations_in_stmts(&mut function.body);
+        }
+        Expr::ArrayLiteral { elements, .. } => {
+            for element in elements {
+                fill_gsub_annotations_in_expr(element);
+            }
+        }
+        Expr::TableLiteral { fields, .. } => {
+            for field in fields {
+                fill_gsub_annotations_in_expr(&mut field.value);
+            }
+        }
+        Expr::Field { base, .. } => fill_gsub_annotations_in_expr(base),
+        Expr::Index { base, index, .. } => {
+            fill_gsub_annotations_in_expr(base);
+            fill_gsub_annotations_in_expr(index);
+        }
+        Expr::Number(..)
+        | Expr::Bool(..)
+        | Expr::Nil(..)
+        | Expr::String(..)
+        | Expr::Bytes(..)
+        | Expr::Name(..)
+        | Expr::Vararg(..)
+        | Expr::Require(..) => {}
+    }
+}
+
+fn annotate_gsub_replacement(pattern_arg: &Expr, repl: &mut Expr) {
+    let Expr::Function(function) = repl else {
+        return;
+    };
+    let captures = waluau_ast::expr_pattern_captures(pattern_arg);
+    let param_tys: Vec<Type> = if captures.is_empty() {
+        vec![Type::String]
+    } else {
+        captures.iter().map(|kind| kind.value_type()).collect()
+    };
+    for (param, ty) in function.params.iter_mut().zip(param_tys) {
+        if param.ty == Type::Unknown {
+            param.ty = ty;
+        }
+    }
+    if function.return_type.is_none() {
+        function.return_type = Some(if stmts_contain_value_return(&function.body) {
+            Type::String
+        } else {
+            Type::Unit
+        });
+    }
+}
+
+/// Whether a statement list contains a value-producing `return` (without
+/// descending into nested function expressions).
+fn stmts_contain_value_return(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(|stmt| match stmt {
+        Stmt::Return(_) | Stmt::ReturnMulti(_) => true,
+        Stmt::If {
+            then_body,
+            else_body,
+            ..
+        }
+        | Stmt::IfCast {
+            then_body,
+            else_body,
+            ..
+        } => stmts_contain_value_return(then_body) || stmts_contain_value_return(else_body),
+        Stmt::While { body, .. }
+        | Stmt::Repeat { body, .. }
+        | Stmt::NumericFor { body, .. }
+        | Stmt::ForIn { body, .. } => stmts_contain_value_return(body),
+        _ => false,
+    })
+}
+
 pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
     let mut typed = desugar_method_declarations(program)?;
     resolve_program_types(&mut typed)?;
+    fill_gsub_replacement_annotations(&mut typed);
     if !typed.top_level.is_empty() {
         typed.functions.push(Function {
             name: FunctionName::Simple("__waluau_top_level_init".to_string()),

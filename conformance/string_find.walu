@@ -1,29 +1,44 @@
--- string.find / string:find: Lua-compatible plain substring search.
+-- string.find / string:find: Lua-conforming signature.
+-- Returns the 1-based inclusive (start, end) of the match, or nil when the
+-- pattern does not occur. The optional third argument is the 1-based start
+-- offset; the optional fourth selects plain (non-pattern) substring search.
 
 function find_via_namespace(): bool
     local message: string = "Welcome to Lua!"
-    local start_idx: i32 = string.find(message, "Lua", 0, true)
-    return start_idx == 11
+    return string.find(message, "Lua", 1, true) == 12
 end
 
 function find_via_method(): bool
     local message: string = "Welcome to Lua!"
-    return message:find("Lua", 0, true) == 11
+    return message:find("Lua", 1, true) == 12
 end
 
 function find_with_default_args(): bool
     local message: string = "Welcome to Lua!"
-    return string.find(message, "Lua") == 11
+    return string.find(message, "Lua") == 12
 end
 
 function find_respects_init(): bool
     local message: string = "Lua Lua Lua"
-    return string.find(message, "Lua", 4, true) == 4
+    return string.find(message, "Lua", 4, true) == 5
 end
 
 function find_not_found(): bool
     local message: string = "Welcome to Lua!"
-    return message:find("xyz") == -1
+    return message:find("xyz") == nil
+end
+
+function find_returns_bounds(): bool
+    local first, last = string.find("hello world", "o w")
+    return first == 5 and last == 7
+end
+
+function find_pattern_class(): bool
+    return string.find("alo123alo", "%d+") == 4
+end
+
+function find_pattern_anchored(): bool
+    return string.find("alo123alo", "^%d") == nil
 end
 
 assert(find_via_namespace())
@@ -31,3 +46,6 @@ assert(find_via_method())
 assert(find_with_default_args())
 assert(find_respects_init())
 assert(find_not_found())
+assert(find_returns_bounds())
+assert(find_pattern_class())
+assert(find_pattern_anchored())
