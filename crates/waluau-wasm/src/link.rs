@@ -332,13 +332,17 @@ fn merge_with_ambient_declarations(
             imports.insert(raw.clone(), resolve_virtual_import(raw)?);
         }
 
+        let (re_exports, namespaces, value_aliases) =
+            process_reexport_bindings(&module.program.top_level, &imports);
+
         let mut rewriter = Rewriter {
             prefix: &prefix,
             func_names: &func_names,
             type_names: &type_names,
             imports: &imports,
-            re_exports: HashMap::new(),
-            namespaces: HashMap::new(),
+            re_exports,
+            namespaces,
+            value_aliases,
         };
 
         for decl in &module.program.type_declarations {
@@ -432,11 +436,34 @@ enum ResolvedImport {
     DomWindow,
 }
 
+type RequireAliases = (
+    HashMap<String, String>,
+    HashMap<String, BTreeMap<String, String>>,
+    HashMap<String, Expr>,
+);
+
 fn resolve_virtual_import(raw: &str) -> Result<ResolvedImport, String> {
     match raw {
         DOM_WINDOW_REQUIRE => Ok(ResolvedImport::DomWindow),
         TFJS_REQUIRE => Ok(ResolvedImport::Namespace(tfjs_namespace())),
         _ => Err(unsupported_virtual_require(raw)),
+    }
+}
+
+fn dom_window_expr(span: Option<waluau_ast::Span>) -> Expr {
+    Expr::Cast {
+        expr: Box::new(Expr::Call {
+            callee: Box::new(Expr::Name(DOM_WINDOW_FUNCTION.to_string(), None, span)),
+            type_args: Vec::new(),
+            args: Vec::new(),
+            span,
+            method_call_origin: None,
+        }),
+        ty: Type::Named {
+            name: DOM_WINDOW_TYPE.to_string(),
+            type_args: Vec::new(),
+        },
+        span,
     }
 }
 
@@ -557,7 +584,8 @@ fn compute_module_export(
         hoist_table_export_functions(&mut module_functions, export)?;
     }
     let top_level_names = module_function_names(&module_functions, &module.program.export);
-    let (re_exports, namespaces) = process_reexport_bindings(&module.program.top_level, &imports);
+    let (re_exports, namespaces, _) =
+        process_reexport_bindings(&module.program.top_level, &imports);
 
     let resolved = resolve_module_export(
         module.program.export.as_ref(),
@@ -589,10 +617,7 @@ fn module_function_names(functions: &[Function], export: &Option<Expr>) -> HashS
 fn process_reexport_bindings(
     top_level: &[Stmt],
     imports: &HashMap<String, ResolvedImport>,
-) -> (
-    HashMap<String, String>,
-    HashMap<String, BTreeMap<String, String>>,
-) {
+) -> RequireAliases {
     let empty = HashSet::new();
     let mut rewriter = Rewriter {
         prefix: "",
@@ -601,11 +626,16 @@ fn process_reexport_bindings(
         imports,
         re_exports: HashMap::new(),
         namespaces: HashMap::new(),
+        value_aliases: HashMap::new(),
     };
     let mut stmts = top_level.to_vec();
     let mut bound = HashSet::new();
     rewriter.rewrite_block(&mut stmts, &mut bound);
-    (rewriter.re_exports, rewriter.namespaces)
+    (
+        rewriter.re_exports,
+        rewriter.namespaces,
+        rewriter.value_aliases,
+    )
 }
 
 fn resolve_module_export(
@@ -714,6 +744,7 @@ struct Rewriter<'a> {
     imports: &'a HashMap<String, ResolvedImport>,
     re_exports: HashMap<String, String>,
     namespaces: HashMap<String, BTreeMap<String, String>>,
+    value_aliases: HashMap<String, Expr>,
 }
 
 impl Rewriter<'_> {
@@ -980,7 +1011,12 @@ impl Rewriter<'_> {
                             ResolvedImport::Namespace(fields) => {
                                 self.namespaces.insert(name.clone(), fields.clone());
                             }
-                            ResolvedImport::DomWindow => {}
+                            ResolvedImport::DomWindow => {
+                                if let Expr::Require(_, span) = &*value {
+                                    self.value_aliases
+                                        .insert(name.clone(), dom_window_expr(*span));
+                                }
+                            }
                         }
                     }
                 }
@@ -1131,30 +1167,19 @@ impl Rewriter<'_> {
                                 .collect(),
                             span: *require_span,
                         },
-                        ResolvedImport::DomWindow => Expr::Cast {
-                            expr: Box::new(Expr::Call {
-                                callee: Box::new(Expr::Name(
-                                    DOM_WINDOW_FUNCTION.to_string(),
-                                    None,
-                                    *require_span,
-                                )),
-                                type_args: Vec::new(),
-                                args: Vec::new(),
-                                span: *require_span,
-                                method_call_origin: None,
-                            }),
-                            ty: Type::Named {
-                                name: DOM_WINDOW_TYPE.to_string(),
-                                type_args: Vec::new(),
-                            },
-                            span: *require_span,
-                        },
+                        ResolvedImport::DomWindow => dom_window_expr(*require_span),
                     };
                 }
             }
             Expr::Name(name, _, _) => {
-                if !bound.contains(name) && self.func_names.contains(name) {
-                    *name = format!("{}{name}", self.prefix);
+                if !bound.contains(name) {
+                    if let Some(resolved) = self.re_exports.get(name) {
+                        *expr = Expr::Name(resolved.clone(), None, None);
+                    } else if let Some(alias) = self.value_aliases.get(name) {
+                        *expr = alias.clone();
+                    } else if self.func_names.contains(name) {
+                        *name = format!("{}{name}", self.prefix);
+                    }
                 }
             }
             Expr::Number(..)
@@ -1959,6 +1984,52 @@ mod tests {
             matches!(&program.top_level[1], Stmt::Expr(Expr::Call { .. })),
             "expected imported assert to remain in merged top-level init: {:?}",
             program.top_level
+        );
+    }
+
+    #[test]
+    fn top_level_require_namespace_is_visible_in_function_body() {
+        let files = std::collections::HashMap::from([
+            (
+                "main.walu".to_string(),
+                r#"
+                    local lib = require("./lib")
+
+                    function main(): i32
+                        return lib.add_one(1)
+                    end
+                "#
+                .to_string(),
+            ),
+            (
+                "lib.walu".to_string(),
+                r#"
+                    function add_one(x: i32): i32
+                        return x + 1
+                    end
+
+                    return {
+                        add_one = add_one,
+                    }
+                "#
+                .to_string(),
+            ),
+        ]);
+
+        let program = link_programs(&files, "main.walu").expect("link should succeed");
+        let main = program
+            .functions
+            .iter()
+            .find(|function| function.name.to_string() == "main")
+            .expect("main should be present");
+        assert!(
+            matches!(
+                &main.body[0],
+                Stmt::Return(Expr::Call { callee, .. })
+                    if matches!(&**callee, Expr::Name(name, _, _) if name == "__waluau_m0_add_one")
+            ),
+            "expected top-level require namespace access to rewrite to imported function: {:?}",
+            main.body
         );
     }
 

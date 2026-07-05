@@ -2,6 +2,10 @@
 -- shell, wires input, and drives the game loop off CSS animationiteration
 -- events (see the TODO(waluau-0nge) below for why not requestAnimationFrame).
 
+local game = require("./game")
+local render = require("./render")
+local window = require("dom:window")
+
 function make_button(document: Document, id: string, label: string): Element
     local button: Element = document:create_element("button")
     button.id = id
@@ -12,12 +16,6 @@ function make_button(document: Document, id: string, label: string): Element
 end
 
 function install_snake(): unit
-    -- TODO(waluau-w5r0): these requires live inside the function because
-    -- file-scope locals (including require bindings) are not visible from
-    -- function bodies.
-    local game = require("./game")
-    local render = require("./render")
-    local window = require("dom:window")
     local document: Document = window.document
     local body: HTMLElement = document.body
 
