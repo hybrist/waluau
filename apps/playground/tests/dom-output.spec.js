@@ -234,6 +234,49 @@ test.describe('DOM Output in Run tab', () => {
     expect(pixel).toEqual([0, 0, 0, 255]);
   });
 
+  test('runs the snake game fixture preset with canvas rendering and controls', async ({ page }) => {
+    await page.getByRole('button', { name: 'Snake Game' }).click();
+
+    await expect(page.locator('.file-item').getByText('main.walu', { exact: true })).toBeVisible();
+    await expect(page.locator('.file-item').getByText('game.walu', { exact: true })).toBeVisible();
+    await expect(page.locator('.file-item').getByText('render.walu', { exact: true })).toBeVisible();
+    await expect(page.locator('.file-item').getByText('rng.walu', { exact: true })).toBeVisible();
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    const domOutput = page.getByLabel('DOM Output');
+    await expect(domOutput).toBeVisible();
+
+    const outputFrame = page.frameLocator('.dom-output-frame');
+    await expect(outputFrame.locator('h1')).toHaveText('Waluau Snake');
+
+    const canvas = outputFrame.locator('canvas#snake-canvas');
+    await expect(canvas).toHaveJSProperty('width', 336);
+    await expect(canvas).toHaveJSProperty('height', 336);
+
+    const paintedPixels = () =>
+      canvas.evaluate((node) => {
+        const data = node
+          .getContext('2d')
+          .getImageData(0, 0, node.width, node.height).data;
+        let painted = 0;
+        for (let i = 3; i < data.length; i += 4) {
+          if (data[i] !== 0) painted += 1;
+        }
+        return painted;
+      });
+
+    // The requestAnimationFrame loop draws the arena, snake, food, and HUD.
+    await expect.poll(paintedPixels).toBeGreaterThan(0);
+
+    // The on-screen d-pad and restart button drive the game without faulting
+    // the wasm instance; the loop keeps painting afterwards.
+    await outputFrame.locator('#snake-down').click();
+    await outputFrame.locator('#snake-restart').click();
+    await expect.poll(paintedPixels).toBeGreaterThan(0);
+  });
+
   test('runs Waluau click and input callbacks from DOM Output events', async ({ page }) => {
     await page.locator('.code-textarea').fill(DOM_EVENT_CALLBACK_SAMPLE);
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {

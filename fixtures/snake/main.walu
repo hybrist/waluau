@@ -1,0 +1,154 @@
+-- Snake, rendered into a <canvas> by Waluau. Entry point: builds the DOM
+-- shell, wires input, and drives the game loop off CSS animationiteration
+-- events (see the TODO(waluau-0nge) below for why not requestAnimationFrame).
+
+function make_button(document: Document, id: string, label: string): Element
+    local button: Element = document:create_element("button")
+    button.id = id
+    button.class_name = "snake-button rounded-md bg-slate-700 px-3 py-2 text-sm font-medium text-white hover:bg-slate-600"
+    button:set_attribute("type", "button")
+    button.text_content = label
+    return button
+end
+
+function install_snake(): unit
+    -- TODO(waluau-w5r0): these requires live inside the function because
+    -- file-scope locals (including require bindings) are not visible from
+    -- function bodies.
+    local game = require("./game")
+    local render = require("./render")
+    local window = require("dom:window")
+    local document: Document = window.document
+    local body: HTMLElement = document.body
+
+    local existing_root: Element? = document:get_element_by_id("app")
+    if existing_root ~= nil then
+        body:remove_child(existing_root)
+    end
+
+    local root: Element = document:create_element("div")
+    root.id = "app"
+    root.class_name = "flex flex-col items-center gap-3 bg-slate-950 p-4 text-slate-100"
+    body:append_child(root)
+
+    local heading: Element = document:create_element("h1")
+    heading.class_name = "text-lg font-semibold"
+    heading.text_content = "Waluau Snake"
+    root:append_child(heading)
+
+    local cols: i32 = 21
+    local rows: i32 = 21
+
+    local element: Element = document:create_element("canvas")
+    element.id = "snake-canvas"
+    root:append_child(element)
+
+    if HTMLCanvasElement(canvas) = element then
+        local width_px: f64 = render.cell_size() * cols::f64
+        local height_px: f64 = render.cell_size() * rows::f64
+        -- 336 = 21 cols/rows * 16px cells (render.cell_size()); the width/
+        -- height properties are u32 so the literal is spelled out here.
+        canvas.width = 336
+        canvas.height = 336
+        local style: CSSStyleProperties = canvas.style
+        style:setProperty("width", tostring(width_px) .. "px")
+        style:setProperty("height", tostring(height_px) .. "px")
+        -- The playfield backdrop: fills are recolored via ctx.filter (see
+        -- render.walu), but the background can simply be CSS on the element.
+        style:setProperty("background-color", "#0f172a")
+        style:setProperty("image-rendering", "pixelated")
+
+        local context: CanvasRenderingContext2D? = canvas:get_context("2d")
+        assert(context ~= nil)
+        local ctx: CanvasRenderingContext2D = context::CanvasRenderingContext2D
+
+        -- TODO(waluau-6i00): the fixed seed and the Event.timeStamp mixing
+        -- below stand in for math.randomseed/math.random until math builtins
+        -- are externalized.
+        local state = game.new_state(cols, rows, 20260705)
+
+        -- Input. On-screen buttons stand in for arrow keys.
+        --
+        -- TODO(waluau-uzdp): KeyboardEvent is not part of the generated DOM
+        -- extern surface, so there is no way to read event.key/event.code
+        -- from a "keydown" listener. Until then the only portable input is a
+        -- clickable d-pad.
+        --
+        -- TODO(waluau-9m6z): Event.type is still disabled in the extern
+        -- filter (cross-interface member collision, since fixed by
+        -- waluau-1l02/PR #241), so one shared listener cannot branch on the
+        -- event kind or key. Each button therefore gets its own closure.
+        local controls: Element = document:create_element("div")
+        controls.id = "snake-controls"
+        controls.class_name = "flex gap-2"
+        root:append_child(controls)
+
+        local up_button: Element = make_button(document, "snake-up", "Up")
+        up_button:add_event_listener("click", function(_event: Event): unit
+            game.turn(state, 0, -1)
+        end)
+        controls:append_child(up_button)
+
+        local down_button: Element = make_button(document, "snake-down", "Down")
+        down_button:add_event_listener("click", function(_event: Event): unit
+            game.turn(state, 0, 1)
+        end)
+        controls:append_child(down_button)
+
+        local left_button: Element = make_button(document, "snake-left", "Left")
+        left_button:add_event_listener("click", function(_event: Event): unit
+            game.turn(state, -1, 0)
+        end)
+        controls:append_child(left_button)
+
+        local right_button: Element = make_button(document, "snake-right", "Right")
+        right_button:add_event_listener("click", function(_event: Event): unit
+            game.turn(state, 1, 0)
+        end)
+        controls:append_child(right_button)
+
+        local restart_button: Element = make_button(document, "snake-restart", "Restart")
+        restart_button:add_event_listener("click", function(_event: Event): unit
+            game.reset(state)
+        end)
+        controls:append_child(restart_button)
+
+        -- Game loop.
+        --
+        -- TODO(waluau-0nge): the natural loop is requestAnimationFrame (or a
+        -- setInterval, which has no extern at all), but the codegen only
+        -- emits host-invocable callback trampolines for (Event) -> unit and
+        -- () -> extern signatures, so the rAF (f64) -> unit callback can
+        -- never be called back by the browser. Workaround: an invisible
+        -- element with an infinite CSS animation whose iteration duration is
+        -- the tick length; its "animationiteration" event flows through the
+        -- supported (Event) -> unit trampoline, and Event.timeStamp doubles
+        -- as the clock for seeding the RNG.
+        local tick_style: Element = document:create_element("style")
+        tick_style.text_content = "@keyframes snake-tick { from { opacity: 0.99; } to { opacity: 1.0; } }"
+        root:append_child(tick_style)
+
+        local clock: Element = document:create_element("div")
+        clock.id = "snake-clock"
+        clock:set_attribute("style", "position: absolute; width: 0px; height: 0px; animation: snake-tick 0.14s linear infinite;")
+        root:append_child(clock)
+
+        local started: bool = false
+        clock:add_event_listener("animationiteration", function(event: Event): unit
+            if not started then
+                started = true
+                -- First tick: fold the timestamp into the RNG so runs differ.
+                state.rng.seed = (state.rng.seed + math.floor(event.timeStamp)::i32) % 2147483647
+            end
+            game.step(state)
+            render.draw(ctx, state)
+        end)
+
+        -- Paint the initial board before the first tick fires.
+        render.draw(ctx, state)
+    else
+        assert(false)
+    end
+end
+
+install_snake()

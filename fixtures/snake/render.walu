@@ -1,0 +1,106 @@
+-- Canvas 2D rendering for the snake fixture. Everything on screen is drawn
+-- with fillRect/strokeRect/fillText; see the TODOs for why.
+--
+-- TODO(waluau-ae6g): the game-state record type is spelled out inline in the
+-- draw() signature because module-local type aliases do not unify across
+-- module boundaries (shared with game.walu).
+
+-- Size of one grid cell in canvas pixels. Keep in sync with main.walu, which
+-- sizes the <canvas> element as cols * cell_size() x rows * cell_size().
+function cell_size(): f64
+    return 16.0
+end
+
+function cell_px(v: i32): f64
+    return v::f64 * cell_size()
+end
+
+-- Select the "fill color" for subsequent draws.
+--
+-- TODO(waluau-b3hl): CanvasRenderingContext2D.fillStyle and .strokeStyle are
+-- Web IDL unions (DOMString or CanvasGradient or CanvasPattern), which the
+-- extern generator cannot represent yet, so they are skipped and every fill
+-- and stroke comes out black. Workaround: leave the paint black and recolor
+-- each draw through the ctx.filter CSS-filter chain (invert/sepia/saturate/
+-- hue-rotate), which is both cryptic and needlessly slow because the filter
+-- has to be swapped per draw call. Replace every set_paint() call with plain
+-- `ctx.fillStyle = "#rrggbb"` once unions land.
+function set_paint(ctx: CanvasRenderingContext2D, filter: string): unit
+    ctx.filter = filter
+end
+
+function paint_white(): string
+    return "invert(100%)"
+end
+
+function paint_green(): string
+    return "invert(48%) sepia(79%) saturate(2476%) hue-rotate(86deg) brightness(118%) contrast(119%)"
+end
+
+function paint_light_green(): string
+    return "invert(78%) sepia(61%) saturate(576%) hue-rotate(60deg) brightness(103%) contrast(101%)"
+end
+
+function paint_red(): string
+    return "invert(13%) sepia(94%) saturate(7466%) hue-rotate(359deg) brightness(95%) contrast(112%)"
+end
+
+function draw(ctx: CanvasRenderingContext2D, state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }): unit
+    local w: f64 = cell_px(state.cols)
+    local h: f64 = cell_px(state.rows)
+
+    -- The board backdrop is the canvas element's CSS background-color (set in
+    -- main.walu); clearing to transparent pixels lets it show through.
+    ctx.filter = "none"
+    ctx:clearRect(0.0, 0.0, w, h)
+
+    -- Arena border.
+    set_paint(ctx, paint_white())
+    ctx.lineWidth = 2.0
+    ctx:strokeRect(1.0, 1.0, w - 2.0, h - 2.0)
+
+    -- Food.
+    --
+    -- TODO(waluau-6kcc): the food should be a filled circle via beginPath() +
+    -- arc() + fill(), but CanvasRenderingContext2D.fill()/stroke() are skipped
+    -- by the extern generator because their optional Path2D parameter needs
+    -- extern function overloading. Path segments can be built (arc, lineTo,
+    -- ...) yet never painted, so the whole game is axis-aligned rectangles.
+    set_paint(ctx, paint_red())
+    ctx:fillRect(cell_px(state.food.x) + 2.0, cell_px(state.food.y) + 2.0, cell_size() - 4.0, cell_size() - 4.0)
+
+    -- Snake, head drawn brighter than the body.
+    -- TODO(waluau-lhia): `#state.snake` does not typecheck on the record
+    -- field directly, so it is aliased into a local first.
+    local snake = state.snake
+    local i: i32 = 0
+    while i < #snake do
+        local seg = snake[i]
+        if i == 0 then
+            set_paint(ctx, paint_light_green())
+        else
+            set_paint(ctx, paint_green())
+        end
+        ctx:fillRect(cell_px(seg.x) + 1.0, cell_px(seg.y) + 1.0, cell_size() - 2.0, cell_size() - 2.0)
+        i += 1
+    end
+
+    -- HUD.
+    set_paint(ctx, paint_white())
+    ctx.font = "12px monospace"
+    ctx:fillText("Score " .. tostring(state.score), 6.0, 14.0)
+
+    if not state.alive then
+        ctx.font = "20px monospace"
+        ctx:fillText("GAME OVER", w / 2.0 - 54.0, h / 2.0 - 4.0)
+        ctx.font = "12px monospace"
+        ctx:fillText("press Restart", w / 2.0 - 47.0, h / 2.0 + 14.0)
+    end
+
+    ctx.filter = "none"
+end
+
+return {
+    cell_size = cell_size,
+    draw = draw,
+}

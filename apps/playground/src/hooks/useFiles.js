@@ -2,10 +2,12 @@ import { useState, useMemo, useCallback } from 'react';
 import {
   fixtureModules,
   moduleFixtures,
+  snakeFixtures,
   conformanceModules,
   filesForConformancePreset,
   MULTI_PRESET,
   KANBAN_PRESET,
+  SNAKE_PRESET,
   DEFAULT_PRESET,
   PRESETS
 } from '../utils/presets.js';
@@ -188,6 +190,22 @@ export default function useFiles() {
         selectPreset(KANBAN_PRESET);
       }
     });
+
+    // 4. Snake fixture files
+    for (const [path, source] of Object.entries(snakeFixtures)) {
+      const filename = path.split('/').pop();
+      items.push({
+        type: 'fixture',
+        path,
+        name: `snake/${filename}`,
+        source,
+        category: 'Fixture',
+        onSelect: () => {
+          selectPreset(SNAKE_PRESET);
+          setActiveFile(`/${filename}`);
+        }
+      });
+    }
 
     return items.sort((left, right) => left.name.localeCompare(right.name));
   }, [selectPreset]);

@@ -13,6 +13,12 @@ const moduleFixtures = import.meta.glob('../../../../fixtures/modules/*.walu', {
   import: 'default'
 });
 
+const snakeFixtures = import.meta.glob('../../../../fixtures/snake/*.walu', {
+  eager: true,
+  query: '?raw',
+  import: 'default'
+});
+
 const conformanceModules = import.meta.glob('../../../../conformance/*.walu', {
   eager: true,
   query: '?raw',
@@ -25,7 +31,7 @@ const conformanceIncludeModules = import.meta.glob('../../../../{builtins,extern
   import: 'default'
 });
 
-export { fixtureModules, moduleFixtures, conformanceModules };
+export { fixtureModules, moduleFixtures, snakeFixtures, conformanceModules };
 
 export function filesForConformancePreset(filename, source) {
   const files = {
@@ -154,7 +160,18 @@ export const KANBAN_PRESET = {
   entryFile: '/app.walu'
 };
 
-export const PRESETS = [...SINGLE_PRESETS, MULTI_PRESET, DOM_PRESET, KANBAN_PRESET, ...CONFORMANCE_PRESETS].sort((left, right) =>
+export const SNAKE_PRESET = {
+  key: 'snake-game',
+  label: 'Snake Game',
+  files: Object.entries(snakeFixtures).reduce((acc, [path, source]) => {
+    const filename = path.split('/').pop();
+    acc[`/${filename}`] = source;
+    return acc;
+  }, {}),
+  entryFile: '/main.walu'
+};
+
+export const PRESETS = [...SINGLE_PRESETS, MULTI_PRESET, DOM_PRESET, KANBAN_PRESET, SNAKE_PRESET, ...CONFORMANCE_PRESETS].sort((left, right) =>
   left.label.localeCompare(right.label)
 );
 
