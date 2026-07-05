@@ -997,9 +997,18 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
     if (value instanceof Uint8Array) return value;
     throw new Error(`Expected Uint8Array bytes value, got ${Object.prototype.toString.call(value)}`);
   };
+  const ownerView = (value) =>
+    value?.ownerDocument?.defaultView ??
+    (value?.nodeType === 9 ? value.defaultView : null) ??
+    value?.view ??
+    value?.currentTarget?.document?.defaultView ??
+    value?.currentTarget?.ownerDocument?.defaultView ??
+    value?.target?.document?.defaultView ??
+    value?.target?.ownerDocument?.defaultView ??
+    globalThis;
   const externIs = (value, typeName) => {
     const name = String(typeName);
-    const view = value?.ownerDocument?.defaultView ?? (value?.nodeType === 9 ? value.defaultView : globalThis);
+    const view = ownerView(value);
     const ctor = view?.[name] ?? globalThis[name];
     return typeof ctor === 'function' && value instanceof ctor ? 1 : 0;
   };

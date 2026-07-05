@@ -12,6 +12,11 @@ function make_button(document: Document, id: string, label: string): Element
     return button
 end
 
+function sync_game_attrs(root: Element, state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }): unit
+    root:set_attribute("data-dir", tostring(state.dir.x) .. "," .. tostring(state.dir.y))
+    root:set_attribute("data-next-dir", tostring(state.next_dir.x) .. "," .. tostring(state.next_dir.y))
+end
+
 function install_snake(): unit
     -- TODO(waluau-w5r0): these requires live inside the function because
     -- file-scope locals (including require bindings) are not visible from
@@ -67,6 +72,7 @@ function install_snake(): unit
         -- below stand in for math.randomseed/math.random until math builtins
         -- are externalized.
         local state = game.new_state(cols, rows, 20260705)
+        sync_game_attrs(root, state)
 
         -- Input.
         window:add_event_listener("keydown", function(event: Event): unit
@@ -82,12 +88,14 @@ function install_snake(): unit
                 elseif key_event.key == "Enter" or key_event.key == " " then
                     game.reset(state)
                 end
+                sync_game_attrs(root, state)
             end
         end)
 
         local restart_button: Element = make_button(document, "snake-restart", "Restart")
         restart_button:add_event_listener("click", function(event: Event): unit
             game.reset(state)
+            sync_game_attrs(root, state)
         end)
         root:append_child(restart_button)
 
@@ -119,6 +127,7 @@ function install_snake(): unit
                 state.rng.seed = (state.rng.seed + math.floor(event.timeStamp)::i32) % 2147483647
             end
             game.step(state)
+            sync_game_attrs(root, state)
             render.draw(ctx, state)
         end)
 

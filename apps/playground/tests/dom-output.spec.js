@@ -249,7 +249,10 @@ test.describe('DOM Output in Run tab', () => {
     await expect(domOutput).toBeVisible();
 
     const outputFrame = page.frameLocator('.dom-output-frame');
+    const appRoot = outputFrame.locator('#app');
     await expect(outputFrame.locator('h1')).toHaveText('Waluau Snake');
+    await expect(appRoot).toHaveAttribute('data-dir', '1,0');
+    await expect(appRoot).toHaveAttribute('data-next-dir', '1,0');
 
     const canvas = outputFrame.locator('canvas#snake-canvas');
     await expect(canvas).toHaveJSProperty('width', 336);
@@ -270,11 +273,21 @@ test.describe('DOM Output in Run tab', () => {
     // The CSS animation loop draws the arena, snake, food, and HUD.
     await expect.poll(paintedPixels).toBeGreaterThan(0);
 
-    // KeyboardEvent downcasts expose key data to Waluau and keep the wasm
-    // instance alive while the game loop continues painting.
-    await outputFrame.locator('body').press('ArrowDown');
-    await outputFrame.locator('body').press('Enter');
+    // KeyboardEvent downcasts expose key data to Waluau and update the queued
+    // direction immediately; the next animation tick applies it to movement.
+    await page.keyboard.press('ArrowDown');
+    await expect(appRoot).toHaveAttribute('data-next-dir', '0,1');
+    await expect(appRoot).toHaveAttribute('data-dir', '0,1');
+
+    await page.keyboard.press('a');
+    await expect(appRoot).toHaveAttribute('data-next-dir', '-1,0');
+
+    await page.keyboard.press('Enter');
+    await expect(appRoot).toHaveAttribute('data-dir', '1,0');
+    await expect(appRoot).toHaveAttribute('data-next-dir', '1,0');
+
     await outputFrame.locator('#snake-restart').click();
+    await expect(appRoot).toHaveAttribute('data-dir', '1,0');
     await expect.poll(paintedPixels).toBeGreaterThan(0);
   });
 

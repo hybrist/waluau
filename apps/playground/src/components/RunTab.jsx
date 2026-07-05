@@ -57,9 +57,45 @@ function DomOutputFrame({ setDomOutputRoot, onEscape }) {
       return;
     }
     let doc = null;
+    const focusFrame = () => {
+      node.focus();
+      node.contentWindow?.focus();
+    };
+    const isEditableTarget = (target) => {
+      const element = target instanceof Element ? target : null;
+      if (!element) return false;
+      const tagName = element.tagName.toLowerCase();
+      return tagName === 'input' || tagName === 'textarea' || tagName === 'select' || element.isContentEditable;
+    };
     const handleKeyDown = (e) => {
       if (e.key === 'Escape' && onEscapeRef.current) {
         onEscapeRef.current();
+      }
+    };
+    const forwardTopLevelKeyDown = (e) => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || isEditableTarget(e.target)) {
+        return;
+      }
+      const frameWindow = node.contentWindow;
+      if (!frameWindow) {
+        return;
+      }
+      const forwarded = new frameWindow.KeyboardEvent('keydown', {
+        key: e.key,
+        code: e.code,
+        location: e.location,
+        ctrlKey: e.ctrlKey,
+        shiftKey: e.shiftKey,
+        altKey: e.altKey,
+        metaKey: e.metaKey,
+        repeat: e.repeat,
+        view: frameWindow,
+        bubbles: true,
+        cancelable: true,
+      });
+      frameWindow.dispatchEvent(forwarded);
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
+        e.preventDefault();
       }
     };
     const syncDocument = () => {
@@ -74,14 +110,19 @@ function DomOutputFrame({ setDomOutputRoot, onEscape }) {
       doc = nextDoc;
       doc.addEventListener('keydown', handleKeyDown);
       setDomOutputRoot(doc);
+      focusFrame();
     };
     syncDocument();
     node.addEventListener('load', syncDocument);
+    node.addEventListener('pointerdown', focusFrame);
+    window.addEventListener('keydown', forwardTopLevelKeyDown, true);
     return () => {
       if (doc) {
         doc.removeEventListener('keydown', handleKeyDown);
       }
       node.removeEventListener('load', syncDocument);
+      node.removeEventListener('pointerdown', focusFrame);
+      window.removeEventListener('keydown', forwardTopLevelKeyDown, true);
       setDomOutputRoot(null);
     };
   }, [setDomOutputRoot]);
@@ -93,6 +134,7 @@ function DomOutputFrame({ setDomOutputRoot, onEscape }) {
       title="DOM Output"
       sandbox="allow-same-origin allow-scripts"
       srcDoc={DOM_OUTPUT_SRC_DOC}
+      tabIndex={0}
     />
   );
 }
