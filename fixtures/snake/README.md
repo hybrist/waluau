@@ -55,9 +55,6 @@ Each workaround in the source carries a `TODO(<beads-id>)` comment. Summary:
   LCG seeded from the first tick's `Event.timeStamp`.
 - `waluau-uzdp` — `KeyboardEvent` is not in the generated DOM surface, so
   there is no keyboard input; the d-pad is on-screen `<button>` elements.
-- `waluau-9m6z` — `Event.type` is still disabled in the extern filter, so one
-  shared listener cannot branch on the event kind; every button gets its own
-  closure.
 - `waluau-ae6g` — module-local type aliases do not unify across module
   boundaries; the game-state record type is spelled out inline in every
   exported signature of `game.walu` and `render.walu`.
