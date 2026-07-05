@@ -1,0 +1,13 @@
+local ok: bool, value: unknown = pcall(function(): f64
+    return 42.0
+end)
+
+assert(ok)
+assert(value::f64 == 42.0)
+
+local failed: bool, err: unknown = pcall(function(): unit
+    assert(false, "boom")
+end)
+
+assert(not failed)
+assert(err::string == "boom")

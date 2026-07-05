@@ -96,6 +96,9 @@ pub enum Instruction {
     Print {
         value: ValueId,
     },
+    Throw {
+        error: ValueId,
+    },
     Call {
         name: String,
         symbol_id: Option<SymbolId>,
@@ -108,6 +111,12 @@ pub enum Instruction {
         return_type: Type,
     },
     CallValue {
+        callee: ValueId,
+        args: Vec<ValueId>,
+        params: Vec<Type>,
+        return_type: Type,
+    },
+    ProtectedCall {
         callee: ValueId,
         args: Vec<ValueId>,
         params: Vec<Type>,

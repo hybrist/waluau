@@ -35,6 +35,8 @@ pub(crate) struct LocalPlan {
     pub(crate) tagged_resume_value_tmp: Option<u32>,
     /// Scratch i32 local for reading the post-continuation state tag in tagged resume.
     pub(crate) tagged_resume_state_tmp: Option<u32>,
+    /// Scratch anyref local for protected-call success payloads.
+    pub(crate) protected_call_value_tmp: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -139,6 +141,12 @@ pub(crate) fn build_local_plan(
             matches!(instruction, IrInstruction::CoroutineResumeTagged { .. })
         })
     });
+    let has_protected_call = function.blocks.values().any(|block| {
+        block
+            .instructions
+            .iter()
+            .any(|(_, instruction)| matches!(instruction, IrInstruction::ProtectedCall { .. }))
+    });
     let coroutine_save_local = if has_resume {
         let slot = function.params.len() as u32 + extra_locals.len() as u32;
         extra_locals.push(coroutine_state_ref_type(
@@ -196,6 +204,13 @@ pub(crate) fn build_local_plan(
     } else {
         None
     };
+    let protected_call_value_tmp = if has_protected_call {
+        let slot = function.params.len() as u32 + extra_locals.len() as u32;
+        extra_locals.push(wasm_type(&Type::Unknown, array_registry)?);
+        Some(slot)
+    } else {
+        None
+    };
 
     Ok(LocalPlan {
         slots,
@@ -210,6 +225,7 @@ pub(crate) fn build_local_plan(
         coroutine_resume_value_tmp,
         tagged_resume_value_tmp,
         tagged_resume_state_tmp,
+        protected_call_value_tmp,
     })
 }
 
@@ -253,7 +269,7 @@ pub(crate) fn infer_value_types(
                 IrInstruction::MathIntrinsic { result_ty, .. } => result_ty.clone(),
                 IrInstruction::BitwiseIntrinsic { result_ty, .. } => result_ty.clone(),
                 IrInstruction::ToString { .. } => Type::String,
-                IrInstruction::Print { .. } => Type::Unit,
+                IrInstruction::Print { .. } | IrInstruction::Throw { .. } => Type::Unit,
                 IrInstruction::Call { name, .. } => signatures
                     .get(name)
                     .ok_or_else(|| {
@@ -263,6 +279,7 @@ pub(crate) fn infer_value_types(
                     .clone(),
                 IrInstruction::HostCall { return_type, .. } => return_type.clone(),
                 IrInstruction::CallValue { return_type, .. } => return_type.clone(),
+                IrInstruction::ProtectedCall { .. } => Type::Multi(vec![Type::Bool, Type::Unknown]),
                 IrInstruction::CoroutineCreate { .. } => Type::Thread,
                 IrInstruction::CoroutineResume { .. } => {
                     Type::Multi(vec![Type::Bool, Type::Unknown])
@@ -671,8 +688,10 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
         IrInstruction::MathIntrinsic { args, .. } => args.clone(),
         IrInstruction::BitwiseIntrinsic { args, .. } => args.clone(),
         IrInstruction::Print { value } => vec![*value],
+        IrInstruction::Throw { error } => vec![*error],
         IrInstruction::Call { args, .. } | IrInstruction::HostCall { args, .. } => args.clone(),
-        IrInstruction::CallValue { callee, args, .. } => {
+        IrInstruction::CallValue { callee, args, .. }
+        | IrInstruction::ProtectedCall { callee, args, .. } => {
             let mut out = Vec::with_capacity(args.len() + 1);
             out.extend(args.iter().copied());
             out.push(*callee);
@@ -749,10 +768,11 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         IrInstruction::MathIntrinsic { args, .. } => args.first().copied() == Some(value),
         IrInstruction::BitwiseIntrinsic { args, .. } => args.first().copied() == Some(value),
         IrInstruction::Print { value: printed } => *printed == value,
+        IrInstruction::Throw { error } => *error == value,
         IrInstruction::Call { args, .. } | IrInstruction::HostCall { args, .. } => {
             args.first().copied() == Some(value)
         }
-        IrInstruction::CallValue { .. } => false,
+        IrInstruction::CallValue { .. } | IrInstruction::ProtectedCall { .. } => false,
         IrInstruction::CoroutineCreate { .. } => false,
         IrInstruction::CoroutineResume { coroutine, .. }
         | IrInstruction::CoroutineResumeTagged { coroutine, .. }

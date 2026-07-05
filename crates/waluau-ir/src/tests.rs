@@ -1530,7 +1530,7 @@ fn lowers_assertion_failure_message_before_trap() {
         trap_block
             .instructions
             .iter()
-            .any(|(_, instruction)| { matches!(instruction, Instruction::Print { .. }) })
+            .any(|(_, instruction)| { matches!(instruction, Instruction::Throw { .. }) })
     );
 }
 

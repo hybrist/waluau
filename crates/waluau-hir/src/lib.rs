@@ -41,9 +41,10 @@ fn binding_for(ty: Type, rebindability: Rebindability) -> Binding {
 
 fn is_builtin_callee(expr: &Expr) -> bool {
     match expr {
-        Expr::Name(name, _, _) => {
-            matches!(name.as_str(), "assert" | "print" | "select" | "tostring")
-        }
+        Expr::Name(name, _, _) => matches!(
+            name.as_str(),
+            "assert" | "error" | "pcall" | "print" | "select" | "tostring"
+        ),
         Expr::Field { base, .. } => matches!(
             base.as_ref(),
             Expr::Name(namespace, _, _)

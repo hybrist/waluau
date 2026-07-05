@@ -228,6 +228,21 @@ fn verify_function(
                         }
                     }
                 }
+                Instruction::Throw { error } => {
+                    let error_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *error,
+                    )?;
+                    if error_ty != Type::String {
+                        return Err(Diagnostic::new(format!(
+                            "throw in block {:?} expects string, got {}",
+                            block.id, error_ty
+                        )));
+                    }
+                }
                 Instruction::HostCall {
                     name,
                     symbol_id,
@@ -266,6 +281,12 @@ fn verify_function(
                     args,
                     params,
                     return_type,
+                }
+                | Instruction::ProtectedCall {
+                    callee,
+                    args,
+                    params,
+                    return_type,
                 } => {
                     let callee_ty = require_dominating_definition(
                         &definitions,
@@ -280,13 +301,13 @@ fn verify_function(
                     };
                     if callee_ty != expected_callee_ty {
                         return Err(Diagnostic::new(format!(
-                            "indirect call in block {:?} expects callee {}, got {}",
+                            "indirect/protected call in block {:?} expects callee {}, got {}",
                             block.id, expected_callee_ty, callee_ty
                         )));
                     }
                     if args.len() != params.len() {
                         return Err(Diagnostic::new(format!(
-                            "indirect call in block {:?} has {} args but expects {}",
+                            "indirect/protected call in block {:?} has {} args but expects {}",
                             block.id,
                             args.len(),
                             params.len()
@@ -302,7 +323,7 @@ fn verify_function(
                         )?;
                         if !types_match(&arg_ty, param_ty) {
                             return Err(Diagnostic::new(format!(
-                                "indirect call argument in block {:?} has type {}, expected {}",
+                                "indirect/protected call argument in block {:?} has type {}, expected {}",
                                 block.id, arg_ty, param_ty
                             )));
                         }
@@ -1006,12 +1027,14 @@ fn infer_instruction_type(
         Instruction::IsNull { .. } => Ok(Type::Bool),
         Instruction::ExternCastTest { .. } => Ok(Type::Bool),
         Instruction::Print { .. } => Ok(Type::Unit),
+        Instruction::Throw { .. } => Ok(Type::Unit),
         Instruction::Call { name, .. } => signatures
             .get(name)
             .map(|(_, ret)| ret.clone())
             .ok_or_else(|| Diagnostic::new(format!("unknown function '{}'", name))),
         Instruction::HostCall { return_type, .. } => Ok(return_type.clone()),
         Instruction::CallValue { return_type, .. } => Ok(return_type.clone()),
+        Instruction::ProtectedCall { .. } => Ok(Type::Multi(vec![Type::Bool, Type::Unknown])),
         Instruction::CoroutineCreate { .. } => Ok(Type::Thread),
         Instruction::CoroutineResume { .. } => {
             Ok(Type::Multi(vec![Type::Bool, Type::Unknown]))

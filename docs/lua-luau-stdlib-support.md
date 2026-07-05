@@ -66,7 +66,7 @@ surprise for people coming from Lua/Luau.
 | `assert` | ⚠️ Different | Requires **exactly one `bool`** argument. No optional message, no passthrough of truthy values, and it does **not return** its argument. A false assert traps at runtime. |
 | `tonumber` | ❌ | Not implemented (use `::` casts between numeric types). |
 | `type` | ❌ | Not implemented (types are static, not runtime-queryable). |
-| `error` / `pcall` / `xpcall` | ❌ | No error-value/protected-call machinery. Failures trap. |
+| `error` / `pcall` / `xpcall` | ⚠️ Partial | `error(string)`, `assert(cond, string)`, and scalar `pcall(f, ...) -> (bool, unknown)` use Wasm exception handling. `xpcall`, multi-value success payloads, non-bool assert truthiness, and raw-trap recovery are not yet supported. |
 | `select` | ❌ | Not implemented. |
 | `next` / `pairs` / `ipairs` | ❌ | Not implemented; iterate with the generic `for` protocol above. |
 | `rawget` / `rawset` / `rawequal` / `rawlen` | ❌ | No metatable/raw access. |

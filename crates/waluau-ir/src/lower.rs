@@ -1958,9 +1958,9 @@ impl Builder<'_> {
         env: &mut HashMap<SymbolId, ValueId>,
         types: &mut HashMap<SymbolId, Type>,
     ) -> Result<(), Diagnostic> {
-        if args.len() != 1 {
+        if !(1..=2).contains(&args.len()) {
             return Err(Diagnostic::new(format!(
-                "{ASSERT} expects 1 argument, got {}",
+                "{ASSERT} expects 1 or 2 arguments, got {}",
                 args.len()
             )));
         }
@@ -1977,23 +1977,26 @@ impl Builder<'_> {
         );
         self.current_block = trap_block;
 
-        let assert_span = args[0].span().or(span);
-        let msg_str = if let Some(sp) = assert_span {
-            if let Some(source) = self.sources.get(&self.file_path) {
-                let (line, expr_text) = resolve_span_to_line_and_text(source, sp);
-                format!(
-                    "Assertion failed: {} at {}:{}",
-                    expr_text, self.file_path, line
-                )
-            } else {
-                format!("Assertion failed at {}:0", self.file_path)
-            }
+        let message = if let Some(message_expr) = args.get(1) {
+            self.lower_expr(message_expr, env, types, Some(Type::String))?
         } else {
-            "Assertion failed".to_string()
+            let assert_span = args[0].span().or(span);
+            let msg_str = if let Some(sp) = assert_span {
+                if let Some(source) = self.sources.get(&self.file_path) {
+                    let (line, expr_text) = resolve_span_to_line_and_text(source, sp);
+                    format!(
+                        "Assertion failed: {} at {}:{}",
+                        expr_text, self.file_path, line
+                    )
+                } else {
+                    format!("Assertion failed at {}:0", self.file_path)
+                }
+            } else {
+                "Assertion failed".to_string()
+            };
+            self.emit(Instruction::String(msg_str))
         };
-
-        let message = self.emit(Instruction::String(msg_str));
-        self.emit(Instruction::Print { value: message });
+        self.emit(Instruction::Throw { error: message });
         self.set_terminator(trap_block, Terminator::Unreachable { span });
         self.current_block = continue_block;
         Ok(())
@@ -3875,6 +3878,16 @@ impl Builder<'_> {
                         return result;
                     }
                     if let Some(result) =
+                        self.lower_pcall_builtin_call(&name, args, env, types, expected.clone())
+                    {
+                        return result;
+                    }
+                    if let Some(result) =
+                        self.lower_error_builtin_call(&name, args, env, types, expected.clone())
+                    {
+                        return result;
+                    }
+                    if let Some(result) =
                         self.lower_math_builtin_call(&name, args, env, types, expected.clone())
                     {
                         return result;
@@ -4243,11 +4256,26 @@ impl Builder<'_> {
         let mut out = Vec::new();
         for expr in exprs {
             let slot_expected = expected.and_then(|types| types.get(out.len()).cloned());
-        let ty = if matches!(expr, Expr::Call { .. } | Expr::MethodCall { .. }) {
-            self.infer_expr_type(expr, types, None)?
-        } else {
-            self.infer_expr_type(expr, types, slot_expected.clone())?
-        };
+            let remaining_expected = expected
+                .and_then(|types| (!types[out.len()..].is_empty()).then(|| &types[out.len()..]));
+            let ty = if let Expr::Call { callee, .. } = expr {
+                let expands_multi = builtin_name(callee.as_ref()).is_some_and(|name| {
+                    name == COROUTINE_RESUME || name == PCALL
+                });
+                if expands_multi {
+                    self.infer_expr_type(
+                        expr,
+                        types,
+                        remaining_expected.map(|types| Type::Multi(types.to_vec())),
+                    )?
+                } else {
+                    self.infer_expr_type(expr, types, None)?
+                }
+            } else if matches!(expr, Expr::MethodCall { .. }) {
+                self.infer_expr_type(expr, types, None)?
+            } else {
+                self.infer_expr_type(expr, types, slot_expected.clone())?
+            };
             match ty {
                 Type::Multi(multi_types) => {
                     let tuple = self.lower_expr(expr, env, types, None)?;
@@ -4769,6 +4797,16 @@ impl Builder<'_> {
                 if let Some(name) = builtin_name(callee.as_ref()) {
                     if let Some(result) =
                         self.infer_promise_builtin_call_type(&name, args, types, expected.clone())
+                    {
+                        return result;
+                    }
+                    if let Some(result) =
+                        self.infer_pcall_builtin_call_type(&name, args, types, expected.clone())
+                    {
+                        return result;
+                    }
+                    if let Some(result) =
+                        self.infer_error_builtin_call_type(&name, args, types, expected.clone())
                     {
                         return result;
                     }
@@ -5404,6 +5442,105 @@ impl Builder<'_> {
         }
     }
 
+    fn lower_pcall_builtin_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<ValueId, Diagnostic>> {
+        if name != PCALL {
+            return None;
+        }
+        if args.is_empty() {
+            return Some(Err(Diagnostic::new("{PCALL} expects at least 1 argument")));
+        }
+        let callee_ty = match self.infer_expr_type(&args[0], types, None) {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        let Type::Function {
+            params,
+            return_type,
+        } = callee_ty.clone()
+        else {
+            return Some(Err(Diagnostic::new(format!(
+                "{PCALL} expects a function, got {callee_ty}"
+            ))));
+        };
+        if args.len() - 1 != params.len() {
+            return Some(Err(Diagnostic::new(format!(
+                "{PCALL} protected function expects {} arguments, got {}",
+                params.len(),
+                args.len() - 1
+            ))));
+        }
+        let callee = match self.lower_expr(&args[0], env, types, Some(callee_ty)) {
+            Ok(value) => value,
+            Err(error) => return Some(Err(error)),
+        };
+        let lowered_args = match args
+            .iter()
+            .skip(1)
+            .zip(params.iter())
+            .map(|(arg, param_ty)| self.lower_expr(arg, env, types, Some(param_ty.clone())))
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(args) => args,
+            Err(error) => return Some(Err(error)),
+        };
+        let value = self.emit(Instruction::ProtectedCall {
+            callee,
+            args: lowered_args,
+            params,
+            return_type: *return_type,
+        });
+        Some(self.coerce_value(
+            value,
+            Type::Multi(vec![Type::Bool, Type::Unknown]),
+            expected,
+        ))
+    }
+
+    fn lower_error_builtin_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<ValueId, Diagnostic>> {
+        if name != ERROR {
+            return None;
+        }
+        if !(1..=2).contains(&args.len()) {
+            return Some(Err(Diagnostic::new(format!(
+                "{ERROR} expects 1 or 2 arguments, got {}",
+                args.len()
+            ))));
+        }
+        let message = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+            Ok(value) => value,
+            Err(error) => return Some(Err(error)),
+        };
+        if args.len() == 2 {
+            if let Err(error) = self.lower_expr(
+                &args[1],
+                env,
+                types,
+                Some(Type::Numeric(NumericType::I32)),
+            ) {
+                return Some(Err(error));
+            }
+        }
+        let unit = self.emit(Instruction::Unit);
+        self.emit(Instruction::Throw { error: message });
+        self.set_terminator(self.current_block, Terminator::Unreachable { span: args[0].span() });
+        self.current_block = DEAD_BLOCK;
+        Some(self.coerce_value(unit, Type::Unit, expected))
+    }
+
     fn lower_promise_await_method_call(
         &mut self,
         receiver: &Expr,
@@ -5562,6 +5699,82 @@ impl Builder<'_> {
             }
             _ => None,
         }
+    }
+
+    fn infer_pcall_builtin_call_type(
+        &self,
+        name: &str,
+        args: &[Expr],
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<Type, Diagnostic>> {
+        if name != PCALL {
+            return None;
+        }
+        if args.is_empty() {
+            return Some(Err(Diagnostic::new("{PCALL} expects at least 1 argument")));
+        }
+        let callee_ty = match self.infer_expr_type(&args[0], types, None) {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        let Type::Function {
+            params,
+            return_type: _,
+        } = callee_ty.clone()
+        else {
+            return Some(Err(Diagnostic::new(format!(
+                "{PCALL} expects a function, got {callee_ty}"
+            ))));
+        };
+        if args.len() - 1 != params.len() {
+            return Some(Err(Diagnostic::new(format!(
+                "{PCALL} protected function expects {} arguments, got {}",
+                params.len(),
+                args.len() - 1
+            ))));
+        }
+        for (arg, param_ty) in args.iter().skip(1).zip(params.iter()) {
+            if let Err(error) = self
+                .infer_expr_type(arg, types, Some(param_ty.clone()))
+                .and_then(|actual| coerce_type(actual, Some(param_ty.clone())))
+            {
+                return Some(Err(error));
+            }
+        }
+        Some(coerce_type(
+            Type::Multi(vec![Type::Bool, Type::Unknown]),
+            expected,
+        ))
+    }
+
+    fn infer_error_builtin_call_type(
+        &self,
+        name: &str,
+        args: &[Expr],
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<Type, Diagnostic>> {
+        if name != ERROR {
+            return None;
+        }
+        if !(1..=2).contains(&args.len()) {
+            return Some(Err(Diagnostic::new(format!(
+                "{ERROR} expects 1 or 2 arguments, got {}",
+                args.len()
+            ))));
+        }
+        if let Err(error) = self.infer_expr_type(&args[0], types, Some(Type::String)) {
+            return Some(Err(error));
+        }
+        if args.len() == 2 {
+            if let Err(error) =
+                self.infer_expr_type(&args[1], types, Some(Type::Numeric(NumericType::I32)))
+            {
+                return Some(Err(error));
+            }
+        }
+        Some(Ok(expected.unwrap_or(Type::Unit)))
     }
 
     fn infer_promise_await_method_call_type(
