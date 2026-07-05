@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use waluau_ast::{Expr, NumericType, TaggedVariant, Type};
+use waluau_ast::{Expr, NumericType, TaggedVariant, Type, UnaryOp};
 use waluau_diagnostics::Diagnostic;
 
 use super::Binding;
@@ -58,6 +58,7 @@ pub(super) const STRING_CHAR: &str = "string.char";
 pub(super) const STRING_UPPER: &str = "string.upper";
 pub(super) const STRING_LOWER: &str = "string.lower";
 pub(super) const STRING_FORMAT: &str = "string.format";
+pub(super) const STRING_REVERSE: &str = "string.reverse";
 // pub(super) const PRINT: &str = "print"; // now handled via extern declaration
 
 fn promise_resolved_type(ty: &Type) -> Option<Type> {
@@ -1029,9 +1030,9 @@ pub(super) fn infer_string_builtin_call(
             Some(coerce_type(Type::String, expected))
         }
         STRING_BYTE => {
-            if args.is_empty() || args.len() > 2 {
+            if args.is_empty() || args.len() > 3 {
                 return Some(Err(Diagnostic::new(format!(
-                    "{STRING_BYTE} expects 1 or 2 arguments, got {}",
+                    "{STRING_BYTE} expects 1 to 3 arguments, got {}",
                     args.len()
                 ))));
             }
@@ -1059,20 +1060,11 @@ pub(super) fn infer_string_builtin_call(
                     return Some(Err(error));
                 }
             }
-            Some(coerce_type(i32_ty, expected))
-        }
-        STRING_CHAR => {
-            if args.len() > 8 {
-                return Some(Err(Diagnostic::new(format!(
-                    "{STRING_CHAR} expects at most 8 arguments, got {}",
-                    args.len()
-                ))));
-            }
-            for arg in args {
+            if let Some(last) = args.get(2) {
                 if let Err(error) = require_arg_type(
-                    STRING_CHAR,
-                    "code",
-                    arg,
+                    STRING_BYTE,
+                    "last",
+                    last,
                     i32_ty.clone(),
                     vars,
                     fn_signatures,
@@ -1080,13 +1072,81 @@ pub(super) fn infer_string_builtin_call(
                 ) {
                     return Some(Err(error));
                 }
+                let count = match string_byte_static_count(args, expected.as_ref()) {
+                    Ok(count) => count,
+                    Err(error) => return Some(Err(error)),
+                };
+                return Some(coerce_type(Type::Multi(vec![i32_ty; count]), expected));
+            }
+            Some(coerce_type(i32_ty, expected))
+        }
+        STRING_CHAR => {
+            let mut arg_types = Vec::new();
+            for arg in args {
+                let arg_ty = match super::expressions::infer_expr(
+                    arg,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    Some(i32_ty.clone()),
+                ) {
+                    Ok(ty) => ty,
+                    Err(_) => match super::expressions::infer_expr(
+                        arg,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        None,
+                    ) {
+                        Ok(Type::Multi(types)) => Type::Multi(types),
+                        Ok(ty) => ty,
+                        Err(error) => return Some(Err(error)),
+                    },
+                };
+                match arg_ty {
+                    Type::Multi(types) => arg_types.extend(types),
+                    ty => arg_types.push(ty),
+                }
+            }
+            if arg_types.len() > 16 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{STRING_CHAR} expects at most 16 statically expanded arguments, got {}",
+                    arg_types.len()
+                ))));
+            }
+            for arg_ty in arg_types {
+                if arg_ty != i32_ty {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_CHAR} expects i32 character codes, got {arg_ty}"
+                    ))));
+                }
+            }
+            Some(coerce_type(Type::String, expected))
+        }
+        STRING_REVERSE => {
+            if args.len() != 1 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{STRING_REVERSE} expects 1 argument, got {}",
+                    args.len()
+                ))));
+            }
+            if let Err(error) = require_arg_type(
+                STRING_REVERSE,
+                "value",
+                &args[0],
+                Type::String,
+                vars,
+                fn_signatures,
+                active_type_params,
+            ) {
+                return Some(Err(error));
             }
             Some(coerce_type(Type::String, expected))
         }
         STRING_FORMAT => {
-            if args.is_empty() || args.len() > 9 {
+            if args.is_empty() || args.len() > 101 {
                 return Some(Err(Diagnostic::new(format!(
-                    "{STRING_FORMAT} expects 1 to 9 arguments, got {}",
+                    "{STRING_FORMAT} expects 1 to 101 arguments, got {}",
                     args.len()
                 ))));
             }
@@ -1101,17 +1161,23 @@ pub(super) fn infer_string_builtin_call(
             ) {
                 return Some(Err(error));
             }
-            for arg in args.iter().skip(1) {
-                let arg_ty = match super::expressions::infer_expr(
-                    arg,
-                    vars,
-                    fn_signatures,
-                    active_type_params,
-                    None,
-                ) {
-                    Ok(ty) => ty,
-                    Err(error) => return Some(Err(error)),
-                };
+            let format_arg_types = match super::expressions::infer_expr_list(
+                &args[1..],
+                vars,
+                fn_signatures,
+                active_type_params,
+                None,
+            ) {
+                Ok(types) => types,
+                Err(error) => return Some(Err(error)),
+            };
+            if format_arg_types.len() > 100 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{STRING_FORMAT} expects at most 100 statically expanded format arguments, got {}",
+                    format_arg_types.len()
+                ))));
+            }
+            for arg_ty in format_arg_types {
                 if !(arg_ty.is_numeric()
                     || arg_ty == Type::Bool
                     || arg_ty == Type::String
@@ -1126,6 +1192,62 @@ pub(super) fn infer_string_builtin_call(
         }
         _ => None,
     }
+}
+
+pub(super) fn string_byte_static_count(
+    args: &[Expr],
+    expected: Option<&Type>,
+) -> Result<usize, Diagnostic> {
+    if let Some(Type::Multi(types)) = expected {
+        return Ok(types.len());
+    }
+    let start = args.get(1).and_then(expr_i32_literal).unwrap_or(1);
+    let Some(end) = args.get(2).and_then(expr_i32_literal) else {
+        return Err(Diagnostic::new(
+            "string.byte range form requires literal indices or an expected multi-value arity",
+        ));
+    };
+    let (start, end) = if let Some(len) = args.first().and_then(expr_string_len) {
+        (
+            normalize_lua_index(start, len),
+            normalize_lua_index(end, len),
+        )
+    } else if start >= 1 && end >= 0 {
+        (start, end)
+    } else {
+        return Err(Diagnostic::new(
+            "string.byte range with negative indices requires a literal string",
+        ));
+    };
+    Ok(if end < start {
+        0
+    } else {
+        (end - start + 1) as usize
+    })
+}
+
+fn expr_i32_literal(expr: &Expr) -> Option<i32> {
+    match expr {
+        Expr::Number(number, _) => number.raw.replace('_', "").parse::<i32>().ok(),
+        Expr::Unary {
+            op: UnaryOp::Neg,
+            expr,
+            ..
+        } => expr_i32_literal(expr).and_then(i32::checked_neg),
+        _ => None,
+    }
+}
+
+fn expr_string_len(expr: &Expr) -> Option<i32> {
+    let Expr::String(value, _) = expr else {
+        return None;
+    };
+    i32::try_from(value.chars().count()).ok()
+}
+
+fn normalize_lua_index(index: i32, len: i32) -> i32 {
+    let normalized = if index < 0 { len + index + 1 } else { index };
+    normalized.clamp(1, len)
 }
 
 fn require_arg_type(

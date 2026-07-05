@@ -59,6 +59,8 @@ const STRING_LOWER: &str = "string.lower";
 const STRING_LOWER_HOST: &str = "string_lower";
 const STRING_FORMAT: &str = "string.format";
 const STRING_FORMAT_HOST_PREFIX: &str = "string_format";
+const STRING_REVERSE: &str = "string.reverse";
+const STRING_REVERSE_HOST: &str = "string_reverse";
 
 fn is_promise_like_extern(ty: &Type) -> bool {
     match ty {

@@ -96,16 +96,16 @@ called as `string.fn(s, …)` or `s:fn(…)`.
 | Symbol | Status | Behaviour / difference |
 |--------|--------|------------------------|
 | `string.find` / `s:find` | ⚠️ Different | Signature `string.find(haystack, needle, init?, plain?)`. **Plain substring search only — patterns are not supported.** Returns a single **0-based** `i32` start index, or **`-1`** when not found (Lua returns 1-based `start, end`, or `nil`). `init` is a 0-based `i32`; `plain` is a `bool`. See `conformance/string_find.walu`. |
-| `string.sub` / `s:sub` | ⚠️ Different | Signature `string.sub(value, first, last?)`. Indices are **0-based** and `last` is inclusive. `last` defaults to the end of the string; negative indices count back from the end. Lua uses 1-based indices. |
+| `string.sub` / `s:sub` | ✅ | Signature `string.sub(value, first, last?)`. Indices are Luau-style **1-based** and `last` is inclusive. `last` defaults to the end of the string; negative indices count back from the end. |
 | `string.len` / `s:len` / `#s` | ✅ | Returns string length as `i32`. |
-| `string.format` / `s:format` | ⚠️ Partial | Supports up to 8 values and the specifiers `%d`, `%s`, `%f`, `%g`, `%x`, `%q`, plus `%%`. Width, precision, flags, and other Lua format specifiers are not implemented. |
+| `string.format` / `s:format` | ⚠️ Partial | Supports up to 100 values with width, precision, flags, `%c`, `%d`/`%i`, `%u`, `%o`, `%f`, `%g`/`%G`, `%x`/`%X`, `%s`, `%q`, Luau `%*`, and `%%`. |
 | `string.rep` / `s:rep` | ✅ | Signature `string.rep(value, count, separator?)`; `separator` defaults to `""`. |
 | `string.lower` / `string.upper` and methods | ✅ | Host string case conversion. |
-| `string.byte` / `s:byte` | ⚠️ Different | Signature `string.byte(value, index?)`. `index` is **0-based** and defaults to 0. Returns one `i32` code point or `-1` out of range (Lua returns `nil` and supports ranges/multiple returns). |
-| `string.char` | ⚠️ Partial | Supports 0 to 8 `i32` code points and returns the corresponding string. |
+| `string.byte` / `s:byte` | ⚠️ Partial | Signature `string.byte(value, index?, last?)`. Indices are Luau-style **1-based** and ranges can return statically-sized multiple values. Scalar out-of-range still returns `-1` instead of `nil`. |
+| `string.char` | ⚠️ Partial | Supports 0 to 16 statically expanded `i32` byte values and returns the corresponding string. |
 | `string.gmatch` / `string.gsub` / `string.match` | ❌ | No Lua pattern engine. |
 | `string.split` (Luau) | ❌ | Not implemented. |
-| `string.reverse` | ❌ | Not implemented. |
+| `string.reverse` | ✅ | Returns the reversed string. |
 | Pattern matching (Lua patterns) | ❌ | Not implemented anywhere. |
 
 ## `table` library
