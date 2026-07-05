@@ -44,7 +44,10 @@ pub(super) const TABLE_INSERT: &str = "table.insert";
 pub(super) const TABLE_REMOVE: &str = "table.remove";
 pub(super) const TABLE_SORT: &str = "table.sort";
 pub(super) const TABLE_GETN: &str = "table.getn";
+pub(super) const TYPE: &str = "type";
+pub(super) const TYPEOF: &str = "typeof";
 pub(super) const TO_STRING: &str = "tostring";
+pub(super) const TO_NUMBER: &str = "tonumber";
 pub(super) const SELECT: &str = "select";
 pub(super) const ASSERT: &str = "assert";
 pub(super) const ERROR: &str = "error";
@@ -588,6 +591,82 @@ pub(super) fn infer_tostring_builtin_call(
             "{TO_STRING} expects a primitive argument (numeric, bool, or string), got {arg_ty}",
         ))))
     }
+}
+
+pub(super) fn infer_type_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    if !matches!(name, TYPE | TYPEOF) {
+        return None;
+    }
+    if args.len() != 1 {
+        return Some(Err(Diagnostic::new(format!(
+            "{name} expects 1 argument, got {}",
+            args.len()
+        ))));
+    }
+    match super::expressions::infer_expr(&args[0], vars, fn_signatures, active_type_params, None) {
+        Ok(_) => Some(coerce_type(Type::String, expected)),
+        Err(error) => Some(Err(error)),
+    }
+}
+
+pub(super) fn infer_tonumber_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    if name != TO_NUMBER {
+        return None;
+    }
+    if args.is_empty() || args.len() > 2 {
+        return Some(Err(Diagnostic::new(format!(
+            "{TO_NUMBER} expects 1 or 2 arguments, got {}",
+            args.len()
+        ))));
+    }
+    let arg_ty = match super::expressions::infer_expr(
+        &args[0],
+        vars,
+        fn_signatures,
+        active_type_params,
+        None,
+    ) {
+        Ok(ty) => ty,
+        Err(error) => return Some(Err(error)),
+    };
+    if !(arg_ty.is_numeric() || arg_ty == Type::String || arg_ty == Type::Unknown) {
+        return Some(Err(Diagnostic::new(format!(
+            "{TO_NUMBER} expects a numeric, string, or unknown argument, got {arg_ty}",
+        ))));
+    }
+    if let Some(base) = args.get(1) {
+        if let Err(error) = require_arg_type(
+            TO_NUMBER,
+            "base",
+            base,
+            Type::Numeric(NumericType::I32),
+            vars,
+            fn_signatures,
+            active_type_params,
+        ) {
+            return Some(Err(error));
+        }
+        if !(arg_ty == Type::String || arg_ty == Type::Unknown) {
+            return Some(Err(Diagnostic::new(format!(
+                "{TO_NUMBER} with a base expects a string or unknown value, got {arg_ty}",
+            ))));
+        }
+    }
+    Some(coerce_type(Type::Numeric(NumericType::F64), expected))
 }
 
 pub(super) fn infer_select_builtin_call(

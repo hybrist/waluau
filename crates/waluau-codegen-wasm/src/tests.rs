@@ -403,9 +403,12 @@ fn reuses_i32_local_slots_for_disjoint_live_ranges() {
         &record_types,
         ir.functions.len() as u32 + u32::from(ir.start.is_some()),
         0, // record_type_offset placeholder (unused in this test)
-        0, // anyref_array_type placeholder (unused in this test)
-        0, // func_val_struct_type placeholder (unused in this test)
-        0, // boxed_f64_struct_type placeholder (unused in this test)
+        super::arrays::RuntimeGcTypes {
+            anyref_array_type: 0,
+            func_val_struct_type: 0,
+            boxed_f64_struct_type: 0,
+            boxed_bool_struct_type: 0,
+        },
     );
     let local_plan = super::build_local_plan(function, &value_types, &array_registry)
         .expect("plan should build");

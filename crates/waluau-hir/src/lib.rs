@@ -62,7 +62,15 @@ fn is_builtin_callee(expr: &Expr) -> bool {
     match expr {
         Expr::Name(name, _, _) => matches!(
             name.as_str(),
-            "assert" | "error" | "pcall" | "print" | "select" | "tostring"
+            "assert"
+                | "error"
+                | "pcall"
+                | "print"
+                | "select"
+                | "tonumber"
+                | "tostring"
+                | "type"
+                | "typeof"
         ),
         Expr::Field { base, .. } => matches!(
             base.as_ref(),
@@ -1691,7 +1699,10 @@ fn initial_top_level_names(program: &Program) -> HashSet<String> {
         "assert".to_string(),
         "error".to_string(),
         "pcall".to_string(),
+        "type".to_string(),
+        "typeof".to_string(),
         "tostring".to_string(),
+        "tonumber".to_string(),
         "select".to_string(),
         "math".to_string(),
         "coroutine".to_string(),

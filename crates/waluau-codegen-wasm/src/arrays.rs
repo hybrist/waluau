@@ -18,8 +18,12 @@ pub(crate) struct ArrayTypeRegistry {
     /// Type index of `$func_val = (struct { orig_idx: i32, env: ref null $anyref_array, wrapper_idx: i32 })`.
     pub(crate) func_val_struct_type: u32,
     /// Type index of `$boxed_f64 = (struct (field f64))`, used to box `f64` values
-    /// into `anyref` (`unknown`). `i32`/`bool` use `i31ref` and need no struct.
+    /// into `anyref` (`unknown`). `i32` uses `i31ref`; bool has a distinct box so
+    /// runtime `type(unknown)` can distinguish booleans from small integers.
     pub(crate) boxed_f64_struct_type: u32,
+    /// Type index of `$boxed_bool = (struct (field i32))`, used to box `bool`
+    /// values into `anyref` (`unknown`).
+    pub(crate) boxed_bool_struct_type: u32,
     /// Whether the closure GC types (including `$boxed_f64`) were emitted for
     /// this module. When absent, `boxed_f64_struct_type` is a dummy index and
     /// no boxed f64 can exist at runtime.
@@ -31,15 +35,20 @@ pub(crate) struct ArrayTypeRegistry {
     pub(crate) growable_array_indices: HashMap<String, u32>,
 }
 
+pub(crate) struct RuntimeGcTypes {
+    pub(crate) anyref_array_type: u32,
+    pub(crate) func_val_struct_type: u32,
+    pub(crate) boxed_f64_struct_type: u32,
+    pub(crate) boxed_bool_struct_type: u32,
+}
+
 impl ArrayTypeRegistry {
     pub(crate) fn with_function_type_offset(
         array_types: &[Type],
         record_types: &[Type],
         function_type_count: u32,
         record_type_offset: u32,
-        anyref_array_type: u32,
-        func_val_struct_type: u32,
-        boxed_f64_struct_type: u32,
+        runtime_gc_types: RuntimeGcTypes,
     ) -> Self {
         // Array-related types are emitted as interleaved pairs: the raw storage
         // array at `base + 2*i` and its growable wrapper struct at `base + 2*i + 1`.
@@ -84,9 +93,10 @@ impl ArrayTypeRegistry {
             record_indices,
             record_field_indices,
             coroutine_state_type: None,
-            anyref_array_type,
-            func_val_struct_type,
-            boxed_f64_struct_type,
+            anyref_array_type: runtime_gc_types.anyref_array_type,
+            func_val_struct_type: runtime_gc_types.func_val_struct_type,
+            boxed_f64_struct_type: runtime_gc_types.boxed_f64_struct_type,
+            boxed_bool_struct_type: runtime_gc_types.boxed_bool_struct_type,
             closure_gc_present: false,
             growable_array_indices,
         }
@@ -309,6 +319,8 @@ fn collect_record_types_from_instruction(
         | IrInstruction::Print { .. }
         | IrInstruction::Throw { .. }
         | IrInstruction::ToString { .. }
+        | IrInstruction::TypeName { .. }
+        | IrInstruction::ToNumber { .. }
         | IrInstruction::Call { .. }
         | IrInstruction::HostCall { .. }
         | IrInstruction::CoroutineCreate { .. }

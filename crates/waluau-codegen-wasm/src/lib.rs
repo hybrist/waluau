@@ -24,8 +24,8 @@ mod signatures;
 mod wasm_types;
 
 use arrays::{
-    ArrayTypeRegistry, array_storage_type, collect_array_types, collect_record_types,
-    record_storage_type,
+    ArrayTypeRegistry, RuntimeGcTypes, array_storage_type, collect_array_types,
+    collect_record_types, record_storage_type,
 };
 use coroutines::{
     AWAIT_STATUS_FULFILLED, AWAIT_STATUS_NONE, AWAIT_STATUS_REJECTED, CoroutinePlan,
@@ -149,7 +149,8 @@ fn needs_lua_error_tag(module: &Module) -> bool {
 }
 
 /// Returns `true` if the module uses any features that require the closure GC types
-/// (`$anyref_array`, `$func_val`, `$boxed_f64`) to be declared in the type section.
+/// (`$anyref_array`, `$func_val`, `$boxed_f64`, `$boxed_bool`) to be declared in
+/// the type section.
 fn needs_closure_gc_types(module: &Module) -> bool {
     for import in &module.declared_imports {
         if import.params.iter().any(type_contains_function_value)
@@ -177,12 +178,14 @@ fn needs_closure_gc_types(module: &Module) -> bool {
                     | IrInstruction::ProtectedCall { .. } => {
                         return true;
                     }
-                    // Casting to/from `unknown` with f64 uses `$boxed_f64`.
+                    // Casting to/from `unknown` with f64/bool uses dedicated boxes.
                     IrInstruction::Cast { from, to, .. } => {
                         if matches!(
                             (from, to),
                             (Type::Numeric(waluau_ast::NumericType::F64), Type::Unknown)
                                 | (Type::Unknown, Type::Numeric(waluau_ast::NumericType::F64))
+                                | (Type::Bool, Type::Unknown)
+                                | (Type::Unknown, Type::Bool)
                         ) {
                             return true;
                         }
@@ -230,24 +233,32 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         }
     }
 
-    // Closure GC types ($anyref_array, $func_val, $boxed_f64) are only needed when
-    // the program uses closures, function-typed values, or f64 boxing into unknown.
+    // Closure GC types ($anyref_array, $func_val, $boxed_f64, $boxed_bool) are only
+    // needed when the program uses closures, function-typed values, or boxed unknowns.
     let callback_event_unit_trampoline = needs_callback_event_unit_trampoline(module);
     let callback_unit_extern_trampoline = needs_callback_unit_extern_trampoline(module);
     let promise_resume_trampoline = needs_promise_resume_trampoline(module);
     let lua_error_tag = needs_lua_error_tag(module);
     let closure_gc_needed = needs_closure_gc_types(module);
-    // Two closure GC types sit after host types (only when needed):
+    // Closure GC helper types sit after host types (only when needed):
     //   $anyref_array = (array (ref null any) mutable)
     //   $func_val = (struct { func_idx: i32, env: ref null $anyref_array })
+    //   $boxed_f64 = (struct { value: f64 })
+    //   $boxed_bool = (struct { value: i32 })
     let closure_gc_base = host_type_base + actual_host_type_count;
-    let (anyref_array_type, func_val_struct_type, boxed_f64_struct_type) = if closure_gc_needed {
-        (closure_gc_base, closure_gc_base + 1, closure_gc_base + 2)
-    } else {
-        // Dummy values — never referenced when closure GC types are absent.
-        (0, 0, 0)
-    };
-    let closure_gc_count = if closure_gc_needed { 3 } else { 0 };
+    let (anyref_array_type, func_val_struct_type, boxed_f64_struct_type, boxed_bool_struct_type) =
+        if closure_gc_needed {
+            (
+                closure_gc_base,
+                closure_gc_base + 1,
+                closure_gc_base + 2,
+                closure_gc_base + 3,
+            )
+        } else {
+            // Dummy values — never referenced when closure GC types are absent.
+            (0, 0, 0, 0)
+        };
+    let closure_gc_count = if closure_gc_needed { 4 } else { 0 };
     // Coroutine GC types sit after the closure GC types.
     let coroutine_types_base = closure_gc_base + closure_gc_count;
     let coroutine_state_type = coroutine_plan.has_state().then_some(coroutine_types_base);
@@ -260,9 +271,12 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         &record_types,
         0,
         record_types_base,
-        anyref_array_type,
-        func_val_struct_type,
-        boxed_f64_struct_type,
+        RuntimeGcTypes {
+            anyref_array_type,
+            func_val_struct_type,
+            boxed_f64_struct_type,
+            boxed_bool_struct_type,
+        },
     );
     array_registry.coroutine_state_type = coroutine_state_type;
     array_registry.closure_gc_present = closure_gc_needed;
@@ -349,6 +363,8 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         (&[externref_val_type()], &[ValType::I32]),
         (&[anyref_val_type()], &[externref_val_type()]),
         (&[ValType::F64, ValType::F64], &[ValType::F64]),
+        (&[externref_val_type(), ValType::I32], &[ValType::F64]),
+        (&[anyref_val_type(), ValType::I32], &[ValType::F64]),
     ];
     for (slot, (params, results)) in host_type_specs.iter().enumerate() {
         if needed_host_slots[slot] {
@@ -394,6 +410,11 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         // $boxed_f64 = (struct (field f64)) — immutable box for f64 → anyref.
         types.ty().struct_(vec![FieldType {
             element_type: StorageType::Val(ValType::F64),
+            mutable: false,
+        }]);
+        // $boxed_bool = (struct (field i32)) — immutable box for bool → anyref.
+        types.ty().struct_(vec![FieldType {
+            element_type: StorageType::Val(ValType::I32),
             mutable: false,
         }]);
     }
@@ -755,6 +776,27 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             host::IMPORT_MODULE,
             host::IMPORT_JS_TOSTRING_UNKNOWN,
             EntityType::Function(host_slot_type_index[9].unwrap()),
+        );
+    }
+    if used_imports.js_typeof_unknown {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_JS_TYPEOF_UNKNOWN,
+            EntityType::Function(host_slot_type_index[9].unwrap()),
+        );
+    }
+    if used_imports.js_tonumber_string {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_JS_TONUMBER_STRING,
+            EntityType::Function(host_slot_type_index[11].unwrap()),
+        );
+    }
+    if used_imports.js_tonumber_unknown {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_JS_TONUMBER_UNKNOWN,
+            EntityType::Function(host_slot_type_index[12].unwrap()),
         );
     }
     if used_imports.extern_is {
@@ -2254,11 +2296,12 @@ fn emit_block_instructions(
                         ));
                     }
                     Type::Unknown if ctx.array_registry.closure_gc_present => {
-                        // A boxed f64 reaches the JS host as an opaque GC
+                        // Boxed f64/bool values reach the JS host as opaque GC
                         // struct that `String()` cannot format; unbox it here
-                        // and use the f64 stringifier instead. (i31-boxed
+                        // and use the concrete stringifier instead. (i31-boxed
                         // i32/u32 values externalize as JS numbers already.)
                         let boxed_f64 = ctx.array_registry.boxed_f64_struct_type;
+                        let boxed_bool = ctx.array_registry.boxed_bool_struct_type;
                         out.instruction(&Instruction::RefTestNullable(HeapType::Concrete(
                             boxed_f64,
                         )));
@@ -2276,9 +2319,27 @@ fn emit_block_instructions(
                         ));
                         out.instruction(&Instruction::Else);
                         emit_value_operand(out, local_plan, *source)?;
+                        out.instruction(&Instruction::RefTestNullable(HeapType::Concrete(
+                            boxed_bool,
+                        )));
+                        out.instruction(&Instruction::If(BlockType::Result(externref_val_type())));
+                        emit_value_operand(out, local_plan, *source)?;
+                        out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
+                            boxed_bool,
+                        )));
+                        out.instruction(&Instruction::StructGet {
+                            struct_type_index: boxed_bool,
+                            field_index: 0,
+                        });
+                        out.instruction(&Instruction::Call(
+                            ctx.host_func_index(host::IMPORT_JS_TOSTRING_BOOL_FUNC)?,
+                        ));
+                        out.instruction(&Instruction::Else);
+                        emit_value_operand(out, local_plan, *source)?;
                         out.instruction(&Instruction::Call(
                             ctx.host_func_index(host::IMPORT_JS_TOSTRING_UNKNOWN_FUNC)?,
                         ));
+                        out.instruction(&Instruction::End);
                         out.instruction(&Instruction::End);
                     }
                     Type::Unknown => {
@@ -2292,6 +2353,132 @@ fn emit_block_instructions(
                     other => {
                         return Err(Diagnostic::new(format!(
                             "tostring is not supported for {} during wasm emission",
+                            other
+                        )));
+                    }
+                }
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::TypeName {
+                value: source,
+                from,
+            } => {
+                match from {
+                    Type::Unknown => {
+                        let nil_index = host::string_constant_index(ctx.string_constants, "nil")?;
+                        let number_index =
+                            host::string_constant_index(ctx.string_constants, "number")?;
+                        emit_value_operand(out, local_plan, *source)?;
+                        out.instruction(&Instruction::RefIsNull);
+                        out.instruction(&Instruction::If(BlockType::Result(externref_val_type())));
+                        out.instruction(&Instruction::GlobalGet(nil_index));
+                        out.instruction(&Instruction::Else);
+                        if ctx.array_registry.closure_gc_present {
+                            let boxed_f64 = ctx.array_registry.boxed_f64_struct_type;
+                            let boxed_bool = ctx.array_registry.boxed_bool_struct_type;
+                            emit_value_operand(out, local_plan, *source)?;
+                            out.instruction(&Instruction::RefTestNullable(HeapType::Concrete(
+                                boxed_f64,
+                            )));
+                            out.instruction(&Instruction::If(BlockType::Result(
+                                externref_val_type(),
+                            )));
+                            out.instruction(&Instruction::GlobalGet(number_index));
+                            out.instruction(&Instruction::Else);
+                            emit_value_operand(out, local_plan, *source)?;
+                            out.instruction(&Instruction::RefTestNullable(HeapType::Concrete(
+                                boxed_bool,
+                            )));
+                            out.instruction(&Instruction::If(BlockType::Result(
+                                externref_val_type(),
+                            )));
+                            let boolean_index =
+                                host::string_constant_index(ctx.string_constants, "boolean")?;
+                            out.instruction(&Instruction::GlobalGet(boolean_index));
+                            out.instruction(&Instruction::Else);
+                        }
+                        emit_value_operand(out, local_plan, *source)?;
+                        out.instruction(&Instruction::RefTestNullable(i31_heap_type()));
+                        out.instruction(&Instruction::If(BlockType::Result(externref_val_type())));
+                        out.instruction(&Instruction::GlobalGet(number_index));
+                        out.instruction(&Instruction::Else);
+                        emit_value_operand(out, local_plan, *source)?;
+                        out.instruction(&Instruction::Call(
+                            ctx.host_func_index(host::IMPORT_JS_TYPEOF_UNKNOWN_FUNC)?,
+                        ));
+                        out.instruction(&Instruction::End);
+                        if ctx.array_registry.closure_gc_present {
+                            out.instruction(&Instruction::End);
+                            out.instruction(&Instruction::End);
+                        }
+                        out.instruction(&Instruction::End);
+                    }
+                    Type::String => {
+                        emit_value_operand(out, local_plan, *source)?;
+                    }
+                    other => {
+                        return Err(Diagnostic::new(format!(
+                            "type is not supported for {} during wasm emission",
+                            other
+                        )));
+                    }
+                }
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::ToNumber {
+                value: source,
+                from,
+                base,
+            } => {
+                match from {
+                    Type::String => {
+                        emit_value_operand(out, local_plan, *source)?;
+                        if let Some(base) = base {
+                            emit_value_operand(out, local_plan, *base)?;
+                        } else {
+                            out.instruction(&Instruction::I32Const(0));
+                        }
+                        out.instruction(&Instruction::Call(
+                            ctx.host_func_index(host::IMPORT_JS_TONUMBER_STRING_FUNC)?,
+                        ));
+                    }
+                    Type::Unknown if base.is_none() && ctx.array_registry.closure_gc_present => {
+                        let boxed_f64 = ctx.array_registry.boxed_f64_struct_type;
+                        emit_value_operand(out, local_plan, *source)?;
+                        out.instruction(&Instruction::RefTestNullable(HeapType::Concrete(
+                            boxed_f64,
+                        )));
+                        out.instruction(&Instruction::If(BlockType::Result(ValType::F64)));
+                        emit_value_operand(out, local_plan, *source)?;
+                        out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
+                            boxed_f64,
+                        )));
+                        out.instruction(&Instruction::StructGet {
+                            struct_type_index: boxed_f64,
+                            field_index: 0,
+                        });
+                        out.instruction(&Instruction::Else);
+                        emit_value_operand(out, local_plan, *source)?;
+                        out.instruction(&Instruction::I32Const(0));
+                        out.instruction(&Instruction::Call(
+                            ctx.host_func_index(host::IMPORT_JS_TONUMBER_UNKNOWN_FUNC)?,
+                        ));
+                        out.instruction(&Instruction::End);
+                    }
+                    Type::Unknown => {
+                        emit_value_operand(out, local_plan, *source)?;
+                        if let Some(base) = base {
+                            emit_value_operand(out, local_plan, *base)?;
+                        } else {
+                            out.instruction(&Instruction::I32Const(0));
+                        }
+                        out.instruction(&Instruction::Call(
+                            ctx.host_func_index(host::IMPORT_JS_TONUMBER_UNKNOWN_FUNC)?,
+                        ));
+                    }
+                    other => {
+                        return Err(Diagnostic::new(format!(
+                            "tonumber is not supported for {} during wasm emission",
                             other
                         )));
                     }
@@ -3655,8 +3842,14 @@ fn emit_box(
     array_registry: &ArrayTypeRegistry,
 ) -> Result<(), Diagnostic> {
     match from {
-        Type::Numeric(NumericType::I32 | NumericType::U32) | Type::Bool => {
+        Type::Numeric(NumericType::I32 | NumericType::U32) => {
             out.instruction(&Instruction::RefI31);
+            Ok(())
+        }
+        Type::Bool => {
+            out.instruction(&Instruction::StructNew(
+                array_registry.boxed_bool_struct_type,
+            ));
             Ok(())
         }
         Type::Numeric(NumericType::F64) => {
@@ -3691,9 +3884,19 @@ fn emit_unbox(
     array_registry: &ArrayTypeRegistry,
 ) -> Result<(), Diagnostic> {
     match to {
-        Type::Numeric(NumericType::I32 | NumericType::U32) | Type::Bool => {
+        Type::Numeric(NumericType::I32 | NumericType::U32) => {
             out.instruction(&Instruction::RefCastNonNull(i31_heap_type()));
             out.instruction(&Instruction::I31GetS);
+            Ok(())
+        }
+        Type::Bool => {
+            out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
+                array_registry.boxed_bool_struct_type,
+            )));
+            out.instruction(&Instruction::StructGet {
+                struct_type_index: array_registry.boxed_bool_struct_type,
+                field_index: 0,
+            });
             Ok(())
         }
         Type::Numeric(NumericType::F64) => {

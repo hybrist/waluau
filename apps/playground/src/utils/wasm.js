@@ -4,7 +4,7 @@ import { luaPatternMatch, luaGsub, luaGsubGenerator, luaGmatch, makeStringReplac
 export const WALUAU_STRING_CONSTANTS_MODULE = 'string_constants';
 export const WALUAU_IMPORT_MODULE = 'waluau';
 // Must match waluau_codegen_wasm::host::HOST_IMPORT_COUNT
-export const WALUAU_HOST_IMPORT_COUNT = 19;
+export const WALUAU_HOST_IMPORT_COUNT = 24;
 const PROMISE_RESUME_TRAMPOLINE_EXPORT = '__waluau_resume_promise_await';
 const PROMISE_RESET_ACTIVE_EXPORT = '__waluau_reset_active_coroutine';
 const CALLBACK_UNIT_EXTERN_TRAMPOLINE_EXPORT = '__waluau_call_callback_unit_extern';
@@ -23,6 +23,40 @@ export function luauToString(value) {
   if (value === -Infinity) return '-inf';
   if (Object.is(value, -0)) return '-0';
   return String(Number(value.toPrecision(14)));
+}
+
+function luauTypeName(value) {
+  if (value == null) return 'nil';
+  switch (typeof value) {
+    case 'boolean': return 'boolean';
+    case 'number':
+    case 'bigint':
+      return 'number';
+    case 'string': return 'string';
+    case 'function': return 'function';
+    case 'object': return 'table';
+    default: return 'userdata';
+  }
+}
+
+function luauToNumber(value, base = 0) {
+  const radix = Number(base) | 0;
+  if (radix !== 0) {
+    if (typeof value !== 'string' || radix < 2 || radix > 36) return NaN;
+    const text = value.trim();
+    if (text === '') return NaN;
+    const sign = text.startsWith('-') ? -1 : 1;
+    const digits = text.replace(/^[+-]/, '');
+    const valid = new RegExp(`^[0-${Math.min(radix - 1, 9)}${radix > 10 ? `a-${String.fromCharCode(86 + radix)}` : ''}]+$`, 'i');
+    if (!valid.test(digits)) return NaN;
+    return sign * parseInt(digits, radix);
+  }
+  if (typeof value === 'number') return value;
+  if (typeof value !== 'string') return NaN;
+  const text = value.trim();
+  if (text === '') return NaN;
+  const parsed = Number(text);
+  return Number.isNaN(parsed) ? NaN : parsed;
 }
 
 function luaQuoteString(value) {
@@ -1085,12 +1119,23 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
     if (
       wasmImport.module === WALUAU_IMPORT_MODULE &&
       wasmImport.kind === 'function' &&
-      wasmImport.name.startsWith('js_tostring_')
+      (wasmImport.name.startsWith('js_tostring_') ||
+        wasmImport.name === 'js_typeof_unknown' ||
+        wasmImport.name === 'js_tonumber_string' ||
+        wasmImport.name === 'js_tonumber_unknown')
     ) {
-      waluauImports[wasmImport.name] =
-        wasmImport.name === 'js_tostring_bool'
-          ? (value) => (value ? 'true' : 'false')
-          : luauToString;
+      if (wasmImport.name === 'js_typeof_unknown') {
+        waluauImports[wasmImport.name] = luauTypeName;
+      } else if (
+        wasmImport.name === 'js_tonumber_string' ||
+        wasmImport.name === 'js_tonumber_unknown'
+      ) {
+        waluauImports[wasmImport.name] = luauToNumber;
+      } else if (wasmImport.name === 'js_tostring_bool') {
+        waluauImports[wasmImport.name] = (value) => (value ? 'true' : 'false');
+      } else {
+        waluauImports[wasmImport.name] = luauToString;
+      }
     }
   }
   for (const wasmImport of getWasmImports(wasmModule)) {

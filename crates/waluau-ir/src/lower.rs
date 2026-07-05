@@ -4476,6 +4476,16 @@ impl Builder<'_> {
                         return result;
                     }
                     if let Some(result) =
+                        self.lower_type_builtin_call(&name, args, env, types, expected.clone())
+                    {
+                        return result;
+                    }
+                    if let Some(result) =
+                        self.lower_tonumber_builtin_call(&name, args, env, types, expected.clone())
+                    {
+                        return result;
+                    }
+                    if let Some(result) =
                         self.lower_table_builtin_call(&name, args, env, types, expected.clone())
                     {
                         return result;
@@ -5411,6 +5421,16 @@ impl Builder<'_> {
                         return result;
                     }
                     if let Some(result) = self.infer_tostring_builtin_call_type(&name, expr, types)
+                    {
+                        return result;
+                    }
+                    if let Some(result) =
+                        self.infer_type_builtin_call_type(&name, args, types, expected.clone())
+                    {
+                        return result;
+                    }
+                    if let Some(result) =
+                        self.infer_tonumber_builtin_call_type(&name, args, types, expected.clone())
                     {
                         return result;
                     }
@@ -6596,6 +6616,110 @@ impl Builder<'_> {
         Some(self.coerce_value(value, Type::String, expected))
     }
 
+    fn lower_type_builtin_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<ValueId, Diagnostic>> {
+        if !matches!(name, TYPE | TYPEOF) {
+            return None;
+        }
+        if args.len() != 1 {
+            return Some(Err(Diagnostic::new(format!(
+                "{name} expects 1 argument, got {}",
+                args.len()
+            ))));
+        }
+        let arg_ty = match self.infer_expr_type(&args[0], types, None) {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        let value = if arg_ty == Type::Unknown {
+            let lowered = match self.lower_expr(&args[0], env, types, Some(Type::Unknown)) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            self.emit(Instruction::TypeName {
+                value: lowered,
+                from: Type::Unknown,
+            })
+        } else {
+            self.emit(Instruction::String(lua_type_name(&arg_ty).to_string()))
+        };
+        Some(self.coerce_value(value, Type::String, expected))
+    }
+
+    fn lower_tonumber_builtin_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<ValueId, Diagnostic>> {
+        if name != TO_NUMBER {
+            return None;
+        }
+        if args.is_empty() || args.len() > 2 {
+            return Some(Err(Diagnostic::new(format!(
+                "{TO_NUMBER} expects 1 or 2 arguments, got {}",
+                args.len()
+            ))));
+        }
+        let arg_ty = match self.infer_expr_type(&args[0], types, None) {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        if !(arg_ty.is_numeric() || arg_ty == Type::String || arg_ty == Type::Unknown) {
+            return Some(Err(Diagnostic::new(format!(
+                "{TO_NUMBER} expects a numeric, string, or unknown argument, got {arg_ty}",
+            ))));
+        }
+        if args.len() == 2 && !(arg_ty == Type::String || arg_ty == Type::Unknown) {
+            return Some(Err(Diagnostic::new(format!(
+                "{TO_NUMBER} with a base expects a string or unknown value, got {arg_ty}",
+            ))));
+        }
+        let result_ty = Type::Numeric(NumericType::F64);
+        if args.len() == 1 && arg_ty.is_numeric() {
+            let lowered = match self.lower_expr(&args[0], env, types, Some(arg_ty.clone())) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let value = if arg_ty == result_ty {
+                lowered
+            } else {
+                self.emit(Instruction::Cast {
+                    value: lowered,
+                    from: arg_ty.clone(),
+                    to: result_ty.clone(),
+                })
+            };
+            return Some(self.coerce_value(value, result_ty, expected));
+        }
+        let lowered = match self.lower_expr(&args[0], env, types, Some(arg_ty.clone())) {
+            Ok(value) => value,
+            Err(error) => return Some(Err(error)),
+        };
+        let base = if let Some(base) = args.get(1) {
+            match self.lower_expr(base, env, types, Some(Type::Numeric(NumericType::I32))) {
+                Ok(value) => Some(value),
+                Err(error) => return Some(Err(error)),
+            }
+        } else {
+            None
+        };
+        let value = self.emit(Instruction::ToNumber {
+            value: lowered,
+            from: arg_ty,
+            base,
+        });
+        Some(self.coerce_value(value, result_ty, expected))
+    }
+
     fn lower_select_builtin_call(
         &mut self,
         name: &str,
@@ -7474,6 +7598,72 @@ impl Builder<'_> {
                 "{TO_STRING} expects a primitive argument (numeric, bool, or string), got {arg_ty}",
             ))))
         }
+    }
+
+    fn infer_type_builtin_call_type(
+        &self,
+        name: &str,
+        args: &[Expr],
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<Type, Diagnostic>> {
+        if !matches!(name, TYPE | TYPEOF) {
+            return None;
+        }
+        if args.len() != 1 {
+            return Some(Err(Diagnostic::new(format!(
+                "{name} expects 1 argument, got {}",
+                args.len()
+            ))));
+        }
+        match self.infer_expr_type(&args[0], types, None) {
+            Ok(_) => Some(coerce_type(Type::String, expected)),
+            Err(error) => Some(Err(error)),
+        }
+    }
+
+    fn infer_tonumber_builtin_call_type(
+        &self,
+        name: &str,
+        args: &[Expr],
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<Type, Diagnostic>> {
+        if name != TO_NUMBER {
+            return None;
+        }
+        if args.is_empty() || args.len() > 2 {
+            return Some(Err(Diagnostic::new(format!(
+                "{TO_NUMBER} expects 1 or 2 arguments, got {}",
+                args.len()
+            ))));
+        }
+        let arg_ty = match self.infer_expr_type(&args[0], types, None) {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        if !(arg_ty.is_numeric() || arg_ty == Type::String || arg_ty == Type::Unknown) {
+            return Some(Err(Diagnostic::new(format!(
+                "{TO_NUMBER} expects a numeric, string, or unknown argument, got {arg_ty}",
+            ))));
+        }
+        if let Some(base) = args.get(1) {
+            match self.infer_expr_type(base, types, Some(Type::Numeric(NumericType::I32))) {
+                Ok(Type::Numeric(NumericType::I32)) => {}
+                Ok(ty) => {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{TO_NUMBER} expects base to be i32, got {ty}"
+                    ))));
+                }
+                Err(error) => return Some(Err(error)),
+            }
+            if !(arg_ty == Type::String || arg_ty == Type::Unknown) {
+                return Some(Err(Diagnostic::new(format!(
+                    "{TO_NUMBER} with a base expects a string or unknown value, got {arg_ty}",
+                ))));
+            }
+        }
+        Some(coerce_type(Type::Numeric(NumericType::F64), expected))
     }
 
     fn infer_select_builtin_call_type(
@@ -8944,6 +9134,28 @@ fn common_numeric_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
             "could not resolve operand type during IR lowering",
             "change one operand type or cast explicitly",
         )),
+    }
+}
+
+fn lua_type_name(ty: &Type) -> &'static str {
+    match ty {
+        Type::Nil => "nil",
+        Type::Unit => "nil",
+        Type::Bool => "boolean",
+        Type::Numeric(_) => "number",
+        Type::String | Type::Bytes => "string",
+        Type::Array(_)
+        | Type::Record(_)
+        | Type::TaggedVariant(_)
+        | Type::TaggedUnion(_) => "table",
+        Type::Function { .. } => "function",
+        Type::Thread => "thread",
+        Type::Extern | Type::ExternSubtype(_) => "userdata",
+        Type::Nullable(_) => "nil",
+        Type::Unknown => "unknown",
+        Type::Named { .. } | Type::Opaque { .. } | Type::TypeParam(_) | Type::Multi(_) => {
+            "unknown"
+        }
     }
 }
 

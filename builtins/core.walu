@@ -4,6 +4,14 @@
 -- Print a string to stdout
 declare function print(message: string): unit
 
+-- Dynamic type/coercion builtins. These are recognized by HIR/IR lowering;
+-- the declarations keep global name resolution aware of the builtins.
+declare function type(value: unknown): string
+declare function typeof(value: unknown): string
+declare function tostring(value: unknown): string
+declare function tonumber(value: unknown): f64
+declare function tonumber(value: unknown, base: i32): f64
+
 -- Lua pattern-matching primitives backing `string.find`/`string.match`/
 -- `string.gmatch`/`string.gsub`. `pm_find`/`pm_match` return 1 when a match
 -- was found and 0 otherwise; on success the match bounds and captures are

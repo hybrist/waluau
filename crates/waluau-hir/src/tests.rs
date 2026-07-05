@@ -2651,6 +2651,21 @@ fn type_checks_tostring_for_primitive_inputs() {
 }
 
 #[test]
+fn type_checks_dynamic_type_and_number_builtins() {
+    let source = r#"
+        function entry(a: i32): string
+            local boxed: unknown = a
+            local tx: string = type(a)
+            local tu: string = typeof(boxed)
+            local n: f64 = tonumber("ff", 16)
+            return tx .. tu .. tostring(n)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
 fn rejects_tostring_for_non_primitive_inputs() {
     let source = r#"
         function entry(xs: {i32}): string
