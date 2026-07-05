@@ -6,6 +6,7 @@
     "createElement": "create_element",
     "documentElement": "document_element",
     "getAttribute": "get_attribute",
+    "getContext": "get_context",
     "getElementById": "get_element_by_id",
     "getItem": "get_item",
     "innerText": "inner_text",
@@ -29,5 +30,15 @@
     "Node.replaceChild.child": "old_child",
     "Node.replaceChild.node": "new_child"
   },
-  "signatureOverrides": {}
+  "signatureOverrides": {
+    "HTMLCanvasElement.getContext": {
+      "returnType": "CanvasRenderingContext2D?",
+      "params": [
+        {
+          "name": "contextId",
+          "idlType": "DOMString"
+        }
+      ]
+    }
+  }
 }

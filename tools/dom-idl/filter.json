@@ -27,6 +27,7 @@
     "CustomElementRegistry",
     "Element",
     "HTMLElement",
+    "HTMLCanvasElement",
     "HTMLHeadingElement",
     "HTMLInputElement",
     "HTMLTextAreaElement",
@@ -69,7 +70,8 @@
     "MediaList",
     "CSSPseudoElement",
     "StylePropertyMapReadOnly",
-    "StylePropertyMap"
+    "StylePropertyMap",
+    "CanvasRenderingContext2D"
   ],
   "disabledMembers": {
     "Event": [

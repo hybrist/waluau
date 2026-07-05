@@ -425,6 +425,21 @@ function parseDomInterfaceImport(name) {
   };
 }
 
+function snakeToCamel(name) {
+  return name.replace(/_([a-z])/g, (_match, letter) => letter.toUpperCase());
+}
+
+function resolveDomMemberName(receiver, generatedName) {
+  if (generatedName in receiver) {
+    return generatedName;
+  }
+  const nativeName = snakeToCamel(generatedName);
+  if (nativeName in receiver) {
+    return nativeName;
+  }
+  return generatedName;
+}
+
 function createPlaygroundDomHost(wasmModule, domOutputRoot, getWasmExports = () => null) {
   const fallbackStorage = new Map();
   const fallbackStorageHost = {
@@ -502,15 +517,15 @@ function createPlaygroundDomHost(wasmModule, domOutputRoot, getWasmExports = () 
     if (interfaceName === 'Window' && propertyName === 'localStorage') {
       return playgroundStorage();
     }
-    return receiver[propertyName];
+    return receiver[resolveDomMemberName(receiver, propertyName)];
   };
 
   const setProperty = (_interfaceName, propertyName, receiver, value) => {
-    receiver[propertyName] = value;
+    receiver[resolveDomMemberName(receiver, propertyName)] = value;
   };
 
   const forwardMethod = (_interfaceName, methodName, receiver, args) => {
-    return receiver[methodName](...args);
+    return receiver[resolveDomMemberName(receiver, methodName)](...args);
   };
 
   const specialImports = {

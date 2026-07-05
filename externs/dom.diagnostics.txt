@@ -16,6 +16,37 @@ skip CSSStyleDeclaration.item: disabled -- member 'operation:item' collides with
 skip CSSStyleDeclaration.length: disabled -- member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip CSSStyleDeclaration.parentRule: disabled -- member 'attribute:parentRule' collides with the same-named member kept on CSSRule (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip CSSStyleSheet.replace: unsupported generic Web IDL type Promise<CSSStyleSheet> (waluau-2c6n)
+skip CanvasRenderingContext2D.clip: path: Web IDL type Path2D is not part of the selected DOM interface surface
+skip CanvasRenderingContext2D.createConicGradient: Web IDL type CanvasGradient is not part of the selected DOM interface surface
+skip CanvasRenderingContext2D.createImageData: Web IDL type ImageData is not part of the selected DOM interface surface
+skip CanvasRenderingContext2D.createLinearGradient: Web IDL type CanvasGradient is not part of the selected DOM interface surface
+skip CanvasRenderingContext2D.createPattern: Web IDL type CanvasPattern? is not part of the selected DOM interface surface
+skip CanvasRenderingContext2D.createRadialGradient: Web IDL type CanvasGradient is not part of the selected DOM interface surface
+skip CanvasRenderingContext2D.direction: unsupported Web IDL type CanvasDirection
+skip CanvasRenderingContext2D.drawFocusIfNeeded: path: Web IDL type Path2D is not part of the selected DOM interface surface
+skip CanvasRenderingContext2D.drawImage: image: unsupported Web IDL type CanvasImageSource
+skip CanvasRenderingContext2D.fill: path: Web IDL type Path2D is not part of the selected DOM interface surface
+skip CanvasRenderingContext2D.fillStyle: unsupported union Web IDL type (DOMString or CanvasGradient or CanvasPattern) (waluau-b3hl)
+skip CanvasRenderingContext2D.fontKerning: unsupported Web IDL type CanvasFontKerning
+skip CanvasRenderingContext2D.fontStretch: unsupported Web IDL type CanvasFontStretch
+skip CanvasRenderingContext2D.fontVariantCaps: unsupported Web IDL type CanvasFontVariantCaps
+skip CanvasRenderingContext2D.getContextAttributes: unsupported Web IDL type CanvasRenderingContext2DSettings
+skip CanvasRenderingContext2D.getImageData: Web IDL type ImageData is not part of the selected DOM interface surface
+skip CanvasRenderingContext2D.getLineDash: unsupported generic Web IDL type sequence<unrestricted double> (waluau-utyc)
+skip CanvasRenderingContext2D.getTransform: Web IDL type DOMMatrix is not part of the selected DOM interface surface
+skip CanvasRenderingContext2D.imageSmoothingQuality: unsupported Web IDL type ImageSmoothingQuality
+skip CanvasRenderingContext2D.isPointInPath: path: Web IDL type Path2D is not part of the selected DOM interface surface
+skip CanvasRenderingContext2D.isPointInStroke: path: Web IDL type Path2D is not part of the selected DOM interface surface
+skip CanvasRenderingContext2D.lineCap: unsupported Web IDL type CanvasLineCap
+skip CanvasRenderingContext2D.lineJoin: unsupported Web IDL type CanvasLineJoin
+skip CanvasRenderingContext2D.measureText: Web IDL type TextMetrics is not part of the selected DOM interface surface
+skip CanvasRenderingContext2D.putImageData: imageData: Web IDL type ImageData is not part of the selected DOM interface surface
+skip CanvasRenderingContext2D.setLineDash: segments: unsupported generic Web IDL type sequence<unrestricted double> (waluau-utyc)
+skip CanvasRenderingContext2D.stroke: path: Web IDL type Path2D is not part of the selected DOM interface surface
+skip CanvasRenderingContext2D.strokeStyle: unsupported union Web IDL type (DOMString or CanvasGradient or CanvasPattern) (waluau-b3hl)
+skip CanvasRenderingContext2D.textAlign: unsupported Web IDL type CanvasTextAlign
+skip CanvasRenderingContext2D.textBaseline: unsupported Web IDL type CanvasTextBaseline
+skip CanvasRenderingContext2D.textRendering: unsupported Web IDL type CanvasTextRendering
 skip CharacterData.after: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-b3hl)
 skip CharacterData.before: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-b3hl)
 skip CharacterData.length: disabled -- member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
@@ -282,6 +313,9 @@ skip FileList.length: disabled -- member 'attribute:length' collides with the sa
 skip HTMLAllCollection.item: unsupported union Web IDL type (HTMLCollection or Element)? (waluau-b3hl)
 skip HTMLAllCollection.length: disabled -- member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip HTMLAllCollection.namedItem: unsupported union Web IDL type (HTMLCollection or Element)? (waluau-b3hl)
+skip HTMLCanvasElement.captureStream: Web IDL type MediaStream is not part of the selected DOM interface surface
+skip HTMLCanvasElement.toBlob: callback: unsupported Web IDL type BlobCallback
+skip HTMLCanvasElement.transferControlToOffscreen: Web IDL type OffscreenCanvas is not part of the selected DOM interface surface
 skip HTMLCollection.item: disabled -- member 'operation:item' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip HTMLCollection.length: disabled -- member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip HTMLElement.attachInternals: Web IDL type ElementInternals is not part of the selected DOM interface surface

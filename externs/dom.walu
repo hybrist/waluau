@@ -29,6 +29,7 @@ type TreeWalker = extern
 type CustomElementRegistry = extern
 type Element = extern extends Node
 type HTMLElement = extern extends Element
+type HTMLCanvasElement = extern extends HTMLElement
 type HTMLHeadingElement = extern extends HTMLElement
 type HTMLInputElement = extern extends HTMLElement
 type HTMLTextAreaElement = extern extends HTMLElement
@@ -72,6 +73,7 @@ type MediaList = extern
 type CSSPseudoElement = extern
 type StylePropertyMapReadOnly = extern
 type StylePropertyMap = extern extends StylePropertyMapReadOnly
+type CanvasRenderingContext2D = extern
 type Promise<T> = extern
 
 declare property Blob:size: u64
@@ -796,6 +798,52 @@ declare property ValidityState:stepMismatch: bool
 declare property ValidityState:badInput: bool
 declare property ValidityState:customError: bool
 declare property ValidityState:valid: bool
+declare property HTMLCanvasElement:width: u32
+declare property HTMLCanvasElement:height: u32
+declare function HTMLCanvasElement:get_context(context_id: string): CanvasRenderingContext2D?
+declare function HTMLCanvasElement:toDataURL(): string
+declare property CanvasRenderingContext2D:canvas: HTMLCanvasElement
+declare function CanvasRenderingContext2D:save(): unit
+declare function CanvasRenderingContext2D:restore(): unit
+declare function CanvasRenderingContext2D:reset(): unit
+declare function CanvasRenderingContext2D:isContextLost(): bool
+declare function CanvasRenderingContext2D:scale(x: f64, y: f64): unit
+declare function CanvasRenderingContext2D:rotate(angle: f64): unit
+declare function CanvasRenderingContext2D:translate(x: f64, y: f64): unit
+declare function CanvasRenderingContext2D:transform(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64): unit
+declare function CanvasRenderingContext2D:setTransform(): unit
+declare function CanvasRenderingContext2D:resetTransform(): unit
+declare property CanvasRenderingContext2D:globalAlpha: f64
+declare property CanvasRenderingContext2D:globalCompositeOperation: string
+declare property CanvasRenderingContext2D:imageSmoothingEnabled: bool
+declare property CanvasRenderingContext2D:shadowOffsetX: f64
+declare property CanvasRenderingContext2D:shadowOffsetY: f64
+declare property CanvasRenderingContext2D:shadowBlur: f64
+declare property CanvasRenderingContext2D:shadowColor: string
+declare property CanvasRenderingContext2D:filter: string
+declare function CanvasRenderingContext2D:clearRect(x: f64, y: f64, w: f64, h: f64): unit
+declare function CanvasRenderingContext2D:fillRect(x: f64, y: f64, w: f64, h: f64): unit
+declare function CanvasRenderingContext2D:strokeRect(x: f64, y: f64, w: f64, h: f64): unit
+declare function CanvasRenderingContext2D:beginPath(): unit
+declare function CanvasRenderingContext2D:fillText(text: string, x: f64, y: f64): unit
+declare function CanvasRenderingContext2D:strokeText(text: string, x: f64, y: f64): unit
+declare property CanvasRenderingContext2D:lineWidth: f64
+declare property CanvasRenderingContext2D:miterLimit: f64
+declare property CanvasRenderingContext2D:lineDashOffset: f64
+declare property CanvasRenderingContext2D:lang: string
+declare property CanvasRenderingContext2D:font: string
+declare property CanvasRenderingContext2D:letterSpacing: string
+declare property CanvasRenderingContext2D:wordSpacing: string
+declare function CanvasRenderingContext2D:closePath(): unit
+declare function CanvasRenderingContext2D:moveTo(x: f64, y: f64): unit
+declare function CanvasRenderingContext2D:lineTo(x: f64, y: f64): unit
+declare function CanvasRenderingContext2D:quadraticCurveTo(cpx: f64, cpy: f64, x: f64, y: f64): unit
+declare function CanvasRenderingContext2D:bezierCurveTo(cp1x: f64, cp1y: f64, cp2x: f64, cp2y: f64, x: f64, y: f64): unit
+declare function CanvasRenderingContext2D:arcTo(x1: f64, y1: f64, x2: f64, y2: f64, radius: f64): unit
+declare function CanvasRenderingContext2D:rect(x: f64, y: f64, w: f64, h: f64): unit
+declare function CanvasRenderingContext2D:roundRect(x: f64, y: f64, w: f64, h: f64): unit
+declare function CanvasRenderingContext2D:arc(x: f64, y: f64, radius: f64, start_angle: f64, end_angle: f64): unit
+declare function CanvasRenderingContext2D:ellipse(x: f64, y: f64, radius_x: f64, radius_y: f64, rotation: f64, start_angle: f64, end_angle: f64): unit
 declare function CustomElementRegistry:upgrade(root: Node): unit
 declare function CustomElementRegistry:initialize(root: Node): unit
 declare property BarProp:visible: bool
