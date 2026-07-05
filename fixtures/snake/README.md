@@ -58,6 +58,6 @@ Each workaround in the source carries a `TODO(<beads-id>)` comment. Summary:
 - `waluau-ae6g` — module-local type aliases do not unify across module
   boundaries; the game-state record type is spelled out inline in every
   exported signature of `game.walu` and `render.walu`.
-- `waluau-w5r0` — file-scope locals (including `require` bindings) are not
-  visible from function bodies; dependencies are re-required inside each
-  function that needs them.
+- `waluau-xyx8` — an empty array literal does not adopt the annotated element
+  type of the field it is assigned to, so `reset()` drains the snake array in
+  place instead of assigning `{}`.

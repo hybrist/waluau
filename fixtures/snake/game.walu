@@ -7,6 +7,8 @@
 -- `type State = ...` alias. Collapse these once cross-module type aliases
 -- unify structurally.
 
+local rng = require("./rng")
+
 function occupied(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }, x: i32, y: i32): bool
     local i: i32 = 0
     while i < #state.snake do
@@ -20,10 +22,6 @@ function occupied(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, di
 end
 
 function spawn_food(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }): unit
-    -- TODO(waluau-w5r0): a file-scope `local rng = require("./rng")` is not
-    -- visible from function bodies (top-level locals are not captured), so
-    -- the dependency has to be re-required inside every function that uses it.
-    local rng = require("./rng")
     local attempts: i32 = 0
     local max_attempts: i32 = state.cols * state.rows
     while attempts < max_attempts do
