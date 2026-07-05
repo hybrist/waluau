@@ -19,12 +19,10 @@ assert(missing_item == nil)
 
 storage:set_item("waluau-dom-storage-key", "serialized board")
 local saved_item: string? = storage:get_item("waluau-dom-storage-key")
+-- assert(x ~= nil) narrows for the rest of the scope; re-checking would be
+-- a type error because `saved_item` is no longer nullable.
 assert(saved_item ~= nil)
-if saved_item ~= nil then
-    assert(saved_item == "serialized board")
-else
-    assert(false)
-end
+assert(saved_item == "serialized board")
 
 storage:remove_item("waluau-dom-storage-key")
 local removed_item: string? = storage:get_item("waluau-dom-storage-key")
@@ -38,11 +36,7 @@ assert(first.class_name == "kanban column selected")
 
 local first_state: string? = first:get_attribute("data-state")
 assert(first_state ~= nil)
-if first_state ~= nil then
-    assert(first_state == "draft")
-else
-    assert(false)
-end
+assert(first_state == "draft")
 
 body:append_child(first)
 assert(document:get_element_by_id("first-dom-child") ~= nil)

@@ -28,6 +28,24 @@ struct Binding {
     ty: Type,
     rebindability: Rebindability,
     record_open: bool,
+    pcall_link: Option<PcallLink>,
+}
+
+/// Ties the two bindings of `local ok, v = pcall(...)` together so branching
+/// on `ok` (or `assert(ok)`) can narrow `v` to the protected function's return
+/// type on the success path and to the error payload type on the failure path.
+/// The link is bidirectional — narrowing only fires while both bindings still
+/// point at each other, so shadowing either name severs it.
+#[derive(Clone, PartialEq)]
+enum PcallLink {
+    Discriminant {
+        payload: String,
+        when_true: Type,
+        when_false: Type,
+    },
+    Payload {
+        discriminant: String,
+    },
 }
 
 fn binding_for(ty: Type, rebindability: Rebindability) -> Binding {
@@ -36,6 +54,7 @@ fn binding_for(ty: Type, rebindability: Rebindability) -> Binding {
         ty,
         rebindability,
         record_open,
+        pcall_link: None,
     }
 }
 

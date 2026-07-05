@@ -3,14 +3,14 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use waluau_ast::{AssignOp, Expr, Function, NumericType, Rebindability, Stmt, Type};
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
-use super::builtins::ASSERT;
-use super::expressions::{infer_expr, infer_expr_list};
+use super::builtins::{ASSERT, PCALL};
+use super::expressions::{builtin_name, infer_expr, infer_expr_list};
 use super::numeric::{common_numeric_type, is_extern_subtype_of};
 use super::signatures::{
     FnSignature, active_type_param_set, generic_diagnostic, inference_diagnostic,
     validate_type_in_scope, validate_type_param_list,
 };
-use super::{Binding, binding_for};
+use super::{Binding, PcallLink, binding_for};
 
 fn method_signature_name(base: &str, method: &str) -> String {
     format!("{base}.{method}")
@@ -193,6 +193,159 @@ pub(super) fn gmatch_loop_value_types(
     Some(Ok(slot_types))
 }
 
+/// Whether a pcall payload type can be soundly materialized from the `unknown`
+/// storage slot by a runtime unbox cast when narrowing applies.
+pub(super) fn is_narrowable_pcall_payload(ty: &Type) -> bool {
+    !matches!(ty, Type::Unit | Type::Unknown | Type::Nil | Type::Multi(_))
+}
+
+/// Recognizes `local ok, v = pcall(f, ...)` and returns the payload types for
+/// the success and failure paths: `(f`'s return type, the error payload type)`.
+/// Errors are always strings (`error(...)` and failed asserts both throw string
+/// payloads), so the failure side is `Type::String`.
+pub(super) fn pcall_discriminant_types(
+    bindings: &[waluau_ast::Binding],
+    values: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+) -> Option<(Type, Type)> {
+    if bindings.len() != 2 {
+        return None;
+    }
+    let [Expr::Call { callee, args, .. }] = values else {
+        return None;
+    };
+    if builtin_name(callee.as_ref()).as_deref() != Some(PCALL) {
+        return None;
+    }
+    let callee_ty =
+        infer_expr(args.first()?, vars, fn_signatures, active_type_params, None).ok()?;
+    let Type::Function { return_type, .. } = callee_ty else {
+        return None;
+    };
+    Some((*return_type, Type::String))
+}
+
+/// Installs the bidirectional discriminant link for `local ok, v = pcall(...)`
+/// on the freshly inserted `ok`/`v` bindings.
+pub(super) fn link_pcall_bindings(
+    bindings: &[waluau_ast::Binding],
+    when_true: Type,
+    when_false: Type,
+    vars: &mut HashMap<String, Binding>,
+) {
+    let ok_name = bindings[0].name.clone();
+    let payload_name = bindings[1].name.clone();
+    if ok_name == payload_name {
+        return;
+    }
+    if let Some(ok_binding) = vars.get_mut(&ok_name) {
+        ok_binding.pcall_link = Some(PcallLink::Discriminant {
+            payload: payload_name.clone(),
+            when_true,
+            when_false,
+        });
+    }
+    if let Some(payload_binding) = vars.get_mut(&payload_name) {
+        payload_binding.pcall_link = Some(PcallLink::Payload {
+            discriminant: ok_name,
+        });
+    }
+}
+
+/// Reassigning either half of a pcall discriminant pair invalidates the
+/// correlation, so drop the link from both sides.
+pub(super) fn sever_pcall_link(name: &str, vars: &mut HashMap<String, Binding>) {
+    let Some(binding) = vars.get_mut(name) else {
+        return;
+    };
+    let Some(link) = binding.pcall_link.take() else {
+        return;
+    };
+    let peer = match link {
+        PcallLink::Discriminant { payload, .. } => payload,
+        PcallLink::Payload { discriminant } => discriminant,
+    };
+    if let Some(peer_binding) = vars.get_mut(&peer) {
+        peer_binding.pcall_link = None;
+    }
+}
+
+/// A condition of the form `ok` or `not ok`, returning the name and whether
+/// the `then` branch corresponds to `ok == true`.
+fn discriminant_test_subject(condition: &Expr) -> Option<(&str, bool)> {
+    match condition {
+        Expr::Name(name, _, _) => Some((name, true)),
+        Expr::Unary {
+            op: waluau_ast::UnaryOp::Not,
+            expr,
+            ..
+        } => match expr.as_ref() {
+            Expr::Name(name, _, _) => Some((name, false)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn narrowed_discriminant_scopes(
+    condition: &Expr,
+    vars: &HashMap<String, Binding>,
+    then_scope: &mut HashMap<String, Binding>,
+    else_scope: &mut HashMap<String, Binding>,
+) {
+    let Some((name, positive)) = discriminant_test_subject(condition) else {
+        return;
+    };
+    let Some(PcallLink::Discriminant {
+        payload,
+        when_true,
+        when_false,
+    }) = vars.get(name).and_then(|b| b.pcall_link.as_ref())
+    else {
+        return;
+    };
+    let Some(payload_binding) = vars.get(payload) else {
+        return;
+    };
+    // The pair must still point at each other; shadowing either name severs it.
+    if !matches!(
+        &payload_binding.pcall_link,
+        Some(PcallLink::Payload { discriminant }) if discriminant == name
+    ) {
+        return;
+    }
+    let (then_ty, else_ty) = if positive {
+        (when_true, when_false)
+    } else {
+        (when_false, when_true)
+    };
+    if is_narrowable_pcall_payload(then_ty) {
+        then_scope.insert(
+            payload.clone(),
+            binding_for(then_ty.clone(), payload_binding.rebindability),
+        );
+    }
+    if is_narrowable_pcall_payload(else_ty) {
+        else_scope.insert(
+            payload.clone(),
+            binding_for(else_ty.clone(), payload_binding.rebindability),
+        );
+    }
+}
+
+/// The scope in effect after `assert(cond)` succeeded: the full then-branch
+/// narrowing (pcall discriminant, variant tests, nil tests). A consequence is
+/// that testing a variant the assert already ruled out is a type error — by
+/// design, since such a check can never be meaningful.
+pub(super) fn assert_narrowed_scope(
+    condition: &Expr,
+    vars: &HashMap<String, Binding>,
+) -> HashMap<String, Binding> {
+    narrowed_scopes(condition, vars).0
+}
+
 fn nil_test_subject(condition: &Expr) -> Option<(&str, bool)> {
     // A bare `if x then` on a nullable value is a truthiness test: the
     // then-branch sees the non-nil type.
@@ -233,6 +386,7 @@ pub(super) fn narrowed_scopes(
     vars: &HashMap<String, Binding>,
 ) -> (HashMap<String, Binding>, HashMap<String, Binding>) {
     let (mut then_scope, mut else_scope) = narrowed_variant_scopes(condition, vars);
+    narrowed_discriminant_scopes(condition, vars, &mut then_scope, &mut else_scope);
     let Some((name, non_null_when_true)) = nil_test_subject(condition) else {
         return (then_scope, else_scope);
     };
@@ -414,6 +568,7 @@ fn collect_return_types_with_scope(
                     Some(existing.ty.clone()),
                 )?;
                 seal_record_locals_in_expr(value, &mut scope);
+                sever_pcall_link(name, &mut scope);
             }
             Stmt::IndexAssign {
                 base, index, value, ..
@@ -785,9 +940,19 @@ fn collect_return_types_with_scope(
                 for value in values {
                     seal_record_locals_in_expr(value, &mut scope);
                 }
+                let discriminant_link = pcall_discriminant_types(
+                    bindings,
+                    values,
+                    &scope,
+                    fn_signatures,
+                    active_type_params,
+                );
                 for (binding, value_ty) in bindings.iter().zip(actual) {
                     let ty = binding.ty.clone().unwrap_or(value_ty);
                     scope.insert(binding.name.clone(), binding_for(ty, binding.rebindability));
+                }
+                if let Some((when_true, when_false)) = discriminant_link {
+                    link_pcall_bindings(bindings, when_true, when_false, &mut scope);
                 }
             }
             Stmt::AssignMulti {
@@ -816,6 +981,9 @@ fn collect_return_types_with_scope(
                         expected.len(),
                         actual.len()
                     )));
+                }
+                for target in targets {
+                    sever_pcall_link(target, &mut scope);
                 }
             }
             Stmt::Expr(expr) => {
@@ -855,6 +1023,9 @@ fn collect_return_types_with_scope(
                                     Some(Type::String),
                                 )?;
                             }
+                            // Statements after `assert(cond)` only run when the
+                            // condition held, so the then-branch narrowing applies.
+                            scope = assert_narrowed_scope(&args[0], &scope);
                             continue;
                         }
                     }
@@ -1011,6 +1182,7 @@ pub(super) fn check_stmt(
                 )));
             }
             seal_record_locals_in_expr(value, vars);
+            sever_pcall_link(name, vars);
             Ok(false)
         }
         Stmt::IndexAssign {
@@ -1589,9 +1761,14 @@ pub(super) fn check_stmt(
             for value in values {
                 seal_record_locals_in_expr(value, vars);
             }
+            let discriminant_link =
+                pcall_discriminant_types(bindings, values, vars, fn_signatures, active_type_params);
             for (binding, value_ty) in bindings.iter().zip(actual) {
                 let ty = binding.ty.clone().unwrap_or(value_ty);
                 vars.insert(binding.name.clone(), binding_for(ty, binding.rebindability));
+            }
+            if let Some((when_true, when_false)) = discriminant_link {
+                link_pcall_bindings(bindings, when_true, when_false, vars);
             }
             Ok(false)
         }
@@ -1639,6 +1816,9 @@ pub(super) fn check_stmt(
                     )));
                 }
             }
+            for target in targets {
+                sever_pcall_link(target, vars);
+            }
             Ok(false)
         }
         Stmt::Expr(expr) => {
@@ -1681,6 +1861,9 @@ pub(super) fn check_stmt(
                                 Some(Type::String),
                             )?;
                         }
+                        // Statements after `assert(cond)` only run when the
+                        // condition held, so the then-branch narrowing applies.
+                        *vars = assert_narrowed_scope(&args[0], vars);
                         return Ok(false);
                     }
                 }
