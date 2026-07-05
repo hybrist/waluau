@@ -430,6 +430,9 @@ function snakeToCamel(name) {
 }
 
 function resolveDomMemberName(receiver, generatedName) {
+  if (receiver == null) {
+    throw new TypeError(`DOM import receiver is null while resolving ${generatedName}`);
+  }
   if (generatedName in receiver) {
     return generatedName;
   }
@@ -474,6 +477,17 @@ function createPlaygroundDomHost(wasmModule, domOutputRoot, getWasmExports = () 
     }
     return fallbackStorageHost;
   };
+
+  const fallbackWindowHost = {
+    get document() {
+      return outputDocument();
+    },
+    get localStorage() {
+      return playgroundStorage();
+    },
+  };
+
+  const outputWindow = () => outputDocument().defaultView ?? fallbackWindowHost;
 
   const replaceChild = (parent, newChild, oldChild) => {
     const removed = parent.replaceChild(newChild, oldChild);
@@ -529,7 +543,7 @@ function createPlaygroundDomHost(wasmModule, domOutputRoot, getWasmExports = () 
   };
 
   const specialImports = {
-    dom_window: () => outputDocument().defaultView,
+    dom_window: outputWindow,
     fetch: fetchFromDomContext,
     'EventTarget.addEventListener': (target, type, callback) => registerEventListener(target, String(type), callback),
     'Node.removeChild': removeChild,

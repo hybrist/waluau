@@ -108,6 +108,32 @@ const DOM_FETCH_RESPONSE_TEXT_SAMPLE = `function fetch_body(): unit
 end
 `;
 
+const DOM_CANVAS_2D_SAMPLE = `local window = require("dom:window")
+local document: Document = window.document
+local body: HTMLElement = document.body
+
+local element: Element = document:create_element("canvas")
+element.id = "waluau-canvas-2d"
+element:set_attribute("width", "64")
+element:set_attribute("height", "32")
+body:append_child(element)
+
+if HTMLCanvasElement(canvas) = element then
+    local context: CanvasRenderingContext2D? = canvas:get_context("2d")
+    assert(context ~= nil)
+    local ctx: CanvasRenderingContext2D = context::CanvasRenderingContext2D
+    local context_canvas: HTMLCanvasElement = ctx.canvas
+    context_canvas:set_attribute("data-context-owner", "true")
+
+    ctx:clearRect(0.0, 0.0, 64.0, 32.0)
+    ctx:fillRect(4.0, 5.0, 20.0, 12.0)
+    ctx.font = "10px sans-serif"
+    ctx:fillText("2D", 28.0, 16.0)
+else
+    assert(false)
+end
+`;
+
 test.describe('DOM Output in Run tab', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
@@ -175,6 +201,25 @@ test.describe('DOM Output in Run tab', () => {
     await expect(outputFrame.locator('section#new-child')).toHaveClass(/panel ready selected/);
     await expect(outputFrame.locator('section#new-child')).toHaveAttribute('data-state', 'ready');
     await expect(outputFrame.locator('section#new-child')).toHaveText('typed card ready persisted');
+  });
+
+  test('renders generated canvas 2D output in the playground DOM frame', async ({ page }) => {
+    await page.locator('.code-textarea').fill(DOM_CANVAS_2D_SAMPLE);
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    const domOutput = page.getByLabel('DOM Output');
+    await expect(domOutput).toBeVisible();
+
+    const outputFrame = page.frameLocator('.dom-output-frame');
+    const canvas = outputFrame.locator('canvas#waluau-canvas-2d');
+    await expect(canvas).toHaveAttribute('data-context-owner', 'true');
+
+    const pixel = await canvas.evaluate((node) =>
+      Array.from(node.getContext('2d').getImageData(6, 7, 1, 1).data)
+    );
+    expect(pixel).toEqual([0, 0, 0, 255]);
   });
 
   test('runs Waluau click and input callbacks from DOM Output events', async ({ page }) => {
