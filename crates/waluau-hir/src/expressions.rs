@@ -20,7 +20,7 @@ use super::signatures::{
 };
 use super::statements::check_stmt;
 
-fn builtin_name(callee: &Expr) -> Option<String> {
+pub(super) fn builtin_name(callee: &Expr) -> Option<String> {
     match callee {
         Expr::Name(name, _, _) => Some(name.clone()),
         Expr::Field { base, name, .. } => match base.as_ref() {

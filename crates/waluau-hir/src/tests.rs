@@ -2849,3 +2849,107 @@ fn rejects_for_in_without_bool_first_value() {
         "for-in iterator expects 2 return values (bool + 1 loop values), got 1"
     );
 }
+
+#[test]
+fn narrows_pcall_payload_in_if_branches() {
+    let source = r#"
+        function entry(): f64
+            local ok, value = pcall(function(): f64
+                return 42.0
+            end)
+            if ok then
+                return value + 1.0
+            else
+                assert(false, value)
+            end
+            return 0.0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("pcall payload should narrow in both branches");
+}
+
+#[test]
+fn narrows_pcall_payload_after_assert() {
+    let source = r#"
+        function entry(): f64
+            local ok, value = pcall(function(): f64
+                return 42.0
+            end)
+            assert(ok)
+            return value + 1.0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("pcall payload should narrow after assert(ok)");
+}
+
+#[test]
+fn narrows_pcall_error_after_negated_assert() {
+    let source = r#"
+        function entry(): string
+            local ok, err = pcall(function(): f64
+                error("boom")
+                return 1.0
+            end)
+            assert(not ok)
+            return err
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("pcall error payload should narrow after assert(not ok)");
+}
+
+#[test]
+fn narrows_pcall_payload_after_diverging_branch() {
+    let source = r#"
+        function entry(): f64
+            local ok, value = pcall(function(): f64
+                return 42.0
+            end)
+            if not ok then
+                return -1.0
+            end
+            return value
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("pcall payload should stay narrowed after early return");
+}
+
+#[test]
+fn pcall_narrowing_severed_by_reassignment() {
+    let source = r#"
+        function entry(): f64
+            local ok, value = pcall(function(): f64
+                return 1.0
+            end)
+            ok = true
+            if ok then
+                return value + 1.0
+            end
+            return 0.0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program)
+        .expect_err("reassigning the discriminant must sever pcall narrowing");
+}
+
+#[test]
+fn pcall_narrowing_severed_by_shadowing() {
+    let source = r#"
+        function entry(): f64
+            local ok, value = pcall(function(): f64
+                return 1.0
+            end)
+            local value = "hello"
+            if ok then
+                return value + 1.0
+            end
+            return 0.0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect_err("shadowing the payload must sever pcall narrowing");
+}

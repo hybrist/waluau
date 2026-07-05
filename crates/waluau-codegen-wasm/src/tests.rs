@@ -1282,6 +1282,20 @@ fn pcall_emits_try_table_and_exception_tag() {
 }
 
 #[test]
+fn emits_valid_wasm_for_pcall_discriminated_union() {
+    let source = include_str!("../../../conformance/pcall_discriminated_union.walu");
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+}
+
+#[test]
 fn assert_failure_message_throws_lua_error_tag() {
     let source = r#"
         function run(): unit

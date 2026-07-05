@@ -967,6 +967,7 @@ pub(crate) fn build_function(
         file_path: function.file_path.clone(),
         tag_ids,
         vararg_value,
+        discriminants: HashMap::new(),
     };
     for stmt in &function.body {
         if builder.current_block == DEAD_BLOCK {
@@ -1005,6 +1006,24 @@ struct Builder<'a> {
     /// whole module so constructors and checks in different functions agree.
     tag_ids: &'a BTreeMap<String, i32>,
     vararg_value: Option<ValueId>,
+    /// For `local ok, v = pcall(...)`: maps the `ok` symbol to its payload
+    /// symbol and the payload types on the success/failure paths, so branching
+    /// on `ok` (or `assert(ok)`) narrows `v` and unboxes it from its anyref slot.
+    discriminants: HashMap<SymbolId, DiscriminantLink>,
+}
+
+#[derive(Clone)]
+struct DiscriminantLink {
+    payload: SymbolId,
+    when_true: Type,
+    when_false: Type,
+}
+
+/// Whether a pcall payload type can be soundly materialized from the `unknown`
+/// storage slot by a runtime unbox cast when narrowing applies. Mirrors
+/// `is_narrowable_pcall_payload` in waluau-hir.
+fn is_narrowable_pcall_payload(ty: &Type) -> bool {
+    !matches!(ty, Type::Unit | Type::Unknown | Type::Nil | Type::Multi(_))
 }
 
 #[derive(Clone)]
@@ -1587,6 +1606,7 @@ impl Builder<'_> {
                     env.insert(symbol_id, value);
                     self.function.value_symbols.insert(value, symbol_id);
                 }
+                self.sever_discriminants(symbol_id);
             }
             Stmt::IndexAssign {
                 op,
@@ -1773,6 +1793,9 @@ impl Builder<'_> {
                     if let Expr::Name(name, _, _) = callee.as_ref() {
                         if name == ASSERT {
                             self.lower_assert_call(args, *span, env, types)?;
+                            // Code after `assert(cond)` only runs when the
+                            // condition held: apply the then-branch narrowing.
+                            self.apply_assert_narrowing(&args[0], env, types);
                             return Ok(());
                         }
                     }
@@ -1873,6 +1896,7 @@ impl Builder<'_> {
                         types.insert(symbol_id, ty);
                     }
                 }
+                self.record_pcall_discriminant(bindings, values, types);
             }
             Stmt::AssignMulti { targets, symbol_ids, values } => {
                 let ids = symbol_ids.as_ref().expect("symbol_ids should be resolved");
@@ -1894,6 +1918,7 @@ impl Builder<'_> {
                 for (id, value) in ids.iter().zip(lowered) {
                     env.insert(*id, value);
                     self.function.value_symbols.insert(value, *id);
+                    self.sever_discriminants(*id);
                 }
             }
             Stmt::If {
@@ -2002,6 +2027,151 @@ impl Builder<'_> {
         Ok(())
     }
 
+    /// After `assert(cond)` the remaining statements only execute when `cond`
+    /// held, so the then-branch narrowing applies to the ambient scope. Only
+    /// the pcall discriminant narrowing applies here (mirroring
+    /// `assert_narrowed_scope` in waluau-hir). Emits the unbox cast in the
+    /// continue block and rebinds the symbol, mirroring the branch-entry
+    /// materialization in `lower_if_branches`.
+    fn apply_assert_narrowing(
+        &mut self,
+        condition: &Expr,
+        env: &mut HashMap<SymbolId, ValueId>,
+        types: &mut HashMap<SymbolId, Type>,
+    ) {
+        let mut then_types_init = types.clone();
+        let mut else_types_init = types.clone();
+        self.narrowed_discriminant_type_scopes(
+            condition,
+            types,
+            &mut then_types_init,
+            &mut else_types_init,
+        );
+        for (symbol_id, narrowed_ty) in then_types_init {
+            let Some(original_ty) = types.get(&symbol_id).cloned() else {
+                continue;
+            };
+            if original_ty != Type::Unknown || narrowed_ty == Type::Unknown {
+                continue;
+            }
+            let Some(original_value) = env.get(&symbol_id).copied() else {
+                continue;
+            };
+            let narrowed_value = self.emit(Instruction::Cast {
+                value: original_value,
+                from: original_ty,
+                to: narrowed_ty.clone(),
+            });
+            env.insert(symbol_id, narrowed_value);
+            self.function
+                .value_symbols
+                .insert(narrowed_value, symbol_id);
+            types.insert(symbol_id, narrowed_ty);
+        }
+    }
+
+    /// Recognizes `local ok, v = pcall(f, ...)` and records the discriminant
+    /// link so branching on `ok` (or `assert(ok)`) narrows `v` to `f`'s return
+    /// type on the success path and to `string` (the error payload) otherwise.
+    /// Mirrors `pcall_discriminant_types` in waluau-hir.
+    fn record_pcall_discriminant(
+        &mut self,
+        bindings: &[waluau_ast::Binding],
+        values: &[Expr],
+        types: &HashMap<SymbolId, Type>,
+    ) {
+        if bindings.len() != 2 {
+            return;
+        }
+        let [Expr::Call { callee, args, .. }] = values else {
+            return;
+        };
+        if builtin_name(callee.as_ref()).as_deref() != Some(PCALL) {
+            return;
+        }
+        let (Some(ok_symbol), Some(payload_symbol)) =
+            (bindings[0].symbol_id, bindings[1].symbol_id)
+        else {
+            return;
+        };
+        // Captured-as-cell locals live behind a mutable array cell; rebinding
+        // them to an unboxed cast value would desynchronize the cell.
+        if self.cell_names.contains(&ok_symbol) || self.cell_names.contains(&payload_symbol) {
+            return;
+        }
+        let Some(first_arg) = args.first() else {
+            return;
+        };
+        let Ok(Type::Function { return_type, .. }) = self.infer_expr_type(first_arg, types, None)
+        else {
+            return;
+        };
+        self.discriminants.insert(
+            ok_symbol,
+            DiscriminantLink {
+                payload: payload_symbol,
+                when_true: *return_type,
+                when_false: Type::String,
+            },
+        );
+    }
+
+    /// Reassigning either half of a pcall discriminant pair invalidates the
+    /// correlation, so drop any link involving the symbol.
+    fn sever_discriminants(&mut self, symbol_id: SymbolId) {
+        self.discriminants
+            .retain(|ok_symbol, link| *ok_symbol != symbol_id && link.payload != symbol_id);
+    }
+
+    /// A condition of the form `ok` or `not ok`, returning the symbol and
+    /// whether the `then` branch corresponds to `ok == true`.
+    fn discriminant_test_subject(condition: &Expr) -> Option<(SymbolId, bool)> {
+        match condition {
+            Expr::Name(_, Some(symbol_id), _) => Some((*symbol_id, true)),
+            Expr::Unary {
+                op: UnaryOp::Not,
+                expr,
+                ..
+            } => match expr.as_ref() {
+                Expr::Name(_, Some(symbol_id), _) => Some((*symbol_id, false)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn narrowed_discriminant_type_scopes(
+        &self,
+        condition: &Expr,
+        types: &HashMap<SymbolId, Type>,
+        then_types: &mut HashMap<SymbolId, Type>,
+        else_types: &mut HashMap<SymbolId, Type>,
+    ) {
+        let Some((symbol_id, positive)) = Self::discriminant_test_subject(condition) else {
+            return;
+        };
+        let Some(link) = self.discriminants.get(&symbol_id) else {
+            return;
+        };
+        // Only narrow while the payload still has its original anyref-backed
+        // `unknown` type; anything else means the slot no longer holds the raw
+        // pcall result.
+        if types.get(&link.payload) != Some(&Type::Unknown) {
+            return;
+        }
+        let (then_ty, else_ty) = if positive {
+            (&link.when_true, &link.when_false)
+        } else {
+            (&link.when_false, &link.when_true)
+        };
+        if is_narrowable_pcall_payload(then_ty) {
+            then_types.insert(link.payload, then_ty.clone());
+        }
+        if is_narrowable_pcall_payload(else_ty) {
+            else_types.insert(link.payload, else_ty.clone());
+        }
+    }
+
     /// Compute narrowed type scopes for `if result is Variant then ... else ... end`.
     /// Returns `(then_types, else_types)` — clones of `types` with the narrowed type
     /// applied to the named variable in each branch.
@@ -2051,11 +2221,13 @@ impl Builder<'_> {
     }
 
     fn narrowed_type_scopes(
+        &self,
         condition: &Expr,
         types: &HashMap<SymbolId, Type>,
     ) -> (HashMap<SymbolId, Type>, HashMap<SymbolId, Type>) {
         let (mut then_types, mut else_types) =
             Self::narrowed_variant_type_scopes(condition, types);
+        self.narrowed_discriminant_type_scopes(condition, types, &mut then_types, &mut else_types);
         let Some((symbol_id, non_null_when_true)) = Self::nil_test_subject(condition) else {
             return (then_types, else_types);
         };
@@ -2078,7 +2250,7 @@ impl Builder<'_> {
         env: &mut HashMap<SymbolId, ValueId>,
         types: &mut HashMap<SymbolId, Type>,
     ) -> Result<(), Diagnostic> {
-        let (then_types_init, else_types_init) = Self::narrowed_type_scopes(condition, types);
+        let (then_types_init, else_types_init) = self.narrowed_type_scopes(condition, types);
         let condition_value = self.lower_expr(condition, env, types, Some(Type::Bool))?;
         self.lower_if_branches(
             condition_value,
@@ -2129,7 +2301,8 @@ impl Builder<'_> {
                 (types.get(&symbol_id), then_env.get(&symbol_id).copied())
             {
                 if original_ty != &narrowed_ty
-                    && original_ty.nullable_inner().as_ref() == Some(&narrowed_ty)
+                    && (original_ty.nullable_inner().as_ref() == Some(&narrowed_ty)
+                        || *original_ty == Type::Unknown)
                 {
                     let narrowed_value = self.emit(Instruction::Cast {
                         value: original_value,
@@ -2179,7 +2352,8 @@ impl Builder<'_> {
                 (types.get(&symbol_id), else_env.get(&symbol_id).copied())
             {
                 if original_ty != &narrowed_ty
-                    && original_ty.nullable_inner().as_ref() == Some(&narrowed_ty)
+                    && (original_ty.nullable_inner().as_ref() == Some(&narrowed_ty)
+                        || *original_ty == Type::Unknown)
                 {
                     let narrowed_value = self.emit(Instruction::Cast {
                         value: original_value,
@@ -2228,7 +2402,17 @@ impl Builder<'_> {
                         then_narrowed_values.get(&name).copied() == Some(tv) && original == Some(ev);
                     let else_is_only_narrowed =
                         else_narrowed_values.get(&name).copied() == Some(ev) && original == Some(tv);
-                    if then_is_only_narrowed || else_is_only_narrowed {
+                    // Both branches narrowed (pcall discriminant: success type in
+                    // one arm, error type in the other). With both exits live the
+                    // branch-local casts must not merge — the ambient type stays
+                    // the original storage type, so keep the original value. With
+                    // one exit dead the surviving cast flows through the phi below
+                    // to match the type propagated after the if.
+                    let both_narrowed = then_narrowed_values.get(&name).copied() == Some(tv)
+                        && else_narrowed_values.get(&name).copied() == Some(ev)
+                        && then_exit != DEAD_BLOCK
+                        && else_exit != DEAD_BLOCK;
+                    if then_is_only_narrowed || else_is_only_narrowed || both_narrowed {
                         continue;
                     }
                     let mut incoming = Vec::new();
@@ -4439,6 +4623,7 @@ impl Builder<'_> {
             file_path: function.file_path.clone(),
             tag_ids: self.tag_ids,
             vararg_value: None,
+            discriminants: HashMap::new(),
         };
         if let Some(_name) = &function.name {
             let symbol_id = function.symbol_id.expect("resolved symbol_id");
