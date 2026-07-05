@@ -6026,6 +6026,25 @@ impl Builder<'_> {
         self.lower_expr(arg, env, types, Some(Type::Unknown))
     }
 
+    /// Infer the element type of the array passed as a table builtin's first argument.
+    fn table_array_element_type(
+        &self,
+        name: &str,
+        args: &[Expr],
+        types: &HashMap<SymbolId, Type>,
+    ) -> Result<Type, Diagnostic> {
+        let arg = args
+            .first()
+            .ok_or_else(|| Diagnostic::new(format!("{name} expects an array argument")))?;
+        let list_ty = self.infer_expr_type(arg, types, None)?;
+        match list_ty {
+            Type::Array(element) => Ok(*element),
+            other => Err(Diagnostic::new(format!(
+                "{name} expects an array as its first argument, got {other}"
+            ))),
+        }
+    }
+
     fn lower_table_builtin_call(
         &mut self,
         name: &str,
@@ -6034,8 +6053,13 @@ impl Builder<'_> {
         types: &HashMap<SymbolId, Type>,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
-        if name != TABLE_CONCAT {
-            return None;
+        match name {
+            TABLE_CONCAT => {}
+            TABLE_GETN => return Some(self.lower_table_getn(args, env, types, expected)),
+            TABLE_INSERT => return Some(self.lower_table_insert(args, env, types, expected)),
+            TABLE_REMOVE => return Some(self.lower_table_remove(args, env, types, expected)),
+            TABLE_SORT => return Some(self.lower_table_sort(args, env, types, expected)),
+            _ => return None,
         }
         if args.is_empty() || args.len() > 2 {
             return Some(Err(Diagnostic::new(format!(
@@ -6165,6 +6189,471 @@ impl Builder<'_> {
 
         self.current_block = exit;
         Some(self.coerce_value(acc_phi, Type::String, expected))
+    }
+
+    fn emit_i32_const(&mut self, value: i32) -> ValueId {
+        self.emit(Instruction::Number {
+            ty: NumericType::I32,
+            literal: NumberLiteral {
+                raw: value.to_string(),
+            },
+        })
+    }
+
+    fn lower_table_getn(
+        &mut self,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        if args.len() != 1 {
+            return Err(Diagnostic::new(format!(
+                "{TABLE_GETN} expects 1 argument, got {}",
+                args.len()
+            )));
+        }
+        let element_ty = self.table_array_element_type(TABLE_GETN, args, types)?;
+        let array_ty = Type::Array(Box::new(element_ty));
+        let array = self.lower_expr(&args[0], env, types, Some(array_ty))?;
+        let len = self.emit(Instruction::ArrayLen { array });
+        self.coerce_value(len, Type::Numeric(NumericType::I32), expected)
+    }
+
+    fn lower_table_insert(
+        &mut self,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        if args.len() < 2 || args.len() > 3 {
+            return Err(Diagnostic::new(format!(
+                "{TABLE_INSERT} expects 2 or 3 arguments, got {}",
+                args.len()
+            )));
+        }
+        let element_ty = self.table_array_element_type(TABLE_INSERT, args, types)?;
+        let array_ty = Type::Array(Box::new(element_ty.clone()));
+        let array = self.lower_expr(&args[0], env, types, Some(array_ty))?;
+        let i32_ty = Type::Numeric(NumericType::I32);
+
+        if args.len() == 2 {
+            // table.insert(t, v): append at index #t.
+            let value = self.lower_expr(&args[1], env, types, Some(element_ty.clone()))?;
+            let len = self.emit(Instruction::ArrayLen { array });
+            self.emit(Instruction::ArraySet {
+                array,
+                index: len,
+                value,
+                element_ty,
+            });
+            let unit = self.emit(Instruction::Unit);
+            return self.coerce_value(unit, Type::Unit, expected);
+        }
+
+        // table.insert(t, pos, v): append v to grow by one, then shift
+        // t[pos..n-1] one slot to the right and write v at pos (0-based; pos
+        // outside 0..=#t traps via the array bounds checks).
+        let pos = self.lower_expr(&args[1], env, types, Some(i32_ty.clone()))?;
+        let value = self.lower_expr(&args[2], env, types, Some(element_ty.clone()))?;
+        let n = self.emit(Instruction::ArrayLen { array });
+        self.emit(Instruction::ArraySet {
+            array,
+            index: n,
+            value,
+            element_ty: element_ty.clone(),
+        });
+        let zero = self.emit_i32_const(0);
+        let one = self.emit_i32_const(1);
+
+        // for i = n down to pos + 1: t[i] = t[i-1]
+        let preheader = self.current_block;
+        let header = self.new_block();
+        let loop_body = self.new_block();
+        let exit = self.new_block();
+        self.set_terminator(preheader, Terminator::Jump(header));
+
+        self.current_block = header;
+        let index_phi = self.emit(Instruction::Phi(vec![(preheader, n)]));
+        // Loop-invariant, threaded through a phi with a `+ 0` self-edge so the
+        // local allocator treats it as live across the back edge (see
+        // lower_table_builtin_call's concat loop).
+        let pos_phi = self.emit(Instruction::Phi(vec![(preheader, pos)]));
+        let cond = self.emit(Instruction::Binary {
+            op: BinaryOp::Greater,
+            left: index_phi,
+            right: pos_phi,
+            operand_ty: i32_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        self.set_terminator(
+            header,
+            Terminator::Branch {
+                condition: cond,
+                then_block: loop_body,
+                else_block: exit,
+            },
+        );
+
+        self.current_block = loop_body;
+        let prev_index = self.emit(Instruction::Binary {
+            op: BinaryOp::Sub,
+            left: index_phi,
+            right: one,
+            operand_ty: i32_ty.clone(),
+            result_ty: i32_ty.clone(),
+        });
+        let shifted = self.emit(Instruction::ArrayGet {
+            array,
+            index: prev_index,
+            element_ty: element_ty.clone(),
+        });
+        self.emit(Instruction::ArraySet {
+            array,
+            index: index_phi,
+            value: shifted,
+            element_ty: element_ty.clone(),
+        });
+        let next_pos = self.emit(Instruction::Binary {
+            op: BinaryOp::Add,
+            left: pos_phi,
+            right: zero,
+            operand_ty: i32_ty.clone(),
+            result_ty: i32_ty,
+        });
+        let body_exit = self.current_block;
+        self.set_terminator(body_exit, Terminator::Jump(header));
+        add_phi_incoming(
+            &mut self.function,
+            header,
+            index_phi,
+            (body_exit, prev_index),
+        );
+        add_phi_incoming(&mut self.function, header, pos_phi, (body_exit, next_pos));
+
+        self.current_block = exit;
+        self.emit(Instruction::ArraySet {
+            array,
+            index: pos_phi,
+            value,
+            element_ty,
+        });
+        let unit = self.emit(Instruction::Unit);
+        self.coerce_value(unit, Type::Unit, expected)
+    }
+
+    fn lower_table_remove(
+        &mut self,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(Diagnostic::new(format!(
+                "{TABLE_REMOVE} expects 1 or 2 arguments, got {}",
+                args.len()
+            )));
+        }
+        let element_ty = self.table_array_element_type(TABLE_REMOVE, args, types)?;
+        let array_ty = Type::Array(Box::new(element_ty.clone()));
+        let array = self.lower_expr(&args[0], env, types, Some(array_ty))?;
+        let i32_ty = Type::Numeric(NumericType::I32);
+
+        let n = self.emit(Instruction::ArrayLen { array });
+        let zero = self.emit_i32_const(0);
+        let one = self.emit_i32_const(1);
+        let pos = if let Some(pos_arg) = args.get(1) {
+            self.lower_expr(pos_arg, env, types, Some(i32_ty.clone()))?
+        } else {
+            self.emit(Instruction::Binary {
+                op: BinaryOp::Sub,
+                left: n,
+                right: one,
+                operand_ty: i32_ty.clone(),
+                result_ty: i32_ty.clone(),
+            })
+        };
+        // Read the removed element up front (this also traps on out-of-range
+        // positions, including removal from an empty array).
+        let removed = self.emit(Instruction::ArrayGet {
+            array,
+            index: pos,
+            element_ty: element_ty.clone(),
+        });
+        let limit = self.emit(Instruction::Binary {
+            op: BinaryOp::Sub,
+            left: n,
+            right: one,
+            operand_ty: i32_ty.clone(),
+            result_ty: i32_ty.clone(),
+        });
+
+        // for i = pos while i < n - 1: t[i] = t[i+1]
+        let preheader = self.current_block;
+        let header = self.new_block();
+        let loop_body = self.new_block();
+        let exit = self.new_block();
+        self.set_terminator(preheader, Terminator::Jump(header));
+
+        self.current_block = header;
+        let index_phi = self.emit(Instruction::Phi(vec![(preheader, pos)]));
+        // Loop-invariant `n - 1`, threaded with a `+ 0` self-edge (see the
+        // concat loop for why).
+        let limit_phi = self.emit(Instruction::Phi(vec![(preheader, limit)]));
+        let cond = self.emit(Instruction::Binary {
+            op: BinaryOp::Less,
+            left: index_phi,
+            right: limit_phi,
+            operand_ty: i32_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        self.set_terminator(
+            header,
+            Terminator::Branch {
+                condition: cond,
+                then_block: loop_body,
+                else_block: exit,
+            },
+        );
+
+        self.current_block = loop_body;
+        let next_index = self.emit(Instruction::Binary {
+            op: BinaryOp::Add,
+            left: index_phi,
+            right: one,
+            operand_ty: i32_ty.clone(),
+            result_ty: i32_ty.clone(),
+        });
+        let shifted = self.emit(Instruction::ArrayGet {
+            array,
+            index: next_index,
+            element_ty: element_ty.clone(),
+        });
+        self.emit(Instruction::ArraySet {
+            array,
+            index: index_phi,
+            value: shifted,
+            element_ty: element_ty.clone(),
+        });
+        let next_limit = self.emit(Instruction::Binary {
+            op: BinaryOp::Add,
+            left: limit_phi,
+            right: zero,
+            operand_ty: i32_ty.clone(),
+            result_ty: i32_ty,
+        });
+        let body_exit = self.current_block;
+        self.set_terminator(body_exit, Terminator::Jump(header));
+        add_phi_incoming(
+            &mut self.function,
+            header,
+            index_phi,
+            (body_exit, next_index),
+        );
+        add_phi_incoming(&mut self.function, header, limit_phi, (body_exit, next_limit));
+
+        self.current_block = exit;
+        self.emit(Instruction::ArrayPop {
+            array,
+            element_ty: element_ty.clone(),
+        });
+        self.coerce_value(removed, element_ty, expected)
+    }
+
+    fn lower_table_sort(
+        &mut self,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(Diagnostic::new(format!(
+                "{TABLE_SORT} expects 1 or 2 arguments, got {}",
+                args.len()
+            )));
+        }
+        let element_ty = self.table_array_element_type(TABLE_SORT, args, types)?;
+        let array_ty = Type::Array(Box::new(element_ty.clone()));
+        let array = self.lower_expr(&args[0], env, types, Some(array_ty))?;
+        let i32_ty = Type::Numeric(NumericType::I32);
+
+        let comparator = if let Some(comparator_arg) = args.get(1) {
+            let comparator_ty = Type::Function {
+                params: vec![element_ty.clone(), element_ty.clone()],
+                return_type: Box::new(Type::Bool),
+            };
+            Some(self.lower_expr(comparator_arg, env, types, Some(comparator_ty))?)
+        } else {
+            if !element_ty.is_numeric() && element_ty != Type::String {
+                return Err(Diagnostic::new(format!(
+                    "{TABLE_SORT} without a comparator requires numeric or string elements, got {element_ty}"
+                )));
+            }
+            None
+        };
+
+        let n = self.emit(Instruction::ArrayLen { array });
+        let zero = self.emit_i32_const(0);
+        let one = self.emit_i32_const(1);
+
+        // Insertion sort:
+        //   for i = 1 while i < n:
+        //     key = t[i]; j = i
+        //     while j > 0 and lt(key, t[j-1]): t[j] = t[j-1]; j -= 1
+        //     t[j] = key; i += 1
+        let outer_pre = self.current_block;
+        let outer_header = self.new_block();
+        let outer_body = self.new_block();
+        let inner_header = self.new_block();
+        let inner_check = self.new_block();
+        let inner_body = self.new_block();
+        let inner_exit = self.new_block();
+        let done = self.new_block();
+        self.set_terminator(outer_pre, Terminator::Jump(outer_header));
+
+        self.current_block = outer_header;
+        let i_phi = self.emit(Instruction::Phi(vec![(outer_pre, one)]));
+        // Loop-invariant length, threaded with a `+ 0` self-edge (see the
+        // concat loop for why).
+        let n_phi = self.emit(Instruction::Phi(vec![(outer_pre, n)]));
+        let outer_cond = self.emit(Instruction::Binary {
+            op: BinaryOp::Less,
+            left: i_phi,
+            right: n_phi,
+            operand_ty: i32_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        self.set_terminator(
+            outer_header,
+            Terminator::Branch {
+                condition: outer_cond,
+                then_block: outer_body,
+                else_block: done,
+            },
+        );
+
+        self.current_block = outer_body;
+        let key = self.emit(Instruction::ArrayGet {
+            array,
+            index: i_phi,
+            element_ty: element_ty.clone(),
+        });
+        self.set_terminator(outer_body, Terminator::Jump(inner_header));
+
+        self.current_block = inner_header;
+        let j_phi = self.emit(Instruction::Phi(vec![(outer_body, i_phi)]));
+        let inner_cond = self.emit(Instruction::Binary {
+            op: BinaryOp::Greater,
+            left: j_phi,
+            right: zero,
+            operand_ty: i32_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        self.set_terminator(
+            inner_header,
+            Terminator::Branch {
+                condition: inner_cond,
+                then_block: inner_check,
+                else_block: inner_exit,
+            },
+        );
+
+        self.current_block = inner_check;
+        let prev_index = self.emit(Instruction::Binary {
+            op: BinaryOp::Sub,
+            left: j_phi,
+            right: one,
+            operand_ty: i32_ty.clone(),
+            result_ty: i32_ty.clone(),
+        });
+        let prev = self.emit(Instruction::ArrayGet {
+            array,
+            index: prev_index,
+            element_ty: element_ty.clone(),
+        });
+        let should_shift = if let Some(comparator) = comparator {
+            self.emit(Instruction::CallValue {
+                callee: comparator,
+                args: vec![key, prev],
+                params: vec![element_ty.clone(), element_ty.clone()],
+                return_type: Type::Bool,
+            })
+        } else {
+            self.emit(Instruction::Binary {
+                op: BinaryOp::Less,
+                left: key,
+                right: prev,
+                operand_ty: element_ty.clone(),
+                result_ty: Type::Bool,
+            })
+        };
+        self.set_terminator(
+            inner_check,
+            Terminator::Branch {
+                condition: should_shift,
+                then_block: inner_body,
+                else_block: inner_exit,
+            },
+        );
+
+        self.current_block = inner_body;
+        self.emit(Instruction::ArraySet {
+            array,
+            index: j_phi,
+            value: prev,
+            element_ty: element_ty.clone(),
+        });
+        let inner_body_exit = self.current_block;
+        self.set_terminator(inner_body_exit, Terminator::Jump(inner_header));
+        add_phi_incoming(
+            &mut self.function,
+            inner_header,
+            j_phi,
+            (inner_body_exit, prev_index),
+        );
+
+        self.current_block = inner_exit;
+        self.emit(Instruction::ArraySet {
+            array,
+            index: j_phi,
+            value: key,
+            element_ty,
+        });
+        let next_i = self.emit(Instruction::Binary {
+            op: BinaryOp::Add,
+            left: i_phi,
+            right: one,
+            operand_ty: i32_ty.clone(),
+            result_ty: i32_ty.clone(),
+        });
+        let next_n = self.emit(Instruction::Binary {
+            op: BinaryOp::Add,
+            left: n_phi,
+            right: zero,
+            operand_ty: i32_ty.clone(),
+            result_ty: i32_ty,
+        });
+        let inner_exit_block = self.current_block;
+        self.set_terminator(inner_exit_block, Terminator::Jump(outer_header));
+        add_phi_incoming(
+            &mut self.function,
+            outer_header,
+            i_phi,
+            (inner_exit_block, next_i),
+        );
+        add_phi_incoming(
+            &mut self.function,
+            outer_header,
+            n_phi,
+            (inner_exit_block, next_n),
+        );
+
+        self.current_block = done;
+        let unit = self.emit(Instruction::Unit);
+        self.coerce_value(unit, Type::Unit, expected)
     }
 
     fn lower_print_builtin_call(
@@ -6393,12 +6882,25 @@ impl Builder<'_> {
         call: &Expr,
         types: &HashMap<SymbolId, Type>,
     ) -> Option<Result<Type, Diagnostic>> {
-        if name != TABLE_CONCAT {
+        if !matches!(
+            name,
+            TABLE_CONCAT | TABLE_INSERT | TABLE_REMOVE | TABLE_SORT | TABLE_GETN
+        ) {
             return None;
         }
         let Expr::Call { args, .. } = call else {
             return None;
         };
+        match name {
+            TABLE_GETN => return Some(Ok(Type::Numeric(NumericType::I32))),
+            TABLE_INSERT | TABLE_SORT => return Some(Ok(Type::Unit)),
+            TABLE_REMOVE => {
+                return Some(
+                    self.table_array_element_type(TABLE_REMOVE, args, types),
+                );
+            }
+            _ => {}
+        }
         if args.is_empty() || args.len() > 2 {
             return Some(Err(Diagnostic::new(format!(
                 "{TABLE_CONCAT} expects 1 or 2 arguments, got {}",

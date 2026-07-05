@@ -333,6 +333,7 @@ pub(crate) fn infer_value_types(
                 IrInstruction::ArrayGet { element_ty, .. } => element_ty.clone(),
                 IrInstruction::ArraySet { .. } => Type::Numeric(NumericType::I32),
                 IrInstruction::ArrayLen { .. } => Type::Numeric(NumericType::I32),
+                IrInstruction::ArrayPop { .. } => Type::Unit,
                 IrInstruction::ArraySlice { element_ty, .. } => {
                     Type::Array(Box::new(element_ty.clone()))
                 }
@@ -741,6 +742,7 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
             ..
         } => vec![*array, *index, *value],
         IrInstruction::ArrayLen { array } => vec![*array],
+        IrInstruction::ArrayPop { array, .. } => vec![*array],
         IrInstruction::ArraySlice { array, start, .. } => vec![*array, *start],
         IrInstruction::BytesGet { bytes, index } => vec![*bytes, *index],
         IrInstruction::BytesLen { bytes } => vec![*bytes],
@@ -773,6 +775,7 @@ fn instruction_use_requires_local(instruction: &IrInstruction) -> bool {
         } | IrInstruction::ArrayGet { .. }
             | IrInstruction::ArraySet { .. }
             | IrInstruction::ArraySlice { .. }
+            | IrInstruction::ArrayPop { .. }
             | IrInstruction::StructGet { .. }
             | IrInstruction::StructSet { .. }
             | IrInstruction::CoroutineResume { .. }
@@ -814,6 +817,7 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         | IrInstruction::ArraySet { .. }
         | IrInstruction::ArraySlice { .. } => false,
         IrInstruction::ArrayLen { array } => *array == value,
+        IrInstruction::ArrayPop { .. } => false,
         IrInstruction::BytesGet { .. } => false,
         IrInstruction::BytesLen { bytes } => *bytes == value,
         IrInstruction::StructNew { fields, .. } => fields.first().copied() == Some(value),

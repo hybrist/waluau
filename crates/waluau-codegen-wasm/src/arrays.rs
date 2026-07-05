@@ -234,7 +234,8 @@ fn collect_array_types_from_instruction(
         }
         IrInstruction::ArrayGet { element_ty, .. }
         | IrInstruction::ArraySet { element_ty, .. }
-        | IrInstruction::ArraySlice { element_ty, .. } => {
+        | IrInstruction::ArraySlice { element_ty, .. }
+        | IrInstruction::ArrayPop { element_ty, .. } => {
             insert_array_type(&Type::Array(Box::new(element_ty.clone())), seen, out);
         }
         IrInstruction::ArrayLen { .. }
@@ -256,7 +257,8 @@ fn collect_record_types_from_instruction(
         IrInstruction::ArrayNew { element_ty, .. }
         | IrInstruction::ArrayGet { element_ty, .. }
         | IrInstruction::ArraySet { element_ty, .. }
-        | IrInstruction::ArraySlice { element_ty, .. } => insert_record_type(element_ty, seen, out),
+        | IrInstruction::ArraySlice { element_ty, .. }
+        | IrInstruction::ArrayPop { element_ty, .. } => insert_record_type(element_ty, seen, out),
         IrInstruction::CallValue {
             params,
             return_type,

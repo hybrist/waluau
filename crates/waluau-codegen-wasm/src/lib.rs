@@ -3050,6 +3050,36 @@ fn emit_block_instructions(
                 });
                 emit_value_store(out, local_plan, *value)?;
             }
+            IrInstruction::ArrayPop { array, element_ty } => {
+                let array_local = local(local_plan, *array)?;
+                let growable_struct_index = ctx.array_registry.growable_array_index(element_ty)?;
+
+                // Trap on empty arrays, then decrement the logical length. The
+                // storage slot is left as-is (capacity is unchanged, and the
+                // stale element is overwritten by the next append).
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: growable_struct_index,
+                    field_index: GROWABLE_LEN_FIELD,
+                });
+                out.instruction(&Instruction::I32Eqz);
+                out.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+                out.instruction(&Instruction::Unreachable);
+                out.instruction(&Instruction::End);
+
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::LocalGet(array_local));
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: growable_struct_index,
+                    field_index: GROWABLE_LEN_FIELD,
+                });
+                out.instruction(&Instruction::I32Const(1));
+                out.instruction(&Instruction::I32Sub);
+                out.instruction(&Instruction::StructSet {
+                    struct_type_index: growable_struct_index,
+                    field_index: GROWABLE_LEN_FIELD,
+                });
+            }
             IrInstruction::ArraySlice {
                 array,
                 start,

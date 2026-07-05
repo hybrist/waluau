@@ -1,0 +1,99 @@
+-- table library on growable arrays: insert (append and positional), remove
+-- (last and positional), sort (default and comparator), and getn. Positions
+-- are 0-based like all Waluau array indexing.
+
+-- table.insert(t, v) appends.
+local t: {i32} = {3, 1}
+table.insert(t, 2)
+assert(#t == 3)
+assert(t[2] == 2)
+assert(table.getn(t) == 3)
+
+-- table.insert(t, pos, v) shifts the tail right.
+table.insert(t, 0, 99)
+assert(#t == 4)
+assert(t[0] == 99)
+assert(t[1] == 3)
+assert(t[2] == 1)
+assert(t[3] == 2)
+table.insert(t, 4, 55)
+assert(#t == 5)
+assert(t[4] == 55)
+
+-- table.remove(t, pos) returns the removed element and shifts left.
+local removed: i32 = table.remove(t, 0)
+assert(removed == 99)
+assert(#t == 4)
+assert(t[0] == 3)
+
+-- table.remove(t) removes the last element.
+local last: i32 = table.remove(t)
+assert(last == 55)
+assert(#t == 3)
+
+-- Default sort is ascending.
+local u: {i32} = {5, 2, 9, 1, 7, 3}
+table.sort(u)
+assert(u[0] == 1)
+assert(u[1] == 2)
+assert(u[2] == 3)
+assert(u[3] == 5)
+assert(u[4] == 7)
+assert(u[5] == 9)
+
+-- Comparator sort (descending).
+table.sort(u, function(a: i32, b: i32): bool
+    return a > b
+end)
+assert(u[0] == 9)
+assert(u[1] == 7)
+assert(u[2] == 5)
+assert(u[3] == 3)
+assert(u[4] == 2)
+assert(u[5] == 1)
+
+-- Sorting f64 and string arrays.
+local f: {f64} = {2.5, 0.5, 1.5}
+table.sort(f)
+assert(f[0] == 0.5)
+assert(f[1] == 1.5)
+assert(f[2] == 2.5)
+
+local s: {string} = {"pear", "apple", "orange"}
+table.sort(s)
+assert(s[0] == "apple")
+assert(s[1] == "orange")
+assert(s[2] == "pear")
+
+-- Sorting an empty or single-element array is a no-op.
+local empty: {i32} = {}
+table.sort(empty)
+assert(#empty == 0)
+local single: {i32} = {42}
+table.sort(single)
+assert(single[0] == 42)
+
+-- Sort remains correct after growth via insert.
+local grown: {i32} = {}
+local i: i32 = 10
+while i > 0 do
+    table.insert(grown, i)
+    i -= 1
+end
+assert(#grown == 10)
+table.sort(grown)
+assert(grown[0] == 1)
+assert(grown[9] == 10)
+
+-- remove/insert round-trip keeps the array usable inside functions.
+function rotate(xs: {i32})
+    local head: i32 = table.remove(xs, 0)
+    table.insert(xs, head)
+end
+
+local ring: {i32} = {1, 2, 3}
+rotate(ring)
+assert(ring[0] == 2)
+assert(ring[1] == 3)
+assert(ring[2] == 1)
+assert(#ring == 3)

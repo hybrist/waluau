@@ -173,6 +173,15 @@ pub enum Instruction {
     ArrayLen {
         array: ValueId,
     },
+    /// Drop the last element of a growable array by decrementing its logical
+    /// length (traps when the array is empty). Unit-valued; callers that need
+    /// the removed element read it with `ArrayGet` first. The storage slot is
+    /// not cleared, so a reference-typed element stays reachable until the
+    /// slot is overwritten by a later append.
+    ArrayPop {
+        array: ValueId,
+        element_ty: Type,
+    },
     ArraySlice {
         array: ValueId,
         start: ValueId,
