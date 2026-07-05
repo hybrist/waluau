@@ -31,7 +31,7 @@ const conformanceIncludeModules = import.meta.glob('../../../../{builtins,extern
   import: 'default'
 });
 
-export { fixtureModules, moduleFixtures, conformanceModules };
+export { fixtureModules, moduleFixtures, snakeFixtures, conformanceModules };
 
 export function filesForConformancePreset(filename, source) {
   const files = {

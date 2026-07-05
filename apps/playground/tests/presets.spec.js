@@ -167,4 +167,27 @@ test.describe('preset selector', () => {
       timeout: COMPILER_READY_TIMEOUT,
     });
   });
+
+  test('file search finds the snake fixture files and loads the preset', async ({ page }) => {
+    await page.getByRole('button', { name: 'Search (Cmd+P)' }).click();
+    await expect(page.locator('.search-modal-container')).toBeVisible();
+
+    await page.locator('.search-input-field').fill('snake');
+    const results = page.locator('.search-item');
+    await expect(results.locator('.search-item-name')).toHaveText([
+      'snake/game.walu',
+      'snake/main.walu',
+      'snake/render.walu',
+      'snake/rng.walu',
+      'snake/sim.walu',
+    ]);
+
+    await results.filter({ hasText: 'snake/main.walu' }).click();
+    await expect(page.locator('.search-modal-container')).not.toBeVisible();
+    await expect(page.locator('.file-item.active').getByText('main.walu', { exact: true })).toBeVisible();
+    await expect(page.locator('.code-textarea')).toContainText('function install_snake');
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+  });
 });
