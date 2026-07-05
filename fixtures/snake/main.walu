@@ -1,6 +1,6 @@
 -- Snake, rendered into a <canvas> by Waluau. Entry point: builds the DOM
--- shell, wires input, and drives the fixed-timestep game loop off
--- requestAnimationFrame.
+-- shell, wires input, and drives the game loop off CSS animationiteration
+-- events (see the TODO(waluau-0nge) below for why not requestAnimationFrame).
 
 function make_button(document: Document, id: string, label: string): Element
     local button: Element = document:create_element("button")
@@ -62,9 +62,9 @@ function install_snake(): unit
         assert(context ~= nil)
         local ctx: CanvasRenderingContext2D = context::CanvasRenderingContext2D
 
-        -- The rAF timestamp is the only clock the DOM surface exposes, so it
-        -- doubles as the RNG seed. TODO(waluau-6i00): replace with
-        -- math.randomseed/math.random once math builtins are externalized.
+        -- TODO(waluau-6i00): the fixed seed and the Event.timeStamp mixing
+        -- below stand in for math.randomseed/math.random until math builtins
+        -- are externalized.
         local state = game.new_state(cols, rows, 20260705)
 
         -- Input. On-screen buttons stand in for arrow keys.
@@ -113,34 +113,39 @@ function install_snake(): unit
         end)
         controls:append_child(restart_button)
 
-        -- Fixed-timestep loop: rAF drives rendering, an accumulator advances
-        -- the simulation every tick_ms. (No setTimeout/setInterval in the
-        -- extern surface, but rAF plus an accumulator is the better game loop
-        -- anyway.)
-        local tick_ms: f64 = 140.0
-        local last_time: f64 = -1.0
-        local accumulator: f64 = 0.0
+        -- Game loop.
+        --
+        -- TODO(waluau-0nge): the natural loop is requestAnimationFrame (or a
+        -- setInterval, which has no extern at all), but the codegen only
+        -- emits host-invocable callback trampolines for (Event) -> unit and
+        -- () -> extern signatures, so the rAF (f64) -> unit callback can
+        -- never be called back by the browser. Workaround: an invisible
+        -- element with an infinite CSS animation whose iteration duration is
+        -- the tick length; its "animationiteration" event flows through the
+        -- supported (Event) -> unit trampoline, and Event.timeStamp doubles
+        -- as the clock for seeding the RNG.
+        local tick_style: Element = document:create_element("style")
+        tick_style.text_content = "@keyframes snake-tick { from { opacity: 0.99; } to { opacity: 1.0; } }"
+        root:append_child(tick_style)
 
-        local frame: (f64) -> unit = function self(now: f64): unit
-            if last_time < 0.0 then
-                -- First frame: fold the timestamp into the RNG so runs differ.
-                state.rng.seed = (state.rng.seed + math.floor(now)::i32) % 2147483647
-                last_time = now
+        local clock: Element = document:create_element("div")
+        clock.id = "snake-clock"
+        clock:set_attribute("style", "position: absolute; width: 0px; height: 0px; animation: snake-tick 0.14s linear infinite;")
+        root:append_child(clock)
+
+        local started: bool = false
+        clock:add_event_listener("animationiteration", function(event: Event): unit
+            if not started then
+                started = true
+                -- First tick: fold the timestamp into the RNG so runs differ.
+                state.rng.seed = (state.rng.seed + math.floor(event.timeStamp)::i32) % 2147483647
             end
-            accumulator += now - last_time
-            last_time = now
-            -- Clamp huge deltas (background tab) so we do not fast-forward.
-            if accumulator > 1000.0 then
-                accumulator = 1000.0
-            end
-            while accumulator >= tick_ms do
-                game.step(state)
-                accumulator -= tick_ms
-            end
+            game.step(state)
             render.draw(ctx, state)
-            local frame_id: u32 = window:requestAnimationFrame(self)
-        end
-        local first_frame_id: u32 = window:requestAnimationFrame(frame)
+        end)
+
+        -- Paint the initial board before the first tick fires.
+        render.draw(ctx, state)
     else
         assert(false)
     end
