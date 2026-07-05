@@ -4052,9 +4052,12 @@ impl Builder<'_> {
                         self.lower_resolved_host_call(name, &[expr.as_ref()], env, types)?;
                     return self.coerce_value(value, return_type, expected);
                 }
-                let actual = self.infer_expr_type(expr, types, expected.clone())?;
                 match op {
                     UnaryOp::Neg => {
+                        // Only '-' propagates the result's expected type into
+                        // its operand (so numeric literals adopt it); 'not'
+                        // and '#' operands have unrelated types.
+                        let actual = self.infer_expr_type(expr, types, expected.clone())?;
                         let operand_ty = match actual {
                             Type::Numeric(ty) => ty,
                             Type::Bool => {

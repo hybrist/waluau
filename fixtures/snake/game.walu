@@ -8,13 +8,9 @@
 -- unify structurally.
 
 function occupied(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }, x: i32, y: i32): bool
-    -- TODO(waluau-lhia): `#state.snake` does not typecheck ("cannot
-    -- implicitly convert array to i32"); the length operator only accepts
-    -- array locals, so the field is aliased into one first.
-    local snake = state.snake
     local i: i32 = 0
-    while i < #snake do
-        local seg = snake[i]
+    while i < #state.snake do
+        local seg = state.snake[i]
         if seg.x == x and seg.y == y then
             return true
         end
@@ -65,11 +61,8 @@ function reset(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: 
     -- TODO(waluau-xyx8): `state.snake = {}` would be the obvious reset, but an
     -- empty array literal does not adopt the annotated element type of the
     -- field it is assigned to. Drain the existing array in place instead.
-    -- TODO(waluau-lhia): aliased local because `#state.snake` does not
-    -- typecheck on the record field directly.
-    local snake = state.snake
-    while #snake > 0 do
-        local discarded = table.remove(snake)
+    while #state.snake > 0 do
+        local discarded = table.remove(state.snake)
     end
     local cx: i32 = state.cols // 2
     local cy: i32 = state.rows // 2

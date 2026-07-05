@@ -64,3 +64,23 @@ alias_ref.y = alias_ref.y + 5
 alias_vec.x = alias_vec.x + 9
 assert(alias_ref.x == 10)
 assert(alias_vec.y == 7)
+
+-- '#' applies directly to arrays reached through record fields, including in
+-- contexts that expect a number (waluau-lhia regression).
+function tail_value(state: { items: {i32}, score: i32 }): i32
+    return state.items[#state.items - 1] + state.score
+end
+
+local state: { items: {i32}, score: i32 } = { items = {10, 20, 30}, score = 7 }
+assert(#state.items == 3)
+local doubled = #state.items * 2
+assert(doubled == 6)
+assert(tail_value(state) == 37)
+table.insert(state.items, 40)
+assert(#state.items == 4)
+table.remove(state.items)
+table.remove(state.items)
+assert(#state.items + 1 == 3)
+
+local nested: { inner: { items: {string} } } = { inner = { items = {"a", "b"} } }
+assert(#nested.inner.items == 2)
