@@ -8,9 +8,13 @@ export const WALUAU_HOST_IMPORT_COUNT = 24;
 const PROMISE_RESUME_TRAMPOLINE_EXPORT = '__waluau_resume_promise_await';
 const PROMISE_RESET_ACTIVE_EXPORT = '__waluau_reset_active_coroutine';
 const CALLBACK_UNIT_EXTERN_TRAMPOLINE_EXPORT = '__waluau_call_callback_unit_extern';
+const CALLBACK_F64_UNIT_TRAMPOLINE_EXPORT = '__waluau_call_callback_f64_unit';
 
 let printCaptureCallback = null;
 const domEventListeners = new WeakMap();
+// Window -> Set of pending requestAnimationFrame handles scheduled by wasm
+// callbacks. Cancelled on rerun so a superseded instance's frame loop stops.
+const pendingAnimationFrames = new WeakMap();
 
 // Luau formats numbers with `%.14g`: `nan`/`inf`/`-inf` for specials, `-0`
 // preserved, and at most 14 significant digits. JS `String()` disagrees on all
@@ -355,6 +359,16 @@ export function cleanupDomEventListeners(node) {
   domEventListeners.delete(node);
 }
 
+export function cancelPendingAnimationFrames(documentOrWindow) {
+  const view = documentOrWindow?.defaultView ?? documentOrWindow;
+  const handles = view ? pendingAnimationFrames.get(view) : undefined;
+  if (!handles) return;
+  for (const handle of handles) {
+    view.cancelAnimationFrame(handle);
+  }
+  handles.clear();
+}
+
 export function decodeBytesConstantsFromWasm(wasmModule) {
   const section = WebAssembly.Module.customSections(wasmModule, 'waluau.bytc')[0];
   if (!section) return [];
@@ -514,6 +528,27 @@ function createPlaygroundDomHost(wasmModule, domOutputRoot, getWasmExports = () 
     rememberDomEventListener(target, type, listener);
   };
 
+  const requestAnimationFrame = (target, callback) => {
+    let handles = pendingAnimationFrames.get(target);
+    if (!handles) {
+      handles = new Set();
+      pendingAnimationFrames.set(target, handles);
+    }
+    const handle = target.requestAnimationFrame((timestamp) => {
+      handles.delete(handle);
+      const exports = getWasmExports();
+      const trampoline = exports?.[CALLBACK_F64_UNIT_TRAMPOLINE_EXPORT];
+      if (typeof trampoline !== 'function') {
+        throw new Error(
+          `Missing ${CALLBACK_F64_UNIT_TRAMPOLINE_EXPORT} export for animation frame callback`
+        );
+      }
+      trampoline(callback, timestamp);
+    });
+    handles.add(handle);
+    return handle;
+  };
+
   const fetchFromDomContext = (input) => {
     // Use globalThis.fetch rather than the iframe window's fetch.  The fetch
     // host import is called from the host-page JS context, not from inside the
@@ -546,6 +581,7 @@ function createPlaygroundDomHost(wasmModule, domOutputRoot, getWasmExports = () 
     dom_window: outputWindow,
     fetch: fetchFromDomContext,
     'EventTarget.addEventListener': (target, type, callback) => registerEventListener(target, String(type), callback),
+    'Window.requestAnimationFrame': requestAnimationFrame,
     'Node.removeChild': removeChild,
     'Node.replaceChild': replaceChild,
     'Window.get/localStorage': () => playgroundStorage(),

@@ -42,6 +42,7 @@ use wasm_types::{
 };
 
 const CALLBACK_EVENT_UNIT_TRAMPOLINE_EXPORT: &str = "__waluau_call_callback_event_unit";
+const CALLBACK_F64_UNIT_TRAMPOLINE_EXPORT: &str = "__waluau_call_callback_f64_unit";
 const CALLBACK_UNIT_EXTERN_TRAMPOLINE_EXPORT: &str = "__waluau_call_callback_unit_extern";
 const PROMISE_RESUME_TRAMPOLINE_EXPORT: &str = "__waluau_resume_promise_await";
 const PROMISE_RESET_ACTIVE_EXPORT: &str = "__waluau_reset_active_coroutine";
@@ -92,6 +93,19 @@ fn is_event_unit_callback_type(ty: &Type) -> bool {
     matches!(return_type.as_ref(), Type::Unit) && matches!(params.as_slice(), [Type::Extern])
 }
 
+fn is_f64_unit_callback_type(ty: &Type) -> bool {
+    let Type::Function {
+        params,
+        return_type,
+    } = ty
+    else {
+        return false;
+    };
+
+    matches!(return_type.as_ref(), Type::Unit)
+        && matches!(params.as_slice(), [Type::Numeric(NumericType::F64)])
+}
+
 fn is_unit_extern_callback_type(ty: &Type) -> bool {
     let Type::Function {
         params,
@@ -117,6 +131,13 @@ fn needs_callback_event_unit_trampoline(module: &Module) -> bool {
         .declared_imports
         .iter()
         .any(|declared| declared.params.iter().any(is_event_unit_callback_type))
+}
+
+fn needs_callback_f64_unit_trampoline(module: &Module) -> bool {
+    module
+        .declared_imports
+        .iter()
+        .any(|declared| declared.params.iter().any(is_f64_unit_callback_type))
 }
 
 fn needs_callback_unit_extern_trampoline(module: &Module) -> bool {
@@ -240,6 +261,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     // Closure GC types ($anyref_array, $func_val, $boxed_f64, $boxed_bool) are only
     // needed when the program uses closures, function-typed values, or boxed unknowns.
     let callback_event_unit_trampoline = needs_callback_event_unit_trampoline(module);
+    let callback_f64_unit_trampoline = needs_callback_f64_unit_trampoline(module);
     let callback_unit_extern_trampoline = needs_callback_unit_extern_trampoline(module);
     let promise_resume_trampoline = needs_promise_resume_trampoline(module);
     let lua_error_tag = needs_lua_error_tag(module);
@@ -289,6 +311,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         module,
         start_thunk.is_some(),
         callback_event_unit_trampoline,
+        callback_f64_unit_trampoline,
         callback_unit_extern_trampoline,
         promise_resume_trampoline,
     );
@@ -521,6 +544,21 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
                 wasm_type(&callback_type, &array_registry)?,
                 externref_val_type(),
             ],
+            Vec::<ValType>::new(),
+        );
+        let type_idx = type_idx_counter;
+        type_idx_counter += 1;
+        Some(type_idx)
+    } else {
+        None
+    };
+    let callback_f64_unit_trampoline_type_idx = if callback_f64_unit_trampoline {
+        let callback_type = Type::Function {
+            params: vec![Type::Numeric(NumericType::F64)],
+            return_type: Box::new(Type::Unit),
+        };
+        types.ty().function(
+            vec![wasm_type(&callback_type, &array_registry)?, ValType::F64],
             Vec::<ValType>::new(),
         );
         let type_idx = type_idx_counter;
@@ -973,6 +1011,20 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         );
         helper_func_idx_counter += 1;
         codes.function(&emit_callback_event_unit_trampoline(
+            &signature_registry,
+            &array_registry,
+            user_type_base,
+        )?);
+    }
+    if let Some(type_idx) = callback_f64_unit_trampoline_type_idx {
+        functions.function(type_idx);
+        exports.export(
+            CALLBACK_F64_UNIT_TRAMPOLINE_EXPORT,
+            ExportKind::Func,
+            import_func_count + helper_func_idx_counter,
+        );
+        helper_func_idx_counter += 1;
+        codes.function(&emit_callback_f64_unit_trampoline(
             &signature_registry,
             &array_registry,
             user_type_base,
@@ -1432,6 +1484,44 @@ fn emit_callback_event_unit_trampoline(
 
     let mut out = Function::new(Vec::new());
     // Push wrapper env, logical event argument, and wrapper table slot.
+    out.instruction(&Instruction::LocalGet(0));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: array_registry.func_val_struct_type,
+        field_index: 1,
+    });
+    out.instruction(&Instruction::LocalGet(1));
+    out.instruction(&Instruction::LocalGet(0));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: array_registry.func_val_struct_type,
+        field_index: 2,
+    });
+    out.instruction(&Instruction::CallIndirect {
+        type_index: wrapper_type_idx,
+        table_index: 0,
+    });
+    out.instruction(&Instruction::End);
+    Ok(out)
+}
+
+/// Exported browser-host ABI helper for timestamped host callbacks such as
+/// `Window.requestAnimationFrame`.
+///
+/// Signature: `(callback: (f64) -> unit, timestamp: f64) -> unit`.
+fn emit_callback_f64_unit_trampoline(
+    signature_registry: &SignatureRegistry,
+    array_registry: &ArrayTypeRegistry,
+    user_type_base: u32,
+) -> Result<Function, Diagnostic> {
+    let wrapper_type_idx = signature_registry
+        .get_wrapper_type_index(
+            user_type_base,
+            &[Type::Numeric(NumericType::F64)],
+            &Type::Unit,
+        )
+        .ok_or_else(|| Diagnostic::new("missing (f64) -> unit callback wrapper type"))?;
+
+    let mut out = Function::new(Vec::new());
+    // Push wrapper env, logical timestamp argument, and wrapper table slot.
     out.instruction(&Instruction::LocalGet(0));
     out.instruction(&Instruction::StructGet {
         struct_type_index: array_registry.func_val_struct_type,
