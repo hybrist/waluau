@@ -8,6 +8,7 @@ import {
   classifyWasmInstantiationError,
   usesDomImports,
   cleanupDomEventListeners,
+  cancelPendingAnimationFrames,
 } from '../utils/wasm.js';
 
 export default function useWaluauCompiler({ files, entryFile }) {
@@ -168,6 +169,7 @@ export default function useWaluauCompiler({ files, entryFile }) {
       try {
         if (moduleUsesDomOutput) {
           cleanupDomEventListeners(domOutputRootRef.current.body);
+          cancelPendingAnimationFrames(domOutputRootRef.current);
           domOutputRootRef.current.body.replaceChildren();
         }
         let instanceExports = null;

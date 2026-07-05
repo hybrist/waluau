@@ -286,6 +286,23 @@ test.describe('DOM Output in Run tab', () => {
     // The requestAnimationFrame loop draws the arena, snake, food, and HUD.
     await expect.poll(paintedPixels).toBeGreaterThan(0);
 
+    // The loop also advances the game: the snake moves one cell per tick, so
+    // the set of painted pixels changes between polls (a static initial paint
+    // would keep the same signature forever).
+    const paintedSignature = () =>
+      canvas.evaluate((node) => {
+        const data = node
+          .getContext('2d')
+          .getImageData(0, 0, node.width, node.height).data;
+        let hash = 0;
+        for (let i = 3; i < data.length; i += 4) {
+          if (data[i] !== 0) hash = (hash * 31 + i) >>> 0;
+        }
+        return hash;
+      });
+    const initialSignature = await paintedSignature();
+    await expect.poll(paintedSignature).not.toBe(initialSignature);
+
     // The on-screen d-pad and restart button drive the game without faulting
     // the wasm instance; the loop keeps painting afterwards.
     await outputFrame.locator('#snake-down').click();

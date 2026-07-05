@@ -3,8 +3,8 @@
 A small 2D snake game written in Waluau, rendered through the
 `HTMLCanvasElement` / `CanvasRenderingContext2D` DOM externs added in #317.
 It exercises canvas drawing, DOM construction, event callbacks, records,
-growable arrays, modules, and a CSS-animation-driven game loop (see
-`waluau-0nge` for why it is not `requestAnimationFrame`).
+growable arrays, modules, and a `requestAnimationFrame`-driven game loop
+(invoked back into wasm through the `(f64) -> unit` callback trampoline).
 
 It is available in the playground as the "Snake Game" preset and covered by
 `apps/playground/tests/dom-output.spec.js`.
@@ -45,17 +45,8 @@ Each workaround in the source carries a `TODO(<beads-id>)` comment. Summary:
 - `waluau-6kcc` — `fill()`/`stroke()` take an optional `Path2D` and need
   extern overloading, so built paths can never be painted. Everything is
   `fillRect`/`strokeRect`/`fillText`; the food is a square instead of a circle.
-- `waluau-0nge` — host-invocable callback trampolines exist only for
-  `(Event) -> unit` and `() -> extern`, so the `(f64) -> unit`
-  `requestAnimationFrame` callback can never be called back (and there are no
-  `setTimeout`/`setInterval` externs at all). The game loop is an invisible
-  element with an infinite CSS animation whose `animationiteration` events
-  tick the game through the supported `(Event) -> unit` trampoline.
 - `waluau-6i00` — no `math.random`/`math.randomseed`; `rng.walu` hand-rolls an
-  LCG seeded from the first tick's `Event.timeStamp`.
+  LCG seeded from the first animation frame's timestamp.
 - `waluau-ae6g` — module-local type aliases do not unify across module
   boundaries; the game-state record type is spelled out inline in every
   exported signature of `game.walu` and `render.walu`.
-- `waluau-xyx8` — an empty array literal does not adopt the annotated element
-  type of the field it is assigned to, so `reset()` drains the snake array in
-  place instead of assigning `{}`.

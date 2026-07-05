@@ -319,6 +319,33 @@ describe('browser conformance', () => {
     expect(reported).toEqual([42, 43]);
   });
 
+  it('passes callback_f64_host_import.walu through the exported frame trampoline', async () => {
+    const source = cases.find(({ name }) => name === 'callback_f64_host_import.walu').source;
+    let callback;
+    const reported = [];
+    const exports = await compileAndInstantiateWithExports(
+      { '/main.walu': source },
+      '/main.walu',
+      {
+        hostImports: {
+          register_frame_callback(handler) {
+            callback = handler;
+          },
+          report_frame_total(value) {
+            reported.push(value);
+          },
+        },
+      },
+    );
+
+    expect(typeof exports.__waluau_call_callback_f64_unit).toBe('function');
+    exports.register_accumulator(1.5);
+    expect(callback).toBeDefined();
+    exports.__waluau_call_callback_f64_unit(callback, 16.25);
+    exports.__waluau_call_callback_f64_unit(callback, 33.5);
+    expect(reported).toEqual([17.75, 51.25]);
+  });
+
   it('passes coroutine_await_promise.walu fulfillment, rejection, and nested resume checks', async () => {
     const source = cases.find(({ name }) => name === 'coroutine_await_promise.walu').source;
     const harness = createPromiseAwaitHarness();

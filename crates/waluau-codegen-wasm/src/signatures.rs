@@ -65,6 +65,7 @@ pub(crate) fn collect_user_signatures(
     module: &Module,
     start_thunk: bool,
     callback_event_unit_trampoline: bool,
+    callback_f64_unit_trampoline: bool,
     callback_unit_extern_trampoline: bool,
     promise_resume_trampoline: bool,
 ) -> SignatureRegistry {
@@ -111,6 +112,12 @@ pub(crate) fn collect_user_signatures(
     }
     if callback_event_unit_trampoline {
         registry.add_wrapper(vec![Type::Extern], Type::Unit);
+    }
+    if callback_f64_unit_trampoline {
+        registry.add_wrapper(
+            vec![Type::Numeric(waluau_ast::NumericType::F64)],
+            Type::Unit,
+        );
     }
     if callback_unit_extern_trampoline {
         registry.add_wrapper(Vec::new(), Type::Extern);
