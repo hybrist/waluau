@@ -925,6 +925,45 @@ impl Resolver {
         Ok(())
     }
 
+    fn resolve_top_level_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Diagnostic> {
+        match stmt {
+            Stmt::Assign {
+                op,
+                name,
+                symbol_id,
+                value,
+            } => {
+                self.resolve_expr(value)?;
+                let id = match self.lookup(name) {
+                    Some(id) => id,
+                    None if *op == AssignOp::Set => self.declare(name),
+                    None => {
+                        return Err(Diagnostic::new(format!("unknown local/global '{name}'")));
+                    }
+                };
+                *symbol_id = Some(id);
+                Ok(())
+            }
+            Stmt::AssignMulti {
+                targets,
+                symbol_ids,
+                values,
+            } => {
+                for value in values {
+                    self.resolve_expr(value)?;
+                }
+                let mut ids = Vec::new();
+                for target in targets {
+                    let id = self.lookup(target).unwrap_or_else(|| self.declare(target));
+                    ids.push(id);
+                }
+                *symbol_ids = Some(ids);
+                Ok(())
+            }
+            _ => self.resolve_stmt(stmt),
+        }
+    }
+
     fn resolve_expr(&mut self, expr: &mut Expr) -> Result<(), Diagnostic> {
         match expr {
             Expr::Name(name, symbol_id, _) => {
@@ -1043,7 +1082,7 @@ pub fn resolve_symbols(program: &mut Program) -> Result<(), Diagnostic> {
 
     // Resolve top-level statements
     for stmt in &mut program.top_level {
-        resolver.resolve_stmt(stmt)?;
+        resolver.resolve_top_level_stmt(stmt)?;
     }
 
     // Resolve export expression

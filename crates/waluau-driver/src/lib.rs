@@ -195,6 +195,21 @@ mod tests {
     }
 
     #[test]
+    fn compiles_implicit_top_level_declaration_captured_by_callback() {
+        super::compile_source(
+            r#"
+                t = { value = 0::i32 }
+                local callback: () -> unit = function(): unit
+                    t.value = 41::i32
+                end
+                callback()
+                assert(t.value == 41::i32)
+            "#,
+        )
+        .expect("implicit top-level declaration should compile and be captured");
+    }
+
+    #[test]
     fn compiles_fn_and_let_identifiers() {
         super::compile_source(
             r#"

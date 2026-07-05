@@ -1140,6 +1140,66 @@ fn builtin_name(callee: &Expr) -> Option<String> {
     }
 }
 
+fn string_byte_static_count(args: &[Expr], expected: Option<&Type>) -> Result<usize, Diagnostic> {
+    if let Some(Type::Multi(types)) = expected {
+        return Ok(types.len());
+    }
+    let indices = string_byte_static_indices(args, expected)?;
+    Ok(indices.len())
+}
+
+fn string_byte_static_indices(
+    args: &[Expr],
+    expected: Option<&Type>,
+) -> Result<Vec<i32>, Diagnostic> {
+    let start = args.get(1).and_then(expr_i32_literal).unwrap_or(1);
+    let Some(end) = args.get(2).and_then(expr_i32_literal) else {
+        return Err(Diagnostic::new(
+            "string.byte range form requires literal indices or an expected multi-value arity",
+        ));
+    };
+    let count_from_expected = expected.and_then(|ty| match ty {
+        Type::Multi(types) => Some(types.len()),
+        _ => None,
+    });
+    let (start, end) = if let Some(len) = args.first().and_then(expr_string_len) {
+        (normalize_lua_index(start, len), normalize_lua_index(end, len))
+    } else if start >= 1 && end >= 0 {
+        (start, end)
+    } else if let Some(count) = count_from_expected {
+        return Ok((0..count).map(|offset| start + offset as i32).collect());
+    } else {
+        return Err(Diagnostic::new(
+            "string.byte range with negative indices requires a literal string",
+        ));
+    };
+    if end < start {
+        Ok(Vec::new())
+    } else {
+        Ok((start..=end).collect())
+    }
+}
+
+fn expr_i32_literal(expr: &Expr) -> Option<i32> {
+    match expr {
+        Expr::Number(number, _) => number.raw.replace('_', "").parse::<i32>().ok(),
+        Expr::Unary { op: UnaryOp::Neg, expr, .. } => expr_i32_literal(expr).and_then(i32::checked_neg),
+        _ => None,
+    }
+}
+
+fn expr_string_len(expr: &Expr) -> Option<i32> {
+    let Expr::String(value, _) = expr else {
+        return None;
+    };
+    i32::try_from(value.chars().count()).ok()
+}
+
+fn normalize_lua_index(index: i32, len: i32) -> i32 {
+    let normalized = if index < 0 { len + index + 1 } else { index };
+    normalized.clamp(1, len)
+}
+
 fn method_signature_name(base: &str, method: &str) -> String {
     format!("{base}.{method}")
 }
@@ -1346,6 +1406,59 @@ impl Builder<'_> {
             body_env.insert(symbol_id, value);
         }
         self.function.value_symbols.insert(value, symbol_id);
+    }
+
+    fn bind_local_value(
+        &mut self,
+        symbol_id: SymbolId,
+        value: ValueId,
+        ty: Type,
+        env: &mut HashMap<SymbolId, ValueId>,
+        types: &mut HashMap<SymbolId, Type>,
+    ) {
+        if self.cell_names.contains(&symbol_id) {
+            let cell = self.emit(Instruction::ArrayNew {
+                element_ty: to_runtime_type(&ty),
+                elements: vec![value],
+            });
+            env.insert(symbol_id, cell);
+            self.function.value_symbols.insert(cell, symbol_id);
+        } else {
+            env.insert(symbol_id, value);
+        }
+        self.function.value_symbols.insert(value, symbol_id);
+        types.insert(symbol_id, ty);
+    }
+
+    fn assign_local_value(
+        &mut self,
+        symbol_id: SymbolId,
+        value: ValueId,
+        ty: &Type,
+        env: &mut HashMap<SymbolId, ValueId>,
+    ) -> Result<(), Diagnostic> {
+        if self.cell_names.contains(&symbol_id) {
+            let cell = env.get(&symbol_id).copied().ok_or_else(|| {
+                Diagnostic::new(format!(
+                    "unknown local symbol {:?} during IR lowering",
+                    symbol_id
+                ))
+            })?;
+            let index0 = self.emit(Instruction::Number {
+                ty: NumericType::I32,
+                literal: NumberLiteral { raw: "0".into() },
+            });
+            self.emit(Instruction::ArraySet {
+                array: cell,
+                index: index0,
+                value,
+                element_ty: to_runtime_type(ty),
+            });
+        } else {
+            env.insert(symbol_id, value);
+        }
+        self.function.value_symbols.insert(value, symbol_id);
+        Ok(())
     }
 
     /// Emit an instruction into a specific block (used for loop exit phis,
@@ -1569,20 +1682,7 @@ impl Builder<'_> {
                 let value = self.lower_expr(value, env, types, Some(inferred_ty.clone()))?;
                 // If this local is captured by any nested function, represent it as a 1-element
                 // array cell so closures can observe and mutate the same storage location.
-                if self.cell_names.contains(&symbol_id) {
-                    let cell = self.emit(Instruction::ArrayNew {
-                        element_ty: to_runtime_type(&inferred_ty),
-                        elements: vec![value],
-                    });
-                    env.insert(symbol_id, cell);
-                    self.function.value_symbols.insert(cell, symbol_id);
-                    // Keep the declared type as the inner element type for type checking.
-                    types.insert(symbol_id, inferred_ty);
-                } else {
-                    env.insert(symbol_id, value);
-                    types.insert(symbol_id, inferred_ty);
-                }
-                self.function.value_symbols.insert(value, symbol_id);
+                self.bind_local_value(symbol_id, value, inferred_ty, env, types);
             }
             Stmt::Assign { op, name, symbol_id, value } => {
                 let symbol_id = symbol_id.expect("symbol_id should be resolved");
@@ -1920,9 +2020,7 @@ impl Builder<'_> {
                         bindings.iter().zip(lowered).zip(expected)
                     {
                         let symbol_id = binding.symbol_id.expect("resolved symbol_id");
-                        env.insert(symbol_id, value);
-                        self.function.value_symbols.insert(value, symbol_id);
-                        types.insert(symbol_id, expected_ty);
+                        self.bind_local_value(symbol_id, value, expected_ty, env, types);
                     }
                 } else {
                     let mut inferred_types = Vec::new();
@@ -1954,9 +2052,7 @@ impl Builder<'_> {
                     }
                     for ((binding, value), ty) in bindings.iter().zip(lowered).zip(inferred_types) {
                         let symbol_id = binding.symbol_id.expect("resolved symbol_id");
-                        env.insert(symbol_id, value);
-                        self.function.value_symbols.insert(value, symbol_id);
-                        types.insert(symbol_id, ty);
+                        self.bind_local_value(symbol_id, value, ty, env, types);
                     }
                 }
             }
@@ -1977,9 +2073,8 @@ impl Builder<'_> {
                         lowered.len()
                     )));
                 }
-                for (id, value) in ids.iter().zip(lowered) {
-                    env.insert(*id, value);
-                    self.function.value_symbols.insert(value, *id);
+                for ((id, value), ty) in ids.iter().zip(lowered).zip(expected.iter()) {
+                    self.assign_local_value(*id, value, ty, env)?;
                 }
             }
             Stmt::If {
@@ -3618,6 +3713,7 @@ impl Builder<'_> {
                         "upper" => Some(STRING_UPPER),
                         "lower" => Some(STRING_LOWER),
                         "format" => Some(STRING_FORMAT),
+                        "reverse" => Some(STRING_REVERSE),
                         _ => None,
                     };
                     if let Some(builtin) = builtin {
@@ -4540,6 +4636,7 @@ impl Builder<'_> {
                         || name == STRING_FIND
                         || name == STRING_MATCH
                         || name == STRING_GSUB
+                        || name == STRING_BYTE
                 });
                 if expands_multi {
                     self.infer_expr_type(
@@ -4907,11 +5004,12 @@ impl Builder<'_> {
                         "upper" => Some(STRING_UPPER),
                         "lower" => Some(STRING_LOWER),
                         "format" => Some(STRING_FORMAT),
+                        "reverse" => Some(STRING_REVERSE),
                         _ => None,
                     };
                     if let Some(builtin) = builtin {
                     if let Some(result) =
-                        self.infer_string_builtin_call_type(builtin, &call_args, types)
+                        self.infer_string_builtin_call_type(builtin, &call_args, types, expected.clone())
                     {
                         return result;
                     }
@@ -5133,7 +5231,9 @@ impl Builder<'_> {
                     if let Some(result) = self.infer_print_builtin_call_type(&name, expr, types) {
                         return result;
                     }
-                    if let Some(result) = self.infer_string_builtin_call_type(&name, args, types) {
+                    if let Some(result) =
+                        self.infer_string_builtin_call_type(&name, args, types, expected.clone())
+                    {
                         return result;
                     }
                 }
@@ -7394,9 +7494,9 @@ impl Builder<'_> {
                 )
             }
             STRING_BYTE => {
-                if args.is_empty() || args.len() > 2 {
+                if args.is_empty() || args.len() > 3 {
                     return Some(Err(Diagnostic::new(format!(
-                        "{STRING_BYTE} expects 1 or 2 arguments, got {}",
+                        "{STRING_BYTE} expects 1 to 3 arguments, got {}",
                         args.len()
                     ))));
                 }
@@ -7404,14 +7504,48 @@ impl Builder<'_> {
                     Ok(val) => val,
                     Err(error) => return Some(Err(error)),
                 };
-                let index = match args.get(1) {
-                    Some(arg) => match self.lower_expr(arg, env, types, Some(i32_ty.clone())) {
-                        Ok(val) => val,
+                if args.len() == 3 {
+                    let indices = match string_byte_static_indices(args, expected.as_ref()) {
+                        Ok(indices) => indices,
                         Err(error) => return Some(Err(error)),
-                    },
-                    None => self.emit_i32_const(1),
+                    };
+                    let mut values = Vec::with_capacity(indices.len());
+                    for index in indices {
+                        let index = self.emit_i32_const(index);
+                        match self.emit_string_host_call(
+                            STRING_BYTE_HOST,
+                            vec![value, index],
+                            i32_ty.clone(),
+                        ) {
+                            Ok(byte) => values.push(byte),
+                            Err(error) => return Some(Err(error)),
+                        }
+                    }
+                    let types = vec![i32_ty.clone(); values.len()];
+                    Ok(self.emit(Instruction::PackMulti { values, types }))
+                } else {
+                    let index = match args.get(1) {
+                        Some(arg) => match self.lower_expr(arg, env, types, Some(i32_ty.clone())) {
+                            Ok(val) => val,
+                            Err(error) => return Some(Err(error)),
+                        },
+                        None => self.emit_i32_const(1),
+                    };
+                    self.emit_string_host_call(STRING_BYTE_HOST, vec![value, index], i32_ty.clone())
+                }
+            }
+            STRING_REVERSE => {
+                if args.len() != 1 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_REVERSE} expects 1 argument, got {}",
+                        args.len()
+                    ))));
+                }
+                let value = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+                    Ok(val) => val,
+                    Err(error) => return Some(Err(error)),
                 };
-                self.emit_string_host_call(STRING_BYTE_HOST, vec![value, index], i32_ty.clone())
+                self.emit_string_host_call(STRING_REVERSE_HOST, vec![value], Type::String)
             }
             STRING_UPPER | STRING_LOWER => {
                 if args.len() != 1 {
@@ -7432,26 +7566,60 @@ impl Builder<'_> {
                 self.emit_string_host_call(host_name, vec![value], Type::String)
             }
             STRING_CHAR => {
-                if args.len() > 8 {
-                    return Some(Err(Diagnostic::new(format!(
-                        "{STRING_CHAR} expects at most 8 arguments, got {}",
-                        args.len()
-                    ))));
-                }
-                let mut lowered_args = Vec::with_capacity(args.len());
+                let mut lowered_args = Vec::new();
                 for arg in args {
-                    match self.lower_expr(arg, env, types, Some(i32_ty.clone())) {
-                        Ok(val) => lowered_args.push(val),
-                        Err(error) => return Some(Err(error)),
+                    let arg_ty = match self.infer_expr_type(arg, types, Some(i32_ty.clone())) {
+                        Ok(ty) => ty,
+                        Err(_) => match self.infer_expr_type(arg, types, None) {
+                            Ok(ty) => ty,
+                            Err(error) => return Some(Err(error)),
+                        },
+                    };
+                    match arg_ty {
+                        Type::Multi(multi_types) => {
+                            let tuple = match self.lower_expr(arg, env, types, None) {
+                                Ok(value) => value,
+                                Err(error) => return Some(Err(error)),
+                            };
+                            for (index, part) in multi_types.into_iter().enumerate() {
+                                if part != i32_ty {
+                                    return Some(Err(Diagnostic::new(format!(
+                                        "{STRING_CHAR} expects i32 character codes, got {part}"
+                                    ))));
+                                }
+                                lowered_args.push(self.emit(Instruction::MultiGet {
+                                    value: tuple,
+                                    index,
+                                    ty: i32_ty.clone(),
+                                }));
+                            }
+                        }
+                        ty => {
+                            if ty != i32_ty {
+                                return Some(Err(Diagnostic::new(format!(
+                                    "{STRING_CHAR} expects i32 character codes, got {ty}"
+                                ))));
+                            }
+                            match self.lower_expr(arg, env, types, Some(i32_ty.clone())) {
+                                Ok(value) => lowered_args.push(value),
+                                Err(error) => return Some(Err(error)),
+                            }
+                        }
                     }
                 }
-                let host_name = format!("{STRING_CHAR_HOST_PREFIX}{}", args.len());
+                if lowered_args.len() > 16 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_CHAR} expects at most 16 statically expanded arguments, got {}",
+                        lowered_args.len()
+                    ))));
+                }
+                let host_name = format!("{STRING_CHAR_HOST_PREFIX}{}", lowered_args.len());
                 self.emit_string_host_call(&host_name, lowered_args, Type::String)
             }
             STRING_FORMAT => {
-                if args.is_empty() || args.len() > 9 {
+                if args.is_empty() || args.len() > 101 {
                     return Some(Err(Diagnostic::new(format!(
-                        "{STRING_FORMAT} expects 1 to 9 arguments, got {}",
+                        "{STRING_FORMAT} expects 1 to 101 arguments, got {}",
                         args.len()
                     ))));
                 }
@@ -7461,12 +7629,54 @@ impl Builder<'_> {
                     Err(error) => return Some(Err(error)),
                 }
                 for arg in args.iter().skip(1) {
-                    match self.lower_expr_to_string(arg, env, types) {
-                        Ok(val) => lowered_args.push(val),
+                    let arg_ty = match self.infer_expr_type(arg, types, None) {
+                        Ok(ty) => ty,
                         Err(error) => return Some(Err(error)),
+                    };
+                    match arg_ty {
+                        Type::Multi(multi_types) => {
+                            let tuple = match self.lower_expr(arg, env, types, None) {
+                                Ok(value) => value,
+                                Err(error) => return Some(Err(error)),
+                            };
+                            for (index, part) in multi_types.into_iter().enumerate() {
+                                if !(part.is_numeric()
+                                    || part == Type::Bool
+                                    || part == Type::String
+                                    || part == Type::Unknown)
+                                {
+                                    return Some(Err(Diagnostic::new(format!(
+                                        "{STRING_FORMAT} expects primitive format arguments, got {part}",
+                                    ))));
+                                }
+                                let value = self.emit(Instruction::MultiGet {
+                                    value: tuple,
+                                    index,
+                                    ty: part.clone(),
+                                });
+                                if part == Type::String {
+                                    lowered_args.push(value);
+                                } else {
+                                    lowered_args.push(self.emit(Instruction::ToString {
+                                        value,
+                                        from: part,
+                                    }));
+                                }
+                            }
+                        }
+                        _ => match self.lower_expr_to_string(arg, env, types) {
+                            Ok(val) => lowered_args.push(val),
+                            Err(error) => return Some(Err(error)),
+                        },
                     }
                 }
-                let host_name = format!("{STRING_FORMAT_HOST_PREFIX}{}", args.len() - 1);
+                if lowered_args.len() > 101 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_FORMAT} expects at most 100 statically expanded format arguments, got {}",
+                        lowered_args.len() - 1
+                    ))));
+                }
+                let host_name = format!("{STRING_FORMAT_HOST_PREFIX}{}", lowered_args.len() - 1);
                 self.emit_string_host_call(&host_name, lowered_args, Type::String)
             }
             _ => return None,
@@ -7475,7 +7685,12 @@ impl Builder<'_> {
         let (value, result_ty) = match lowered {
             Ok(value) => {
                 let result_ty = match name {
-                    STRING_LEN | STRING_BYTE => i32_ty,
+                    STRING_LEN => i32_ty,
+                    STRING_BYTE if args.len() == 3 => Type::Multi(vec![
+                        i32_ty.clone();
+                        string_byte_static_count(args, expected.as_ref()).unwrap_or(0)
+                    ]),
+                    STRING_BYTE => i32_ty,
                     _ => Type::String,
                 };
                 (value, result_ty)
@@ -8060,6 +8275,7 @@ impl Builder<'_> {
         name: &str,
         args: &[Expr],
         types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
     ) -> Option<Result<Type, Diagnostic>> {
         let i32_ty = Type::Numeric(NumericType::I32);
         match name {
@@ -8166,7 +8382,7 @@ impl Builder<'_> {
             STRING_GMATCH => Some(Err(Diagnostic::new(format!(
                 "{STRING_GMATCH} is only supported as a for-in iterator"
             )))),
-            STRING_LEN | STRING_UPPER | STRING_LOWER => {
+            STRING_LEN | STRING_UPPER | STRING_LOWER | STRING_REVERSE => {
                 if args.len() != 1 {
                     return Some(Err(Diagnostic::new(format!(
                         "{name} expects 1 argument, got {}",
@@ -8254,9 +8470,9 @@ impl Builder<'_> {
                 Some(Ok(Type::String))
             }
             STRING_BYTE => {
-                if args.is_empty() || args.len() > 2 {
+                if args.is_empty() || args.len() > 3 {
                     return Some(Err(Diagnostic::new(format!(
-                        "{STRING_BYTE} expects 1 or 2 arguments, got {}",
+                        "{STRING_BYTE} expects 1 to 3 arguments, got {}",
                         args.len()
                     ))));
                 }
@@ -8280,32 +8496,58 @@ impl Builder<'_> {
                         return Some(Err(error));
                     }
                 }
-                Some(Ok(i32_ty))
-            }
-            STRING_CHAR => {
-                if args.len() > 8 {
-                    return Some(Err(Diagnostic::new(format!(
-                        "{STRING_CHAR} expects at most 8 arguments, got {}",
-                        args.len()
-                    ))));
-                }
-                for arg in args {
+                if let Some(last) = args.get(2) {
                     if let Err(error) = self.require_inferred_arg_type(
-                        STRING_CHAR,
-                        "code",
-                        arg,
+                        STRING_BYTE,
+                        "last",
+                        last,
                         i32_ty.clone(),
                         types,
                     ) {
                         return Some(Err(error));
                     }
+                    let count = match string_byte_static_count(args, expected.as_ref()) {
+                        Ok(count) => count,
+                        Err(error) => return Some(Err(error)),
+                    };
+                    return Some(Ok(Type::Multi(vec![i32_ty; count])));
+                }
+                Some(Ok(i32_ty))
+            }
+            STRING_CHAR => {
+                let mut arg_types = Vec::new();
+                for arg in args {
+                    let arg_ty = match self.infer_expr_type(arg, types, Some(i32_ty.clone())) {
+                        Ok(ty) => ty,
+                        Err(_) => match self.infer_expr_type(arg, types, None) {
+                            Ok(ty) => ty,
+                            Err(error) => return Some(Err(error)),
+                        },
+                    };
+                    match arg_ty {
+                        Type::Multi(types) => arg_types.extend(types),
+                        ty => arg_types.push(ty),
+                    }
+                }
+                if arg_types.len() > 16 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_CHAR} expects at most 16 statically expanded arguments, got {}",
+                        arg_types.len()
+                    ))));
+                }
+                for arg_ty in arg_types {
+                    if arg_ty != i32_ty {
+                        return Some(Err(Diagnostic::new(format!(
+                            "{STRING_CHAR} expects i32 character codes, got {arg_ty}"
+                        ))));
+                    }
                 }
                 Some(Ok(Type::String))
             }
             STRING_FORMAT => {
-                if args.is_empty() || args.len() > 9 {
+                if args.is_empty() || args.len() > 101 {
                     return Some(Err(Diagnostic::new(format!(
-                        "{STRING_FORMAT} expects 1 to 9 arguments, got {}",
+                        "{STRING_FORMAT} expects 1 to 101 arguments, got {}",
                         args.len()
                     ))));
                 }
@@ -8318,11 +8560,24 @@ impl Builder<'_> {
                 ) {
                     return Some(Err(error));
                 }
+                let mut format_arg_types = Vec::new();
                 for arg in args.iter().skip(1) {
                     let arg_ty = match self.infer_expr_type(arg, types, None) {
                         Ok(ty) => ty,
                         Err(error) => return Some(Err(error)),
                     };
+                    match arg_ty {
+                        Type::Multi(types) => format_arg_types.extend(types),
+                        ty => format_arg_types.push(ty),
+                    }
+                }
+                if format_arg_types.len() > 100 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_FORMAT} expects at most 100 statically expanded format arguments, got {}",
+                        format_arg_types.len()
+                    ))));
+                }
+                for arg_ty in format_arg_types {
                     if !(arg_ty.is_numeric()
                         || arg_ty == Type::Bool
                         || arg_ty == Type::String

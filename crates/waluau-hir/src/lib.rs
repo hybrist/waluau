@@ -1666,6 +1666,159 @@ fn desugar_method_declarations(program: &Program) -> Result<Program, Diagnostic>
     Ok(rewritten)
 }
 
+fn initial_top_level_names(program: &Program) -> HashSet<String> {
+    let mut names = HashSet::from([
+        "print".to_string(),
+        "assert".to_string(),
+        "error".to_string(),
+        "pcall".to_string(),
+        "tostring".to_string(),
+        "select".to_string(),
+        "math".to_string(),
+        "coroutine".to_string(),
+        "promise".to_string(),
+        "table".to_string(),
+        "string".to_string(),
+        "bit32".to_string(),
+    ]);
+    names.extend(
+        program
+            .declared_imports
+            .iter()
+            .map(|decl| decl.name.clone()),
+    );
+    names.extend(program.functions.iter().filter_map(|function| {
+        function
+            .name
+            .simple_name()
+            .map(std::borrow::ToOwned::to_owned)
+    }));
+    names
+}
+
+fn fresh_implicit_multi_temp(declared: &HashSet<String>, counter: &mut usize) -> String {
+    loop {
+        let name = format!("__waluau$implicit_multi${}", *counter);
+        *counter += 1;
+        if !declared.contains(&name) {
+            return name;
+        }
+    }
+}
+
+fn desugar_implicit_top_level_declarations(program: &mut Program) {
+    let mut declared = initial_top_level_names(program);
+    let mut rewritten = Vec::with_capacity(program.top_level.len());
+    let mut temp_counter = 0;
+
+    for stmt in std::mem::take(&mut program.top_level) {
+        match stmt {
+            Stmt::Let {
+                name,
+                symbol_id,
+                rebindability,
+                ty,
+                value,
+            } => {
+                declared.insert(name.clone());
+                rewritten.push(Stmt::Let {
+                    name,
+                    symbol_id,
+                    rebindability,
+                    ty,
+                    value,
+                });
+            }
+            Stmt::LetMulti { bindings, values } => {
+                for binding in &bindings {
+                    declared.insert(binding.name.clone());
+                }
+                rewritten.push(Stmt::LetMulti { bindings, values });
+            }
+            Stmt::Assign {
+                op: AssignOp::Set,
+                name,
+                symbol_id,
+                value,
+            } if !declared.contains(&name) => {
+                declared.insert(name.clone());
+                rewritten.push(Stmt::Let {
+                    name,
+                    symbol_id,
+                    rebindability: Rebindability::Rebindable,
+                    ty: None,
+                    value,
+                });
+            }
+            Stmt::AssignMulti {
+                targets,
+                symbol_ids: _,
+                values,
+            } if targets.iter().any(|target| !declared.contains(target)) => {
+                if targets.iter().all(|target| !declared.contains(target)) {
+                    let bindings = targets
+                        .into_iter()
+                        .map(|name| {
+                            declared.insert(name.clone());
+                            waluau_ast::Binding {
+                                name,
+                                symbol_id: None,
+                                rebindability: Rebindability::Rebindable,
+                                ty: None,
+                            }
+                        })
+                        .collect();
+                    rewritten.push(Stmt::LetMulti { bindings, values });
+                } else {
+                    let temps = (0..targets.len())
+                        .map(|_| {
+                            let name = fresh_implicit_multi_temp(&declared, &mut temp_counter);
+                            declared.insert(name.clone());
+                            name
+                        })
+                        .collect::<Vec<_>>();
+                    let temp_bindings = temps
+                        .iter()
+                        .map(|name| waluau_ast::Binding {
+                            name: name.clone(),
+                            symbol_id: None,
+                            rebindability: Rebindability::Rebindable,
+                            ty: None,
+                        })
+                        .collect();
+                    rewritten.push(Stmt::LetMulti {
+                        bindings: temp_bindings,
+                        values,
+                    });
+                    for (target, temp) in targets.into_iter().zip(temps) {
+                        let value = Expr::Name(temp, None, None);
+                        if declared.contains(&target) {
+                            rewritten.push(Stmt::Assign {
+                                op: AssignOp::Set,
+                                name: target,
+                                symbol_id: None,
+                                value,
+                            });
+                        } else {
+                            declared.insert(target.clone());
+                            rewritten.push(Stmt::Let {
+                                name: target,
+                                symbol_id: None,
+                                rebindability: Rebindability::Rebindable,
+                                ty: None,
+                                value,
+                            });
+                        }
+                    }
+                }
+            }
+            other => rewritten.push(other),
+        }
+    }
+
+    program.top_level = rewritten;
+}
+
 fn method_signature_name(table: &str, method: &str) -> String {
     format!("{table}.{method}")
 }
@@ -2582,6 +2735,7 @@ fn stmts_contain_value_return(stmts: &[Stmt]) -> bool {
 
 pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
     let mut typed = desugar_method_declarations(program)?;
+    desugar_implicit_top_level_declarations(&mut typed);
     resolve_program_types(&mut typed)?;
     fill_gsub_replacement_annotations(&mut typed);
     if !typed.top_level.is_empty() {

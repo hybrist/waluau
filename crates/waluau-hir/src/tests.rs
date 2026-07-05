@@ -1466,6 +1466,73 @@ fn type_checks_multi_return_and_multi_assignment() {
 }
 
 #[test]
+fn type_checks_implicit_top_level_assignment_declaration() {
+    let source = r#"
+        x = 41::i32
+        assert(x == 41::i32)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+    let init = typed
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "__waluau_top_level_init")
+        .expect("expected synthesized top-level init");
+    assert!(matches!(&init.body[0], Stmt::Let { name, .. } if name == "x"));
+}
+
+#[test]
+fn type_checks_implicit_top_level_multi_assignment_declaration() {
+    let source = r#"
+        function pair(x: i32, y: bool): i32, bool
+            return x, y
+        end
+
+        a, b = pair(1::i32, true)
+        assert(a == 1::i32)
+        assert(b)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+    let init = typed
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "__waluau_top_level_init")
+        .expect("expected synthesized top-level init");
+    assert!(matches!(
+        &init.body[0],
+        Stmt::LetMulti { bindings, .. }
+            if bindings.iter().map(|binding| binding.name.as_str()).collect::<Vec<_>>()
+                == vec!["a", "b"]
+    ));
+}
+
+#[test]
+fn type_checks_nested_function_mutating_implicit_top_level_declaration() {
+    let source = r#"
+        t = { value = 0::i32 }
+        local callback: () -> unit = function(): unit
+            t.value = 41::i32
+        end
+        callback()
+        assert(t.value == 41::i32)
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_top_level_read_before_implicit_assignment_declaration() {
+    let source = r#"
+        assert(x == 1::i32)
+        x = 1::i32
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert!(error.to_string().contains("unknown"));
+}
+
+#[test]
 fn type_checks_multi_value_call_argument_expansion() {
     let source = r#"
         function pair(x: i32, y: i32): i32, i32

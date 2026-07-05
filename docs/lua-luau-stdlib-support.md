@@ -96,18 +96,18 @@ called as `string.fn(s, …)` or `s:fn(…)`.
 | Symbol | Status | Behaviour / difference |
 |--------|--------|------------------------|
 | `string.find` / `s:find` | ✅ | Lua-conforming signature `string.find(s, pattern, init?, plain?)`: returns the 1-based inclusive `start, end` (plus captures for literal patterns), or `nil` when there is no match. Full Lua pattern support, including classes, anchors, quantifiers, captures, position captures, `%b`, `%f`, and back-references. `init` may be negative; `plain` selects plain substring search. See `conformance/string_find.walu` and `conformance/luau/pm.*.walu`. |
-| `string.sub` / `s:sub` | ✅ | Lua-conforming 1-based inclusive indices; negative indices count back from the end; `last` defaults to `-1` (end of string). |
+| `string.sub` / `s:sub` | ✅ | Signature `string.sub(value, first, last?)`. Indices are Lua-style **1-based** and `last` is inclusive. `last` defaults to the end of the string; negative indices count back from the end. |
 | `string.len` / `s:len` / `#s` | ✅ | Returns string length as `i32`. |
-| `string.format` / `s:format` | ⚠️ Partial | Supports up to 8 values and the specifiers `%d`, `%s`, `%f`, `%g`, `%x`, `%q`, plus `%%`. Width, precision, flags, and other Lua format specifiers are not implemented. |
+| `string.format` / `s:format` | ⚠️ Partial | Supports up to 100 values with width, precision, flags, `%c`, `%d`/`%i`, `%u`, `%o`, `%f`, `%g`/`%G`, `%x`/`%X`, `%s`, `%q`, Luau `%*`, and `%%`. |
 | `string.rep` / `s:rep` | ✅ | Signature `string.rep(value, count, separator?)`; `separator` defaults to `""`. |
 | `string.lower` / `string.upper` and methods | ✅ | Host string case conversion. |
-| `string.byte` / `s:byte` | ⚠️ Partial | Signature `string.byte(value, index?)`. `index` is **1-based** (negative counts from the end) and defaults to 1, matching Lua. Returns one `i32` code point, or `-1` out of range (Lua returns `nil`); ranges/multiple returns are not implemented. |
-| `string.char` | ⚠️ Partial | Supports 0 to 8 `i32` code points and returns the corresponding string. |
+| `string.byte` / `s:byte` | ⚠️ Partial | Signature `string.byte(value, index?, last?)`. Indices are Lua-style **1-based** (negative counts from the end) and ranges can return statically-sized multiple values. Scalar out-of-range still returns `-1` instead of `nil`. |
+| `string.char` | ⚠️ Partial | Supports 0 to 16 statically expanded `i32` byte values and returns the corresponding string. |
 | `string.match` / `s:match` | ✅ | Lua-conforming: returns the pattern's captures (or the whole match), each `nil` on no match. Capture arity and types are derived statically from literal patterns; non-literal patterns are treated as capture-free (the whole match is returned). |
 | `string.gsub` / `s:gsub` | ⚠️ Partial | Lua-conforming `string.gsub(s, pattern, repl, n?)` returning `result, count`. `repl` may be a template string (`%0`–`%9`, `%%`) or a function of the captures returning a string, a number, or nothing (keep the match). Table replacements are not supported. |
 | `string.gmatch` / `s:gmatch` | ⚠️ Partial | Supported as a `for ... in string.gmatch(s, p)` iterator; loop variables bind the captures (or the whole match). Not usable as a first-class iterator value. |
 | `string.split` (Luau) | ❌ | Not implemented. |
-| `string.reverse` | ❌ | Not implemented. |
+| `string.reverse` | ✅ | Returns the reversed string. |
 | Pattern matching (Lua patterns) | ✅ | Full Lua pattern engine (a port of Luau's `lstrlib.c` matcher) backing `string.find`/`match`/`gmatch`/`gsub`, including `%b`, `%f`, back-references, position captures, and Lua-style malformed-pattern errors. Patterns operate per UTF-16 code unit with ASCII character classes; `%z` matches the zero code unit. |
 
 ## `table` library
