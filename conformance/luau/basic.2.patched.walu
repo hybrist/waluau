@@ -360,18 +360,14 @@ assert((function() local a = {4,5,6} a[2] = 8 return a[2] end)() == 8)
 -- locals are not expressible).
 
 -- upvalues & loops (validates timely closing)
--- PATCHED: tables cannot grow (`res[#res+1] = ...`), so each variant
--- preallocates a function array, overwrites its slots with closures made in
--- the loop, and only calls them after the loop finishes — preserving the
--- "capture outlives the iteration" shape with 0-based slots.
+-- PATCHED: `res[#res+1] = ...` becomes the 0-based append `res[#res] = ...`
+-- on a typed empty function array (growable arrays make the append idiom
+-- work directly).
 assert((function()
-    local dummy = function(): f64 return 0 end
-    local res = {dummy, dummy, dummy, dummy, dummy}
-    local idx: i32 = 0
+    local res: {() -> f64} = {}
 
     for i=1,5 do
-        res[idx] = (function(): f64 return i end)
-        idx += 1
+        res[#res] = (function(): f64 return i end)
     end
 
     local sum = 0
@@ -381,8 +377,7 @@ assert((function()
 end)() == 15)
 
 assert((function()
-    local dummy = function(): f64 return 0 end
-    local res = {dummy, dummy, dummy, dummy, dummy}
+    local res: {() -> f64} = {}
 
     for i, v in {1,2,3,4,5} do
         res[i] = (function(): f64 return v end)
@@ -395,15 +390,12 @@ assert((function()
 end)() == 15)
 
 assert((function()
-    local dummy = function(): f64 return 0 end
-    local res = {dummy, dummy, dummy, dummy, dummy, dummy}
-    local idx: i32 = 0
+    local res: {() -> f64} = {}
 
     local i = 0
     while i <= 5 do
         local j = i
-        res[idx] = (function(): f64 return j end)
-        idx += 1
+        res[#res] = (function(): f64 return j end)
         i = i + 1
     end
 
@@ -414,15 +406,12 @@ assert((function()
 end)() == 15)
 
 assert((function()
-    local dummy = function(): f64 return 0 end
-    local res = {dummy, dummy, dummy, dummy, dummy, dummy}
-    local idx: i32 = 0
+    local res: {() -> f64} = {}
 
     local i = 0
     repeat
         local j = i
-        res[idx] = (function(): f64 return j end)
-        idx += 1
+        res[#res] = (function(): f64 return j end)
         i = i + 1
     until i > 5
 
@@ -434,13 +423,10 @@ end)() == 15)
 
 -- upvalues & loops & break!
 assert((function()
-    local dummy = function(): f64 return 0 end
-    local res = {dummy, dummy, dummy, dummy, dummy}
-    local idx: i32 = 0
+    local res: {() -> f64} = {}
 
     for i=1,10 do
-        res[idx] = (function(): f64 return i end)
-        idx += 1
+        res[#res] = (function(): f64 return i end)
         if i == 5 then
             break
         end
@@ -453,8 +439,7 @@ assert((function()
 end)() == 15)
 
 assert((function()
-    local dummy = function(): f64 return 0 end
-    local res = {dummy, dummy, dummy, dummy, dummy}
+    local res: {() -> f64} = {}
 
     for i, v in {1,2,3,4,5,6,7,8,9,10} do
         res[i] = (function(): f64 return v end)
@@ -470,15 +455,12 @@ assert((function()
 end)() == 15)
 
 assert((function()
-    local dummy = function(): f64 return 0 end
-    local res = {dummy, dummy, dummy, dummy, dummy, dummy}
-    local idx: i32 = 0
+    local res: {() -> f64} = {}
 
     local i = 0
     while i < 10 do
         local j = i
-        res[idx] = (function(): f64 return j end)
-        idx += 1
+        res[#res] = (function(): f64 return j end)
         if i == 5 then
             break
         end
@@ -492,15 +474,12 @@ assert((function()
 end)() == 15)
 
 assert((function()
-    local dummy = function(): f64 return 0 end
-    local res = {dummy, dummy, dummy, dummy, dummy, dummy}
-    local idx: i32 = 0
+    local res: {() -> f64} = {}
 
     local i = 0
     repeat
         local j = i
-        res[idx] = (function(): f64 return j end)
-        idx += 1
+        res[#res] = (function(): f64 return j end)
         if i == 5 then
             break
         end

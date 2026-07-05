@@ -274,6 +274,8 @@ fn function_requires_wasm_gc(function: &waluau_ir::Function) -> bool {
                         | waluau_ir::Instruction::ArrayGet { .. }
                         | waluau_ir::Instruction::ArraySet { .. }
                         | waluau_ir::Instruction::ArrayLen { .. }
+                        | waluau_ir::Instruction::ArrayPop { .. }
+                        | waluau_ir::Instruction::ArraySlice { .. }
                         | waluau_ir::Instruction::Closure { .. }
                 )
             })

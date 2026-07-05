@@ -40,6 +40,10 @@ pub(super) const BIT32_RROTATE: &str = "bit32.rrotate";
 pub(super) const BIT32_COUNTLZ: &str = "bit32.countlz";
 pub(super) const BIT32_COUNTRZ: &str = "bit32.countrz";
 pub(super) const TABLE_CONCAT: &str = "table.concat";
+pub(super) const TABLE_INSERT: &str = "table.insert";
+pub(super) const TABLE_REMOVE: &str = "table.remove";
+pub(super) const TABLE_SORT: &str = "table.sort";
+pub(super) const TABLE_GETN: &str = "table.getn";
 pub(super) const TO_STRING: &str = "tostring";
 pub(super) const SELECT: &str = "select";
 pub(super) const ASSERT: &str = "assert";
@@ -627,6 +631,24 @@ pub(super) fn infer_select_builtin_call(
     }
 }
 
+/// Infer the element type of the array passed as a table builtin's first argument.
+fn infer_table_array_element(
+    name: &str,
+    arg: &Expr,
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+) -> Result<Type, Diagnostic> {
+    let list_ty =
+        super::expressions::infer_expr(arg, vars, fn_signatures, active_type_params, None)?;
+    match list_ty {
+        Type::Array(element) => Ok(*element),
+        other => Err(Diagnostic::new(format!(
+            "{name} expects an array as its first argument, got {other}"
+        ))),
+    }
+}
+
 pub(super) fn infer_table_builtin_call(
     name: &str,
     args: &[Expr],
@@ -635,8 +657,156 @@ pub(super) fn infer_table_builtin_call(
     active_type_params: &HashSet<String>,
     expected: Option<Type>,
 ) -> Option<Result<Type, Diagnostic>> {
-    if name != TABLE_CONCAT {
-        return None;
+    let i32_ty = Type::Numeric(NumericType::I32);
+    match name {
+        TABLE_GETN => {
+            if args.len() != 1 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{TABLE_GETN} expects 1 argument, got {}",
+                    args.len()
+                ))));
+            }
+            if let Err(error) =
+                infer_table_array_element(name, &args[0], vars, fn_signatures, active_type_params)
+            {
+                return Some(Err(error));
+            }
+            return Some(coerce_type(i32_ty, expected));
+        }
+        TABLE_INSERT => {
+            if args.len() < 2 || args.len() > 3 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{TABLE_INSERT} expects 2 or 3 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            let element_ty = match infer_table_array_element(
+                name,
+                &args[0],
+                vars,
+                fn_signatures,
+                active_type_params,
+            ) {
+                Ok(ty) => ty,
+                Err(error) => return Some(Err(error)),
+            };
+            if args.len() == 3 {
+                match super::expressions::infer_expr(
+                    &args[1],
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    Some(i32_ty.clone()),
+                ) {
+                    Ok(ty) if ty == i32_ty => {}
+                    Ok(ty) => {
+                        return Some(Err(Diagnostic::new(format!(
+                            "{TABLE_INSERT} expects an i32 position, got {ty}"
+                        ))));
+                    }
+                    Err(error) => return Some(Err(error)),
+                }
+            }
+            let value_arg = args.last().expect("checked arity above");
+            match super::expressions::infer_expr(
+                value_arg,
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(element_ty.clone()),
+            ) {
+                Ok(ty) if ty == element_ty => {}
+                Ok(ty) => {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{TABLE_INSERT} expects a {element_ty} value, got {ty}"
+                    ))));
+                }
+                Err(error) => return Some(Err(error)),
+            }
+            return Some(coerce_type(Type::Unit, expected));
+        }
+        TABLE_REMOVE => {
+            if args.is_empty() || args.len() > 2 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{TABLE_REMOVE} expects 1 or 2 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            let element_ty = match infer_table_array_element(
+                name,
+                &args[0],
+                vars,
+                fn_signatures,
+                active_type_params,
+            ) {
+                Ok(ty) => ty,
+                Err(error) => return Some(Err(error)),
+            };
+            if let Some(pos_arg) = args.get(1) {
+                match super::expressions::infer_expr(
+                    pos_arg,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    Some(i32_ty.clone()),
+                ) {
+                    Ok(ty) if ty == i32_ty => {}
+                    Ok(ty) => {
+                        return Some(Err(Diagnostic::new(format!(
+                            "{TABLE_REMOVE} expects an i32 position, got {ty}"
+                        ))));
+                    }
+                    Err(error) => return Some(Err(error)),
+                }
+            }
+            return Some(coerce_type(element_ty, expected));
+        }
+        TABLE_SORT => {
+            if args.is_empty() || args.len() > 2 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{TABLE_SORT} expects 1 or 2 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            let element_ty = match infer_table_array_element(
+                name,
+                &args[0],
+                vars,
+                fn_signatures,
+                active_type_params,
+            ) {
+                Ok(ty) => ty,
+                Err(error) => return Some(Err(error)),
+            };
+            if let Some(comparator) = args.get(1) {
+                let comparator_ty = Type::Function {
+                    params: vec![element_ty.clone(), element_ty.clone()],
+                    return_type: Box::new(Type::Bool),
+                };
+                match super::expressions::infer_expr(
+                    comparator,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    Some(comparator_ty.clone()),
+                ) {
+                    Ok(ty) if ty == comparator_ty => {}
+                    Ok(ty) => {
+                        return Some(Err(Diagnostic::new(format!(
+                            "{TABLE_SORT} expects a ({element_ty}, {element_ty}) -> bool comparator, got {ty}"
+                        ))));
+                    }
+                    Err(error) => return Some(Err(error)),
+                }
+            } else if !element_ty.is_numeric() && element_ty != Type::String {
+                return Some(Err(Diagnostic::new(format!(
+                    "{TABLE_SORT} without a comparator requires numeric or string elements, got {element_ty}"
+                ))));
+            }
+            return Some(coerce_type(Type::Unit, expected));
+        }
+        TABLE_CONCAT => {}
+        _ => return None,
     }
     if args.is_empty() || args.len() > 2 {
         return Some(Err(Diagnostic::new(format!(

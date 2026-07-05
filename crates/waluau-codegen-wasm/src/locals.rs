@@ -37,6 +37,10 @@ pub(crate) struct LocalPlan {
     pub(crate) tagged_resume_state_tmp: Option<u32>,
     /// Scratch anyref local for protected-call success payloads.
     pub(crate) protected_call_value_tmp: Option<u32>,
+    /// Scratch `(ref null $array_T)` locals used by `ArraySet` (storage growth on
+    /// append) and `ArraySlice` (freshly allocated storage), keyed by the array
+    /// element type's display string.
+    pub(crate) array_scratch: BTreeMap<String, u32>,
 }
 
 #[derive(Clone)]
@@ -212,6 +216,31 @@ pub(crate) fn build_local_plan(
         None
     };
 
+    // One raw-storage scratch local per array element type touched by an
+    // ArraySet (growth path) or ArraySlice (fresh storage) in this function.
+    let mut array_scratch = BTreeMap::new();
+    for block in function.blocks.values() {
+        for (_, instruction) in &block.instructions {
+            let element_ty = match instruction {
+                IrInstruction::ArraySet { element_ty, .. }
+                | IrInstruction::ArraySlice { element_ty, .. } => element_ty,
+                _ => continue,
+            };
+            let key = element_ty.to_string();
+            if array_scratch.contains_key(&key) {
+                continue;
+            }
+            let storage_array_ty = Type::Array(Box::new(element_ty.clone()));
+            let storage_index = array_registry.index(&storage_array_ty)?;
+            let slot = function.params.len() as u32 + extra_locals.len() as u32;
+            extra_locals.push(ValType::Ref(wasm_encoder::RefType {
+                nullable: true,
+                heap_type: wasm_encoder::HeapType::Concrete(storage_index),
+            }));
+            array_scratch.insert(key, slot);
+        }
+    }
+
     Ok(LocalPlan {
         slots,
         multi_slots,
@@ -226,6 +255,7 @@ pub(crate) fn build_local_plan(
         tagged_resume_value_tmp,
         tagged_resume_state_tmp,
         protected_call_value_tmp,
+        array_scratch,
     })
 }
 
@@ -303,6 +333,7 @@ pub(crate) fn infer_value_types(
                 IrInstruction::ArrayGet { element_ty, .. } => element_ty.clone(),
                 IrInstruction::ArraySet { .. } => Type::Numeric(NumericType::I32),
                 IrInstruction::ArrayLen { .. } => Type::Numeric(NumericType::I32),
+                IrInstruction::ArrayPop { .. } => Type::Unit,
                 IrInstruction::ArraySlice { element_ty, .. } => {
                     Type::Array(Box::new(element_ty.clone()))
                 }
@@ -711,6 +742,7 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
             ..
         } => vec![*array, *index, *value],
         IrInstruction::ArrayLen { array } => vec![*array],
+        IrInstruction::ArrayPop { array, .. } => vec![*array],
         IrInstruction::ArraySlice { array, start, .. } => vec![*array, *start],
         IrInstruction::BytesGet { bytes, index } => vec![*bytes, *index],
         IrInstruction::BytesLen { bytes } => vec![*bytes],
@@ -743,6 +775,7 @@ fn instruction_use_requires_local(instruction: &IrInstruction) -> bool {
         } | IrInstruction::ArrayGet { .. }
             | IrInstruction::ArraySet { .. }
             | IrInstruction::ArraySlice { .. }
+            | IrInstruction::ArrayPop { .. }
             | IrInstruction::StructGet { .. }
             | IrInstruction::StructSet { .. }
             | IrInstruction::CoroutineResume { .. }
@@ -784,6 +817,7 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         | IrInstruction::ArraySet { .. }
         | IrInstruction::ArraySlice { .. } => false,
         IrInstruction::ArrayLen { array } => *array == value,
+        IrInstruction::ArrayPop { .. } => false,
         IrInstruction::BytesGet { .. } => false,
         IrInstruction::BytesLen { bytes } => *bytes == value,
         IrInstruction::StructNew { fields, .. } => fields.first().copied() == Some(value),
@@ -843,4 +877,19 @@ pub(crate) fn local(local_plan: &LocalPlan, value: ValueId) -> Result<u32, Diagn
         .get(&value)
         .copied()
         .ok_or_else(|| Diagnostic::new(format!("missing local slot for value {:?}", value)))
+}
+
+pub(crate) fn array_scratch_local(
+    local_plan: &LocalPlan,
+    element_ty: &Type,
+) -> Result<u32, Diagnostic> {
+    local_plan
+        .array_scratch
+        .get(&element_ty.to_string())
+        .copied()
+        .ok_or_else(|| {
+            Diagnostic::new(format!(
+                "missing array scratch local for element type {element_ty}"
+            ))
+        })
 }

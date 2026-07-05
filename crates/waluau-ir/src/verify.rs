@@ -552,6 +552,22 @@ fn verify_function(
                         )));
                     }
                 }
+                Instruction::ArrayPop { array, element_ty } => {
+                    let array_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *array,
+                    )?;
+                    let expected_array_ty = Type::Array(Box::new(element_ty.clone()));
+                    if array_ty != expected_array_ty {
+                        return Err(Diagnostic::new(format!(
+                            "array pop in block {:?} expects {}, got {}",
+                            block.id, expected_array_ty, array_ty
+                        )));
+                    }
+                }
                 Instruction::ArraySlice {
                     array,
                     start,
@@ -1054,6 +1070,7 @@ fn infer_instruction_type(
         Instruction::ArrayGet { element_ty, .. } => Ok(element_ty.clone()),
         Instruction::ArraySet { .. } => Ok(Type::Numeric(NumericType::I32)),
         Instruction::ArrayLen { .. } => Ok(Type::Numeric(NumericType::I32)),
+        Instruction::ArrayPop { .. } => Ok(Type::Unit),
         Instruction::ArraySlice { element_ty, .. } => Ok(Type::Array(Box::new(element_ty.clone()))),
         Instruction::BytesGet { .. } => Ok(Type::Numeric(NumericType::I32)),
         Instruction::BytesLen { .. } => Ok(Type::Numeric(NumericType::I32)),

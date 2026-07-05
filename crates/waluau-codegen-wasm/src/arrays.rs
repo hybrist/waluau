@@ -24,6 +24,11 @@ pub(crate) struct ArrayTypeRegistry {
     /// this module. When absent, `boxed_f64_struct_type` is a dummy index and
     /// no boxed f64 can exist at runtime.
     pub(crate) closure_gc_present: bool,
+    /// Type indices for growable array wrapper structs, keyed by element type.
+    /// Each growable array value is `(struct (field storage: ref null array) (field len: i32))`;
+    /// the struct is emitted immediately after its backing array type so nested
+    /// arrays can reference the inner struct without a forward reference.
+    pub(crate) growable_array_indices: HashMap<String, u32>,
 }
 
 impl ArrayTypeRegistry {
@@ -36,10 +41,27 @@ impl ArrayTypeRegistry {
         func_val_struct_type: u32,
         boxed_f64_struct_type: u32,
     ) -> Self {
+        // Array-related types are emitted as interleaved pairs: the raw storage
+        // array at `base + 2*i` and its growable wrapper struct at `base + 2*i + 1`.
+        // Because `array_types` is depth-sorted, an outer array's storage can
+        // reference the inner element's growable struct as a backward reference.
         let indices = array_types
             .iter()
             .enumerate()
-            .map(|(offset, array_ty)| (type_key(array_ty), function_type_count + offset as u32))
+            .map(|(offset, array_ty)| (type_key(array_ty), function_type_count + 2 * offset as u32))
+            .collect();
+        let growable_array_indices = array_types
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, array_ty)| {
+                let Type::Array(element) = array_ty else {
+                    return None;
+                };
+                Some((
+                    type_key(element),
+                    function_type_count + 2 * offset as u32 + 1,
+                ))
+            })
             .collect();
         let record_indices = record_types
             .iter()
@@ -66,6 +88,7 @@ impl ArrayTypeRegistry {
             func_val_struct_type,
             boxed_f64_struct_type,
             closure_gc_present: false,
+            growable_array_indices,
         }
     }
 
@@ -103,6 +126,13 @@ impl ArrayTypeRegistry {
                 field, record_ty
             ))
         })
+    }
+
+    pub(crate) fn growable_array_index(&self, element_ty: &Type) -> Result<u32, Diagnostic> {
+        self.growable_array_indices
+            .get(&type_key(element_ty))
+            .copied()
+            .ok_or_else(|| Diagnostic::new(format!("missing growable array type for {element_ty}")))
     }
 }
 
@@ -204,7 +234,8 @@ fn collect_array_types_from_instruction(
         }
         IrInstruction::ArrayGet { element_ty, .. }
         | IrInstruction::ArraySet { element_ty, .. }
-        | IrInstruction::ArraySlice { element_ty, .. } => {
+        | IrInstruction::ArraySlice { element_ty, .. }
+        | IrInstruction::ArrayPop { element_ty, .. } => {
             insert_array_type(&Type::Array(Box::new(element_ty.clone())), seen, out);
         }
         IrInstruction::ArrayLen { .. }
@@ -226,7 +257,8 @@ fn collect_record_types_from_instruction(
         IrInstruction::ArrayNew { element_ty, .. }
         | IrInstruction::ArrayGet { element_ty, .. }
         | IrInstruction::ArraySet { element_ty, .. }
-        | IrInstruction::ArraySlice { element_ty, .. } => insert_record_type(element_ty, seen, out),
+        | IrInstruction::ArraySlice { element_ty, .. }
+        | IrInstruction::ArrayPop { element_ty, .. } => insert_record_type(element_ty, seen, out),
         IrInstruction::CallValue {
             params,
             return_type,
@@ -309,8 +341,11 @@ pub(crate) fn array_storage_type(
         }
         Type::Nullable(inner) => array_storage_type(inner, registry),
         Type::Unknown => Ok(StorageType::Val(crate::wasm_types::anyref_val_type())),
-        Type::Array(_) => {
-            let index = registry.index(element_ty)?;
+        // Array values are growable wrapper structs. `array_types` is
+        // depth-sorted and each wrapper struct is emitted right after its raw
+        // array, so the inner element's struct is always a backward reference.
+        Type::Array(inner) => {
+            let index = registry.growable_array_index(inner)?;
             Ok(StorageType::Val(ValType::Ref(RefType {
                 nullable: true,
                 heap_type: HeapType::Concrete(index),
@@ -357,8 +392,8 @@ pub(crate) fn record_storage_type(
             Ok(StorageType::Val(externref_val_type()))
         }
         Type::Nullable(inner) => record_storage_type(inner, registry),
-        Type::Array(_) => {
-            let index = registry.index(field_ty)?;
+        Type::Array(inner) => {
+            let index = registry.growable_array_index(inner)?;
             Ok(StorageType::Val(ValType::Ref(RefType {
                 nullable: true,
                 heap_type: HeapType::Concrete(index),

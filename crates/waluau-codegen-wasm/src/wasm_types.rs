@@ -49,8 +49,10 @@ pub(crate) fn wasm_type(
         Type::Named { .. } | Type::Opaque { .. } => {
             unreachable!("opaque types must be erased before wasm lowering")
         }
-        Type::Array(_) => {
-            let index = array_registry.index(ty)?;
+        // Array values are the growable wrapper struct `{storage, len}`, not the
+        // raw wasm array (which only backs the struct's storage field).
+        Type::Array(element) => {
+            let index = array_registry.growable_array_index(element)?;
             Ok(ValType::Ref(RefType {
                 nullable: true,
                 heap_type: HeapType::Concrete(index),
