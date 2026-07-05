@@ -1,12 +1,10 @@
 -- Canvas 2D rendering for the snake fixture. Everything on screen is drawn
 -- with fillRect/strokeRect/fillText; see the TODOs for why.
---
--- TODO(waluau-ae6g): the game-state record type is spelled out inline in the
--- draw() signature because module-local type aliases do not unify across
--- module boundaries (shared with game.walu).
 
 -- Size of one grid cell in canvas pixels. Keep in sync with main.walu, which
 -- sizes the <canvas> element as cols * cell_size() x rows * cell_size().
+type State = { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }
+
 function cell_size(): f64
     return 16.0
 end
@@ -45,7 +43,7 @@ function paint_red(): string
     return "invert(13%) sepia(94%) saturate(7466%) hue-rotate(359deg) brightness(95%) contrast(112%)"
 end
 
-function draw(ctx: CanvasRenderingContext2D, state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }): unit
+function draw(ctx: CanvasRenderingContext2D, state: State): unit
     local w: f64 = cell_px(state.cols)
     local h: f64 = cell_px(state.rows)
 
