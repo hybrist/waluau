@@ -67,8 +67,6 @@ Each workaround in the source carries a `TODO(<beads-id>)` comment. Summary:
 - `waluau-40ix` — a bare `return` in a `unit` function fails to typecheck
   ("cannot implicitly convert nil to unit"); early-exit guards in `game.walu`
   are restructured into `if`/`elseif` ladders and success flags.
-- `waluau-lhia` — the length operator `#` rejects record-field operands
-  (`#state.snake`); arrays are aliased into locals before measuring them.
 - `waluau-xyx8` — an empty array literal does not adopt the annotated element
   type of the field it is assigned to, so `reset()` drains the snake array in
   place instead of assigning `{}`.

@@ -12,9 +12,8 @@ assert(state.score == 0)
 
 -- The snake starts as three segments with the head at the grid center,
 -- moving right.
-local snake = state.snake
-assert(#snake == 3)
-local head = snake[0]
+assert(#state.snake == 3)
+local head = state.snake[0]
 assert(head.x == 4 and head.y == 4)
 
 -- Food never spawns on top of the snake.
@@ -43,8 +42,7 @@ assert(not state.alive)
 game.reset(state)
 assert(state.alive)
 assert(state.score == 0)
-local reset_snake = state.snake
-assert(#reset_snake == 3)
+assert(#state.snake == 3)
 
 -- A 180-degree reversal is ignored: moving right, turning left must not
 -- apply, so the next step still moves the head to the right.

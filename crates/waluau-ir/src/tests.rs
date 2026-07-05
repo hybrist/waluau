@@ -2448,3 +2448,29 @@ fn array_for_in_break_reads_breaking_iteration_values() {
     "#,
     );
 }
+
+#[test]
+fn lowers_length_of_record_field_array_in_numeric_context() {
+    // Regression test for waluau-lhia: `#` on an array reached through a
+    // record field failed with "cannot implicitly convert array to i32"
+    // whenever the surrounding context expected a number, because the unary
+    // lowering pushed the result's expected type into the operand.
+    let source = r#"
+        function entry(): i32
+            local s: { items: {i32} } = { items = {1, 2, 3} }
+            if #s.items == 3 then
+                return #s.items + 1
+            end
+            return 0
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let module = build(&program).expect("ir build should succeed");
+    let function = &module.functions[0];
+    assert!(function.blocks.values().any(|block| {
+        block
+            .instructions
+            .iter()
+            .any(|(_, instruction)| matches!(instruction, Instruction::ArrayLen { .. }))
+    }));
+}

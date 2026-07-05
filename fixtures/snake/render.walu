@@ -70,12 +70,9 @@ function draw(ctx: CanvasRenderingContext2D, state: { cols: i32, rows: i32, snak
     ctx:fillRect(cell_px(state.food.x) + 2.0, cell_px(state.food.y) + 2.0, cell_size() - 4.0, cell_size() - 4.0)
 
     -- Snake, head drawn brighter than the body.
-    -- TODO(waluau-lhia): `#state.snake` does not typecheck on the record
-    -- field directly, so it is aliased into a local first.
-    local snake = state.snake
     local i: i32 = 0
-    while i < #snake do
-        local seg = snake[i]
+    while i < #state.snake do
+        local seg = state.snake[i]
         if i == 0 then
             set_paint(ctx, paint_light_green())
         else
