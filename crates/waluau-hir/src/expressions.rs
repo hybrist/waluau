@@ -6,9 +6,10 @@ use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 use super::Binding;
 use super::builtins::{
     STRING_BYTE, STRING_FIND, STRING_FORMAT, STRING_LEN, STRING_LOWER, STRING_REP, STRING_SUB,
-    STRING_UPPER, infer_bit32_builtin_call, infer_coroutine_builtin_call, infer_math_builtin_call,
-    infer_promise_await_method_call, infer_promise_builtin_call, infer_select_builtin_call,
-    infer_string_builtin_call, infer_table_builtin_call, infer_tostring_builtin_call,
+    STRING_UPPER, infer_bit32_builtin_call, infer_coroutine_builtin_call, infer_error_builtin_call,
+    infer_math_builtin_call, infer_pcall_builtin_call, infer_promise_await_method_call,
+    infer_promise_builtin_call, infer_select_builtin_call, infer_string_builtin_call,
+    infer_table_builtin_call, infer_tostring_builtin_call,
 };
 use super::numeric::{
     coerce_type, common_element_type, infer_numeric_common_type, is_extern_subtype_of,
@@ -489,6 +490,26 @@ pub(super) fn infer_expr(
             }
             if let Some(name) = builtin_name(callee.as_ref()) {
                 if let Some(result) = infer_promise_builtin_call(
+                    &name,
+                    args,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    expected.clone(),
+                ) {
+                    return result;
+                }
+                if let Some(result) = infer_pcall_builtin_call(
+                    &name,
+                    args,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    expected.clone(),
+                ) {
+                    return result;
+                }
+                if let Some(result) = infer_error_builtin_call(
                     &name,
                     args,
                     vars,
@@ -1210,16 +1231,16 @@ pub(super) fn infer_expr_list(
             .and_then(|types| (!types[out.len()..].is_empty()).then(|| &types[out.len()..]));
         let next_expected = remaining_expected.and_then(|types| types.first().cloned());
         let ty = if let Expr::Call { callee, .. } = expr {
-            let is_resume =
-                builtin_name(callee.as_ref()).is_some_and(|name| name == "coroutine.resume");
+            let expands_multi = builtin_name(callee.as_ref())
+                .is_some_and(|name| name == "coroutine.resume" || name == "pcall");
             // A Name not found in fn_signatures or vars may be a tagged-union constructor
             // (e.g. `Num(42)`). Pass next_expected so the constructor intercept in
             // infer_expr can see the expected union type and fire correctly.
             let is_potential_constructor = matches!(callee.as_ref(), Expr::Name(tag, _, _)
                     if !fn_signatures.contains_key(tag.as_str())
                         && !vars.contains_key(tag.as_str()));
-            let call_expected = if is_resume {
-                // coroutine.resume returns Multi; pass the full expected slice so the
+            let call_expected = if expands_multi {
+                // coroutine.resume/pcall return Multi; pass the full expected slice so the
                 // return-type inference captures all slots rather than just the first.
                 remaining_expected.map(|types| Type::Multi(types.to_vec()))
             } else if is_potential_constructor {

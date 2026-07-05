@@ -1715,7 +1715,8 @@ impl<'a> Monomorphizer<'a> {
         types: &HashMap<SymbolId, Type>,
     ) -> Result<Option<Type>, Diagnostic> {
         match name {
-            "print" | "assert" => Ok(Some(Type::Unit)),
+            "print" | "assert" | "error" => Ok(Some(Type::Unit)),
+            "pcall" => Ok(Some(Type::Multi(vec![Type::Bool, Type::Unknown]))),
             "tostring" => Ok(Some(Type::String)),
             "coroutine.create" => Ok(Some(Type::Thread)),
             "coroutine.resume" => Ok(Some(Type::Multi(vec![Type::Bool, Type::Unknown]))),

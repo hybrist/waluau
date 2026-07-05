@@ -92,6 +92,11 @@ pub(crate) fn collect_user_signatures(
                         params,
                         return_type,
                         ..
+                    }
+                    | IrInstruction::ProtectedCall {
+                        params,
+                        return_type,
+                        ..
                     } => {
                         registry.add(params.clone(), return_type.clone());
                         registry.add_wrapper(params.clone(), return_type.clone());

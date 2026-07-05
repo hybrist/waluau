@@ -756,9 +756,9 @@ fn collect_return_types_with_scope(
                 {
                     if let Expr::Name(name, _, _) = callee.as_ref() {
                         if name == ASSERT {
-                            if args.len() != 1 {
+                            if !(1..=2).contains(&args.len()) {
                                 return Err(Diagnostic::new(format!(
-                                    "{ASSERT} expects 1 argument, got {}",
+                                    "{ASSERT} expects 1 or 2 arguments, got {}",
                                     args.len()
                                 )));
                             }
@@ -773,6 +773,15 @@ fn collect_return_types_with_scope(
                                 return Err(Diagnostic::new(format!(
                                     "{ASSERT} expects bool, got {actual}"
                                 )));
+                            }
+                            if args.len() == 2 {
+                                infer_expr(
+                                    &args[1],
+                                    &scope,
+                                    fn_signatures,
+                                    active_type_params,
+                                    Some(Type::String),
+                                )?;
                             }
                             continue;
                         }
@@ -1521,9 +1530,9 @@ pub(super) fn check_stmt(
             {
                 if let Expr::Name(name, _, _) = callee.as_ref() {
                     if name == ASSERT {
-                        if args.len() != 1 {
+                        if !(1..=2).contains(&args.len()) {
                             return Err(Diagnostic::new(format!(
-                                "{ASSERT} expects 1 argument, got {}",
+                                "{ASSERT} expects 1 or 2 arguments, got {}",
                                 args.len()
                             )));
                         }
@@ -1538,6 +1547,15 @@ pub(super) fn check_stmt(
                             return Err(Diagnostic::new(format!(
                                 "{ASSERT} expects bool, got {actual}"
                             )));
+                        }
+                        if args.len() == 2 {
+                            infer_expr(
+                                &args[1],
+                                vars,
+                                fn_signatures,
+                                active_type_params,
+                                Some(Type::String),
+                            )?;
                         }
                         return Ok(false);
                     }

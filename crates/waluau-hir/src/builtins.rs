@@ -43,6 +43,8 @@ pub(super) const TABLE_CONCAT: &str = "table.concat";
 pub(super) const TO_STRING: &str = "tostring";
 pub(super) const SELECT: &str = "select";
 pub(super) const ASSERT: &str = "assert";
+pub(super) const ERROR: &str = "error";
+pub(super) const PCALL: &str = "pcall";
 pub(super) const STRING_FIND: &str = "string.find";
 pub(super) const STRING_LEN: &str = "string.len";
 pub(super) const STRING_SUB: &str = "string.sub";
@@ -310,6 +312,105 @@ pub(super) fn infer_coroutine_builtin_call(
         }
         _ => None,
     }
+}
+
+pub(super) fn infer_pcall_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    if name != PCALL {
+        return None;
+    }
+    if args.is_empty() {
+        return Some(Err(Diagnostic::new("{PCALL} expects at least 1 argument")));
+    }
+    let callee_ty = match super::expressions::infer_expr(
+        &args[0],
+        vars,
+        fn_signatures,
+        active_type_params,
+        None,
+    ) {
+        Ok(ty) => ty,
+        Err(error) => return Some(Err(error)),
+    };
+    let Type::Function {
+        params,
+        return_type: _,
+    } = callee_ty
+    else {
+        return Some(Err(Diagnostic::new(format!(
+            "{PCALL} expects a function, got {callee_ty}"
+        ))));
+    };
+    if args.len() - 1 != params.len() {
+        return Some(Err(Diagnostic::new(format!(
+            "{PCALL} protected function expects {} arguments, got {}",
+            params.len(),
+            args.len() - 1
+        ))));
+    }
+    for (arg, param_ty) in args.iter().skip(1).zip(params.iter()) {
+        if let Err(error) = super::expressions::infer_expr(
+            arg,
+            vars,
+            fn_signatures,
+            active_type_params,
+            Some(param_ty.clone()),
+        )
+        .and_then(|actual| coerce_type(actual, Some(param_ty.clone())))
+        {
+            return Some(Err(error));
+        }
+    }
+    Some(coerce_type(
+        Type::Multi(vec![Type::Bool, Type::Unknown]),
+        expected,
+    ))
+}
+
+pub(super) fn infer_error_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    if name != ERROR {
+        return None;
+    }
+    if !(1..=2).contains(&args.len()) {
+        return Some(Err(Diagnostic::new(format!(
+            "{ERROR} expects 1 or 2 arguments, got {}",
+            args.len()
+        ))));
+    }
+    if let Err(error) = super::expressions::infer_expr(
+        &args[0],
+        vars,
+        fn_signatures,
+        active_type_params,
+        Some(Type::String),
+    ) {
+        return Some(Err(error));
+    }
+    if args.len() == 2 {
+        if let Err(error) = super::expressions::infer_expr(
+            &args[1],
+            vars,
+            fn_signatures,
+            active_type_params,
+            Some(Type::Numeric(NumericType::I32)),
+        ) {
+            return Some(Err(error));
+        }
+    }
+    Some(Ok(expected.unwrap_or(Type::Unit)))
 }
 
 pub(super) fn infer_math_builtin_call(

@@ -1249,6 +1249,56 @@ fn emits_valid_wasm_for_unknown_coroutine_payloads() {
 }
 
 #[test]
+fn pcall_emits_try_table_and_exception_tag() {
+    let source = r#"
+        function run(): i32
+            local ok: bool, value: unknown = pcall(function(): f64
+                return 42.0
+            end)
+            if ok and value::f64 == 42.0 then
+                return 1
+            end
+            return 0
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(wat.contains("tag"), "should emit a Lua error tag:\n{wat}");
+    assert!(
+        wat.contains("try_table"),
+        "pcall should lower to try_table:\n{wat}"
+    );
+}
+
+#[test]
+fn assert_failure_message_throws_lua_error_tag() {
+    let source = r#"
+        function run(): unit
+            assert(false, "boom")
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(wat.contains("throw"), "assert should emit throw:\n{wat}");
+}
+
+#[test]
 fn emits_valid_wasm_for_unknown_coroutine_extern_payloads() {
     let source = r#"
         function yield_extern(value: extern): extern

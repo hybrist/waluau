@@ -231,6 +231,11 @@ fn collect_record_types_from_instruction(
             params,
             return_type,
             ..
+        }
+        | IrInstruction::ProtectedCall {
+            params,
+            return_type,
+            ..
         } => {
             for param in params {
                 insert_record_type(param, seen, out);
@@ -270,6 +275,7 @@ fn collect_record_types_from_instruction(
         | IrInstruction::MathIntrinsic { .. }
         | IrInstruction::BitwiseIntrinsic { .. }
         | IrInstruction::Print { .. }
+        | IrInstruction::Throw { .. }
         | IrInstruction::ToString { .. }
         | IrInstruction::Call { .. }
         | IrInstruction::HostCall { .. }

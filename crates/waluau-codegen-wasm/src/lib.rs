@@ -8,10 +8,11 @@ use waluau_ir::{
     MathIntrinsic, Module, Terminator, ValueId,
 };
 use wasm_encoder::{
-    AbstractHeapType, BlockType, CodeSection, ConstExpr, CustomSection, ElementSection, Elements,
-    EntityType, ExportKind, ExportSection, FieldType, Function, FunctionSection, GlobalSection,
-    HeapType, ImportSection, Instruction, Module as WasmModule, RefType, StartSection, StorageType,
-    TableSection, TableType, TypeSection, ValType,
+    AbstractHeapType, BlockType, Catch, CodeSection, ConstExpr, CustomSection, ElementSection,
+    Elements, EntityType, ExportKind, ExportSection, FieldType, Function, FunctionSection,
+    GlobalSection, HeapType, ImportSection, Instruction, Module as WasmModule, RefType,
+    StartSection, StorageType, TableSection, TableType, TagKind, TagSection, TagType, TypeSection,
+    ValType,
 };
 use wasmparser::{Validator, WasmFeatures};
 
@@ -129,6 +130,19 @@ fn needs_promise_resume_trampoline(module: &Module) -> bool {
     })
 }
 
+fn needs_lua_error_tag(module: &Module) -> bool {
+    module.functions.iter().any(|function| {
+        function.blocks.values().any(|block| {
+            block.instructions.iter().any(|(_, instruction)| {
+                matches!(
+                    instruction,
+                    IrInstruction::Throw { .. } | IrInstruction::ProtectedCall { .. }
+                )
+            })
+        })
+    })
+}
+
 /// Returns `true` if the module uses any features that require the closure GC types
 /// (`$anyref_array`, `$func_val`, `$boxed_f64`) to be declared in the type section.
 fn needs_closure_gc_types(module: &Module) -> bool {
@@ -153,7 +167,9 @@ fn needs_closure_gc_types(module: &Module) -> bool {
             for (_, instruction) in &block.instructions {
                 match instruction {
                     // Closure creation and indirect calls require all three GC types.
-                    IrInstruction::Closure { .. } | IrInstruction::CallValue { .. } => {
+                    IrInstruction::Closure { .. }
+                    | IrInstruction::CallValue { .. }
+                    | IrInstruction::ProtectedCall { .. } => {
                         return true;
                     }
                     // Casting to/from `unknown` with f64 uses `$boxed_f64`.
@@ -211,6 +227,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     let callback_event_unit_trampoline = needs_callback_event_unit_trampoline(module);
     let callback_unit_extern_trampoline = needs_callback_unit_extern_trampoline(module);
     let promise_resume_trampoline = needs_promise_resume_trampoline(module);
+    let lua_error_tag = needs_lua_error_tag(module);
     let closure_gc_needed = needs_closure_gc_types(module);
     // Two closure GC types sit after host types (only when needed):
     //   $anyref_array = (array (ref null any) mutable)
@@ -515,6 +532,16 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     } else {
         None
     };
+    let lua_error_tag_type_idx = if lua_error_tag {
+        let type_idx = type_idx_counter;
+        types
+            .ty()
+            .function(vec![anyref_val_type()], Vec::<ValType>::new());
+        type_idx_counter += 1;
+        Some(type_idx)
+    } else {
+        None
+    };
 
     struct RecordHelpersInfo {
         record_idx: u32,
@@ -762,6 +789,13 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     if let Some(state_type) = coroutine_state_type {
         coroutine_plan.emit_globals(&mut globals, state_type);
     }
+    let mut tags = TagSection::new();
+    if let Some(func_type_idx) = lua_error_tag_type_idx {
+        tags.tag(TagType {
+            kind: TagKind::Exception,
+            func_type_idx,
+        });
+    }
     let mut exports = ExportSection::new();
     let mut codes = CodeSection::new();
     for (index, function) in module.functions.iter().enumerate() {
@@ -989,6 +1023,9 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     wasm.section(&imports);
     wasm.section(&functions);
     wasm.section(&tables);
+    if !tags.is_empty() {
+        wasm.section(&tags);
+    }
     if coroutine_plan.has_state() {
         wasm.section(&globals);
     }
@@ -1200,6 +1237,97 @@ fn emit_closure_wrapper(
     out.instruction(&Instruction::Call(import_count + target_sig.index));
     out.instruction(&Instruction::End);
     Ok(out)
+}
+
+struct CallValueSignature<'a> {
+    params: &'a [Type],
+    return_type: &'a Type,
+}
+
+fn emit_call_value_stack(
+    out: &mut Function,
+    local_plan: &LocalPlan,
+    ctx: &EmissionContext<'_>,
+    value_defs: &HashMap<ValueId, IrInstruction>,
+    callee: ValueId,
+    args: &[ValueId],
+    signature: CallValueSignature<'_>,
+) -> Result<(), Diagnostic> {
+    if let Some(IrInstruction::Closure {
+        name,
+        captures,
+        params: closure_params,
+        return_type: closure_return_type,
+    }) = value_defs.get(&callee)
+    {
+        if signature.params != closure_params || signature.return_type != closure_return_type {
+            return Err(Diagnostic::new(
+                "indirect-call signature mismatch for closure value",
+            ));
+        }
+        let target = ctx.signatures.get(name).ok_or_else(|| {
+            Diagnostic::new(format!(
+                "unknown closure target function '{name}' during wasm emission"
+            ))
+        })?;
+        for (i, capture) in captures.iter().enumerate() {
+            let expected = target
+                .params
+                .get(i)
+                .ok_or_else(|| Diagnostic::new("closure target param missing"))?
+                .clone();
+            if let Type::Array(_) = expected {
+                emit_value_operand(out, local_plan, *capture)?;
+            } else if let Some(IrInstruction::ArrayNew { elements, .. }) = value_defs.get(capture) {
+                let elem = elements
+                    .first()
+                    .copied()
+                    .ok_or_else(|| Diagnostic::new("empty array capture during wasm emission"))?;
+                emit_value_operand(out, local_plan, elem)?;
+            } else {
+                emit_value_operand(out, local_plan, *capture)?;
+            }
+        }
+        for arg in args {
+            emit_value_operand(out, local_plan, *arg)?;
+        }
+        out.instruction(&Instruction::Call(ctx.wasm_func_index(target.index)));
+        return Ok(());
+    }
+
+    emit_value_operand(out, local_plan, callee)?;
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: ctx.array_registry.func_val_struct_type,
+        field_index: 1,
+    });
+    for arg in args {
+        emit_value_operand(out, local_plan, *arg)?;
+    }
+    emit_value_operand(out, local_plan, callee)?;
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: ctx.array_registry.func_val_struct_type,
+        field_index: 2,
+    });
+    let type_index = ctx
+        .signature_registry
+        .get_wrapper_type_index(ctx.user_type_base, signature.params, signature.return_type)
+        .ok_or_else(|| {
+            Diagnostic::new(format!(
+                "missing wrapper type for indirect call ({}) -> {}",
+                signature
+                    .params
+                    .iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                signature.return_type
+            ))
+        })?;
+    out.instruction(&Instruction::CallIndirect {
+        type_index,
+        table_index: 0,
+    });
+    Ok(())
 }
 
 /// Exported browser-host ABI helper for MVP DOM events.
@@ -2137,6 +2265,12 @@ fn emit_block_instructions(
                 }
                 emit_value_store(out, local_plan, *value)?;
             }
+            IrInstruction::Throw { error } => {
+                emit_value_operand(out, local_plan, *error)?;
+                out.instruction(&Instruction::AnyConvertExtern);
+                out.instruction(&Instruction::Throw(0));
+                emit_value_store(out, local_plan, *value)?;
+            }
             IrInstruction::Call { name, args, .. } => {
                 for arg in args {
                     emit_value_operand(out, local_plan, *arg)?;
@@ -2253,6 +2387,50 @@ fn emit_block_instructions(
                     table_index: 0,
                 });
                 emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::ProtectedCall {
+                callee,
+                args,
+                params,
+                return_type,
+            } => {
+                let slots = local_plan
+                    .multi_slots
+                    .get(value)
+                    .ok_or_else(|| Diagnostic::new("pcall result has no multi-value slots"))?;
+                let ok_slot = slots[0];
+                let value_slot = slots[1];
+                let value_tmp = local_plan
+                    .protected_call_value_tmp
+                    .ok_or_else(|| Diagnostic::new("missing protected-call value scratch local"))?;
+
+                out.instruction(&Instruction::I32Const(0));
+                out.instruction(&Instruction::LocalSet(ok_slot));
+                out.instruction(&Instruction::Block(BlockType::Result(anyref_val_type())));
+                out.instruction(&Instruction::TryTable(
+                    BlockType::Result(anyref_val_type()),
+                    Cow::Owned(vec![Catch::One { tag: 0, label: 0 }]),
+                ));
+                emit_call_value_stack(
+                    out,
+                    local_plan,
+                    ctx,
+                    value_defs,
+                    *callee,
+                    args,
+                    CallValueSignature {
+                        params,
+                        return_type,
+                    },
+                )?;
+                emit_box(out, return_type, ctx.array_registry)?;
+                out.instruction(&Instruction::LocalSet(value_tmp));
+                out.instruction(&Instruction::I32Const(1));
+                out.instruction(&Instruction::LocalSet(ok_slot));
+                out.instruction(&Instruction::LocalGet(value_tmp));
+                out.instruction(&Instruction::End);
+                out.instruction(&Instruction::End);
+                out.instruction(&Instruction::LocalSet(value_slot));
             }
             IrInstruction::CoroutineCreate { callee } => {
                 let state_ty = ctx.coroutine_state_type()?;
