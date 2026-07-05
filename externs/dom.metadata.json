@@ -4603,6 +4603,14 @@
     {
       "interface": "Event",
       "kind": "attribute",
+      "idlName": "type",
+      "emittedName": "type",
+      "type": "string",
+      "readonly": true
+    },
+    {
+      "interface": "Event",
+      "kind": "attribute",
       "idlName": "target",
       "emittedName": "target",
       "type": "EventTarget",
@@ -10359,13 +10367,6 @@
       "interface": "CSSStyleDeclaration",
       "member": "parentRule",
       "reason": "member 'attribute:parentRule' collides with the same-named member kept on CSSRule (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
-      "issue": "waluau-1l02",
-      "disabled": true
-    },
-    {
-      "interface": "Event",
-      "member": "type",
-      "reason": "member 'attribute:type' collides with the same-named member kept on Blob (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
       "issue": "waluau-1l02",
       "disabled": true
     },

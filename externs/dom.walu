@@ -587,6 +587,7 @@ declare function CSSStyleDeclaration:getPropertyPriority(property: string): stri
 declare function CSSStyleDeclaration:setProperty(property: string, value: string): unit
 declare function CSSStyleDeclaration:removeProperty(property: string): string
 declare property CSSStyleProperties:cssFloat: string
+declare property Event:type: string
 declare property Event:target: EventTarget
 declare property Event:srcElement: EventTarget?
 declare property Event:currentTarget: EventTarget?
