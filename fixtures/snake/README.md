@@ -61,6 +61,3 @@ Each workaround in the source carries a `TODO(<beads-id>)` comment. Summary:
 - `waluau-w5r0` — file-scope locals (including `require` bindings) are not
   visible from function bodies; dependencies are re-required inside each
   function that needs them.
-- `waluau-xyx8` — an empty array literal does not adopt the annotated element
-  type of the field it is assigned to, so `reset()` drains the snake array in
-  place instead of assigning `{}`.

@@ -1,0 +1,36 @@
+-- Every context where an empty array literal should adopt the expected type.
+
+-- 1. annotated local
+local xs: {i32} = {}
+assert(#xs == 0)
+
+-- 2. record literal field
+local rec: { items: {i32} } = { items = {} }
+assert(#rec.items == 0)
+
+-- 3. assignment to record field (with growth afterwards)
+rec.items = {}
+table.insert(rec.items, 42)
+assert(#rec.items == 1)
+assert(rec.items[0] == 42)
+
+-- 4. function argument
+function count(values: {f64}): i32
+    return #values
+end
+assert(count({}) == 0)
+
+-- 5. return position
+function make(): {i32}
+    return {}
+end
+assert(#make() == 0)
+
+-- 6. array-of-records element type, matching fixtures/snake reset()
+local state: { snake: {{ x: i32, y: i32 }} } = { snake = {} }
+table.insert(state.snake, 0, { x = 3, y = 4 })
+state.snake = {}
+assert(#state.snake == 0)
+table.insert(state.snake, 0, { x = 1, y = 2 })
+assert(#state.snake == 1)
+assert(state.snake[0].y == 2)
