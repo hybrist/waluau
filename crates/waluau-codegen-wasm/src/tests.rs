@@ -1255,7 +1255,10 @@ fn pcall_emits_try_table_and_exception_tag() {
             local ok: bool, value: unknown = pcall(function(): f64
                 return 42.0
             end)
-            if ok and value::f64 == 42.0 then
+            local arg_ok: bool, arg_value: unknown = pcall(function(x: number): number
+                return x + 3
+            end, 2)
+            if ok and value::f64 == 42.0 and arg_ok and arg_value::f64 == 5 then
                 return 1
             end
             return 0
