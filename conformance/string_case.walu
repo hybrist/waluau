@@ -1,0 +1,8 @@
+-- string.upper/string.lower and method-call sugar.
+
+local message: string = "Lua"
+
+assert(string.upper(message) == "LUA")
+assert(message:upper() == "LUA")
+assert(string.lower(message) == "lua")
+assert(message:lower() == "lua")

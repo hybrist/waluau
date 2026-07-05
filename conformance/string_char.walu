@@ -1,0 +1,5 @@
+-- string.char builds a string from up to 8 code points.
+
+assert(string.char() == "")
+assert(string.char(65) == "A")
+assert(string.char(65, 66, 67) == "ABC")

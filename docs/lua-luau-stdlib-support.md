@@ -96,12 +96,13 @@ called as `string.fn(s, …)` or `s:fn(…)`.
 | Symbol | Status | Behaviour / difference |
 |--------|--------|------------------------|
 | `string.find` / `s:find` | ⚠️ Different | Signature `string.find(haystack, needle, init?, plain?)`. **Plain substring search only — patterns are not supported.** Returns a single **0-based** `i32` start index, or **`-1`** when not found (Lua returns 1-based `start, end`, or `nil`). `init` is a 0-based `i32`; `plain` is a `bool`. See `conformance/string_find.walu`. |
-| `string.sub` | ❌ | Recognised but explicitly **not yet supported in Wasm emission** (compile error). |
-| `string.len` | ⚠️ Use `#` | No `string.len` function; use the `#` operator. |
-| `string.format` | ❌ | Not implemented. |
-| `string.rep` | ❌ | Not implemented. |
-| `string.lower` / `string.upper` | ❌ | Not implemented. |
-| `string.byte` / `string.char` | ❌ | Not implemented (strings are not byte-indexable; see bytes separation in the strings design doc). |
+| `string.sub` / `s:sub` | ⚠️ Different | Signature `string.sub(value, first, last?)`. Indices are **0-based** and `last` is inclusive. `last` defaults to the end of the string; negative indices count back from the end. Lua uses 1-based indices. |
+| `string.len` / `s:len` / `#s` | ✅ | Returns string length as `i32`. |
+| `string.format` / `s:format` | ⚠️ Partial | Supports up to 8 values and the specifiers `%d`, `%s`, `%f`, `%g`, `%x`, `%q`, plus `%%`. Width, precision, flags, and other Lua format specifiers are not implemented. |
+| `string.rep` / `s:rep` | ✅ | Signature `string.rep(value, count, separator?)`; `separator` defaults to `""`. |
+| `string.lower` / `string.upper` and methods | ✅ | Host string case conversion. |
+| `string.byte` / `s:byte` | ⚠️ Different | Signature `string.byte(value, index?)`. `index` is **0-based** and defaults to 0. Returns one `i32` code point or `-1` out of range (Lua returns `nil` and supports ranges/multiple returns). |
+| `string.char` | ⚠️ Partial | Supports 0 to 8 `i32` code points and returns the corresponding string. |
 | `string.gmatch` / `string.gsub` / `string.match` | ❌ | No Lua pattern engine. |
 | `string.split` (Luau) | ❌ | Not implemented. |
 | `string.reverse` | ❌ | Not implemented. |

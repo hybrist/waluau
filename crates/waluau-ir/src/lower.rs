@@ -3335,18 +3335,31 @@ impl Builder<'_> {
                 ..
             } => {
                 let receiver_ty = self.infer_expr_type(receiver, types, None)?;
-                if receiver_ty == Type::String && name == "find" {
+                if receiver_ty == Type::String {
                     let mut call_args = Vec::with_capacity(args.len() + 1);
                     call_args.push((**receiver).clone());
                     call_args.extend_from_slice(args);
+                    let builtin = match name.as_str() {
+                        "find" => Some(STRING_FIND),
+                        "len" => Some(STRING_LEN),
+                        "sub" => Some(STRING_SUB),
+                        "rep" => Some(STRING_REP),
+                        "byte" => Some(STRING_BYTE),
+                        "upper" => Some(STRING_UPPER),
+                        "lower" => Some(STRING_LOWER),
+                        "format" => Some(STRING_FORMAT),
+                        _ => None,
+                    };
+                    if let Some(builtin) = builtin {
                     if let Some(result) = self.lower_string_builtin_call(
-                        STRING_FIND,
+                        builtin,
                         &call_args,
                         env,
                         types,
                         expected.clone(),
                     ) {
                         return result;
+                    }
                     }
                 }
                 if let Some(result) = self.lower_promise_await_method_call(
@@ -3582,6 +3595,19 @@ impl Builder<'_> {
                     }
                     UnaryOp::Len => {
                         let actual = self.infer_expr_type(expr, types, None)?;
+                        if actual == Type::String {
+                            let value = self.lower_expr(expr, env, types, Some(Type::String))?;
+                            let len = self.emit_string_host_call(
+                                STRING_LEN_HOST,
+                                vec![value],
+                                Type::Numeric(NumericType::I32),
+                            )?;
+                            return self.coerce_value(
+                                len,
+                                Type::Numeric(NumericType::I32),
+                                expected,
+                            );
+                        }
                         if actual == Type::Bytes {
                             let bytes = self.lower_expr(expr, env, types, Some(Type::Bytes))?;
                             let len = self.emit(Instruction::BytesLen { bytes });
@@ -3592,7 +3618,9 @@ impl Builder<'_> {
                             );
                         }
                         if !actual.is_array() {
-                            return Err(Diagnostic::new("# requires an array or bytes operand"));
+                            return Err(Diagnostic::new(
+                                "# requires a string, array, or bytes operand",
+                            ));
                         }
                         let array = self.lower_expr(expr, env, types, Some(actual))?;
                         let len = self.emit(Instruction::ArrayLen { array });
@@ -4540,14 +4568,27 @@ impl Builder<'_> {
                 ..
             } => {
                 let receiver_ty = self.infer_expr_type(receiver, types, None)?;
-                if receiver_ty == Type::String && name == "find" {
+                if receiver_ty == Type::String {
                     let mut call_args = Vec::with_capacity(args.len() + 1);
                     call_args.push((**receiver).clone());
                     call_args.extend_from_slice(args);
+                    let builtin = match name.as_str() {
+                        "find" => Some(STRING_FIND),
+                        "len" => Some(STRING_LEN),
+                        "sub" => Some(STRING_SUB),
+                        "rep" => Some(STRING_REP),
+                        "byte" => Some(STRING_BYTE),
+                        "upper" => Some(STRING_UPPER),
+                        "lower" => Some(STRING_LOWER),
+                        "format" => Some(STRING_FORMAT),
+                        _ => None,
+                    };
+                    if let Some(builtin) = builtin {
                     if let Some(result) =
-                        self.infer_string_builtin_call_type(STRING_FIND, &call_args, types)
+                        self.infer_string_builtin_call_type(builtin, &call_args, types)
                     {
                         return result;
+                    }
                     }
                 }
                 if let Some(result) =
@@ -4675,10 +4716,10 @@ impl Builder<'_> {
                 }
                 UnaryOp::Len => {
                     let actual = self.infer_expr_type(expr, types, None)?;
-                    if actual == Type::Bytes || actual.is_array() {
+                    if actual == Type::String || actual == Type::Bytes || actual.is_array() {
                         coerce_type(Type::Numeric(NumericType::I32), expected)
                     } else {
-                        Err(Diagnostic::new("# requires an array or bytes operand"))
+                        Err(Diagnostic::new("# requires a string, array, or bytes operand"))
                     }
                 }
             },
@@ -6212,73 +6253,202 @@ impl Builder<'_> {
         types: &HashMap<SymbolId, Type>,
         expected: Option<Type>,
     ) -> Option<Result<ValueId, Diagnostic>> {
-        if name != STRING_FIND {
-            return None;
-        }
-
-        // string.find(haystack, needle, init?, plain?) — `init` (search start
-        // offset) and `plain` default to 0 and true when the caller omits them.
-        if args.len() < 2 || args.len() > 4 {
-            return Some(Err(Diagnostic::new(format!(
-                "{STRING_FIND} expects 2 to 4 arguments, got {}",
-                args.len()
-            ))));
-        }
-
-        let haystack = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
-            Ok(val) => val,
-            Err(error) => return Some(Err(error)),
-        };
-        let needle = match self.lower_expr(&args[1], env, types, Some(Type::String)) {
-            Ok(val) => val,
-            Err(error) => return Some(Err(error)),
-        };
         let i32_ty = Type::Numeric(NumericType::I32);
-        let init = match args.get(2) {
-            Some(arg) => match self.lower_expr(arg, env, types, Some(i32_ty.clone())) {
-                Ok(val) => val,
-                Err(error) => return Some(Err(error)),
-            },
-            None => self.emit(Instruction::Number {
-                ty: NumericType::I32,
-                literal: NumberLiteral { raw: "0".into() },
-            }),
+        let lowered = match name {
+            STRING_FIND => {
+                if args.len() < 2 || args.len() > 4 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_FIND} expects 2 to 4 arguments, got {}",
+                        args.len()
+                    ))));
+                }
+                let haystack = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+                    Ok(val) => val,
+                    Err(error) => return Some(Err(error)),
+                };
+                let needle = match self.lower_expr(&args[1], env, types, Some(Type::String)) {
+                    Ok(val) => val,
+                    Err(error) => return Some(Err(error)),
+                };
+                let init = match args.get(2) {
+                    Some(arg) => match self.lower_expr(arg, env, types, Some(i32_ty.clone())) {
+                        Ok(val) => val,
+                        Err(error) => return Some(Err(error)),
+                    },
+                    None => self.emit_i32_const("0"),
+                };
+                let plain = match args.get(3) {
+                    Some(arg) => match self.lower_expr(arg, env, types, Some(Type::Bool)) {
+                        Ok(val) => val,
+                        Err(error) => return Some(Err(error)),
+                    },
+                    None => self.emit(Instruction::Bool(true)),
+                };
+                self.emit_string_host_call(
+                    STRING_FIND_HOST,
+                    vec![haystack, needle, init, plain],
+                    i32_ty.clone(),
+                )
+            }
+            STRING_LEN => {
+                if args.len() != 1 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_LEN} expects 1 argument, got {}",
+                        args.len()
+                    ))));
+                }
+                let value = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+                    Ok(val) => val,
+                    Err(error) => return Some(Err(error)),
+                };
+                self.emit_string_host_call(STRING_LEN_HOST, vec![value], i32_ty.clone())
+            }
+            STRING_SUB => {
+                if args.len() < 2 || args.len() > 3 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_SUB} expects 2 or 3 arguments, got {}",
+                        args.len()
+                    ))));
+                }
+                let value = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+                    Ok(val) => val,
+                    Err(error) => return Some(Err(error)),
+                };
+                let first = match self.lower_expr(&args[1], env, types, Some(i32_ty.clone())) {
+                    Ok(val) => val,
+                    Err(error) => return Some(Err(error)),
+                };
+                let last = match args.get(2) {
+                    Some(arg) => match self.lower_expr(arg, env, types, Some(i32_ty.clone())) {
+                        Ok(val) => val,
+                        Err(error) => return Some(Err(error)),
+                    },
+                    None => self.emit_i32_const("-1"),
+                };
+                self.emit_string_host_call(
+                    STRING_SUB_HOST,
+                    vec![value, first, last],
+                    Type::String,
+                )
+            }
+            STRING_REP => {
+                if args.len() < 2 || args.len() > 3 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_REP} expects 2 or 3 arguments, got {}",
+                        args.len()
+                    ))));
+                }
+                let value = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+                    Ok(val) => val,
+                    Err(error) => return Some(Err(error)),
+                };
+                let count = match self.lower_expr(&args[1], env, types, Some(i32_ty.clone())) {
+                    Ok(val) => val,
+                    Err(error) => return Some(Err(error)),
+                };
+                let separator = match args.get(2) {
+                    Some(arg) => match self.lower_expr(arg, env, types, Some(Type::String)) {
+                        Ok(val) => val,
+                        Err(error) => return Some(Err(error)),
+                    },
+                    None => self.emit(Instruction::String(String::new())),
+                };
+                self.emit_string_host_call(
+                    STRING_REP_HOST,
+                    vec![value, count, separator],
+                    Type::String,
+                )
+            }
+            STRING_BYTE => {
+                if args.is_empty() || args.len() > 2 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_BYTE} expects 1 or 2 arguments, got {}",
+                        args.len()
+                    ))));
+                }
+                let value = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+                    Ok(val) => val,
+                    Err(error) => return Some(Err(error)),
+                };
+                let index = match args.get(1) {
+                    Some(arg) => match self.lower_expr(arg, env, types, Some(i32_ty.clone())) {
+                        Ok(val) => val,
+                        Err(error) => return Some(Err(error)),
+                    },
+                    None => self.emit_i32_const("0"),
+                };
+                self.emit_string_host_call(STRING_BYTE_HOST, vec![value, index], i32_ty.clone())
+            }
+            STRING_UPPER | STRING_LOWER => {
+                if args.len() != 1 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{name} expects 1 argument, got {}",
+                        args.len()
+                    ))));
+                }
+                let value = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+                    Ok(val) => val,
+                    Err(error) => return Some(Err(error)),
+                };
+                let host_name = if name == STRING_UPPER {
+                    STRING_UPPER_HOST
+                } else {
+                    STRING_LOWER_HOST
+                };
+                self.emit_string_host_call(host_name, vec![value], Type::String)
+            }
+            STRING_CHAR => {
+                if args.len() > 8 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_CHAR} expects at most 8 arguments, got {}",
+                        args.len()
+                    ))));
+                }
+                let mut lowered_args = Vec::with_capacity(args.len());
+                for arg in args {
+                    match self.lower_expr(arg, env, types, Some(i32_ty.clone())) {
+                        Ok(val) => lowered_args.push(val),
+                        Err(error) => return Some(Err(error)),
+                    }
+                }
+                let host_name = format!("{STRING_CHAR_HOST_PREFIX}{}", args.len());
+                self.emit_string_host_call(&host_name, lowered_args, Type::String)
+            }
+            STRING_FORMAT => {
+                if args.is_empty() || args.len() > 9 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_FORMAT} expects 1 to 9 arguments, got {}",
+                        args.len()
+                    ))));
+                }
+                let mut lowered_args = Vec::with_capacity(args.len());
+                match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+                    Ok(val) => lowered_args.push(val),
+                    Err(error) => return Some(Err(error)),
+                }
+                for arg in args.iter().skip(1) {
+                    match self.lower_expr_to_string(arg, env, types) {
+                        Ok(val) => lowered_args.push(val),
+                        Err(error) => return Some(Err(error)),
+                    }
+                }
+                let host_name = format!("{STRING_FORMAT_HOST_PREFIX}{}", args.len() - 1);
+                self.emit_string_host_call(&host_name, lowered_args, Type::String)
+            }
+            _ => return None,
         };
-        let plain = match args.get(3) {
-            Some(arg) => match self.lower_expr(arg, env, types, Some(Type::Bool)) {
-                Ok(val) => val,
-                Err(error) => return Some(Err(error)),
-            },
-            None => self.emit(Instruction::Bool(true)),
-        };
 
-        let call_args = vec![haystack, needle, init, plain];
-
-        // The result type: i32 (0-based position, or -1 if not found)
-        let result_ty = Type::Numeric(NumericType::I32);
-
-        let symbol_id = self
-            .host_import_names
-            .get(STRING_FIND_HOST)
-            .copied()
-            .ok_or_else(|| {
-                Diagnostic::new(format!(
-                    "declared function '{STRING_FIND_HOST}' is missing a host import symbol"
-                ))
-            });
-        let symbol_id = match symbol_id {
-            Ok(id) => id,
+        let (value, result_ty) = match lowered {
+            Ok(value) => {
+                let result_ty = match name {
+                    STRING_FIND | STRING_LEN | STRING_BYTE => i32_ty,
+                    _ => Type::String,
+                };
+                (value, result_ty)
+            }
             Err(error) => return Some(Err(error)),
         };
-
-        let result_value = self.emit(Instruction::HostCall {
-            name: STRING_FIND_HOST.to_string(),
-            symbol_id,
-            args: call_args,
-            return_type: result_ty.clone(),
-        });
-
-        Some(self.coerce_value(result_value, result_ty, expected))
+        Some(self.coerce_value(value, result_ty, expected))
     }
 
     fn infer_string_builtin_call_type(
@@ -6287,55 +6457,302 @@ impl Builder<'_> {
         args: &[Expr],
         types: &HashMap<SymbolId, Type>,
     ) -> Option<Result<Type, Diagnostic>> {
-        if name != STRING_FIND {
-            return None;
-        }
-        if args.len() < 2 || args.len() > 4 {
-            return Some(Err(Diagnostic::new(format!(
-                "{STRING_FIND} expects 2 to 4 arguments, got {}",
-                args.len()
-            ))));
-        }
-
-        match self.infer_expr_type(&args[0], types, Some(Type::String)) {
-            Ok(Type::String) => {}
-            Ok(actual) => return Some(Err(Diagnostic::new(format!(
-                "{STRING_FIND} expects haystack to be string, got {actual}",
-            )))),
-            Err(error) => return Some(Err(error)),
-        }
-
-        match self.infer_expr_type(&args[1], types, Some(Type::String)) {
-            Ok(Type::String) => {}
-            Ok(actual) => return Some(Err(Diagnostic::new(format!(
-                "{STRING_FIND} expects needle to be string, got {actual}",
-            )))),
-            Err(error) => return Some(Err(error)),
-        }
-
         let i32_ty = Type::Numeric(NumericType::I32);
-        if let Some(init_arg) = args.get(2) {
-            match self.infer_expr_type(init_arg, types, Some(i32_ty.clone())) {
-                Ok(ty) if ty == i32_ty => {}
-                Ok(actual) => return Some(Err(Diagnostic::new(format!(
-                    "{STRING_FIND} expects init to be an i32, got {actual}",
-                )))),
-                Err(error) => return Some(Err(error)),
+        match name {
+            STRING_FIND => {
+                if args.len() < 2 || args.len() > 4 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_FIND} expects 2 to 4 arguments, got {}",
+                        args.len()
+                    ))));
+                }
+                if let Err(error) = self.require_inferred_arg_type(
+                    STRING_FIND,
+                    "haystack",
+                    &args[0],
+                    Type::String,
+                    types,
+                ) {
+                    return Some(Err(error));
+                }
+                if let Err(error) = self.require_inferred_arg_type(
+                    STRING_FIND,
+                    "needle",
+                    &args[1],
+                    Type::String,
+                    types,
+                ) {
+                    return Some(Err(error));
+                }
+                if let Some(init_arg) = args.get(2) {
+                    if let Err(error) = self.require_inferred_arg_type(
+                        STRING_FIND,
+                        "init",
+                        init_arg,
+                        i32_ty.clone(),
+                        types,
+                    ) {
+                        return Some(Err(error));
+                    }
+                }
+                if let Some(plain_arg) = args.get(3) {
+                    if let Err(error) = self.require_inferred_arg_type(
+                        STRING_FIND,
+                        "plain",
+                        plain_arg,
+                        Type::Bool,
+                        types,
+                    ) {
+                        return Some(Err(error));
+                    }
+                }
+                Some(Ok(i32_ty))
             }
-        }
-
-        if let Some(plain_arg) = args.get(3) {
-            match self.infer_expr_type(plain_arg, types, Some(Type::Bool)) {
-                Ok(Type::Bool) => {}
-                Ok(actual) => return Some(Err(Diagnostic::new(format!(
-                    "{STRING_FIND} expects plain to be a bool, got {actual}",
-                )))),
-                Err(error) => return Some(Err(error)),
+            STRING_LEN | STRING_UPPER | STRING_LOWER => {
+                if args.len() != 1 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{name} expects 1 argument, got {}",
+                        args.len()
+                    ))));
+                }
+                if let Err(error) =
+                    self.require_inferred_arg_type(name, "value", &args[0], Type::String, types)
+                {
+                    return Some(Err(error));
+                }
+                Some(Ok(if name == STRING_LEN {
+                    i32_ty
+                } else {
+                    Type::String
+                }))
             }
+            STRING_SUB => {
+                if args.len() < 2 || args.len() > 3 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_SUB} expects 2 or 3 arguments, got {}",
+                        args.len()
+                    ))));
+                }
+                if let Err(error) = self.require_inferred_arg_type(
+                    STRING_SUB,
+                    "value",
+                    &args[0],
+                    Type::String,
+                    types,
+                ) {
+                    return Some(Err(error));
+                }
+                for (index, label) in [(1, "first"), (2, "last")] {
+                    if let Some(arg) = args.get(index) {
+                        if let Err(error) = self.require_inferred_arg_type(
+                            STRING_SUB,
+                            label,
+                            arg,
+                            i32_ty.clone(),
+                            types,
+                        ) {
+                            return Some(Err(error));
+                        }
+                    }
+                }
+                Some(Ok(Type::String))
+            }
+            STRING_REP => {
+                if args.len() < 2 || args.len() > 3 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_REP} expects 2 or 3 arguments, got {}",
+                        args.len()
+                    ))));
+                }
+                if let Err(error) = self.require_inferred_arg_type(
+                    STRING_REP,
+                    "value",
+                    &args[0],
+                    Type::String,
+                    types,
+                ) {
+                    return Some(Err(error));
+                }
+                if let Err(error) = self.require_inferred_arg_type(
+                    STRING_REP,
+                    "count",
+                    &args[1],
+                    i32_ty.clone(),
+                    types,
+                ) {
+                    return Some(Err(error));
+                }
+                if let Some(separator) = args.get(2) {
+                    if let Err(error) = self.require_inferred_arg_type(
+                        STRING_REP,
+                        "separator",
+                        separator,
+                        Type::String,
+                        types,
+                    ) {
+                        return Some(Err(error));
+                    }
+                }
+                Some(Ok(Type::String))
+            }
+            STRING_BYTE => {
+                if args.is_empty() || args.len() > 2 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_BYTE} expects 1 or 2 arguments, got {}",
+                        args.len()
+                    ))));
+                }
+                if let Err(error) = self.require_inferred_arg_type(
+                    STRING_BYTE,
+                    "value",
+                    &args[0],
+                    Type::String,
+                    types,
+                ) {
+                    return Some(Err(error));
+                }
+                if let Some(index) = args.get(1) {
+                    if let Err(error) = self.require_inferred_arg_type(
+                        STRING_BYTE,
+                        "index",
+                        index,
+                        i32_ty.clone(),
+                        types,
+                    ) {
+                        return Some(Err(error));
+                    }
+                }
+                Some(Ok(i32_ty))
+            }
+            STRING_CHAR => {
+                if args.len() > 8 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_CHAR} expects at most 8 arguments, got {}",
+                        args.len()
+                    ))));
+                }
+                for arg in args {
+                    if let Err(error) = self.require_inferred_arg_type(
+                        STRING_CHAR,
+                        "code",
+                        arg,
+                        i32_ty.clone(),
+                        types,
+                    ) {
+                        return Some(Err(error));
+                    }
+                }
+                Some(Ok(Type::String))
+            }
+            STRING_FORMAT => {
+                if args.is_empty() || args.len() > 9 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_FORMAT} expects 1 to 9 arguments, got {}",
+                        args.len()
+                    ))));
+                }
+                if let Err(error) = self.require_inferred_arg_type(
+                    STRING_FORMAT,
+                    "format",
+                    &args[0],
+                    Type::String,
+                    types,
+                ) {
+                    return Some(Err(error));
+                }
+                for arg in args.iter().skip(1) {
+                    let arg_ty = match self.infer_expr_type(arg, types, None) {
+                        Ok(ty) => ty,
+                        Err(error) => return Some(Err(error)),
+                    };
+                    if !(arg_ty.is_numeric()
+                        || arg_ty == Type::Bool
+                        || arg_ty == Type::String
+                        || arg_ty == Type::Unknown)
+                    {
+                        return Some(Err(Diagnostic::new(format!(
+                            "{STRING_FORMAT} expects primitive format arguments, got {arg_ty}",
+                        ))));
+                    }
+                }
+                Some(Ok(Type::String))
+            }
+            _ => None,
         }
+    }
 
-        // Return type: i32 (0-based position, or -1 if not found)
-        Some(Ok(i32_ty))
+    fn emit_i32_const(&mut self, raw: &str) -> ValueId {
+        self.emit(Instruction::Number {
+            ty: NumericType::I32,
+            literal: NumberLiteral { raw: raw.into() },
+        })
+    }
+
+    fn emit_string_host_call(
+        &mut self,
+        host_name: &str,
+        args: Vec<ValueId>,
+        return_type: Type,
+    ) -> Result<ValueId, Diagnostic> {
+        let symbol_id = self
+            .host_import_names
+            .get(host_name)
+            .copied()
+            .ok_or_else(|| {
+                Diagnostic::new(format!(
+                    "declared function '{host_name}' is missing a host import symbol"
+                ))
+            })?;
+        Ok(self.emit(Instruction::HostCall {
+            name: host_name.to_string(),
+            symbol_id,
+            args,
+            return_type,
+        }))
+    }
+
+    fn lower_expr_to_string(
+        &mut self,
+        expr: &Expr,
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        let arg_ty = self.infer_expr_type(expr, types, None)?;
+        if !(arg_ty.is_numeric()
+            || arg_ty == Type::Bool
+            || arg_ty == Type::String
+            || arg_ty == Type::Unknown)
+        {
+            return Err(Diagnostic::new(format!(
+                "{STRING_FORMAT} expects primitive format arguments, got {arg_ty}",
+            )));
+        }
+        let lowered = self.lower_expr(expr, env, types, Some(arg_ty.clone()))?;
+        if arg_ty == Type::String {
+            Ok(lowered)
+        } else {
+            Ok(self.emit(Instruction::ToString {
+                value: lowered,
+                from: arg_ty,
+            }))
+        }
+    }
+
+    fn require_inferred_arg_type(
+        &self,
+        builtin: &str,
+        label: &str,
+        arg: &Expr,
+        expected: Type,
+        types: &HashMap<SymbolId, Type>,
+    ) -> Result<(), Diagnostic> {
+        match self.infer_expr_type(arg, types, Some(expected.clone())) {
+            Ok(actual) if actual == expected => Ok(()),
+            Ok(actual) => Err(Diagnostic::new(format!(
+                "{builtin} expects {label} to be {expected}, got {actual}"
+            ))),
+            Err(error) => Err(error),
+        }
     }
 }
 

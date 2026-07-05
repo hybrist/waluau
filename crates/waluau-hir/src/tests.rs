@@ -1015,7 +1015,10 @@ fn rejects_length_on_non_array() {
 
     let program = parse(source).expect("parse should succeed");
     let error = super::type_check(&program).expect_err("type check should fail");
-    assert_eq!(error.to_string(), "# requires an array or bytes operand");
+    assert_eq!(
+        error.to_string(),
+        "# requires a string, array, or bytes operand"
+    );
 }
 
 #[test]
