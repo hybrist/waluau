@@ -73,44 +73,47 @@ function install_snake(): unit
         -- extern surface, so there is no way to read event.key/event.code
         -- from a "keydown" listener. Until then the only portable input is a
         -- clickable d-pad.
-        --
-        -- TODO(waluau-9m6z): Event.type is still disabled in the extern
-        -- filter (cross-interface member collision, since fixed by
-        -- waluau-1l02/PR #241), so one shared listener cannot branch on the
-        -- event kind or key. Each button therefore gets its own closure.
         local controls: Element = document:create_element("div")
         controls.id = "snake-controls"
         controls.class_name = "flex gap-2"
         root:append_child(controls)
 
+        local function handle_control_event(event: Event): unit
+            if event.type == "click" then
+                if Element(target) = event.target then
+                    if target.id == "snake-up" then
+                        game.turn(state, 0, -1)
+                    elseif target.id == "snake-down" then
+                        game.turn(state, 0, 1)
+                    elseif target.id == "snake-left" then
+                        game.turn(state, -1, 0)
+                    elseif target.id == "snake-right" then
+                        game.turn(state, 1, 0)
+                    elseif target.id == "snake-restart" then
+                        game.reset(state)
+                    end
+                end
+            end
+        end
+
         local up_button: Element = make_button(document, "snake-up", "Up")
-        up_button:add_event_listener("click", function(_event: Event): unit
-            game.turn(state, 0, -1)
-        end)
+        up_button:add_event_listener("click", handle_control_event)
         controls:append_child(up_button)
 
         local down_button: Element = make_button(document, "snake-down", "Down")
-        down_button:add_event_listener("click", function(_event: Event): unit
-            game.turn(state, 0, 1)
-        end)
+        down_button:add_event_listener("click", handle_control_event)
         controls:append_child(down_button)
 
         local left_button: Element = make_button(document, "snake-left", "Left")
-        left_button:add_event_listener("click", function(_event: Event): unit
-            game.turn(state, -1, 0)
-        end)
+        left_button:add_event_listener("click", handle_control_event)
         controls:append_child(left_button)
 
         local right_button: Element = make_button(document, "snake-right", "Right")
-        right_button:add_event_listener("click", function(_event: Event): unit
-            game.turn(state, 1, 0)
-        end)
+        right_button:add_event_listener("click", handle_control_event)
         controls:append_child(right_button)
 
         local restart_button: Element = make_button(document, "snake-restart", "Restart")
-        restart_button:add_event_listener("click", function(_event: Event): unit
-            game.reset(state)
-        end)
+        restart_button:add_event_listener("click", handle_control_event)
         controls:append_child(restart_button)
 
         -- Game loop.

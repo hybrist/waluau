@@ -2560,6 +2560,19 @@ fn type_checks_unit_return_with_print() {
 }
 
 #[test]
+fn type_checks_bare_return_in_unit_function() {
+    let source = r#"
+        function check(x: i32): unit
+            if x > 0 then
+                return
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
 fn rejects_print_in_non_unit_expression_context() {
     let source = r#"
         declare function print(message: string): unit

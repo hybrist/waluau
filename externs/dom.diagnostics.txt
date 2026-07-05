@@ -304,7 +304,6 @@ skip Element.setAttributeNS: value: unsupported union Web IDL type (TrustedType 
 skip Element.setHTMLUnsafe: html: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-b3hl)
 skip Element.startViewTransition: Web IDL type ViewTransition is not part of the selected DOM interface surface
 skip Event.composedPath: unsupported generic Web IDL type sequence<EventTarget> (waluau-utyc)
-skip Event.type: disabled -- member 'attribute:type' collides with the same-named member kept on Blob (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip EventTarget.removeEventListener: callback: nullable callback Web IDL type EventListener? has no extern syntax representation (waluau-lqjs)
 skip EventTarget.when: Web IDL type Observable is not part of the selected DOM interface surface
 skip File.name: disabled -- member 'attribute:name' collides with the same-named member kept on Plugin (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)

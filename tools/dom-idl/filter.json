@@ -74,13 +74,6 @@
     "CanvasRenderingContext2D"
   ],
   "disabledMembers": {
-    "Event": [
-      {
-        "member": "attribute:type",
-        "reason": "member 'attribute:type' collides with the same-named member kept on Blob (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
-        "issue": "waluau-1l02"
-      }
-    ],
     "HTMLInputElement": [
       {
         "member": "attribute:type",

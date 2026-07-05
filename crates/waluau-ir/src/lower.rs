@@ -1993,8 +1993,13 @@ impl Builder<'_> {
                 self.lower_continue(env)?;
             }
             Stmt::Return(expr) => {
-                let value =
-                    self.lower_expr(expr, env, types, Some(self.function.return_type.clone()))?;
+                let value = if matches!(expr, Expr::Nil(_))
+                    && self.function.return_type == Type::Unit
+                {
+                    self.emit(Instruction::Unit)
+                } else {
+                    self.lower_expr(expr, env, types, Some(self.function.return_type.clone()))?
+                };
                 self.set_terminator(self.current_block, Terminator::Return(value));
                 self.current_block = DEAD_BLOCK;
             }

@@ -245,6 +245,7 @@ test('DOM Promise generation keeps nested generic Promise returns disabled', () 
 
 test('generated externs expose minimal DOM event callbacks', () => {
   const externs = readRepoFile('externs/dom.walu');
+  assert.match(externs, /^declare property Event:type: string$/m);
   assert.match(externs, /^declare property Event:target: EventTarget$/m);
   assert.match(externs, /^declare function EventTarget:add_event_listener\(type: string, callback: \(Event\) -> unit\): unit$/m);
 });
