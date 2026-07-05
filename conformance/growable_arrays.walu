@@ -1,0 +1,74 @@
+-- Growable arrays: writing at index #t (the current length) appends, so the
+-- Luau `t[#t+1] = x` idiom works in Waluau's 0-based indexing as `t[#t] = x`.
+-- Writes past the length still trap (there is no hash part), and `#` always
+-- reports the logical length, never the storage capacity.
+
+local t: {i32} = {10, 20}
+t[#t] = 30
+t[#t] = 40
+t[#t] = 50
+t[#t] = 60
+assert(#t == 6)
+assert(t[0] == 10)
+assert(t[2] == 30)
+assert(t[5] == 60)
+
+-- In-bounds writes replace without changing the length.
+t[0] = 99
+assert(t[0] == 99)
+assert(#t == 6)
+
+-- Empty literals start at length 0 and grow across many doublings.
+local e: {f64} = {}
+assert(#e == 0)
+for i = 1, 100 do
+    e[#e] = i * 2
+end
+assert(#e == 100)
+assert(e[0] == 2)
+assert(e[99] == 200)
+
+-- Appending inside a function sees the same array the caller holds.
+function push(xs: {i32}, value: i32)
+    xs[#xs] = value
+end
+
+local shared: {i32} = {1}
+push(shared, 2)
+push(shared, 3)
+assert(#shared == 3)
+assert(shared[1] == 2)
+assert(shared[2] == 3)
+
+-- Nested arrays: inner arrays grow independently.
+local rows: {{i32}} = {}
+local r: i32 = 1
+while r <= 3 do
+    local row: {i32} = {}
+    local c: i32 = 1
+    while c <= 4 do
+        row[#row] = r * 10 + c
+        c += 1
+    end
+    rows[#rows] = row
+    r += 1
+end
+assert(#rows == 3)
+local first_row: {i32} = rows[0]
+assert(#first_row == 4)
+local last_row: {i32} = rows[2]
+assert(last_row[3] == 34)
+
+-- Growth works on arrays captured by closures.
+assert((function(): i32
+    local log: {i32} = {}
+    local record = function(value: i32)
+        log[#log] = value
+    end
+    local i: i32 = 1
+    while i <= 10 do
+        record(i)
+        i += 1
+    end
+    return #log * 1000 + log[0] * 100 + log[9]
+end)() == 10110)

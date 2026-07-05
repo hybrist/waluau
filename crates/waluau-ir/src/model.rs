@@ -178,35 +178,6 @@ pub enum Instruction {
         start: ValueId,
         element_ty: Type,
     },
-    /// Create a new growable array with initial capacity
-    GrowableArrayNew {
-        element_ty: Type,
-        initial_elements: Vec<ValueId>,
-    },
-    /// Get element from growable array (with bounds checking)
-    GrowableArrayGet {
-        array: ValueId,
-        index: ValueId,
-        element_ty: Type,
-    },
-    /// Set element in growable array (supports append at index == length)
-    GrowableArraySet {
-        array: ValueId,
-        index: ValueId,
-        value: ValueId,
-        element_ty: Type,
-    },
-    /// Get the current length of a growable array
-    GrowableArrayLen {
-        array: ValueId,
-        element_ty: Type,
-    },
-    /// Push an element to the end of a growable array
-    GrowableArrayPush {
-        array: ValueId,
-        value: ValueId,
-        element_ty: Type,
-    },
     BytesGet {
         bytes: ValueId,
         index: ValueId,
