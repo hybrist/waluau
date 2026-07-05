@@ -1251,6 +1251,36 @@ fn lowers_lifted_unit_function_expression_with_implicit_return() {
 }
 
 #[test]
+fn lowers_bare_return_in_unit_function() {
+    let source = r#"
+        function entry(x: i32): unit
+            if x > 0 then
+                return
+            end
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.name == "entry")
+        .expect("entry function should exist");
+    assert!(
+        function.blocks.values().any(|block| {
+            matches!(block.terminator, Terminator::Return(value)
+            if block.instructions.iter().any(|(id, instruction)| {
+                *id == value && matches!(instruction, Instruction::Unit)
+            }))
+        }),
+        "expected explicit bare return to lower to a unit return:\n{}",
+        function.dump()
+    );
+}
+
+#[test]
 fn lowers_duplicate_declared_host_members_across_extern_types() {
     let source = r#"
         type Alpha = extern

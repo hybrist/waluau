@@ -1657,6 +1657,9 @@ pub(super) fn check_stmt(
         }
         Stmt::Return(expr) => {
             seal_record_locals_in_expr(expr, vars);
+            if matches!(expr, Expr::Nil(_)) && expected_return == &Type::Unit {
+                return Ok(true);
+            }
             let ty = infer_expr(
                 expr,
                 vars,

@@ -30,25 +30,19 @@ function spawn_food(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, 
     local rng = require("./rng")
     local attempts: i32 = 0
     local max_attempts: i32 = state.cols * state.rows
-    -- TODO(waluau-40ix): a bare `return` inside a unit function is rejected
-    -- ("cannot implicitly convert nil to unit"), so instead of returning from
-    -- the loop on success this tracks a `placed` flag.
-    local placed: bool = false
-    while not placed and attempts < max_attempts do
+    while attempts < max_attempts do
         local fx: i32 = rng.next_below(state.rng, state.cols)
         local fy: i32 = rng.next_below(state.rng, state.rows)
         if not occupied(state, fx, fy) then
             state.food.x = fx
             state.food.y = fy
-            placed = true
+            return
         end
         attempts += 1
     end
-    if not placed then
-        -- Rejection sampling gave up; the board is (almost) full. Treat it as
-        -- the end of the run rather than looping forever.
-        state.alive = false
-    end
+    -- Rejection sampling gave up; the board is (almost) full. Treat it as the
+    -- end of the run rather than looping forever.
+    state.alive = false
 end
 
 function new_state(cols: i32, rows: i32, seed: i32): { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }
@@ -93,41 +87,45 @@ end
 
 -- Queue a direction change for the next tick, ignoring 180-degree reversals.
 function turn(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }, dx: i32, dy: i32): unit
-    -- Inverted guard instead of an early `return` (TODO(waluau-40ix)).
-    if dx ~= -state.dir.x or dy ~= -state.dir.y then
-        state.next_dir.x = dx
-        state.next_dir.y = dy
+    if dx == -state.dir.x and dy == -state.dir.y then
+        return
     end
+    state.next_dir.x = dx
+    state.next_dir.y = dy
 end
 
 -- Advance the game by one tick.
 function step(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }): unit
-    -- TODO(waluau-40ix): early-exit guards (`if not state.alive then return
-    -- end`) do not typecheck in unit functions, hence this if/elseif ladder.
-    if state.alive then
-        -- Copy fields instead of `state.dir = state.next_dir`: assigning the
-        -- record itself would alias next_dir and let a later turn() rewrite
-        -- the direction we are already moving in.
-        state.dir.x = state.next_dir.x
-        state.dir.y = state.next_dir.y
+    if not state.alive then
+        return
+    end
 
-        local head = state.snake[0]
-        local nx: i32 = head.x + state.dir.x
-        local ny: i32 = head.y + state.dir.y
+    -- Copy fields instead of `state.dir = state.next_dir`: assigning the
+    -- record itself would alias next_dir and let a later turn() rewrite the
+    -- direction we are already moving in.
+    state.dir.x = state.next_dir.x
+    state.dir.y = state.next_dir.y
 
-        if nx < 0 or nx >= state.cols or ny < 0 or ny >= state.rows then
-            state.alive = false
-        elseif occupied(state, nx, ny) then
-            state.alive = false
-        else
-            table.insert(state.snake, 0, { x = nx, y = ny })
-            if nx == state.food.x and ny == state.food.y then
-                state.score = state.score + 1
-                spawn_food(state)
-            else
-                local moved_tail = table.remove(state.snake)
-            end
-        end
+    local head = state.snake[0]
+    local nx: i32 = head.x + state.dir.x
+    local ny: i32 = head.y + state.dir.y
+
+    if nx < 0 or nx >= state.cols or ny < 0 or ny >= state.rows then
+        state.alive = false
+        return
+    end
+
+    if occupied(state, nx, ny) then
+        state.alive = false
+        return
+    end
+
+    table.insert(state.snake, 0, { x = nx, y = ny })
+    if nx == state.food.x and ny == state.food.y then
+        state.score = state.score + 1
+        spawn_food(state)
+    else
+        local moved_tail = table.remove(state.snake)
     end
 end
 
