@@ -976,6 +976,20 @@ fn infers_annotated_empty_array_literals() {
 }
 
 #[test]
+fn infers_empty_array_literals_assigned_to_record_fields() {
+    let source = r#"
+        function entry(): i32
+            local state: { items: {i32} } = { items = {1, 2, 3} }
+            state.items = {}
+            return #state.items
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("record-field empty array assignment should type check");
+}
+
+#[test]
 fn rejects_empty_array_literals_without_context() {
     let source = r#"
         function entry(): i32

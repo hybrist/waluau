@@ -58,12 +58,7 @@ function new_state(cols: i32, rows: i32, seed: i32): { cols: i32, rows: i32, sna
 end
 
 function reset(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }): unit
-    -- TODO(waluau-xyx8): `state.snake = {}` would be the obvious reset, but an
-    -- empty array literal does not adopt the annotated element type of the
-    -- field it is assigned to. Drain the existing array in place instead.
-    while #state.snake > 0 do
-        local discarded = table.remove(state.snake)
-    end
+    state.snake = {}
     local cx: i32 = state.cols // 2
     local cy: i32 = state.rows // 2
     table.insert(state.snake, 0, { x = cx - 2, y = cy })
