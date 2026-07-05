@@ -283,6 +283,17 @@ function mapType(idlType, filter, knownInterfaces, include, options = {}) {
     };
   }
   if (base.startsWith('(')) {
+    // waluau-b3hl: Web IDL unions are untagged/structural, which has no general
+    // representation in waluau's extern type system. filter.unionTypeMap lets the
+    // curated surface opt specific, exact union shapes into a single-type collapse
+    // where that is sound -- e.g. `(DOMString or CanvasGradient or CanvasPattern)`
+    // (fillStyle/strokeStyle) collapses to `string`, which is always valid to
+    // assign; the getter is loosened to `string` as well. Unions not listed there
+    // remain skipped (waluau-o4xs tracks the general story).
+    const collapsed = filter.unionTypeMap?.[base];
+    if (collapsed) {
+      return finishMapType(idlType, collapsed, nullable);
+    }
     return { error: `unsupported union Web IDL type ${idlType}`, category: 'unsupported-union' };
   }
   // waluau-lxdd: the extern type system has no `any`/`object`/dynamic value type, so

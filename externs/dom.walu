@@ -819,6 +819,8 @@ declare function CanvasRenderingContext2D:resetTransform(): unit
 declare property CanvasRenderingContext2D:globalAlpha: f64
 declare property CanvasRenderingContext2D:globalCompositeOperation: string
 declare property CanvasRenderingContext2D:imageSmoothingEnabled: bool
+declare property CanvasRenderingContext2D:strokeStyle: string
+declare property CanvasRenderingContext2D:fillStyle: string
 declare property CanvasRenderingContext2D:shadowOffsetX: f64
 declare property CanvasRenderingContext2D:shadowOffsetY: f64
 declare property CanvasRenderingContext2D:shadowBlur: f64

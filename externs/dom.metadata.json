@@ -6561,6 +6561,22 @@
     {
       "interface": "CanvasRenderingContext2D",
       "kind": "attribute",
+      "idlName": "strokeStyle",
+      "emittedName": "strokeStyle",
+      "type": "string",
+      "readonly": false
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "attribute",
+      "idlName": "fillStyle",
+      "emittedName": "fillStyle",
+      "type": "string",
+      "readonly": false
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "attribute",
       "idlName": "shadowOffsetX",
       "emittedName": "shadowOffsetX",
       "type": "f64",
@@ -7612,7 +7628,7 @@
       "interface": "Document",
       "member": "parseHTMLUnsafe",
       "reason": "html: unsupported union Web IDL type (TrustedHTML or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "Document",
@@ -7666,13 +7682,13 @@
       "interface": "Document",
       "member": "write",
       "reason": "text: unsupported union Web IDL type (TrustedHTML or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "Document",
       "member": "writeln",
       "reason": "text: unsupported union Web IDL type (TrustedHTML or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "Document",
@@ -7808,19 +7824,19 @@
       "interface": "Document",
       "member": "prepend",
       "reason": "nodes: unsupported union Web IDL type (Node or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "Document",
       "member": "append",
       "reason": "nodes: unsupported union Web IDL type (Node or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "Document",
       "member": "replaceChildren",
       "reason": "nodes: unsupported union Web IDL type (Node or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "Document",
@@ -8678,7 +8694,7 @@
       "interface": "Window",
       "member": "event",
       "reason": "unsupported union Web IDL type (Event or undefined)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "Window",
@@ -9181,7 +9197,7 @@
       "interface": "Element",
       "member": "setAttributeNS",
       "reason": "value: unsupported union Web IDL type (TrustedType or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "Element",
@@ -9304,25 +9320,25 @@
       "interface": "Element",
       "member": "setHTMLUnsafe",
       "reason": "html: unsupported union Web IDL type (TrustedHTML or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "Element",
       "member": "innerHTML",
       "reason": "unsupported union Web IDL type (TrustedHTML or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "Element",
       "member": "outerHTML",
       "reason": "unsupported union Web IDL type (TrustedHTML or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "Element",
       "member": "insertAdjacentHTML",
       "reason": "string: unsupported union Web IDL type (TrustedHTML or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "Element",
@@ -9392,19 +9408,19 @@
       "interface": "Element",
       "member": "prepend",
       "reason": "nodes: unsupported union Web IDL type (Node or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "Element",
       "member": "append",
       "reason": "nodes: unsupported union Web IDL type (Node or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "Element",
       "member": "replaceChildren",
       "reason": "nodes: unsupported union Web IDL type (Node or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "Element",
@@ -9445,19 +9461,19 @@
       "interface": "Element",
       "member": "before",
       "reason": "nodes: unsupported union Web IDL type (Node or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "Element",
       "member": "after",
       "reason": "nodes: unsupported union Web IDL type (Node or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "Element",
       "member": "replaceWith",
       "reason": "nodes: unsupported union Web IDL type (Node or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "Element",
@@ -9545,7 +9561,7 @@
       "interface": "CSSPseudoElement",
       "member": "parent",
       "reason": "unsupported union Web IDL type (Element or CSSPseudoElement)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "CSSPseudoElement",
@@ -9575,7 +9591,7 @@
       "interface": "StylePropertyMapReadOnly",
       "member": "get",
       "reason": "unsupported union Web IDL type (undefined or CSSStyleValue)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "StylePropertyMapReadOnly",
@@ -9594,13 +9610,13 @@
       "interface": "StylePropertyMap",
       "member": "set",
       "reason": "values: unsupported union Web IDL type (CSSStyleValue or USVString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "StylePropertyMap",
       "member": "append",
       "reason": "values: unsupported union Web IDL type (CSSStyleValue or USVString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "StylePropertyMap",
@@ -9641,7 +9657,7 @@
       "interface": "HTMLElement",
       "member": "hidden",
       "reason": "unsupported union Web IDL type (boolean or unrestricted double or DOMString)?",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "HTMLElement",
@@ -10421,7 +10437,7 @@
       "interface": "Range",
       "member": "createContextualFragment",
       "reason": "string: unsupported union Web IDL type (TrustedHTML or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "MediaList",
@@ -10455,7 +10471,7 @@
       "interface": "StyleSheet",
       "member": "ownerNode",
       "reason": "unsupported union Web IDL type (Element or ProcessingInstruction)?",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "StyleSheet",
@@ -10576,19 +10592,19 @@
       "interface": "DocumentType",
       "member": "before",
       "reason": "nodes: unsupported union Web IDL type (Node or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "DocumentType",
       "member": "after",
       "reason": "nodes: unsupported union Web IDL type (Node or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "DocumentType",
       "member": "replaceWith",
       "reason": "nodes: unsupported union Web IDL type (Node or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "DocumentType",
@@ -10636,19 +10652,19 @@
       "interface": "DocumentFragment",
       "member": "prepend",
       "reason": "nodes: unsupported union Web IDL type (Node or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "DocumentFragment",
       "member": "append",
       "reason": "nodes: unsupported union Web IDL type (Node or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "DocumentFragment",
       "member": "replaceChildren",
       "reason": "nodes: unsupported union Web IDL type (Node or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "DocumentFragment",
@@ -10696,7 +10712,7 @@
       "interface": "ShadowRoot",
       "member": "setHTMLUnsafe",
       "reason": "html: unsupported union Web IDL type (TrustedHTML or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "ShadowRoot",
@@ -10709,7 +10725,7 @@
       "interface": "ShadowRoot",
       "member": "innerHTML",
       "reason": "unsupported union Web IDL type (TrustedHTML or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "ShadowRoot",
@@ -10804,19 +10820,19 @@
       "interface": "CharacterData",
       "member": "before",
       "reason": "nodes: unsupported union Web IDL type (Node or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "CharacterData",
       "member": "after",
       "reason": "nodes: unsupported union Web IDL type (Node or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "CharacterData",
       "member": "replaceWith",
       "reason": "nodes: unsupported union Web IDL type (Node or DOMString)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "CharacterData",
@@ -11207,19 +11223,19 @@
       "interface": "HTMLAllCollection",
       "member": "namedItem",
       "reason": "unsupported union Web IDL type (HTMLCollection or Element)?",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "HTMLAllCollection",
       "member": "item",
       "reason": "unsupported union Web IDL type (HTMLCollection or Element)?",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "HTMLFormControlsCollection",
       "member": "namedItem",
       "reason": "unsupported union Web IDL type (RadioNodeList or Element)?",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "HTMLFormElement",
@@ -11419,7 +11435,7 @@
       "interface": "HTMLSlotElement",
       "member": "assign",
       "reason": "nodes: unsupported union Web IDL type (Element or Text)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "HTMLCanvasElement",
@@ -11456,18 +11472,6 @@
       "member": "imageSmoothingQuality",
       "reason": "unsupported Web IDL type ImageSmoothingQuality",
       "issue": null
-    },
-    {
-      "interface": "CanvasRenderingContext2D",
-      "member": "strokeStyle",
-      "reason": "unsupported union Web IDL type (DOMString or CanvasGradient or CanvasPattern)",
-      "issue": "waluau-b3hl"
-    },
-    {
-      "interface": "CanvasRenderingContext2D",
-      "member": "fillStyle",
-      "reason": "unsupported union Web IDL type (DOMString or CanvasGradient or CanvasPattern)",
-      "issue": "waluau-b3hl"
     },
     {
       "interface": "CanvasRenderingContext2D",
@@ -11635,7 +11639,7 @@
       "interface": "CustomElementRegistry",
       "member": "get",
       "reason": "unsupported union Web IDL type (CustomElementConstructor or undefined)",
-      "issue": "waluau-b3hl"
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "CustomElementRegistry",

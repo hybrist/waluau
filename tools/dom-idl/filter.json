@@ -2101,7 +2101,7 @@
     "unsupported-generic:ObservableArray": "waluau-utyc",
     "unsupported-generic:record": "waluau-utyc",
     "unsupported-generic:Promise": "waluau-2c6n",
-    "unsupported-union": "waluau-b3hl",
+    "unsupported-union": "waluau-o4xs",
     "nullable-callback-type": "waluau-lqjs",
     "nullable-primitive-type": "waluau-pq7p",
     "reserved-keyword-param": "waluau-9szs",
@@ -2158,5 +2158,8 @@
     "OrientationType": "string",
     "AutoplayPolicy": "string",
     "SpatialNavigationDirection": "string"
+  },
+  "unionTypeMap": {
+    "(DOMString or CanvasGradient or CanvasPattern)": "string"
   }
 }

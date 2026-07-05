@@ -50,8 +50,9 @@ function install_snake(): unit
         local style: CSSStyleProperties = canvas.style
         style:setProperty("width", tostring(width_px) .. "px")
         style:setProperty("height", tostring(height_px) .. "px")
-        -- The playfield backdrop: fills are recolored via ctx.filter (see
-        -- render.walu), but the background can simply be CSS on the element.
+        -- The playfield backdrop: render.walu clears the canvas to transparent
+        -- pixels each frame, so plain CSS background-color on the element
+        -- shows through as the board color.
         style:setProperty("background-color", "#0f172a")
         style:setProperty("image-rendering", "pixelated")
 
