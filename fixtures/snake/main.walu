@@ -65,12 +65,9 @@ function install_snake(): unit
         -- are externalized.
         local state = game.new_state(cols, rows, 20260705)
 
-        -- Input. On-screen buttons stand in for arrow keys.
-        --
-        -- TODO(waluau-uzdp): KeyboardEvent is not part of the generated DOM
-        -- extern surface, so there is no way to read event.key/event.code
-        -- from a "keydown" listener. Until then the only portable input is a
-        -- clickable d-pad.
+        -- Input: arrow keys / WASD via a document-level "keydown" listener
+        -- (the Event is downcast to KeyboardEvent to read .key), plus an
+        -- on-screen d-pad for pointer/touch play.
         local controls: Element = document:create_element("div")
         controls.id = "snake-controls"
         controls.class_name = "flex gap-2"
@@ -113,6 +110,23 @@ function install_snake(): unit
         local restart_button: Element = make_button(document, "snake-restart", "Restart")
         restart_button:add_event_listener("click", handle_control_event)
         controls:append_child(restart_button)
+
+        document:add_event_listener("keydown", function(event: Event): unit
+            if KeyboardEvent(kev) = event then
+                local key: string = kev.key
+                if key == "ArrowUp" or key == "w" then
+                    game.turn(state, 0, -1)
+                elseif key == "ArrowDown" or key == "s" then
+                    game.turn(state, 0, 1)
+                elseif key == "ArrowLeft" or key == "a" then
+                    game.turn(state, -1, 0)
+                elseif key == "ArrowRight" or key == "d" then
+                    game.turn(state, 1, 0)
+                elseif key == "r" then
+                    game.reset(state)
+                end
+            end
+        end)
 
         -- Game loop.
         --

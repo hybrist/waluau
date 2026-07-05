@@ -2,6 +2,8 @@
   "interfaces": [
     "EventTarget",
     "Event",
+    "UIEvent",
+    "KeyboardEvent",
     "Node",
     "Document",
     "DocumentFragment",
@@ -74,6 +76,13 @@
     "CanvasRenderingContext2D"
   ],
   "disabledMembers": {
+    "KeyboardEvent": [
+      {
+        "member": "attribute:repeat",
+        "reason": "member name 'repeat' is a reserved waluau keyword, so both the emitted 'declare property KeyboardEvent:repeat' line and any 'event.repeat' use site fail to parse (member-name analogue of the reserved parameter-name collision waluau-9szs)",
+        "issue": "waluau-9szs"
+      }
+    ],
     "HTMLInputElement": [
       {
         "member": "attribute:type",

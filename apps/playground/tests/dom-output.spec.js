@@ -89,6 +89,22 @@ body:append_child(input)
 body:append_child(status)
 `;
 
+const DOM_KEYBOARD_EVENT_SAMPLE = `local window = require("dom:window")
+local document = window.document
+local body: HTMLElement = document.body
+
+local status: Element = document:create_element("p")
+status.id = "key-status"
+status.text_content = "idle"
+body:append_child(status)
+
+document:add_event_listener("keydown", function(event: Event): unit
+    if KeyboardEvent(kev) = event then
+        status.text_content = "key " .. kev.key .. " code " .. kev.code
+    end
+end)
+`;
+
 const DOM_FETCH_RESPONSE_TEXT_SAMPLE = `function fetch_body(): unit
     local co: thread = coroutine.create(function(): i32
         local res = fetch("/test.json"):await()
@@ -275,6 +291,15 @@ test.describe('DOM Output in Run tab', () => {
     await outputFrame.locator('#snake-down').click();
     await outputFrame.locator('#snake-restart').click();
     await expect.poll(paintedPixels).toBeGreaterThan(0);
+
+    // Keyboard input flows through the KeyboardEvent downcast in the
+    // document-level keydown listener; clicking the canvas first moves focus
+    // into the DOM Output iframe so the keys land on its document.
+    await canvas.click();
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('s');
+    await page.keyboard.press('r');
+    await expect.poll(paintedPixels).toBeGreaterThan(0);
   });
 
   test('runs Waluau click and input callbacks from DOM Output events', async ({ page }) => {
@@ -297,6 +322,27 @@ test.describe('DOM Output in Run tab', () => {
 
     await outputFrame.locator('#event-input').fill('typed card');
     await expect(outputFrame.locator('#event-status')).toHaveText('input typed card');
+  });
+
+  test('reads key and code from KeyboardEvent downcasts in keydown listeners', async ({ page }) => {
+    await page.locator('.code-textarea').fill(DOM_KEYBOARD_EVENT_SAMPLE);
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    const domOutput = page.getByLabel('DOM Output');
+    await expect(domOutput).toBeVisible();
+
+    const outputFrame = page.frameLocator('.dom-output-frame');
+    await expect(outputFrame.locator('#key-status')).toHaveText('idle');
+
+    // Move focus into the DOM Output iframe so key presses reach its document.
+    await outputFrame.locator('body').click();
+    await page.keyboard.press('a');
+    await expect(outputFrame.locator('#key-status')).toHaveText('key a code KeyA');
+
+    await page.keyboard.press('ArrowLeft');
+    await expect(outputFrame.locator('#key-status')).toHaveText('key ArrowLeft code ArrowLeft');
   });
 
   test('runs Waluau fetch and Response.text awaits in DOM Output', async ({ page }) => {

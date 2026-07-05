@@ -999,7 +999,17 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
   };
   const externIs = (value, typeName) => {
     const name = String(typeName);
-    const view = value?.ownerDocument?.defaultView ?? (value?.nodeType === 9 ? value.defaultView : globalThis);
+    // Nodes carry their realm via ownerDocument; events (which have no
+    // ownerDocument) come from the DOM Output iframe's realm, so resolve the
+    // constructor through the event target's document instead -- an
+    // 'instanceof globalThis.KeyboardEvent' check would always be false for
+    // an event created inside the iframe.
+    const view =
+      value?.ownerDocument?.defaultView ??
+      (value?.nodeType === 9 ? value.defaultView : null) ??
+      value?.target?.ownerDocument?.defaultView ??
+      (value?.target?.nodeType === 9 ? value.target.defaultView : null) ??
+      globalThis;
     const ctor = view?.[name] ?? globalThis[name];
     return typeof ctor === 'function' && value instanceof ctor ? 1 : 0;
   };
