@@ -3020,3 +3020,52 @@ fn pcall_narrowing_severed_by_shadowing() {
     let program = parse(source).expect("parse should succeed");
     super::type_check(&program).expect_err("shadowing the payload must sever pcall narrowing");
 }
+
+#[test]
+fn assert_narrows_variant_for_rest_of_scope() {
+    let source = r#"
+        type Either = Left(i32) | Right(f64)
+
+        function entry(either: Either): i32
+            assert(either is Left)
+            return either.value
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("assert(x is Variant) should narrow for the rest of scope");
+}
+
+#[test]
+fn rejects_variant_test_ruled_out_by_assert() {
+    let source = r#"
+        type Either = Left(i32) | Right(f64)
+
+        function entry(either: Either): bool
+            assert(either is Left)
+            return either is Right
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program)
+        .expect_err("testing a variant the assert ruled out must be a type error");
+    assert_eq!(
+        error.to_string(),
+        "type Left(i32) has no tagged variant 'Right'"
+    );
+}
+
+#[test]
+fn assert_narrows_nullable_for_rest_of_scope() {
+    let source = r#"
+        function take(value: string): i32
+            return 20
+        end
+
+        function entry(value: string?): i32
+            assert(value ~= nil)
+            return take(value)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("assert(x ~= nil) should narrow for the rest of scope");
+}

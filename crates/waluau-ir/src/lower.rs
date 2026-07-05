@@ -2123,45 +2123,49 @@ impl Builder<'_> {
     }
 
     /// After `assert(cond)` the remaining statements only execute when `cond`
-    /// held, so the then-branch narrowing applies to the ambient scope. Only
-    /// the pcall discriminant narrowing applies here (mirroring
-    /// `assert_narrowed_scope` in waluau-hir). Emits the unbox cast in the
-    /// continue block and rebinds the symbol, mirroring the branch-entry
-    /// materialization in `lower_if_branches`.
+    /// held, so the full then-branch narrowing applies to the ambient scope
+    /// (mirroring `assert_narrowed_scope` in waluau-hir). Where the narrowed
+    /// type has a different runtime representation (pcall payload unbox, nil
+    /// test) this emits the cast in the continue block and rebinds the symbol,
+    /// mirroring the branch-entry materialization in `lower_if_branches`;
+    /// variant narrowing is a type-level refinement only.
     fn apply_assert_narrowing(
         &mut self,
         condition: &Expr,
         env: &mut HashMap<SymbolId, ValueId>,
         types: &mut HashMap<SymbolId, Type>,
     ) {
-        let mut then_types_init = types.clone();
-        let mut else_types_init = types.clone();
-        self.narrowed_discriminant_type_scopes(
-            condition,
-            types,
-            &mut then_types_init,
-            &mut else_types_init,
-        );
+        let (then_types_init, _) = self.narrowed_type_scopes(condition, types);
         for (symbol_id, narrowed_ty) in then_types_init {
             let Some(original_ty) = types.get(&symbol_id).cloned() else {
                 continue;
             };
-            if original_ty != Type::Unknown || narrowed_ty == Type::Unknown {
+            if original_ty == narrowed_ty {
                 continue;
             }
-            let Some(original_value) = env.get(&symbol_id).copied() else {
-                continue;
-            };
-            let narrowed_value = self.emit(Instruction::Cast {
-                value: original_value,
-                from: original_ty,
-                to: narrowed_ty.clone(),
-            });
-            env.insert(symbol_id, narrowed_value);
-            self.function
-                .value_symbols
-                .insert(narrowed_value, symbol_id);
-            types.insert(symbol_id, narrowed_ty);
+            if original_ty.nullable_inner().as_ref() == Some(&narrowed_ty)
+                || original_ty == Type::Unknown
+            {
+                let Some(original_value) = env.get(&symbol_id).copied() else {
+                    continue;
+                };
+                let narrowed_value = self.emit(Instruction::Cast {
+                    value: original_value,
+                    from: original_ty,
+                    to: narrowed_ty.clone(),
+                });
+                env.insert(symbol_id, narrowed_value);
+                self.function
+                    .value_symbols
+                    .insert(narrowed_value, symbol_id);
+                types.insert(symbol_id, narrowed_ty);
+            } else if matches!(original_ty, Type::TaggedUnion(_) | Type::TaggedVariant(_))
+                && matches!(narrowed_ty, Type::TaggedUnion(_) | Type::TaggedVariant(_))
+            {
+                // Tagged-union values share the canonical record representation,
+                // so variant narrowing needs no cast.
+                types.insert(symbol_id, narrowed_ty);
+            }
         }
     }
 

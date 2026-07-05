@@ -300,18 +300,15 @@ fn narrowed_discriminant_scopes(
     }
 }
 
-/// The scope in effect after `assert(cond)` succeeded. Only the pcall
-/// discriminant narrowing applies here: broader narrowing (e.g. variant
-/// tests) would make later checks of the now-impossible variants type
-/// errors, breaking existing exhaustive `assert(x is ...)` sequences.
+/// The scope in effect after `assert(cond)` succeeded: the full then-branch
+/// narrowing (pcall discriminant, variant tests, nil tests). A consequence is
+/// that testing a variant the assert already ruled out is a type error — by
+/// design, since such a check can never be meaningful.
 pub(super) fn assert_narrowed_scope(
     condition: &Expr,
     vars: &HashMap<String, Binding>,
 ) -> HashMap<String, Binding> {
-    let mut then_scope = vars.clone();
-    let mut else_scope = vars.clone();
-    narrowed_discriminant_scopes(condition, vars, &mut then_scope, &mut else_scope);
-    then_scope
+    narrowed_scopes(condition, vars).0
 }
 
 fn nil_test_subject(condition: &Expr) -> Option<(&str, bool)> {

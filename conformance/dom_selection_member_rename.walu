@@ -9,13 +9,11 @@ local text: Text = document:createTextNode("selection target")
 body:append_child(text)
 
 local selection: Selection? = window:getSelection()
+-- assert(x ~= nil) narrows for the rest of the scope; re-checking would be
+-- a type error because `selection` is no longer nullable.
 assert(selection ~= nil)
 
-if selection ~= nil then
-    selection:select_all_children(body)
-    assert(selection.rangeCount == 1)
-    local anchor: Node? = selection.anchor_node
-    assert(anchor ~= nil)
-else
-    assert(false)
-end
+selection:select_all_children(body)
+assert(selection.rangeCount == 1)
+local anchor: Node? = selection.anchor_node
+assert(anchor ~= nil)
