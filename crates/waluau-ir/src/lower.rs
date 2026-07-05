@@ -1328,6 +1328,59 @@ impl Builder<'_> {
         self.function.value_symbols.insert(value, symbol_id);
     }
 
+    fn bind_local_value(
+        &mut self,
+        symbol_id: SymbolId,
+        value: ValueId,
+        ty: Type,
+        env: &mut HashMap<SymbolId, ValueId>,
+        types: &mut HashMap<SymbolId, Type>,
+    ) {
+        if self.cell_names.contains(&symbol_id) {
+            let cell = self.emit(Instruction::ArrayNew {
+                element_ty: to_runtime_type(&ty),
+                elements: vec![value],
+            });
+            env.insert(symbol_id, cell);
+            self.function.value_symbols.insert(cell, symbol_id);
+        } else {
+            env.insert(symbol_id, value);
+        }
+        self.function.value_symbols.insert(value, symbol_id);
+        types.insert(symbol_id, ty);
+    }
+
+    fn assign_local_value(
+        &mut self,
+        symbol_id: SymbolId,
+        value: ValueId,
+        ty: &Type,
+        env: &mut HashMap<SymbolId, ValueId>,
+    ) -> Result<(), Diagnostic> {
+        if self.cell_names.contains(&symbol_id) {
+            let cell = env.get(&symbol_id).copied().ok_or_else(|| {
+                Diagnostic::new(format!(
+                    "unknown local symbol {:?} during IR lowering",
+                    symbol_id
+                ))
+            })?;
+            let index0 = self.emit(Instruction::Number {
+                ty: NumericType::I32,
+                literal: NumberLiteral { raw: "0".into() },
+            });
+            self.emit(Instruction::ArraySet {
+                array: cell,
+                index: index0,
+                value,
+                element_ty: to_runtime_type(ty),
+            });
+        } else {
+            env.insert(symbol_id, value);
+        }
+        self.function.value_symbols.insert(value, symbol_id);
+        Ok(())
+    }
+
     /// Emit an instruction into a specific block (used for loop exit phis,
     /// which are created before the exit block becomes the current block).
     fn emit_in(&mut self, block: BlockId, instruction: Instruction) -> ValueId {
@@ -1545,20 +1598,7 @@ impl Builder<'_> {
                 let value = self.lower_expr(value, env, types, Some(inferred_ty.clone()))?;
                 // If this local is captured by any nested function, represent it as a 1-element
                 // array cell so closures can observe and mutate the same storage location.
-                if self.cell_names.contains(&symbol_id) {
-                    let cell = self.emit(Instruction::ArrayNew {
-                        element_ty: to_runtime_type(&inferred_ty),
-                        elements: vec![value],
-                    });
-                    env.insert(symbol_id, cell);
-                    self.function.value_symbols.insert(cell, symbol_id);
-                    // Keep the declared type as the inner element type for type checking.
-                    types.insert(symbol_id, inferred_ty);
-                } else {
-                    env.insert(symbol_id, value);
-                    types.insert(symbol_id, inferred_ty);
-                }
-                self.function.value_symbols.insert(value, symbol_id);
+                self.bind_local_value(symbol_id, value, inferred_ty, env, types);
             }
             Stmt::Assign { op, name, symbol_id, value } => {
                 let symbol_id = symbol_id.expect("symbol_id should be resolved");
@@ -1896,9 +1936,7 @@ impl Builder<'_> {
                         bindings.iter().zip(lowered).zip(expected)
                     {
                         let symbol_id = binding.symbol_id.expect("resolved symbol_id");
-                        env.insert(symbol_id, value);
-                        self.function.value_symbols.insert(value, symbol_id);
-                        types.insert(symbol_id, expected_ty);
+                        self.bind_local_value(symbol_id, value, expected_ty, env, types);
                     }
                 } else {
                     let mut inferred_types = Vec::new();
@@ -1928,9 +1966,7 @@ impl Builder<'_> {
                     }
                     for ((binding, value), ty) in bindings.iter().zip(lowered).zip(inferred_types) {
                         let symbol_id = binding.symbol_id.expect("resolved symbol_id");
-                        env.insert(symbol_id, value);
-                        self.function.value_symbols.insert(value, symbol_id);
-                        types.insert(symbol_id, ty);
+                        self.bind_local_value(symbol_id, value, ty, env, types);
                     }
                 }
             }
@@ -1951,9 +1987,8 @@ impl Builder<'_> {
                         lowered.len()
                     )));
                 }
-                for (id, value) in ids.iter().zip(lowered) {
-                    env.insert(*id, value);
-                    self.function.value_symbols.insert(value, *id);
+                for ((id, value), ty) in ids.iter().zip(lowered).zip(expected.iter()) {
+                    self.assign_local_value(*id, value, ty, env)?;
                 }
             }
             Stmt::If {
