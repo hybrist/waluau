@@ -1,0 +1,36 @@
+-- Dynamic equality on `unknown` operands: numbers compare numerically across
+-- boxed representations (so 1 == 1.0), booleans by value, strings by content,
+-- nil against nil, and reference values (tables) by identity — matching Lua's
+-- primitive equality without metamethods.
+
+function eq(a, b)
+    return a == b
+end
+
+assert(eq(1, 1))
+assert(not eq(1, 2))
+assert(eq(1.5, 1.5))
+assert(eq(1, 1.0))
+assert(eq("x", "x"))
+assert(not eq("x", "y"))
+assert(eq(true, true))
+assert(not eq(true, false))
+assert(not eq(1, true))
+assert(not eq(1, "1"))
+assert(not eq(false, nil))
+assert(eq(nil, nil))
+assert(not eq("x", nil))
+
+local t1 = {1, 2}
+local t2 = {1, 2}
+assert(eq(t1, t1))
+assert(not eq(t1, t2))
+
+-- Mixed static/unknown operands: the concrete side boxes into unknown.
+function against_five(v)
+    return v == 5
+end
+
+assert(against_five(5))
+assert(not against_five(6))
+assert(not against_five("5"))

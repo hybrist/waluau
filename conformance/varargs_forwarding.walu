@@ -1,0 +1,47 @@
+-- Vararg forwarding: a trailing `...` at a call site forwards the caller's
+-- varargs. Explicit arguments fill the callee's fixed parameters first;
+-- missing fixed parameters are drawn from the front of the forwarded varargs
+-- and the rest become the callee's varargs.
+
+function count(...)
+    return select('#', ...)
+end
+
+-- Forwarding to a callee with no fixed parameters.
+function forward(...)
+    return count(...)
+end
+
+assert(forward() == 0)
+assert(forward(1, 2, 3) == 3)
+
+-- Explicit arguments before the forwarded varargs spill into the callee's
+-- varargs.
+function prefixed(...)
+    return count("x", ...)
+end
+
+assert(prefixed() == 1)
+assert(prefixed(1, 2) == 3)
+
+-- Forwarding into fixed parameters: the first two forwarded values land in
+-- a and b, the rest stay varargs.
+function two_fixed(a, b, ...)
+    return tostring(a) .. tostring(b) .. tostring(select('#', ...))
+end
+
+function forward_two(...)
+    return two_fixed(...)
+end
+
+assert(forward_two(10, 20, 30, 40) == "10202")
+assert(two_fixed(1, 2) == "120")
+
+-- Values keep their identity through varargs: numbers stay numbers.
+function first(...)
+    return select(1, ...)
+end
+
+assert(first(42) == 42)
+assert(first(1.5, "x") == 1.5)
+assert(first("hello") == "hello")

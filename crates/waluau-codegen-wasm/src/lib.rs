@@ -178,6 +178,10 @@ fn needs_closure_gc_types(module: &Module) -> bool {
                     | IrInstruction::ProtectedCall { .. } => {
                         return true;
                     }
+                    // Dynamic array reads box f64/bool elements on the fly.
+                    IrInstruction::DynIndex { .. } => {
+                        return true;
+                    }
                     // Casting to/from `unknown` with f64/bool uses dedicated boxes.
                     IrInstruction::Cast { from, to, .. } => {
                         if matches!(
@@ -821,6 +825,13 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             host::IMPORT_MODULE,
             host::IMPORT_MATH_POW,
             EntityType::Function(host_slot_type_index[10].unwrap()),
+        );
+    }
+    if used_imports.js_eq_unknown {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_JS_EQ_UNKNOWN,
+            EntityType::Function(host_slot_type_index[0].unwrap()),
         );
     }
     let mut declared_import_indices = HashMap::new();
@@ -2180,9 +2191,20 @@ fn emit_block_instructions(
                 from,
                 to,
             } => {
-                emit_value_operand(out, local_plan, *source)?;
-                emit_cast(out, from.clone(), to.clone(), ctx.array_registry)?;
-                emit_value_store(out, local_plan, *value)?;
+                // When the f64 box exists, a number leaving `unknown` may be
+                // an i31 or a `$boxed_f64` (e.g. an integer literal typed f64
+                // boxed at a call site); dispatch on the representation.
+                if ctx.array_registry.closure_gc_present && number_unbox_target(from, to).is_some()
+                {
+                    let target = number_unbox_target(from, to).expect("checked above");
+                    let source_local = local(local_plan, *source)?;
+                    emit_number_unbox_dispatch(out, ctx, source_local, target);
+                    emit_value_store(out, local_plan, *value)?;
+                } else {
+                    emit_value_operand(out, local_plan, *source)?;
+                    emit_cast(out, from.clone(), to.clone(), ctx.array_registry)?;
+                    emit_value_store(out, local_plan, *value)?;
+                }
             }
             IrInstruction::Binary {
                 op,
@@ -2191,7 +2213,14 @@ fn emit_block_instructions(
                 operand_ty,
                 result_ty,
             } => {
-                if matches!(op, BinaryOp::FloorDiv | BinaryOp::Mod) {
+                if matches!(op, BinaryOp::Eq | BinaryOp::NotEq) && *operand_ty == Type::Unknown {
+                    let left_local = local(local_plan, *left)?;
+                    let right_local = local(local_plan, *right)?;
+                    emit_unknown_eq(out, ctx, left_local, right_local)?;
+                    if matches!(op, BinaryOp::NotEq) {
+                        out.instruction(&Instruction::I32Eqz);
+                    }
+                } else if matches!(op, BinaryOp::FloorDiv | BinaryOp::Mod) {
                     let left_local = local(local_plan, *left)?;
                     let right_local = local(local_plan, *right)?;
                     emit_floor_or_mod(out, *op, operand_ty.clone(), left_local, right_local)?;
@@ -3237,6 +3266,20 @@ fn emit_block_instructions(
                 });
                 emit_value_store(out, local_plan, *value)?;
             }
+            IrInstruction::DynLen { value: operand } => {
+                let operand_local = local(local_plan, *operand)?;
+                emit_dyn_len(out, ctx, operand_local)?;
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::DynIndex {
+                value: operand,
+                index,
+            } => {
+                let operand_local = local(local_plan, *operand)?;
+                let index_local = local(local_plan, *index)?;
+                emit_dyn_index(out, ctx, operand_local, index_local)?;
+                emit_value_store(out, local_plan, *value)?;
+            }
             IrInstruction::ArrayPop { array, element_ty } => {
                 let array_local = local(local_plan, *array)?;
                 let growable_struct_index = ctx.array_registry.growable_array_index(element_ty)?;
@@ -3830,6 +3873,315 @@ fn i31_heap_type() -> HeapType {
         shared: false,
         ty: AbstractHeapType::I31,
     }
+}
+
+/// For casts out of `unknown` (or a boxed nullable, which shares the anyref
+/// representation) into a numeric type, returns the target when the runtime
+/// value may be either an i31 or a `$boxed_f64` and needs a
+/// two-representation dispatch.
+pub(crate) fn number_unbox_target(from: &Type, to: &Type) -> Option<NumericType> {
+    if *from != Type::Unknown && !from.is_boxed_nullable() {
+        return None;
+    }
+    if to.is_boxed_nullable() {
+        return None;
+    }
+    match to {
+        Type::Numeric(numeric @ (NumericType::I32 | NumericType::U32 | NumericType::F64)) => {
+            Some(*numeric)
+        }
+        _ => None,
+    }
+}
+
+/// Emit a numeric unbox from an `unknown` local that may hold either an i31
+/// or a `$boxed_f64`, leaving the target numeric value on the stack.
+/// Non-numbers trap on the ref.cast, and f64 → integer conversion traps on
+/// NaN/out-of-range (where Lua raises an error).
+fn emit_number_unbox_dispatch(
+    out: &mut Function,
+    ctx: &EmissionContext<'_>,
+    source_local: u32,
+    target: NumericType,
+) {
+    let boxed_f64 = ctx.array_registry.boxed_f64_struct_type;
+    let result = if target == NumericType::F64 {
+        ValType::F64
+    } else {
+        ValType::I32
+    };
+    out.instruction(&Instruction::LocalGet(source_local));
+    out.instruction(&Instruction::RefTestNonNull(i31_heap_type()));
+    out.instruction(&Instruction::If(BlockType::Result(result)));
+    out.instruction(&Instruction::LocalGet(source_local));
+    out.instruction(&Instruction::RefCastNonNull(i31_heap_type()));
+    out.instruction(&Instruction::I31GetS);
+    if target == NumericType::F64 {
+        out.instruction(&Instruction::F64ConvertI32S);
+    }
+    out.instruction(&Instruction::Else);
+    out.instruction(&Instruction::LocalGet(source_local));
+    out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(boxed_f64)));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: boxed_f64,
+        field_index: 0,
+    });
+    match target {
+        NumericType::U32 => {
+            out.instruction(&Instruction::I32TruncF64U);
+        }
+        NumericType::I32 => {
+            out.instruction(&Instruction::I32TruncF64S);
+        }
+        _ => {}
+    }
+    out.instruction(&Instruction::End);
+}
+
+/// Emit `#` on an `unknown` (anyref) local, leaving the logical length (i32)
+/// on the stack. Dispatches over every growable array wrapper type in the
+/// module and traps when the value is none of them.
+fn emit_dyn_len(
+    out: &mut Function,
+    ctx: &EmissionContext<'_>,
+    operand_local: u32,
+) -> Result<(), Diagnostic> {
+    let wrappers = &ctx.array_registry.growable_array_element_types;
+    for (_, wrapper_idx) in wrappers {
+        out.instruction(&Instruction::LocalGet(operand_local));
+        out.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(
+            *wrapper_idx,
+        )));
+        out.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+        out.instruction(&Instruction::LocalGet(operand_local));
+        out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
+            *wrapper_idx,
+        )));
+        out.instruction(&Instruction::StructGet {
+            struct_type_index: *wrapper_idx,
+            field_index: GROWABLE_LEN_FIELD,
+        });
+        out.instruction(&Instruction::Else);
+    }
+    out.instruction(&Instruction::Unreachable);
+    for _ in wrappers {
+        out.instruction(&Instruction::End);
+    }
+    Ok(())
+}
+
+/// True when a dynamic array read can box this element type into `unknown`
+/// (`emit_dyn_index` skips array types whose elements cannot be boxed; they
+/// fall through to the trap).
+fn dyn_element_boxable(storage: &StorageType) -> bool {
+    !matches!(
+        storage,
+        StorageType::Val(ValType::I64) | StorageType::Val(ValType::F32)
+    )
+}
+
+/// Emit `value[index]` where `value` is an `unknown` (anyref) local, leaving
+/// the element boxed into `unknown` (anyref) on the stack. Dispatches over
+/// the module's growable array wrapper types with a per-type bounds check;
+/// traps for non-arrays, unboxable element types, and out-of-range indices.
+fn emit_dyn_index(
+    out: &mut Function,
+    ctx: &EmissionContext<'_>,
+    operand_local: u32,
+    index_local: u32,
+) -> Result<(), Diagnostic> {
+    let wrappers = &ctx.array_registry.growable_array_element_types;
+    let anyref = anyref_val_type();
+    let mut arms = 0usize;
+    for (element_ty, wrapper_idx) in wrappers {
+        let storage = array_storage_type(element_ty, ctx.array_registry)?;
+        if !dyn_element_boxable(&storage) {
+            continue;
+        }
+        let storage_array_ty = Type::Array(Box::new(element_ty.clone()));
+        let storage_type_index = ctx.array_registry.index(&storage_array_ty)?;
+
+        out.instruction(&Instruction::LocalGet(operand_local));
+        out.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(
+            *wrapper_idx,
+        )));
+        out.instruction(&Instruction::If(BlockType::Result(anyref)));
+        // Bounds check against the logical length; the unsigned compare also
+        // rejects negative indices.
+        out.instruction(&Instruction::LocalGet(index_local));
+        out.instruction(&Instruction::LocalGet(operand_local));
+        out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
+            *wrapper_idx,
+        )));
+        out.instruction(&Instruction::StructGet {
+            struct_type_index: *wrapper_idx,
+            field_index: GROWABLE_LEN_FIELD,
+        });
+        out.instruction(&Instruction::I32GeU);
+        out.instruction(&Instruction::If(BlockType::Empty));
+        out.instruction(&Instruction::Unreachable);
+        out.instruction(&Instruction::End);
+
+        out.instruction(&Instruction::LocalGet(operand_local));
+        out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
+            *wrapper_idx,
+        )));
+        out.instruction(&Instruction::StructGet {
+            struct_type_index: *wrapper_idx,
+            field_index: GROWABLE_STORAGE_FIELD,
+        });
+        out.instruction(&Instruction::LocalGet(index_local));
+        out.instruction(&Instruction::ArrayGet(storage_type_index));
+
+        // Box the raw element into anyref based on its storage representation.
+        match storage {
+            StorageType::Val(ValType::I32) => {
+                let base_ty = match element_ty {
+                    Type::Nullable(inner) => inner.as_ref(),
+                    other => other,
+                };
+                if *base_ty == Type::Bool {
+                    out.instruction(&Instruction::StructNew(
+                        ctx.array_registry.boxed_bool_struct_type,
+                    ));
+                } else {
+                    out.instruction(&Instruction::RefI31);
+                }
+            }
+            StorageType::Val(ValType::F64) => {
+                out.instruction(&Instruction::StructNew(
+                    ctx.array_registry.boxed_f64_struct_type,
+                ));
+            }
+            StorageType::Val(val) if val == externref_val_type() => {
+                out.instruction(&Instruction::AnyConvertExtern);
+            }
+            // anyref and concrete GC refs are already (subtypes of) anyref.
+            _ => {}
+        }
+        out.instruction(&Instruction::Else);
+        arms += 1;
+    }
+    out.instruction(&Instruction::Unreachable);
+    for _ in 0..arms {
+        out.instruction(&Instruction::End);
+    }
+    Ok(())
+}
+
+/// Emit Lua equality between two `unknown` (anyref) locals, leaving an i32
+/// (0/1) on the stack.
+///
+/// Numbers compare numerically across their two boxed representations (i31
+/// for small integers, `$boxed_f64` for floats) and booleans compare by
+/// unboxed value, so `1 == 1.0` holds and boxing never affects the result.
+/// Everything else (strings, host externs, arrays, records, threads,
+/// functions) is externalized and compared with JavaScript `===`, which gives
+/// string content equality and reference identity for GC objects — matching
+/// Lua's primitive equality without metamethods.
+fn emit_unknown_eq(
+    out: &mut Function,
+    ctx: &EmissionContext<'_>,
+    left_local: u32,
+    right_local: u32,
+) -> Result<(), Diagnostic> {
+    let js_eq = ctx.host_func_index(host::IMPORT_JS_EQ_UNKNOWN_FUNC)?;
+    let emit_js_fallback = |out: &mut Function| {
+        out.instruction(&Instruction::LocalGet(left_local));
+        out.instruction(&Instruction::ExternConvertAny);
+        out.instruction(&Instruction::LocalGet(right_local));
+        out.instruction(&Instruction::ExternConvertAny);
+        out.instruction(&Instruction::Call(js_eq));
+    };
+    if !ctx.array_registry.closure_gc_present {
+        // Without the closure GC types no boxed f64/bool can exist at
+        // runtime; every anyref externalizes faithfully (i31 as a JS number,
+        // strings/externs as themselves, GC refs as identity-stable objects),
+        // so JavaScript `===` decides everything, including nulls.
+        emit_js_fallback(out);
+        return Ok(());
+    }
+    let boxed_f64 = ctx.array_registry.boxed_f64_struct_type;
+    let boxed_bool = ctx.array_registry.boxed_bool_struct_type;
+    // Push 1 when the local holds an i31 or boxed f64 (a Lua number).
+    let emit_is_number = |out: &mut Function, local: u32| {
+        out.instruction(&Instruction::LocalGet(local));
+        out.instruction(&Instruction::RefTestNonNull(i31_heap_type()));
+        out.instruction(&Instruction::LocalGet(local));
+        out.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(boxed_f64)));
+        out.instruction(&Instruction::I32Or);
+    };
+    // Push the numeric value of an i31-or-boxed-f64 local as f64.
+    let emit_number_value = |out: &mut Function, local: u32| {
+        out.instruction(&Instruction::LocalGet(local));
+        out.instruction(&Instruction::RefTestNonNull(i31_heap_type()));
+        out.instruction(&Instruction::If(BlockType::Result(ValType::F64)));
+        out.instruction(&Instruction::LocalGet(local));
+        out.instruction(&Instruction::RefCastNonNull(i31_heap_type()));
+        out.instruction(&Instruction::I31GetS);
+        out.instruction(&Instruction::F64ConvertI32S);
+        out.instruction(&Instruction::Else);
+        out.instruction(&Instruction::LocalGet(local));
+        out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(boxed_f64)));
+        out.instruction(&Instruction::StructGet {
+            struct_type_index: boxed_f64,
+            field_index: 0,
+        });
+        out.instruction(&Instruction::End);
+    };
+    let emit_is_boxed_bool = |out: &mut Function, local: u32| {
+        out.instruction(&Instruction::LocalGet(local));
+        out.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(boxed_bool)));
+    };
+    let emit_boxed_bool_value = |out: &mut Function, local: u32| {
+        out.instruction(&Instruction::LocalGet(local));
+        out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(boxed_bool)));
+        out.instruction(&Instruction::StructGet {
+            struct_type_index: boxed_bool,
+            field_index: 0,
+        });
+    };
+
+    // if (left is number && right is number) → compare as f64
+    emit_is_number(out, left_local);
+    emit_is_number(out, right_local);
+    out.instruction(&Instruction::I32And);
+    out.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+    emit_number_value(out, left_local);
+    emit_number_value(out, right_local);
+    out.instruction(&Instruction::F64Eq);
+    out.instruction(&Instruction::Else);
+    // else if (left is boxed bool && right is boxed bool) → compare unboxed
+    emit_is_boxed_bool(out, left_local);
+    emit_is_boxed_bool(out, right_local);
+    out.instruction(&Instruction::I32And);
+    out.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+    emit_boxed_bool_value(out, left_local);
+    emit_boxed_bool_value(out, right_local);
+    out.instruction(&Instruction::I32Eq);
+    out.instruction(&Instruction::Else);
+    // else if either side is a box (f64 or bool) the pair is mixed-type →
+    // unequal; boxes must not reach the extern fallback because they
+    // externalize as opaque objects with fresh identity semantics.
+    out.instruction(&Instruction::LocalGet(left_local));
+    out.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(boxed_f64)));
+    out.instruction(&Instruction::LocalGet(right_local));
+    out.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(boxed_f64)));
+    out.instruction(&Instruction::I32Or);
+    emit_is_boxed_bool(out, left_local);
+    out.instruction(&Instruction::I32Or);
+    emit_is_boxed_bool(out, right_local);
+    out.instruction(&Instruction::I32Or);
+    out.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+    out.instruction(&Instruction::I32Const(0));
+    out.instruction(&Instruction::Else);
+    // else → externalize and let JavaScript `===` decide (strings, externs,
+    // GC identity, nulls, and i31-vs-non-number mixes).
+    emit_js_fallback(out);
+    out.instruction(&Instruction::End);
+    out.instruction(&Instruction::End);
+    out.instruction(&Instruction::End);
+    Ok(())
 }
 
 /// Box a primitive value (already on the stack) into an `anyref` (`unknown`).

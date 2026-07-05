@@ -335,6 +335,8 @@ pub(crate) fn infer_value_types(
                 IrInstruction::ArrayGet { element_ty, .. } => element_ty.clone(),
                 IrInstruction::ArraySet { .. } => Type::Numeric(NumericType::I32),
                 IrInstruction::ArrayLen { .. } => Type::Numeric(NumericType::I32),
+                IrInstruction::DynLen { .. } => Type::Numeric(NumericType::I32),
+                IrInstruction::DynIndex { .. } => Type::Unknown,
                 IrInstruction::ArrayPop { .. } => Type::Unit,
                 IrInstruction::ArraySlice { element_ty, .. } => {
                     Type::Array(Box::new(element_ty.clone()))
@@ -752,6 +754,8 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
             ..
         } => vec![*array, *index, *value],
         IrInstruction::ArrayLen { array } => vec![*array],
+        IrInstruction::DynLen { value } => vec![*value],
+        IrInstruction::DynIndex { value, index } => vec![*value, *index],
         IrInstruction::ArrayPop { array, .. } => vec![*array],
         IrInstruction::ArraySlice { array, start, .. } => vec![*array, *start],
         IrInstruction::BytesGet { bytes, index } => vec![*bytes, *index],
@@ -777,12 +781,31 @@ fn terminator_operands(terminator: &Terminator) -> Vec<ValueId> {
 }
 
 fn instruction_use_requires_local(instruction: &IrInstruction) -> bool {
+    // Unknown equality re-reads both operands from locals while dispatching
+    // on their boxed representations.
+    if let IrInstruction::Binary {
+        op: BinaryOp::Eq | BinaryOp::NotEq,
+        operand_ty: Type::Unknown,
+        ..
+    } = instruction
+    {
+        return true;
+    }
+    // Numeric unboxes out of `unknown` re-read the source local while
+    // dispatching on the i31 vs boxed-f64 representation.
+    if let IrInstruction::Cast { from, to, .. } = instruction {
+        if crate::number_unbox_target(from, to).is_some() {
+            return true;
+        }
+    }
     matches!(
         instruction,
         IrInstruction::Binary {
             op: BinaryOp::FloorDiv | BinaryOp::Mod | BinaryOp::Pow,
             ..
-        } | IrInstruction::ArrayGet { .. }
+        } | IrInstruction::DynLen { .. }
+            | IrInstruction::DynIndex { .. }
+            | IrInstruction::ArrayGet { .. }
             | IrInstruction::ArraySet { .. }
             | IrInstruction::ArraySlice { .. }
             | IrInstruction::ArrayPop { .. }
@@ -827,7 +850,9 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         IrInstruction::ArrayNew { elements, .. } => elements.first().copied() == Some(value),
         IrInstruction::ArrayGet { .. }
         | IrInstruction::ArraySet { .. }
-        | IrInstruction::ArraySlice { .. } => false,
+        | IrInstruction::ArraySlice { .. }
+        | IrInstruction::DynLen { .. }
+        | IrInstruction::DynIndex { .. } => false,
         IrInstruction::ArrayLen { array } => *array == value,
         IrInstruction::ArrayPop { .. } => false,
         IrInstruction::BytesGet { .. } => false,

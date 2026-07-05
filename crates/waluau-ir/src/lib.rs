@@ -35,6 +35,7 @@ const TABLE_INSERT: &str = "table.insert";
 const TABLE_REMOVE: &str = "table.remove";
 const TABLE_SORT: &str = "table.sort";
 const TABLE_GETN: &str = "table.getn";
+const TABLE_PACK: &str = "table.pack";
 const TYPE: &str = "type";
 const TYPEOF: &str = "typeof";
 const TO_STRING: &str = "tostring";

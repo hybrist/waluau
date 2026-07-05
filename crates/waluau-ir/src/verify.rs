@@ -576,6 +576,52 @@ fn verify_function(
                         )));
                     }
                 }
+                Instruction::DynLen { value: operand } => {
+                    let operand_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *operand,
+                    )?;
+                    if operand_ty != Type::Unknown {
+                        return Err(Diagnostic::new(format!(
+                            "dyn.len operand in block {:?} must be unknown, got {}",
+                            block.id, operand_ty
+                        )));
+                    }
+                }
+                Instruction::DynIndex {
+                    value: operand,
+                    index,
+                } => {
+                    let operand_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *operand,
+                    )?;
+                    if operand_ty != Type::Unknown {
+                        return Err(Diagnostic::new(format!(
+                            "dyn.index operand in block {:?} must be unknown, got {}",
+                            block.id, operand_ty
+                        )));
+                    }
+                    let index_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *index,
+                    )?;
+                    if index_ty != Type::Numeric(NumericType::I32) {
+                        return Err(Diagnostic::new(format!(
+                            "dyn.index index in block {:?} must be i32, got {}",
+                            block.id, index_ty
+                        )));
+                    }
+                }
                 Instruction::ArraySlice {
                     array,
                     start,
@@ -1131,6 +1177,8 @@ fn infer_instruction_type(
         Instruction::ArrayGet { element_ty, .. } => Ok(element_ty.clone()),
         Instruction::ArraySet { .. } => Ok(Type::Numeric(NumericType::I32)),
         Instruction::ArrayLen { .. } => Ok(Type::Numeric(NumericType::I32)),
+        Instruction::DynLen { .. } => Ok(Type::Numeric(NumericType::I32)),
+        Instruction::DynIndex { .. } => Ok(Type::Unknown),
         Instruction::ArrayPop { .. } => Ok(Type::Unit),
         Instruction::ArraySlice { element_ty, .. } => Ok(Type::Array(Box::new(element_ty.clone()))),
         Instruction::BytesGet { .. } => Ok(Type::Numeric(NumericType::I32)),

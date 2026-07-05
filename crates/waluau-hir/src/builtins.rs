@@ -44,6 +44,7 @@ pub(super) const TABLE_INSERT: &str = "table.insert";
 pub(super) const TABLE_REMOVE: &str = "table.remove";
 pub(super) const TABLE_SORT: &str = "table.sort";
 pub(super) const TABLE_GETN: &str = "table.getn";
+pub(super) const TABLE_PACK: &str = "table.pack";
 pub(super) const TYPE: &str = "type";
 pub(super) const TYPEOF: &str = "typeof";
 pub(super) const TO_STRING: &str = "tostring";
@@ -686,14 +687,7 @@ pub(super) fn infer_select_builtin_call(
             args.len()
         ))));
     }
-    match &args[0] {
-        Expr::String(marker, _) if marker == "#" => {}
-        _ => {
-            return Some(Err(Diagnostic::new(
-                "select currently supports only select('#', ...)",
-            )));
-        }
-    }
+    let count_marker = matches!(&args[0], Expr::String(marker, _) if marker == "#");
     let arg_ty = match super::expressions::infer_expr(
         &args[1],
         vars,
@@ -704,14 +698,33 @@ pub(super) fn infer_select_builtin_call(
         Ok(ty) => ty,
         Err(error) => return Some(Err(error)),
     };
-
-    if arg_ty.is_array() {
-        Some(coerce_type(Type::Numeric(NumericType::I32), expected))
-    } else {
-        Some(Err(Diagnostic::new(format!(
+    let Some(element_ty) = arg_ty.element_type() else {
+        return Some(Err(Diagnostic::new(format!(
             "{SELECT} expects an array, got {arg_ty}"
-        ))))
+        ))));
+    };
+    if count_marker {
+        return Some(coerce_type(Type::Numeric(NumericType::I32), expected));
     }
+    // `select(n, ...)` returns the single value at 1-based position n
+    // (negative n counts from the end); positions past the end trap where
+    // Lua raises "index out of range".
+    let index_ty = match super::expressions::infer_expr(
+        &args[0],
+        vars,
+        fn_signatures,
+        active_type_params,
+        Some(Type::Numeric(NumericType::I32)),
+    ) {
+        Ok(ty) => ty,
+        Err(error) => return Some(Err(error)),
+    };
+    if index_ty != Type::Numeric(NumericType::I32) {
+        return Some(Err(Diagnostic::new(format!(
+            "{SELECT} expects '#' or an i32 index as its first argument, got {index_ty}"
+        ))));
+    }
+    Some(coerce_type(element_ty, expected))
 }
 
 /// Infer the element type of the array passed as a table builtin's first argument.
@@ -742,6 +755,32 @@ pub(super) fn infer_table_builtin_call(
 ) -> Option<Result<Type, Diagnostic>> {
     let i32_ty = Type::Numeric(NumericType::I32);
     match name {
+        TABLE_PACK => {
+            if args.len() > 1 {
+                for arg in &args[..args.len() - 1] {
+                    if matches!(arg, Expr::Vararg(_)) {
+                        return Some(Err(Diagnostic::new(
+                            "'...' is only supported as the last argument of a call",
+                        )));
+                    }
+                }
+            }
+            for arg in args {
+                if matches!(arg, Expr::Vararg(_)) {
+                    continue;
+                }
+                if let Err(error) = super::expressions::infer_expr(
+                    arg,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    Some(Type::Unknown),
+                ) {
+                    return Some(Err(error));
+                }
+            }
+            return Some(coerce_type(Type::Array(Box::new(Type::Unknown)), expected));
+        }
         TABLE_GETN => {
             if args.len() != 1 {
                 return Some(Err(Diagnostic::new(format!(
