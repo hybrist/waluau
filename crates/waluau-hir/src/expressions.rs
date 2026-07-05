@@ -5,11 +5,11 @@ use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
 use super::Binding;
 use super::builtins::{
-    STRING_BYTE, STRING_FIND, STRING_FORMAT, STRING_LEN, STRING_LOWER, STRING_REP, STRING_SUB,
-    STRING_UPPER, infer_bit32_builtin_call, infer_coroutine_builtin_call, infer_error_builtin_call,
-    infer_math_builtin_call, infer_pcall_builtin_call, infer_promise_await_method_call,
-    infer_promise_builtin_call, infer_select_builtin_call, infer_string_builtin_call,
-    infer_table_builtin_call, infer_tostring_builtin_call,
+    STRING_BYTE, STRING_FIND, STRING_FORMAT, STRING_LEN, STRING_LOWER, STRING_REP, STRING_REVERSE,
+    STRING_SUB, STRING_UPPER, infer_bit32_builtin_call, infer_coroutine_builtin_call,
+    infer_error_builtin_call, infer_math_builtin_call, infer_pcall_builtin_call,
+    infer_promise_await_method_call, infer_promise_builtin_call, infer_select_builtin_call,
+    infer_string_builtin_call, infer_table_builtin_call, infer_tostring_builtin_call,
 };
 use super::numeric::{
     coerce_type, common_element_type, infer_numeric_common_type, is_extern_subtype_of,
@@ -749,6 +749,7 @@ pub(super) fn infer_expr(
                     "upper" => Some(STRING_UPPER),
                     "lower" => Some(STRING_LOWER),
                     "format" => Some(STRING_FORMAT),
+                    "reverse" => Some(STRING_REVERSE),
                     _ => None,
                 };
                 if let Some(builtin) = builtin {
@@ -1231,8 +1232,9 @@ pub(super) fn infer_expr_list(
             .and_then(|types| (!types[out.len()..].is_empty()).then(|| &types[out.len()..]));
         let next_expected = remaining_expected.and_then(|types| types.first().cloned());
         let ty = if let Expr::Call { callee, .. } = expr {
-            let expands_multi = builtin_name(callee.as_ref())
-                .is_some_and(|name| name == "coroutine.resume" || name == "pcall");
+            let expands_multi = builtin_name(callee.as_ref()).is_some_and(|name| {
+                name == "coroutine.resume" || name == "pcall" || name == STRING_BYTE
+            });
             // A Name not found in fn_signatures or vars may be a tagged-union constructor
             // (e.g. `Num(42)`). Pass next_expected so the constructor intercept in
             // infer_expr can see the expected union type and fire correctly.
