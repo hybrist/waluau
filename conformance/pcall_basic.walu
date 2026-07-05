@@ -5,6 +5,13 @@ end)
 assert(ok)
 assert(value::f64 == 42.0)
 
+local arg_ok: bool, arg_value: unknown = pcall(function(x: number): number
+    return x + 3
+end, 2)
+
+assert(arg_ok)
+assert(arg_value::f64 == 5)
+
 local failed: bool, err: unknown = pcall(function(): unit
     assert(false, "boom")
 end)

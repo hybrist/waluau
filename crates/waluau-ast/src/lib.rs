@@ -666,6 +666,8 @@ impl Resolver {
         for builtin in &[
             "print",
             "assert",
+            "error",
+            "pcall",
             "tostring",
             "select",
             "math",
