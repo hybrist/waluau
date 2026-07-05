@@ -23,6 +23,7 @@ if Left(n) = a then
     assert(n == 5)
 end
 
--- `is` still works for plain boolean tag tests.
+-- `is` still works for plain boolean tag tests. After this assert, `a` is
+-- narrowed to Left; testing the now-impossible Right variant would be a
+-- type error.
 assert(a is Left)
-assert(not (a is Right))
