@@ -1558,3 +1558,69 @@ fn emits_valid_wasm_for_tagged_union_pattern_match_binding() {
         "should emit struct.get for the tag check and payload unbox"
     );
 }
+
+#[test]
+fn emits_valid_wasm_for_varargs_and_table_pack_conformance_fixtures() {
+    for source in [
+        include_str!("../../../conformance/varargs_forwarding.walu"),
+        include_str!("../../../conformance/varargs_table_literal.walu"),
+        include_str!("../../../conformance/table_pack.walu"),
+        include_str!("../../../conformance/select_n.walu"),
+        include_str!("../../../conformance/varargs_checkresults.walu"),
+    ] {
+        let program = waluau_parser::parse(source).expect("parse should succeed");
+        let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+        let ir = waluau_ir::build(&typed).expect("ir should succeed");
+        waluau_ir::verify(&ir).expect("ir should verify");
+
+        let wasm = emit(&ir).expect("emit should succeed");
+        Validator::new_with_features(wasmparser::WasmFeatures::all())
+            .validate_all(&wasm)
+            .expect("emitted module should validate");
+    }
+}
+
+#[test]
+fn emits_valid_wasm_for_dynamic_unknown_operations() {
+    for source in [
+        include_str!("../../../conformance/unknown_equality.walu"),
+        include_str!("../../../conformance/unknown_len_index.walu"),
+    ] {
+        let program = waluau_parser::parse(source).expect("parse should succeed");
+        let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+        let ir = waluau_ir::build(&typed).expect("ir should succeed");
+        waluau_ir::verify(&ir).expect("ir should verify");
+
+        let wasm = emit(&ir).expect("emit should succeed");
+        Validator::new_with_features(wasmparser::WasmFeatures::all())
+            .validate_all(&wasm)
+            .expect("emitted module should validate");
+    }
+}
+
+#[test]
+fn unknown_equality_imports_js_eq_unknown() {
+    let source = r#"
+        function eq(a, b)
+            return a == b
+        end
+        assert(eq("x", "x"))
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+
+    let mut found = false;
+    for payload in Parser::new(0).parse_all(&wasm) {
+        if let Payload::ImportSection(imports) = payload.expect("wasm should parse") {
+            for import in imports {
+                let import = import.expect("import should parse");
+                if import.module == "waluau" && import.name == "js_eq_unknown" {
+                    found = true;
+                }
+            }
+        }
+    }
+    assert!(found, "unknown equality should import waluau.js_eq_unknown");
+}

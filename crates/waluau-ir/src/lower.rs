@@ -3815,6 +3815,9 @@ impl Builder<'_> {
                     Some(nullable @ Type::Nullable(_)) if nullable.is_boxed_nullable() => nullable,
                     Some(Type::Nullable(inner)) => *inner,
                     Some(Type::Extern) => Type::Extern,
+                    // nil as an `unknown` value is a null anyref (e.g. nil
+                    // passed through varargs or compared dynamically).
+                    Some(Type::Unknown) => Type::Unknown,
                     Some(other) => {
                         return Err(Diagnostic::new(format!(
                             "nil is only assignable to nullable extern, got {other}"
@@ -4165,6 +4168,15 @@ impl Builder<'_> {
                         if actual == Type::Bytes {
                             let bytes = self.lower_expr(expr, env, types, Some(Type::Bytes))?;
                             let len = self.emit(Instruction::BytesLen { bytes });
+                            return self.coerce_value(
+                                len,
+                                Type::Numeric(NumericType::I32),
+                                expected,
+                            );
+                        }
+                        if actual == Type::Unknown {
+                            let value = self.lower_expr(expr, env, types, Some(Type::Unknown))?;
+                            let len = self.emit(Instruction::DynLen { value });
                             return self.coerce_value(
                                 len,
                                 Type::Numeric(NumericType::I32),
@@ -4525,56 +4537,8 @@ impl Builder<'_> {
                         let args = if matches!(
                             param_types.last(),
                             Some(Type::Array(element)) if element.as_ref() == &Type::Unknown
-                        ) && matches!(args.as_slice(), [Expr::Vararg(_)])
-                        {
-                            let varargs = self.lower_expr(
-                                &args[0],
-                                env,
-                                types,
-                                Some(Type::Array(Box::new(Type::Unknown))),
-                            )?;
-                            let zero = self.emit(Instruction::Number {
-                                ty: NumericType::I32,
-                                literal: NumberLiteral { raw: "0".into() },
-                            });
-                            let one = self.emit(Instruction::Number {
-                                ty: NumericType::I32,
-                                literal: NumberLiteral { raw: "1".into() },
-                            });
-                            let head = self.emit(Instruction::ArrayGet {
-                                array: varargs,
-                                index: zero,
-                                element_ty: Type::Unknown,
-                            });
-                            let tail = self.emit(Instruction::ArraySlice {
-                                array: varargs,
-                                start: one,
-                                element_ty: Type::Unknown,
-                            });
-                            vec![head, tail]
-                        } else if matches!(
-                            param_types.last(),
-                            Some(Type::Array(element)) if element.as_ref() == &Type::Unknown
                         ) {
-                            let fixed_count = param_types.len() - 1;
-                            let mut lowered = Vec::with_capacity(param_types.len());
-                            for (arg, param_ty) in args.iter().take(fixed_count).zip(param_types.iter()) {
-                                if param_ty == &Type::Unknown {
-                                    lowered.push(self.lower_vararg_unknown_arg(arg, env, types)?);
-                                } else {
-                                    lowered.push(self.lower_expr(arg, env, types, Some(param_ty.clone()))?);
-                                }
-                            }
-                            let mut extras = Vec::new();
-                            for arg in args.iter().skip(fixed_count) {
-                                extras.push(self.lower_vararg_unknown_arg(arg, env, types)?);
-                            }
-                            let tail = self.emit(Instruction::ArrayNew {
-                                element_ty: Type::Unknown,
-                                elements: extras,
-                            });
-                            lowered.push(tail);
-                            lowered
+                            self.shape_vararg_call_args(param_types, args, env, types)?
                         } else {
                             args.iter()
                                 .zip(param_types.iter())
@@ -4693,9 +4657,45 @@ impl Builder<'_> {
                     return self.coerce_value(value, struct_ty, None);
                 }
                 let array_ty = self.infer_array_literal_type(elements, types, expected.clone())?;
+                // When the expected type is not an array (e.g. the literal is
+                // passed as `unknown`), the coercion above swallows the array
+                // shape; recover the literal's own type and let the final
+                // coerce_value box it.
+                let array_ty = if array_ty.is_array() {
+                    array_ty
+                } else {
+                    self.infer_array_literal_type(elements, types, None)?
+                };
                 let element_ty = array_ty
                     .element_type()
                     .expect("array literal must have element type");
+                if matches!(elements.last(), Some(Expr::Vararg(_))) {
+                    // `{a, b, ...}` splats the caller's varargs after the
+                    // explicit prefix; `{...}` alone is a fresh copy.
+                    let varargs = self
+                        .vararg_value
+                        .ok_or_else(|| Diagnostic::new("'...' used outside a vararg function"))?;
+                    let prefix = elements[..elements.len() - 1]
+                        .iter()
+                        .map(|element| self.lower_expr(element, env, types, Some(Type::Unknown)))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let value = if prefix.is_empty() {
+                        let zero = self.emit_i32_const(0);
+                        self.emit(Instruction::ArraySlice {
+                            array: varargs,
+                            start: zero,
+                            element_ty: Type::Unknown,
+                        })
+                    } else {
+                        let dest = self.emit(Instruction::ArrayNew {
+                            element_ty: Type::Unknown,
+                            elements: prefix,
+                        });
+                        self.emit_array_append_all(dest, varargs);
+                        dest
+                    };
+                    return self.coerce_value(value, array_ty, expected);
+                }
                 let lowered = elements
                     .iter()
                     .map(|element| self.lower_expr(element, env, types, Some(element_ty.clone())))
@@ -4715,12 +4715,17 @@ impl Builder<'_> {
                     let value = self.emit(Instruction::BytesGet { bytes, index });
                     return self.coerce_value(value, Type::Numeric(NumericType::I32), expected);
                 }
+                if base_ty == Type::Unknown {
+                    let base = self.lower_expr(base, env, types, Some(Type::Unknown))?;
+                    let index = self.lower_index_to_i32(index, env, types)?;
+                    let value = self.emit(Instruction::DynIndex { value: base, index });
+                    return self.coerce_value(value, Type::Unknown, expected);
+                }
                 let element_ty = base_ty
                     .element_type()
                     .ok_or_else(|| Diagnostic::new("indexing requires an array or bytes operand"))?;
                 let array = self.lower_expr(base, env, types, Some(base_ty))?;
-                let index =
-                    self.lower_expr(index, env, types, Some(Type::Numeric(NumericType::I32)))?;
+                let index = self.lower_index_to_i32(index, env, types)?;
                 let value = self.emit(Instruction::ArrayGet {
                     array,
                     index,
@@ -4799,6 +4804,13 @@ impl Builder<'_> {
                     let base_val = self.lower_expr(base, env, types, None)?;
                     let cast_val = self.unbox_tagged_variant_value(base_val, &payload_ty)?;
                     return self.coerce_value(cast_val, payload_ty, expected);
+                }
+                // `.n` on an array reads its length, so `table.pack(...).n`
+                // behaves like Lua's packed-table count field.
+                if matches!(base_ty, Type::Array(_)) && name == "n" {
+                    let array = self.lower_expr(base, env, types, Some(base_ty))?;
+                    let value = self.emit(Instruction::ArrayLen { array });
+                    return self.coerce_value(value, Type::Numeric(NumericType::I32), expected);
                 }
                 let field_ty = base_ty
                     .record_field(name)
@@ -5339,7 +5351,11 @@ impl Builder<'_> {
                 }
                 UnaryOp::Len => {
                     let actual = self.infer_expr_type(expr, types, None)?;
-                    if actual == Type::String || actual == Type::Bytes || actual.is_array() {
+                    if actual == Type::String
+                        || actual == Type::Bytes
+                        || actual == Type::Unknown
+                        || actual.is_array()
+                    {
                         coerce_type(Type::Numeric(NumericType::I32), expected)
                     } else {
                         Err(Diagnostic::new("# requires a string, array, or bytes operand"))
@@ -5499,6 +5515,9 @@ impl Builder<'_> {
                         return coerce_type(return_type, expected);
                     }
                 }
+                if matches!(base_ty, Type::Array(_)) && name == "n" {
+                    return coerce_type(Type::Numeric(NumericType::I32), expected);
+                }
                 let field_ty = base_ty
                     .record_field(name)
                     .ok_or_else(|| Diagnostic::new(format!("unknown record field '{name}'")))?;
@@ -5508,15 +5527,21 @@ impl Builder<'_> {
                 let base_ty = self.infer_expr_type(base, types, None)?;
                 let element_ty = if base_ty == Type::Bytes {
                     Type::Numeric(NumericType::I32)
+                } else if base_ty == Type::Unknown {
+                    Type::Unknown
                 } else {
                     base_ty
                         .element_type()
                         .ok_or_else(|| Diagnostic::new("indexing requires an array or bytes operand"))?
                 };
-                let index_ty =
-                    self.infer_expr_type(index, types, Some(Type::Numeric(NumericType::I32)))?;
-                if index_ty != Type::Numeric(NumericType::I32) {
-                    return Err(Diagnostic::new("index must be i32"));
+                let index_ty = self
+                    .infer_expr_type(index, types, None)
+                    .map(first_of_multi)
+                    .or_else(|_| {
+                        self.infer_expr_type(index, types, Some(Type::Numeric(NumericType::I32)))
+                    })?;
+                if !index_ty.is_numeric() && index_ty != Type::Unknown {
+                    return Err(Diagnostic::new("array index must be numeric"));
                 }
                 coerce_type(element_ty, expected)
             }
@@ -5591,12 +5616,20 @@ impl Builder<'_> {
                 if let Type::Nullable(_) = &left_ty {
                     return Ok(left_ty);
                 }
+                // An unknown operand compares with Lua dynamic equality; the
+                // other side is boxed into unknown as needed.
+                if left_ty == Type::Unknown {
+                    return Ok(Type::Unknown);
+                }
                 if let Ok(probe_right) = self
                     .infer_expr_type(right, types, None)
                     .map(first_of_multi)
                 {
                     if matches!(probe_right, Type::Nullable(_)) {
                         return Ok(probe_right);
+                    }
+                    if probe_right == Type::Unknown {
+                        return Ok(Type::Unknown);
                     }
                 }
                 if left_ty == Type::Bool {
@@ -5877,13 +5910,46 @@ impl Builder<'_> {
             ));
         }
 
+        if elements.len() > 1 {
+            for element in &elements[..elements.len() - 1] {
+                if matches!(element, Expr::Vararg(_)) {
+                    return Err(Diagnostic::new(
+                        "'...' is only supported as the last element of a table constructor",
+                    ));
+                }
+            }
+        }
         let expected_element = expected.as_ref().and_then(Type::element_type);
+        // A trailing `...` splats the caller's varargs (unknown values) into
+        // the array, and an expected `{unknown}` boxes every element, so both
+        // force the element type to unknown.
+        if matches!(elements.last(), Some(Expr::Vararg(_)))
+            || expected_element == Some(Type::Unknown)
+        {
+            return coerce_type(Type::Array(Box::new(Type::Unknown)), expected);
+        }
         let mut iter = elements.iter();
         let first = iter.next().expect("non-empty array literal");
         let mut element_ty = self.infer_expr_type(first, types, expected_element.clone())?;
         for element in iter {
-            let actual = self.infer_expr_type(element, types, Some(element_ty.clone()))?;
-            element_ty = common_element_type(element_ty, actual)?;
+            if element_ty == Type::Unknown {
+                continue;
+            }
+            // Heterogeneous literals without a concrete expected element type
+            // fall back to `{unknown}` with boxed elements (see
+            // infer_array_literal in waluau-hir).
+            match self
+                .infer_expr_type(element, types, Some(element_ty.clone()))
+                .and_then(|actual| common_element_type(element_ty.clone(), actual))
+            {
+                Ok(unified) => element_ty = unified,
+                Err(error) => {
+                    if expected_element.is_some() {
+                        return Err(error);
+                    }
+                    element_ty = Type::Unknown;
+                }
+            }
         }
 
         coerce_type(Type::Array(Box::new(element_ty)), expected)
@@ -6737,54 +6803,283 @@ impl Builder<'_> {
                 args.len()
             ))));
         }
-        match &args[0] {
-            Expr::String(marker, _) if marker == "#" => {}
-            _ => {
-                return Some(Err(Diagnostic::new(
-                    "select currently supports only select('#', ...)",
-                )));
-            }
-        }
+        let count_marker = matches!(&args[0], Expr::String(marker, _) if marker == "#");
         // First, infer the type to validate it's an array
         let arg_ty = match self.infer_expr_type(&args[1], types, None) {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
-        
-        if !arg_ty.is_array() {
+
+        let Some(element_ty) = arg_ty.element_type() else {
             return Some(Err(Diagnostic::new(format!(
                 "{SELECT} expects an array, got {arg_ty}"
             ))));
-        }
-        
+        };
+
         // Now lower the expression with the known array type
         let array = match self.lower_expr(&args[1], env, types, Some(arg_ty)) {
             Ok(value) => value,
             Err(error) => return Some(Err(error)),
         };
-        let value = self.emit(Instruction::ArrayLen { array });
-        Some(self.coerce_value(value, Type::Numeric(NumericType::I32), expected))
+        if count_marker {
+            let value = self.emit(Instruction::ArrayLen { array });
+            return Some(self.coerce_value(value, Type::Numeric(NumericType::I32), expected));
+        }
+        // `select(n, ...)` returns the single value at 1-based position n;
+        // negative n counts from the end (`len + n`). Out-of-range positions
+        // trap on the array bounds check where Lua raises "index out of
+        // range".
+        let n = match self.lower_expr(&args[0], env, types, Some(Type::Numeric(NumericType::I32)))
+        {
+            Ok(value) => value,
+            Err(error) => return Some(Err(error)),
+        };
+        let i32_ty = Type::Numeric(NumericType::I32);
+        let zero = self.emit_i32_const(0);
+        let one = self.emit_i32_const(1);
+        let positive = self.emit(Instruction::Binary {
+            op: BinaryOp::Greater,
+            left: n,
+            right: zero,
+            operand_ty: i32_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        let preheader = self.current_block;
+        let from_front = self.new_block();
+        let from_back = self.new_block();
+        let merge = self.new_block();
+        self.set_terminator(
+            preheader,
+            Terminator::Branch {
+                condition: positive,
+                then_block: from_front,
+                else_block: from_back,
+            },
+        );
+        self.current_block = from_front;
+        let front_index = self.emit(Instruction::Binary {
+            op: BinaryOp::Sub,
+            left: n,
+            right: one,
+            operand_ty: i32_ty.clone(),
+            result_ty: i32_ty.clone(),
+        });
+        self.set_terminator(from_front, Terminator::Jump(merge));
+        self.current_block = from_back;
+        let len = self.emit(Instruction::ArrayLen { array });
+        let back_index = self.emit(Instruction::Binary {
+            op: BinaryOp::Add,
+            left: len,
+            right: n,
+            operand_ty: i32_ty.clone(),
+            result_ty: i32_ty,
+        });
+        self.set_terminator(from_back, Terminator::Jump(merge));
+        self.current_block = merge;
+        let index = self.emit(Instruction::Phi(vec![
+            (from_front, front_index),
+            (from_back, back_index),
+        ]));
+        let value = self.emit(Instruction::ArrayGet {
+            array,
+            index,
+            element_ty: element_ty.clone(),
+        });
+        Some(self.coerce_value(value, element_ty, expected))
     }
 
-    fn lower_vararg_unknown_arg(
+    /// Shape the argument list for a call to a vararg function, whose IR-level
+    /// signature ends with the implicit `Array(Unknown)` vararg slot.
+    ///
+    /// Explicit arguments fill the callee's fixed parameters first; leftovers
+    /// are boxed into a fresh tail array. A trailing `...` forwards the
+    /// caller's varargs: missing fixed parameters are drawn from the front of
+    /// the forwarded varargs (trapping when too few values were passed, where
+    /// Lua would see nil) and the rest become the callee's varargs.
+    fn shape_vararg_call_args(
         &mut self,
-        arg: &Expr,
+        param_types: &[Type],
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+    ) -> Result<Vec<ValueId>, Diagnostic> {
+        let fixed_count = param_types.len() - 1;
+        if args.len() > 1 {
+            for arg in &args[..args.len() - 1] {
+                if matches!(arg, Expr::Vararg(_)) {
+                    return Err(Diagnostic::new(
+                        "'...' is only supported as the last argument of a call",
+                    ));
+                }
+            }
+        }
+        let trailing_vararg = matches!(args.last(), Some(Expr::Vararg(_)));
+        let explicit = if trailing_vararg {
+            &args[..args.len() - 1]
+        } else {
+            args
+        };
+        if !trailing_vararg && explicit.len() < fixed_count {
+            return Err(Diagnostic::new(format!(
+                "function expects at least {fixed_count} arguments, got {}",
+                explicit.len()
+            )));
+        }
+        let mut lowered = Vec::with_capacity(param_types.len());
+        for (arg, param_ty) in explicit.iter().zip(param_types.iter().take(fixed_count)) {
+            lowered.push(self.lower_expr(arg, env, types, Some(param_ty.clone()))?);
+        }
+        let mut extras = Vec::new();
+        for arg in explicit.iter().skip(fixed_count) {
+            extras.push(self.lower_expr(arg, env, types, Some(Type::Unknown))?);
+        }
+        if !trailing_vararg {
+            let tail = self.emit(Instruction::ArrayNew {
+                element_ty: Type::Unknown,
+                elements: extras,
+            });
+            lowered.push(tail);
+            return Ok(lowered);
+        }
+        let varargs = self
+            .vararg_value
+            .ok_or_else(|| Diagnostic::new("'...' used outside a vararg function"))?;
+        if explicit.len() < fixed_count {
+            // Fill the remaining fixed parameters from the front of the
+            // forwarded varargs, then pass the rest along as the callee's
+            // varargs.
+            let missing = fixed_count - explicit.len();
+            for offset in 0..missing {
+                let index = self.emit_i32_const(offset as i32);
+                let value = self.emit(Instruction::ArrayGet {
+                    array: varargs,
+                    index,
+                    element_ty: Type::Unknown,
+                });
+                let param_ty = param_types[explicit.len() + offset].clone();
+                lowered.push(self.coerce_value(value, Type::Unknown, Some(param_ty))?);
+            }
+            let start = self.emit_i32_const(missing as i32);
+            let tail = self.emit(Instruction::ArraySlice {
+                array: varargs,
+                start,
+                element_ty: Type::Unknown,
+            });
+            lowered.push(tail);
+        } else {
+            // Every fixed parameter is covered by an explicit argument; the
+            // callee's varargs are the leftover explicit values followed by a
+            // copy of the caller's forwarded varargs.
+            let tail = self.emit(Instruction::ArrayNew {
+                element_ty: Type::Unknown,
+                elements: extras,
+            });
+            self.emit_array_append_all(tail, varargs);
+            lowered.push(tail);
+        }
+        Ok(lowered)
+    }
+
+    /// Lower an array index expression to i32. Non-i32 numeric indices are
+    /// converted with a truncating cast (traps on NaN/out-of-range, where Lua
+    /// raises an error), so f64-typed values — e.g. numeric for-loop
+    /// variables over literal bounds — can index arrays.
+    fn lower_index_to_i32(
+        &mut self,
+        index: &Expr,
         env: &HashMap<SymbolId, ValueId>,
         types: &HashMap<SymbolId, Type>,
     ) -> Result<ValueId, Diagnostic> {
-        let arg_ty = self.infer_expr_type(arg, types, None)?;
-        if arg_ty == Type::String {
-            return self.lower_expr(arg, env, types, Some(Type::Unknown));
+        let i32_ty = Type::Numeric(NumericType::I32);
+        if !matches!(index, Expr::Number(..)) {
+            if let Ok(index_ty) = self.infer_expr_type(index, types, None).map(first_of_multi) {
+                if index_ty.is_numeric() && index_ty != i32_ty {
+                    let value = self.lower_expr(index, env, types, Some(index_ty.clone()))?;
+                    return Ok(self.emit(Instruction::Cast {
+                        value,
+                        from: index_ty,
+                        to: i32_ty,
+                    }));
+                }
+            }
         }
-        if arg_ty.is_numeric() || arg_ty == Type::Bool {
-            let value = self.lower_expr(arg, env, types, Some(arg_ty.clone()))?;
-            let string_value = self.emit(Instruction::ToString {
-                value,
-                from: arg_ty,
-            });
-            return self.coerce_value(string_value, Type::String, Some(Type::Unknown));
-        }
-        self.lower_expr(arg, env, types, Some(Type::Unknown))
+        self.lower_expr(index, env, types, Some(i32_ty))
+    }
+
+    /// Append every element of `src` (an `Array(Unknown)` value) to the
+    /// growable array `dest` via an inline counted loop, using the
+    /// write-at-length append semantics of growable arrays.
+    fn emit_array_append_all(&mut self, dest: ValueId, src: ValueId) {
+        let i32_ty = Type::Numeric(NumericType::I32);
+        let zero = self.emit_i32_const(0);
+        let one = self.emit_i32_const(1);
+        let src_len = self.emit(Instruction::ArrayLen { array: src });
+
+        let preheader = self.current_block;
+        let header = self.new_block();
+        let body = self.new_block();
+        let exit = self.new_block();
+        self.set_terminator(preheader, Terminator::Jump(header));
+
+        self.current_block = header;
+        let index_phi = self.emit(Instruction::Phi(vec![(preheader, zero)]));
+        // Loop-invariant, threaded through a phi with a `+ 0` self-edge so the
+        // local allocator treats it as live across the back edge (see
+        // lower_table_insert's shift loop).
+        let len_phi = self.emit(Instruction::Phi(vec![(preheader, src_len)]));
+        let cond = self.emit(Instruction::Binary {
+            op: BinaryOp::Less,
+            left: index_phi,
+            right: len_phi,
+            operand_ty: i32_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        self.set_terminator(
+            header,
+            Terminator::Branch {
+                condition: cond,
+                then_block: body,
+                else_block: exit,
+            },
+        );
+
+        self.current_block = body;
+        let element = self.emit(Instruction::ArrayGet {
+            array: src,
+            index: index_phi,
+            element_ty: Type::Unknown,
+        });
+        let dest_len = self.emit(Instruction::ArrayLen { array: dest });
+        self.emit(Instruction::ArraySet {
+            array: dest,
+            index: dest_len,
+            value: element,
+            element_ty: Type::Unknown,
+        });
+        let next_index = self.emit(Instruction::Binary {
+            op: BinaryOp::Add,
+            left: index_phi,
+            right: one,
+            operand_ty: i32_ty.clone(),
+            result_ty: i32_ty.clone(),
+        });
+        let next_len = self.emit(Instruction::Binary {
+            op: BinaryOp::Add,
+            left: len_phi,
+            right: zero,
+            operand_ty: i32_ty.clone(),
+            result_ty: i32_ty,
+        });
+        let body_exit = self.current_block;
+        self.set_terminator(body_exit, Terminator::Jump(header));
+        add_phi_incoming(
+            &mut self.function,
+            header,
+            index_phi,
+            (body_exit, next_index),
+        );
+        add_phi_incoming(&mut self.function, header, len_phi, (body_exit, next_len));
+        self.current_block = exit;
     }
 
     /// Infer the element type of the array passed as a table builtin's first argument.
@@ -6816,6 +7111,7 @@ impl Builder<'_> {
     ) -> Option<Result<ValueId, Diagnostic>> {
         match name {
             TABLE_CONCAT => {}
+            TABLE_PACK => return Some(self.lower_table_pack(args, env, types, expected)),
             TABLE_GETN => return Some(self.lower_table_getn(args, env, types, expected)),
             TABLE_INSERT => return Some(self.lower_table_insert(args, env, types, expected)),
             TABLE_REMOVE => return Some(self.lower_table_remove(args, env, types, expected)),
@@ -6979,6 +7275,64 @@ impl Builder<'_> {
         let array = self.lower_expr(&args[0], env, types, Some(array_ty))?;
         let len = self.emit(Instruction::ArrayLen { array });
         self.coerce_value(len, Type::Numeric(NumericType::I32), expected)
+    }
+
+    /// `table.pack(...)` collects its arguments into a fresh `{unknown}`
+    /// array whose length doubles as the packed count (`t.n`, `#t`).
+    fn lower_table_pack(
+        &mut self,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        if args.len() > 1 {
+            for arg in &args[..args.len() - 1] {
+                if matches!(arg, Expr::Vararg(_)) {
+                    return Err(Diagnostic::new(
+                        "'...' is only supported as the last argument of a call",
+                    ));
+                }
+            }
+        }
+        let array_ty = Type::Array(Box::new(Type::Unknown));
+        let trailing_vararg = matches!(args.last(), Some(Expr::Vararg(_)));
+        let explicit = if trailing_vararg {
+            &args[..args.len() - 1]
+        } else {
+            args
+        };
+        let prefix = explicit
+            .iter()
+            .map(|arg| self.lower_expr(arg, env, types, Some(Type::Unknown)))
+            .collect::<Result<Vec<_>, _>>()?;
+        if !trailing_vararg {
+            let value = self.emit(Instruction::ArrayNew {
+                element_ty: Type::Unknown,
+                elements: prefix,
+            });
+            return self.coerce_value(value, array_ty, expected);
+        }
+        let varargs = self
+            .vararg_value
+            .ok_or_else(|| Diagnostic::new("'...' used outside a vararg function"))?;
+        let value = if prefix.is_empty() {
+            // `table.pack(...)` is a fresh copy of the caller's varargs.
+            let zero = self.emit_i32_const(0);
+            self.emit(Instruction::ArraySlice {
+                array: varargs,
+                start: zero,
+                element_ty: Type::Unknown,
+            })
+        } else {
+            let dest = self.emit(Instruction::ArrayNew {
+                element_ty: Type::Unknown,
+                elements: prefix,
+            });
+            self.emit_array_append_all(dest, varargs);
+            dest
+        };
+        self.coerce_value(value, array_ty, expected)
     }
 
     fn lower_table_insert(
@@ -7681,25 +8035,21 @@ impl Builder<'_> {
                 args.len()
             ))));
         }
-        match &args[0] {
-            Expr::String(marker, _) if marker == "#" => {}
-            _ => {
-                return Some(Err(Diagnostic::new(
-                    "select currently supports only select('#', ...)",
-                )));
-            }
-        }
+        let count_marker = matches!(&args[0], Expr::String(marker, _) if marker == "#");
         let arg_ty = match self.infer_expr_type(&args[1], types, None) {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
-        
-        if arg_ty.is_array() {
+
+        let Some(element_ty) = arg_ty.element_type() else {
+            return Some(Err(Diagnostic::new(format!(
+                "{SELECT} expects an array, got {arg_ty}"
+            ))));
+        };
+        if count_marker {
             Some(Ok(Type::Numeric(NumericType::I32)))
         } else {
-            Some(Err(Diagnostic::new(format!(
-                "{SELECT} expects an array, got {arg_ty}"
-            ))))
+            Some(Ok(element_ty))
         }
     }
 
@@ -7711,7 +8061,7 @@ impl Builder<'_> {
     ) -> Option<Result<Type, Diagnostic>> {
         if !matches!(
             name,
-            TABLE_CONCAT | TABLE_INSERT | TABLE_REMOVE | TABLE_SORT | TABLE_GETN
+            TABLE_CONCAT | TABLE_INSERT | TABLE_REMOVE | TABLE_SORT | TABLE_GETN | TABLE_PACK
         ) {
             return None;
         }
@@ -7719,6 +8069,7 @@ impl Builder<'_> {
             return None;
         };
         match name {
+            TABLE_PACK => return Some(Ok(Type::Array(Box::new(Type::Unknown)))),
             TABLE_GETN => return Some(Ok(Type::Numeric(NumericType::I32))),
             TABLE_INSERT | TABLE_SORT => return Some(Ok(Type::Unit)),
             TABLE_REMOVE => {

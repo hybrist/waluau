@@ -1,0 +1,26 @@
+-- `#` and indexing on `unknown` values dispatch over the module's array
+-- types at runtime: any array passed as unknown reports its length and reads
+-- elements (boxed back into unknown). Non-arrays trap.
+
+function len_of(v)
+    return #v
+end
+
+assert(len_of({1, 2, 3}) == 3)
+assert(len_of({"a"}) == 1)
+assert(len_of({1.5, 2.5}) == 2)
+
+function get(v, i)
+    return v[i]
+end
+
+assert(get({10, 20, 30}, 1) == 20)
+assert(get({"x", "y"}, 0) == "x")
+assert(get({1.5, 2.5}, 1) == 2.5)
+assert(get({true, false}, 0) == true)
+
+-- Heterogeneous literals infer as {unknown} with boxed elements.
+local mixed = { true, 1, 2, 42 }
+assert(#mixed == 4)
+assert(mixed[0] == true)
+assert(mixed[3] == 42)

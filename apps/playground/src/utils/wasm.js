@@ -1069,6 +1069,10 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
       (format, ...args) => stringFormat(format, ...args),
     ])),
     extern_is: externIs,
+    // Fallback equality for `unknown` values: the wasm side already unboxes
+    // and compares numbers/booleans, so `===` here decides strings (content),
+    // nulls, and host/GC objects (identity).
+    js_eq_unknown: (left, right) => (left === right ? 1 : 0),
     math_pow: (base, exponent) => Math.pow(base, exponent),
     bytes_literal: (index) => {
       const literal = bytesConstants[index];

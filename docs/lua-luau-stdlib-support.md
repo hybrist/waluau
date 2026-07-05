@@ -67,7 +67,7 @@ surprise for people coming from Lua/Luau.
 | `tonumber` | ❌ | Not implemented (use `::` casts between numeric types). |
 | `type` | ❌ | Not implemented (types are static, not runtime-queryable). |
 | `error` / `pcall` / `xpcall` | ⚠️ Partial | `error(string)`, `assert(cond, string)`, and scalar `pcall(f, ...) -> (bool, unknown)` use Wasm exception handling. `xpcall`, multi-value success payloads, non-bool assert truthiness, and raw-trap recovery are not yet supported. |
-| `select` | ❌ | Not implemented. |
+| `select` | ⚠️ Partial | `select('#', ...)` returns the vararg count; `select(n, ...)` returns the **single** value at 1-based position `n` (negative `n` counts from the end) rather than the whole tail. Out-of-range positions trap. See `conformance/select_n.walu`. |
 | `next` / `pairs` / `ipairs` | ❌ | Not implemented; iterate with the generic `for` protocol above. |
 | `rawget` / `rawset` / `rawequal` / `rawlen` | ❌ | No metatable/raw access. |
 | `setmetatable` / `getmetatable` | ❌ | No metatables. |
@@ -115,9 +115,10 @@ called as `string.fn(s, …)` or `s:fn(…)`.
 | Symbol | Status | Behaviour / difference |
 |--------|--------|------------------------|
 | `table.concat` | ⚠️ Different | Signature `table.concat(list, sep?)`. Requires `list` to be an **array of `string`** (`{string}`); does **not** stringify numbers and has no `i`/`j` range arguments. Returns a `string`. |
-| `table.insert` / `table.remove` | ❌ | Arrays are fixed-size in current milestones; no append/remove. |
-| `table.sort` | ❌ | Not implemented. |
-| `table.unpack` / `table.pack` | ❌ | Not implemented. |
+| `table.insert` / `table.remove` | ⚠️ Different | Implemented on growable arrays with **0-based** positions (`table.insert(t, v)`, `table.insert(t, pos, v)`, `table.remove(t, pos?)`). |
+| `table.sort` | ⚠️ Different | Implemented (default `<` ordering; comparator arguments not supported). |
+| `table.pack` | ⚠️ Different | Returns a fresh `{unknown}` array of the packed values; the count is available as both `.n` and `#`. Indexing is **0-based** (`t[0]..t[t.n - 1]`). See `conformance/table_pack.walu`. |
+| `table.unpack` | ❌ | Not implemented (runtime-variadic multi-value returns; tracked separately). |
 | `table.create` / `table.clone` / `table.find` (Luau) | ❌ | Not implemented. |
 | `table.move`, `table.freeze`, `table.isfrozen` | ❌ | Not implemented. |
 

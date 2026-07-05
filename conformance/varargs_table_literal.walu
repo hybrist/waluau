@@ -1,0 +1,29 @@
+-- A trailing `...` in a table constructor splats the caller's varargs after
+-- the explicit prefix; `{...}` alone is a fresh copy of the varargs.
+
+function collect(...)
+    local t = {...}
+    return #t
+end
+
+assert(collect() == 0)
+assert(collect(1, 2, 3) == 3)
+
+function collect_prefixed(...)
+    return {0, ...}
+end
+
+local t = collect_prefixed(5, 6)
+assert(#t == 3)
+assert(t[0] == 0)
+assert(t[1] == 5)
+assert(t[2] == 6)
+
+-- `{...}` is a copy: growing it does not affect the varargs.
+function copy_and_grow(...)
+    local t = {...}
+    t[#t] = "extra"
+    return tostring(#t) .. "/" .. tostring(select('#', ...))
+end
+
+assert(copy_and_grow(1) == "2/1")

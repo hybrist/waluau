@@ -1,0 +1,27 @@
+-- select(n, ...) returns the value at 1-based position n, like Lua;
+-- negative n counts from the end. select('#', ...) reports the count.
+
+function pick(n: i32, ...)
+    return select(n, ...)
+end
+
+assert(pick(1, "a", "b", "c") == "a")
+assert(pick(3, "a", "b", "c") == "c")
+assert(pick(-1, "a", "b", "c") == "c")
+assert(pick(-3, "a", "b", "c") == "a")
+assert(pick(2, 10, 20, 30) == 20)
+
+function second(...)
+    return select(2, ...)
+end
+
+assert(second(10, 20, 30) == 20)
+assert(second("x", "y") == "y")
+
+function count(...)
+    return select('#', ...)
+end
+
+assert(count() == 0)
+assert(count(1, 2) == 2)
+assert(count(nil) == 1)

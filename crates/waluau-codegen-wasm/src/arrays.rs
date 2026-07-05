@@ -33,6 +33,10 @@ pub(crate) struct ArrayTypeRegistry {
     /// the struct is emitted immediately after its backing array type so nested
     /// arrays can reference the inner struct without a forward reference.
     pub(crate) growable_array_indices: HashMap<String, u32>,
+    /// The element types behind `growable_array_indices`, in the deterministic
+    /// depth-sorted emission order, for dynamic (unknown-operand) array ops
+    /// that dispatch over every array type in the module.
+    pub(crate) growable_array_element_types: Vec<(Type, u32)>,
 }
 
 pub(crate) struct RuntimeGcTypes {
@@ -72,6 +76,19 @@ impl ArrayTypeRegistry {
                 ))
             })
             .collect();
+        let growable_array_element_types = array_types
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, array_ty)| {
+                let Type::Array(element) = array_ty else {
+                    return None;
+                };
+                Some((
+                    element.as_ref().clone(),
+                    function_type_count + 2 * offset as u32 + 1,
+                ))
+            })
+            .collect();
         let record_indices = record_types
             .iter()
             .enumerate()
@@ -99,6 +116,7 @@ impl ArrayTypeRegistry {
             boxed_bool_struct_type: runtime_gc_types.boxed_bool_struct_type,
             closure_gc_present: false,
             growable_array_indices,
+            growable_array_element_types,
         }
     }
 
@@ -328,6 +346,8 @@ fn collect_record_types_from_instruction(
         | IrInstruction::CoroutineAwaitResult
         | IrInstruction::CoroutineClose { .. }
         | IrInstruction::ArrayLen { .. }
+        | IrInstruction::DynLen { .. }
+        | IrInstruction::DynIndex { .. }
         | IrInstruction::BytesGet { .. }
         | IrInstruction::BytesLen { .. }
         | IrInstruction::StructSet { .. }

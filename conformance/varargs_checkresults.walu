@@ -1,0 +1,22 @@
+-- Mirrors the Luau pcall suite's checkresults helper (adapted to Waluau's
+-- 0-based arrays: t[i - 1] instead of t[i]). Exercises table.pack over
+-- forwarded varargs, `.n`, `#` on an unknown parameter, dynamic indexing of
+-- both the packed table and the expected-results table, and dynamic equality.
+
+function checkresults(e, ...)
+    local t = table.pack(...)
+    assert(t.n == #e)
+    for i = 1, t.n do
+        assert(t[i - 1] == e[i - 1])
+    end
+end
+
+checkresults({ true, 1, 2, 42 }, true, 1, 2, 42)
+checkresults({ "a", "b" }, "a", "b")
+checkresults({ 3.5 }, 3.5)
+
+function forward(e, ...)
+    checkresults(e, ...)
+end
+
+forward({ "x", 7 }, "x", 7)

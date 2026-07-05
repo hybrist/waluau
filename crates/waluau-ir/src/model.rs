@@ -196,6 +196,19 @@ pub enum Instruction {
         start: ValueId,
         element_ty: Type,
     },
+    /// Length of an `unknown` value that holds an array at runtime.
+    /// Codegen dispatches over the module's growable array wrapper types;
+    /// traps when the value is not an array.
+    DynLen {
+        value: ValueId,
+    },
+    /// Read `value[index]` where `value` is `unknown`; the element is boxed
+    /// into `unknown`. Traps when the value is not an array or the index is
+    /// out of bounds.
+    DynIndex {
+        value: ValueId,
+        index: ValueId,
+    },
     BytesGet {
         bytes: ValueId,
         index: ValueId,

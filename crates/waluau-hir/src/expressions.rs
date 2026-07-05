@@ -402,7 +402,9 @@ pub(super) fn infer_expr(
             }
             UnaryOp::Len => {
                 let actual = infer_expr(expr, vars, fn_signatures, active_type_params, None)?;
-                if actual == Type::String || actual == Type::Bytes {
+                // `#` on unknown dispatches over the module's array types at
+                // runtime (traps for non-arrays).
+                if actual == Type::String || actual == Type::Bytes || actual == Type::Unknown {
                     return coerce_type(Type::Numeric(NumericType::I32), expected);
                 }
                 if !actual.is_array() {
@@ -682,17 +684,31 @@ pub(super) fn infer_expr(
                     return_type,
                 }) = fn_signatures.get(name)
                 {
-                    if !matches!(args.first(), Some(Expr::Vararg(_))) && args.len() < params.len() {
+                    if args.len() > 1 {
+                        for arg in &args[..args.len() - 1] {
+                            if matches!(arg, Expr::Vararg(_)) {
+                                return Err(Diagnostic::new(
+                                    "'...' is only supported as the last argument of a call",
+                                ));
+                            }
+                        }
+                    }
+                    // A trailing `...` forwards the caller's varargs, which can
+                    // cover any number of missing fixed parameters at runtime.
+                    let trailing_vararg = matches!(args.last(), Some(Expr::Vararg(_)));
+                    let explicit = if trailing_vararg {
+                        &args[..args.len() - 1]
+                    } else {
+                        &args[..]
+                    };
+                    if !trailing_vararg && explicit.len() < params.len() {
                         return Err(Diagnostic::new(format!(
                             "function expects at least {} arguments, got {}",
                             params.len(),
-                            args.len()
+                            explicit.len()
                         )));
                     }
-                    for (arg, expected_param) in args.iter().zip(params.iter()) {
-                        if matches!(arg, Expr::Vararg(_)) {
-                            break;
-                        }
+                    for (arg, expected_param) in explicit.iter().zip(params.iter()) {
                         let actual = infer_expr(
                             arg,
                             vars,
@@ -707,10 +723,7 @@ pub(super) fn infer_expr(
                             )));
                         }
                     }
-                    for arg in args.iter().skip(params.len()) {
-                        if matches!(arg, Expr::Vararg(_)) {
-                            continue;
-                        }
+                    for arg in explicit.iter().skip(params.len()) {
                         let _ = infer_expr(
                             arg,
                             vars,
@@ -978,6 +991,11 @@ pub(super) fn infer_expr(
                     "field access on tagged union requires narrowing before reading '{name}'"
                 )));
             }
+            // `.n` on an array reads its length, so `table.pack(...).n`
+            // behaves like Lua's packed-table count field.
+            if matches!(base_ty, Type::Array(_)) && name == "n" {
+                return coerce_type(Type::Numeric(NumericType::I32), expected);
+            }
             let Some(field_ty) = base_ty.record_field(name) else {
                 if matches!(
                     base_ty,
@@ -993,20 +1011,30 @@ pub(super) fn infer_expr(
             let base_ty = infer_expr(base, vars, fn_signatures, active_type_params, None)?;
             let element_ty = if base_ty == Type::Bytes {
                 Type::Numeric(NumericType::I32)
+            } else if base_ty == Type::Unknown {
+                // Indexing an unknown value dispatches over the module's
+                // array types at runtime; the element comes back boxed.
+                Type::Unknown
             } else {
                 base_ty
                     .element_type()
                     .ok_or_else(|| Diagnostic::new("indexing requires an array or bytes operand"))?
             };
-            let index_ty = infer_expr(
-                index,
-                vars,
-                fn_signatures,
-                active_type_params,
-                Some(Type::Numeric(NumericType::I32)),
-            )?;
-            if index_ty != Type::Numeric(NumericType::I32) {
-                return Err(Diagnostic::new("array index must be i32"));
+            // Any numeric index is accepted and converted to i32 at lowering
+            // (f64 loop variables index arrays, as in Lua).
+            let index_ty = infer_expr(index, vars, fn_signatures, active_type_params, None)
+                .map(first_of_multi)
+                .or_else(|_| {
+                    infer_expr(
+                        index,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        Some(Type::Numeric(NumericType::I32)),
+                    )
+                })?;
+            if !index_ty.is_numeric() && index_ty != Type::Unknown {
+                return Err(Diagnostic::new("array index must be numeric"));
             }
             coerce_type(element_ty, expected)
         }
@@ -1237,6 +1265,33 @@ pub(super) fn infer_expr(
                         return Ok(Type::Bool);
                     }
                 }
+                // An unknown operand compares with Lua dynamic equality; the
+                // other side is boxed into unknown as needed.
+                if left_ty == Type::Unknown {
+                    let _ = infer_expr(
+                        right,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        Some(Type::Unknown),
+                    )?;
+                    return Ok(Type::Bool);
+                }
+                if let Ok(right_probe) =
+                    infer_expr(right, vars, fn_signatures, active_type_params, None)
+                        .map(first_of_multi)
+                {
+                    if right_probe == Type::Unknown {
+                        let _ = infer_expr(
+                            left,
+                            vars,
+                            fn_signatures,
+                            active_type_params,
+                            Some(Type::Unknown),
+                        )?;
+                        return Ok(Type::Bool);
+                    }
+                }
                 if left_ty == Type::Bool {
                     let right_ty = infer_expr(
                         right,
@@ -1378,7 +1433,34 @@ fn infer_array_literal(
         ));
     }
 
+    if elements.len() > 1 {
+        for element in &elements[..elements.len() - 1] {
+            if matches!(element, Expr::Vararg(_)) {
+                return Err(Diagnostic::new(
+                    "'...' is only supported as the last element of a table constructor",
+                ));
+            }
+        }
+    }
     let expected_element = expected.as_ref().and_then(Type::element_type);
+    // A trailing `...` splats the caller's varargs (unknown values) into the
+    // array, and an expected `{unknown}` boxes every element, so both force
+    // the element type to unknown.
+    if matches!(elements.last(), Some(Expr::Vararg(_))) || expected_element == Some(Type::Unknown) {
+        for element in elements {
+            if matches!(element, Expr::Vararg(_)) {
+                continue;
+            }
+            let _ = infer_expr(
+                element,
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(Type::Unknown),
+            )?;
+        }
+        return coerce_type(Type::Array(Box::new(Type::Unknown)), expected);
+    }
     let mut iter = elements.iter();
     let first = iter.next().expect("non-empty array literal");
     let mut element_ty = infer_expr(
@@ -1389,14 +1471,38 @@ fn infer_array_literal(
         expected_element.clone(),
     )?;
     for element in iter {
-        let actual = infer_expr(
+        // Heterogeneous literals without a concrete expected element type fall
+        // back to `{unknown}` with boxed elements, matching Lua's untyped
+        // sequences (e.g. `{ true, 1, 2, 42 }`).
+        if element_ty != Type::Unknown {
+            match infer_expr(
+                element,
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(element_ty.clone()),
+            )
+            .and_then(|actual| common_element_type(element_ty.clone(), actual))
+            {
+                Ok(unified) => {
+                    element_ty = unified;
+                    continue;
+                }
+                Err(error) => {
+                    if expected_element.is_some() {
+                        return Err(error);
+                    }
+                    element_ty = Type::Unknown;
+                }
+            }
+        }
+        let _ = infer_expr(
             element,
             vars,
             fn_signatures,
             active_type_params,
-            Some(element_ty.clone()),
+            Some(Type::Unknown),
         )?;
-        element_ty = common_element_type(element_ty, actual)?;
     }
 
     let array_ty = Type::Array(Box::new(element_ty));

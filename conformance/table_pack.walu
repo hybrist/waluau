@@ -1,0 +1,45 @@
+-- table.pack collects its arguments into a fresh `{unknown}` array; the
+-- packed count is available both as `.n` (like Lua's packed table) and `#`.
+
+function pack_count(...)
+    local t = table.pack(...)
+    return t.n
+end
+
+assert(pack_count() == 0)
+assert(pack_count(1, 2, 3) == 3)
+
+function pack_first(...)
+    local t = table.pack(...)
+    return t[0]
+end
+
+assert(pack_first("hello", 2) == "hello")
+
+local direct = table.pack(10, "x", true)
+assert(direct.n == 3)
+assert(#direct == 3)
+assert(direct[0] == 10)
+assert(direct[1] == "x")
+assert(direct[2] == true)
+
+-- Explicit arguments before a trailing `...` are packed ahead of the
+-- forwarded varargs.
+function pack_mixed(...)
+    return table.pack("head", ...)
+end
+
+local m = pack_mixed(7, 8)
+assert(m.n == 3)
+assert(m[0] == "head")
+assert(m[1] == 7)
+assert(m[2] == 8)
+
+-- table.pack returns a fresh copy: growing it does not affect the varargs.
+function pack_and_grow(...)
+    local t = table.pack(...)
+    t[#t] = "extra"
+    return tostring(t.n) .. "/" .. tostring(select('#', ...))
+end
+
+assert(pack_and_grow(1, 2) == "3/2")
