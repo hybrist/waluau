@@ -538,6 +538,8 @@ describe('browser conformance', () => {
       expect(canvas.id).toBe('waluau-canvas-2d');
       expect(canvas.width).toBe(64);
       expect(canvas.height).toBe(32);
+      expect(canvas.style.width).toBe('64px');
+      expect(canvas.style.height).toBe('32px');
       expect(canvas.getAttribute('data-context-owner')).toBe('true');
 
       const context = canvas.getContext('2d');
