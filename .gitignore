@@ -11,3 +11,6 @@ dist/
 .pnpm-debug.log
 .vercel
 apps/playground/public/*.wasm
+
+# Beads / Dolt files (added by bd init)
+.beads/proxieddb/
