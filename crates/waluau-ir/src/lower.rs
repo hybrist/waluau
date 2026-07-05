@@ -6990,7 +6990,7 @@ impl Builder<'_> {
                         Ok(val) => val,
                         Err(error) => return Some(Err(error)),
                     },
-                    None => self.emit_i32_const("0"),
+                    None => self.emit_i32_const(0),
                 };
                 let plain = match args.get(3) {
                     Some(arg) => match self.lower_expr(arg, env, types, Some(Type::Bool)) {
@@ -7038,7 +7038,7 @@ impl Builder<'_> {
                         Ok(val) => val,
                         Err(error) => return Some(Err(error)),
                     },
-                    None => self.emit_i32_const("-1"),
+                    None => self.emit_i32_const(-1),
                 };
                 self.emit_string_host_call(
                     STRING_SUB_HOST,
@@ -7090,7 +7090,7 @@ impl Builder<'_> {
                         Ok(val) => val,
                         Err(error) => return Some(Err(error)),
                     },
-                    None => self.emit_i32_const("0"),
+                    None => self.emit_i32_const(0),
                 };
                 self.emit_string_host_call(STRING_BYTE_HOST, vec![value, index], i32_ty.clone())
             }
@@ -7394,13 +7394,6 @@ impl Builder<'_> {
             }
             _ => None,
         }
-    }
-
-    fn emit_i32_const(&mut self, raw: &str) -> ValueId {
-        self.emit(Instruction::Number {
-            ty: NumericType::I32,
-            literal: NumberLiteral { raw: raw.into() },
-        })
     }
 
     fn emit_string_host_call(
