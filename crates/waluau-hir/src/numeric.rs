@@ -5,6 +5,14 @@ use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
 use super::{Binding, FnSignature, inference_diagnostic};
 
+fn record_fields(ty: &Type) -> Option<&std::collections::BTreeMap<String, Type>> {
+    match ty {
+        Type::Record(fields) => Some(fields),
+        Type::Opaque { ty, .. } => record_fields(ty),
+        _ => None,
+    }
+}
+
 pub(super) fn common_element_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
     match (left, right) {
         (Type::Numeric(left), Type::Numeric(right)) => {
@@ -272,6 +280,22 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
                     ty: expected_ty,
                 })
             }
+            Type::Opaque {
+                ty: ref actual_ty, ..
+            } if matches!(
+                (
+                    record_fields(actual_ty.as_ref()),
+                    record_fields(expected_ty.as_ref())
+                ),
+                (Some(_), Some(_))
+            ) =>
+            {
+                let _ = coerce_type(*actual_ty.clone(), Some(*expected_ty.clone()))?;
+                Ok(Type::Opaque {
+                    name: expected_name,
+                    ty: expected_ty,
+                })
+            }
             // A tagged-union constructor produces a TaggedVariant; allow it to be
             // assigned to an Opaque alias whose inner type is a TaggedUnion or TaggedVariant.
             Type::TaggedVariant(ref actual_variant) => match expected_ty.as_ref() {
@@ -317,7 +341,7 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             ))),
         },
         Some(Type::Record(expected_fields)) => {
-            let Type::Record(actual_fields) = actual else {
+            let Some(actual_fields) = record_fields(&actual).cloned() else {
                 let expected_record = Type::Record(expected_fields.clone());
                 return Err(Diagnostic::new(format!(
                     "cannot implicitly convert {} to {}",

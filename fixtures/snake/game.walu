@@ -1,15 +1,11 @@
 -- Core snake rules: grid state, movement, food, and collisions. No DOM or
 -- canvas access in this module so the logic stays host-independent.
---
--- TODO(waluau-ae6g): module-local type aliases do not unify across module
--- boundaries, so the game-state record type below is spelled out inline in
--- every exported signature (here and in render.walu) instead of a shared
--- `type State = ...` alias. Collapse these once cross-module type aliases
--- unify structurally.
 
 local rng = require("./rng")
 
-function occupied(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }, x: i32, y: i32): bool
+type State = { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }
+
+function occupied(state: State, x: i32, y: i32): bool
     local i: i32 = 0
     while i < #state.snake do
         local seg = state.snake[i]
@@ -21,7 +17,7 @@ function occupied(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, di
     return false
 end
 
-function spawn_food(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }): unit
+function spawn_food(state: State): unit
     local attempts: i32 = 0
     local max_attempts: i32 = state.cols * state.rows
     while attempts < max_attempts do
@@ -39,8 +35,8 @@ function spawn_food(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, 
     state.alive = false
 end
 
-function new_state(cols: i32, rows: i32, seed: i32): { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }
-    local state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool } = {
+function new_state(cols: i32, rows: i32, seed: i32): State
+    local state: State = {
         cols = cols,
         rows = rows,
         snake = {},
@@ -55,7 +51,7 @@ function new_state(cols: i32, rows: i32, seed: i32): { cols: i32, rows: i32, sna
     return state
 end
 
-function reset(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }): unit
+function reset(state: State): unit
     state.snake = {}
     local cx: i32 = state.cols // 2
     local cy: i32 = state.rows // 2
@@ -72,7 +68,7 @@ function reset(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: 
 end
 
 -- Queue a direction change for the next tick, ignoring 180-degree reversals.
-function turn(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }, dx: i32, dy: i32): unit
+function turn(state: State, dx: i32, dy: i32): unit
     if dx == -state.dir.x and dy == -state.dir.y then
         return
     end
@@ -81,7 +77,7 @@ function turn(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: {
 end
 
 -- Advance the game by one tick.
-function step(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }): unit
+function step(state: State): unit
     if not state.alive then
         return
     end

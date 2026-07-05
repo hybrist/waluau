@@ -20,6 +20,14 @@ fn property_setter_name(base: &str, property: &str) -> String {
     format!("{base}.set/{property}")
 }
 
+fn record_fields_from_type(ty: Type) -> Option<BTreeMap<String, Type>> {
+    match ty {
+        Type::Record(fields) => Some(fields),
+        Type::Opaque { ty, .. } => record_fields_from_type(*ty),
+        _ => None,
+    }
+}
+
 fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
     if expected == actual {
         return true;
@@ -600,7 +608,7 @@ fn collect_return_types_with_scope(
                         .get(base_name)
                         .cloned()
                         .ok_or_else(|| Diagnostic::new(format!("unknown local '{base_name}'")))?;
-                    let Type::Record(mut fields) = binding.ty else {
+                    let Some(mut fields) = record_fields_from_type(binding.ty.clone()) else {
                         return Err(Diagnostic::new("field assignment requires a record base"));
                     };
                     let existing = fields.get(name).cloned();
@@ -635,7 +643,7 @@ fn collect_return_types_with_scope(
                 } else {
                     let base_ty =
                         infer_expr(base, &scope, fn_signatures, active_type_params, None)?;
-                    let Type::Record(fields) = base_ty else {
+                    let Some(fields) = record_fields_from_type(base_ty) else {
                         return Err(Diagnostic::new("field assignment requires a record base"));
                     };
                     let field_ty = fields
@@ -1281,7 +1289,7 @@ pub(super) fn check_stmt(
                     .get(base_name)
                     .cloned()
                     .ok_or_else(|| Diagnostic::new(format!("unknown local '{base_name}'")))?;
-                let Type::Record(mut fields) = binding.ty else {
+                let Some(mut fields) = record_fields_from_type(binding.ty.clone()) else {
                     return Err(Diagnostic::new("field assignment requires a record base"));
                 };
                 let method_name = method_signature_name(base_name, name);
@@ -1365,7 +1373,7 @@ pub(super) fn check_stmt(
                 Ok(false)
             } else {
                 let base_ty = infer_expr(base, vars, fn_signatures, active_type_params, None)?;
-                let Type::Record(fields) = base_ty else {
+                let Some(fields) = record_fields_from_type(base_ty) else {
                     return Err(Diagnostic::new("field assignment requires a record base"));
                 };
                 let field_ty = fields

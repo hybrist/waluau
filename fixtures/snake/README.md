@@ -47,6 +47,3 @@ Each workaround in the source carries a `TODO(<beads-id>)` comment. Summary:
   `fillRect`/`strokeRect`/`fillText`; the food is a square instead of a circle.
 - `waluau-6i00` — no `math.random`/`math.randomseed`; `rng.walu` hand-rolls an
   LCG seeded from the first animation frame's timestamp.
-- `waluau-ae6g` — module-local type aliases do not unify across module
-  boundaries; the game-state record type is spelled out inline in every
-  exported signature of `game.walu` and `render.walu`.
