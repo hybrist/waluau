@@ -1,11 +1,6 @@
 -- Imported verbatim from the Luau conformance suite (luau-lang/luau),
 -- tests/conformance/strings.luau at commit 86d2a9d.
 -- See README.md and LICENSE in this directory for provenance and licensing.
---
--- conformance: pending
--- This chunk contains only strings.luau checks that currently fail in Waluau.
--- Remove this directive when the whole chunk passes.
---
 -- Split from conformance/luau/strings.walu. Helper setup is repeated as needed
 -- so each numbered chunk is independently discoverable by the conformance runner.
 

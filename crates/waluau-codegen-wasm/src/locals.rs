@@ -299,6 +299,8 @@ pub(crate) fn infer_value_types(
                 IrInstruction::MathIntrinsic { result_ty, .. } => result_ty.clone(),
                 IrInstruction::BitwiseIntrinsic { result_ty, .. } => result_ty.clone(),
                 IrInstruction::ToString { .. } => Type::String,
+                IrInstruction::TypeName { .. } => Type::String,
+                IrInstruction::ToNumber { .. } => Type::Numeric(NumericType::F64),
                 IrInstruction::Print { .. } | IrInstruction::Throw { .. } => Type::Unit,
                 IrInstruction::Call { name, .. } => signatures
                     .get(name)
@@ -714,6 +716,14 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
             vec![*value]
         }
         IrInstruction::ToString { value, .. } => vec![*value],
+        IrInstruction::TypeName { value, .. } => vec![*value],
+        IrInstruction::ToNumber { value, base, .. } => {
+            let mut values = vec![*value];
+            if let Some(base) = base {
+                values.push(*base);
+            }
+            values
+        }
         IrInstruction::Cast { value, .. } => vec![*value],
         IrInstruction::Binary { left, right, .. } => vec![*left, *right],
         IrInstruction::MathIntrinsic { args, .. } => args.clone(),
@@ -796,6 +806,8 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         IrInstruction::IsNull { value: tested, .. }
         | IrInstruction::ExternCastTest { value: tested, .. } => *tested == value,
         IrInstruction::ToString { .. } => false,
+        IrInstruction::TypeName { .. } => false,
+        IrInstruction::ToNumber { .. } => false,
         IrInstruction::Cast { value: source, .. } => *source == value,
         IrInstruction::Binary { left, .. } => *left == value,
         IrInstruction::MathIntrinsic { args, .. } => args.first().copied() == Some(value),

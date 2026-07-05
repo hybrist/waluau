@@ -864,6 +864,57 @@ fn verify_function(
                         )));
                     }
                 }
+                Instruction::TypeName { value, from } => {
+                    let value_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *value,
+                    )?;
+                    if &value_ty != from {
+                        return Err(Diagnostic::new(format!(
+                            "type source type mismatch in block {:?}: expected {}, got {}",
+                            block.id, from, value_ty
+                        )));
+                    }
+                }
+                Instruction::ToNumber { value, from, base } => {
+                    let value_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *value,
+                    )?;
+                    if &value_ty != from {
+                        return Err(Diagnostic::new(format!(
+                            "tonumber source type mismatch in block {:?}: expected {}, got {}",
+                            block.id, from, value_ty
+                        )));
+                    }
+                    if !(from.is_numeric() || *from == Type::String || *from == Type::Unknown) {
+                        return Err(Diagnostic::new(format!(
+                            "tonumber requires numeric, string, or unknown source type, got {}",
+                            from
+                        )));
+                    }
+                    if let Some(base) = base {
+                        let base_ty = require_dominating_definition(
+                            &definitions,
+                            &dominators,
+                            &seen_in_block,
+                            block.id,
+                            *base,
+                        )?;
+                        if base_ty != Type::Numeric(NumericType::I32) {
+                            return Err(Diagnostic::new(format!(
+                                "tonumber base expects i32, got {}",
+                                base_ty
+                            )));
+                        }
+                    }
+                }
             }
             seen_in_block.insert(*value);
         }
@@ -1048,6 +1099,8 @@ fn infer_instruction_type(
         Instruction::MathIntrinsic { result_ty, .. } => Ok(result_ty.clone()),
         Instruction::BitwiseIntrinsic { result_ty, .. } => Ok(result_ty.clone()),
         Instruction::ToString { .. } => Ok(Type::String),
+        Instruction::TypeName { .. } => Ok(Type::String),
+        Instruction::ToNumber { .. } => Ok(Type::Numeric(NumericType::F64)),
         Instruction::IsNull { .. } => Ok(Type::Bool),
         Instruction::ExternCastTest { .. } => Ok(Type::Bool),
         Instruction::Print { .. } => Ok(Type::Unit),

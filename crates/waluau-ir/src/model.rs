@@ -93,6 +93,15 @@ pub enum Instruction {
         value: ValueId,
         from: Type,
     },
+    TypeName {
+        value: ValueId,
+        from: Type,
+    },
+    ToNumber {
+        value: ValueId,
+        from: Type,
+        base: Option<ValueId>,
+    },
     Print {
         value: ValueId,
     },

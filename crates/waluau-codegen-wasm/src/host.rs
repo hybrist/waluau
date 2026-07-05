@@ -28,13 +28,16 @@ pub const IMPORT_JS_TOSTRING_F32: &str = "js_tostring_f32";
 pub const IMPORT_JS_TOSTRING_F64: &str = "js_tostring_f64";
 pub const IMPORT_JS_TOSTRING_BOOL: &str = "js_tostring_bool";
 pub const IMPORT_JS_TOSTRING_UNKNOWN: &str = "js_tostring_unknown";
+pub const IMPORT_JS_TYPEOF_UNKNOWN: &str = "js_typeof_unknown";
+pub const IMPORT_JS_TONUMBER_STRING: &str = "js_tonumber_string";
+pub const IMPORT_JS_TONUMBER_UNKNOWN: &str = "js_tonumber_unknown";
 pub const IMPORT_PRINT: &str = "print";
 pub const IMPORT_EXTERN_IS: &str = "extern_is";
 pub const IMPORT_ATTACH_PROMISE: &str = "__waluau_attach_promise";
 pub const IMPORT_MATH_POW: &str = "math_pow";
 
 /// Maximum number of host function imports (when all are used).
-pub const HOST_IMPORT_COUNT: u32 = 21;
+pub const HOST_IMPORT_COUNT: u32 = 24;
 
 /// Canonical function-index slot for each host import.
 /// These are stable identifiers used as keys into [`HostImportMap`].
@@ -56,13 +59,16 @@ pub const IMPORT_JS_TOSTRING_F32_FUNC: u32 = 14;
 pub const IMPORT_JS_TOSTRING_F64_FUNC: u32 = 15;
 pub const IMPORT_JS_TOSTRING_BOOL_FUNC: u32 = 16;
 pub const IMPORT_JS_TOSTRING_UNKNOWN_FUNC: u32 = 17;
-pub const IMPORT_EXTERN_IS_FUNC: u32 = 18;
-pub const IMPORT_ATTACH_PROMISE_FUNC: u32 = 19;
-pub const IMPORT_MATH_POW_FUNC: u32 = 20;
+pub const IMPORT_JS_TYPEOF_UNKNOWN_FUNC: u32 = 18;
+pub const IMPORT_JS_TONUMBER_STRING_FUNC: u32 = 19;
+pub const IMPORT_JS_TONUMBER_UNKNOWN_FUNC: u32 = 20;
+pub const IMPORT_EXTERN_IS_FUNC: u32 = 21;
+pub const IMPORT_ATTACH_PROMISE_FUNC: u32 = 22;
+pub const IMPORT_MATH_POW_FUNC: u32 = 23;
 
 /// Number of host function types in the canonical type-slot table.
 /// The actual number emitted in a given module may be less if some slots are unused.
-pub const HOST_TYPE_COUNT: u32 = 11;
+pub const HOST_TYPE_COUNT: u32 = 13;
 
 /// Records which host functions are actually referenced by a module.
 #[derive(Clone, Debug, Default)]
@@ -85,6 +91,9 @@ pub struct UsedHostImports {
     pub js_tostring_f64: bool,
     pub js_tostring_bool: bool,
     pub js_tostring_unknown: bool,
+    pub js_typeof_unknown: bool,
+    pub js_tonumber_string: bool,
+    pub js_tonumber_unknown: bool,
     pub extern_is: bool,
     pub attach_promise: bool,
     pub math_pow: bool,
@@ -137,6 +146,9 @@ impl UsedHostImports {
             (IMPORT_JS_TOSTRING_F64_FUNC, self.js_tostring_f64),
             (IMPORT_JS_TOSTRING_BOOL_FUNC, self.js_tostring_bool),
             (IMPORT_JS_TOSTRING_UNKNOWN_FUNC, self.js_tostring_unknown),
+            (IMPORT_JS_TYPEOF_UNKNOWN_FUNC, self.js_typeof_unknown),
+            (IMPORT_JS_TONUMBER_STRING_FUNC, self.js_tonumber_string),
+            (IMPORT_JS_TONUMBER_UNKNOWN_FUNC, self.js_tonumber_unknown),
             (IMPORT_EXTERN_IS_FUNC, self.extern_is),
             (IMPORT_ATTACH_PROMISE_FUNC, self.attach_promise),
             (IMPORT_MATH_POW_FUNC, self.math_pow),
@@ -172,8 +184,10 @@ impl UsedHostImports {
 /// | 6    | (externref) → []                      | print                                        |
 /// | 7    | (externref, i32) → i32                | bytes_get                                    |
 /// | 8    | (externref) → i32                     | bytes_len                                    |
-/// | 9    | (anyref) → externref                  | js_tostring_unknown                         |
+/// | 9    | (anyref) → externref                  | js_tostring_unknown, js_typeof_unknown     |
 /// | 10   | (f64, f64) → f64                      | math_pow                                     |
+/// | 11   | (externref, i32) → f64                | js_tonumber_string                          |
+/// | 12   | (anyref, i32) → f64                   | js_tonumber_unknown                         |
 pub fn needed_host_type_slots(used: &UsedHostImports) -> [bool; HOST_TYPE_COUNT as usize] {
     let mut slots = [false; HOST_TYPE_COUNT as usize];
     if used.js_string_eq
@@ -199,7 +213,7 @@ pub fn needed_host_type_slots(used: &UsedHostImports) -> [bool; HOST_TYPE_COUNT 
     if used.js_tostring_f64 {
         slots[5] = true;
     }
-    if used.js_tostring_unknown {
+    if used.js_tostring_unknown || used.js_typeof_unknown {
         slots[9] = true;
     }
     if used.print {
@@ -213,6 +227,12 @@ pub fn needed_host_type_slots(used: &UsedHostImports) -> [bool; HOST_TYPE_COUNT 
     }
     if used.math_pow {
         slots[10] = true;
+    }
+    if used.js_tonumber_string {
+        slots[11] = true;
+    }
+    if used.js_tonumber_unknown {
+        slots[12] = true;
     }
     slots
 }
@@ -258,10 +278,21 @@ fn mark_used_by_instruction(instruction: &IrInstruction, used: &mut UsedHostImpo
             Type::Bool => used.js_tostring_bool = true,
             Type::Unknown => {
                 used.js_tostring_unknown = true;
-                // The unknown path dispatches boxed f64 values to the f64
-                // stringifier when closure GC types are present.
+                // The unknown path dispatches boxed f64/bool values to their
+                // concrete stringifiers when closure GC types are present.
                 used.js_tostring_f64 = true;
+                used.js_tostring_bool = true;
             }
+            _ => {}
+        },
+        IrInstruction::TypeName { from, .. } => {
+            if from == &Type::Unknown {
+                used.js_typeof_unknown = true;
+            }
+        }
+        IrInstruction::ToNumber { from, .. } => match from {
+            Type::String => used.js_tonumber_string = true,
+            Type::Unknown => used.js_tonumber_unknown = true,
             _ => {}
         },
         IrInstruction::Binary { op, operand_ty, .. } => match (op, operand_ty) {
@@ -369,6 +400,16 @@ fn collect_from_function<'a>(
                         .is_none() =>
                 {
                     strings.push(target_name.clone());
+                }
+                IrInstruction::TypeName {
+                    from: Type::Unknown,
+                    ..
+                } => {
+                    for literal in ["boolean", "nil", "number"] {
+                        if indices.insert(literal, strings.len() as u32).is_none() {
+                            strings.push(literal.to_string());
+                        }
+                    }
                 }
                 _ => {}
             }
