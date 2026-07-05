@@ -38,10 +38,6 @@ import surface used by the playground's DOM output mode.
 
 Each workaround in the source carries a `TODO(<beads-id>)` comment. Summary:
 
-- `waluau-b3hl` — `fillStyle`/`strokeStyle` are Web IDL unions and are skipped
-  by the extern generator, so all paint is black. Colors are faked by swapping
-  the `ctx.filter` CSS-filter chain per draw call (`render.walu`), and the
-  board backdrop is plain CSS `background-color` on the canvas element.
 - `waluau-6kcc` — `fill()`/`stroke()` take an optional `Path2D` and need
   extern overloading, so built paths can never be painted. Everything is
   `fillRect`/`strokeRect`/`fillText`; the food is a square instead of a circle.

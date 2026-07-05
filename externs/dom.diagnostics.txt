@@ -8,7 +8,7 @@ skip CSSPseudoElement.convertPointFromNode: point: unsupported Web IDL type DOMP
 skip CSSPseudoElement.convertQuadFromNode: quad: unsupported Web IDL type DOMQuadInit
 skip CSSPseudoElement.convertRectFromNode: from: unsupported Web IDL type GeometryNode
 skip CSSPseudoElement.getBoxQuads: unsupported generic Web IDL type sequence<DOMQuad> (waluau-utyc)
-skip CSSPseudoElement.parent: unsupported union Web IDL type (Element or CSSPseudoElement) (waluau-b3hl)
+skip CSSPseudoElement.parent: unsupported union Web IDL type (Element or CSSPseudoElement) (waluau-o4xs)
 skip CSSPseudoElement.type: disabled -- member 'attribute:type' collides with the same-named member kept on Blob (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip CSSRule.type: disabled -- member 'attribute:type' collides with the same-named member kept on Blob (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip CSSStyleDeclaration.cssText: disabled -- member 'attribute:cssText' collides with the same-named member kept on CSSRule (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
@@ -26,7 +26,6 @@ skip CanvasRenderingContext2D.direction: unsupported Web IDL type CanvasDirectio
 skip CanvasRenderingContext2D.drawFocusIfNeeded: path: Web IDL type Path2D is not part of the selected DOM interface surface
 skip CanvasRenderingContext2D.drawImage: image: unsupported Web IDL type CanvasImageSource
 skip CanvasRenderingContext2D.fill: path: Web IDL type Path2D is not part of the selected DOM interface surface
-skip CanvasRenderingContext2D.fillStyle: unsupported union Web IDL type (DOMString or CanvasGradient or CanvasPattern) (waluau-b3hl)
 skip CanvasRenderingContext2D.fontKerning: unsupported Web IDL type CanvasFontKerning
 skip CanvasRenderingContext2D.fontStretch: unsupported Web IDL type CanvasFontStretch
 skip CanvasRenderingContext2D.fontVariantCaps: unsupported Web IDL type CanvasFontVariantCaps
@@ -43,17 +42,16 @@ skip CanvasRenderingContext2D.measureText: Web IDL type TextMetrics is not part 
 skip CanvasRenderingContext2D.putImageData: imageData: Web IDL type ImageData is not part of the selected DOM interface surface
 skip CanvasRenderingContext2D.setLineDash: segments: unsupported generic Web IDL type sequence<unrestricted double> (waluau-utyc)
 skip CanvasRenderingContext2D.stroke: path: Web IDL type Path2D is not part of the selected DOM interface surface
-skip CanvasRenderingContext2D.strokeStyle: unsupported union Web IDL type (DOMString or CanvasGradient or CanvasPattern) (waluau-b3hl)
 skip CanvasRenderingContext2D.textAlign: unsupported Web IDL type CanvasTextAlign
 skip CanvasRenderingContext2D.textBaseline: unsupported Web IDL type CanvasTextBaseline
 skip CanvasRenderingContext2D.textRendering: unsupported Web IDL type CanvasTextRendering
-skip CharacterData.after: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-b3hl)
-skip CharacterData.before: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-b3hl)
+skip CharacterData.after: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-o4xs)
+skip CharacterData.before: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-o4xs)
 skip CharacterData.length: disabled -- member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip CharacterData.remove: disabled -- member 'operation:remove' collides with the same-named member kept on DOMTokenList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip CharacterData.replaceWith: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-b3hl)
+skip CharacterData.replaceWith: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-o4xs)
 skip CustomElementRegistry.define: constructor: unsupported Web IDL type CustomElementConstructor
-skip CustomElementRegistry.get: unsupported union Web IDL type (CustomElementConstructor or undefined) (waluau-b3hl)
+skip CustomElementRegistry.get: unsupported union Web IDL type (CustomElementConstructor or undefined) (waluau-o4xs)
 skip CustomElementRegistry.getName: constructor: unsupported Web IDL type CustomElementConstructor
 skip CustomElementRegistry.whenDefined: unsupported generic Web IDL type Promise<CustomElementConstructor> (waluau-2c6n)
 skip DOMPoint.fromPoint: disabled -- member 'operation:fromPoint' is also declared on ancestor interface DOMPointReadOnly; cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
@@ -79,7 +77,7 @@ skip DOMTokenList.length: disabled -- member 'attribute:length' collides with th
 skip DOMTokenList.value: disabled -- member 'attribute:value' collides with the same-named member kept on HTMLElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Document.activeViewTransition: Web IDL type ViewTransition? is not part of the selected DOM interface surface
 skip Document.adoptedStyleSheets: unsupported generic Web IDL type ObservableArray<CSSStyleSheet> (waluau-utyc)
-skip Document.append: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-b3hl)
+skip Document.append: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-o4xs)
 skip Document.captureEvents: disabled -- member 'operation:captureEvents' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Document.caretPositionFromPoint: Web IDL type CaretPosition? is not part of the selected DOM interface surface
 skip Document.clear: disabled -- member 'operation:clear' collides with the same-named member kept on Storage (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
@@ -215,39 +213,39 @@ skip Document.onwebkitanimationstart: disabled -- member 'attribute:onwebkitanim
 skip Document.onwebkittransitionend: disabled -- member 'attribute:onwebkittransitionend' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Document.onwheel: disabled -- member 'attribute:onwheel' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Document.open: disabled -- member 'operation:open' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip Document.parseHTMLUnsafe: html: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-b3hl)
+skip Document.parseHTMLUnsafe: html: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-o4xs)
 skip Document.permissionsPolicy: Web IDL type PermissionsPolicy is not part of the selected DOM interface surface
 skip Document.plugins: disabled -- member 'attribute:plugins' collides with the same-named member kept on Navigator (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip Document.prepend: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-b3hl)
+skip Document.prepend: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-o4xs)
 skip Document.releaseEvents: disabled -- member 'operation:releaseEvents' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip Document.replaceChildren: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-b3hl)
+skip Document.replaceChildren: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-o4xs)
 skip Document.requestStorageAccess: unsupported generic Web IDL type Promise<undefined> (waluau-2c6n)
 skip Document.rootElement: Web IDL type SVGSVGElement? is not part of the selected DOM interface surface
 skip Document.startViewTransition: Web IDL type ViewTransition is not part of the selected DOM interface surface
 skip Document.timeline: Web IDL type DocumentTimeline is not part of the selected DOM interface surface
 skip Document.title: disabled -- member 'attribute:title' collides with the same-named member kept on StyleSheet (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip Document.write: text: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-b3hl)
-skip Document.writeln: text: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-b3hl)
-skip DocumentFragment.append: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-b3hl)
+skip Document.write: text: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-o4xs)
+skip Document.writeln: text: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-o4xs)
+skip DocumentFragment.append: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-o4xs)
 skip DocumentFragment.childElementCount: disabled -- member 'attribute:childElementCount' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip DocumentFragment.children: disabled -- member 'attribute:children' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip DocumentFragment.firstElementChild: disabled -- member 'attribute:firstElementChild' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip DocumentFragment.getElementById: disabled -- member 'operation:getElementById' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip DocumentFragment.lastElementChild: disabled -- member 'attribute:lastElementChild' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip DocumentFragment.moveBefore: disabled -- member 'operation:moveBefore' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip DocumentFragment.prepend: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-b3hl)
+skip DocumentFragment.prepend: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-o4xs)
 skip DocumentFragment.querySelector: disabled -- member 'operation:querySelector' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip DocumentFragment.querySelectorAll: disabled -- member 'operation:querySelectorAll' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip DocumentFragment.replaceChildren: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-b3hl)
-skip DocumentType.after: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-b3hl)
-skip DocumentType.before: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-b3hl)
+skip DocumentFragment.replaceChildren: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-o4xs)
+skip DocumentType.after: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-o4xs)
+skip DocumentType.before: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-o4xs)
 skip DocumentType.name: disabled -- member 'attribute:name' collides with the same-named member kept on Plugin (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip DocumentType.remove: disabled -- member 'operation:remove' collides with the same-named member kept on DOMTokenList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip DocumentType.replaceWith: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-b3hl)
+skip DocumentType.replaceWith: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-o4xs)
 skip Element.activeViewTransition: Web IDL type ViewTransition? is not part of the selected DOM interface surface
-skip Element.after: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-b3hl)
+skip Element.after: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-o4xs)
 skip Element.animate: Web IDL type Animation is not part of the selected DOM interface surface
-skip Element.append: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-b3hl)
+skip Element.append: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-o4xs)
 skip Element.ariaControlsElements: unsupported generic Web IDL type FrozenArray<Element>? (waluau-utyc)
 skip Element.ariaDescribedByElements: unsupported generic Web IDL type FrozenArray<Element>? (waluau-utyc)
 skip Element.ariaDetailsElements: unsupported generic Web IDL type FrozenArray<Element>? (waluau-utyc)
@@ -257,7 +255,7 @@ skip Element.ariaLabelledByElements: unsupported generic Web IDL type FrozenArra
 skip Element.ariaNotify: disabled -- member 'operation:ariaNotify' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Element.ariaOwnsElements: unsupported generic Web IDL type FrozenArray<Element>? (waluau-utyc)
 skip Element.attachShadow: init: unsupported Web IDL type ShadowRootInit
-skip Element.before: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-b3hl)
+skip Element.before: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-o4xs)
 skip Element.childElementCount: disabled -- member 'attribute:childElementCount' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Element.children: disabled -- member 'attribute:children' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Element.convertPointFromNode: point: unsupported Web IDL type DOMPointInit
@@ -275,8 +273,8 @@ skip Element.getElementsByClassName: disabled -- member 'operation:getElementsBy
 skip Element.getElementsByTagName: disabled -- member 'operation:getElementsByTagName' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Element.getElementsByTagNameNS: disabled -- member 'operation:getElementsByTagNameNS' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Element.getRegionFlowRanges: unsupported generic Web IDL type sequence<Range>? (waluau-utyc)
-skip Element.innerHTML: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-b3hl)
-skip Element.insertAdjacentHTML: string: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-b3hl)
+skip Element.innerHTML: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-o4xs)
+skip Element.insertAdjacentHTML: string: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-o4xs)
 skip Element.lastElementChild: disabled -- member 'attribute:lastElementChild' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Element.localName: disabled -- member 'attribute:localName' collides with the same-named member kept on Attr (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Element.moveBefore: disabled -- member 'operation:moveBefore' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
@@ -284,24 +282,24 @@ skip Element.namespaceURI: disabled -- member 'attribute:namespaceURI' collides 
 skip Element.nextElementSibling: disabled -- member 'attribute:nextElementSibling' collides with the same-named member kept on CharacterData (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Element.onfullscreenchange: disabled -- member 'attribute:onfullscreenchange' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Element.onfullscreenerror: disabled -- member 'attribute:onfullscreenerror' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip Element.outerHTML: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-b3hl)
+skip Element.outerHTML: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-o4xs)
 skip Element.prefix: disabled -- member 'attribute:prefix' collides with the same-named member kept on Attr (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip Element.prepend: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-b3hl)
+skip Element.prepend: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-o4xs)
 skip Element.previousElementSibling: disabled -- member 'attribute:previousElementSibling' collides with the same-named member kept on CharacterData (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Element.pseudo: disabled -- member 'operation:pseudo' collides with the same-named member kept on CSSPseudoElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Element.querySelector: disabled -- member 'operation:querySelector' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Element.querySelectorAll: disabled -- member 'operation:querySelectorAll' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Element.remove: disabled -- member 'operation:remove' collides with the same-named member kept on DOMTokenList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip Element.replaceChildren: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-b3hl)
-skip Element.replaceWith: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-b3hl)
+skip Element.replaceChildren: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-o4xs)
+skip Element.replaceWith: nodes: unsupported union Web IDL type (Node or DOMString) (waluau-o4xs)
 skip Element.requestFullscreen: unsupported generic Web IDL type Promise<undefined> (waluau-2c6n)
 skip Element.requestPointerLock: unsupported generic Web IDL type Promise<undefined> (waluau-2c6n)
 skip Element.scroll: unsupported generic Web IDL type Promise<undefined> (waluau-2c6n)
 skip Element.scrollBy: unsupported generic Web IDL type Promise<undefined> (waluau-2c6n)
 skip Element.scrollIntoView: unsupported generic Web IDL type Promise<undefined> (waluau-2c6n)
 skip Element.scrollTo: unsupported generic Web IDL type Promise<undefined> (waluau-2c6n)
-skip Element.setAttributeNS: value: unsupported union Web IDL type (TrustedType or DOMString) (waluau-b3hl)
-skip Element.setHTMLUnsafe: html: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-b3hl)
+skip Element.setAttributeNS: value: unsupported union Web IDL type (TrustedType or DOMString) (waluau-o4xs)
+skip Element.setHTMLUnsafe: html: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-o4xs)
 skip Element.startViewTransition: Web IDL type ViewTransition is not part of the selected DOM interface surface
 skip Event.composedPath: unsupported generic Web IDL type sequence<EventTarget> (waluau-utyc)
 skip EventTarget.removeEventListener: callback: nullable callback Web IDL type EventListener? has no extern syntax representation (waluau-lqjs)
@@ -309,9 +307,9 @@ skip EventTarget.when: Web IDL type Observable is not part of the selected DOM i
 skip File.name: disabled -- member 'attribute:name' collides with the same-named member kept on Plugin (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip FileList.item: disabled -- member 'operation:item' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip FileList.length: disabled -- member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip HTMLAllCollection.item: unsupported union Web IDL type (HTMLCollection or Element)? (waluau-b3hl)
+skip HTMLAllCollection.item: unsupported union Web IDL type (HTMLCollection or Element)? (waluau-o4xs)
 skip HTMLAllCollection.length: disabled -- member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip HTMLAllCollection.namedItem: unsupported union Web IDL type (HTMLCollection or Element)? (waluau-b3hl)
+skip HTMLAllCollection.namedItem: unsupported union Web IDL type (HTMLCollection or Element)? (waluau-o4xs)
 skip HTMLCanvasElement.captureStream: Web IDL type MediaStream is not part of the selected DOM interface surface
 skip HTMLCanvasElement.toBlob: callback: unsupported Web IDL type BlobCallback
 skip HTMLCanvasElement.transferControlToOffscreen: Web IDL type OffscreenCanvas is not part of the selected DOM interface surface
@@ -322,7 +320,7 @@ skip HTMLElement.blur: disabled -- member 'operation:blur' collides with the sam
 skip HTMLElement.dir: disabled -- member 'attribute:dir' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip HTMLElement.editContext: Web IDL type EditContext? is not part of the selected DOM interface surface
 skip HTMLElement.focus: disabled -- member 'operation:focus' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip HTMLElement.hidden: unsupported union Web IDL type (boolean or unrestricted double or DOMString)? (waluau-b3hl)
+skip HTMLElement.hidden: unsupported union Web IDL type (boolean or unrestricted double or DOMString)? (waluau-o4xs)
 skip HTMLElement.onabort: disabled -- member 'attribute:onabort' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip HTMLElement.onanimationcancel: disabled -- member 'attribute:onanimationcancel' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip HTMLElement.onanimationend: disabled -- member 'attribute:onanimationend' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
@@ -429,7 +427,7 @@ skip HTMLElement.onwebkitanimationstart: disabled -- member 'attribute:onwebkita
 skip HTMLElement.onwebkittransitionend: disabled -- member 'attribute:onwebkittransitionend' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip HTMLElement.onwheel: disabled -- member 'attribute:onwheel' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip HTMLElement.title: disabled -- member 'attribute:title' collides with the same-named member kept on StyleSheet (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip HTMLFormControlsCollection.namedItem: unsupported union Web IDL type (RadioNodeList or Element)? (waluau-b3hl)
+skip HTMLFormControlsCollection.namedItem: unsupported union Web IDL type (RadioNodeList or Element)? (waluau-o4xs)
 skip HTMLFormElement.length: disabled -- member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip HTMLFormElement.name: disabled -- member 'attribute:name' collides with the same-named member kept on Plugin (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip HTMLFormElement.target: disabled -- member 'attribute:target' collides with the same-named member kept on Event (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
@@ -448,7 +446,7 @@ skip HTMLInputElement.value: disabled -- member 'attribute:value' is also declar
 skip HTMLInputElement.valueAsDate: unsupported Web IDL type object? (waluau-lxdd)
 skip HTMLInputElement.webkitEntries: unsupported generic Web IDL type FrozenArray<FileSystemEntry> (waluau-utyc)
 skip HTMLInputElement.width: disabled -- member 'attribute:width' collides with the same-named member kept on DOMRectReadOnly (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip HTMLSlotElement.assign: nodes: unsupported union Web IDL type (Element or Text) (waluau-b3hl)
+skip HTMLSlotElement.assign: nodes: unsupported union Web IDL type (Element or Text) (waluau-o4xs)
 skip HTMLSlotElement.assignedElements: unsupported generic Web IDL type sequence<Element> (waluau-utyc)
 skip HTMLSlotElement.assignedNodes: unsupported generic Web IDL type sequence<Node> (waluau-utyc)
 skip HTMLSlotElement.name: disabled -- member 'attribute:name' collides with the same-named member kept on Plugin (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
@@ -552,7 +550,7 @@ skip PluginArray.length: disabled -- member 'attribute:length' collides with the
 skip PluginArray.namedItem: disabled -- member 'operation:namedItem' collides with the same-named member kept on HTMLCollection (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip ProcessingInstruction.target: disabled -- member 'attribute:target' collides with the same-named member kept on Event (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Range.collapse: disabled -- member 'operation:collapse' collides with the same-named member kept on Selection (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip Range.createContextualFragment: string: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-b3hl)
+skip Range.createContextualFragment: string: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-o4xs)
 skip Range.detach: disabled -- member 'operation:detach' collides with the same-named member kept on NodeIterator (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Response.arrayBuffer: unsupported generic Web IDL type Promise<ArrayBuffer> (waluau-2c6n)
 skip Response.blob: unsupported generic Web IDL type Promise<Blob> (waluau-2c6n)
@@ -576,22 +574,22 @@ skip ShadowRoot.fullscreenElement: disabled -- member 'attribute:fullscreenEleme
 skip ShadowRoot.getAnimations: unsupported generic Web IDL type sequence<Animation> (waluau-utyc)
 skip ShadowRoot.getHTML: disabled -- member 'operation:getHTML' collides with the same-named member kept on Element (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip ShadowRoot.host: disabled -- member 'attribute:host' collides with the same-named member kept on Location (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip ShadowRoot.innerHTML: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-b3hl)
+skip ShadowRoot.innerHTML: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-o4xs)
 skip ShadowRoot.onslotchange: disabled -- member 'attribute:onslotchange' collides with the same-named member kept on Window (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip ShadowRoot.pictureInPictureElement: disabled -- member 'attribute:pictureInPictureElement' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip ShadowRoot.pointerLockElement: disabled -- member 'attribute:pointerLockElement' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip ShadowRoot.setHTML: disabled -- member 'operation:setHTML' collides with the same-named member kept on Element (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip ShadowRoot.setHTMLUnsafe: html: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-b3hl)
+skip ShadowRoot.setHTMLUnsafe: html: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-o4xs)
 skip ShadowRoot.styleSheets: disabled -- member 'attribute:styleSheets' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Storage.length: disabled -- member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip StylePropertyMap.append: values: unsupported union Web IDL type (CSSStyleValue or USVString) (waluau-b3hl)
+skip StylePropertyMap.append: values: unsupported union Web IDL type (CSSStyleValue or USVString) (waluau-o4xs)
 skip StylePropertyMap.clear: disabled -- member 'operation:clear' collides with the same-named member kept on Storage (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip StylePropertyMap.set: values: unsupported union Web IDL type (CSSStyleValue or USVString) (waluau-b3hl)
-skip StylePropertyMapReadOnly.get: unsupported union Web IDL type (undefined or CSSStyleValue) (waluau-b3hl)
+skip StylePropertyMap.set: values: unsupported union Web IDL type (CSSStyleValue or USVString) (waluau-o4xs)
+skip StylePropertyMapReadOnly.get: unsupported union Web IDL type (undefined or CSSStyleValue) (waluau-o4xs)
 skip StylePropertyMapReadOnly.getAll: unsupported generic Web IDL type sequence<CSSStyleValue> (waluau-utyc)
 skip StylePropertyMapReadOnly.size: disabled -- member 'attribute:size' collides with the same-named member kept on Blob (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip StyleSheet.href: disabled -- member 'attribute:href' collides with the same-named member kept on Location (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip StyleSheet.ownerNode: unsupported union Web IDL type (Element or ProcessingInstruction)? (waluau-b3hl)
+skip StyleSheet.ownerNode: unsupported union Web IDL type (Element or ProcessingInstruction)? (waluau-o4xs)
 skip StyleSheet.parentStyleSheet: disabled -- member 'attribute:parentStyleSheet' collides with the same-named member kept on CSSRule (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip StyleSheet.type: disabled -- member 'attribute:type' collides with the same-named member kept on Blob (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip StyleSheetList.item: disabled -- member 'operation:item' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
@@ -613,7 +611,7 @@ skip Window.crashReport: Web IDL type CrashReportContext is not part of the sele
 skip Window.createImageBitmap: unsupported generic Web IDL type Promise<ImageBitmap> (waluau-2c6n)
 skip Window.crypto: Web IDL type Crypto is not part of the selected DOM interface surface
 skip Window.documentPictureInPicture: Web IDL type DocumentPictureInPicture is not part of the selected DOM interface surface
-skip Window.event: unsupported union Web IDL type (Event or undefined) (waluau-b3hl)
+skip Window.event: unsupported union Web IDL type (Event or undefined) (waluau-o4xs)
 skip Window.external: Web IDL type External is not part of the selected DOM interface surface
 skip Window.fence: Web IDL type Fence? is not part of the selected DOM interface surface
 skip Window.fetchLater: Web IDL type FetchLaterResult is not part of the selected DOM interface surface

@@ -126,7 +126,7 @@ test('skip diagnostics reference tracked compiler/tooling limitations where appl
   const diagnostics = readRepoFile('externs/dom.diagnostics.txt');
   assert.match(diagnostics, /unsupported generic Web IDL type sequence<[^>]*> \(waluau-utyc\)/);
   assert.match(diagnostics, /unsupported generic Web IDL type Promise<[^>]*> \(waluau-2c6n\)/);
-  assert.match(diagnostics, /unsupported union Web IDL type \([^)]*\) \(waluau-b3hl\)/);
+  assert.match(diagnostics, /unsupported union Web IDL type \([^)]*\) \(waluau-o4xs\)/);
   assert.match(diagnostics, /nullable callback Web IDL type .+ has no extern syntax representation \(waluau-lqjs\)/);
   assert.match(diagnostics, /nullable modifier rejects primitive Web IDL type .+ \(waluau-pq7p\)/);
   assert.match(diagnostics, /unsupported Web IDL type (any|object\??) \(waluau-lxdd\)/);
@@ -282,11 +282,78 @@ test('generated externs expose a focused canvas 2D rendering slice', () => {
   assert.match(externs, /^declare function CanvasRenderingContext2D:fillText\(text: string, x: f64, y: f64\): unit$/m);
   assert.match(diagnostics, /skip CanvasRenderingContext2D\.drawImage: image: unsupported Web IDL type CanvasImageSource/);
 
+  // waluau-b3hl: the (DOMString or CanvasGradient or CanvasPattern) union is
+  // collapsed to `string` through filter.json's unionTypeMap, so the paint
+  // style properties are emitted instead of skipped.
+  assert.match(externs, /^declare property CanvasRenderingContext2D:fillStyle: string$/m);
+  assert.match(externs, /^declare property CanvasRenderingContext2D:strokeStyle: string$/m);
+  assert.doesNotMatch(diagnostics, /skip CanvasRenderingContext2D\.fillStyle/);
+  assert.doesNotMatch(diagnostics, /skip CanvasRenderingContext2D\.strokeStyle/);
+  const emittedCanvasMembers = metadata.emittedMembers.map(
+    (entry) => `${entry.interface}.${entry.idlName}`,
+  );
+  assert.ok(emittedCanvasMembers.includes('CanvasRenderingContext2D.fillStyle'));
+  assert.ok(emittedCanvasMembers.includes('CanvasRenderingContext2D.strokeStyle'));
+
   const getContext = metadata.emittedMembers.find(
     (entry) => entry.interface === 'HTMLCanvasElement' && entry.idlName === 'getContext',
   );
   assert.deepEqual(getContext?.params, ['context_id: string']);
   assert.equal(getContext?.returnType, 'CanvasRenderingContext2D?');
+});
+
+test('unionTypeMap collapses exact Web IDL union shapes and skips unmapped unions', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'waluau-dom-idl-union-'));
+  const input = path.join(dir, 'custom.webidl');
+  const filter = path.join(dir, 'filter.json');
+  const patches = path.join(dir, 'patches.json');
+
+  writeFileSync(input, [
+    'interface Gradient {',
+    '};',
+    'interface Pattern {',
+    '};',
+    'interface Painter {',
+    '  attribute (DOMString or Gradient or Pattern) paint;',
+    '  attribute (DOMString or Gradient or Pattern)? maybePaint;',
+    '  attribute (Gradient or Pattern) unmapped;',
+    '  undefined apply((DOMString or Gradient or Pattern) style);',
+    '};',
+    '',
+  ].join('\n'));
+  writeFileSync(filter, JSON.stringify({
+    interfaces: ['Painter'],
+    typeMap: {
+      DOMString: 'string',
+      undefined: 'unit',
+    },
+    unionTypeMap: {
+      '(DOMString or Gradient or Pattern)': 'string',
+    },
+    disabledMembers: {},
+    hostFunctions: [],
+    skipIssueRefs: {
+      'unsupported-union': 'waluau-o4xs',
+    },
+  }));
+  writeFileSync(patches, JSON.stringify({}));
+
+  const generated = runGenerator({
+    input: path.relative(repoRoot, input),
+    filter: path.relative(repoRoot, filter),
+    patches: path.relative(repoRoot, patches),
+  });
+
+  // A mapped union collapses in attribute, nullable-attribute, and parameter positions.
+  assert.match(generated.externs, /^declare property Painter:paint: string$/m);
+  assert.match(generated.externs, /^declare property Painter:maybePaint: string\?$/m);
+  assert.match(generated.externs, /^declare function Painter:apply\(style: string\): unit$/m);
+  // A union without a unionTypeMap entry is still skipped with the tracked issue ref.
+  assert.doesNotMatch(generated.externs, /unmapped/);
+  assert.match(
+    generated.diagnostics,
+    /skip Painter\.unmapped: unsupported union Web IDL type \(Gradient or Pattern\) \(waluau-o4xs\)/,
+  );
 });
 
 test('generated externs sanitize reserved DOM parameter names deterministically', () => {
