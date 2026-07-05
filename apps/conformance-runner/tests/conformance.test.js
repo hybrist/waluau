@@ -526,6 +526,30 @@ describe('browser conformance', () => {
     }
   });
 
+  it('renders through generated canvas 2D extern handles', async () => {
+    const testCase = cases.find(({ name }) => name === 'dom_canvas_2d_rendering.walu');
+    const source = sourceForCase(testCase);
+    const { root, cleanup } = await compileAndInstantiateWithDom({ '/main.walu': source }, '/main.walu');
+
+    try {
+      expect(root.children).toHaveLength(1);
+      const canvas = root.children[0];
+      expect(canvas.tagName).toBe('CANVAS');
+      expect(canvas.id).toBe('waluau-canvas-2d');
+      expect(canvas.width).toBe(64);
+      expect(canvas.height).toBe(32);
+      expect(canvas.style.width).toBe('64px');
+      expect(canvas.style.height).toBe('32px');
+      expect(canvas.getAttribute('data-context-owner')).toBe('true');
+
+      const context = canvas.getContext('2d');
+      const pixel = context.getImageData(6, 7, 1, 1).data;
+      expect(Array.from(pixel)).toEqual([0, 0, 0, 255]);
+    } finally {
+      cleanup();
+    }
+  });
+
   it('passes DOM mutation and localStorage host API checks', async () => {
     const testCase = cases.find(({ name }) => name === 'dom_storage_host_api.walu');
     const source = sourceForCase(testCase);

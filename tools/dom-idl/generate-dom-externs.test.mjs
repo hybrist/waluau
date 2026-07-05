@@ -264,6 +264,30 @@ test('generated externs expose minimal DOM mutation and storage APIs', () => {
   assert.match(externs, /^declare function Storage:get_item\(key: string\): string\?$/m);
 });
 
+test('generated externs expose a focused canvas 2D rendering slice', () => {
+  const externs = readRepoFile('externs/dom.walu');
+  const metadata = JSON.parse(readRepoFile('externs/dom.metadata.json'));
+  const diagnostics = readRepoFile('externs/dom.diagnostics.txt');
+
+  assert.match(externs, /^type HTMLCanvasElement = extern extends HTMLElement$/m);
+  assert.match(externs, /^type CanvasRenderingContext2D = extern$/m);
+  assert.match(
+    externs,
+    /^declare function HTMLCanvasElement:get_context\(context_id: string\): CanvasRenderingContext2D\?$/m,
+  );
+  assert.match(externs, /^declare property CanvasRenderingContext2D:canvas: HTMLCanvasElement$/m);
+  assert.match(externs, /^declare function CanvasRenderingContext2D:fillRect\(x: f64, y: f64, w: f64, h: f64\): unit$/m);
+  assert.match(externs, /^declare function CanvasRenderingContext2D:clearRect\(x: f64, y: f64, w: f64, h: f64\): unit$/m);
+  assert.match(externs, /^declare function CanvasRenderingContext2D:fillText\(text: string, x: f64, y: f64\): unit$/m);
+  assert.match(diagnostics, /skip CanvasRenderingContext2D\.drawImage: image: unsupported Web IDL type CanvasImageSource/);
+
+  const getContext = metadata.emittedMembers.find(
+    (entry) => entry.interface === 'HTMLCanvasElement' && entry.idlName === 'getContext',
+  );
+  assert.deepEqual(getContext?.params, ['context_id: string']);
+  assert.equal(getContext?.returnType, 'CanvasRenderingContext2D?');
+});
+
 test('generated externs sanitize reserved DOM parameter names deterministically', () => {
   const externs = readRepoFile('externs/dom.walu');
   const metadata = JSON.parse(readRepoFile('externs/dom.metadata.json'));

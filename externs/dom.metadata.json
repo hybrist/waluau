@@ -110,6 +110,10 @@
       "parent": "Element"
     },
     {
+      "interface": "HTMLCanvasElement",
+      "parent": "HTMLElement"
+    },
+    {
       "interface": "HTMLHeadingElement",
       "parent": "HTMLElement"
     },
@@ -280,6 +284,10 @@
     {
       "interface": "StylePropertyMap",
       "parent": "StylePropertyMapReadOnly"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "parent": null
     }
   ],
   "emittedMembers": [
@@ -6374,6 +6382,462 @@
       "readonly": true
     },
     {
+      "interface": "HTMLCanvasElement",
+      "kind": "attribute",
+      "idlName": "width",
+      "emittedName": "width",
+      "type": "u32",
+      "readonly": false
+    },
+    {
+      "interface": "HTMLCanvasElement",
+      "kind": "attribute",
+      "idlName": "height",
+      "emittedName": "height",
+      "type": "u32",
+      "readonly": false
+    },
+    {
+      "interface": "HTMLCanvasElement",
+      "kind": "operation",
+      "idlName": "getContext",
+      "emittedName": "get_context",
+      "params": [
+        "context_id: string"
+      ],
+      "returnType": "CanvasRenderingContext2D?"
+    },
+    {
+      "interface": "HTMLCanvasElement",
+      "kind": "operation",
+      "idlName": "toDataURL",
+      "emittedName": "toDataURL",
+      "params": [],
+      "returnType": "string"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "attribute",
+      "idlName": "canvas",
+      "emittedName": "canvas",
+      "type": "HTMLCanvasElement",
+      "readonly": true
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "save",
+      "emittedName": "save",
+      "params": [],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "restore",
+      "emittedName": "restore",
+      "params": [],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "reset",
+      "emittedName": "reset",
+      "params": [],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "isContextLost",
+      "emittedName": "isContextLost",
+      "params": [],
+      "returnType": "bool"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "scale",
+      "emittedName": "scale",
+      "params": [
+        "x: f64",
+        "y: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "rotate",
+      "emittedName": "rotate",
+      "params": [
+        "angle: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "translate",
+      "emittedName": "translate",
+      "params": [
+        "x: f64",
+        "y: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "transform",
+      "emittedName": "transform",
+      "params": [
+        "a: f64",
+        "b: f64",
+        "c: f64",
+        "d: f64",
+        "e: f64",
+        "f: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "setTransform",
+      "emittedName": "setTransform",
+      "params": [],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "resetTransform",
+      "emittedName": "resetTransform",
+      "params": [],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "attribute",
+      "idlName": "globalAlpha",
+      "emittedName": "globalAlpha",
+      "type": "f64",
+      "readonly": false
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "attribute",
+      "idlName": "globalCompositeOperation",
+      "emittedName": "globalCompositeOperation",
+      "type": "string",
+      "readonly": false
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "attribute",
+      "idlName": "imageSmoothingEnabled",
+      "emittedName": "imageSmoothingEnabled",
+      "type": "bool",
+      "readonly": false
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "attribute",
+      "idlName": "shadowOffsetX",
+      "emittedName": "shadowOffsetX",
+      "type": "f64",
+      "readonly": false
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "attribute",
+      "idlName": "shadowOffsetY",
+      "emittedName": "shadowOffsetY",
+      "type": "f64",
+      "readonly": false
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "attribute",
+      "idlName": "shadowBlur",
+      "emittedName": "shadowBlur",
+      "type": "f64",
+      "readonly": false
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "attribute",
+      "idlName": "shadowColor",
+      "emittedName": "shadowColor",
+      "type": "string",
+      "readonly": false
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "attribute",
+      "idlName": "filter",
+      "emittedName": "filter",
+      "type": "string",
+      "readonly": false
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "clearRect",
+      "emittedName": "clearRect",
+      "params": [
+        "x: f64",
+        "y: f64",
+        "w: f64",
+        "h: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "fillRect",
+      "emittedName": "fillRect",
+      "params": [
+        "x: f64",
+        "y: f64",
+        "w: f64",
+        "h: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "strokeRect",
+      "emittedName": "strokeRect",
+      "params": [
+        "x: f64",
+        "y: f64",
+        "w: f64",
+        "h: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "beginPath",
+      "emittedName": "beginPath",
+      "params": [],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "fillText",
+      "emittedName": "fillText",
+      "params": [
+        "text: string",
+        "x: f64",
+        "y: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "strokeText",
+      "emittedName": "strokeText",
+      "params": [
+        "text: string",
+        "x: f64",
+        "y: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "attribute",
+      "idlName": "lineWidth",
+      "emittedName": "lineWidth",
+      "type": "f64",
+      "readonly": false
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "attribute",
+      "idlName": "miterLimit",
+      "emittedName": "miterLimit",
+      "type": "f64",
+      "readonly": false
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "attribute",
+      "idlName": "lineDashOffset",
+      "emittedName": "lineDashOffset",
+      "type": "f64",
+      "readonly": false
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "attribute",
+      "idlName": "lang",
+      "emittedName": "lang",
+      "type": "string",
+      "readonly": false
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "attribute",
+      "idlName": "font",
+      "emittedName": "font",
+      "type": "string",
+      "readonly": false
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "attribute",
+      "idlName": "letterSpacing",
+      "emittedName": "letterSpacing",
+      "type": "string",
+      "readonly": false
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "attribute",
+      "idlName": "wordSpacing",
+      "emittedName": "wordSpacing",
+      "type": "string",
+      "readonly": false
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "closePath",
+      "emittedName": "closePath",
+      "params": [],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "moveTo",
+      "emittedName": "moveTo",
+      "params": [
+        "x: f64",
+        "y: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "lineTo",
+      "emittedName": "lineTo",
+      "params": [
+        "x: f64",
+        "y: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "quadraticCurveTo",
+      "emittedName": "quadraticCurveTo",
+      "params": [
+        "cpx: f64",
+        "cpy: f64",
+        "x: f64",
+        "y: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "bezierCurveTo",
+      "emittedName": "bezierCurveTo",
+      "params": [
+        "cp1x: f64",
+        "cp1y: f64",
+        "cp2x: f64",
+        "cp2y: f64",
+        "x: f64",
+        "y: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "arcTo",
+      "emittedName": "arcTo",
+      "params": [
+        "x1: f64",
+        "y1: f64",
+        "x2: f64",
+        "y2: f64",
+        "radius: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "rect",
+      "emittedName": "rect",
+      "params": [
+        "x: f64",
+        "y: f64",
+        "w: f64",
+        "h: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "roundRect",
+      "emittedName": "roundRect",
+      "params": [
+        "x: f64",
+        "y: f64",
+        "w: f64",
+        "h: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "arc",
+      "emittedName": "arc",
+      "params": [
+        "x: f64",
+        "y: f64",
+        "radius: f64",
+        "start_angle: f64",
+        "end_angle: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "ellipse",
+      "emittedName": "ellipse",
+      "params": [
+        "x: f64",
+        "y: f64",
+        "radius_x: f64",
+        "radius_y: f64",
+        "rotation: f64",
+        "start_angle: f64",
+        "end_angle: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
       "interface": "CustomElementRegistry",
       "kind": "operation",
       "idlName": "upgrade",
@@ -10813,6 +11277,210 @@
       "member": "assign",
       "reason": "nodes: unsupported union Web IDL type (Element or Text)",
       "issue": "waluau-b3hl"
+    },
+    {
+      "interface": "HTMLCanvasElement",
+      "member": "toBlob",
+      "reason": "callback: unsupported Web IDL type BlobCallback",
+      "issue": null
+    },
+    {
+      "interface": "HTMLCanvasElement",
+      "member": "transferControlToOffscreen",
+      "reason": "Web IDL type OffscreenCanvas is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "HTMLCanvasElement",
+      "member": "captureStream",
+      "reason": "Web IDL type MediaStream is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "getContextAttributes",
+      "reason": "unsupported Web IDL type CanvasRenderingContext2DSettings",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "getTransform",
+      "reason": "Web IDL type DOMMatrix is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "imageSmoothingQuality",
+      "reason": "unsupported Web IDL type ImageSmoothingQuality",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "strokeStyle",
+      "reason": "unsupported union Web IDL type (DOMString or CanvasGradient or CanvasPattern)",
+      "issue": "waluau-b3hl"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "fillStyle",
+      "reason": "unsupported union Web IDL type (DOMString or CanvasGradient or CanvasPattern)",
+      "issue": "waluau-b3hl"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "createLinearGradient",
+      "reason": "Web IDL type CanvasGradient is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "createRadialGradient",
+      "reason": "Web IDL type CanvasGradient is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "createConicGradient",
+      "reason": "Web IDL type CanvasGradient is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "createPattern",
+      "reason": "Web IDL type CanvasPattern? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "fill",
+      "reason": "path: Web IDL type Path2D is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "stroke",
+      "reason": "path: Web IDL type Path2D is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "clip",
+      "reason": "path: Web IDL type Path2D is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "isPointInPath",
+      "reason": "path: Web IDL type Path2D is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "isPointInStroke",
+      "reason": "path: Web IDL type Path2D is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "drawFocusIfNeeded",
+      "reason": "path: Web IDL type Path2D is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "measureText",
+      "reason": "Web IDL type TextMetrics is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "drawImage",
+      "reason": "image: unsupported Web IDL type CanvasImageSource",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "createImageData",
+      "reason": "Web IDL type ImageData is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "getImageData",
+      "reason": "Web IDL type ImageData is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "putImageData",
+      "reason": "imageData: Web IDL type ImageData is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "lineCap",
+      "reason": "unsupported Web IDL type CanvasLineCap",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "lineJoin",
+      "reason": "unsupported Web IDL type CanvasLineJoin",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "setLineDash",
+      "reason": "segments: unsupported generic Web IDL type sequence<unrestricted double>",
+      "issue": "waluau-utyc"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "getLineDash",
+      "reason": "unsupported generic Web IDL type sequence<unrestricted double>",
+      "issue": "waluau-utyc"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "textAlign",
+      "reason": "unsupported Web IDL type CanvasTextAlign",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "textBaseline",
+      "reason": "unsupported Web IDL type CanvasTextBaseline",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "direction",
+      "reason": "unsupported Web IDL type CanvasDirection",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "fontKerning",
+      "reason": "unsupported Web IDL type CanvasFontKerning",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "fontStretch",
+      "reason": "unsupported Web IDL type CanvasFontStretch",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "fontVariantCaps",
+      "reason": "unsupported Web IDL type CanvasFontVariantCaps",
+      "issue": null
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "member": "textRendering",
+      "reason": "unsupported Web IDL type CanvasTextRendering",
+      "issue": null
     },
     {
       "interface": "CustomElementRegistry",

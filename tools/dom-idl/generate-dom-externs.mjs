@@ -349,6 +349,10 @@ function patchedParamName(owner, member, param, patches) {
   return patches.parameterRenames?.[`${owner}.${member}.${param}`] ?? toSnake(param);
 }
 
+function patchedSignature(owner, member, patches) {
+  return patches.signatureOverrides?.[`${owner}.${member}`] ?? null;
+}
+
 function toSnake(name) {
   return name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 }
@@ -365,9 +369,11 @@ function sanitizeParamName(name, usedNames) {
 function emitInterfaceMember(iface, member, context) {
   const { filter, patches, knownInterfaces, include } = context;
   const rename = patchedName(member.name, patches);
+  const signature = patchedSignature(iface.name, member.name, patches);
 
   if (member.kind === 'attribute') {
-    const mapped = mapType(member.idlType, filter, knownInterfaces, include, {
+    const idlType = signature?.idlType ?? member.idlType;
+    const mapped = mapType(idlType, filter, knownInterfaces, include, {
       owner: iface.name,
       member: member.name,
       position: 'attribute',
@@ -387,7 +393,8 @@ function emitInterfaceMember(iface, member, context) {
   }
 
   if (member.kind === 'operation') {
-    const returnType = mapType(member.idlType, filter, knownInterfaces, include, {
+    const returnIdlType = signature?.returnType ?? member.idlType;
+    const returnType = mapType(returnIdlType, filter, knownInterfaces, include, {
       owner: iface.name,
       member: member.name,
       position: 'return',
@@ -395,7 +402,8 @@ function emitInterfaceMember(iface, member, context) {
     if (returnType.error) return { skipped: returnType.error, category: returnType.category };
     const params = [];
     const usedParamNames = new Set();
-    for (const param of member.params) {
+    const sourceParams = signature?.params ?? member.params;
+    for (const param of sourceParams) {
       if (param.unsupported) return { skipped: `unsupported parameter syntax ${param.source}` };
       if (param.optional) return { skipped: `unsupported optional parameter ${param.name}` };
       const mapped = mapType(param.idlType, filter, knownInterfaces, include, {

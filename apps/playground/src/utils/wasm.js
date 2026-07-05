@@ -425,6 +425,24 @@ function parseDomInterfaceImport(name) {
   };
 }
 
+function snakeToCamel(name) {
+  return name.replace(/_([a-z])/g, (_match, letter) => letter.toUpperCase());
+}
+
+function resolveDomMemberName(receiver, generatedName) {
+  if (receiver == null) {
+    throw new TypeError(`DOM import receiver is null while resolving ${generatedName}`);
+  }
+  if (generatedName in receiver) {
+    return generatedName;
+  }
+  const nativeName = snakeToCamel(generatedName);
+  if (nativeName in receiver) {
+    return nativeName;
+  }
+  return generatedName;
+}
+
 function createPlaygroundDomHost(wasmModule, domOutputRoot, getWasmExports = () => null) {
   const fallbackStorage = new Map();
   const fallbackStorageHost = {
@@ -459,6 +477,17 @@ function createPlaygroundDomHost(wasmModule, domOutputRoot, getWasmExports = () 
     }
     return fallbackStorageHost;
   };
+
+  const fallbackWindowHost = {
+    get document() {
+      return outputDocument();
+    },
+    get localStorage() {
+      return playgroundStorage();
+    },
+  };
+
+  const outputWindow = () => outputDocument().defaultView ?? fallbackWindowHost;
 
   const replaceChild = (parent, newChild, oldChild) => {
     const removed = parent.replaceChild(newChild, oldChild);
@@ -502,19 +531,19 @@ function createPlaygroundDomHost(wasmModule, domOutputRoot, getWasmExports = () 
     if (interfaceName === 'Window' && propertyName === 'localStorage') {
       return playgroundStorage();
     }
-    return receiver[propertyName];
+    return receiver[resolveDomMemberName(receiver, propertyName)];
   };
 
   const setProperty = (_interfaceName, propertyName, receiver, value) => {
-    receiver[propertyName] = value;
+    receiver[resolveDomMemberName(receiver, propertyName)] = value;
   };
 
   const forwardMethod = (_interfaceName, methodName, receiver, args) => {
-    return receiver[methodName](...args);
+    return receiver[resolveDomMemberName(receiver, methodName)](...args);
   };
 
   const specialImports = {
-    dom_window: () => outputDocument().defaultView,
+    dom_window: outputWindow,
     fetch: fetchFromDomContext,
     'EventTarget.addEventListener': (target, type, callback) => registerEventListener(target, String(type), callback),
     'Node.removeChild': removeChild,

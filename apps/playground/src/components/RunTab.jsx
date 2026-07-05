@@ -6,6 +6,7 @@ const DOM_OUTPUT_SRC_DOC = `<!doctype html>
 <html>
   <head>
     <meta name="tailwind-compatible-polyfill" content="local deterministic utility subset">
+    <meta http-equiv="Content-Security-Policy" content="script-src 'none'; object-src 'none'; base-uri 'none'">
     <style>
       *{box-sizing:border-box}
       html{color:#1f2937;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:16px;line-height:1.5}
@@ -62,13 +63,16 @@ function DomOutputFrame({ setDomOutputRoot, onEscape }) {
       }
     };
     const syncDocument = () => {
+      const nextDoc = node.contentDocument;
+      if (!nextDoc?.querySelector('meta[name="tailwind-compatible-polyfill"]')) {
+        setDomOutputRoot(null);
+        return;
+      }
       if (doc) {
         doc.removeEventListener('keydown', handleKeyDown);
       }
-      doc = node.contentDocument;
-      if (doc) {
-        doc.addEventListener('keydown', handleKeyDown);
-      }
+      doc = nextDoc;
+      doc.addEventListener('keydown', handleKeyDown);
       setDomOutputRoot(doc);
     };
     syncDocument();
@@ -87,7 +91,7 @@ function DomOutputFrame({ setDomOutputRoot, onEscape }) {
       className="dom-output-frame"
       ref={setFrame}
       title="DOM Output"
-      sandbox="allow-same-origin"
+      sandbox="allow-same-origin allow-scripts"
       srcDoc={DOM_OUTPUT_SRC_DOC}
     />
   );
