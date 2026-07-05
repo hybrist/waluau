@@ -1,5 +1,22 @@
 pub use waluau_span::Span;
 
+mod lua_pattern;
+pub use lua_pattern::{
+    LuaCaptureKind, lua_pattern_captures, lua_pattern_is_plain, string_find_result_types,
+    string_match_result_types,
+};
+
+/// Capture kinds for a string builtin's pattern argument. Only literal
+/// patterns can be analyzed statically; non-literal patterns and malformed
+/// literals fall back to "no captures" (the runtime pattern engine raises
+/// the Lua error for malformed patterns when the call actually runs).
+pub fn expr_pattern_captures(pattern_arg: &Expr) -> Vec<LuaCaptureKind> {
+    match pattern_arg {
+        Expr::String(literal, _) => lua_pattern_captures(literal).unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SymbolId(pub usize);
 
@@ -198,6 +215,13 @@ impl Type {
             Self::Nullable(inner) => Some(*inner.clone()),
             _ => None,
         }
+    }
+
+    /// Nullable types whose inner value type has no null representation in
+    /// wasm (numerics and bools). These are boxed into `anyref`, with null
+    /// standing for nil, so conversions to/from the inner type must box/unbox.
+    pub fn is_boxed_nullable(&self) -> bool {
+        matches!(self, Self::Nullable(inner) if matches!(**inner, Self::Numeric(_) | Self::Bool))
     }
 
     pub fn tagged_variant(&self, tag: &str) -> Option<TaggedVariant> {

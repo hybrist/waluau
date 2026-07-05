@@ -728,20 +728,24 @@ fn emits_valid_wasm_for_unknown_boxing() {
 }
 
 #[test]
-fn rejects_implicit_unbox_from_unknown() {
-    // Unboxing must be explicit: assigning `unknown` to a concrete type is rejected.
+fn allows_implicit_unbox_from_unknown() {
+    // `unknown` values (e.g. unannotated Lua parameters) implicitly unbox to
+    // concrete types with a runtime-checked cast, mirroring Lua's dynamic
+    // typing.
     let source = r#"
-        function bad(v: unknown): i32
+        function pass(v: unknown): i32
             local x: i32 = v
             return x
         end
     "#;
     let program = waluau_parser::parse(source).expect("parse should succeed");
-    let result = waluau_hir::type_check_and_infer(&program);
-    assert!(
-        result.is_err(),
-        "implicit unbox from unknown should be a type error"
-    );
+    let typed =
+        waluau_hir::type_check_and_infer(&program).expect("implicit unbox should type-check");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
 }
 
 #[test]

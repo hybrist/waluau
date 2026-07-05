@@ -5,11 +5,12 @@ use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
 use super::Binding;
 use super::builtins::{
-    STRING_BYTE, STRING_FIND, STRING_FORMAT, STRING_LEN, STRING_LOWER, STRING_REP, STRING_REVERSE,
-    STRING_SUB, STRING_UPPER, infer_bit32_builtin_call, infer_coroutine_builtin_call,
-    infer_error_builtin_call, infer_math_builtin_call, infer_pcall_builtin_call,
-    infer_promise_await_method_call, infer_promise_builtin_call, infer_select_builtin_call,
-    infer_string_builtin_call, infer_table_builtin_call, infer_tostring_builtin_call,
+    STRING_BYTE, STRING_FIND, STRING_FORMAT, STRING_GMATCH, STRING_GSUB, STRING_LEN, STRING_LOWER,
+    STRING_MATCH, STRING_REP, STRING_REVERSE, STRING_SUB, STRING_UPPER, infer_bit32_builtin_call,
+    infer_coroutine_builtin_call, infer_error_builtin_call, infer_math_builtin_call,
+    infer_pcall_builtin_call, infer_promise_await_method_call, infer_promise_builtin_call,
+    infer_select_builtin_call, infer_string_builtin_call, infer_table_builtin_call,
+    infer_tostring_builtin_call,
 };
 use super::numeric::{
     coerce_type, common_element_type, infer_numeric_common_type, is_extern_subtype_of,
@@ -742,6 +743,9 @@ pub(super) fn infer_expr(
                 call_args.extend_from_slice(args);
                 let builtin = match name.as_str() {
                     "find" => Some(STRING_FIND),
+                    "match" => Some(STRING_MATCH),
+                    "gmatch" => Some(STRING_GMATCH),
+                    "gsub" => Some(STRING_GSUB),
                     "len" => Some(STRING_LEN),
                     "sub" => Some(STRING_SUB),
                     "rep" => Some(STRING_REP),
@@ -986,7 +990,18 @@ pub(super) fn infer_expr(
             op, left, right, ..
         } => match op {
             BinaryOp::Concat => {
-                let left_ty = infer_expr(left, vars, fn_signatures, active_type_params, None)?;
+                let mut left_ty = first_of_multi(infer_expr(
+                    left,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    None,
+                )?);
+                if left_ty == Type::Unknown
+                    || matches!(left_ty, Type::Nullable(ref inner) if **inner == Type::String)
+                {
+                    left_ty = Type::String;
+                }
                 if left_ty == Type::String {
                     let right_ty = infer_expr(
                         right,
@@ -1152,16 +1167,52 @@ pub(super) fn infer_expr(
                     } else {
                         left
                     };
-                    let value_ty =
-                        infer_expr(value, vars, fn_signatures, active_type_params, None)?;
+                    let value_ty = first_of_multi(infer_expr(
+                        value,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        None,
+                    )?);
                     if matches!(value_ty, Type::Nullable(_)) {
                         return Ok(Type::Bool);
                     }
                     return Err(Diagnostic::new(
-                        "nil comparison requires a nullable extern operand",
+                        "nil comparison requires a nullable operand",
                     ));
                 }
-                let left_ty = infer_expr(left, vars, fn_signatures, active_type_params, None)?;
+                let left_ty = first_of_multi(infer_expr(
+                    left,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    None,
+                )?);
+                if matches!(left_ty, Type::Nullable(_)) {
+                    let _ = infer_expr(
+                        right,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        Some(left_ty),
+                    )?;
+                    return Ok(Type::Bool);
+                }
+                if let Ok(right_probe) =
+                    infer_expr(right, vars, fn_signatures, active_type_params, None)
+                        .map(first_of_multi)
+                {
+                    if matches!(right_probe, Type::Nullable(_)) {
+                        let _ = infer_expr(
+                            left,
+                            vars,
+                            fn_signatures,
+                            active_type_params,
+                            Some(right_probe),
+                        )?;
+                        return Ok(Type::Bool);
+                    }
+                }
                 if left_ty == Type::Bool {
                     let right_ty = infer_expr(
                         right,
@@ -1215,6 +1266,14 @@ pub(super) fn infer_expr(
     }
 }
 
+/// Lua multi-value adjustment for a type in a single-value context.
+pub(super) fn first_of_multi(ty: Type) -> Type {
+    match ty {
+        Type::Multi(mut parts) if !parts.is_empty() => parts.remove(0),
+        other => other,
+    }
+}
+
 fn is_nil_comparison(left: &Expr, right: &Expr) -> bool {
     matches!(left, Expr::Nil(..)) || matches!(right, Expr::Nil(..))
 }
@@ -1233,7 +1292,12 @@ pub(super) fn infer_expr_list(
         let next_expected = remaining_expected.and_then(|types| types.first().cloned());
         let ty = if let Expr::Call { callee, .. } = expr {
             let expands_multi = builtin_name(callee.as_ref()).is_some_and(|name| {
-                name == "coroutine.resume" || name == "pcall" || name == STRING_BYTE
+                name == "coroutine.resume"
+                    || name == "pcall"
+                    || name == STRING_FIND
+                    || name == STRING_MATCH
+                    || name == STRING_GSUB
+                    || name == STRING_BYTE
             });
             // A Name not found in fn_signatures or vars may be a tagged-union constructor
             // (e.g. `Num(42)`). Pass next_expected so the constructor intercept in
@@ -1377,7 +1441,7 @@ fn infer_function_expr(
             saw_return = true;
         }
     }
-    if !saw_return && return_ty != Type::Unit {
+    if !saw_return && return_ty != Type::Unit && !matches!(return_ty, Type::Nullable(_)) {
         return Err(Diagnostic::new("function expression is missing a return"));
     }
     coerce_type(function_ty, expected)

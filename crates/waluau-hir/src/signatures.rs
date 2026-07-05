@@ -573,6 +573,15 @@ pub(super) fn infer_top_level_function_return_type(
     for ty in returns.into_iter().skip(1) {
         merged = common_return_type(merged, ty)?;
     }
+    // A function that can fall off the end implicitly returns nil, making an
+    // otherwise non-nil return type nullable (Lua semantics).
+    if !matches!(
+        merged,
+        Type::Unit | Type::Nullable(_) | Type::Nil | Type::Multi(_)
+    ) && !super::statements::stmts_always_return(&function.body)
+    {
+        merged = Type::Nullable(Box::new(merged));
+    }
     Ok(Some(merged))
 }
 
@@ -618,6 +627,13 @@ pub(super) fn infer_function_expr_return_type(
     let mut merged = returns[0].clone();
     for ty in returns.into_iter().skip(1) {
         merged = common_return_type(merged, ty)?;
+    }
+    if !matches!(
+        merged,
+        Type::Unit | Type::Nullable(_) | Type::Nil | Type::Multi(_)
+    ) && !super::statements::stmts_always_return(&function.body)
+    {
+        merged = Type::Nullable(Box::new(merged));
     }
     Ok(merged)
 }

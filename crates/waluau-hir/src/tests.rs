@@ -487,7 +487,7 @@ fn nil_comparison_rejects_non_nullable_extern_values() {
     let error = super::type_check_and_infer(&program).expect_err("type check should fail");
     assert_eq!(
         error.to_string(),
-        "nil comparison requires a nullable extern operand"
+        "nil comparison requires a nullable operand"
     );
 }
 
@@ -2137,7 +2137,9 @@ fn rejects_multi_value_call_type_mismatch() {
 }
 
 #[test]
-fn rejects_multi_value_in_scalar_context() {
+fn multi_value_in_scalar_context_takes_first_value() {
+    // Lua adjustment rules: a multi-value call in a single-value context
+    // keeps only its first value.
     let source = r#"
         function pair(x: i32, y: i32): i32, i32
             return x, y
@@ -2149,11 +2151,7 @@ fn rejects_multi_value_in_scalar_context() {
         end
     "#;
     let program = parse(source).expect("parse should succeed");
-    let error = super::type_check(&program).expect_err("type check should fail");
-    assert_eq!(
-        error.to_string(),
-        "cannot implicitly convert multiple values to f64"
-    );
+    super::type_check(&program).expect("multi-value adjustment should type check");
 }
 
 #[test]
@@ -2489,7 +2487,7 @@ fn type_checks_coroutine_resume_unknown_payloads() {
 }
 
 #[test]
-fn rejects_coroutine_resume_unknown_payload_without_explicit_cast() {
+fn allows_coroutine_resume_unknown_payload_with_implicit_unbox() {
     let source = r#"
         function run_job(): i32
             local co: thread = coroutine.create(function(): i32
@@ -2504,11 +2502,9 @@ fn rejects_coroutine_resume_unknown_payload_without_explicit_cast() {
         end
     "#;
     let program = parse(source).expect("parse should succeed");
-    let error = super::type_check(&program).expect_err("type check should fail");
-    assert_eq!(
-        error.to_string(),
-        "cannot implicitly convert unknown to i32; use an explicit cast"
-    );
+    // `unknown` implicitly unboxes to concrete types with a runtime-checked
+    // cast, so binding the resume payload to i32 type-checks.
+    super::type_check(&program).expect("implicit unbox should type check");
 }
 
 #[test]

@@ -1,4 +1,5 @@
 import * as tf from '@tensorflow/tfjs';
+import { luaPatternMatch, luaGsub, luaGsubGenerator, luaGmatch, makeStringReplacer } from './lua-pattern.js';
 
 export const WALUAU_STRING_CONSTANTS_MODULE = 'string_constants';
 export const WALUAU_IMPORT_MODULE = 'waluau';
@@ -22,19 +23,6 @@ export function luauToString(value) {
   if (value === -Infinity) return '-inf';
   if (Object.is(value, -0)) return '-0';
   return String(Number(value.toPrecision(14)));
-}
-
-function luaStringPosition(index, length) {
-  const value = Number(index) | 0;
-  return value < 0 ? length + value + 1 : value;
-}
-
-function normalizeLuaStringStart(index, length) {
-  return Math.max(1, Math.min(length + 1, luaStringPosition(index, length))) - 1;
-}
-
-function normalizeLuaStringEnd(index, length) {
-  return Math.max(0, Math.min(length, luaStringPosition(index, length)));
 }
 
 function luaQuoteString(value) {
@@ -148,6 +136,164 @@ function stringChar(...args) {
     }
   }
   return String.fromCodePoint(...codes);
+}
+
+// Host side of the Lua pattern-matching builtins (string.find/match/gmatch/
+// gsub). The compiler lowers those builtins to the pm_* imports below; the
+// last successful match's bounds and captures are read back through the
+// pm_match_*/pm_capture_* accessors immediately after the call that produced
+// them. gsub-with-function-replacement and gmatch iterate via integer handles
+// so nested iterations do not clobber each other.
+function createLuaPatternHost() {
+  let lastMatch = null; // { start, end (1-based inclusive), whole, captures }
+  let lastGsubCount = 0;
+  const handles = new Map();
+  let nextHandle = 1;
+
+  // Lua's posrelat + str_find_aux init clamping (1-based; negative counts
+  // from the end; anything past len+1 can never match).
+  const normalizeInit = (init, len) => {
+    let pos = Number(init) | 0;
+    if (pos < 0) pos = -pos > len ? 0 : len + pos + 1;
+    if (pos < 1) pos = 1;
+    return pos > len + 1 ? null : pos;
+  };
+
+  const rememberMatch = (source, m) => {
+    lastMatch = {
+      start: m.start + 1,
+      end: m.end,
+      whole: source.slice(m.start, m.end),
+      captures: m.captures,
+    };
+  };
+
+  return {
+    pm_find: (haystack, pattern, init, plain) => {
+      const str = String(haystack);
+      const pat = String(pattern);
+      const start = normalizeInit(init, str.length);
+      if (start === null) {
+        lastMatch = null;
+        return 0;
+      }
+      if (plain) {
+        const index = str.indexOf(pat, start - 1);
+        if (index < 0) {
+          lastMatch = null;
+          return 0;
+        }
+        lastMatch = {
+          start: index + 1,
+          end: index + pat.length,
+          whole: pat,
+          captures: [],
+        };
+        return 1;
+      }
+      const m = luaPatternMatch(str, pat, start - 1, false);
+      if (!m) {
+        lastMatch = null;
+        return 0;
+      }
+      rememberMatch(str, m);
+      return 1;
+    },
+    pm_match: (haystack, pattern, init) => {
+      const str = String(haystack);
+      const start = normalizeInit(init, str.length);
+      if (start === null) {
+        lastMatch = null;
+        return 0;
+      }
+      const m = luaPatternMatch(str, String(pattern), start - 1, true);
+      if (!m) {
+        lastMatch = null;
+        return 0;
+      }
+      rememberMatch(str, m);
+      return 1;
+    },
+    pm_match_start: () => (lastMatch ? lastMatch.start : 0),
+    pm_match_end: () => (lastMatch ? lastMatch.end : 0),
+    pm_capture_string: (index) => {
+      if (!lastMatch) return '';
+      const i = Number(index);
+      if (i === 0) return lastMatch.whole;
+      const capture = lastMatch.captures[i - 1];
+      return capture === undefined ? '' : String(capture.value);
+    },
+    pm_capture_position: (index) => {
+      if (!lastMatch) return 0;
+      const capture = lastMatch.captures[Number(index) - 1];
+      return capture === undefined ? 0 : Number(capture.value);
+    },
+    pm_gsub: (source, pattern, replacement, maxCount) => {
+      const { result, count } = luaGsub(
+        String(source),
+        String(pattern),
+        makeStringReplacer(String(replacement)),
+        Number(maxCount),
+      );
+      lastGsubCount = count;
+      return result;
+    },
+    pm_gsub_count: () => lastGsubCount,
+    pm_gsub_begin: (source, pattern, maxCount) => {
+      const handle = nextHandle++;
+      handles.set(handle, {
+        gen: luaGsubGenerator(String(source), String(pattern), Number(maxCount)),
+        replacement: undefined,
+        result: null,
+      });
+      return handle;
+    },
+    pm_gsub_next: (handle) => {
+      const state = handles.get(Number(handle));
+      const step = state.gen.next(state.replacement);
+      state.replacement = undefined;
+      if (step.done) {
+        state.result = step.value.result;
+        lastGsubCount = step.value.count;
+        return 0;
+      }
+      lastMatch = {
+        start: 0,
+        end: 0,
+        whole: step.value.whole,
+        captures: step.value.captures,
+      };
+      return 1;
+    },
+    pm_gsub_replace: (handle, replacement) => {
+      handles.get(Number(handle)).replacement = String(replacement);
+    },
+    pm_gsub_keep: (handle) => {
+      handles.get(Number(handle)).replacement = null;
+    },
+    pm_gsub_finish: (handle) => {
+      const state = handles.get(Number(handle));
+      handles.delete(Number(handle));
+      return state.result ?? '';
+    },
+    pm_gmatch: (haystack, pattern) => {
+      const source = String(haystack);
+      const handle = nextHandle++;
+      handles.set(handle, { next: luaGmatch(source, String(pattern)), source });
+      return handle;
+    },
+    pm_gmatch_next: (handle) => {
+      const state = handles.get(Number(handle));
+      if (!state) return 0;
+      const m = state.next();
+      if (!m) {
+        handles.delete(Number(handle));
+        return 0;
+      }
+      rememberMatch(state.source, m);
+      return 1;
+    },
+  };
 }
 
 function rememberDomEventListener(target, type, listener) {
@@ -847,32 +993,35 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
         console.log(value);
       }
     },
-    string_find: (haystack, needle, init, plain) => {
-      const hay = String(haystack);
-      const needleStr = String(needle);
-      let start = Number(init);
-      if (start < 0) start = Math.max(0, hay.length + start);
-      // Pattern matching is not supported; only plain substring search.
-      void plain;
-      return hay.indexOf(needleStr, start);
-    },
+    ...createLuaPatternHost(),
     string_len: (value) => String(value).length,
     string_sub: (value, first, last) => {
+      // Lua string.sub semantics: 1-based inclusive indices, negatives count
+      // from the end (-1 is the last character, which also serves as the
+      // compiler's default for a missing `last`).
       const str = String(value);
-      const start = normalizeLuaStringStart(first, str.length);
-      const end = last == null ? str.length : normalizeLuaStringEnd(last, str.length);
-      return str.slice(start, Math.max(start, end));
+      const len = str.length;
+      const posrelat = (pos) => (pos >= 0 ? pos : Math.max(0, len + pos + 1));
+      let start = posrelat(Number(first) | 0);
+      let end = posrelat(Number(last) | 0);
+      if (start < 1) start = 1;
+      if (end > len) end = len;
+      return start <= end ? str.slice(start - 1, end) : '';
     },
     string_rep: (value, count, separator) => {
       const n = Math.max(0, Number(count) | 0);
       return Array(n).fill(String(value)).join(String(separator));
     },
     string_byte: (value, index) => {
+      // Lua string.byte semantics: 1-based index, negatives count from the
+      // end. Out-of-range returns -1 (Lua returns no values; a nilable
+      // multi-return string.byte is tracked separately).
       const str = String(value);
-      const position = luaStringPosition(index, str.length);
-      const offset = position - 1;
-      if (offset < 0 || offset >= str.length) return -1;
-      return str.codePointAt(offset);
+      const len = str.length;
+      let offset = Number(index) | 0;
+      if (offset < 0) offset = len + offset + 1;
+      if (offset < 1 || offset > len) return -1;
+      return str.codePointAt(offset - 1);
     },
     string_upper: (value) => String(value).toUpperCase(),
     string_lower: (value) => String(value).toLowerCase(),
