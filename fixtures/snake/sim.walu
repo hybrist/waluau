@@ -1,0 +1,54 @@
+-- Headless, DOM-free sanity harness for the snake rules. This entry never
+-- touches the canvas or DOM externs, so it can be compiled and executed in
+-- any wasm host to check game.walu and rng.walu behavior deterministically.
+--
+--     cargo run -p waluau-cli -- fixtures/snake/sim.walu -o sim.wasm
+
+local game = require("./game")
+
+local state = game.new_state(9, 9, 42)
+assert(state.alive)
+assert(state.score == 0)
+
+-- The snake starts as three segments with the head at the grid center,
+-- moving right.
+local snake = state.snake
+assert(#snake == 3)
+local head = snake[0]
+assert(head.x == 4 and head.y == 4)
+
+-- Food never spawns on top of the snake.
+local food = state.food
+assert(food.x >= 0 and food.x < 9)
+assert(food.y >= 0 and food.y < 9)
+
+game.step(state)
+game.step(state)
+assert(state.alive)
+
+-- Steer down and walk into the bottom wall: the run must end.
+game.turn(state, 0, 1)
+local i: i32 = 0
+while i < 9 do
+    game.step(state)
+    i += 1
+end
+assert(not state.alive)
+
+-- Stepping a dead game is a no-op.
+game.step(state)
+assert(not state.alive)
+
+-- Restart brings the board back to the initial shape.
+game.reset(state)
+assert(state.alive)
+assert(state.score == 0)
+local reset_snake = state.snake
+assert(#reset_snake == 3)
+
+-- A 180-degree reversal is ignored: moving right, turning left must not
+-- apply, so the next step still moves the head to the right.
+game.turn(state, -1, 0)
+game.step(state)
+local reset_head = state.snake[0]
+assert(reset_head.x == 5 and reset_head.y == 4)

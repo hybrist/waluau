@@ -1,0 +1,139 @@
+-- Core snake rules: grid state, movement, food, and collisions. No DOM or
+-- canvas access in this module so the logic stays host-independent.
+--
+-- TODO(waluau-ae6g): module-local type aliases do not unify across module
+-- boundaries, so the game-state record type below is spelled out inline in
+-- every exported signature (here and in render.walu) instead of a shared
+-- `type State = ...` alias. Collapse these once cross-module type aliases
+-- unify structurally.
+
+function occupied(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }, x: i32, y: i32): bool
+    -- TODO(waluau-lhia): `#state.snake` does not typecheck ("cannot
+    -- implicitly convert array to i32"); the length operator only accepts
+    -- array locals, so the field is aliased into one first.
+    local snake = state.snake
+    local i: i32 = 0
+    while i < #snake do
+        local seg = snake[i]
+        if seg.x == x and seg.y == y then
+            return true
+        end
+        i += 1
+    end
+    return false
+end
+
+function spawn_food(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }): unit
+    -- TODO(waluau-w5r0): a file-scope `local rng = require("./rng")` is not
+    -- visible from function bodies (top-level locals are not captured), so
+    -- the dependency has to be re-required inside every function that uses it.
+    local rng = require("./rng")
+    local attempts: i32 = 0
+    local max_attempts: i32 = state.cols * state.rows
+    -- TODO(waluau-40ix): a bare `return` inside a unit function is rejected
+    -- ("cannot implicitly convert nil to unit"), so instead of returning from
+    -- the loop on success this tracks a `placed` flag.
+    local placed: bool = false
+    while not placed and attempts < max_attempts do
+        local fx: i32 = rng.next_below(state.rng, state.cols)
+        local fy: i32 = rng.next_below(state.rng, state.rows)
+        if not occupied(state, fx, fy) then
+            state.food.x = fx
+            state.food.y = fy
+            placed = true
+        end
+        attempts += 1
+    end
+    if not placed then
+        -- Rejection sampling gave up; the board is (almost) full. Treat it as
+        -- the end of the run rather than looping forever.
+        state.alive = false
+    end
+end
+
+function new_state(cols: i32, rows: i32, seed: i32): { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }
+    local state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool } = {
+        cols = cols,
+        rows = rows,
+        snake = {},
+        dir = { x = 1, y = 0 },
+        next_dir = { x = 1, y = 0 },
+        food = { x = 0, y = 0 },
+        rng = { seed = seed },
+        score = 0,
+        alive = true,
+    }
+    reset(state)
+    return state
+end
+
+function reset(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }): unit
+    -- TODO(waluau-xyx8): `state.snake = {}` would be the obvious reset, but an
+    -- empty array literal does not adopt the annotated element type of the
+    -- field it is assigned to. Drain the existing array in place instead.
+    -- TODO(waluau-lhia): aliased local because `#state.snake` does not
+    -- typecheck on the record field directly.
+    local snake = state.snake
+    while #snake > 0 do
+        local discarded = table.remove(snake)
+    end
+    local cx: i32 = state.cols // 2
+    local cy: i32 = state.rows // 2
+    table.insert(state.snake, 0, { x = cx - 2, y = cy })
+    table.insert(state.snake, 0, { x = cx - 1, y = cy })
+    table.insert(state.snake, 0, { x = cx, y = cy })
+    state.dir.x = 1
+    state.dir.y = 0
+    state.next_dir.x = 1
+    state.next_dir.y = 0
+    state.score = 0
+    state.alive = true
+    spawn_food(state)
+end
+
+-- Queue a direction change for the next tick, ignoring 180-degree reversals.
+function turn(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }, dx: i32, dy: i32): unit
+    -- Inverted guard instead of an early `return` (TODO(waluau-40ix)).
+    if dx ~= -state.dir.x or dy ~= -state.dir.y then
+        state.next_dir.x = dx
+        state.next_dir.y = dy
+    end
+end
+
+-- Advance the game by one tick.
+function step(state: { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }): unit
+    -- TODO(waluau-40ix): early-exit guards (`if not state.alive then return
+    -- end`) do not typecheck in unit functions, hence this if/elseif ladder.
+    if state.alive then
+        -- Copy fields instead of `state.dir = state.next_dir`: assigning the
+        -- record itself would alias next_dir and let a later turn() rewrite
+        -- the direction we are already moving in.
+        state.dir.x = state.next_dir.x
+        state.dir.y = state.next_dir.y
+
+        local head = state.snake[0]
+        local nx: i32 = head.x + state.dir.x
+        local ny: i32 = head.y + state.dir.y
+
+        if nx < 0 or nx >= state.cols or ny < 0 or ny >= state.rows then
+            state.alive = false
+        elseif occupied(state, nx, ny) then
+            state.alive = false
+        else
+            table.insert(state.snake, 0, { x = nx, y = ny })
+            if nx == state.food.x and ny == state.food.y then
+                state.score = state.score + 1
+                spawn_food(state)
+            else
+                local moved_tail = table.remove(state.snake)
+            end
+        end
+    end
+end
+
+return {
+    new_state = new_state,
+    reset = reset,
+    turn = turn,
+    step = step,
+}

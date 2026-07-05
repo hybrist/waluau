@@ -1,0 +1,149 @@
+-- Snake, rendered into a <canvas> by Waluau. Entry point: builds the DOM
+-- shell, wires input, and drives the fixed-timestep game loop off
+-- requestAnimationFrame.
+
+function make_button(document: Document, id: string, label: string): Element
+    local button: Element = document:create_element("button")
+    button.id = id
+    button.class_name = "snake-button rounded-md bg-slate-700 px-3 py-2 text-sm font-medium text-white hover:bg-slate-600"
+    button:set_attribute("type", "button")
+    button.text_content = label
+    return button
+end
+
+function install_snake(): unit
+    -- TODO(waluau-w5r0): these requires live inside the function because
+    -- file-scope locals (including require bindings) are not visible from
+    -- function bodies.
+    local game = require("./game")
+    local render = require("./render")
+    local window = require("dom:window")
+    local document: Document = window.document
+    local body: HTMLElement = document.body
+
+    local existing_root: Element? = document:get_element_by_id("app")
+    if existing_root ~= nil then
+        body:remove_child(existing_root)
+    end
+
+    local root: Element = document:create_element("div")
+    root.id = "app"
+    root.class_name = "flex flex-col items-center gap-3 bg-slate-950 p-4 text-slate-100"
+    body:append_child(root)
+
+    local heading: Element = document:create_element("h1")
+    heading.class_name = "text-lg font-semibold"
+    heading.text_content = "Waluau Snake"
+    root:append_child(heading)
+
+    local cols: i32 = 21
+    local rows: i32 = 21
+
+    local element: Element = document:create_element("canvas")
+    element.id = "snake-canvas"
+    root:append_child(element)
+
+    if HTMLCanvasElement(canvas) = element then
+        local width_px: f64 = render.cell_size() * cols::f64
+        local height_px: f64 = render.cell_size() * rows::f64
+        -- 336 = 21 cols/rows * 16px cells (render.cell_size()); the width/
+        -- height properties are u32 so the literal is spelled out here.
+        canvas.width = 336
+        canvas.height = 336
+        local style: CSSStyleProperties = canvas.style
+        style:setProperty("width", tostring(width_px) .. "px")
+        style:setProperty("height", tostring(height_px) .. "px")
+        -- The playfield backdrop: fills are recolored via ctx.filter (see
+        -- render.walu), but the background can simply be CSS on the element.
+        style:setProperty("background-color", "#0f172a")
+        style:setProperty("image-rendering", "pixelated")
+
+        local context: CanvasRenderingContext2D? = canvas:get_context("2d")
+        assert(context ~= nil)
+        local ctx: CanvasRenderingContext2D = context::CanvasRenderingContext2D
+
+        -- The rAF timestamp is the only clock the DOM surface exposes, so it
+        -- doubles as the RNG seed. TODO(waluau-6i00): replace with
+        -- math.randomseed/math.random once math builtins are externalized.
+        local state = game.new_state(cols, rows, 20260705)
+
+        -- Input. On-screen buttons stand in for arrow keys.
+        --
+        -- TODO(waluau-uzdp): KeyboardEvent is not part of the generated DOM
+        -- extern surface, so there is no way to read event.key/event.code
+        -- from a "keydown" listener. Until then the only portable input is a
+        -- clickable d-pad.
+        --
+        -- TODO(waluau-9m6z): Event.type is still disabled in the extern
+        -- filter (cross-interface member collision, since fixed by
+        -- waluau-1l02/PR #241), so one shared listener cannot branch on the
+        -- event kind or key. Each button therefore gets its own closure.
+        local controls: Element = document:create_element("div")
+        controls.id = "snake-controls"
+        controls.class_name = "flex gap-2"
+        root:append_child(controls)
+
+        local up_button: Element = make_button(document, "snake-up", "Up")
+        up_button:add_event_listener("click", function(_event: Event): unit
+            game.turn(state, 0, -1)
+        end)
+        controls:append_child(up_button)
+
+        local down_button: Element = make_button(document, "snake-down", "Down")
+        down_button:add_event_listener("click", function(_event: Event): unit
+            game.turn(state, 0, 1)
+        end)
+        controls:append_child(down_button)
+
+        local left_button: Element = make_button(document, "snake-left", "Left")
+        left_button:add_event_listener("click", function(_event: Event): unit
+            game.turn(state, -1, 0)
+        end)
+        controls:append_child(left_button)
+
+        local right_button: Element = make_button(document, "snake-right", "Right")
+        right_button:add_event_listener("click", function(_event: Event): unit
+            game.turn(state, 1, 0)
+        end)
+        controls:append_child(right_button)
+
+        local restart_button: Element = make_button(document, "snake-restart", "Restart")
+        restart_button:add_event_listener("click", function(_event: Event): unit
+            game.reset(state)
+        end)
+        controls:append_child(restart_button)
+
+        -- Fixed-timestep loop: rAF drives rendering, an accumulator advances
+        -- the simulation every tick_ms. (No setTimeout/setInterval in the
+        -- extern surface, but rAF plus an accumulator is the better game loop
+        -- anyway.)
+        local tick_ms: f64 = 140.0
+        local last_time: f64 = -1.0
+        local accumulator: f64 = 0.0
+
+        local frame: (f64) -> unit = function self(now: f64): unit
+            if last_time < 0.0 then
+                -- First frame: fold the timestamp into the RNG so runs differ.
+                state.rng.seed = (state.rng.seed + math.floor(now)::i32) % 2147483647
+                last_time = now
+            end
+            accumulator += now - last_time
+            last_time = now
+            -- Clamp huge deltas (background tab) so we do not fast-forward.
+            if accumulator > 1000.0 then
+                accumulator = 1000.0
+            end
+            while accumulator >= tick_ms do
+                game.step(state)
+                accumulator -= tick_ms
+            end
+            render.draw(ctx, state)
+            local frame_id: u32 = window:requestAnimationFrame(self)
+        end
+        local first_frame_id: u32 = window:requestAnimationFrame(frame)
+    else
+        assert(false)
+    end
+end
+
+install_snake()
