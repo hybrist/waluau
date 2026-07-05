@@ -24,10 +24,17 @@ export function luauToString(value) {
   return String(Number(value.toPrecision(14)));
 }
 
-function normalizeStringIndex(index, length) {
-  const value = Number(index);
-  if (value < 0) return Math.max(0, length + value);
-  return Math.min(length, value);
+function luaStringPosition(index, length) {
+  const value = Number(index) | 0;
+  return value < 0 ? length + value + 1 : value;
+}
+
+function normalizeLuaStringStart(index, length) {
+  return Math.max(1, Math.min(length + 1, luaStringPosition(index, length))) - 1;
+}
+
+function normalizeLuaStringEnd(index, length) {
+  return Math.max(0, Math.min(length, luaStringPosition(index, length)));
 }
 
 function luaQuoteString(value) {
@@ -36,20 +43,36 @@ function luaQuoteString(value) {
     .replace(/\u2029/g, '\\u2029');
 }
 
-function formatNumber(value, specifier) {
+function formatNumber(value, specifier, precision) {
   const number = Number(value);
   switch (specifier) {
     case 'd':
+    case 'i':
       return String(Math.trunc(number));
+    case 'u':
+      return BigInt.asUintN(64, BigInt(Math.trunc(number))).toString(10);
+    case 'o':
+      return BigInt.asUintN(64, BigInt(Math.trunc(number))).toString(8);
     case 'x':
-      return (Math.trunc(number) >>> 0).toString(16);
+      return BigInt.asUintN(64, BigInt(Math.trunc(number))).toString(16);
+    case 'X':
+      return BigInt.asUintN(64, BigInt(Math.trunc(number))).toString(16).toUpperCase();
     case 'f':
-      return number.toFixed(6);
+      return number.toFixed(precision ?? 6);
     case 'g':
-      return luauToString(number);
+    case 'G':
+      return precision == null ? luauToString(number) : String(Number(number.toPrecision(precision)));
     default:
       return luauToString(number);
   }
+}
+
+function padFormatted(value, flags, width, specifier) {
+  const minWidth = width == null ? 0 : width;
+  if (value.length >= minWidth) return value;
+  const zeroPad = flags.includes('0') && !flags.includes('-') && !['s', 'q', 'c'].includes(specifier);
+  const padding = (zeroPad ? '0' : ' ').repeat(minWidth - value.length);
+  return flags.includes('-') ? value + padding : padding + value;
 }
 
 function stringFormat(format, ...args) {
@@ -65,27 +88,66 @@ function stringFormat(format, ...args) {
     if (i + 1 >= fmt.length) {
       throw new Error('incomplete string.format specifier');
     }
+    let flags = '';
+    while (i + 1 < fmt.length && '-+ #0'.includes(fmt[i + 1])) {
+      flags += fmt[++i];
+      if (flags.length > 16) throw new Error('invalid string.format flags');
+    }
+    let widthText = '';
+    while (i + 1 < fmt.length && /[0-9]/.test(fmt[i + 1])) widthText += fmt[++i];
+    let precision = null;
+    if (i + 1 < fmt.length && fmt[i + 1] === '.') {
+      i++;
+      let precisionText = '';
+      while (i + 1 < fmt.length && /[0-9]/.test(fmt[i + 1])) precisionText += fmt[++i];
+      if (precisionText === '' || precisionText.length > 2) {
+        throw new Error('invalid string.format precision');
+      }
+      precision = Number(precisionText);
+    }
+    if (widthText.length > 2) throw new Error('invalid string.format width');
+    const width = widthText === '' ? null : Number(widthText);
     const specifier = fmt[++i];
     if (specifier === '%') {
       out += '%';
       continue;
     }
-    if (!'dsfgxq'.includes(specifier)) {
+    if (specifier === '*') {
+      if (argIndex >= args.length) throw new Error('not enough arguments for string.format');
+      out += String(args[argIndex++]);
+      continue;
+    }
+    if (!'diuofegGxXqsc'.includes(specifier)) {
       throw new Error(`unsupported string.format specifier %${specifier}`);
     }
     if (argIndex >= args.length) {
       throw new Error('not enough arguments for string.format');
     }
     const value = args[argIndex++];
+    let formatted;
     if (specifier === 's') {
-      out += String(value);
+      formatted = String(value);
+      if (precision != null) formatted = formatted.slice(0, precision);
     } else if (specifier === 'q') {
-      out += luaQuoteString(value);
+      formatted = luaQuoteString(value);
+    } else if (specifier === 'c') {
+      formatted = String.fromCodePoint(Number(value) & 0xff);
     } else {
-      out += formatNumber(value, specifier);
+      formatted = formatNumber(value, specifier, precision);
     }
+    out += padFormatted(formatted, flags, width, specifier);
   }
   return out;
+}
+
+function stringChar(...args) {
+  const codes = args.map((value) => Number(value));
+  for (const code of codes) {
+    if (!Number.isInteger(code) || code < 0 || code > 255) {
+      throw new Error(`string.char code out of range: ${code}`);
+    }
+  }
+  return String.fromCodePoint(...codes);
 }
 
 function rememberDomEventListener(target, type, listener) {
@@ -797,11 +859,8 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
     string_len: (value) => String(value).length,
     string_sub: (value, first, last) => {
       const str = String(value);
-      const start = normalizeStringIndex(first, str.length);
-      const end =
-        Number(last) === -1
-          ? str.length
-          : Math.min(str.length, normalizeStringIndex(last, str.length) + 1);
+      const start = normalizeLuaStringStart(first, str.length);
+      const end = last == null ? str.length : normalizeLuaStringEnd(last, str.length);
       return str.slice(start, Math.max(start, end));
     },
     string_rep: (value, count, separator) => {
@@ -810,30 +869,22 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
     },
     string_byte: (value, index) => {
       const str = String(value);
-      const offset = normalizeStringIndex(index, str.length);
+      const position = luaStringPosition(index, str.length);
+      const offset = position - 1;
       if (offset < 0 || offset >= str.length) return -1;
       return str.codePointAt(offset);
     },
     string_upper: (value) => String(value).toUpperCase(),
     string_lower: (value) => String(value).toLowerCase(),
-    string_char0: () => '',
-    string_char1: (a) => String.fromCodePoint(Number(a)),
-    string_char2: (a, b) => String.fromCodePoint(Number(a), Number(b)),
-    string_char3: (a, b, c) => String.fromCodePoint(Number(a), Number(b), Number(c)),
-    string_char4: (a, b, c, d) => String.fromCodePoint(Number(a), Number(b), Number(c), Number(d)),
-    string_char5: (a, b, c, d, e) => String.fromCodePoint(Number(a), Number(b), Number(c), Number(d), Number(e)),
-    string_char6: (a, b, c, d, e, f) => String.fromCodePoint(Number(a), Number(b), Number(c), Number(d), Number(e), Number(f)),
-    string_char7: (a, b, c, d, e, f, g) => String.fromCodePoint(Number(a), Number(b), Number(c), Number(d), Number(e), Number(f), Number(g)),
-    string_char8: (a, b, c, d, e, f, g, h) => String.fromCodePoint(Number(a), Number(b), Number(c), Number(d), Number(e), Number(f), Number(g), Number(h)),
-    string_format0: (format) => stringFormat(format),
-    string_format1: (format, a) => stringFormat(format, a),
-    string_format2: (format, a, b) => stringFormat(format, a, b),
-    string_format3: (format, a, b, c) => stringFormat(format, a, b, c),
-    string_format4: (format, a, b, c, d) => stringFormat(format, a, b, c, d),
-    string_format5: (format, a, b, c, d, e) => stringFormat(format, a, b, c, d, e),
-    string_format6: (format, a, b, c, d, e, f) => stringFormat(format, a, b, c, d, e, f),
-    string_format7: (format, a, b, c, d, e, f, g) => stringFormat(format, a, b, c, d, e, f, g),
-    string_format8: (format, a, b, c, d, e, f, g, h) => stringFormat(format, a, b, c, d, e, f, g, h),
+    string_reverse: (value) => Array.from(String(value)).reverse().join(''),
+    ...Object.fromEntries(Array.from({ length: 17 }, (_, arity) => [
+      `string_char${arity}`,
+      (...args) => stringChar(...args),
+    ])),
+    ...Object.fromEntries(Array.from({ length: 101 }, (_, arity) => [
+      `string_format${arity}`,
+      (format, ...args) => stringFormat(format, ...args),
+    ])),
     extern_is: externIs,
     math_pow: (base, exponent) => Math.pow(base, exponent),
     bytes_literal: (index) => {
