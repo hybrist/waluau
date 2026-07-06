@@ -15,6 +15,29 @@ pub(super) struct GenericScheme {
     pub(super) return_type: Type,
 }
 
+/// One overload of a declared host function. `name` is the unique internal
+/// name the overload was renamed to (`base$overloadN`); the matching
+/// `FnSignature::Mono` entry is registered under that name.
+#[derive(Clone, Debug)]
+pub(super) struct OverloadVariant {
+    pub(super) name: String,
+    pub(super) params: Vec<Type>,
+    pub(super) return_type: Type,
+}
+
+impl OverloadVariant {
+    /// Human-readable parameter list for diagnostics, e.g. `(f32, f32)`.
+    pub(super) fn params_display(&self) -> String {
+        let params = self
+            .params
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("({params})")
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(super) enum FnSignature {
     Mono {
@@ -23,6 +46,11 @@ pub(super) enum FnSignature {
         return_type: Type,
     },
     Generic(GenericScheme),
+    /// A set of declared host function overloads sharing one source-level
+    /// name, registered under the base name. Calls select a variant from the
+    /// argument types; each variant is also registered as a `Mono` signature
+    /// under its unique internal name.
+    Overloaded(Vec<OverloadVariant>),
 }
 
 pub(super) fn inference_diagnostic(

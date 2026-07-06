@@ -13,12 +13,12 @@ mod signatures;
 mod statements;
 
 use expressions::{
-    infer_expr, resolve_operator_overload, resolved_type_method_name,
-    resolved_type_property_getter_name,
+    infer_expr, resolve_operator_overload, resolved_type_method_call_name,
+    resolved_type_property_getter_name, select_overload,
 };
 use signatures::{
-    FnSignature, GenericScheme, active_type_param_set, infer_function_expr_return_type,
-    infer_top_level_function_return_type, inference_diagnostic,
+    FnSignature, GenericScheme, OverloadVariant, active_type_param_set,
+    infer_function_expr_return_type, infer_top_level_function_return_type, inference_diagnostic,
 };
 use statements::{check_function, check_stmt};
 use statements::{checked_if_cast_scopes, narrowed_scopes, resolved_type_property_setter_name};
@@ -2471,11 +2471,35 @@ fn annotate_expr_resolved_members(
             annotate_expr_resolved_members(else_expr, vars, fn_signatures, active_type_params)?;
         }
         Expr::Call { callee, args, .. } => {
-            if !is_builtin_callee(callee) {
+            let builtin_callee = is_builtin_callee(callee);
+            if !builtin_callee {
                 annotate_expr_resolved_members(callee, vars, fn_signatures, active_type_params)?;
             }
-            for arg in args {
+            for arg in args.iter_mut() {
                 annotate_expr_resolved_members(arg, vars, fn_signatures, active_type_params)?;
+            }
+            // Direct calls to overloaded declared imports are rewritten to
+            // the selected overload's unique internal name so IR lowering can
+            // resolve the host import without re-running overload selection.
+            if !builtin_callee {
+                if let Expr::Name(name, _, _) = callee.as_mut() {
+                    if vars.get(name).is_none() {
+                        if let Some(FnSignature::Overloaded(variants)) =
+                            fn_signatures.get(name.as_str())
+                        {
+                            let chosen = select_overload(
+                                name,
+                                variants,
+                                None,
+                                args,
+                                vars,
+                                fn_signatures,
+                                active_type_params,
+                            )?;
+                            *name = chosen.name.clone();
+                        }
+                    }
+                }
             }
         }
         Expr::MethodCall {
@@ -2486,13 +2510,20 @@ fn annotate_expr_resolved_members(
             ..
         } => {
             annotate_expr_resolved_members(receiver, vars, fn_signatures, active_type_params)?;
-            for arg in args {
+            for arg in args.iter_mut() {
                 annotate_expr_resolved_members(arg, vars, fn_signatures, active_type_params)?;
             }
             if let Ok(receiver_ty) =
                 infer_expr(receiver, vars, fn_signatures, active_type_params, None)
             {
-                *resolved_name = resolved_type_method_name(&receiver_ty, name, fn_signatures);
+                *resolved_name = resolved_type_method_call_name(
+                    &receiver_ty,
+                    name,
+                    args,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                )?;
             }
         }
         Expr::Function(function) => {
@@ -2763,10 +2794,107 @@ fn stmts_contain_value_return(stmts: &[Stmt]) -> bool {
     })
 }
 
+/// Group `declare function` entries that share a source-level name into
+/// overload sets.
+///
+/// - Textually identical re-declarations (same parameter types, return type,
+///   and host name — common when several modules declare the same extern) are
+///   deduplicated, keeping the first occurrence.
+/// - Declarations with identical parameter types but conflicting return
+///   types or host names are rejected.
+/// - Genuine overloads (differing arity or parameter types) are renamed to
+///   unique internal names (`base$overloadN`, in declaration order) while
+///   their host names stay untouched, so each overload becomes its own host
+///   import under the shared external name.
+///
+/// Returns the overload sets keyed by base name; the variants reference the
+/// unique internal names the imports were renamed to.
+fn disambiguate_declared_import_overloads(
+    program: &mut Program,
+) -> Result<HashMap<String, Vec<OverloadVariant>>, Diagnostic> {
+    let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
+    for (index, declared) in program.declared_imports.iter().enumerate() {
+        match groups.iter_mut().find(|(name, _)| *name == declared.name) {
+            Some((_, indices)) => indices.push(index),
+            None => groups.push((declared.name.clone(), vec![index])),
+        }
+    }
+
+    let mut removed: HashSet<usize> = HashSet::new();
+    let mut overload_sets = HashMap::new();
+    for (name, indices) in groups {
+        if indices.len() == 1 {
+            continue;
+        }
+        let mut kept: Vec<usize> = Vec::new();
+        for index in indices {
+            let candidate = &program.declared_imports[index];
+            let duplicate_of = kept.iter().copied().find(|&kept_index| {
+                let existing = &program.declared_imports[kept_index];
+                existing.params.len() == candidate.params.len()
+                    && existing
+                        .params
+                        .iter()
+                        .zip(candidate.params.iter())
+                        .all(|(a, b)| a.ty == b.ty)
+            });
+            match duplicate_of {
+                Some(kept_index) => {
+                    let existing = &program.declared_imports[kept_index];
+                    if existing.return_type == candidate.return_type
+                        && existing.host_name == candidate.host_name
+                    {
+                        // Exact re-declaration (e.g. the same extern declared
+                        // by several modules): keep the first occurrence.
+                        removed.insert(index);
+                    } else {
+                        return Err(Diagnostic::new(format!(
+                            "conflicting declarations of host function '{name}': overloads must \
+                             differ in parameter types, but two declarations share the parameter \
+                             list and disagree on the return type or host name"
+                        )));
+                    }
+                }
+                None => kept.push(index),
+            }
+        }
+        if kept.len() < 2 {
+            continue;
+        }
+        let mut variants = Vec::with_capacity(kept.len());
+        for (position, index) in kept.into_iter().enumerate() {
+            let declared = &mut program.declared_imports[index];
+            declared.name = waluau_ast::overload_variant_name(&name, position);
+            variants.push(OverloadVariant {
+                name: declared.name.clone(),
+                params: declared
+                    .params
+                    .iter()
+                    .map(|param| param.ty.clone())
+                    .collect(),
+                return_type: declared.return_type.clone(),
+            });
+        }
+        overload_sets.insert(name, variants);
+    }
+
+    if !removed.is_empty() {
+        let mut index = 0;
+        program.declared_imports.retain(|_| {
+            let keep = !removed.contains(&index);
+            index += 1;
+            keep
+        });
+    }
+
+    Ok(overload_sets)
+}
+
 pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
     let mut typed = desugar_method_declarations(program)?;
     desugar_implicit_top_level_declarations(&mut typed);
     resolve_program_types(&mut typed)?;
+    let overload_sets = disambiguate_declared_import_overloads(&mut typed)?;
     fill_gsub_replacement_annotations(&mut typed);
     if !typed.top_level.is_empty() {
         typed.functions.push(Function {
@@ -2802,6 +2930,11 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
                 return_type: declared.return_type.clone(),
             },
         );
+    }
+    // Overloaded declared imports keep an overload-set entry under their
+    // source-level base name; calls select a variant from the argument types.
+    for (base_name, variants) in overload_sets {
+        fn_signatures.insert(base_name, FnSignature::Overloaded(variants));
     }
     for function in &typed.functions {
         if function.type_params.is_empty() {

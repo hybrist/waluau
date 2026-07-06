@@ -81,6 +81,9 @@ type Promise<T> = extern
 declare property Blob:size: u64
 declare property Blob:type: string
 declare function Blob:slice(): Blob
+declare function Blob:slice(start: i64): Blob
+declare function Blob:slice(start: i64, end_: i64): Blob
+declare function Blob:slice(start: i64, end_: i64, content_type: string): Blob
 declare property File:lastModified: i64
 declare property File:webkitRelativePath: string
 declare property Document:URL: string
@@ -109,7 +112,9 @@ declare function Document:createAttributeNS(namespace: string?, qualified_name: 
 declare function Document:createEvent(interface: string): Event
 declare function Document:createRange(): Range
 declare function Document:createNodeIterator(root: Node): NodeIterator
+declare function Document:createNodeIterator(root: Node, what_to_show: u32): NodeIterator
 declare function Document:createTreeWalker(root: Node): TreeWalker
+declare function Document:createTreeWalker(root: Node, what_to_show: u32): TreeWalker
 declare function Document:elementFromPoint(x: f64, y: f64): Element?
 declare property Document:scrollingElement: Element?
 declare property Document:fullscreenEnabled: bool
@@ -134,6 +139,8 @@ declare property Document:defaultView: Window?
 declare function Document:hasFocus(): bool
 declare property Document:designMode: string
 declare function Document:execCommand(command_id: string): bool
+declare function Document:execCommand(command_id: string, show_u_i: bool): bool
+declare function Document:execCommand(command_id: string, show_u_i: bool, value: string): bool
 declare function Document:queryCommandEnabled(command_id: string): bool
 declare function Document:queryCommandIndeterm(command_id: string): bool
 declare function Document:queryCommandState(command_id: string): bool
@@ -198,12 +205,19 @@ declare property Window:frames: Window
 declare property Window:parent: Window?
 declare property Window:frameElement: Element?
 declare function Window:open(): Window?
+declare function Window:open(url: string): Window?
+declare function Window:open(url: string, target: string): Window?
+declare function Window:open(url: string, target: string, features: string): Window?
 declare property Window:navigator: Navigator
 declare property Window:clientInformation: Navigator
 declare property Window:originAgentCluster: bool
+declare function Window:alert(): unit
 declare function Window:alert(message: string): unit
 declare function Window:confirm(): bool
+declare function Window:confirm(message: string): bool
 declare function Window:prompt(): string?
+declare function Window:prompt(message: string): string?
+declare function Window:prompt(message: string, default: string): string?
 declare function Window:print(): unit
 declare property Window:credentialless: bool
 declare property Window:onorientationchange: (Event) -> unit
@@ -228,6 +242,7 @@ declare property Window:outerWidth: i32
 declare property Window:outerHeight: i32
 declare property Window:devicePixelRatio: f64
 declare function Window:getComputedStyle(elt: Element): CSSStyleProperties
+declare function Window:getComputedStyle(elt: Element, pseudo_elt: string?): CSSStyleProperties
 declare function Window:captureEvents(): unit
 declare function Window:releaseEvents(): unit
 declare property Window:onappinstalled: (Event) -> unit
@@ -365,7 +380,9 @@ declare property Window:crossOriginIsolated: bool
 declare function Window:btoa(data: string): string
 declare function Window:atob(data: string): string
 declare function Window:clearTimeout(): unit
+declare function Window:clearTimeout(id: i32): unit
 declare function Window:clearInterval(): unit
+declare function Window:clearInterval(id: i32): unit
 declare function Window:queueMicrotask(callback: () -> unit): unit
 declare function Window:fetch(input: string): Promise<Response>
 declare function Window:requestAnimationFrame(callback: (f64) -> unit): u32
@@ -409,10 +426,10 @@ declare function Element:hasAttributes(): bool
 declare property Element:attributes: NamedNodeMap
 declare function Element:get_attribute(name: string): string?
 declare function Element:getAttributeNS(namespace: string?, local_name: string): string?
-declare function Element:set_attribute(name: string, value: string): unit
 declare function Element:remove_attribute(name: string): unit
 declare function Element:removeAttributeNS(namespace: string?, local_name: string): unit
 declare function Element:toggleAttribute(qualified_name: string): bool
+declare function Element:toggleAttribute(qualified_name: string, force: bool): bool
 declare function Element:hasAttribute(qualified_name: string): bool
 declare function Element:hasAttributeNS(namespace: string?, local_name: string): bool
 declare function Element:getAttributeNode(qualified_name: string): Attr?
@@ -448,6 +465,7 @@ declare function Element:getHTML(): string
 declare function Element:setPointerCapture(pointer_id: i32): unit
 declare function Element:releasePointerCapture(pointer_id: i32): unit
 declare function Element:hasPointerCapture(pointer_id: i32): bool
+declare function Element:set_attribute(name: string, value: string): unit
 declare property Element:regionOverset: string
 declare property Element:assignedSlot: HTMLSlotElement?
 declare property Element:role: string?
@@ -577,16 +595,22 @@ declare property StyleSheet:disabled: bool
 declare property CSSStyleSheet:ownerRule: CSSRule?
 declare property CSSStyleSheet:cssRules: CSSRuleList
 declare function CSSStyleSheet:insertRule(rule: string): u32
+declare function CSSStyleSheet:insertRule(rule: string, index: u32): u32
 declare function CSSStyleSheet:deleteRule(index: u32): unit
 declare function CSSStyleSheet:replaceSync(text: string): unit
 declare property CSSStyleSheet:rules: CSSRuleList
 declare function CSSStyleSheet:addRule(): i32
+declare function CSSStyleSheet:addRule(selector: string): i32
+declare function CSSStyleSheet:addRule(selector: string, style: string): i32
+declare function CSSStyleSheet:addRule(selector: string, style: string, index: u32): i32
 declare function CSSStyleSheet:removeRule(): unit
+declare function CSSStyleSheet:removeRule(index: u32): unit
 declare function CSSRuleList:item(index: u32): CSSRule?
 declare property CSSRuleList:length: u32
 declare function CSSStyleDeclaration:getPropertyValue(property: string): string
 declare function CSSStyleDeclaration:getPropertyPriority(property: string): string
 declare function CSSStyleDeclaration:setProperty(property: string, value: string): unit
+declare function CSSStyleDeclaration:setProperty(property: string, value: string, priority: string): unit
 declare function CSSStyleDeclaration:removeProperty(property: string): string
 declare property CSSStyleProperties:cssFloat: string
 declare property Event:type: string
@@ -606,8 +630,10 @@ declare property Event:composed: bool
 declare property Event:isTrusted: bool
 declare property Event:timeStamp: f64
 declare function Event:initEvent(type: string): unit
-declare function EventTarget:add_event_listener(type: string, callback: (Event) -> unit): unit
+declare function Event:initEvent(type: string, bubbles: bool): unit
+declare function Event:initEvent(type: string, bubbles: bool, cancelable: bool): unit
 declare function EventTarget:dispatchEvent(event: Event): bool
+declare function EventTarget:add_event_listener(type: string, callback: (Event) -> unit): unit
 declare function HTMLCollection:namedItem(name: string): Element?
 declare property Node:nodeType: u32
 declare property Node:node_name: string
@@ -627,6 +653,7 @@ declare property Node:nodeValue: string?
 declare property Node:text_content: string
 declare function Node:normalize(): unit
 declare function Node:cloneNode(): Node
+declare function Node:cloneNode(subtree: bool): Node
 declare function Node:isEqualNode(other_node: Node?): bool
 declare function Node:isSameNode(other_node: Node?): bool
 declare function Node:compareDocumentPosition(other: Node): u32
@@ -688,6 +715,7 @@ declare function DOMTokenList:contains(token: string): bool
 declare function DOMTokenList:add(tokens: string): unit
 declare function DOMTokenList:remove(tokens: string): unit
 declare function DOMTokenList:toggle(token: string): bool
+declare function DOMTokenList:toggle(token: string, force: bool): bool
 declare function DOMTokenList:replace(token: string, new_token: string): bool
 declare function DOMTokenList:supports(token: string): bool
 declare property HTMLInputElement:accept: string
@@ -720,7 +748,9 @@ declare property HTMLInputElement:step: string
 declare property HTMLInputElement:defaultValue: string
 declare property HTMLInputElement:valueAsNumber: f64
 declare function HTMLInputElement:stepUp(): unit
+declare function HTMLInputElement:stepUp(n: i32): unit
 declare function HTMLInputElement:stepDown(): unit
+declare function HTMLInputElement:stepDown(n: i32): unit
 declare property HTMLInputElement:willValidate: bool
 declare property HTMLInputElement:validity: ValidityState
 declare property HTMLInputElement:validationMessage: string
@@ -728,8 +758,10 @@ declare function HTMLInputElement:setCustomValidity(error: string): unit
 declare property HTMLInputElement:labels: NodeList?
 declare function HTMLInputElement:select(): unit
 declare property HTMLInputElement:selectionDirection: string?
+declare function HTMLInputElement:setRangeText(replacement: string): unit
 declare function HTMLInputElement:setRangeText(replacement: string, start: u32, end_: u32): unit
 declare function HTMLInputElement:setSelectionRange(start: u32, end_: u32): unit
+declare function HTMLInputElement:setSelectionRange(start: u32, end_: u32, direction: string): unit
 declare function HTMLInputElement:showPicker(): unit
 declare property HTMLInputElement:webkitdirectory: bool
 declare property HTMLInputElement:capture: string
@@ -738,6 +770,7 @@ declare property HTMLInputElement:popoverTargetElement: Element?
 declare property HTMLInputElement:popoverTargetAction: string
 declare function Response:error(): Response
 declare function Response:redirect(url: string): Response
+declare function Response:redirect(url: string, status: u32): Response
 declare property Response:url: string
 declare property Response:redirected: bool
 declare property Response:status: u32
@@ -778,6 +811,7 @@ declare property HTMLFormElement:relList: DOMTokenList
 declare property HTMLFormElement:elements: HTMLFormControlsCollection
 declare function HTMLFormElement:submit(): unit
 declare function HTMLFormElement:requestSubmit(): unit
+declare function HTMLFormElement:requestSubmit(submitter: HTMLElement?): unit
 declare function HTMLFormElement:reset(): unit
 declare function HTMLFormElement:checkValidity(): bool
 declare function HTMLFormElement:reportValidity(): bool
@@ -788,8 +822,10 @@ declare property HTMLTextAreaElement:wrap: string
 declare property HTMLTextAreaElement:textLength: u32
 declare property HTMLTextAreaElement:selectionStart: u32
 declare property HTMLTextAreaElement:selectionEnd: u32
+declare function HTMLTextAreaElement:setRangeText(replacement: string): unit
 declare function HTMLTextAreaElement:setRangeText(replacement: string, start: u32, end_: u32): unit
 declare function HTMLTextAreaElement:setSelectionRange(start: u32, end_: u32): unit
+declare function HTMLTextAreaElement:setSelectionRange(start: u32, end_: u32, direction: string): unit
 declare property ValidityState:valueMissing: bool
 declare property ValidityState:typeMismatch: bool
 declare property ValidityState:patternMismatch: bool
@@ -805,6 +841,7 @@ declare property HTMLCanvasElement:width: u32
 declare property HTMLCanvasElement:height: u32
 declare function HTMLCanvasElement:get_context(context_id: string): CanvasRenderingContext2D?
 declare function HTMLCanvasElement:toDataURL(): string
+declare function HTMLCanvasElement:toDataURL(type: string): string
 declare property CanvasRenderingContext2D:canvas: HTMLCanvasElement
 declare function CanvasRenderingContext2D:save(): unit
 declare function CanvasRenderingContext2D:restore(): unit
@@ -814,6 +851,7 @@ declare function CanvasRenderingContext2D:scale(x: f64, y: f64): unit
 declare function CanvasRenderingContext2D:rotate(angle: f64): unit
 declare function CanvasRenderingContext2D:translate(x: f64, y: f64): unit
 declare function CanvasRenderingContext2D:transform(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64): unit
+declare function CanvasRenderingContext2D:setTransform(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64): unit
 declare function CanvasRenderingContext2D:setTransform(): unit
 declare function CanvasRenderingContext2D:resetTransform(): unit
 declare property CanvasRenderingContext2D:globalAlpha: f64
@@ -830,8 +868,16 @@ declare function CanvasRenderingContext2D:clearRect(x: f64, y: f64, w: f64, h: f
 declare function CanvasRenderingContext2D:fillRect(x: f64, y: f64, w: f64, h: f64): unit
 declare function CanvasRenderingContext2D:strokeRect(x: f64, y: f64, w: f64, h: f64): unit
 declare function CanvasRenderingContext2D:beginPath(): unit
+declare function CanvasRenderingContext2D:fill(): unit
+declare function CanvasRenderingContext2D:stroke(): unit
+declare function CanvasRenderingContext2D:clip(): unit
+declare function CanvasRenderingContext2D:isPointInPath(x: f64, y: f64): bool
+declare function CanvasRenderingContext2D:isPointInStroke(x: f64, y: f64): bool
+declare function CanvasRenderingContext2D:drawFocusIfNeeded(element: Element): unit
 declare function CanvasRenderingContext2D:fillText(text: string, x: f64, y: f64): unit
+declare function CanvasRenderingContext2D:fillText(text: string, x: f64, y: f64, max_width: f64): unit
 declare function CanvasRenderingContext2D:strokeText(text: string, x: f64, y: f64): unit
+declare function CanvasRenderingContext2D:strokeText(text: string, x: f64, y: f64, max_width: f64): unit
 declare property CanvasRenderingContext2D:lineWidth: f64
 declare property CanvasRenderingContext2D:miterLimit: f64
 declare property CanvasRenderingContext2D:lineDashOffset: f64
@@ -848,7 +894,9 @@ declare function CanvasRenderingContext2D:arcTo(x1: f64, y1: f64, x2: f64, y2: f
 declare function CanvasRenderingContext2D:rect(x: f64, y: f64, w: f64, h: f64): unit
 declare function CanvasRenderingContext2D:roundRect(x: f64, y: f64, w: f64, h: f64): unit
 declare function CanvasRenderingContext2D:arc(x: f64, y: f64, radius: f64, start_angle: f64, end_angle: f64): unit
+declare function CanvasRenderingContext2D:arc(x: f64, y: f64, radius: f64, start_angle: f64, end_angle: f64, counterclockwise: bool): unit
 declare function CanvasRenderingContext2D:ellipse(x: f64, y: f64, radius_x: f64, radius_y: f64, rotation: f64, start_angle: f64, end_angle: f64): unit
+declare function CanvasRenderingContext2D:ellipse(x: f64, y: f64, radius_x: f64, radius_y: f64, rotation: f64, start_angle: f64, end_angle: f64, counterclockwise: bool): unit
 declare function CustomElementRegistry:upgrade(root: Node): unit
 declare function CustomElementRegistry:initialize(root: Node): unit
 declare property BarProp:visible: bool
@@ -865,6 +913,7 @@ declare function Location:assign(url: string): unit
 declare function Location:reload(): unit
 declare property History:scrollRestoration: string
 declare function History:go(): unit
+declare function History:go(delta: i32): unit
 declare function History:back(): unit
 declare function History:forward(): unit
 declare function PluginArray:refresh(): unit
@@ -881,6 +930,10 @@ declare function Storage:clear(): unit
 declare property UIEvent:view: Window?
 declare property UIEvent:detail: i32
 declare function UIEvent:initUIEvent(type_arg: string): unit
+declare function UIEvent:initUIEvent(type_arg: string, bubbles_arg: bool): unit
+declare function UIEvent:initUIEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool): unit
+declare function UIEvent:initUIEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool, view_arg: Window?): unit
+declare function UIEvent:initUIEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool, view_arg: Window?, detail_arg: i32): unit
 declare property UIEvent:which: u32
 declare function ScreenOrientation:unlock(): unit
 declare property ScreenOrientation:angle: u32
@@ -897,15 +950,22 @@ declare function Selection:removeRange(range: Range): unit
 declare function Selection:removeAllRanges(): unit
 declare function Selection:empty(): unit
 declare function Selection:collapse(node: Node?): unit
+declare function Selection:collapse(node: Node?, offset: u32): unit
 declare function Selection:setPosition(node: Node?): unit
+declare function Selection:setPosition(node: Node?, offset: u32): unit
 declare function Selection:collapseToStart(): unit
 declare function Selection:collapseToEnd(): unit
 declare function Selection:extend(node: Node): unit
+declare function Selection:extend(node: Node, offset: u32): unit
 declare function Selection:setBaseAndExtent(anchor_node: Node, anchor_offset: u32, focus_node: Node, focus_offset: u32): unit
 declare function Selection:selectAllChildren(node: Node): unit
 declare function Selection:modify(): unit
+declare function Selection:modify(alter: string): unit
+declare function Selection:modify(alter: string, direction: string): unit
+declare function Selection:modify(alter: string, direction: string, granularity: string): unit
 declare function Selection:deleteFromDocument(): unit
 declare function Selection:containsNode(node: Node): bool
+declare function Selection:containsNode(node: Node, allow_partial_containment: bool): bool
 declare property KeyboardEvent:key: string
 declare property KeyboardEvent:code: string
 declare property KeyboardEvent:location: u32
@@ -916,6 +976,15 @@ declare property KeyboardEvent:metaKey: bool
 declare property KeyboardEvent:isComposing: bool
 declare function KeyboardEvent:getModifierState(key_arg: string): bool
 declare function KeyboardEvent:initKeyboardEvent(type_arg: string): unit
+declare function KeyboardEvent:initKeyboardEvent(type_arg: string, bubbles_arg: bool): unit
+declare function KeyboardEvent:initKeyboardEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool): unit
+declare function KeyboardEvent:initKeyboardEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool, view_arg: Window?): unit
+declare function KeyboardEvent:initKeyboardEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool, view_arg: Window?, key_arg: string): unit
+declare function KeyboardEvent:initKeyboardEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool, view_arg: Window?, key_arg: string, location_arg: u32): unit
+declare function KeyboardEvent:initKeyboardEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool, view_arg: Window?, key_arg: string, location_arg: u32, ctrl_key: bool): unit
+declare function KeyboardEvent:initKeyboardEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool, view_arg: Window?, key_arg: string, location_arg: u32, ctrl_key: bool, alt_key: bool): unit
+declare function KeyboardEvent:initKeyboardEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool, view_arg: Window?, key_arg: string, location_arg: u32, ctrl_key: bool, alt_key: bool, shift_key: bool): unit
+declare function KeyboardEvent:initKeyboardEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool, view_arg: Window?, key_arg: string, location_arg: u32, ctrl_key: bool, alt_key: bool, shift_key: bool, meta_key: bool): unit
 declare property KeyboardEvent:charCode: u32
 declare property KeyboardEvent:keyCode: u32
 declare function VirtualKeyboard:show(): unit

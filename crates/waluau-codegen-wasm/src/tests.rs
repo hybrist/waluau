@@ -1624,3 +1624,53 @@ fn unknown_equality_imports_js_eq_unknown() {
     }
     assert!(found, "unknown equality should import waluau.js_eq_unknown");
 }
+
+#[test]
+fn declared_import_overloads_emit_one_host_import_per_overload() {
+    let source = r#"
+        type Ctx = extern
+        declare function get_ctx(): Ctx
+        declare function Ctx:fill(): unit
+        declare function Ctx:fill(rule: string): unit
+        declare function pick(x: f32): f32
+        declare function pick(x: f64): f64
+
+        function paint(): f64
+            local c: Ctx = get_ctx()
+            c:fill()
+            c:fill("evenodd")
+            local narrow: f32 = pick(1.5::f32)
+            return pick(2.5) + narrow::f64
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    // Each overload becomes its own host import under the shared external
+    // name, with the overload's own signature.
+    let mut fill_imports = 0;
+    let mut pick_imports = 0;
+    for payload in Parser::new(0).parse_all(&wasm) {
+        let payload = payload.expect("wasm should parse");
+        if let Payload::ImportSection(reader) = payload {
+            for import in reader {
+                let import = import.expect("import should decode");
+                if import.module != "waluau" {
+                    continue;
+                }
+                match import.name {
+                    "Ctx.fill" => fill_imports += 1,
+                    "pick" => pick_imports += 1,
+                    _ => {}
+                }
+            }
+        }
+    }
+    assert_eq!(fill_imports, 2, "expected one import per fill overload");
+    assert_eq!(pick_imports, 2, "expected one import per pick overload");
+}

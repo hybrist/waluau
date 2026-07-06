@@ -15,7 +15,7 @@ It is available in the playground as the "Snake Game" preset and covered by
 | --- | --- |
 | `main.walu` | Browser entry point: builds the DOM shell (canvas, d-pad buttons), wires keyboard + click handlers, runs the tick loop. |
 | `game.walu` | Host-independent game rules: state record, movement, food, collisions. |
-| `render.walu` | Canvas 2D drawing (rectangles and text only, see TODOs). |
+| `render.walu` | Canvas 2D drawing: arena and snake rectangles, circular food via `beginPath()`/`arc()`/`fill()`, text HUD. |
 | `rng.walu` | Hand-rolled 31-bit LCG pseudo-random number generator. |
 | `sim.walu` | Headless, DOM-free entry that asserts the game rules deterministically. |
 
@@ -38,8 +38,5 @@ import surface used by the playground's DOM output mode.
 
 Each workaround in the source carries a `TODO(<beads-id>)` comment. Summary:
 
-- `waluau-6kcc` — `fill()`/`stroke()` take an optional `Path2D` and need
-  extern overloading, so built paths can never be painted. Everything is
-  `fillRect`/`strokeRect`/`fillText`; the food is a square instead of a circle.
 - `waluau-6i00` — no `math.random`/`math.randomseed`; `rng.walu` hand-rolls an
   LCG seeded from the first animation frame's timestamp.
