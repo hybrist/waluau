@@ -256,7 +256,6 @@ test.describe('DOM Output in Run tab', () => {
     await expect(page.locator('.file-item').getByText('main.walu', { exact: true })).toBeVisible();
     await expect(page.locator('.file-item').getByText('game.walu', { exact: true })).toBeVisible();
     await expect(page.locator('.file-item').getByText('render.walu', { exact: true })).toBeVisible();
-    await expect(page.locator('.file-item').getByText('rng.walu', { exact: true })).toBeVisible();
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
       timeout: COMPILER_READY_TIMEOUT,
     });

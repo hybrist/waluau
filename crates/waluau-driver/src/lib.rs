@@ -105,11 +105,12 @@ fn default_output_path(input: &Path) -> PathBuf {
 
 fn add_builtins_to_program(program: &mut waluau_ast::Program) -> Result<(), Diagnostic> {
     // Load builtin declaration files and merge their declared_imports
-    let builtin_files = ["core.walu"];
+    let builtin_files = ["core.walu", "math.walu"];
 
     for filename in &builtin_files {
         let builtin_source = match *filename {
             "core.walu" => include_str!("../../../builtins/core.walu"),
+            "math.walu" => include_str!("../../../builtins/math.walu"),
             _ => continue,
         };
 
@@ -450,14 +451,92 @@ mod tests {
     }
 
     #[test]
-    fn rejects_math_abs_for_integer_types() {
-        let source = r#"
+    fn math_abs_on_integers_widens_to_f64() {
+        // math.abs is declared for f32/f64 only (builtins/math.walu); an i32
+        // argument follows the language's implicit i32 -> f64 widening, so
+        // the f64 overload is selected and the result is f64, not i32.
+        let err = super::compile_source(
+            r#"
             function bad(x: i32): i32
                 return math.abs(x)
             end
+        "#,
+        )
+        .expect_err("compile should fail");
+        assert!(
+            err.to_string()
+                .contains("cannot implicitly convert f64 to i32"),
+            "expected f64 result diagnostic, got: {err}"
+        );
+
+        super::compile_source(
+            r#"
+            function ok(x: i32): f64
+                return math.abs(x)
+            end
+        "#,
+        )
+        .expect("i32 argument should widen to the f64 overload");
+    }
+
+    #[test]
+    fn compiles_math_builtins_as_host_import_overloads() {
+        // math.* builtins are extern declarations (builtins/math.walu):
+        // overload selection picks the f32/f64 variant from the argument
+        // types and each selected variant becomes its own host import under
+        // the shared dotted host name.
+        let source = r#"
+            function wide(x: f64): f64
+                return math.sqrt(math.abs(x)) + math.min(x, 2.0)
+            end
+            function narrow(x: f32): f32
+                return math.floor(math.copysign(x, x))
+            end
         "#;
-        let err = super::compile_source(source).expect_err("compile should fail");
-        assert!(err.to_string().contains("math.abs does not support i32"));
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let wat = wasmprinter::print_bytes(&wasm).expect("wat should print");
+        for import in [
+            "math.sqrt",
+            "math.abs",
+            "math.min",
+            "math.floor",
+            "math.copysign",
+        ] {
+            assert!(
+                wat.contains(&format!("(import \"waluau\" \"{import}\"")),
+                "expected a {import} host import:\n{wat}"
+            );
+        }
+        assert!(
+            !wat.contains("f64.sqrt") && !wat.contains("f32.sqrt"),
+            "math.sqrt must lower to a host call, not a wasm intrinsic:\n{wat}"
+        );
+    }
+
+    #[test]
+    fn compiles_math_random_and_randomseed() {
+        let source = r#"
+            function roll(): f64
+                math.randomseed(42.0)
+                local unit_sample: f64 = math.random()
+                local die: i32 = math.random(6)
+                local ranged: i32 = math.random(3, 9)
+                return unit_sample + die::f64 + ranged::f64
+            end
+        "#;
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let wat = wasmprinter::print_bytes(&wasm).expect("wat should print");
+        assert!(
+            wat.contains("(import \"waluau\" \"math.randomseed\""),
+            "expected a math.randomseed host import:\n{wat}"
+        );
+        // All three math.random overloads share the host name but are
+        // imported separately (arities 0, 1, and 2).
+        assert_eq!(
+            wat.matches("(import \"waluau\" \"math.random\" ").count(),
+            3,
+            "expected three math.random overload imports:\n{wat}"
+        );
     }
 
     #[test]

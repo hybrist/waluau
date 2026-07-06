@@ -1,12 +1,17 @@
 -- Headless, DOM-free sanity harness for the snake rules. This entry never
 -- touches the canvas or DOM externs, so it can be compiled and executed in
--- any wasm host to check game.walu and rng.walu behavior deterministically.
+-- any wasm host to check game.walu behavior deterministically (food
+-- placement is pinned by the math.randomseed(42) call below).
 --
 --     cargo run -p waluau-cli -- fixtures/snake/sim.walu -o sim.wasm
 
 local game = require("./game")
 
-local state = game.new_state(9, 9, 42)
+-- Seed the host PRNG so food placement (the only randomness in the rules)
+-- is reproducible across runs.
+math.randomseed(42)
+
+local state = game.new_state(9, 9)
 assert(state.alive)
 assert(state.score == 0)
 

@@ -246,16 +246,11 @@ pub enum Instruction {
 pub enum MathIntrinsic {
     /// Unary float negation (`f32.neg`/`f64.neg`); preserves -0 and NaN sign,
     /// unlike lowering `-x` as `0 - x`.
+    ///
+    /// The `math.*` builtins (abs, sqrt, min, ...) are no longer intrinsics:
+    /// they are declared host imports (builtins/math.walu) lowered as
+    /// ordinary host calls.
     Neg,
-    Abs,
-    Min,
-    Max,
-    Sqrt,
-    Floor,
-    Ceil,
-    Trunc,
-    Nearest,
-    Copysign,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

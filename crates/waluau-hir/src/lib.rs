@@ -72,12 +72,14 @@ fn is_builtin_callee(expr: &Expr) -> bool {
                 | "type"
                 | "typeof"
         ),
+        // `math.*` is intentionally absent: math builtins are declared host
+        // imports (builtins/math.walu) resolved through overload selection.
         Expr::Field { base, .. } => matches!(
             base.as_ref(),
             Expr::Name(namespace, _, _)
                 if matches!(
                     namespace.as_str(),
-                    "bit32" | "coroutine" | "math" | "promise" | "string" | "table"
+                    "bit32" | "coroutine" | "promise" | "string" | "table"
                 )
         ),
         _ => false,
@@ -2497,6 +2499,45 @@ fn annotate_expr_resolved_members(
                                 active_type_params,
                             )?;
                             *name = chosen.name.clone();
+                        }
+                    }
+                }
+                // Namespaced declared imports called through a field
+                // expression (`math.abs(x)`): rewrite the callee to a plain
+                // name so symbol resolution binds it to the host import. For
+                // overload sets the selected variant's unique internal name
+                // is used; the mangle scheme composes with the dotted name
+                // (`math.abs` -> `math.abs$overload0`).
+                if let Expr::Field {
+                    base,
+                    name: field,
+                    span,
+                    ..
+                } = callee.as_mut()
+                {
+                    if let Expr::Name(base_name, _, _) = base.as_ref() {
+                        if vars.get(base_name).is_none() {
+                            let dotted = format!("{base_name}.{field}");
+                            let rewritten = match fn_signatures.get(&dotted) {
+                                Some(FnSignature::Overloaded(variants)) => {
+                                    let chosen = select_overload(
+                                        &dotted,
+                                        variants,
+                                        None,
+                                        args,
+                                        vars,
+                                        fn_signatures,
+                                        active_type_params,
+                                    )?;
+                                    Some(chosen.name.clone())
+                                }
+                                Some(FnSignature::Mono { .. }) => Some(dotted),
+                                _ => None,
+                            };
+                            if let Some(name) = rewritten {
+                                let span = *span;
+                                **callee = Expr::Name(name, None, span);
+                            }
                         }
                     }
                 }

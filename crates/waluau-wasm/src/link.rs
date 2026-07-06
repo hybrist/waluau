@@ -212,12 +212,13 @@ impl<'a> Loader<'a> {
 
     fn load_builtins(&mut self) -> Result<Vec<waluau_ast::DeclaredImport>, String> {
         // Load builtin declaration files and extract their declared_imports
-        let builtin_files = ["core.walu"];
+        let builtin_files = ["core.walu", "math.walu"];
         let mut all_imports = Vec::new();
 
         for filename in &builtin_files {
             let builtin_source = match *filename {
                 "core.walu" => include_str!("../../../builtins/core.walu"),
+                "math.walu" => include_str!("../../../builtins/math.walu"),
                 _ => continue,
             };
 

@@ -342,6 +342,7 @@ dependencies = [
  "waluau-hir",
  "waluau-ir",
  "waluau-parser",
+ "wasmprinter",
 ]
 
 [[package]]

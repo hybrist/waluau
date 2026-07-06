@@ -1,9 +1,7 @@
 -- Core snake rules: grid state, movement, food, and collisions. No DOM or
 -- canvas access in this module so the logic stays host-independent.
 
-local rng = require("./rng")
-
-type State = { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }
+type State = { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, score: i32, alive: bool }
 
 function occupied(state: State, x: i32, y: i32): bool
     local i: i32 = 0
@@ -21,8 +19,8 @@ function spawn_food(state: State): unit
     local attempts: i32 = 0
     local max_attempts: i32 = state.cols * state.rows
     while attempts < max_attempts do
-        local fx: i32 = rng.next_below(state.rng, state.cols)
-        local fy: i32 = rng.next_below(state.rng, state.rows)
+        local fx: i32 = math.random(state.cols) - 1
+        local fy: i32 = math.random(state.rows) - 1
         if not occupied(state, fx, fy) then
             state.food.x = fx
             state.food.y = fy
@@ -35,7 +33,7 @@ function spawn_food(state: State): unit
     state.alive = false
 end
 
-function new_state(cols: i32, rows: i32, seed: i32): State
+function new_state(cols: i32, rows: i32): State
     local state: State = {
         cols = cols,
         rows = rows,
@@ -43,7 +41,6 @@ function new_state(cols: i32, rows: i32, seed: i32): State
         dir = { x = 1, y = 0 },
         next_dir = { x = 1, y = 0 },
         food = { x = 0, y = 0 },
-        rng = { seed = seed },
         score = 0,
         alive = true,
     }

@@ -178,7 +178,6 @@ test.describe('preset selector', () => {
       'snake/game.walu',
       'snake/main.walu',
       'snake/render.walu',
-      'snake/rng.walu',
       'snake/sim.walu',
     ]);
 

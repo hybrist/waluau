@@ -21,15 +21,8 @@ pub(super) const COROUTINE_CLOSE: &str = "coroutine.close";
 pub(super) const COROUTINE_YIELD: &str = "coroutine.yield";
 pub(super) const COROUTINE_AWAIT_PROMISE: &str = "coroutine.await_promise";
 pub(super) const PROMISE_AWAIT: &str = "promise.await";
-pub(super) const MATH_ABS: &str = "math.abs";
-pub(super) const MATH_MIN: &str = "math.min";
-pub(super) const MATH_MAX: &str = "math.max";
-pub(super) const MATH_SQRT: &str = "math.sqrt";
-pub(super) const MATH_FLOOR: &str = "math.floor";
-pub(super) const MATH_CEIL: &str = "math.ceil";
-pub(super) const MATH_TRUNC: &str = "math.trunc";
-pub(super) const MATH_NEAREST: &str = "math.nearest";
-pub(super) const MATH_COPYSIGN: &str = "math.copysign";
+// math.* builtins are extern host functions declared in builtins/math.walu;
+// overload resolution replaces the old hardcoded polymorphic logic here.
 pub(super) const BIT32_BNOT: &str = "bit32.bnot";
 pub(super) const BIT32_BAND: &str = "bit32.band";
 pub(super) const BIT32_BOR: &str = "bit32.bor";
@@ -423,73 +416,6 @@ pub(super) fn infer_error_builtin_call(
         }
     }
     Some(Ok(expected.unwrap_or(Type::Unit)))
-}
-
-pub(super) fn infer_math_builtin_call(
-    name: &str,
-    args: &[Expr],
-    vars: &HashMap<String, Binding>,
-    fn_signatures: &HashMap<String, FnSignature>,
-    active_type_params: &HashSet<String>,
-    expected: Option<Type>,
-) -> Option<Result<Type, Diagnostic>> {
-    let arity = match name {
-        MATH_ABS | MATH_SQRT | MATH_FLOOR | MATH_CEIL | MATH_TRUNC | MATH_NEAREST => 1,
-        MATH_MIN | MATH_MAX | MATH_COPYSIGN => 2,
-        _ => return None,
-    };
-    if args.len() != arity {
-        return Some(Err(Diagnostic::new(format!(
-            "{name} expects {arity} argument{}, got {}",
-            if arity == 1 { "" } else { "s" },
-            args.len()
-        ))));
-    }
-    let first = match super::expressions::infer_expr(
-        &args[0],
-        vars,
-        fn_signatures,
-        active_type_params,
-        None,
-    ) {
-        Ok(ty) => ty,
-        Err(error) => return Some(Err(error)),
-    };
-    let Type::Numeric(first_numeric) = first else {
-        return Some(Err(Diagnostic::new(format!(
-            "{name} expects numeric arguments"
-        ))));
-    };
-    if arity == 2 {
-        let second = match super::expressions::infer_expr(
-            &args[1],
-            vars,
-            fn_signatures,
-            active_type_params,
-            Some(Type::Numeric(first_numeric)),
-        ) {
-            Ok(ty) => ty,
-            Err(error) => return Some(Err(error)),
-        };
-        if second != Type::Numeric(first_numeric) {
-            return Some(Err(Diagnostic::new(format!(
-                "{name} requires both arguments to have the same numeric type"
-            ))));
-        }
-    }
-    let supports = match name {
-        MATH_MIN | MATH_MAX => matches!(first_numeric, NumericType::F32 | NumericType::F64),
-        MATH_ABS | MATH_SQRT | MATH_FLOOR | MATH_CEIL | MATH_TRUNC | MATH_NEAREST
-        | MATH_COPYSIGN => matches!(first_numeric, NumericType::F32 | NumericType::F64),
-        _ => false,
-    };
-    if !supports {
-        return Some(Err(Diagnostic::new(format!(
-            "{name} does not support {}",
-            Type::Numeric(first_numeric)
-        ))));
-    }
-    Some(coerce_type(Type::Numeric(first_numeric), expected))
 }
 
 pub(super) fn infer_bit32_builtin_call(

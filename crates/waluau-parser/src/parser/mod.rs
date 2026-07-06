@@ -200,6 +200,13 @@ impl Parser {
                 },
             };
             (name, Some(receiver_param))
+        } else if self.check_simple(&TokenKind::Dot) {
+            // Namespaced host function (`declare function math.abs(...)`):
+            // the dotted name is the function's identity; unlike `:` method
+            // sugar there is no implicit receiver parameter.
+            self.advance();
+            let member = self.expect_identifier()?;
+            (format!("{receiver}.{member}"), None)
         } else {
             (receiver, None)
         };

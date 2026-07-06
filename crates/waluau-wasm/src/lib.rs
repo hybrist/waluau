@@ -297,11 +297,12 @@ fn add_builtins_to_program(
     program: &mut waluau_ast::Program,
 ) -> Result<(), waluau_diagnostics::Diagnostic> {
     // Load builtin declaration files and merge their declared_imports
-    let builtin_files = ["core.walu"];
+    let builtin_files = ["core.walu", "math.walu"];
 
     for filename in &builtin_files {
         let builtin_source = match *filename {
             "core.walu" => include_str!("../../../builtins/core.walu"),
+            "math.walu" => include_str!("../../../builtins/math.walu"),
             _ => continue,
         };
 
