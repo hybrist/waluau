@@ -1,24 +1,22 @@
 -- Core snake rules: grid state, movement, food, and collisions. No DOM or
 -- canvas access in this module so the logic stays host-independent.
 
+-- TODO(waluau-3efk): render.walu re-declares this alias verbatim; export it
+-- from here instead once type aliases can cross module boundaries.
 type State = { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, score: i32, alive: bool }
 
 function occupied(state: State, x: i32, y: i32): bool
-    local i: i32 = 0
-    while i < #state.snake do
-        local seg = state.snake[i]
+    for seg in state.snake do
         if seg.x == x and seg.y == y then
             return true
         end
-        i += 1
     end
     return false
 end
 
 function spawn_food(state: State): unit
-    local attempts: i32 = 0
     local max_attempts: i32 = state.cols * state.rows
-    while attempts < max_attempts do
+    for _ = 1, max_attempts do
         local fx: i32 = math.random(state.cols) - 1
         local fy: i32 = math.random(state.rows) - 1
         if not occupied(state, fx, fy) then
@@ -26,14 +24,13 @@ function spawn_food(state: State): unit
             state.food.y = fy
             return
         end
-        attempts += 1
     end
     -- Rejection sampling gave up; the board is (almost) full. Treat it as the
     -- end of the run rather than looping forever.
     state.alive = false
 end
 
-function new_state(cols: i32, rows: i32): State
+function new(cols: i32, rows: i32): State
     local state: State = {
         cols = cols,
         rows = rows,
@@ -49,12 +46,10 @@ function new_state(cols: i32, rows: i32): State
 end
 
 function reset(state: State): unit
-    state.snake = {}
     local cx: i32 = state.cols // 2
     local cy: i32 = state.rows // 2
-    table.insert(state.snake, 0, { x = cx - 2, y = cy })
-    table.insert(state.snake, 0, { x = cx - 1, y = cy })
-    table.insert(state.snake, 0, { x = cx, y = cy })
+    -- Head first: the head lives at index 0 and moves right at start.
+    state.snake = { { x = cx, y = cy }, { x = cx - 1, y = cy }, { x = cx - 2, y = cy } }
     state.dir.x = 1
     state.dir.y = 0
     state.next_dir.x = 1
@@ -101,15 +96,19 @@ function step(state: State): unit
 
     table.insert(state.snake, 0, { x = nx, y = ny })
     if nx == state.food.x and ny == state.food.y then
-        state.score = state.score + 1
+        state.score += 1
         spawn_food(state)
     else
-        local moved_tail = table.remove(state.snake)
+        table.remove(state.snake)
     end
 end
 
+-- TODO(waluau-2tx9): step/turn/reset would idiomatically be methods
+-- (function State:step()) with a State.new constructor, but dot-named
+-- statics don't parse and record-alias methods don't dispatch across module
+-- boundaries, so the rules are exported as free functions taking the state.
 return {
-    new_state = new_state,
+    new = new,
     reset = reset,
     turn = turn,
     step = step,
