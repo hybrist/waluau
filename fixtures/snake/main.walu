@@ -60,7 +60,7 @@ function install_snake(): unit
         assert(context ~= nil)
         local ctx: CanvasRenderingContext2D = context::CanvasRenderingContext2D
 
-        local state = game.new_state(cols, rows)
+        local state = game.new(cols, rows)
 
         -- Input: arrow keys / WASD via a document-level "keydown" listener
         -- (the Event is downcast to KeyboardEvent to read .key), plus an
@@ -88,25 +88,20 @@ function install_snake(): unit
             end
         end
 
-        local up_button: Element = make_button(document, "snake-up", "Up")
-        up_button:add_event_listener("click", handle_control_event)
-        controls:append_child(up_button)
-
-        local down_button: Element = make_button(document, "snake-down", "Down")
-        down_button:add_event_listener("click", handle_control_event)
-        controls:append_child(down_button)
-
-        local left_button: Element = make_button(document, "snake-left", "Left")
-        left_button:add_event_listener("click", handle_control_event)
-        controls:append_child(left_button)
-
-        local right_button: Element = make_button(document, "snake-right", "Right")
-        right_button:add_event_listener("click", handle_control_event)
-        controls:append_child(right_button)
-
-        local restart_button: Element = make_button(document, "snake-restart", "Restart")
-        restart_button:add_event_listener("click", handle_control_event)
-        controls:append_child(restart_button)
+        local button_defs: {{ id: string, label: string }} = {
+            { id = "snake-up", label = "Up" },
+            { id = "snake-down", label = "Down" },
+            { id = "snake-left", label = "Left" },
+            { id = "snake-right", label = "Right" },
+            -- TODO(waluau-hxq6): no trailing comma after the last element;
+            -- array literals reject it (record literals accept it).
+            { id = "snake-restart", label = "Restart" }
+        }
+        for def in button_defs do
+            local button: Element = make_button(document, def.id, def.label)
+            button:add_event_listener("click", handle_control_event)
+            controls:append_child(button)
+        end
 
         document:add_event_listener("keydown", function(event: Event): unit
             if KeyboardEvent(kev) = event then
@@ -148,7 +143,7 @@ function install_snake(): unit
         -- Paint the initial board before the first tick fires.
         render.draw(ctx, state)
     else
-        assert(false)
+        error("document.create_element(\"canvas\") did not return an HTMLCanvasElement")
     end
 end
 

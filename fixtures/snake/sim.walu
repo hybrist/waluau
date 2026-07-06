@@ -11,7 +11,7 @@ local game = require("./game")
 -- is reproducible across runs.
 math.randomseed(42)
 
-local state = game.new_state(9, 9)
+local state = game.new(9, 9)
 assert(state.alive)
 assert(state.score == 0)
 
@@ -32,10 +32,8 @@ assert(state.alive)
 
 -- Steer down and walk into the bottom wall: the run must end.
 game.turn(state, 0, 1)
-local i: i32 = 0
-while i < 9 do
+for _ = 1, 9 do
     game.step(state)
-    i += 1
 end
 assert(not state.alive)
 

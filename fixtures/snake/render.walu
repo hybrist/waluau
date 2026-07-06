@@ -1,10 +1,14 @@
 -- Canvas 2D rendering for the snake fixture: rectangles for the arena and
 -- snake, a beginPath()/arc()/fill() circle for the food, and fillText HUD.
 
--- Size of one grid cell in canvas pixels. Keep in sync with main.walu, which
--- sizes the <canvas> element as cols * cell_size() x rows * cell_size().
+-- TODO(waluau-3efk): duplicated from game.walu; import the alias from there
+-- once type aliases can cross module boundaries.
 type State = { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, score: i32, alive: bool }
 
+-- Size of one grid cell in canvas pixels. Keep in sync with main.walu, which
+-- sizes the <canvas> element as cols * cell_size() x rows * cell_size().
+-- TODO(waluau-ixpr): this would be an exported CELL_SIZE constant, but module
+-- export fields may only reference functions.
 function cell_size(): f64
     return 16.0
 end
@@ -31,20 +35,19 @@ function draw(ctx: CanvasRenderingContext2D, state: State): unit
     -- variant lives outside the curated extern surface).
     ctx.fillStyle = "#dc2626"
     ctx:beginPath()
+    -- TODO(waluau-2nx0): spell the sweep as 2.0 * math.pi once math constants
+    -- exist in the builtins; 6.283185307179586 is tau.
     ctx:arc(cell_px(state.food.x) + cell_size() / 2.0, cell_px(state.food.y) + cell_size() / 2.0, cell_size() / 2.0 - 2.0, 0.0, 6.283185307179586)
     ctx:fill()
 
-    -- Snake, head drawn brighter than the body.
-    local i: i32 = 0
-    while i < #state.snake do
-        local seg = state.snake[i]
+    -- Snake, head (index 0) drawn brighter than the body.
+    for i, seg in state.snake do
         if i == 0 then
             ctx.fillStyle = "#4ade80"
         else
             ctx.fillStyle = "#16a34a"
         end
         ctx:fillRect(cell_px(seg.x) + 1.0, cell_px(seg.y) + 1.0, cell_size() - 2.0, cell_size() - 2.0)
-        i += 1
     end
 
     -- HUD.
