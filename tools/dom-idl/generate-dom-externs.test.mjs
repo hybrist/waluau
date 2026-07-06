@@ -376,8 +376,108 @@ test('generated externs sanitize reserved DOM parameter names deterministically'
   assert.doesNotMatch(diagnostics, /skip HTMLInputElement\.setRangeText: .*waluau-9szs/);
   assert.doesNotMatch(diagnostics, /skip HTMLTextAreaElement\.setRangeText: .*waluau-9szs/);
 
+  // setRangeText is overloaded in Web IDL; the reserved-name sanitation
+  // applies to the four-argument overload's `end` parameter.
   const inputSetRangeText = metadata.emittedMembers.find(
-    (entry) => entry.interface === 'HTMLInputElement' && entry.idlName === 'setRangeText',
+    (entry) =>
+      entry.interface === 'HTMLInputElement' &&
+      entry.idlName === 'setRangeText' &&
+      entry.params.length === 3,
   );
   assert.deepEqual(inputSetRangeText?.params, ['replacement: string', 'start: u32', 'end_: u32']);
+});
+
+test('optional parameters and Web IDL overloads emit extern overload declarations', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'waluau-dom-idl-overload-'));
+  const input = path.join(dir, 'custom.webidl');
+  const filter = path.join(dir, 'filter.json');
+  const patches = path.join(dir, 'patches.json');
+
+  writeFileSync(input, [
+    'interface Path {',
+    '};',
+    'interface Painter {',
+    // Optional parameters expand into one declaration per emittable arity.
+    '  undefined arc(double x, double y, optional boolean counterclockwise);',
+    // Web IDL overloads: the zero-argument variant is emittable even when
+    // the other overload needs an out-of-surface type.
+    '  undefined fill(optional UnknownFillRule rule);',
+    '  undefined fill(Path path, optional UnknownFillRule rule);',
+    // Overloads sharing a required prefix collapse to one declaration per
+    // distinct extern signature.
+    '  undefined write(DOMString text);',
+    '  undefined write(DOMString text, optional Path path);',
+    // Expansion stops at the first optional parameter with no extern
+    // representation; later optionals are dropped with it.
+    '  undefined mark(DOMString label, optional UnknownFillRule rule, optional boolean deep);',
+    '};',
+    '',
+  ].join('\n'));
+  writeFileSync(filter, JSON.stringify({
+    interfaces: ['Painter'],
+    typeMap: {
+      DOMString: 'string',
+      undefined: 'unit',
+      double: 'f64',
+      boolean: 'bool',
+    },
+    disabledMembers: {},
+    hostFunctions: [],
+    skipIssueRefs: {},
+  }));
+  writeFileSync(patches, JSON.stringify({}));
+
+  const generated = runGenerator({
+    input: path.relative(repoRoot, input),
+    filter: path.relative(repoRoot, filter),
+    patches: path.relative(repoRoot, patches),
+  });
+
+  // Optional-parameter arity ladder.
+  assert.match(generated.externs, /^declare function Painter:arc\(x: f64, y: f64\): unit$/m);
+  assert.match(
+    generated.externs,
+    /^declare function Painter:arc\(x: f64, y: f64, counterclockwise: bool\): unit$/m,
+  );
+  // The zero-argument fill overload is emitted; the Path overload is skipped.
+  assert.match(generated.externs, /^declare function Painter:fill\(\): unit$/m);
+  assert.doesNotMatch(generated.externs, /fill\(path/);
+  assert.match(
+    generated.diagnostics,
+    /skip Painter\.fill: path: Web IDL type Path is not part of the selected DOM interface surface/,
+  );
+  // Overloads collapsing to the same extern signature emit exactly once.
+  const writeLines = generated.externs
+    .split('\n')
+    .filter((line) => line.includes('Painter:write'));
+  assert.deepEqual(writeLines, ['declare function Painter:write(text: string): unit']);
+  // Expansion truncates at the first unrepresentable optional parameter.
+  const markLines = generated.externs
+    .split('\n')
+    .filter((line) => line.includes('Painter:mark'));
+  assert.deepEqual(markLines, ['declare function Painter:mark(label: string): unit']);
+});
+
+test('generated canvas externs expose fill, stroke, and both arc overloads', () => {
+  const externs = readRepoFile('externs/dom.walu');
+  const metadata = JSON.parse(readRepoFile('externs/dom.metadata.json'));
+
+  assert.match(externs, /^declare function CanvasRenderingContext2D:fill\(\): unit$/m);
+  assert.match(externs, /^declare function CanvasRenderingContext2D:stroke\(\): unit$/m);
+  assert.match(
+    externs,
+    /^declare function CanvasRenderingContext2D:arc\(x: f64, y: f64, radius: f64, start_angle: f64, end_angle: f64\): unit$/m,
+  );
+  assert.match(
+    externs,
+    /^declare function CanvasRenderingContext2D:arc\(x: f64, y: f64, radius: f64, start_angle: f64, end_angle: f64, counterclockwise: bool\): unit$/m,
+  );
+
+  const arcOverloads = metadata.emittedMembers.filter(
+    (entry) => entry.interface === 'CanvasRenderingContext2D' && entry.idlName === 'arc',
+  );
+  assert.deepEqual(
+    arcOverloads.map((entry) => entry.params.length),
+    [5, 6],
+  );
 });

@@ -1,5 +1,5 @@
--- Canvas 2D rendering for the snake fixture. Everything on screen is drawn
--- with fillRect/strokeRect/fillText; see the TODOs for why.
+-- Canvas 2D rendering for the snake fixture: rectangles for the arena and
+-- snake, a beginPath()/arc()/fill() circle for the food, and fillText HUD.
 
 -- Size of one grid cell in canvas pixels. Keep in sync with main.walu, which
 -- sizes the <canvas> element as cols * cell_size() x rows * cell_size().
@@ -26,15 +26,13 @@ function draw(ctx: CanvasRenderingContext2D, state: State): unit
     ctx.lineWidth = 2.0
     ctx:strokeRect(1.0, 1.0, w - 2.0, h - 2.0)
 
-    -- Food.
-    --
-    -- TODO(waluau-6kcc): the food should be a filled circle via beginPath() +
-    -- arc() + fill(), but CanvasRenderingContext2D.fill()/stroke() are skipped
-    -- by the extern generator because their optional Path2D parameter needs
-    -- extern function overloading. Path segments can be built (arc, lineTo,
-    -- ...) yet never painted, so the whole game is axis-aligned rectangles.
+    -- Food: a filled circle centered in its grid cell. fill() resolves to the
+    -- zero-argument overload of CanvasRenderingContext2D.fill (its Path2D
+    -- variant lives outside the curated extern surface).
     ctx.fillStyle = "#dc2626"
-    ctx:fillRect(cell_px(state.food.x) + 2.0, cell_px(state.food.y) + 2.0, cell_size() - 4.0, cell_size() - 4.0)
+    ctx:beginPath()
+    ctx:arc(cell_px(state.food.x) + cell_size() / 2.0, cell_px(state.food.y) + cell_size() / 2.0, cell_size() / 2.0 - 2.0, 0.0, 6.283185307179586)
+    ctx:fill()
 
     -- Snake, head drawn brighter than the body.
     local i: i32 = 0

@@ -3107,3 +3107,234 @@ fn assert_narrows_nullable_for_rest_of_scope() {
     let program = parse(source).expect("parse should succeed");
     super::type_check(&program).expect("assert(x ~= nil) should narrow for the rest of scope");
 }
+
+#[test]
+fn resolves_declared_import_overloads_by_parameter_type() {
+    let source = r#"
+        declare function pick(x: f32): f32
+        declare function pick(x: f64): f64
+
+        function narrow(x: f32): f32
+            return pick(x)
+        end
+
+        function wide(x: f64): f64
+            return pick(x)
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+
+    // The two declarations were renamed to unique internal names while the
+    // host-facing name stays `pick` for both.
+    let pick_imports: Vec<_> = typed
+        .declared_imports
+        .iter()
+        .filter(|declared| declared.host_name == "pick")
+        .collect();
+    assert_eq!(pick_imports.len(), 2);
+    assert_eq!(pick_imports[0].name, "pick$overload0");
+    assert_eq!(pick_imports[1].name, "pick$overload1");
+
+    // Each call site was rewritten to the overload selected from its
+    // argument type.
+    let callee_name = |function_name: &str| {
+        let function = typed
+            .functions
+            .iter()
+            .find(|function| function.name.to_string() == function_name)
+            .expect("function should exist");
+        let Stmt::Return(Expr::Call { callee, .. }) = &function.body[0] else {
+            panic!("expected a returned call in {function_name}");
+        };
+        let Expr::Name(name, _, _) = callee.as_ref() else {
+            panic!("expected a name callee in {function_name}");
+        };
+        name.clone()
+    };
+    assert_eq!(callee_name("narrow"), "pick$overload0");
+    assert_eq!(callee_name("wide"), "pick$overload1");
+}
+
+#[test]
+fn resolves_declared_method_overloads_by_arity() {
+    let source = r#"
+        type Ctx = extern
+        declare function get_ctx(): Ctx
+        declare function Ctx:fill(): unit
+        declare function Ctx:fill(rule: string): unit
+
+        function paint(): unit
+            local c: Ctx = get_ctx()
+            c:fill()
+            c:fill("evenodd")
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+
+    let paint = typed
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "paint")
+        .expect("paint should exist");
+    let resolved = paint.body[1..]
+        .iter()
+        .map(|stmt| {
+            let Stmt::Expr(Expr::MethodCall { resolved_name, .. }) = stmt else {
+                panic!("expected method call statements");
+            };
+            resolved_name.clone().expect("method call should resolve")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(resolved, ["Ctx.fill$overload0", "Ctx.fill$overload1"]);
+}
+
+#[test]
+fn overloaded_call_literal_prefers_exact_match_over_coercion() {
+    let source = r#"
+        declare function pick(x: f32): f32
+        declare function pick(x: f64): f64
+
+        function literal(): f64
+            return pick(1.5)
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+    let literal = typed
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "literal")
+        .expect("literal should exist");
+    let Stmt::Return(Expr::Call { callee, .. }) = &literal.body[0] else {
+        panic!("expected returned call");
+    };
+    let Expr::Name(name, _, _) = callee.as_ref() else {
+        panic!("expected name callee");
+    };
+    // An unsuffixed literal defaults to f64, which matches the f64 overload
+    // exactly; the f32 overload would need a literal coercion.
+    assert_eq!(name, "pick$overload1");
+}
+
+#[test]
+fn rejects_ambiguous_overloaded_call() {
+    let source = r#"
+        declare function pick(x: i64): i64
+        declare function pick(x: f64): f64
+
+        function ambiguous(x: i32): f64
+            return pick(x)::f64
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "ambiguous call to overloaded function 'pick': candidates (i64) and (f64) match equally well"
+    );
+}
+
+#[test]
+fn rejects_overloaded_call_without_matching_types() {
+    let source = r#"
+        declare function pick(x: f32): f32
+        declare function pick(x: f64): f64
+
+        function bad(): f64
+            return pick("nope")
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "no overload of 'pick' matches argument types (string); available overloads: (f32), (f64)"
+    );
+}
+
+#[test]
+fn rejects_overloaded_call_without_matching_arity() {
+    let source = r#"
+        type Ctx = extern
+        declare function get_ctx(): Ctx
+        declare function Ctx:fill(): unit
+        declare function Ctx:fill(rule: string): unit
+
+        function bad(): unit
+            get_ctx():fill("evenodd", "extra")
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "no overload of 'Ctx.fill' accepts 3 arguments; available overloads: (Ctx), (Ctx, string)"
+    );
+}
+
+#[test]
+fn rejects_overloaded_function_used_as_value() {
+    let source = r#"
+        declare function pick(x: f32): f32
+        declare function pick(x: f64): f64
+
+        function bad(): f64
+            local alias = pick
+            return alias(1.0)
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "overloaded host function 'pick' cannot be used as a value; call it directly"
+    );
+}
+
+#[test]
+fn deduplicates_identical_declared_import_redeclarations() {
+    let source = r#"
+        declare function ping(x: i32): i32
+        declare function ping(x: i32): i32
+
+        function go(x: i32): i32
+            return ping(x)
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+    let pings: Vec<_> = typed
+        .declared_imports
+        .iter()
+        .filter(|declared| declared.host_name == "ping")
+        .collect();
+    assert_eq!(pings.len(), 1, "identical re-declarations should collapse");
+    assert_eq!(pings[0].name, "ping");
+}
+
+#[test]
+fn rejects_overloads_with_identical_parameters_and_conflicting_returns() {
+    let source = r#"
+        declare function ping(x: i32): i32
+        declare function ping(x: i32): f64
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "conflicting declarations of host function 'ping': overloads must differ in parameter \
+         types, but two declarations share the parameter list and disagree on the return type \
+         or host name"
+    );
+}

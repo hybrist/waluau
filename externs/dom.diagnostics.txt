@@ -298,10 +298,12 @@ skip Element.scroll: unsupported generic Web IDL type Promise<undefined> (waluau
 skip Element.scrollBy: unsupported generic Web IDL type Promise<undefined> (waluau-2c6n)
 skip Element.scrollIntoView: unsupported generic Web IDL type Promise<undefined> (waluau-2c6n)
 skip Element.scrollTo: unsupported generic Web IDL type Promise<undefined> (waluau-2c6n)
+skip Element.setAttribute: value: unsupported union Web IDL type (TrustedType or DOMString) (waluau-o4xs)
 skip Element.setAttributeNS: value: unsupported union Web IDL type (TrustedType or DOMString) (waluau-o4xs)
 skip Element.setHTMLUnsafe: html: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-o4xs)
 skip Element.startViewTransition: Web IDL type ViewTransition is not part of the selected DOM interface surface
 skip Event.composedPath: unsupported generic Web IDL type sequence<EventTarget> (waluau-utyc)
+skip EventTarget.addEventListener: callback: nullable callback Web IDL type EventListener? has no extern syntax representation (waluau-lqjs)
 skip EventTarget.removeEventListener: callback: nullable callback Web IDL type EventListener? has no extern syntax representation (waluau-lqjs)
 skip EventTarget.when: Web IDL type Observable is not part of the selected DOM interface surface
 skip File.name: disabled -- member 'attribute:name' collides with the same-named member kept on Plugin (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
@@ -502,6 +504,8 @@ skip Navigator.deprecatedURNtoURL: unsupported generic Web IDL type Promise<USVS
 skip Navigator.devicePosture: Web IDL type DevicePosture is not part of the selected DOM interface surface
 skip Navigator.geolocation: Web IDL type Geolocation is not part of the selected DOM interface surface
 skip Navigator.getAutoplayPolicy: context: Web IDL type AudioContext is not part of the selected DOM interface surface
+skip Navigator.getAutoplayPolicy: element: Web IDL type HTMLMediaElement is not part of the selected DOM interface surface
+skip Navigator.getAutoplayPolicy: type: unsupported Web IDL type AutoplayPolicyMediaType
 skip Navigator.getBattery: unsupported generic Web IDL type Promise<BatteryManager> (waluau-2c6n)
 skip Navigator.getGamepads: unsupported generic Web IDL type sequence<Gamepad?> (waluau-utyc)
 skip Navigator.getInstalledRelatedApps: unsupported generic Web IDL type Promise<sequence<RelatedApplication>> (waluau-2c6n)
@@ -559,6 +563,7 @@ skip Response.bytes: unsupported generic Web IDL type Promise<Uint8Array> (walua
 skip Response.formData: unsupported generic Web IDL type Promise<FormData> (waluau-2c6n)
 skip Response.headers: Web IDL type Headers is not part of the selected DOM interface surface
 skip Response.json: data: unsupported Web IDL type any (waluau-lxdd)
+skip Response.json: unsupported generic Web IDL type Promise<any> (waluau-2c6n)
 skip Response.type: unsupported Web IDL type ResponseType
 skip Screen.height: disabled -- member 'attribute:height' collides with the same-named member kept on DOMRectReadOnly (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip Screen.width: disabled -- member 'attribute:width' collides with the same-named member kept on DOMRectReadOnly (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)

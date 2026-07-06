@@ -17,7 +17,8 @@ use super::numeric::{
     require_bool_pair, require_numeric_cast, resolve_number_literal,
 };
 use super::signatures::{
-    FnSignature, generic_diagnostic, infer_generic_call, infer_generic_function_expr_call,
+    FnSignature, OverloadVariant, generic_diagnostic, infer_generic_call,
+    infer_generic_function_expr_call,
 };
 use super::statements::check_stmt;
 
@@ -226,14 +227,170 @@ pub(super) fn resolved_type_method_name(
             if !method_name.ends_with(&suffix) {
                 return None;
             }
-            let FnSignature::Mono { params, .. } = signature else {
-                return None;
+            let receiver_matches = match signature {
+                FnSignature::Mono { params, .. } => params
+                    .first()
+                    .is_some_and(|param| method_receiver_matches(param, receiver_ty)),
+                FnSignature::Overloaded(variants) => variants.iter().any(|variant| {
+                    variant
+                        .params
+                        .first()
+                        .is_some_and(|param| method_receiver_matches(param, receiver_ty))
+                }),
+                FnSignature::Generic(_) => false,
             };
-            let receiver_param = params.first()?;
-            method_receiver_matches(receiver_param, receiver_ty).then_some(method_name.clone())
+            receiver_matches.then(|| method_name.clone())
         })
         .collect::<Vec<_>>();
     (matches.len() == 1).then(|| matches.remove(0))
+}
+
+/// Resolve a method call on `receiver_ty` to a directly-callable signature
+/// name, selecting the matching overload variant when the method is
+/// overloaded. Returns the unique internal name IR lowering should call.
+pub(super) fn resolved_type_method_call_name(
+    receiver_ty: &Type,
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+) -> Result<Option<String>, Diagnostic> {
+    let Some(method_name) = resolved_type_method_name(receiver_ty, name, fn_signatures) else {
+        return Ok(None);
+    };
+    match fn_signatures.get(&method_name) {
+        Some(FnSignature::Overloaded(variants)) => {
+            let chosen = select_overload(
+                &method_name,
+                variants,
+                Some(receiver_ty),
+                args,
+                vars,
+                fn_signatures,
+                active_type_params,
+            )?;
+            Ok(Some(chosen.name.clone()))
+        }
+        _ => Ok(Some(method_name)),
+    }
+}
+
+/// Pick the declared-import overload that best matches a call's arguments.
+///
+/// Resolution rules, in order:
+/// 1. Keep variants whose arity matches the call (for method calls the
+///    receiver occupies the first parameter and must be compatible).
+/// 2. Reject variants where some argument neither equals nor coerces to the
+///    parameter type. Each coercion (implicit widening, literal adoption)
+///    costs 1; exact type matches cost 0.
+/// 3. The variant with the lowest total cost wins. A tie between distinct
+///    variants is an ambiguity error; an empty candidate set is a no-match
+///    error. Both list the available overload signatures.
+pub(super) fn select_overload<'a>(
+    display_name: &str,
+    variants: &'a [OverloadVariant],
+    receiver_ty: Option<&Type>,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+) -> Result<&'a OverloadVariant, Diagnostic> {
+    let receiver_len = usize::from(receiver_ty.is_some());
+    let total_args = args.len() + receiver_len;
+    let overload_list = || {
+        variants
+            .iter()
+            .map(OverloadVariant::params_display)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    let arity_matches = variants
+        .iter()
+        .filter(|variant| {
+            variant.params.len() == total_args
+                && receiver_ty.is_none_or(|receiver| {
+                    variant
+                        .params
+                        .first()
+                        .is_some_and(|param| method_receiver_matches(param, receiver))
+                })
+        })
+        .collect::<Vec<_>>();
+    if arity_matches.is_empty() {
+        return Err(Diagnostic::new(format!(
+            "no overload of '{display_name}' accepts {total_args} argument{}; available overloads: {}",
+            if total_args == 1 { "" } else { "s" },
+            overload_list()
+        )));
+    }
+
+    let mut viable: Vec<(&OverloadVariant, u32)> = Vec::new();
+    for variant in arity_matches {
+        let mut cost = 0u32;
+        let mut candidate_viable = true;
+        for (arg, param) in args.iter().zip(variant.params.iter().skip(receiver_len)) {
+            let exact = infer_expr(arg, vars, fn_signatures, active_type_params, None)
+                .is_ok_and(|actual| actual == *param);
+            if exact {
+                continue;
+            }
+            if infer_expr(
+                arg,
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(param.clone()),
+            )
+            .is_ok()
+            {
+                cost += 1;
+            } else {
+                candidate_viable = false;
+                break;
+            }
+        }
+        if candidate_viable {
+            viable.push((variant, cost));
+        }
+    }
+
+    if viable.is_empty() {
+        let arg_types = args
+            .iter()
+            .map(|arg| {
+                infer_expr(arg, vars, fn_signatures, active_type_params, None)
+                    .map_or_else(|_| "?".to_string(), |ty| ty.to_string())
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(Diagnostic::new(format!(
+            "no overload of '{display_name}' matches argument types ({arg_types}); available overloads: {}",
+            overload_list()
+        )));
+    }
+    let best_cost = viable
+        .iter()
+        .map(|(_, cost)| *cost)
+        .min()
+        .expect("viable is non-empty");
+    let mut best = viable
+        .into_iter()
+        .filter(|(_, cost)| *cost == best_cost)
+        .map(|(variant, _)| variant)
+        .collect::<Vec<_>>();
+    if best.len() > 1 {
+        let candidates = best
+            .iter()
+            .map(|variant| variant.params_display())
+            .collect::<Vec<_>>()
+            .join(" and ");
+        return Err(Diagnostic::new(format!(
+            "ambiguous call to overloaded function '{display_name}': candidates {candidates} match equally well"
+        )));
+    }
+    Ok(best.remove(0))
 }
 
 fn type_property_getter_signature<'a>(
@@ -315,6 +472,13 @@ pub(super) fn infer_expr(
                     ),
                     "call the generic function with explicit type arguments, e.g. id<i32>(value)",
                 ));
+            }
+            if vars.get(name).is_none()
+                && matches!(fn_signatures.get(name), Some(FnSignature::Overloaded(_)))
+            {
+                return Err(Diagnostic::new(format!(
+                    "overloaded host function '{name}' cannot be used as a value; call it directly"
+                )));
             }
             let actual = if let Some(local) = vars.get(name) {
                 local.ty.clone()
@@ -743,6 +907,36 @@ pub(super) fn infer_expr(
                     return coerce_type(return_type.clone(), expected);
                 }
             }
+            if let Expr::Name(name, _, _) = callee.as_ref() {
+                if vars.get(name).is_none() {
+                    if let Some(FnSignature::Overloaded(variants)) = fn_signatures.get(name) {
+                        let chosen = select_overload(
+                            name,
+                            variants,
+                            None,
+                            args,
+                            vars,
+                            fn_signatures,
+                            active_type_params,
+                        )?;
+                        for (arg, expected_param) in args.iter().zip(chosen.params.iter()) {
+                            let actual = infer_expr(
+                                arg,
+                                vars,
+                                fn_signatures,
+                                active_type_params,
+                                Some(expected_param.clone()),
+                            )?;
+                            if coerce_type(actual.clone(), Some(expected_param.clone())).is_err() {
+                                return Err(Diagnostic::new(format!(
+                                    "call expected {expected_param}, got {actual}"
+                                )));
+                            }
+                        }
+                        return coerce_type(chosen.return_type.clone(), expected);
+                    }
+                }
+            }
             let callee_ty = infer_expr(callee, vars, fn_signatures, active_type_params, None)?;
             let (params, ret) = match callee_ty {
                 Type::Function {
@@ -825,7 +1019,7 @@ pub(super) fn infer_expr(
             ) {
                 return result;
             }
-            let (params, ret) = if let Some((signature, _)) =
+            let (params, ret) = if let Some((signature, signature_name)) =
                 method_signature(receiver, name, fn_signatures)
                     .or_else(|| type_method_signature(&receiver_ty, name, fn_signatures))
             {
@@ -858,6 +1052,25 @@ pub(super) fn infer_expr(
                             active_type_params,
                             expected,
                         );
+                    }
+                    FnSignature::Overloaded(variants) => {
+                        if !type_args.is_empty() {
+                            return Err(generic_diagnostic(
+                                "generic/extra-type-args",
+                                "type arguments are only allowed when calling a generic method",
+                                "remove the type argument list or call a generic method",
+                            ));
+                        }
+                        let chosen = select_overload(
+                            &signature_name,
+                            variants,
+                            Some(&receiver_ty),
+                            args,
+                            vars,
+                            fn_signatures,
+                            active_type_params,
+                        )?;
+                        (chosen.params.clone(), chosen.return_type.clone())
                     }
                 }
             } else {
@@ -967,6 +1180,9 @@ pub(super) fn infer_expr(
                             ),
                             "call the generic function with explicit type arguments",
                         )),
+                        FnSignature::Overloaded(_) => Err(Diagnostic::new(format!(
+                            "overloaded host function '{method_name}' cannot be used as a value; call it directly"
+                        ))),
                     };
                 }
             }

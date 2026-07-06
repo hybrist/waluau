@@ -21,6 +21,26 @@ The generated `.walu` output emits extern inheritance with
 metadata so downstream tooling can inspect the DOM hierarchy without reparsing
 the generated source.
 
+## Overloads and optional parameters
+
+The waluau compiler supports overloaded `declare function` entries (same name,
+different parameter types or arity), and the generator leans on that in two
+ways:
+
+- Web IDL overloads of one operation (e.g. `fill()` and `fill(Path2D)`) are
+  each considered independently; every overload whose types map is emitted,
+  so an unrepresentable overload no longer drags down the whole member.
+- Trailing `optional` parameters expand into one declaration per emittable
+  arity: the required prefix first, then one more declaration per optional
+  parameter whose type maps (e.g. `arc(...)` with and without
+  `counterclockwise`). Expansion stops at the first optional parameter with
+  no extern representation.
+
+Overloads that collapse to the same extern parameter types are emitted once.
+At the wasm level each overload becomes its own import under the shared
+`Interface.member` name; the playground host bridge forwards arguments
+variadically, so one JS implementation serves every arity.
+
 ## Union types
 
 Web IDL union types (e.g. `(DOMString or CanvasGradient or CanvasPattern)`) are

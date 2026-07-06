@@ -42,6 +42,18 @@ function resolveRepoPath(value) {
 }
 
 function memberKey(member) {
+  // Operations keep their argument list in the key so Web IDL overloads of
+  // the same operation (e.g. fill() and fill(Path2D)) survive merging;
+  // attributes and exact re-declarations across partials still collapse.
+  if (member.type === 'operation') {
+    const args = (member.arguments ?? [])
+      .map((arg) => {
+        const type = arg.idlType ? stringifyType(arg.idlType) : '<untyped>';
+        return `${arg.optional ? '?' : ''}${type}${arg.variadic ? '...' : ''}`;
+      })
+      .join(',');
+    return `operation:${member.name || ''}(${args})`;
+  }
   return `${member.type}:${member.name || ''}`;
 }
 
@@ -78,14 +90,14 @@ function convertAstMember(member) {
     if (!member.idlType) return null;
     const params = [];
     for (const arg of member.arguments) {
-      if (arg.optional) {
-        break;
-      }
       if (!arg.idlType) {
+        // A required argument without a usable type invalidates the whole
+        // operation; an optional one just ends the emittable prefix.
+        if (arg.optional) break;
         return null;
       }
       params.push({
-        optional: false,
+        optional: Boolean(arg.optional),
         idlType: stringifyType(arg.idlType),
         name: arg.name,
         source: arg.type,
@@ -414,32 +426,49 @@ function emitInterfaceMember(iface, member, context) {
     const params = [];
     const usedParamNames = new Set();
     const sourceParams = signature?.params ?? member.params;
+    // Optional trailing parameters are emitted as overloads: one declaration
+    // with the required prefix, then one more per mappable optional
+    // parameter. `requiredCount` marks the shortest emittable arity;
+    // expansion stops at the first optional parameter whose type has no
+    // extern representation (dropping it and everything after it, which
+    // matches the pre-overload behavior of truncating at the first optional).
+    let requiredCount = 0;
+    let sawOptional = false;
     for (const param of sourceParams) {
       if (param.unsupported) return { skipped: `unsupported parameter syntax ${param.source}` };
-      if (param.optional) return { skipped: `unsupported optional parameter ${param.name}` };
+      sawOptional ||= Boolean(param.optional);
       const mapped = mapType(param.idlType, filter, knownInterfaces, include, {
         owner: iface.name,
         member: member.name,
         position: 'parameter',
       });
-      if (mapped.error) return { skipped: `${param.name}: ${mapped.error}`, category: mapped.category };
+      if (mapped.error) {
+        if (sawOptional) break;
+        return { skipped: `${param.name}: ${mapped.error}`, category: mapped.category };
+      }
       const paramName = sanitizeParamName(
         patchedParamName(iface.name, member.name, param.name, patches),
         usedParamNames,
       );
       params.push(`${paramName}: ${mapped.type}`);
+      if (!sawOptional) requiredCount = params.length;
     }
-    return {
-      line: `declare function ${iface.name}:${rename}(${params.join(', ')}): ${returnType.type}`,
-      metadata: {
-        interface: iface.name,
-        kind: member.kind,
-        idlName: member.name,
-        emittedName: rename,
-        params,
-        returnType: returnType.type,
-      },
-    };
+    const emissions = [];
+    for (let arity = requiredCount; arity <= params.length; arity += 1) {
+      const variantParams = params.slice(0, arity);
+      emissions.push({
+        line: `declare function ${iface.name}:${rename}(${variantParams.join(', ')}): ${returnType.type}`,
+        metadata: {
+          interface: iface.name,
+          kind: member.kind,
+          idlName: member.name,
+          emittedName: rename,
+          params: variantParams,
+          returnType: returnType.type,
+        },
+      });
+    }
+    return { emissions };
   }
 
   return { skipped: 'unsupported member syntax' };
@@ -532,13 +561,19 @@ async function generate({ customSource, filter, patches }) {
   for (const iface of parsed.filter((candidate) => include.has(candidate.name))) {
     const disabledMembers = new Map((filter.disabledMembers?.[iface.name] ?? []).map((entry) => [entry.member, entry]));
     const seen = new Set();
+    const emittedLines = new Set();
     for (const member of iface.members) {
       if (!member.name) continue;
-      const key = `${member.kind}:${member.name}`;
+      // Operations key on their parameter list too, so Web IDL overloads of
+      // one operation are all considered; attributes stay name-keyed.
+      const paramsKey = member.kind === 'operation'
+        ? `(${member.params.map((param) => `${param.optional ? '?' : ''}${param.idlType}`).join(',')})`
+        : '';
+      const key = `${member.kind}:${member.name}${paramsKey}`;
       if (seen.has(key)) continue;
       seen.add(key);
 
-      const disabledEntry = disabledMembers.get(key);
+      const disabledEntry = disabledMembers.get(`${member.kind}:${member.name}`);
       if (disabledEntry) {
         const suffix = disabledEntry.issue ? ` (${disabledEntry.issue})` : '';
         diagnostics.push(`skip ${iface.name}.${member.name}: disabled -- ${disabledEntry.reason}${suffix}`);
@@ -565,8 +600,20 @@ async function generate({ customSource, filter, patches }) {
         });
         continue;
       }
-      output.push(emitted.line);
-      emittedMembers.push(emitted.metadata);
+      // Operations yield one declaration per emittable arity; overloads from
+      // distinct Web IDL signatures that collapse to the same extern
+      // signature (e.g. a shared required prefix) are emitted only once.
+      // Signatures are compared by parameter types, ignoring parameter names.
+      for (const emission of emitted.emissions ?? [emitted]) {
+        const paramTypes = (emission.metadata.params ?? [])
+          .map((param) => param.slice(param.indexOf(': ') + 2))
+          .join(', ');
+        const signatureKey = `${emission.metadata.kind}:${emission.metadata.emittedName}(${paramTypes})`;
+        if (emittedLines.has(signatureKey)) continue;
+        emittedLines.add(signatureKey);
+        output.push(emission.line);
+        emittedMembers.push(emission.metadata);
+      }
     }
   }
 
@@ -607,10 +654,21 @@ async function generate({ customSource, filter, patches }) {
   }
 
   output.push('');
+  // Web IDL overloads of one member can be skipped for the same reason;
+  // record each distinct skip entry once.
+  const seenSkips = new Set();
+  metadata.skippedMembers = metadata.skippedMembers.filter((entry) => {
+    const key = JSON.stringify(entry);
+    if (seenSkips.has(key)) return false;
+    seenSkips.add(key);
+    return true;
+  });
   return {
     externs: output.join('\n'),
     metadata: `${JSON.stringify(metadata, null, 2)}\n`,
-    diagnostics: `${diagnostics.sort().join('\n')}\n`,
+    // Web IDL overloads of one member can fail for the same reason; report
+    // each distinct diagnostic once.
+    diagnostics: `${[...new Set(diagnostics)].sort().join('\n')}\n`,
   };
 }
 

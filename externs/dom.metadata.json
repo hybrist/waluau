@@ -324,6 +324,39 @@
       "returnType": "Blob"
     },
     {
+      "interface": "Blob",
+      "kind": "operation",
+      "idlName": "slice",
+      "emittedName": "slice",
+      "params": [
+        "start: i64"
+      ],
+      "returnType": "Blob"
+    },
+    {
+      "interface": "Blob",
+      "kind": "operation",
+      "idlName": "slice",
+      "emittedName": "slice",
+      "params": [
+        "start: i64",
+        "end_: i64"
+      ],
+      "returnType": "Blob"
+    },
+    {
+      "interface": "Blob",
+      "kind": "operation",
+      "idlName": "slice",
+      "emittedName": "slice",
+      "params": [
+        "start: i64",
+        "end_: i64",
+        "content_type: string"
+      ],
+      "returnType": "Blob"
+    },
+    {
       "interface": "File",
       "kind": "attribute",
       "idlName": "lastModified",
@@ -584,10 +617,32 @@
     {
       "interface": "Document",
       "kind": "operation",
+      "idlName": "createNodeIterator",
+      "emittedName": "createNodeIterator",
+      "params": [
+        "root: Node",
+        "what_to_show: u32"
+      ],
+      "returnType": "NodeIterator"
+    },
+    {
+      "interface": "Document",
+      "kind": "operation",
       "idlName": "createTreeWalker",
       "emittedName": "createTreeWalker",
       "params": [
         "root: Node"
+      ],
+      "returnType": "TreeWalker"
+    },
+    {
+      "interface": "Document",
+      "kind": "operation",
+      "idlName": "createTreeWalker",
+      "emittedName": "createTreeWalker",
+      "params": [
+        "root: Node",
+        "what_to_show: u32"
       ],
       "returnType": "TreeWalker"
     },
@@ -789,6 +844,29 @@
       "emittedName": "execCommand",
       "params": [
         "command_id: string"
+      ],
+      "returnType": "bool"
+    },
+    {
+      "interface": "Document",
+      "kind": "operation",
+      "idlName": "execCommand",
+      "emittedName": "execCommand",
+      "params": [
+        "command_id: string",
+        "show_u_i: bool"
+      ],
+      "returnType": "bool"
+    },
+    {
+      "interface": "Document",
+      "kind": "operation",
+      "idlName": "execCommand",
+      "emittedName": "execCommand",
+      "params": [
+        "command_id: string",
+        "show_u_i: bool",
+        "value: string"
       ],
       "returnType": "bool"
     },
@@ -1329,6 +1407,39 @@
     },
     {
       "interface": "Window",
+      "kind": "operation",
+      "idlName": "open",
+      "emittedName": "open",
+      "params": [
+        "url: string"
+      ],
+      "returnType": "Window?"
+    },
+    {
+      "interface": "Window",
+      "kind": "operation",
+      "idlName": "open",
+      "emittedName": "open",
+      "params": [
+        "url: string",
+        "target: string"
+      ],
+      "returnType": "Window?"
+    },
+    {
+      "interface": "Window",
+      "kind": "operation",
+      "idlName": "open",
+      "emittedName": "open",
+      "params": [
+        "url: string",
+        "target: string",
+        "features: string"
+      ],
+      "returnType": "Window?"
+    },
+    {
+      "interface": "Window",
       "kind": "attribute",
       "idlName": "navigator",
       "emittedName": "navigator",
@@ -1356,6 +1467,14 @@
       "kind": "operation",
       "idlName": "alert",
       "emittedName": "alert",
+      "params": [],
+      "returnType": "unit"
+    },
+    {
+      "interface": "Window",
+      "kind": "operation",
+      "idlName": "alert",
+      "emittedName": "alert",
       "params": [
         "message: string"
       ],
@@ -1372,9 +1491,40 @@
     {
       "interface": "Window",
       "kind": "operation",
+      "idlName": "confirm",
+      "emittedName": "confirm",
+      "params": [
+        "message: string"
+      ],
+      "returnType": "bool"
+    },
+    {
+      "interface": "Window",
+      "kind": "operation",
       "idlName": "prompt",
       "emittedName": "prompt",
       "params": [],
+      "returnType": "string?"
+    },
+    {
+      "interface": "Window",
+      "kind": "operation",
+      "idlName": "prompt",
+      "emittedName": "prompt",
+      "params": [
+        "message: string"
+      ],
+      "returnType": "string?"
+    },
+    {
+      "interface": "Window",
+      "kind": "operation",
+      "idlName": "prompt",
+      "emittedName": "prompt",
+      "params": [
+        "message: string",
+        "default: string"
+      ],
       "returnType": "string?"
     },
     {
@@ -1582,6 +1732,17 @@
       "emittedName": "getComputedStyle",
       "params": [
         "elt: Element"
+      ],
+      "returnType": "CSSStyleProperties"
+    },
+    {
+      "interface": "Window",
+      "kind": "operation",
+      "idlName": "getComputedStyle",
+      "emittedName": "getComputedStyle",
+      "params": [
+        "elt: Element",
+        "pseudo_elt: string?"
       ],
       "returnType": "CSSStyleProperties"
     },
@@ -2690,9 +2851,29 @@
     {
       "interface": "Window",
       "kind": "operation",
+      "idlName": "clearTimeout",
+      "emittedName": "clearTimeout",
+      "params": [
+        "id: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "Window",
+      "kind": "operation",
       "idlName": "clearInterval",
       "emittedName": "clearInterval",
       "params": [],
+      "returnType": "unit"
+    },
+    {
+      "interface": "Window",
+      "kind": "operation",
+      "idlName": "clearInterval",
+      "emittedName": "clearInterval",
+      "params": [
+        "id: i32"
+      ],
       "returnType": "unit"
     },
     {
@@ -3063,17 +3244,6 @@
     {
       "interface": "Element",
       "kind": "operation",
-      "idlName": "setAttribute",
-      "emittedName": "set_attribute",
-      "params": [
-        "name: string",
-        "value: string"
-      ],
-      "returnType": "unit"
-    },
-    {
-      "interface": "Element",
-      "kind": "operation",
       "idlName": "removeAttribute",
       "emittedName": "remove_attribute",
       "params": [
@@ -3099,6 +3269,17 @@
       "emittedName": "toggleAttribute",
       "params": [
         "qualified_name: string"
+      ],
+      "returnType": "bool"
+    },
+    {
+      "interface": "Element",
+      "kind": "operation",
+      "idlName": "toggleAttribute",
+      "emittedName": "toggleAttribute",
+      "params": [
+        "qualified_name: string",
+        "force: bool"
       ],
       "returnType": "bool"
     },
@@ -3419,6 +3600,17 @@
         "pointer_id: i32"
       ],
       "returnType": "bool"
+    },
+    {
+      "interface": "Element",
+      "kind": "operation",
+      "idlName": "setAttribute",
+      "emittedName": "set_attribute",
+      "params": [
+        "name: string",
+        "value: string"
+      ],
+      "returnType": "unit"
     },
     {
       "interface": "Element",
@@ -4500,6 +4692,17 @@
     {
       "interface": "CSSStyleSheet",
       "kind": "operation",
+      "idlName": "insertRule",
+      "emittedName": "insertRule",
+      "params": [
+        "rule: string",
+        "index: u32"
+      ],
+      "returnType": "u32"
+    },
+    {
+      "interface": "CSSStyleSheet",
+      "kind": "operation",
       "idlName": "deleteRule",
       "emittedName": "deleteRule",
       "params": [
@@ -4536,9 +4739,52 @@
     {
       "interface": "CSSStyleSheet",
       "kind": "operation",
+      "idlName": "addRule",
+      "emittedName": "addRule",
+      "params": [
+        "selector: string"
+      ],
+      "returnType": "i32"
+    },
+    {
+      "interface": "CSSStyleSheet",
+      "kind": "operation",
+      "idlName": "addRule",
+      "emittedName": "addRule",
+      "params": [
+        "selector: string",
+        "style: string"
+      ],
+      "returnType": "i32"
+    },
+    {
+      "interface": "CSSStyleSheet",
+      "kind": "operation",
+      "idlName": "addRule",
+      "emittedName": "addRule",
+      "params": [
+        "selector: string",
+        "style: string",
+        "index: u32"
+      ],
+      "returnType": "i32"
+    },
+    {
+      "interface": "CSSStyleSheet",
+      "kind": "operation",
       "idlName": "removeRule",
       "emittedName": "removeRule",
       "params": [],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CSSStyleSheet",
+      "kind": "operation",
+      "idlName": "removeRule",
+      "emittedName": "removeRule",
+      "params": [
+        "index: u32"
+      ],
       "returnType": "unit"
     },
     {
@@ -4587,6 +4833,18 @@
       "params": [
         "property: string",
         "value: string"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CSSStyleDeclaration",
+      "kind": "operation",
+      "idlName": "setProperty",
+      "emittedName": "setProperty",
+      "params": [
+        "property: string",
+        "value: string",
+        "priority: string"
       ],
       "returnType": "unit"
     },
@@ -4747,13 +5005,25 @@
       "returnType": "unit"
     },
     {
-      "interface": "EventTarget",
+      "interface": "Event",
       "kind": "operation",
-      "idlName": "addEventListener",
-      "emittedName": "add_event_listener",
+      "idlName": "initEvent",
+      "emittedName": "initEvent",
       "params": [
         "type: string",
-        "callback: (Event) -> unit"
+        "bubbles: bool"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "Event",
+      "kind": "operation",
+      "idlName": "initEvent",
+      "emittedName": "initEvent",
+      "params": [
+        "type: string",
+        "bubbles: bool",
+        "cancelable: bool"
       ],
       "returnType": "unit"
     },
@@ -4766,6 +5036,17 @@
         "event: Event"
       ],
       "returnType": "bool"
+    },
+    {
+      "interface": "EventTarget",
+      "kind": "operation",
+      "idlName": "addEventListener",
+      "emittedName": "add_event_listener",
+      "params": [
+        "type: string",
+        "callback: (Event) -> unit"
+      ],
+      "returnType": "unit"
     },
     {
       "interface": "HTMLCollection",
@@ -4919,6 +5200,16 @@
       "idlName": "cloneNode",
       "emittedName": "cloneNode",
       "params": [],
+      "returnType": "Node"
+    },
+    {
+      "interface": "Node",
+      "kind": "operation",
+      "idlName": "cloneNode",
+      "emittedName": "cloneNode",
+      "params": [
+        "subtree: bool"
+      ],
       "returnType": "Node"
     },
     {
@@ -5473,6 +5764,17 @@
     {
       "interface": "DOMTokenList",
       "kind": "operation",
+      "idlName": "toggle",
+      "emittedName": "toggle",
+      "params": [
+        "token: string",
+        "force: bool"
+      ],
+      "returnType": "bool"
+    },
+    {
+      "interface": "DOMTokenList",
+      "kind": "operation",
       "idlName": "replace",
       "emittedName": "replace",
       "params": [
@@ -5734,9 +6036,29 @@
     {
       "interface": "HTMLInputElement",
       "kind": "operation",
+      "idlName": "stepUp",
+      "emittedName": "stepUp",
+      "params": [
+        "n: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "HTMLInputElement",
+      "kind": "operation",
       "idlName": "stepDown",
       "emittedName": "stepDown",
       "params": [],
+      "returnType": "unit"
+    },
+    {
+      "interface": "HTMLInputElement",
+      "kind": "operation",
+      "idlName": "stepDown",
+      "emittedName": "stepDown",
+      "params": [
+        "n: i32"
+      ],
       "returnType": "unit"
     },
     {
@@ -5803,6 +6125,16 @@
       "idlName": "setRangeText",
       "emittedName": "setRangeText",
       "params": [
+        "replacement: string"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "HTMLInputElement",
+      "kind": "operation",
+      "idlName": "setRangeText",
+      "emittedName": "setRangeText",
+      "params": [
         "replacement: string",
         "start: u32",
         "end_: u32"
@@ -5817,6 +6149,18 @@
       "params": [
         "start: u32",
         "end_: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "HTMLInputElement",
+      "kind": "operation",
+      "idlName": "setSelectionRange",
+      "emittedName": "setSelectionRange",
+      "params": [
+        "start: u32",
+        "end_: u32",
+        "direction: string"
       ],
       "returnType": "unit"
     },
@@ -5883,6 +6227,17 @@
       "emittedName": "redirect",
       "params": [
         "url: string"
+      ],
+      "returnType": "Response"
+    },
+    {
+      "interface": "Response",
+      "kind": "operation",
+      "idlName": "redirect",
+      "emittedName": "redirect",
+      "params": [
+        "url: string",
+        "status: u32"
       ],
       "returnType": "Response"
     },
@@ -6209,6 +6564,16 @@
     {
       "interface": "HTMLFormElement",
       "kind": "operation",
+      "idlName": "requestSubmit",
+      "emittedName": "requestSubmit",
+      "params": [
+        "submitter: HTMLElement?"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "HTMLFormElement",
+      "kind": "operation",
       "idlName": "reset",
       "emittedName": "reset",
       "params": [],
@@ -6292,6 +6657,16 @@
       "idlName": "setRangeText",
       "emittedName": "setRangeText",
       "params": [
+        "replacement: string"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "HTMLTextAreaElement",
+      "kind": "operation",
+      "idlName": "setRangeText",
+      "emittedName": "setRangeText",
+      "params": [
         "replacement: string",
         "start: u32",
         "end_: u32"
@@ -6306,6 +6681,18 @@
       "params": [
         "start: u32",
         "end_: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "HTMLTextAreaElement",
+      "kind": "operation",
+      "idlName": "setSelectionRange",
+      "emittedName": "setSelectionRange",
+      "params": [
+        "start: u32",
+        "end_: u32",
+        "direction: string"
       ],
       "returnType": "unit"
     },
@@ -6432,6 +6819,16 @@
       "returnType": "string"
     },
     {
+      "interface": "HTMLCanvasElement",
+      "kind": "operation",
+      "idlName": "toDataURL",
+      "emittedName": "toDataURL",
+      "params": [
+        "type: string"
+      ],
+      "returnType": "string"
+    },
+    {
       "interface": "CanvasRenderingContext2D",
       "kind": "attribute",
       "idlName": "canvas",
@@ -6508,6 +6905,21 @@
       "kind": "operation",
       "idlName": "transform",
       "emittedName": "transform",
+      "params": [
+        "a: f64",
+        "b: f64",
+        "c: f64",
+        "d: f64",
+        "e: f64",
+        "f: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "setTransform",
+      "emittedName": "setTransform",
       "params": [
         "a: f64",
         "b: f64",
@@ -6664,8 +7076,89 @@
     {
       "interface": "CanvasRenderingContext2D",
       "kind": "operation",
+      "idlName": "fill",
+      "emittedName": "fill",
+      "params": [],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "stroke",
+      "emittedName": "stroke",
+      "params": [],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "clip",
+      "emittedName": "clip",
+      "params": [],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "isPointInPath",
+      "emittedName": "isPointInPath",
+      "params": [
+        "x: f64",
+        "y: f64"
+      ],
+      "returnType": "bool"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "isPointInStroke",
+      "emittedName": "isPointInStroke",
+      "params": [
+        "x: f64",
+        "y: f64"
+      ],
+      "returnType": "bool"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "drawFocusIfNeeded",
+      "emittedName": "drawFocusIfNeeded",
+      "params": [
+        "element: Element"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
       "idlName": "fillText",
       "emittedName": "fillText",
+      "params": [
+        "text: string",
+        "x: f64",
+        "y: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "fillText",
+      "emittedName": "fillText",
+      "params": [
+        "text: string",
+        "x: f64",
+        "y: f64",
+        "max_width: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "strokeText",
+      "emittedName": "strokeText",
       "params": [
         "text: string",
         "x: f64",
@@ -6681,7 +7174,8 @@
       "params": [
         "text: string",
         "x: f64",
-        "y: f64"
+        "y: f64",
+        "max_width: f64"
       ],
       "returnType": "unit"
     },
@@ -6856,6 +7350,21 @@
     {
       "interface": "CanvasRenderingContext2D",
       "kind": "operation",
+      "idlName": "arc",
+      "emittedName": "arc",
+      "params": [
+        "x: f64",
+        "y: f64",
+        "radius: f64",
+        "start_angle: f64",
+        "end_angle: f64",
+        "counterclockwise: bool"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
       "idlName": "ellipse",
       "emittedName": "ellipse",
       "params": [
@@ -6866,6 +7375,23 @@
         "rotation: f64",
         "start_angle: f64",
         "end_angle: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "CanvasRenderingContext2D",
+      "kind": "operation",
+      "idlName": "ellipse",
+      "emittedName": "ellipse",
+      "params": [
+        "x: f64",
+        "y: f64",
+        "radius_x: f64",
+        "radius_y: f64",
+        "rotation: f64",
+        "start_angle: f64",
+        "end_angle: f64",
+        "counterclockwise: bool"
       ],
       "returnType": "unit"
     },
@@ -7001,6 +7527,16 @@
       "idlName": "go",
       "emittedName": "go",
       "params": [],
+      "returnType": "unit"
+    },
+    {
+      "interface": "History",
+      "kind": "operation",
+      "idlName": "go",
+      "emittedName": "go",
+      "params": [
+        "delta: i32"
+      ],
       "returnType": "unit"
     },
     {
@@ -7144,6 +7680,56 @@
     },
     {
       "interface": "UIEvent",
+      "kind": "operation",
+      "idlName": "initUIEvent",
+      "emittedName": "initUIEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "UIEvent",
+      "kind": "operation",
+      "idlName": "initUIEvent",
+      "emittedName": "initUIEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "UIEvent",
+      "kind": "operation",
+      "idlName": "initUIEvent",
+      "emittedName": "initUIEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool",
+        "view_arg: Window?"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "UIEvent",
+      "kind": "operation",
+      "idlName": "initUIEvent",
+      "emittedName": "initUIEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool",
+        "view_arg: Window?",
+        "detail_arg: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "UIEvent",
       "kind": "attribute",
       "idlName": "which",
       "emittedName": "which",
@@ -7281,10 +7867,32 @@
     {
       "interface": "Selection",
       "kind": "operation",
+      "idlName": "collapse",
+      "emittedName": "collapse",
+      "params": [
+        "node: Node?",
+        "offset: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "Selection",
+      "kind": "operation",
       "idlName": "setPosition",
       "emittedName": "setPosition",
       "params": [
         "node: Node?"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "Selection",
+      "kind": "operation",
+      "idlName": "setPosition",
+      "emittedName": "setPosition",
+      "params": [
+        "node: Node?",
+        "offset: u32"
       ],
       "returnType": "unit"
     },
@@ -7311,6 +7919,17 @@
       "emittedName": "extend",
       "params": [
         "node: Node"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "Selection",
+      "kind": "operation",
+      "idlName": "extend",
+      "emittedName": "extend",
+      "params": [
+        "node: Node",
+        "offset: u32"
       ],
       "returnType": "unit"
     },
@@ -7348,6 +7967,39 @@
     {
       "interface": "Selection",
       "kind": "operation",
+      "idlName": "modify",
+      "emittedName": "modify",
+      "params": [
+        "alter: string"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "Selection",
+      "kind": "operation",
+      "idlName": "modify",
+      "emittedName": "modify",
+      "params": [
+        "alter: string",
+        "direction: string"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "Selection",
+      "kind": "operation",
+      "idlName": "modify",
+      "emittedName": "modify",
+      "params": [
+        "alter: string",
+        "direction: string",
+        "granularity: string"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "Selection",
+      "kind": "operation",
       "idlName": "deleteFromDocument",
       "emittedName": "deleteFromDocument",
       "params": [],
@@ -7360,6 +8012,17 @@
       "emittedName": "containsNode",
       "params": [
         "node: Node"
+      ],
+      "returnType": "bool"
+    },
+    {
+      "interface": "Selection",
+      "kind": "operation",
+      "idlName": "containsNode",
+      "emittedName": "containsNode",
+      "params": [
+        "node: Node",
+        "allow_partial_containment: bool"
       ],
       "returnType": "bool"
     },
@@ -7444,6 +8107,141 @@
       "emittedName": "initKeyboardEvent",
       "params": [
         "type_arg: string"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "operation",
+      "idlName": "initKeyboardEvent",
+      "emittedName": "initKeyboardEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "operation",
+      "idlName": "initKeyboardEvent",
+      "emittedName": "initKeyboardEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "operation",
+      "idlName": "initKeyboardEvent",
+      "emittedName": "initKeyboardEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool",
+        "view_arg: Window?"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "operation",
+      "idlName": "initKeyboardEvent",
+      "emittedName": "initKeyboardEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool",
+        "view_arg: Window?",
+        "key_arg: string"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "operation",
+      "idlName": "initKeyboardEvent",
+      "emittedName": "initKeyboardEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool",
+        "view_arg: Window?",
+        "key_arg: string",
+        "location_arg: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "operation",
+      "idlName": "initKeyboardEvent",
+      "emittedName": "initKeyboardEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool",
+        "view_arg: Window?",
+        "key_arg: string",
+        "location_arg: u32",
+        "ctrl_key: bool"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "operation",
+      "idlName": "initKeyboardEvent",
+      "emittedName": "initKeyboardEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool",
+        "view_arg: Window?",
+        "key_arg: string",
+        "location_arg: u32",
+        "ctrl_key: bool",
+        "alt_key: bool"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "operation",
+      "idlName": "initKeyboardEvent",
+      "emittedName": "initKeyboardEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool",
+        "view_arg: Window?",
+        "key_arg: string",
+        "location_arg: u32",
+        "ctrl_key: bool",
+        "alt_key: bool",
+        "shift_key: bool"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "KeyboardEvent",
+      "kind": "operation",
+      "idlName": "initKeyboardEvent",
+      "emittedName": "initKeyboardEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool",
+        "view_arg: Window?",
+        "key_arg: string",
+        "location_arg: u32",
+        "ctrl_key: bool",
+        "alt_key: bool",
+        "shift_key: bool",
+        "meta_key: bool"
       ],
       "returnType": "unit"
     },
@@ -8881,6 +9679,18 @@
     {
       "interface": "Navigator",
       "member": "getAutoplayPolicy",
+      "reason": "type: unsupported Web IDL type AutoplayPolicyMediaType",
+      "issue": null
+    },
+    {
+      "interface": "Navigator",
+      "member": "getAutoplayPolicy",
+      "reason": "element: Web IDL type HTMLMediaElement is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "Navigator",
+      "member": "getAutoplayPolicy",
       "reason": "context: Web IDL type AudioContext is not part of the selected DOM interface surface",
       "issue": null
     },
@@ -9192,6 +10002,12 @@
       "member": "getAttributeNames",
       "reason": "unsupported generic Web IDL type sequence<DOMString>",
       "issue": "waluau-utyc"
+    },
+    {
+      "interface": "Element",
+      "member": "setAttribute",
+      "reason": "value: unsupported union Web IDL type (TrustedType or DOMString)",
+      "issue": "waluau-o4xs"
     },
     {
       "interface": "Element",
@@ -10536,6 +11352,12 @@
     },
     {
       "interface": "EventTarget",
+      "member": "addEventListener",
+      "reason": "callback: nullable callback Web IDL type EventListener? has no extern syntax representation",
+      "issue": "waluau-lqjs"
+    },
+    {
+      "interface": "EventTarget",
       "member": "removeEventListener",
       "reason": "callback: nullable callback Web IDL type EventListener? has no extern syntax representation",
       "issue": "waluau-lqjs"
@@ -11087,6 +11909,12 @@
       "interface": "Response",
       "member": "formData",
       "reason": "unsupported generic Web IDL type Promise<FormData>",
+      "issue": "waluau-2c6n"
+    },
+    {
+      "interface": "Response",
+      "member": "json",
+      "reason": "unsupported generic Web IDL type Promise<any>",
       "issue": "waluau-2c6n"
     },
     {

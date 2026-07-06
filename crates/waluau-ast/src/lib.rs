@@ -20,6 +20,28 @@ pub fn expr_pattern_captures(pattern_arg: &Expr) -> Vec<LuaCaptureKind> {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SymbolId(pub usize);
 
+/// Separator used to build unique internal names for overloaded declared
+/// host functions. `declare function abs(x: f32): f32` and
+/// `declare function abs(x: f64): f64` are renamed to `abs$overload0` and
+/// `abs$overload1` during type checking; `$` cannot appear in source
+/// identifiers, so the mangled names never collide with user code.
+pub const OVERLOAD_SEPARATOR: &str = "$overload";
+
+/// The unique internal name for overload `index` of declared function `base`.
+pub fn overload_variant_name(base: &str, index: usize) -> String {
+    format!("{base}{OVERLOAD_SEPARATOR}{index}")
+}
+
+/// The base (source-level) name of a mangled overload name, or `None` when
+/// `name` is not an overload variant name.
+pub fn overload_base_name(name: &str) -> Option<&str> {
+    let (base, suffix) = name.rsplit_once(OVERLOAD_SEPARATOR)?;
+    if base.is_empty() || suffix.is_empty() || !suffix.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(base)
+}
+
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -731,6 +753,14 @@ impl Resolver {
         id
     }
 
+    /// Bind `name` to an existing symbol in the current scope without
+    /// allocating a new id.
+    fn bind_existing(&mut self, name: &str, id: SymbolId) {
+        if let Some(current) = self.scopes.last_mut() {
+            current.insert(name.to_string(), id);
+        }
+    }
+
     fn lookup(&self, name: &str) -> Option<SymbolId> {
         for scope in self.scopes.iter().rev() {
             if let Some(id) = scope.get(name) {
@@ -1078,6 +1108,22 @@ pub fn resolve_symbols(program: &mut Program) -> Result<(), Diagnostic> {
     for declared in &mut program.declared_imports {
         let id = resolver.declare(&declared.name);
         declared.symbol_id = Some(id);
+    }
+    // Overloaded declared imports carry unique internal names after type
+    // checking (`name$overloadN`). Keep the shared base name resolvable so
+    // builtin-intercepted references (e.g. `tonumber`) still bind; type
+    // checking rewrites all other call sites to the mangled names.
+    let mut overload_bases: Vec<(String, SymbolId)> = Vec::new();
+    for declared in &program.declared_imports {
+        if let (Some(base), Some(id)) = (overload_base_name(&declared.name), declared.symbol_id) {
+            match overload_bases.iter_mut().find(|(name, _)| name == base) {
+                Some(entry) => entry.1 = id,
+                None => overload_bases.push((base.to_string(), id)),
+            }
+        }
+    }
+    for (base, id) in overload_bases {
+        resolver.bind_existing(&base, id);
     }
 
     // Resolve top-level statements
