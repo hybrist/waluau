@@ -7,10 +7,10 @@ use super::Binding;
 use super::builtins::{
     STRING_BYTE, STRING_FIND, STRING_FORMAT, STRING_GMATCH, STRING_GSUB, STRING_LEN, STRING_LOWER,
     STRING_MATCH, STRING_REP, STRING_REVERSE, STRING_SUB, STRING_UPPER, infer_bit32_builtin_call,
-    infer_coroutine_builtin_call, infer_error_builtin_call, infer_math_builtin_call,
-    infer_pcall_builtin_call, infer_promise_await_method_call, infer_promise_builtin_call,
-    infer_select_builtin_call, infer_string_builtin_call, infer_table_builtin_call,
-    infer_tonumber_builtin_call, infer_tostring_builtin_call, infer_type_builtin_call,
+    infer_coroutine_builtin_call, infer_error_builtin_call, infer_pcall_builtin_call,
+    infer_promise_await_method_call, infer_promise_builtin_call, infer_select_builtin_call,
+    infer_string_builtin_call, infer_table_builtin_call, infer_tonumber_builtin_call,
+    infer_tostring_builtin_call, infer_type_builtin_call,
 };
 use super::numeric::{
     coerce_type, common_element_type, infer_numeric_common_type, is_extern_subtype_of,
@@ -694,16 +694,6 @@ pub(super) fn infer_expr(
                 ) {
                     return result;
                 }
-                if let Some(result) = infer_math_builtin_call(
-                    &name,
-                    args,
-                    vars,
-                    fn_signatures,
-                    active_type_params,
-                    expected.clone(),
-                ) {
-                    return result;
-                }
                 if let Some(result) = infer_bit32_builtin_call(
                     &name,
                     args,
@@ -934,6 +924,78 @@ pub(super) fn infer_expr(
                             }
                         }
                         return coerce_type(chosen.return_type.clone(), expected);
+                    }
+                }
+            }
+            // Namespaced declared imports called through a field expression
+            // (`math.abs(x)`): resolve the dotted name against the declared
+            // function signatures when the namespace is not a local binding.
+            if let Expr::Field { base, name, .. } = callee.as_ref() {
+                if let Expr::Name(base_name, _, _) = base.as_ref() {
+                    if !vars.contains_key(base_name) {
+                        let dotted = method_signature_name(base_name, name);
+                        match fn_signatures.get(&dotted) {
+                            Some(FnSignature::Overloaded(variants)) => {
+                                let chosen = select_overload(
+                                    &dotted,
+                                    variants,
+                                    None,
+                                    args,
+                                    vars,
+                                    fn_signatures,
+                                    active_type_params,
+                                )?;
+                                for (arg, expected_param) in args.iter().zip(chosen.params.iter()) {
+                                    let actual = infer_expr(
+                                        arg,
+                                        vars,
+                                        fn_signatures,
+                                        active_type_params,
+                                        Some(expected_param.clone()),
+                                    )?;
+                                    if coerce_type(actual.clone(), Some(expected_param.clone()))
+                                        .is_err()
+                                    {
+                                        return Err(Diagnostic::new(format!(
+                                            "call expected {expected_param}, got {actual}"
+                                        )));
+                                    }
+                                }
+                                return coerce_type(chosen.return_type.clone(), expected);
+                            }
+                            Some(FnSignature::Mono {
+                                params,
+                                vararg: false,
+                                return_type,
+                            }) => {
+                                if args.len() != params.len() {
+                                    return Err(Diagnostic::new(format!(
+                                        "{dotted} expects {} argument{}, got {}",
+                                        params.len(),
+                                        if params.len() == 1 { "" } else { "s" },
+                                        args.len()
+                                    )));
+                                }
+                                for (arg, expected_param) in args.iter().zip(params.iter()) {
+                                    let actual = infer_expr(
+                                        arg,
+                                        vars,
+                                        fn_signatures,
+                                        active_type_params,
+                                        Some(expected_param.clone()),
+                                    )?;
+                                    if coerce_type(actual.clone(), Some(expected_param.clone()))
+                                        .is_err()
+                                    {
+                                        return Err(Diagnostic::new(format!(
+                                            "call expected {expected_param}, got {actual}"
+                                        )));
+                                    }
+                                }
+                                return coerce_type(return_type.clone(), expected);
+                            }
+                            _ => {}
+                        }
                     }
                 }
             }

@@ -4467,11 +4467,6 @@ impl Builder<'_> {
                         return result;
                     }
                     if let Some(result) =
-                        self.lower_math_builtin_call(&name, args, env, types, expected.clone())
-                    {
-                        return result;
-                    }
-                    if let Some(result) =
                         self.lower_bit32_builtin_call(&name, args, env, types, expected.clone())
                     {
                         return result;
@@ -5427,9 +5422,6 @@ impl Builder<'_> {
                     if let Some(result) =
                         self.infer_error_builtin_call_type(&name, args, types, expected.clone())
                     {
-                        return result;
-                    }
-                    if let Some(result) = self.infer_math_builtin_call_type(&name, expr, types) {
                         return result;
                     }
                     if let Some(result) = self.infer_bit32_builtin_call_type(&name, args, types) {
@@ -6524,65 +6516,6 @@ impl Builder<'_> {
             ))));
         }
         Some(Ok(expected.unwrap_or(Type::Unknown)))
-    }
-
-    fn lower_math_builtin_call(
-        &mut self,
-        name: &str,
-        args: &[Expr],
-        env: &HashMap<SymbolId, ValueId>,
-        types: &HashMap<SymbolId, Type>,
-        expected: Option<Type>,
-    ) -> Option<Result<ValueId, Diagnostic>> {
-        let (intrinsic, arity) = match name {
-            MATH_ABS => (MathIntrinsic::Abs, 1),
-            MATH_MIN => (MathIntrinsic::Min, 2),
-            MATH_MAX => (MathIntrinsic::Max, 2),
-            MATH_SQRT => (MathIntrinsic::Sqrt, 1),
-            MATH_FLOOR => (MathIntrinsic::Floor, 1),
-            MATH_CEIL => (MathIntrinsic::Ceil, 1),
-            MATH_TRUNC => (MathIntrinsic::Trunc, 1),
-            MATH_NEAREST => (MathIntrinsic::Nearest, 1),
-            MATH_COPYSIGN => (MathIntrinsic::Copysign, 2),
-            _ => return None,
-        };
-        if args.len() != arity {
-            return Some(Err(Diagnostic::new(format!(
-                "{name} expects {arity} argument{}, got {}",
-                if arity == 1 { "" } else { "s" },
-                args.len()
-            ))));
-        }
-        let operand_ty = match self.infer_math_builtin_call_type(
-            name,
-            &Expr::Call {
-                callee: Box::new(Expr::Name(name.to_string(), None, None)),
-                type_args: Vec::new(),
-                args: args.to_vec(),
-                span: None,
-                method_call_origin: None,
-            },
-            types,
-        ) {
-            Some(Ok(Type::Numeric(ty))) => Type::Numeric(ty),
-            Some(Ok(_)) => unreachable!(),
-            Some(Err(error)) => return Some(Err(error)),
-            None => return None,
-        };
-        let mut lowered = Vec::with_capacity(args.len());
-        for arg in args {
-            match self.lower_expr(arg, env, types, Some(operand_ty.clone())) {
-                Ok(value) => lowered.push(value),
-                Err(error) => return Some(Err(error)),
-            }
-        }
-        let value = self.emit(Instruction::MathIntrinsic {
-            intrinsic,
-            args: lowered,
-            operand_ty: operand_ty.clone(),
-            result_ty: operand_ty.clone(),
-        });
-        Some(self.coerce_value(value, operand_ty, expected))
     }
 
     fn lower_bit32_builtin_call(
@@ -7802,82 +7735,6 @@ impl Builder<'_> {
         };
         let print_value = self.emit(Instruction::Print { value });
         Some(self.coerce_value(print_value, Type::Unit, expected))
-    }
-
-    fn infer_math_builtin_call_type(
-        &self,
-        name: &str,
-        call: &Expr,
-        types: &HashMap<SymbolId, Type>,
-    ) -> Option<Result<Type, Diagnostic>> {
-        let Expr::Call { args, .. } = call else {
-            return None;
-        };
-        let (intrinsic, arity) = match name {
-            MATH_ABS => (MathIntrinsic::Abs, 1),
-            MATH_MIN => (MathIntrinsic::Min, 2),
-            MATH_MAX => (MathIntrinsic::Max, 2),
-            MATH_SQRT => (MathIntrinsic::Sqrt, 1),
-            MATH_FLOOR => (MathIntrinsic::Floor, 1),
-            MATH_CEIL => (MathIntrinsic::Ceil, 1),
-            MATH_TRUNC => (MathIntrinsic::Trunc, 1),
-            MATH_NEAREST => (MathIntrinsic::Nearest, 1),
-            MATH_COPYSIGN => (MathIntrinsic::Copysign, 2),
-            _ => return None,
-        };
-        if args.len() != arity {
-            return Some(Err(Diagnostic::new(format!(
-                "{name} expects {arity} argument{}, got {}",
-                if arity == 1 { "" } else { "s" },
-                args.len()
-            ))));
-        }
-
-        let first_ty = match self.infer_expr_type(&args[0], types, None) {
-            Ok(ty) => ty,
-            Err(error) => return Some(Err(error)),
-        };
-        let Type::Numeric(first_numeric) = first_ty else {
-            return Some(Err(Diagnostic::new(format!(
-                "{name} expects numeric arguments"
-            ))));
-        };
-        if arity == 2 {
-            let second =
-                match self.infer_expr_type(&args[1], types, Some(Type::Numeric(first_numeric))) {
-                    Ok(ty) => ty,
-                    Err(error) => return Some(Err(error)),
-                };
-            if second != Type::Numeric(first_numeric) {
-                return Some(Err(Diagnostic::new(format!(
-                    "{name} requires both arguments to have the same numeric type"
-                ))));
-            }
-        }
-
-        let supports = match intrinsic {
-            MathIntrinsic::Min | MathIntrinsic::Max => {
-                matches!(first_numeric, NumericType::F32 | NumericType::F64)
-            }
-            MathIntrinsic::Neg
-            | MathIntrinsic::Abs
-            | MathIntrinsic::Sqrt
-            | MathIntrinsic::Floor
-            | MathIntrinsic::Ceil
-            | MathIntrinsic::Trunc
-            | MathIntrinsic::Nearest
-            | MathIntrinsic::Copysign => {
-                matches!(first_numeric, NumericType::F32 | NumericType::F64)
-            }
-        };
-        if !supports {
-            return Some(Err(Diagnostic::new(format!(
-                "{name} does not support {}",
-                Type::Numeric(first_numeric)
-            ))));
-        }
-
-        Some(Ok(Type::Numeric(first_numeric)))
     }
 
     fn infer_bit32_builtin_call_type(

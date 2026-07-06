@@ -1,0 +1,38 @@
+-- Math builtin functions, declared as host imports.
+--
+-- Each f32/f64 pair is an overload set: HIR overload resolution picks the
+-- variant matching the argument types, and every variant becomes its own
+-- wasm import under the shared host name (the JS host implements them once
+-- with plain Math.* functions, which cover both widths).
+
+declare function math.abs(x: f32): f32
+declare function math.abs(x: f64): f64
+declare function math.sqrt(x: f32): f32
+declare function math.sqrt(x: f64): f64
+declare function math.floor(x: f32): f32
+declare function math.floor(x: f64): f64
+declare function math.ceil(x: f32): f32
+declare function math.ceil(x: f64): f64
+declare function math.trunc(x: f32): f32
+declare function math.trunc(x: f64): f64
+-- Round-to-nearest, ties to even (wasm `fN.nearest` semantics).
+declare function math.nearest(x: f32): f32
+declare function math.nearest(x: f64): f64
+
+declare function math.min(a: f32, b: f32): f32
+declare function math.min(a: f64, b: f64): f64
+declare function math.max(a: f32, b: f32): f32
+declare function math.max(a: f64, b: f64): f64
+declare function math.copysign(a: f32, b: f32): f32
+declare function math.copysign(a: f64, b: f64): f64
+
+-- Pseudo-random numbers, following Lua's math.random family. The host owns
+-- the generator state; math.randomseed makes the sequence deterministic.
+--
+--   math.random()      -> f64 in [0, 1)
+--   math.random(m)     -> i32 in [1, m]
+--   math.random(m, n)  -> i32 in [m, n]
+declare function math.random(): f64
+declare function math.random(m: i32): i32
+declare function math.random(m: i32, n: i32): i32
+declare function math.randomseed(seed: f64): unit

@@ -1033,6 +1033,9 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
     if (value instanceof Uint8Array) return value;
     throw new Error(`Expected Uint8Array bytes value, got ${Object.prototype.toString.call(value)}`);
   };
+  // math.random state (mulberry32). Seeded randomly per instance so
+  // unseeded runs differ; math.randomseed(x) resets it deterministically.
+  let prngState = (Math.random() * 0x100000000) >>> 0;
   const externIs = (value, typeName) => {
     const name = String(typeName);
     // Nodes carry their realm via ownerDocument; events (which have no
@@ -1149,6 +1152,54 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
     // nulls, and host/GC objects (identity).
     js_eq_unknown: (left, right) => (left === right ? 1 : 0),
     math_pow: (base, exponent) => Math.pow(base, exponent),
+    // math.* builtins (builtins/math.walu). f32/f64 overload pairs share one
+    // JS implementation: wasm's import boundary narrows f32 results, and the
+    // JS Math functions match wasm float semantics (NaN propagation,
+    // Math.min(-0, +0) === -0) for both widths.
+    'math.abs': Math.abs,
+    'math.sqrt': Math.sqrt,
+    'math.floor': Math.floor,
+    'math.ceil': Math.ceil,
+    'math.trunc': Math.trunc,
+    // Round-to-nearest, ties to even (wasm fN.nearest); Math.round rounds
+    // half-up so it cannot be used directly.
+    'math.nearest': (x) => {
+      const floor = Math.floor(x);
+      const diff = x - floor;
+      if (diff < 0.5) return floor;
+      if (diff > 0.5) return floor + 1;
+      return floor % 2 === 0 ? floor : floor + 1;
+    },
+    'math.min': Math.min,
+    'math.max': Math.max,
+    'math.copysign': (magnitude, sign) => {
+      const negative = sign < 0 || Object.is(sign, -0);
+      return negative ? -Math.abs(magnitude) : Math.abs(magnitude);
+    },
+    // Lua-style math.random / math.randomseed. The generator (mulberry32) is
+    // host-owned, per-instance state: unseeded runs start from a random
+    // seed, and math.randomseed(x) makes the following sequence fully
+    // deterministic (fixtures/snake/sim.walu relies on this).
+    //   math.random()     -> f64 in [0, 1)
+    //   math.random(m)    -> i32 in [1, m]
+    //   math.random(m, n) -> i32 in [m, n]
+    'math.random': (m, n) => {
+      prngState = (prngState + 0x6d2b79f5) >>> 0;
+      let t = prngState;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      const sample = ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      if (m === undefined) return sample;
+      const low = n === undefined ? 1 : m | 0;
+      const high = n === undefined ? m | 0 : n | 0;
+      if (high < low) {
+        throw new Error(`math.random interval is empty: [${low}, ${high}]`);
+      }
+      return low + Math.floor(sample * (high - low + 1));
+    },
+    'math.randomseed': (seed) => {
+      prngState = Math.trunc(Number(seed)) >>> 0;
+    },
     bytes_literal: (index) => {
       const literal = bytesConstants[index];
       if (!literal) {

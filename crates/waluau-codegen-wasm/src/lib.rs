@@ -5096,60 +5096,6 @@ fn emit_math_intrinsic(
         (MathIntrinsic::Neg, Type::Numeric(NumericType::F64)) => {
             out.instruction(&Instruction::F64Neg);
         }
-        (MathIntrinsic::Abs, Type::Numeric(NumericType::F32)) => {
-            out.instruction(&Instruction::F32Abs);
-        }
-        (MathIntrinsic::Abs, Type::Numeric(NumericType::F64)) => {
-            out.instruction(&Instruction::F64Abs);
-        }
-        (MathIntrinsic::Min, Type::Numeric(NumericType::F32)) => {
-            out.instruction(&Instruction::F32Min);
-        }
-        (MathIntrinsic::Min, Type::Numeric(NumericType::F64)) => {
-            out.instruction(&Instruction::F64Min);
-        }
-        (MathIntrinsic::Max, Type::Numeric(NumericType::F32)) => {
-            out.instruction(&Instruction::F32Max);
-        }
-        (MathIntrinsic::Max, Type::Numeric(NumericType::F64)) => {
-            out.instruction(&Instruction::F64Max);
-        }
-        (MathIntrinsic::Sqrt, Type::Numeric(NumericType::F32)) => {
-            out.instruction(&Instruction::F32Sqrt);
-        }
-        (MathIntrinsic::Sqrt, Type::Numeric(NumericType::F64)) => {
-            out.instruction(&Instruction::F64Sqrt);
-        }
-        (MathIntrinsic::Floor, Type::Numeric(NumericType::F32)) => {
-            out.instruction(&Instruction::F32Floor);
-        }
-        (MathIntrinsic::Floor, Type::Numeric(NumericType::F64)) => {
-            out.instruction(&Instruction::F64Floor);
-        }
-        (MathIntrinsic::Ceil, Type::Numeric(NumericType::F32)) => {
-            out.instruction(&Instruction::F32Ceil);
-        }
-        (MathIntrinsic::Ceil, Type::Numeric(NumericType::F64)) => {
-            out.instruction(&Instruction::F64Ceil);
-        }
-        (MathIntrinsic::Trunc, Type::Numeric(NumericType::F32)) => {
-            out.instruction(&Instruction::F32Trunc);
-        }
-        (MathIntrinsic::Trunc, Type::Numeric(NumericType::F64)) => {
-            out.instruction(&Instruction::F64Trunc);
-        }
-        (MathIntrinsic::Nearest, Type::Numeric(NumericType::F32)) => {
-            out.instruction(&Instruction::F32Nearest);
-        }
-        (MathIntrinsic::Nearest, Type::Numeric(NumericType::F64)) => {
-            out.instruction(&Instruction::F64Nearest);
-        }
-        (MathIntrinsic::Copysign, Type::Numeric(NumericType::F32)) => {
-            out.instruction(&Instruction::F32Copysign);
-        }
-        (MathIntrinsic::Copysign, Type::Numeric(NumericType::F64)) => {
-            out.instruction(&Instruction::F64Copysign);
-        }
         (intrinsic, ty) => {
             return Err(Diagnostic::new(format!(
                 "math intrinsic {intrinsic:?} does not support {ty} during wasm emission"

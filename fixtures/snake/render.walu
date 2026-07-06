@@ -3,7 +3,7 @@
 
 -- Size of one grid cell in canvas pixels. Keep in sync with main.walu, which
 -- sizes the <canvas> element as cols * cell_size() x rows * cell_size().
-type State = { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, rng: { seed: i32 }, score: i32, alive: bool }
+type State = { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, score: i32, alive: bool }
 
 function cell_size(): f64
     return 16.0

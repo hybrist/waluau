@@ -60,10 +60,7 @@ function install_snake(): unit
         assert(context ~= nil)
         local ctx: CanvasRenderingContext2D = context::CanvasRenderingContext2D
 
-        -- TODO(waluau-6i00): the fixed seed and the frame-timestamp mixing
-        -- below stand in for math.randomseed/math.random until math builtins
-        -- are externalized.
-        local state = game.new_state(cols, rows, 20260705)
+        local state = game.new_state(cols, rows)
 
         -- Input: arrow keys / WASD via a document-level "keydown" listener
         -- (the Event is downcast to KeyboardEvent to read .key), plus an
@@ -136,8 +133,8 @@ function install_snake(): unit
         local function frame(timestamp: f64): unit
             if not started then
                 started = true
-                -- First frame: fold the timestamp into the RNG so runs differ.
-                state.rng.seed = (state.rng.seed + math.floor(timestamp)::i32) % 2147483647
+                -- First frame: seed the PRNG from the timestamp so runs differ.
+                math.randomseed(timestamp)
                 last_step = timestamp
             elseif timestamp - last_step >= tick_ms then
                 last_step = timestamp

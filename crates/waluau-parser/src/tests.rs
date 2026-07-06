@@ -170,6 +170,32 @@ fn parses_if_call_condition_without_confusing_it_for_if_cast() {
 }
 
 #[test]
+fn parses_declared_host_function_with_dotted_namespace_name() {
+    let source = r#"
+        declare function math.abs(x: f32): f32
+        declare function math.abs(x: f64): f64
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert_eq!(program.declared_imports.len(), 2);
+    for declared in &program.declared_imports {
+        // Unlike `Iface:method` receiver sugar, a dotted name adds no
+        // implicit self parameter.
+        assert_eq!(declared.name, "math.abs");
+        assert_eq!(declared.host_name, "math.abs");
+        assert_eq!(declared.params.len(), 1);
+    }
+    assert_eq!(
+        program.declared_imports[0].params[0].ty,
+        Type::Numeric(waluau_ast::NumericType::F32)
+    );
+    assert_eq!(
+        program.declared_imports[1].params[0].ty,
+        Type::Numeric(waluau_ast::NumericType::F64)
+    );
+}
+
+#[test]
 fn parses_declared_host_method_with_implicit_receiver_param() {
     let source = r#"
         type Element = extern

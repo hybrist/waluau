@@ -1425,7 +1425,7 @@ impl<'a> Monomorphizer<'a> {
                 ..
             } => {
                 if let Some(name) = builtin_name(callee) {
-                    if let Some(ty) = self.infer_builtin_call_type(&name, args, subst, types)? {
+                    if let Some(ty) = self.infer_builtin_call_type(&name, args)? {
                         return Ok(ty);
                     }
                 }
@@ -1749,8 +1749,6 @@ impl<'a> Monomorphizer<'a> {
         &self,
         name: &str,
         args: &[Expr],
-        subst: &HashMap<String, Type>,
-        types: &HashMap<SymbolId, Type>,
     ) -> Result<Option<Type>, Diagnostic> {
         match name {
             "print" | "assert" | "error" => Ok(Some(Type::Unit)),
@@ -1760,19 +1758,6 @@ impl<'a> Monomorphizer<'a> {
             "coroutine.resume" => Ok(Some(Type::Multi(vec![Type::Bool, Type::Unknown]))),
             "coroutine.close" => Ok(Some(Type::Bool)),
             "coroutine.await_promise" | crate::PROMISE_AWAIT => Ok(Some(Type::Unknown)),
-            "math.abs" | "math.min" | "math.max" | "math.sqrt" | "math.floor" | "math.ceil"
-            | "math.trunc" | "math.nearest" | "math.copysign" => {
-                if let Some(first) = args.first() {
-                    let first_ty = self.infer_expr_type(first, subst, types)?;
-                    if let Type::Numeric(num) = first_ty {
-                        Ok(Some(Type::Numeric(num)))
-                    } else {
-                        Ok(Some(Type::number()))
-                    }
-                } else {
-                    Ok(Some(Type::number()))
-                }
-            }
             "string.len" | "string.byte" => Ok(Some(Type::Numeric(waluau_ast::NumericType::I32))),
             "string.find" => Ok(Some(Type::Multi(waluau_ast::string_find_result_types(
                 &args
