@@ -1,0 +1,21 @@
+-- Math constants are declared in builtins/math.walu (`declare const`) and
+-- fold to their literal value during lowering; no host import is involved.
+
+assert(math.pi > 3.14159265)
+assert(math.pi < 3.14159266)
+
+-- Constants participate in arithmetic like any other f64 value.
+local tau: f64 = 2.0 * math.pi
+assert(tau > 6.2831853)
+assert(tau < 6.2831854)
+
+-- Reads work in every expression position, including inside functions.
+function circle_area(radius: f64): f64
+    return math.pi * radius * radius
+end
+
+assert(circle_area(2.0) > 12.566)
+assert(circle_area(2.0) < 12.567)
+
+-- The constant agrees with the trigonometric identity sqrt(pi^2) == pi.
+assert(math.sqrt(math.pi * math.pi) == math.pi)

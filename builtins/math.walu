@@ -5,6 +5,10 @@
 -- wasm import under the shared host name (the JS host implements them once
 -- with plain Math.* functions, which cover both widths).
 
+-- Math constants. `declare const` names a compile-time constant: reads fold
+-- to the literal during lowering, so nothing is imported from the host.
+declare const math.pi: f64 = 3.141592653589793
+
 declare function math.abs(x: f32): f32
 declare function math.abs(x: f64): f64
 declare function math.sqrt(x: f32): f32

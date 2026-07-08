@@ -296,7 +296,8 @@ fn type_requires_wasm_gc(ty: &waluau_ast::Type) -> bool {
 fn add_builtins_to_program(
     program: &mut waluau_ast::Program,
 ) -> Result<(), waluau_diagnostics::Diagnostic> {
-    // Load builtin declaration files and merge their declared_imports
+    // Load builtin declaration files and merge their declared imports and
+    // constants.
     let builtin_files = ["core.walu", "math.walu"];
 
     for filename in &builtin_files {
@@ -311,6 +312,9 @@ fn add_builtins_to_program(
         program
             .declared_imports
             .extend(builtin_program.declared_imports);
+        program
+            .declared_constants
+            .extend(builtin_program.declared_constants);
     }
 
     Ok(())
@@ -485,6 +489,15 @@ mod tests {
         let result =
             compile_sources(&files, "/main.walu").expect("compile_multi fixture should compile");
         assert!(result.wat.contains("(module"));
+    }
+
+    #[test]
+    fn compile_math_constants_fold_to_literals() {
+        let result = compile_source("assert(math.pi > 3.14 and math.pi < 3.15)")
+            .expect("math.pi read should compile");
+        // The constant folds to an f64 literal; no math.pi host import exists.
+        assert!(result.wat.contains("3.141592653589793"));
+        assert!(!result.wat.contains("(import \"waluau\" \"math.pi\""));
     }
 
     #[test]

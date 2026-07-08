@@ -1440,12 +1440,14 @@ fn verifies_loop_with_break_and_continue() {
     let tag_ids = std::collections::BTreeMap::new();
     let host_import_signatures = std::collections::HashMap::new();
     let host_import_names = std::collections::HashMap::new();
+    let declared_constants = std::collections::HashMap::new();
     let mut lowered = super::build_function(
         &program.functions[0],
         &signatures,
         &host_import_signatures,
         &host_import_names,
         &field_call_signatures,
+        &declared_constants,
         &program.sources,
         &tag_ids,
     )

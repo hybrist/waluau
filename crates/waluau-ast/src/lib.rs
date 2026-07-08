@@ -48,6 +48,7 @@ use std::collections::BTreeMap;
 pub struct Program {
     pub functions: Vec<Function>,
     pub declared_imports: Vec<DeclaredImport>,
+    pub declared_constants: Vec<DeclaredConstant>,
     pub type_declarations: Vec<TypeDeclaration>,
     pub top_level: Vec<Stmt>,
     /// The value a module exports through a trailing top-level `return`.
@@ -74,6 +75,17 @@ pub struct DeclaredImport {
     pub symbol_id: Option<SymbolId>,
     pub params: Vec<Param>,
     pub return_type: Type,
+}
+
+/// A named compile-time constant on a builtin namespace, declared as
+/// `declare const math.pi: f64 = 3.141592653589793`. Reads fold to the
+/// literal during lowering; nothing is imported from the host.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeclaredConstant {
+    /// Qualified name, e.g. `math.pi`.
+    pub name: String,
+    pub ty: Type,
+    pub value: NumberLiteral,
 }
 
 #[derive(Clone, Debug, PartialEq)]
