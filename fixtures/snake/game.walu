@@ -4,32 +4,7 @@
 -- The state record alias; render.walu imports it as `game.State`.
 type State = { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, score: i32, alive: bool }
 
-function occupied(state: State, x: i32, y: i32): bool
-    for seg in state.snake do
-        if seg.x == x and seg.y == y then
-            return true
-        end
-    end
-    return false
-end
-
-function spawn_food(state: State): unit
-    local max_attempts: i32 = state.cols * state.rows
-    for _ = 1, max_attempts do
-        local fx: i32 = math.random(state.cols) - 1
-        local fy: i32 = math.random(state.rows) - 1
-        if not occupied(state, fx, fy) then
-            state.food.x = fx
-            state.food.y = fy
-            return
-        end
-    end
-    -- Rejection sampling gave up; the board is (almost) full. Treat it as the
-    -- end of the run rather than looping forever.
-    state.alive = false
-end
-
-function new(cols: i32, rows: i32): State
+function State.new(cols: i32, rows: i32): State
     local state: State = {
         cols = cols,
         rows = rows,
@@ -40,75 +15,93 @@ function new(cols: i32, rows: i32): State
         score = 0,
         alive = true,
     }
-    reset(state)
+    state:reset()
     return state
 end
 
-function reset(state: State): unit
-    local cx: i32 = state.cols // 2
-    local cy: i32 = state.rows // 2
+function State:occupied(x: i32, y: i32): bool
+    for seg in self.snake do
+        if seg.x == x and seg.y == y then
+            return true
+        end
+    end
+    return false
+end
+
+function State:spawn_food(): unit
+    local max_attempts: i32 = self.cols * self.rows
+    for _ = 1, max_attempts do
+        local fx: i32 = math.random(self.cols) - 1
+        local fy: i32 = math.random(self.rows) - 1
+        if not self:occupied(fx, fy) then
+            self.food.x = fx
+            self.food.y = fy
+            return
+        end
+    end
+    -- Rejection sampling gave up; the board is (almost) full. Treat it as the
+    -- end of the run rather than looping forever.
+    self.alive = false
+end
+
+function State:reset(): unit
+    local cx: i32 = self.cols // 2
+    local cy: i32 = self.rows // 2
     -- Head first: the head lives at index 0 and moves right at start.
-    state.snake = { { x = cx, y = cy }, { x = cx - 1, y = cy }, { x = cx - 2, y = cy } }
-    state.dir.x = 1
-    state.dir.y = 0
-    state.next_dir.x = 1
-    state.next_dir.y = 0
-    state.score = 0
-    state.alive = true
-    spawn_food(state)
+    self.snake = { { x = cx, y = cy }, { x = cx - 1, y = cy }, { x = cx - 2, y = cy } }
+    self.dir.x = 1
+    self.dir.y = 0
+    self.next_dir.x = 1
+    self.next_dir.y = 0
+    self.score = 0
+    self.alive = true
+    self:spawn_food()
 end
 
 -- Queue a direction change for the next tick, ignoring 180-degree reversals.
-function turn(state: State, dx: i32, dy: i32): unit
-    if dx == -state.dir.x and dy == -state.dir.y then
+function State:turn(dx: i32, dy: i32): unit
+    if dx == -self.dir.x and dy == -self.dir.y then
         return
     end
-    state.next_dir.x = dx
-    state.next_dir.y = dy
+    self.next_dir.x = dx
+    self.next_dir.y = dy
 end
 
 -- Advance the game by one tick.
-function step(state: State): unit
-    if not state.alive then
+function State:step(): unit
+    if not self.alive then
         return
     end
 
-    -- Copy fields instead of `state.dir = state.next_dir`: assigning the
+    -- Copy fields instead of `self.dir = self.next_dir`: assigning the
     -- record itself would alias next_dir and let a later turn() rewrite the
     -- direction we are already moving in.
-    state.dir.x = state.next_dir.x
-    state.dir.y = state.next_dir.y
+    self.dir.x = self.next_dir.x
+    self.dir.y = self.next_dir.y
 
-    local head = state.snake[0]
-    local nx: i32 = head.x + state.dir.x
-    local ny: i32 = head.y + state.dir.y
+    local head = self.snake[0]
+    local nx: i32 = head.x + self.dir.x
+    local ny: i32 = head.y + self.dir.y
 
-    if nx < 0 or nx >= state.cols or ny < 0 or ny >= state.rows then
-        state.alive = false
+    if nx < 0 or nx >= self.cols or ny < 0 or ny >= self.rows then
+        self.alive = false
         return
     end
 
-    if occupied(state, nx, ny) then
-        state.alive = false
+    if self:occupied(nx, ny) then
+        self.alive = false
         return
     end
 
-    table.insert(state.snake, 0, { x = nx, y = ny })
-    if nx == state.food.x and ny == state.food.y then
-        state.score += 1
-        spawn_food(state)
+    table.insert(self.snake, 0, { x = nx, y = ny })
+    if nx == self.food.x and ny == self.food.y then
+        self.score += 1
+        self:spawn_food()
     else
-        table.remove(state.snake)
+        table.remove(self.snake)
     end
 end
 
--- TODO(waluau-2tx9): step/turn/reset would idiomatically be methods
--- (function State:step()) with a State.new constructor, but dot-named
--- statics don't parse and record-alias methods don't dispatch across module
--- boundaries, so the rules are exported as free functions taking the state.
 return {
-    new = new,
-    reset = reset,
-    turn = turn,
-    step = step,
+    new = State.new,
 }

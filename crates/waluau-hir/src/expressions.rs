@@ -56,8 +56,12 @@ fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
     if is_extern_subtype_of(actual, expected) {
         return true;
     }
-    match (expected, actual) {
-        (Type::Record(expected_fields), Type::Record(actual_fields)) => expected_fields
+    // Structural record match, unwrapping opaque aliases on either side so
+    // methods dispatch across differently-named aliases of the same record —
+    // mirroring how coerce_type unifies record aliases (e.g. one module's
+    // State value passed to another module's structurally identical alias).
+    match (record_fields(expected), record_fields(actual)) {
+        (Some(expected_fields), Some(actual_fields)) => expected_fields
             .iter()
             .all(|(name, expected_ty)| actual_fields.get(name) == Some(expected_ty)),
         _ => false,

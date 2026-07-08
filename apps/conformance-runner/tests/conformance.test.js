@@ -345,6 +345,50 @@ describe('browser conformance', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('passes methods and static constructors across require boundaries', async () => {
+    const counter = `
+      type Counter = { value: i32 }
+
+      function Counter.new(start: i32): Counter
+          local counter: Counter = { value = start }
+          counter:clamp()
+          return counter
+      end
+
+      function Counter:bump(amount: i32): unit
+          self.value += amount
+          self:clamp()
+      end
+
+      function Counter:clamp(): unit
+          if self.value > 100 then
+              self.value = 100
+          end
+      end
+
+      return { new = Counter.new }
+    `;
+    const main = `
+      local counter = require("./counter")
+
+      local c = counter.new(5)
+      c:bump(10)
+      assert(c.value == 15)
+      c:bump(1000)
+      assert(c.value == 100)
+
+      -- A consumer-side structurally identical alias still dispatches the
+      -- defining module's methods.
+      type Counter = { value: i32 }
+      local aliased: Counter = counter.new(7)
+      aliased:bump(1)
+      assert(aliased.value == 8)
+    `;
+    await expect(
+      compileAndInstantiate({ '/counter.walu': counter, '/main.walu': main }, '/main.walu'),
+    ).resolves.toBeUndefined();
+  });
+
   it('passes extern_host_object.walu round-trip identity checks', async () => {
     const source = cases.find(({ name }) => name === 'extern_host_object.walu').source;
     const exports = await compileAndInstantiateWithExports({ '/main.walu': source }, '/main.walu');

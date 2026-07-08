@@ -1,0 +1,46 @@
+-- Dot-named functions (`function State.new(...)`) are plain functions under
+-- the dotted name — a Lua-style static constructor with no implicit self.
+-- Together with `function State:method(...)` sugar this gives the idiomatic
+-- constructor + methods shape.
+
+type Counter = { value: i32, peak: i32 }
+
+function Counter.new(start: i32): Counter
+    local counter: Counter = { value = start, peak = start }
+    return counter
+end
+
+function Counter.zero(): Counter
+    return Counter.new(0)
+end
+
+function Counter:bump(amount: i32): unit
+    self.value += amount
+    self:track_peak()
+end
+
+function Counter:track_peak(): unit
+    if self.value > self.peak then
+        self.peak = self.value
+    end
+end
+
+function Counter:total(extra: i32): i32
+    return self.value + extra
+end
+
+local counter = Counter.new(5)
+assert(counter.value == 5)
+
+-- Integer literals coerce to the method's declared parameter types.
+counter:bump(10)
+assert(counter.value == 15)
+assert(counter.peak == 15)
+
+counter:bump(-7)
+assert(counter.value == 8)
+assert(counter.peak == 15)
+assert(counter:total(2) == 10)
+
+local zeroed = Counter.zero()
+assert(zeroed.value == 0)
