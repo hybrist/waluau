@@ -135,8 +135,12 @@ These keep the first slice small; each can be lifted later.
 - Imported modules now contribute their top-level statements to a single
   synthesized init sequence. Dependencies initialize before the modules that
   require them, and the entry module initializes last.
-- Table exports are limited to fixed named fields mapping to functions (no
-  arbitrary table types or non-function values). General table support remains M4.
+- Table exports are limited to fixed named fields mapping to functions or
+  module constants. A module constant is a top-level
+  `local NAME <const> = <literal>` binding; the linker inlines its literal at
+  every reference, which also makes it visible inside the module's own
+  function bodies (plain top-level locals are not). Non-literal exports and
+  arbitrary table types remain out of scope.
 - Wasm exports are limited to the entry-facing function surface; mangled module
   internals and synthesized helper functions stay internal.
 

@@ -282,8 +282,14 @@ fn merge_with_builtins(
             imports.insert(raw.clone(), resolve_virtual_import(raw)?);
         }
 
-        let (re_exports, namespaces, value_aliases) =
+        let (re_exports, namespaces, mut value_aliases) =
             process_reexport_bindings(&module.program.top_level, &imports);
+        // The module's own constants inline wherever the name is visible but
+        // the top-level local is not — most importantly function bodies.
+        // Top-level statements after the `local` keep using the local itself
+        // (the binding gates the alias), which is equivalent: the initializer
+        // is a literal and const locals cannot be rebound.
+        value_aliases.extend(module_constants(&module.program.top_level));
 
         let mut rewriter = Rewriter {
             prefix: &prefix,
@@ -386,20 +392,40 @@ fn extend_unique_type_declarations(
 #[derive(Clone)]
 enum ResolvedImport {
     Function(String),
-    Namespace(BTreeMap<String, String>),
+    Namespace(ModuleNamespace),
     DomWindow,
+}
+
+/// A module's table export: fields mapping to (mangled) function names, plus
+/// fields mapping to constant literals (top-level `local NAME <const> =
+/// <literal>` bindings), which member accesses inline.
+#[derive(Clone, Debug, Default)]
+struct ModuleNamespace {
+    functions: BTreeMap<String, String>,
+    constants: BTreeMap<String, Expr>,
+}
+
+impl ModuleNamespace {
+    fn from_functions(functions: BTreeMap<String, String>) -> Self {
+        Self {
+            functions,
+            constants: BTreeMap::new(),
+        }
+    }
 }
 
 type RequireAliases = (
     HashMap<String, String>,
-    HashMap<String, BTreeMap<String, String>>,
+    HashMap<String, ModuleNamespace>,
     HashMap<String, Expr>,
 );
 
 fn resolve_virtual_import(raw: &str) -> Result<ResolvedImport, Diagnostic> {
     match raw {
         DOM_WINDOW_REQUIRE => Ok(ResolvedImport::DomWindow),
-        TFJS_REQUIRE => Ok(ResolvedImport::Namespace(tfjs_namespace())),
+        TFJS_REQUIRE => Ok(ResolvedImport::Namespace(ModuleNamespace::from_functions(
+            tfjs_namespace(),
+        ))),
         _ => Err(unsupported_virtual_require(raw)),
     }
 }
@@ -514,6 +540,51 @@ fn function_expr_to_function(name: &str, function: &FunctionExpr) -> Function {
     }
 }
 
+/// Collects a module's constants: top-level `local NAME <const> = <literal>`
+/// bindings. Their values are inlined wherever the name is referenced from a
+/// function body (top-level locals are otherwise invisible there) and
+/// wherever a consumer reads them off the module's export table. A numeric
+/// literal keeps its annotated type through an explicit cast.
+fn module_constants(top_level: &[Stmt]) -> HashMap<String, Expr> {
+    let mut constants = HashMap::new();
+    for stmt in top_level {
+        let Stmt::Let {
+            name,
+            rebindability: waluau_ast::Rebindability::Const,
+            ty,
+            value,
+            ..
+        } = stmt
+        else {
+            continue;
+        };
+        if let Some(literal) = constant_literal(ty.as_ref(), value) {
+            constants.insert(name.clone(), literal);
+        }
+    }
+    constants
+}
+
+/// The inlinable expression for a constant initializer, or `None` when the
+/// initializer is not a literal (only literals can be duplicated freely).
+fn constant_literal(ty: Option<&Type>, value: &Expr) -> Option<Expr> {
+    match value {
+        Expr::Number(..) => match ty {
+            // Keep the annotated numeric type: a bare literal would default
+            // to f64 in unconstrained positions.
+            Some(ty @ Type::Numeric(_)) => Some(Expr::Cast {
+                expr: Box::new(value.clone()),
+                ty: ty.clone(),
+                span: None,
+            }),
+            None => Some(value.clone()),
+            Some(_) => None,
+        },
+        Expr::Bool(..) | Expr::String(..) => Some(value.clone()),
+        _ => None,
+    }
+}
+
 fn compute_module_export(
     modules: &[LoadedModule],
     id: usize,
@@ -540,6 +611,7 @@ fn compute_module_export(
     let top_level_names = module_function_names(&module_functions, &module.program.export);
     let (re_exports, namespaces, _) =
         process_reexport_bindings(&module.program.top_level, &imports);
+    let constants = module_constants(&module.program.top_level);
 
     let resolved = resolve_module_export(
         module.program.export.as_ref(),
@@ -547,6 +619,7 @@ fn compute_module_export(
         &top_level_names,
         &re_exports,
         &namespaces,
+        &constants,
     )?;
 
     cache.insert(id, resolved.clone());
@@ -597,7 +670,8 @@ fn resolve_module_export(
     prefix: &str,
     top_level_names: &HashSet<String>,
     re_exports: &HashMap<String, String>,
-    namespaces: &HashMap<String, BTreeMap<String, String>>,
+    namespaces: &HashMap<String, ModuleNamespace>,
+    constants: &HashMap<String, Expr>,
 ) -> Result<ResolvedImport, Diagnostic> {
     match export {
         Some(Expr::Name(name, _, _)) => Ok(ResolvedImport::Function(export_function_name(
@@ -608,18 +682,27 @@ fn resolve_module_export(
             "module export",
         )?)),
         Some(Expr::TableLiteral { fields, .. }) => {
-            let mut namespace = BTreeMap::new();
+            let mut namespace = ModuleNamespace::default();
             for field in fields {
-                let function_name = export_field_function_name(
+                match export_field_value(
                     field,
                     prefix,
                     top_level_names,
                     re_exports,
                     namespaces,
-                )?;
-                namespace.insert(field.name.clone(), function_name);
+                    constants,
+                )? {
+                    ExportedField::Function(function_name) => {
+                        namespace
+                            .functions
+                            .insert(field.name.clone(), function_name);
+                    }
+                    ExportedField::Constant(value) => {
+                        namespace.constants.insert(field.name.clone(), value);
+                    }
+                }
             }
-            if namespace.is_empty() {
+            if namespace.functions.is_empty() && namespace.constants.is_empty() {
                 return Err(Diagnostic::new("module exports an empty table"));
             }
             Ok(ResolvedImport::Namespace(namespace))
@@ -651,21 +734,33 @@ fn export_function_name(
     )))
 }
 
-fn export_field_function_name(
+enum ExportedField {
+    Function(String),
+    Constant(Expr),
+}
+
+fn export_field_value(
     field: &TableField,
     prefix: &str,
     top_level_names: &HashSet<String>,
     re_exports: &HashMap<String, String>,
-    namespaces: &HashMap<String, BTreeMap<String, String>>,
-) -> Result<String, Diagnostic> {
+    namespaces: &HashMap<String, ModuleNamespace>,
+    constants: &HashMap<String, Expr>,
+) -> Result<ExportedField, Diagnostic> {
     match &field.value {
-        Expr::Name(name, _, _) => export_function_name(
-            name,
-            prefix,
-            top_level_names,
-            re_exports,
-            &format!("module export field '{}'", field.name),
-        ),
+        Expr::Name(name, _, _) => {
+            if let Some(value) = constants.get(name) {
+                return Ok(ExportedField::Constant(value.clone()));
+            }
+            export_function_name(
+                name,
+                prefix,
+                top_level_names,
+                re_exports,
+                &format!("module export field '{}'", field.name),
+            )
+            .map(ExportedField::Function)
+        }
         Expr::Field {
             base, name: member, ..
         } if matches!(&**base, Expr::Name(..)) => {
@@ -678,16 +773,21 @@ fn export_field_function_name(
                     field.name
                 ))
             })?;
-            fields.get(member).cloned().ok_or_else(|| {
-                Diagnostic::new(format!(
-                    "module export field '{}' references unknown member '{member}' on '{namespace}'",
-                    field.name
-                ))
-            })
+            if let Some(function) = fields.functions.get(member) {
+                return Ok(ExportedField::Function(function.clone()));
+            }
+            if let Some(value) = fields.constants.get(member) {
+                return Ok(ExportedField::Constant(value.clone()));
+            }
+            Err(Diagnostic::new(format!(
+                "module export field '{}' references unknown member '{member}' on '{namespace}'",
+                field.name
+            )))
         }
-        Expr::Function(_) => Ok(format!("{prefix}{}", field.name)),
+        Expr::Function(_) => Ok(ExportedField::Function(format!("{prefix}{}", field.name))),
         _ => Err(Diagnostic::new(format!(
-            "module export field '{}' must be a function name, namespace member, or `function ... end`",
+            "module export field '{}' must be a function name, namespace member, `function ... end`, \
+             or a top-level `local NAME <const> = <literal>` constant",
             field.name
         ))),
     }
@@ -701,7 +801,7 @@ struct Rewriter<'a> {
     type_names: &'a HashSet<String>,
     imports: &'a HashMap<String, ResolvedImport>,
     re_exports: HashMap<String, String>,
-    namespaces: HashMap<String, BTreeMap<String, String>>,
+    namespaces: HashMap<String, ModuleNamespace>,
     value_aliases: HashMap<String, Expr>,
 }
 
@@ -966,8 +1066,8 @@ impl Rewriter<'_> {
                             ResolvedImport::Function(function) => {
                                 self.re_exports.insert(name.clone(), function.clone());
                             }
-                            ResolvedImport::Namespace(fields) => {
-                                self.namespaces.insert(name.clone(), fields.clone());
+                            ResolvedImport::Namespace(namespace) => {
+                                self.namespaces.insert(name.clone(), namespace.clone());
                             }
                             ResolvedImport::DomWindow => {
                                 if let Expr::Require(_, span) = &*value {
@@ -987,7 +1087,8 @@ impl Rewriter<'_> {
                         }
                     }
                     if !field_map.is_empty() && field_map.len() == fields.len() {
-                        self.namespaces.insert(name.clone(), field_map);
+                        self.namespaces
+                            .insert(name.clone(), ModuleNamespace::from_functions(field_map));
                     }
                 }
                 bound.insert(name.clone());
@@ -1097,8 +1198,12 @@ impl Rewriter<'_> {
         {
             if let Expr::Name(local, _, _) = &**base {
                 if let Some(fields) = self.namespaces.get(local) {
-                    if let Some(resolved) = fields.get(field) {
+                    if let Some(resolved) = fields.functions.get(field) {
                         *expr = Expr::Name(resolved.clone(), None, None);
+                        return;
+                    }
+                    if let Some(value) = fields.constants.get(field) {
+                        *expr = value.clone();
                         return;
                     }
                 }
@@ -1110,13 +1215,18 @@ impl Rewriter<'_> {
                 if let Some(resolved) = self.imports.get(path) {
                     *expr = match resolved {
                         ResolvedImport::Function(name) => Expr::Name(name.clone(), None, *span),
-                        ResolvedImport::Namespace(fields) => Expr::TableLiteral {
-                            fields: fields
+                        ResolvedImport::Namespace(namespace) => Expr::TableLiteral {
+                            fields: namespace
+                                .functions
                                 .iter()
                                 .map(|(name, function)| TableField {
                                     name: name.clone(),
                                     value: Expr::Name(function.clone(), None, None),
                                 })
+                                .chain(namespace.constants.iter().map(|(name, value)| TableField {
+                                    name: name.clone(),
+                                    value: value.clone(),
+                                }))
                                 .collect(),
                             span: *span,
                         },
