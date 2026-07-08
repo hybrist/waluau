@@ -1,9 +1,9 @@
 -- Canvas 2D rendering for the snake fixture: rectangles for the arena and
 -- snake, a beginPath()/arc()/fill() circle for the food, and fillText HUD.
 
--- TODO(waluau-3efk): duplicated from game.walu; import the alias from there
--- once type aliases can cross module boundaries.
-type State = { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, score: i32, alive: bool }
+local game = require("./game")
+
+type State = game.State
 
 -- Size of one grid cell in canvas pixels. main.walu reads this off the
 -- module namespace to size the <canvas> element as cols * CELL_SIZE x

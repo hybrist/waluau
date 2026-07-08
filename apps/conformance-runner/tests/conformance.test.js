@@ -310,6 +310,41 @@ describe('browser conformance', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('passes type aliases imported across require boundaries', async () => {
+    const state = `
+      type State = { score: i32 }
+
+      function new_state(): State
+          return { score = 41::i32 }
+      end
+
+      return {
+          new_state = new_state,
+      }
+    `;
+    const main = `
+      local state_mod = require("./state")
+
+      type State = state_mod.State
+
+      function bump(state: State): i32
+          state.score += 1
+          return state.score
+      end
+
+      function direct(state: state_mod.State): i32
+          return state.score
+      end
+
+      local state: state_mod.State = state_mod.new_state()
+      assert(bump(state) == 42)
+      assert(direct(state) == 42)
+    `;
+    await expect(
+      compileAndInstantiate({ '/state.walu': state, '/main.walu': main }, '/main.walu'),
+    ).resolves.toBeUndefined();
+  });
+
   it('passes extern_host_object.walu round-trip identity checks', async () => {
     const source = cases.find(({ name }) => name === 'extern_host_object.walu').source;
     const exports = await compileAndInstantiateWithExports({ '/main.walu': source }, '/main.walu');
