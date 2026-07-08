@@ -138,7 +138,8 @@ semantic gap from Lua/Luau.
 | `math.trunc` | ⚠️ Non-standard | Not a Lua function (closest Lua equivalent is `math.modf`). Maps to Wasm `trunc`. Float-only. |
 | `math.nearest` | ⚠️ Non-standard | Not a Lua/Luau function. Round-to-nearest-even via Wasm `nearest` (Luau's `math.round` rounds half away from zero — different). |
 | `math.copysign` | ⚠️ Non-standard | Not a Lua function. Maps to Wasm `copysign`. Two float args. |
-| `math.pi`, `math.huge`, `math.maxinteger`, `math.mininteger` | ❌ | No math constants. |
+| `math.pi` | ✅ | Compile-time `f64` constant (folds to a literal; no host import). |
+| `math.huge`, `math.maxinteger`, `math.mininteger` | ❌ | Not implemented. |
 | `math.random` / `math.randomseed` | ❌ | Not implemented. |
 | `math.fmod`, `math.modf`, `math.pow`, `math.log`, `math.exp`, `math.sin/cos/tan`, … | ❌ | Not implemented. |
 | `math.clamp`, `math.sign`, `math.round`, `math.noise`, `math.lerp` (Luau) | ❌ | Not implemented. |

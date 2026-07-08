@@ -237,7 +237,7 @@ pub(super) fn resolved_type_method_name(
                         .first()
                         .is_some_and(|param| method_receiver_matches(param, receiver_ty))
                 }),
-                FnSignature::Generic(_) => false,
+                FnSignature::Generic(_) | FnSignature::Const { .. } => false,
             };
             receiver_matches.then(|| method_name.clone())
         })
@@ -1134,6 +1134,11 @@ pub(super) fn infer_expr(
                         )?;
                         (chosen.params.clone(), chosen.return_type.clone())
                     }
+                    FnSignature::Const { .. } => {
+                        return Err(Diagnostic::new(format!(
+                            "'{signature_name}' is a constant, not a method"
+                        )));
+                    }
                 }
             } else {
                 if !type_args.is_empty() {
@@ -1245,6 +1250,7 @@ pub(super) fn infer_expr(
                         FnSignature::Overloaded(_) => Err(Diagnostic::new(format!(
                             "overloaded host function '{method_name}' cannot be used as a value; call it directly"
                         ))),
+                        FnSignature::Const { ty } => coerce_type(ty.clone(), expected),
                     };
                 }
             }

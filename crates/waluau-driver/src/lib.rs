@@ -104,7 +104,8 @@ fn default_output_path(input: &Path) -> PathBuf {
 }
 
 fn add_builtins_to_program(program: &mut waluau_ast::Program) -> Result<(), Diagnostic> {
-    // Load builtin declaration files and merge their declared_imports
+    // Load builtin declaration files and merge their declared imports and
+    // constants.
     let builtin_files = ["core.walu", "math.walu"];
 
     for filename in &builtin_files {
@@ -119,6 +120,9 @@ fn add_builtins_to_program(program: &mut waluau_ast::Program) -> Result<(), Diag
         program
             .declared_imports
             .extend(builtin_program.declared_imports);
+        program
+            .declared_constants
+            .extend(builtin_program.declared_constants);
     }
 
     Ok(())

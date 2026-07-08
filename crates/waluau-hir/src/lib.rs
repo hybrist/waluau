@@ -2931,6 +2931,33 @@ fn disambiguate_declared_import_overloads(
     Ok(overload_sets)
 }
 
+/// Drops exact re-declarations of a constant (e.g. the same builtin declared
+/// by several merged modules) and rejects conflicting ones.
+fn dedupe_declared_constants(program: &mut Program) -> Result<(), Diagnostic> {
+    let mut seen: HashMap<String, waluau_ast::DeclaredConstant> = HashMap::new();
+    let mut conflict = None;
+    program
+        .declared_constants
+        .retain(|constant| match seen.get(&constant.name) {
+            Some(existing) => {
+                if existing != constant && conflict.is_none() {
+                    conflict = Some(constant.name.clone());
+                }
+                false
+            }
+            None => {
+                seen.insert(constant.name.clone(), constant.clone());
+                true
+            }
+        });
+    match conflict {
+        Some(name) => Err(Diagnostic::new(format!(
+            "conflicting declarations of constant '{name}'"
+        ))),
+        None => Ok(()),
+    }
+}
+
 pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
     let mut typed = desugar_method_declarations(program)?;
     desugar_implicit_top_level_declarations(&mut typed);
@@ -2976,6 +3003,21 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
     // source-level base name; calls select a variant from the argument types.
     for (base_name, variants) in overload_sets {
         fn_signatures.insert(base_name, FnSignature::Overloaded(variants));
+    }
+    dedupe_declared_constants(&mut typed)?;
+    for constant in &typed.declared_constants {
+        if fn_signatures.contains_key(&constant.name) {
+            return Err(Diagnostic::new(format!(
+                "declared constant '{}' conflicts with a declared host function of the same name",
+                constant.name
+            )));
+        }
+        fn_signatures.insert(
+            constant.name.clone(),
+            FnSignature::Const {
+                ty: constant.ty.clone(),
+            },
+        );
     }
     for function in &typed.functions {
         if function.type_params.is_empty() {

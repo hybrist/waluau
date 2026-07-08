@@ -77,6 +77,16 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
         .iter()
         .map(|declared| (declared.name.clone(), declared.symbol_id))
         .collect::<HashMap<_, _>>();
+    let declared_constants = monomorphic
+        .declared_constants
+        .iter()
+        .map(|constant| {
+            (
+                constant.name.clone(),
+                (constant.ty.clone(), constant.value.clone()),
+            )
+        })
+        .collect::<HashMap<_, _>>();
     let mut functions = Vec::new();
     for function in &monomorphic.functions {
         let mut lowered = build_function(
@@ -85,6 +95,7 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
             &host_import_signatures,
             &host_import_names,
             &field_call_signatures,
+            &declared_constants,
             &monomorphic.sources,
             &tag_ids,
         )?;
@@ -526,6 +537,7 @@ fn erase_opaque_types(program: &Program) -> Program {
                 return_type: erase_type_opaque_types(&declared.return_type),
             })
             .collect(),
+        declared_constants: program.declared_constants.clone(),
         type_declarations: Vec::new(),
         top_level: program.top_level.iter().map(erase_stmt_opaque_types).collect(),
         export: program.export.as_ref().map(erase_expr_opaque_types),
@@ -862,12 +874,14 @@ fn to_runtime_type(ty: &Type) -> Type {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_function(
     function: &AstFunction,
     signatures: &HashMap<SymbolId, (Vec<Type>, Type)>,
     host_import_signatures: &HashMap<SymbolId, (Vec<Type>, Type)>,
     host_import_names: &HashMap<String, SymbolId>,
     field_call_signatures: &HashMap<String, (Vec<Type>, Type)>,
+    declared_constants: &HashMap<String, (Type, NumberLiteral)>,
     sources: &BTreeMap<String, String>,
     tag_ids: &BTreeMap<String, i32>,
 ) -> Result<Vec<Function>, Diagnostic> {
@@ -959,6 +973,7 @@ pub(crate) fn build_function(
         host_import_signatures,
         host_import_names,
         field_call_signatures,
+        declared_constants,
         lifted_functions: Vec::new(),
         lambda_counter: 0,
         loop_stack: Vec::new(),
@@ -1005,6 +1020,9 @@ struct Builder<'a> {
     host_import_signatures: &'a HashMap<SymbolId, (Vec<Type>, Type)>,
     host_import_names: &'a HashMap<String, SymbolId>,
     field_call_signatures: &'a HashMap<String, (Vec<Type>, Type)>,
+    /// Declared namespace constants (`declare const math.pi: f64 = ...`),
+    /// keyed by qualified name; field reads fold to the literal.
+    declared_constants: &'a HashMap<String, (Type, NumberLiteral)>,
     lifted_functions: Vec<Function>,
     lambda_counter: usize,
     loop_stack: Vec<LoopContext>,
@@ -4769,6 +4787,20 @@ impl Builder<'_> {
                 resolved_name,
                 ..
             } => {
+                // A declared namespace constant (`math.pi`) folds to its
+                // literal; the namespace is not a value that can be lowered.
+                if let Some((constant_ty, literal)) = self.declared_constant(base, name) {
+                    let Type::Numeric(numeric) = constant_ty else {
+                        return Err(Diagnostic::new(format!(
+                            "declared constant '{name}' must have a numeric type"
+                        )));
+                    };
+                    let value = self.emit(Instruction::Number {
+                        ty: numeric,
+                        literal,
+                    });
+                    return self.coerce_value(value, Type::Numeric(numeric), expected);
+                }
                 let base_ty = self.infer_expr_type(base, types, None)?;
                 if let Some((getter_name, params, return_type)) =
                     type_property_getter_signature(
@@ -5020,6 +5052,7 @@ impl Builder<'_> {
             host_import_signatures: self.host_import_signatures,
             host_import_names: self.host_import_names,
             field_call_signatures: self.field_call_signatures,
+            declared_constants: self.declared_constants,
             lifted_functions: Vec::new(),
             lambda_counter: 0,
             loop_stack: Vec::new(),
@@ -5099,6 +5132,18 @@ impl Builder<'_> {
                 .collect(),
             return_type: return_ty,
         }))
+    }
+
+    /// The declared namespace constant a field access reads, when `base` is a
+    /// bare namespace name and `base.name` is a declared constant (mirrors
+    /// the qualified-name lookup HIR performs before inferring the base).
+    fn declared_constant(&self, base: &Expr, name: &str) -> Option<(Type, NumberLiteral)> {
+        let Expr::Name(base_name, _, _) = base else {
+            return None;
+        };
+        self.declared_constants
+            .get(&format!("{base_name}.{name}"))
+            .cloned()
     }
 
     fn infer_expr_type(
@@ -5502,6 +5547,9 @@ impl Builder<'_> {
                 resolved_name,
                 ..
             } => {
+                if let Some((constant_ty, _)) = self.declared_constant(base, name) {
+                    return coerce_type(constant_ty, expected);
+                }
                 let base_ty = self.infer_expr_type(base, types, None)?;
                 if let Some((_, params, return_type)) =
                     type_property_getter_signature(

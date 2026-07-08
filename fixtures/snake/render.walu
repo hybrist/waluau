@@ -35,9 +35,7 @@ function draw(ctx: CanvasRenderingContext2D, state: State): unit
     -- variant lives outside the curated extern surface).
     ctx.fillStyle = "#dc2626"
     ctx:beginPath()
-    -- TODO(waluau-2nx0): spell the sweep as 2.0 * math.pi once math constants
-    -- exist in the builtins; 6.283185307179586 is tau.
-    ctx:arc(cell_px(state.food.x) + cell_size() / 2.0, cell_px(state.food.y) + cell_size() / 2.0, cell_size() / 2.0 - 2.0, 0.0, 6.283185307179586)
+    ctx:arc(cell_px(state.food.x) + cell_size() / 2.0, cell_px(state.food.y) + cell_size() / 2.0, cell_size() / 2.0 - 2.0, 0.0, 2.0 * math.pi)
     ctx:fill()
 
     -- Snake, head (index 0) drawn brighter than the body.

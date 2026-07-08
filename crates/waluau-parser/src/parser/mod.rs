@@ -1,6 +1,6 @@
 use waluau_ast::{
-    DeclaredImport, Function, FunctionExpr, FunctionName, Param, Program, Span, Stmt, Type,
-    TypeDeclaration,
+    DeclaredConstant, DeclaredImport, Function, FunctionExpr, FunctionName, Param, Program, Span,
+    Stmt, Type, TypeDeclaration,
 };
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
@@ -33,6 +33,7 @@ impl Parser {
     pub(super) fn parse_program(&mut self) -> Result<Program, Diagnostic> {
         let mut functions = Vec::new();
         let mut declared_imports = Vec::new();
+        let mut declared_constants = Vec::new();
         let mut type_declarations = Vec::new();
         let mut top_level = Vec::new();
         let mut export = None;
@@ -74,6 +75,14 @@ impl Parser {
                         self.synchronize_statement(&[], self.index);
                     }
                 }
+            } else if self.is_declare_const_start() {
+                match self.parse_declared_const() {
+                    Ok(declared) => declared_constants.push(declared),
+                    Err(error) => {
+                        self.record_error(error);
+                        self.synchronize_statement(&[], self.index);
+                    }
+                }
             } else {
                 match self.parse_stmt() {
                     // A trailing top-level `return <expr>` declares the value a
@@ -109,6 +118,7 @@ impl Parser {
             Ok(Program {
                 functions,
                 declared_imports,
+                declared_constants,
                 type_declarations,
                 top_level,
                 export,
@@ -178,6 +188,57 @@ impl Parser {
                 Some(TokenKind::Identifier(kind))
             ) if keyword == "declare" && kind == "property"
         )
+    }
+
+    fn is_declare_const_start(&self) -> bool {
+        matches!(
+            (
+                self.peek().map(|token| &token.kind),
+                self.peek_n(1).map(|token| &token.kind),
+            ),
+            (
+                Some(TokenKind::Identifier(keyword)),
+                Some(TokenKind::Identifier(kind))
+            ) if keyword == "declare" && kind == "const"
+        )
+    }
+
+    /// Parses `declare const math.pi: f64 = 3.141592653589793`: a named
+    /// compile-time constant on a builtin namespace. Reads fold to the
+    /// literal during lowering, so nothing is imported from the host.
+    fn parse_declared_const(&mut self) -> Result<DeclaredConstant, Diagnostic> {
+        let keyword = self.expect_identifier()?;
+        if keyword != "declare" {
+            return Err(Diagnostic::new("expected 'declare'"));
+        }
+        let kind = self.expect_identifier()?;
+        if kind != "const" {
+            return Err(Diagnostic::new("expected 'const' after 'declare'"));
+        }
+        let namespace = self.expect_identifier()?;
+        self.expect_simple(TokenKind::Dot, "expected '.' after constant namespace")?;
+        let member = self.expect_identifier()?;
+        let name = format!("{namespace}.{member}");
+        self.expect_simple(TokenKind::Colon, "expected ':' before constant type")?;
+        let ty = self.parse_type()?;
+        if !matches!(ty, Type::Numeric(_)) {
+            return Err(Diagnostic::new(format!(
+                "declared constant '{name}' must have a numeric type"
+            )));
+        }
+        self.expect_simple(TokenKind::Equal, "expected '=' after constant type")?;
+        let value = match self.peek().map(|token| token.kind.clone()) {
+            Some(TokenKind::Number(raw)) => {
+                self.advance();
+                waluau_ast::NumberLiteral { raw }
+            }
+            _ => {
+                return Err(Diagnostic::new(format!(
+                    "declared constant '{name}' must be initialized with a number literal"
+                )));
+            }
+        };
+        Ok(DeclaredConstant { name, ty, value })
     }
 
     fn parse_declared_import(&mut self) -> Result<DeclaredImport, Diagnostic> {

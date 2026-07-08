@@ -51,6 +51,12 @@ pub(super) enum FnSignature {
     /// argument types; each variant is also registered as a `Mono` signature
     /// under its unique internal name.
     Overloaded(Vec<OverloadVariant>),
+    /// A named compile-time constant on a builtin namespace, e.g. `math.pi`
+    /// (declared as `declare const math.pi: f64 = ...`). Reads type as `ty`;
+    /// calls are rejected. Lowering folds reads to the declared literal.
+    Const {
+        ty: Type,
+    },
 }
 
 pub(super) fn inference_diagnostic(

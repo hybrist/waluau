@@ -196,6 +196,48 @@ fn parses_declared_host_function_with_dotted_namespace_name() {
 }
 
 #[test]
+fn parses_declared_namespace_constant() {
+    let source = r#"
+        declare const math.pi: f64 = 3.141592653589793
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert_eq!(program.declared_constants.len(), 1);
+    let constant = &program.declared_constants[0];
+    assert_eq!(constant.name, "math.pi");
+    assert_eq!(constant.ty, Type::Numeric(waluau_ast::NumericType::F64));
+    assert_eq!(constant.value.raw, "3.141592653589793");
+}
+
+#[test]
+fn rejects_declared_constant_with_non_numeric_type() {
+    let source = r#"
+        declare const math.name: string = 1
+    "#;
+
+    let error = parse(source).expect_err("parse should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("declared constant 'math.name' must have a numeric type")
+    );
+}
+
+#[test]
+fn rejects_declared_constant_without_number_literal() {
+    let source = r#"
+        declare const math.pi: f64 = true
+    "#;
+
+    let error = parse(source).expect_err("parse should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("declared constant 'math.pi' must be initialized with a number literal")
+    );
+}
+
+#[test]
 fn parses_declared_host_method_with_implicit_receiver_param() {
     let source = r#"
         type Element = extern

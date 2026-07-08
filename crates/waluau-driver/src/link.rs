@@ -18,7 +18,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use waluau_ast::{
-    Expr, Function, FunctionExpr, FunctionName, Program, Stmt, TableField, Type, TypeDeclaration,
+    DeclaredConstant, DeclaredImport, Expr, Function, FunctionExpr, FunctionName, Program, Stmt,
+    TableField, Type, TypeDeclaration,
 };
 use waluau_diagnostics::Diagnostic;
 
@@ -38,7 +39,7 @@ pub fn link_program(entry: &Path) -> Result<Program, Diagnostic> {
     let mut loader = Loader::default();
 
     // Load builtin declarations first
-    let builtin_imports = loader.load_builtins()?;
+    let (builtin_imports, builtin_constants) = loader.load_builtins()?;
 
     let entry_id = loader.load(&entry)?;
     let dom_externs = if loader.requires_dom_externs {
@@ -55,6 +56,7 @@ pub fn link_program(entry: &Path) -> Result<Program, Diagnostic> {
         &loader.modules,
         entry_id,
         builtin_imports,
+        builtin_constants,
         dom_externs,
         tfjs_externs,
     )
@@ -144,10 +146,14 @@ impl Loader {
         Ok(id)
     }
 
-    fn load_builtins(&mut self) -> Result<Vec<waluau_ast::DeclaredImport>, Diagnostic> {
-        // Load builtin declaration files and extract their declared_imports
+    fn load_builtins(
+        &mut self,
+    ) -> Result<(Vec<DeclaredImport>, Vec<DeclaredConstant>), Diagnostic> {
+        // Load builtin declaration files and extract their declared imports
+        // and constants.
         let builtin_files = ["core.walu", "math.walu"];
         let mut all_imports = Vec::new();
+        let mut all_constants = Vec::new();
 
         for filename in &builtin_files {
             let builtin_source = match *filename {
@@ -159,9 +165,10 @@ impl Loader {
             let program =
                 waluau_parser::parse_with_path(builtin_source, &format!("builtin:{filename}"))?;
             all_imports.extend(program.declared_imports);
+            all_constants.extend(program.declared_constants);
         }
 
-        Ok(all_imports)
+        Ok((all_imports, all_constants))
     }
 
     fn load_dom_externs(&mut self) -> Result<Program, Diagnostic> {
@@ -221,12 +228,14 @@ fn module_prefix(id: usize, entry_id: usize) -> String {
 fn merge_with_builtins(
     modules: &[LoadedModule],
     entry_id: usize,
-    builtin_imports: Vec<waluau_ast::DeclaredImport>,
+    builtin_imports: Vec<DeclaredImport>,
+    builtin_constants: Vec<DeclaredConstant>,
     dom_externs: Option<Program>,
     tfjs_externs: Option<Program>,
 ) -> Result<Program, Diagnostic> {
     let mut functions = Vec::new();
     let mut declared_imports = builtin_imports;
+    let mut declared_constants = builtin_constants;
     let mut type_declarations = Vec::new();
     let mut extern_sources = BTreeMap::new();
     if let Some(dom_program) = dom_externs {
@@ -293,9 +302,13 @@ fn merge_with_builtins(
             type_declarations.push(lowered);
         }
 
-        // Collect declared imports from all modules (mainly builtins)
+        // Collect declared imports and constants from all modules (mainly
+        // builtins)
         for import in &module.program.declared_imports {
             declared_imports.push(import.clone());
+        }
+        for constant in &module.program.declared_constants {
+            declared_constants.push(constant.clone());
         }
 
         for function in &module_functions {
@@ -339,6 +352,7 @@ fn merge_with_builtins(
     Ok(Program {
         functions,
         declared_imports,
+        declared_constants,
         type_declarations,
         top_level,
         export: None,
