@@ -751,6 +751,88 @@ mod tests {
     }
 
     #[test]
+    fn compile_file_exports_module_constants() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("config.walu"),
+            r#"
+                local CELL_SIZE <const>: f64 = 16.0
+                local TITLE <const> = "snake"
+
+                function cell_px(v: i32): f64
+                    return v::f64 * CELL_SIZE
+                end
+
+                return {
+                    CELL_SIZE = CELL_SIZE,
+                    TITLE = TITLE,
+                    cell_px = cell_px,
+                }
+            "#,
+        )
+        .expect("config module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local config = require("./config")
+
+                assert(config.CELL_SIZE == 16.0)
+                assert(config.TITLE == "snake")
+                assert(config.cell_px(2) == 32.0)
+
+                function in_function(): f64
+                    return config.CELL_SIZE + 1.0
+                end
+                assert(in_function() == 17.0)
+            "#,
+        )
+        .expect("main module should write");
+
+        let wasm = super::compile_file(&input_path).expect("compile should succeed");
+        assert!(!wasm.is_empty());
+    }
+
+    #[test]
+    fn compile_file_rejects_non_literal_constant_export() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("config.walu"),
+            r#"
+                local SIZES <const> = { 16.0 }
+
+                function first(): f64
+                    return 16.0
+                end
+
+                return {
+                    SIZES = SIZES,
+                    first = first,
+                }
+            "#,
+        )
+        .expect("config module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local config = require("./config")
+                assert(config.first() == 16.0)
+            "#,
+        )
+        .expect("main module should write");
+
+        // A `<const>` local with a non-literal initializer is not a module
+        // constant, so the export field does not resolve.
+        let error = super::compile_file(&input_path).expect_err("compile should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("module export field 'SIZES' references unknown function 'SIZES'")
+        );
+    }
+
+    #[test]
     fn compiles_array_ops() {
         super::compile_file(&fixture_path("array_ops.walu")).expect("compile should succeed");
     }

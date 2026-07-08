@@ -272,6 +272,44 @@ describe('browser conformance', () => {
     }
   }
 
+  it('passes module constants exported across require boundaries', async () => {
+    const config = `
+      local CELL_SIZE <const>: f64 = 16.0
+      local COLS <const>: i32 = 21
+      local TITLE <const> = "snake"
+
+      function cell_px(v: i32): f64
+          return v::f64 * CELL_SIZE
+      end
+
+      return {
+          CELL_SIZE = CELL_SIZE,
+          COLS = COLS,
+          TITLE = TITLE,
+          cell_px = cell_px,
+      }
+    `;
+    const main = `
+      local config = require("./config")
+
+      assert(config.CELL_SIZE == 16.0)
+      assert(config.COLS == 21)
+      assert(config.TITLE == "snake")
+      assert(config.cell_px(2) == 32.0)
+
+      local width: f64 = config.CELL_SIZE * config.COLS::f64
+      assert(width == 336.0)
+
+      function in_function(): f64
+          return config.CELL_SIZE + 1.0
+      end
+      assert(in_function() == 17.0)
+    `;
+    await expect(
+      compileAndInstantiate({ '/config.walu': config, '/main.walu': main }, '/main.walu'),
+    ).resolves.toBeUndefined();
+  });
+
   it('passes extern_host_object.walu round-trip identity checks', async () => {
     const source = cases.find(({ name }) => name === 'extern_host_object.walu').source;
     const exports = await compileAndInstantiateWithExports({ '/main.walu': source }, '/main.walu');

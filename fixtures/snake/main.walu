@@ -41,9 +41,9 @@ function install_snake(): unit
     root:append_child(element)
 
     if HTMLCanvasElement(canvas) = element then
-        local width_px: f64 = render.cell_size() * cols::f64
-        local height_px: f64 = render.cell_size() * rows::f64
-        -- 336 = 21 cols/rows * 16px cells (render.cell_size()); the width/
+        local width_px: f64 = render.CELL_SIZE * cols::f64
+        local height_px: f64 = render.CELL_SIZE * rows::f64
+        -- 336 = 21 cols/rows * 16px cells (render.CELL_SIZE); the width/
         -- height properties are u32 so the literal is spelled out here.
         canvas.width = 336
         canvas.height = 336
