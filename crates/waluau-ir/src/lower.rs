@@ -5318,19 +5318,20 @@ impl Builder<'_> {
                         params[0], receiver_ty
                     )));
                 }
-                let actual_args = args
-                    .iter()
-                    .map(|arg| self.infer_expr_type(arg, types, None))
-                    .collect::<Result<Vec<_>, _>>()?;
-                if params.len() != actual_args.len() + 1 {
+                if params.len() != args.len() + 1 {
                     return Err(Diagnostic::new(format!(
                         "function expects {} arguments, got {}",
                         params.len(),
-                        actual_args.len() + 1
+                        args.len() + 1
                     )));
                 }
-                for (expected_param, actual) in params.iter().skip(1).zip(actual_args.iter()) {
-                    if expected_param != actual {
+                // Infer each argument against its parameter type so literals
+                // resolve to the parameter's numeric type (a bare integer
+                // literal would otherwise default to f64 and mismatch).
+                for (expected_param, arg) in params.iter().skip(1).zip(args.iter()) {
+                    let actual =
+                        self.infer_expr_type(arg, types, Some(expected_param.clone()))?;
+                    if expected_param != &actual {
                         return Err(Diagnostic::new(format!(
                             "call expected {}, got {}",
                             expected_param, actual

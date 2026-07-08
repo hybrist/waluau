@@ -1855,6 +1855,38 @@ fn parses_method_function_declaration_name() {
 }
 
 #[test]
+fn parses_dot_named_function_declaration() {
+    let source = r#"
+        function State.new(cols: i32): i32
+            return cols
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let function = &program.functions[0];
+    // A dot-named function is a plain function under the dotted name; unlike
+    // `:` method sugar there is no implicit self parameter.
+    assert_eq!(function.name, FunctionName::Simple("State.new".to_string()));
+    assert_eq!(function.params.len(), 1);
+}
+
+#[test]
+fn rejects_method_on_dot_named_function() {
+    let source = r#"
+        function State.new:clone(): i32
+            return 0
+        end
+    "#;
+
+    let error = parse(source).expect_err("parse should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot declare a method on dot-named function 'State.new'")
+    );
+}
+
+#[test]
 fn parses_generic_method_function_declaration() {
     let source = r#"
         function point:identity<T>(value: T): T

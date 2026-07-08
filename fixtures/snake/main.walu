@@ -74,15 +74,15 @@ function install_snake(): unit
             if event.type == "click" then
                 if Element(target) = event.target then
                     if target.id == "snake-up" then
-                        game.turn(state, 0, -1)
+                        state:turn(0, -1)
                     elseif target.id == "snake-down" then
-                        game.turn(state, 0, 1)
+                        state:turn(0, 1)
                     elseif target.id == "snake-left" then
-                        game.turn(state, -1, 0)
+                        state:turn(-1, 0)
                     elseif target.id == "snake-right" then
-                        game.turn(state, 1, 0)
+                        state:turn(1, 0)
                     elseif target.id == "snake-restart" then
-                        game.reset(state)
+                        state:reset()
                     end
                 end
             end
@@ -105,15 +105,15 @@ function install_snake(): unit
             if KeyboardEvent(kev) = event then
                 local key: string = kev.key
                 if key == "ArrowUp" or key == "w" then
-                    game.turn(state, 0, -1)
+                    state:turn(0, -1)
                 elseif key == "ArrowDown" or key == "s" then
-                    game.turn(state, 0, 1)
+                    state:turn(0, 1)
                 elseif key == "ArrowLeft" or key == "a" then
-                    game.turn(state, -1, 0)
+                    state:turn(-1, 0)
                 elseif key == "ArrowRight" or key == "d" then
-                    game.turn(state, 1, 0)
+                    state:turn(1, 0)
                 elseif key == "r" then
-                    game.reset(state)
+                    state:reset()
                 end
             end
         end)
@@ -131,7 +131,7 @@ function install_snake(): unit
                 last_step = timestamp
             elseif timestamp - last_step >= tick_ms then
                 last_step = timestamp
-                game.step(state)
+                state:step()
                 render.draw(ctx, state)
             end
             window:requestAnimationFrame(frame)

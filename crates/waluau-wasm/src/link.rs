@@ -865,6 +865,11 @@ fn export_field_value(
             let Expr::Name(namespace, _, _) = &**base else {
                 unreachable!()
             };
+            // The module's own dot-named function (`new = State.new`).
+            let dotted = format!("{namespace}.{member}");
+            if top_level_names.contains(&dotted) {
+                return Ok(ExportedField::Function(format!("{prefix}{dotted}")));
+            }
             let fields = namespaces.get(namespace).ok_or_else(|| {
                 format!(
                     "module export field '{}' references unknown namespace '{namespace}'",
@@ -1189,15 +1194,37 @@ impl Rewriter<'_> {
                         }
                     }
                 }
-                self.rewrite_expr(value, bound);
-                if let Expr::TableLiteral { fields, .. } = &*value {
-                    let mut field_map = BTreeMap::new();
-                    for field in fields {
-                        if let Expr::Name(function_name, _, _) = &field.value {
-                            field_map.insert(field.name.clone(), function_name.clone());
-                        }
+                // A table-of-functions local (`local ns = { add = add }`)
+                // registers as a namespace so `ns.add` resolves to the
+                // function directly. Eligibility is decided before rewriting:
+                // every field must reference a top-level function (or a
+                // re-exported import) — a record literal that merely stores
+                // other bindings (e.g. a constructor's `{ value = start }`)
+                // must not hijack later field accesses on a same-named local.
+                let registers_namespace = match &*value {
+                    Expr::TableLiteral { fields, .. } => {
+                        !fields.is_empty()
+                            && fields.iter().all(|field| {
+                                matches!(
+                                    &field.value,
+                                    Expr::Name(field_name, _, _)
+                                        if !bound.contains(field_name)
+                                            && (self.func_names.contains(field_name)
+                                                || self.re_exports.contains_key(field_name))
+                                )
+                            })
                     }
-                    if !field_map.is_empty() && field_map.len() == fields.len() {
+                    _ => false,
+                };
+                self.rewrite_expr(value, bound);
+                if registers_namespace {
+                    if let Expr::TableLiteral { fields, .. } = &*value {
+                        let mut field_map = BTreeMap::new();
+                        for field in fields {
+                            if let Expr::Name(function_name, _, _) = &field.value {
+                                field_map.insert(field.name.clone(), function_name.clone());
+                            }
+                        }
                         self.namespaces
                             .insert(name.clone(), ModuleNamespace::from_functions(field_map));
                     }
@@ -1320,6 +1347,13 @@ impl Rewriter<'_> {
                         *expr = value.clone();
                         return;
                     }
+                }
+                // A reference to the module's own dot-named function
+                // (`State.new`), mangled like any other top-level function.
+                let dotted = format!("{local}.{field}");
+                if !bound.contains(local) && self.func_names.contains(&dotted) {
+                    *expr = Expr::Name(format!("{}{dotted}", self.prefix), None, *span);
+                    return;
                 }
             }
         }

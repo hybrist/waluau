@@ -742,6 +742,61 @@ mod tests {
     }
 
     #[test]
+    fn compile_file_dispatches_methods_and_statics_across_modules() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("counter.walu"),
+            r#"
+                type Counter = { value: i32 }
+
+                function Counter.new(start: i32): Counter
+                    local counter: Counter = { value = start }
+                    counter:clamp()
+                    return counter
+                end
+
+                function Counter:bump(amount: i32): unit
+                    self.value += amount
+                    self:clamp()
+                end
+
+                function Counter:clamp(): unit
+                    if self.value > 100 then
+                        self.value = 100
+                    end
+                end
+
+                return { new = Counter.new }
+            "#,
+        )
+        .expect("counter module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local counter = require("./counter")
+
+                local c = counter.new(5)
+                c:bump(10)
+                assert(c.value == 15)
+                c:bump(1000)
+                assert(c.value == 100)
+
+                -- A consumer-side structurally identical alias still
+                -- dispatches the defining module's methods.
+                type Counter = { value: i32 }
+                local aliased: Counter = counter.new(7)
+                aliased:bump(1)
+                assert(aliased.value == 8)
+            "#,
+        )
+        .expect("main module should write");
+
+        let wasm = super::compile_file(&input_path).expect("compile should succeed");
+        assert!(!wasm.is_empty());
+    }
+
+    #[test]
     fn compile_file_reports_unknown_imported_type_alias() {
         let tempdir = tempdir().expect("tempdir should exist");
         fs::write(

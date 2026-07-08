@@ -159,6 +159,21 @@ impl Parser {
                 table: name,
                 method,
             })
+        } else if self.check_simple(&TokenKind::Dot) {
+            // A dot-named function (`function State.new(...)`) is a plain
+            // function under the dotted name — no implicit self parameter,
+            // unlike `:` method sugar. `.` cannot appear in identifiers, so
+            // the name never collides with user bindings; call sites resolve
+            // `State.new(...)` through the qualified-name lookup.
+            self.advance();
+            let member = self.expect_identifier()?;
+            let dotted = format!("{name}.{member}");
+            if self.check_simple(&TokenKind::Colon) {
+                return Err(Diagnostic::new(format!(
+                    "cannot declare a method on dot-named function '{dotted}'"
+                )));
+            }
+            Ok(FunctionName::Simple(dotted))
         } else {
             Ok(FunctionName::Simple(name))
         }
