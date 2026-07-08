@@ -774,6 +774,38 @@ fn parses_array_types_literals_indexing_and_length() {
 }
 
 #[test]
+fn parses_array_literal_with_trailing_comma() {
+    let source = r#"
+        function scores(): i32
+            local values: {i32} = {100, 250, 300,}
+            return values[0]
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert!(matches!(
+        &program.functions[0].body[0],
+        Stmt::Let {
+            value: waluau_ast::Expr::ArrayLiteral { elements, .. },
+            ..
+        } if elements.len() == 3
+    ));
+}
+
+#[test]
+fn rejects_array_literal_with_only_a_comma() {
+    let source = r#"
+        function bad(): i32
+            local values: {i32} = {,}
+            return 0
+        end
+    "#;
+
+    let error = parse(source).expect_err("parse should fail");
+    assert!(error.to_string().contains("expected expression"));
+}
+
+#[test]
 fn parses_named_table_literals() {
     let source = r#"
         return {

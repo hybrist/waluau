@@ -1,0 +1,24 @@
+-- Trailing commas are accepted after the last element of array literals,
+-- matching the behavior record literals always had.
+
+function array_trailing(): i32
+    local xs: {i32} = {1, 2, 3,}
+    return #xs
+end
+
+function nested_trailing(): i32
+    local points: {{ x: i32, y: i32 }} = {
+        { x = 1, y = 2 },
+        { x = 3, y = 4 },
+    }
+    return points[1].x
+end
+
+function record_trailing(): i32
+    local point: { x: i32, y: i32 } = { x = 7, y = 9, }
+    return point.x
+end
+
+assert(array_trailing() == 3)
+assert(nested_trailing() == 3)
+assert(record_trailing() == 7)

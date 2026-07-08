@@ -93,9 +93,7 @@ function install_snake(): unit
             { id = "snake-down", label = "Down" },
             { id = "snake-left", label = "Left" },
             { id = "snake-right", label = "Right" },
-            -- TODO(waluau-hxq6): no trailing comma after the last element;
-            -- array literals reject it (record literals accept it).
-            { id = "snake-restart", label = "Restart" }
+            { id = "snake-restart", label = "Restart" },
         }
         for def in button_defs do
             local button: Element = make_button(document, def.id, def.label)
