@@ -591,6 +591,9 @@ impl Parser {
 
         let mut elements = Vec::new();
         loop {
+            if self.check_simple(&TokenKind::RBrace) {
+                break;
+            }
             elements.push(self.parse_expr()?);
             if self.check_simple(&TokenKind::Comma) {
                 self.advance();
