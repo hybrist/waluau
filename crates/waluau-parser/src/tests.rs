@@ -196,6 +196,36 @@ fn parses_declared_host_function_with_dotted_namespace_name() {
 }
 
 #[test]
+fn parses_namespace_member_type_references() {
+    let source = r#"
+        local game = require("./game")
+
+        type State = game.State
+
+        function score(state: game.State): i32
+            return 0
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    assert_eq!(program.type_declarations.len(), 1);
+    assert_eq!(
+        program.type_declarations[0].ty,
+        Type::Named {
+            name: "game.State".into(),
+            type_args: vec![],
+        }
+    );
+    assert_eq!(
+        program.functions[0].params[0].ty,
+        Type::Named {
+            name: "game.State".into(),
+            type_args: vec![],
+        }
+    );
+}
+
+#[test]
 fn parses_declared_namespace_constant() {
     let source = r#"
         declare const math.pi: f64 = 3.141592653589793

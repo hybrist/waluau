@@ -696,6 +696,85 @@ mod tests {
     }
 
     #[test]
+    fn compile_file_imports_type_aliases_across_modules() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("state.walu"),
+            r#"
+                type State = { score: i32 }
+
+                function new_state(): State
+                    return { score = 41::i32 }
+                end
+
+                return {
+                    new_state = new_state,
+                }
+            "#,
+        )
+        .expect("state module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local state_mod = require("./state")
+
+                type State = state_mod.State
+
+                function bump(state: State): i32
+                    state.score += 1
+                    return state.score
+                end
+
+                function direct(state: state_mod.State): i32
+                    return state.score
+                end
+
+                local state: state_mod.State = state_mod.new_state()
+                assert(bump(state) == 42)
+                assert(direct(state) == 42)
+            "#,
+        )
+        .expect("main module should write");
+
+        let wasm = super::compile_file(&input_path).expect("compile should succeed");
+        assert!(!wasm.is_empty());
+    }
+
+    #[test]
+    fn compile_file_reports_unknown_imported_type_alias() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("state.walu"),
+            r#"
+                type State = { score: i32 }
+
+                function new_state(): State
+                    return { score = 41::i32 }
+                end
+
+                return {
+                    new_state = new_state,
+                }
+            "#,
+        )
+        .expect("state module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local state_mod = require("./state")
+
+                local state: state_mod.Missing = state_mod.new_state()
+            "#,
+        )
+        .expect("main module should write");
+
+        let error = super::compile_file(&input_path).expect_err("compile should fail");
+        assert!(error.to_string().contains("state_mod.Missing"));
+    }
+
+    #[test]
     fn compile_file_unifies_record_type_aliases_across_modules() {
         let tempdir = tempdir().expect("tempdir should exist");
         fs::write(

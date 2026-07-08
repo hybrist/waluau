@@ -184,6 +184,16 @@ impl Parser {
                 }
             }
             Some(TokenKind::Identifier(name)) => {
+                // A dotted name (`game.State`) references a type alias
+                // exported by a required module; the linker resolves the
+                // namespace against the module's require bindings.
+                let name = if self.check_simple(&TokenKind::Dot) {
+                    self.advance();
+                    let member = self.expect_identifier()?;
+                    format!("{name}.{member}")
+                } else {
+                    name
+                };
                 let type_args = if self.check_simple(&TokenKind::Less) {
                     self.parse_type_arg_list()?
                 } else {

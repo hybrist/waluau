@@ -94,6 +94,23 @@ That capability is added as part of this work: a bare top-level function name
 lowers to a capture-free function reference (a `funcref` placed in the module's
 function table), which the existing indirect-call machinery already supports.
 
+A require binding also exposes the module's type aliases in type positions,
+Luau-style. `m.State` names the alias `State` declared in the required module,
+both directly in annotations and as the right-hand side of a local re-alias:
+
+```lua
+local m = require("./game")
+
+type State = m.State
+
+function score(state: m.State): i32
+    return state.score
+end
+```
+
+The linker resolves `m.State` to the imported module's (prefixed) declaration
+during merging, so the later stages still see ordinary named types.
+
 ## Implementation
 
 Module resolution and linking live entirely in `waluau-driver`; the lexer,

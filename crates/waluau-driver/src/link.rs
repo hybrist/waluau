@@ -290,11 +290,13 @@ fn merge_with_builtins(
         // (the binding gates the alias), which is equivalent: the initializer
         // is a literal and const locals cannot be rebound.
         value_aliases.extend(module_constants(&module.program.top_level));
+        let type_namespaces = module_type_namespaces(modules, module, entry_id);
 
         let mut rewriter = Rewriter {
             prefix: &prefix,
             func_names: &func_names,
             type_names: &type_names,
+            type_namespaces: &type_namespaces,
             imports: &imports,
             re_exports,
             namespaces,
@@ -641,15 +643,50 @@ fn module_function_names(functions: &[Function], export: &Option<Expr>) -> HashS
     names
 }
 
+/// Maps a module's require-binding names to the (prefix, type-alias names)
+/// of the module each binding resolves to, so `game.State` in a type
+/// position can be rewritten to the imported module's prefixed alias.
+fn module_type_namespaces(
+    modules: &[LoadedModule],
+    module: &LoadedModule,
+    entry_id: usize,
+) -> HashMap<String, (String, HashSet<String>)> {
+    let mut type_namespaces = HashMap::new();
+    for stmt in &module.program.top_level {
+        let Stmt::Let {
+            name,
+            value: Expr::Require(path, _),
+            ..
+        } = stmt
+        else {
+            continue;
+        };
+        let Some(&target_id) = module.requires.get(path) else {
+            continue;
+        };
+        let target = &modules[target_id];
+        let types: HashSet<String> = target
+            .program
+            .type_declarations
+            .iter()
+            .map(|decl| decl.name.clone())
+            .collect();
+        type_namespaces.insert(name.clone(), (module_prefix(target_id, entry_id), types));
+    }
+    type_namespaces
+}
+
 fn process_reexport_bindings(
     top_level: &[Stmt],
     imports: &HashMap<String, ResolvedImport>,
 ) -> RequireAliases {
     let empty = HashSet::new();
+    let empty_type_namespaces = HashMap::new();
     let mut rewriter = Rewriter {
         prefix: "",
         func_names: &empty,
         type_names: &empty,
+        type_namespaces: &empty_type_namespaces,
         imports,
         re_exports: HashMap::new(),
         namespaces: HashMap::new(),
@@ -799,6 +836,9 @@ struct Rewriter<'a> {
     prefix: &'a str,
     func_names: &'a HashSet<String>,
     type_names: &'a HashSet<String>,
+    /// Require-binding name -> (target module prefix, target's type aliases),
+    /// for resolving `binding.Type` references in type positions.
+    type_namespaces: &'a HashMap<String, (String, HashSet<String>)>,
     imports: &'a HashMap<String, ResolvedImport>,
     re_exports: HashMap<String, String>,
     namespaces: HashMap<String, ModuleNamespace>,
@@ -1001,7 +1041,17 @@ impl Rewriter<'_> {
     fn rewrite_type(&self, ty: &mut Type) {
         match ty {
             Type::Named { name, type_args } => {
-                if self.type_names.contains(name) {
+                if let Some((namespace, member)) = name.split_once('.') {
+                    // `game.State`: a type alias reached through a require
+                    // binding; resolve it to the imported module's prefixed
+                    // declaration. Unknown bindings or members are left
+                    // as-is so type resolution reports the dotted name.
+                    if let Some((target_prefix, types)) = self.type_namespaces.get(namespace) {
+                        if types.contains(member) {
+                            *name = format!("{target_prefix}{member}");
+                        }
+                    }
+                } else if self.type_names.contains(name) {
                     *name = format!("{}{name}", self.prefix);
                 }
                 for ty in type_args {
