@@ -335,13 +335,14 @@ test.describe('DOM Output in Run tab', () => {
     await expect(outputFrame.locator('#poker-score')).toContainText('Computer 10');
     await expect(outputFrame.locator('#poker-status')).toContainText('Swap phase');
     await expect(outputFrame.locator('#submit-swap')).toBeVisible();
+    await expect(outputFrame.locator('[id^="wager-"]')).toHaveCount(0);
     await expect(outputFrame.locator('#trick-history-empty')).toHaveText('No tricks played yet.');
 
     for (let round = 1; round <= 6; round += 1) {
       if (round === 1) {
         await outputFrame.locator('#player-card-0').click();
         await outputFrame.locator('#middle-card-0').click();
-        await outputFrame.locator('#wager-3').click();
+        await expect(outputFrame.locator('#submit-swap')).toContainText('Wager 1');
         await outputFrame.locator('#submit-swap').click();
         await expect(outputFrame.locator('#poker-status')).toContainText('Pot');
       } else {
