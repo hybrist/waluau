@@ -112,7 +112,21 @@ export default function RunTab({
   handleManualRun,
   getResult,
 }) {
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('fullscreen') === 'true';
+  });
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (isFullscreen) {
+      url.searchParams.set('fullscreen', 'true');
+    } else {
+      url.searchParams.delete('fullscreen');
+    }
+    window.history.replaceState(null, '', url);
+  }, [isFullscreen]);
+
 
   useEffect(() => {
     if (!isFullscreen) return;

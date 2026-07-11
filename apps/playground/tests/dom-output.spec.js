@@ -431,33 +431,61 @@ test.describe('DOM Output in Run tab', () => {
     // Click fullscreen button
     await fullscreenBtn.click();
 
-    // The section should now have the "fullscreen" class
+    // The section should now have the "fullscreen" class and URL should have the parameter
     await expect(domOutput).toHaveClass(/fullscreen/);
+    await expect(page.url()).toContain('fullscreen=true');
 
     // The close button/bar should be visible
     const exitBtn = domOutput.locator('.dom-output-exit-btn');
     await expect(exitBtn).toBeVisible();
     await expect(exitBtn).toHaveText('Close Full Screen');
 
-    // Clicking close button exits fullscreen
+    // Clicking close button exits fullscreen and removes parameter from URL
     await exitBtn.click();
     await expect(domOutput).not.toHaveClass(/fullscreen/);
     await expect(exitBtn).not.toBeVisible();
+    await expect(page.url()).not.toContain('fullscreen=true');
 
     // Click fullscreen button again to test Escape key from main window
     await fullscreenBtn.click();
     await expect(domOutput).toHaveClass(/fullscreen/);
+    await expect(page.url()).toContain('fullscreen=true');
     await page.keyboard.press('Escape');
     await expect(domOutput).not.toHaveClass(/fullscreen/);
+    await expect(page.url()).not.toContain('fullscreen=true');
 
     // Click fullscreen button again to test Escape key from iframe
     await fullscreenBtn.click();
     await expect(domOutput).toHaveClass(/fullscreen/);
+    await expect(page.url()).toContain('fullscreen=true');
     
     // Focus inside iframe and press Escape
     const frame = page.frameLocator('.dom-output-frame');
     await frame.locator('body').click(); // focus frame
     await page.keyboard.press('Escape');
     await expect(domOutput).not.toHaveClass(/fullscreen/);
+    await expect(page.url()).not.toContain('fullscreen=true');
+  });
+
+  test('starts directly in fullscreen mode if URL parameter is present', async ({ page }) => {
+    // Navigate with fullscreen=true parameter
+    await page.goto('/?fullscreen=true');
+    await page.locator('.code-textarea').fill(DOM_SAMPLE);
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    const domOutput = page.getByLabel('DOM Output');
+    await expect(domOutput).toBeVisible();
+
+    // The section should immediately have the "fullscreen" class
+    await expect(domOutput).toHaveClass(/fullscreen/);
+
+    // Exiting fullscreen should update the URL
+    const exitBtn = domOutput.locator('.dom-output-exit-btn');
+    await expect(exitBtn).toBeVisible();
+    await exitBtn.click();
+    await expect(domOutput).not.toHaveClass(/fullscreen/);
+    await expect(page.url()).not.toContain('fullscreen=true');
   });
 });
