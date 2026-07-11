@@ -933,7 +933,6 @@ fn parses_namespace_member_access() {
         Stmt::Return(waluau_ast::Expr::Call {
             callee,
             args,
-            type_args: _,
             ..
         }) if args.len() == 2
             && matches!(

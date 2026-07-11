@@ -995,13 +995,7 @@ fn collect_return_types_with_scope(
                 }
             }
             Stmt::Expr(expr) => {
-                if let Expr::Call {
-                    callee,
-                    type_args: _,
-                    args,
-                    ..
-                } = expr
-                {
+                if let Expr::Call { callee, args, .. } = expr {
                     if let Expr::Name(name, _, _) = callee.as_ref() {
                         if name == ASSERT {
                             if !(1..=2).contains(&args.len()) {
@@ -1836,13 +1830,7 @@ pub(super) fn check_stmt(
             if !matches!(expr, Expr::Call { .. } | Expr::MethodCall { .. }) {
                 return Err(Diagnostic::new("expression statements must be calls"));
             }
-            if let Expr::Call {
-                callee,
-                type_args: _,
-                args,
-                ..
-            } = expr
-            {
+            if let Expr::Call { callee, args, .. } = expr {
                 if let Expr::Name(name, _, _) = callee.as_ref() {
                     if name == ASSERT {
                         if !(1..=2).contains(&args.len()) {
