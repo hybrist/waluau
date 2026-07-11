@@ -57,6 +57,27 @@ test.describe('REPL tab', () => {
     await expect(page.locator('.repl-cell-output').last()).toHaveText('still works');
   });
 
+  test('reports generated Wasm load errors with the browser diagnostic', async ({ page }) => {
+    await page.evaluate(() => {
+      const originalCompile = WebAssembly.compile;
+      WebAssembly.compile = async (...args) => {
+        WebAssembly.compile = originalCompile;
+        void args;
+        throw new WebAssembly.CompileError('simulated Safari REPL module rejection');
+      };
+    });
+
+    await evaluate(page, 'print("will not instantiate")');
+    await expect(page.locator('.repl-output-error').last()).toContainText(
+      'Failed to compile the generated WASM module: CompileError: simulated Safari REPL module rejection',
+    );
+
+    // The failed module did not commit the cell, and restoring the browser API
+    // lets the next evaluation proceed normally.
+    await evaluate(page, 'print("recovered")');
+    await expect(page.locator('.repl-cell-output').last()).toHaveText('recovered');
+  });
+
   test('reset clears the session transcript', async ({ page }) => {
     await evaluate(page, 'print("before reset")');
     await expect(page.locator('.repl-cell')).toHaveCount(1);

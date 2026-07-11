@@ -184,6 +184,25 @@ test.describe('DOM Output in Run tab', () => {
     await expect(outputFrame.locator('p')).toHaveText('Hello from Waluau DOM rendered inside the playground Run tab');
   });
 
+  test('loads DOM modules when WebAssembly.Module.imports reflection fails', async ({ page }) => {
+    await page.evaluate(() => {
+      WebAssembly.Module.imports = () => {
+        throw new TypeError(
+          'WebAssembly.Module.imports unable to produce import descriptors for the given module',
+        );
+      };
+    });
+
+    await page.locator('.code-textarea').fill(DOM_SAMPLE);
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    const outputFrame = page.frameLocator('.dom-output-frame');
+    await expect(outputFrame.locator('h2')).toHaveText('Hello from Waluau DOM');
+    await expect(page.getByRole('heading', { name: 'Module Load Error' })).toHaveCount(0);
+  });
+
   test('loads generated DOM APIs from the DOM preset via require("dom:window")', async ({ page }) => {
     await page.getByRole('button', { name: 'DOM Externs Example' }).click();
 

@@ -5,7 +5,7 @@ import {
   getWasmExports,
   getDefaultParamValue,
   executeCall,
-  classifyWasmInstantiationError,
+  classifyWasmModuleError,
   usesDomImports,
   cleanupDomEventListeners,
   cancelPendingAnimationFrames,
@@ -115,47 +115,12 @@ export default function useWaluauCompiler({ files, entryFile }) {
         }
         return;
       }
-      const wasmBuffer = new Uint8Array(outputWasmBytes);
-      const wasmModule = await WebAssembly.compile(wasmBuffer, {
-        builtins: ["js-string"],
-        importedStringConstants: WALUAU_STRING_CONSTANTS_MODULE,
-      });
-      const moduleUsesDomOutput = usesDomImports(wasmModule);
       if (active) {
-        setUsesDomOutput(moduleUsesDomOutput);
-      }
-      if (moduleUsesDomOutput && !domOutputRootRef.current) {
-        return;
-      }
-      const richSigs = output?.signatures || {};
-      const list = getWasmExports(wasmBuffer)
-        .filter(func => !func.name.startsWith('__waluau'))
-        .map(func => {
-          const richSig = (richSigs instanceof Map || (richSigs && typeof richSigs.get === 'function'))
-            ? richSigs.get(func.name)
-            : richSigs[func.name];
-          return {
-            ...func,
-            richParams: richSig ? richSig.params : null,
-            richReturns: richSig ? richSig.returns : null,
-          };
-        });
-      if (active) {
-        setExportsList(list);
-        setFuncInputs(prev => {
-          const next = { ...prev };
-          let changed = false;
-          for (const func of list) {
-            if (!next[func.name] || next[func.name].length !== func.params.length) {
-              const defaultVals = func.richParams
-                ? func.richParams.map(getDefaultParamValue)
-                : func.params.map(getDefaultParamValue);
-              next[func.name] = defaultVals;
-              changed = true;
-            }
-          }
-          return changed ? next : prev;
-        });
+        setRunInstance(null);
+        setRunError(null);
+        setExportsList([]);
+        setManualResults({});
+        setInitLogs([]);
       }
       const capturedInitLogs = [];
       const initLogger = (msg) => {
@@ -166,17 +131,64 @@ export default function useWaluauCompiler({ files, entryFile }) {
           setInitLogs([...capturedInitLogs]);
         }
       };
+      let phase = 'compile';
+      let moduleUsesDomOutput = false;
       try {
+        const wasmBuffer = new Uint8Array(outputWasmBytes);
+        const wasmModule = await WebAssembly.compile(wasmBuffer, {
+          builtins: ['js-string'],
+          importedStringConstants: WALUAU_STRING_CONSTANTS_MODULE,
+        });
+
+        phase = 'inspect';
+        moduleUsesDomOutput = usesDomImports(wasmModule, wasmBuffer);
+        const richSigs = output?.signatures || {};
+        const list = getWasmExports(wasmBuffer)
+          .filter(func => !func.name.startsWith('__waluau'))
+          .map(func => {
+            const richSig = (richSigs instanceof Map || (richSigs && typeof richSigs.get === 'function'))
+              ? richSigs.get(func.name)
+              : richSigs[func.name];
+            return {
+              ...func,
+              richParams: richSig ? richSig.params : null,
+              richReturns: richSig ? richSig.returns : null,
+            };
+          });
+        if (active) {
+          setUsesDomOutput(moduleUsesDomOutput);
+          setExportsList(list);
+          setFuncInputs(prev => {
+            const next = { ...prev };
+            let changed = false;
+            for (const func of list) {
+              if (!next[func.name] || next[func.name].length !== func.params.length) {
+                const defaultVals = func.richParams
+                  ? func.richParams.map(getDefaultParamValue)
+                  : func.params.map(getDefaultParamValue);
+                next[func.name] = defaultVals;
+                changed = true;
+              }
+            }
+            return changed ? next : prev;
+          });
+        }
+        if (moduleUsesDomOutput && !domOutputRootRef.current) {
+          return;
+        }
         if (moduleUsesDomOutput) {
           cleanupDomEventListeners(domOutputRootRef.current.body);
           cancelPendingAnimationFrames(domOutputRootRef.current);
           domOutputRootRef.current.body.replaceChildren();
         }
+        phase = 'imports';
         let instanceExports = null;
         const imports = buildWaluauImports(wasmModule, initLogger, {
+          wasmBytes: wasmBuffer,
           domOutputRoot: moduleUsesDomOutput ? domOutputRootRef.current : null,
           getWasmExports: () => instanceExports,
         });
+        phase = 'instantiate';
         const instance = await WebAssembly.instantiate(wasmModule, imports);
         instanceExports = instance.exports;
 
@@ -188,11 +200,13 @@ export default function useWaluauCompiler({ files, entryFile }) {
         }
       } catch (err) {
         if (active) {
-          console.error("Instantiation failed:", err);
+          console.error(`Generated WASM ${phase} failed:`, err);
           setRunInstance(null);
-          setRunError(classifyWasmInstantiationError(err, requiresWasmGc));
+          setRunError(classifyWasmModuleError(err, phase, requiresWasmGc));
+          setExportsList([]);
           setManualResults({});
           setInitLogs(capturedInitLogs);
+          setUsesDomOutput(moduleUsesDomOutput);
         }
       }
     }

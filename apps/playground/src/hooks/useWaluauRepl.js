@@ -3,7 +3,7 @@ import {
   WALUAU_STRING_CONSTANTS_MODULE,
   buildWaluauImports,
   usesDomImports,
-  classifyWasmInstantiationError,
+  classifyWasmModuleError,
 } from '../utils/wasm.js';
 
 const REPL_PATH = '/repl.walu';
@@ -84,30 +84,38 @@ export default function useWaluauRepl() {
       return { ok: false, error: stringifyError(err) };
     }
 
-    const wasmBuffer = new Uint8Array(result.wasm);
-    const wasmModule = await WebAssembly.compile(wasmBuffer, {
-      builtins: ['js-string'],
-      importedStringConstants: WALUAU_STRING_CONSTANTS_MODULE,
-    });
-
-    if (usesDomImports(wasmModule)) {
-      return {
-        ok: false,
-        error: 'This program uses DOM imports, which the REPL does not host yet. Use the Run tab for DOM presets.',
-      };
-    }
-
     const logs = [];
-    let instanceExports = null;
-    const imports = buildWaluauImports(wasmModule, (msg) => logs.push(msg), {
-      getWasmExports: () => instanceExports,
-    });
-
+    let phase = 'compile';
     try {
+      const wasmBuffer = new Uint8Array(result.wasm);
+      const wasmModule = await WebAssembly.compile(wasmBuffer, {
+        builtins: ['js-string'],
+        importedStringConstants: WALUAU_STRING_CONSTANTS_MODULE,
+      });
+
+      phase = 'inspect';
+      if (usesDomImports(wasmModule, wasmBuffer)) {
+        return {
+          ok: false,
+          error: 'This program uses DOM imports, which the REPL does not host yet. Use the Run tab for DOM presets.',
+        };
+      }
+
+      phase = 'imports';
+      let instanceExports = null;
+      const imports = buildWaluauImports(wasmModule, (msg) => logs.push(msg), {
+        wasmBytes: wasmBuffer,
+        getWasmExports: () => instanceExports,
+      });
+
+      phase = 'instantiate';
       const instance = await WebAssembly.instantiate(wasmModule, imports);
       instanceExports = instance.exports;
     } catch (err) {
-      return { ok: false, error: classifyWasmInstantiationError(err, Boolean(result.requiresWasmGc)) };
+      return {
+        ok: false,
+        error: classifyWasmModuleError(err, phase, Boolean(result.requiresWasmGc)),
+      };
     }
 
     // Let any synchronous coroutine/promise continuations flush their prints.

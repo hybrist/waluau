@@ -36,6 +36,7 @@ export async function compileAndInstantiateWithExports(files, entryFile = '/main
     let instanceExports = null;
     const imports = buildWaluauImports(wasmModule, undefined, {
       ...options,
+      wasmBytes: wasmBuffer,
       domOutputRoot,
       getWasmExports: () => instanceExports,
     });
@@ -73,6 +74,7 @@ export async function compileAndInstantiateWithDom(files, entryFile = '/main.wal
 
     let instanceExports = null;
     const imports = buildWaluauImports(wasmModule, undefined, {
+      wasmBytes: wasmBuffer,
       domOutputRoot,
       getWasmExports: () => instanceExports,
     });
