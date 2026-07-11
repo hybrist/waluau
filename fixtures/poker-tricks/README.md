@@ -2,8 +2,9 @@
 
 A compact player-versus-computer trick-taking game written in Waluau. Each
 player starts with five cards and 10 points. Three community cards are revealed
-each round. Before playing the trick, either player may pass or wager 1–3 points
-to exchange up to three hand cards with the same number of community cards.
+each round. Before playing the trick, either player may pass or exchange up to
+three hand cards with the same number of community cards. The wager is one
+point per selected card, so swapping one, two, or three cards wagers 1–3 points.
 Only one proposal executes: the higher wager has priority, with equal wagers
 decided by comparing the proposed boards as three-card poker hands. The
 computer searches every legal exchange for an improved five-card hand.

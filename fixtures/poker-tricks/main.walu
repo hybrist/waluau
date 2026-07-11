@@ -53,7 +53,7 @@ function swap_history_text(trick: game.Trick): string
     return "equal proposals; no swap" .. wagers
 end
 
-function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand: {i32}, swap_middle: {i32}, wager: i32): unit
+function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand: {i32}, swap_middle: {i32}): unit
     local document: Document = window.document
     local body: HTMLElement = document.body
     local existing: Element? = document:get_element_by_id("app")
@@ -72,7 +72,7 @@ function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand
     table_area:append_child(heading)
 
     local rules: Element = make_element(document, "p", "max-w-xl text-center text-sm text-emerald-100")
-    rules.text_content = "First wager 1-3 points to exchange up to three hand cards with the community, or pass. Then choose two cards for the five-card poker trick."
+    rules.text_content = "Exchange up to three hand cards with the same number of community cards, wagering one point per card, or pass. Then choose two cards for the five-card poker trick."
     table_area:append_child(rules)
 
     local score: Element = make_element(document, "p", "rounded-full bg-emerald-950 px-5 py-2 font-mono text-amber-100")
@@ -130,18 +130,11 @@ function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand
     local controls: Element = make_element(document, "div", "flex flex-wrap justify-center gap-3")
     table_area:append_child(controls)
     if state.swap_open then
-        for amount = 1, 3 do
-            local wager_button: Element = make_element(document, "button", "rounded-lg border border-amber-300 bg-emerald-950 px-4 py-3 font-bold text-amber-100")
-            if wager == amount then wager_button.class_name = "rounded-lg border-2 border-white bg-amber-400 px-4 py-3 font-bold text-emerald-950" end
-            wager_button.id = "wager-" .. tostring(amount)
-            wager_button:set_attribute("type", "button")
-            wager_button.text_content = "Wager " .. tostring(amount)
-            controls:append_child(wager_button)
-        end
         local submit_swap: Element = make_element(document, "button", "rounded-lg bg-amber-400 px-5 py-3 font-bold text-emerald-950 hover:bg-amber-300")
         submit_swap.id = "submit-swap"
         submit_swap:set_attribute("type", "button")
-        submit_swap.text_content = "Attempt swap"
+        local selected_count: i32 = pick_count(swap_hand)
+        submit_swap.text_content = "Attempt swap · Wager " .. tostring(selected_count)
         controls:append_child(submit_swap)
         local pass_swap: Element = make_element(document, "button", "rounded-lg bg-emerald-950 px-5 py-3 font-bold text-white")
         pass_swap.id = "pass-swap"
@@ -225,7 +218,7 @@ function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand
                 end
             end
             if state.swap_open then
-                status.text_content = "Swap phase: select the same number of hand and community cards (1-3), choose a wager, or pass."
+                status.text_content = "Swap phase: select the same number of hand and community cards (1-3). Your wager equals the number selected, or you can pass."
             elseif state.player_wager == 0 and state.computer_wager == 0 then
                 status.text_content = "Both players passed. Choose two cards; this trick is worth " .. tostring(state.round) .. " point(s)."
             elseif state.swap_winner > 0 then
@@ -245,35 +238,29 @@ function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand
         if Element(target) = event.target then
             if target.id == "new-game" then
                 state:reset()
-                render_poker_tricks(state, { -1, -1 }, { -1, -1, -1 }, { -1, -1, -1 }, 1)
+                render_poker_tricks(state, { -1, -1 }, { -1, -1, -1 }, { -1, -1, -1 })
             elseif target.id == "pass-swap" and state.swap_open then
-                state:resolve_swap(0, {}, {})
-                render_poker_tricks(state, { -1, -1 }, { -1, -1, -1 }, { -1, -1, -1 }, 1)
+                state:resolve_swap({}, {})
+                render_poker_tricks(state, { -1, -1 }, { -1, -1, -1 }, { -1, -1, -1 })
             elseif target.id == "submit-swap" and state.swap_open then
                 local hand_count: i32 = pick_count(swap_hand)
                 local middle_count: i32 = pick_count(swap_middle)
                 if hand_count < 1 or hand_count ~= middle_count then
                     status.text_content = "Select the same number of hand and community cards (1-3)."
-                elseif wager < 1 or wager > 3 or wager > state.player_points then
-                    status.text_content = "Choose a wager you can afford between 1 and 3 points."
+                elseif hand_count > state.player_points then
+                    status.text_content = "You need one point per selected card. Select fewer cards or pass."
                 else
                     local hand_indices: {i32} = {}
                     local middle_indices: {i32} = {}
                     for index in swap_hand do if index >= 0 then table.insert(hand_indices, index) end end
                     for index in swap_middle do if index >= 0 then table.insert(middle_indices, index) end end
-                    state:resolve_swap(wager, hand_indices, middle_indices)
-                    render_poker_tricks(state, { -1, -1 }, { -1, -1, -1 }, { -1, -1, -1 }, 1)
+                    state:resolve_swap(hand_indices, middle_indices)
+                    render_poker_tricks(state, { -1, -1 }, { -1, -1, -1 }, { -1, -1, -1 })
                 end
-            elseif target.id == "wager-1" and state.swap_open then
-                render_poker_tricks(state, play_selection, swap_hand, swap_middle, 1)
-            elseif target.id == "wager-2" and state.swap_open then
-                render_poker_tricks(state, play_selection, swap_hand, swap_middle, 2)
-            elseif target.id == "wager-3" and state.swap_open then
-                render_poker_tricks(state, play_selection, swap_hand, swap_middle, 3)
             elseif target.id == "play-trick" and not state.finished and not state.swap_open then
                 if play_selection[0] >= 0 and play_selection[1] >= 0 then
                     state:play(play_selection[0], play_selection[1])
-                    render_poker_tricks(state, { -1, -1 }, { -1, -1, -1 }, { -1, -1, -1 }, 1)
+                    render_poker_tricks(state, { -1, -1 }, { -1, -1, -1 }, { -1, -1, -1 })
                 else
                     status.text_content = "Select exactly two cards first."
                 end
@@ -292,7 +279,7 @@ function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand
                 if hand_index >= 0 then toggle_swap_pick(swap_hand, hand_index) end
                 if middle_index >= 0 then toggle_swap_pick(swap_middle, middle_index) end
                 if hand_index >= 0 or middle_index >= 0 then
-                    render_poker_tricks(state, play_selection, swap_hand, swap_middle, wager)
+                    render_poker_tricks(state, play_selection, swap_hand, swap_middle)
                 end
             elseif not state.finished then
                 local index: i32 = -1
@@ -304,7 +291,7 @@ function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand
                 end
                 if index >= 0 then
                     toggle_play_pick(play_selection, index)
-                    render_poker_tricks(state, play_selection, swap_hand, swap_middle, wager)
+                    render_poker_tricks(state, play_selection, swap_hand, swap_middle)
                 end
             end
         end
@@ -330,5 +317,5 @@ end
 
 window:requestAnimationFrame(function(timestamp: f64): unit
     math.randomseed(timestamp)
-    render_poker_tricks(game.new(), { -1, -1 }, { -1, -1, -1 }, { -1, -1, -1 }, 1)
+    render_poker_tricks(game.new(), { -1, -1 }, { -1, -1, -1 }, { -1, -1, -1 })
 end)
