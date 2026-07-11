@@ -330,6 +330,9 @@ test.describe('DOM Output in Run tab', () => {
     await expect(outputFrame.locator('h1')).toHaveText('Poker Tricks');
     await expect(outputFrame.locator('#middle-cards').locator('button')).toHaveCount(3);
     await expect(outputFrame.locator('#player-hand').locator('button')).toHaveCount(5);
+    await expect(outputFrame.locator('#computer-hand .pt-card-back')).toHaveCount(5);
+    await expect(outputFrame.locator('#player-hand .pt-card-pip')).toHaveCount(5);
+    await expect(outputFrame.locator('#middle-cards .pt-card-corner')).toHaveCount(6);
     await expect(outputFrame.locator('#poker-score')).toContainText('Round 1');
     await expect(outputFrame.locator('#poker-score')).toContainText('You 10');
     await expect(outputFrame.locator('#poker-score')).toContainText('Computer 10');
@@ -355,6 +358,12 @@ test.describe('DOM Output in Run tab', () => {
       await expect(outputFrame.locator('#player-card-1')).toHaveClass(/border-4/);
       await outputFrame.locator('#play-trick').click();
       expect(pageErrors).toEqual([]);
+      await expect(outputFrame.locator('#trick-reveal')).toBeVisible();
+      await expect(outputFrame.locator('#trick-reveal .pt-reveal-card')).toHaveCount(5);
+      await expect(outputFrame.locator('#trick-reveal .pt-reveal-card').first()).toHaveCSS(
+        'animation-name',
+        'pt-flip',
+      );
       const history = outputFrame.locator('.trick-history-entry');
       await expect(history).toHaveCount(round);
       await expect(history.nth(round - 1)).toContainText(`Trick ${round}`);

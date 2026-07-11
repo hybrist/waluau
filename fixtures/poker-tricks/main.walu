@@ -9,6 +9,63 @@ function make_element(document: Document, tag: string, class_name: string): Elem
     return element
 end
 
+function card_rank(card: game.Card): string
+    if card.rank == 14 then return "A" end
+    if card.rank == 13 then return "K" end
+    if card.rank == 12 then return "Q" end
+    if card.rank == 11 then return "J" end
+    return tostring(card.rank)
+end
+
+function card_suit(card: game.Card): string
+    if card.suit == 1 then return "♦" end
+    if card.suit == 2 then return "♥" end
+    if card.suit == 3 then return "♠" end
+    return "♣"
+end
+
+function card_color(card: game.Card): string
+    if card.suit == 1 or card.suit == 2 then return "pt-card-red" end
+    return "pt-card-black"
+end
+
+function append_card_face(document: Document, element: Element, card: game.Card): unit
+    local color: string = card_color(card)
+    local corner: Element = make_element(document, "span", "pt-card-corner " .. color)
+    corner.text_content = card_rank(card) .. "\n" .. card_suit(card)
+    element:append_child(corner)
+    local pip: Element = make_element(document, "span", "pt-card-pip " .. color)
+    pip.text_content = card_suit(card)
+    element:append_child(pip)
+    local bottom: Element = make_element(document, "span", "pt-card-corner pt-card-corner-bottom " .. color)
+    bottom.text_content = card_rank(card) .. "\n" .. card_suit(card)
+    element:append_child(bottom)
+end
+
+function make_showdown_card(document: Document, card: game.Card, delay: i32): Element
+    local card_element: Element = make_element(document, "div", "pt-card pt-card-static pt-reveal-card")
+    card_element:set_attribute("aria-label", game.card_name(card))
+    card_element:set_attribute("style", "animation-delay: " .. tostring(delay) .. "ms")
+    append_card_face(document, card_element, card)
+    return card_element
+end
+
+function append_showdown_cards(document: Document, row: Element, cards: {game.Card}, first_delay: i32): unit
+    local delay: i32 = first_delay
+    for card in cards do
+        row:append_child(make_showdown_card(document, card, delay))
+        delay += 90
+    end
+end
+
+function install_poker_styles(document: Document, body: HTMLElement): unit
+    if document:get_element_by_id("poker-tricks-style") ~= nil then return end
+    local style: Element = make_element(document, "style", "")
+    style.id = "poker-tricks-style"
+    style.text_content = "#app{min-height:100vh;padding:1rem;background:radial-gradient(circle at 50% 0%,#174f45 0%,#062c29 42%,#020b12 100%);color:#ecfdf5;font-family:Inter,ui-sans-serif,system-ui,sans-serif}.pt-table{position:relative;isolation:isolate;box-sizing:border-box;display:flex;max-width:64rem;margin:auto;padding:2rem;flex-direction:column;align-items:center;gap:1.25rem;border:10px solid #3f2415;border-radius:2rem;background:radial-gradient(ellipse at center,#116149 0%,#084332 68%,#052b24 100%);box-shadow:0 32px 90px #0009,inset 0 0 0 2px #f5d87926,inset 0 0 80px #001b14}.pt-table:before{content:'';position:absolute;inset:10px;border:1px solid #f6d98530;border-radius:1.4rem;pointer-events:none;z-index:-1}.pt-eyebrow,.pt-section-label,.pt-community-label{margin:0;text-transform:uppercase;font-size:.68rem;font-weight:900;letter-spacing:.28em;color:#d1fae5b8}.pt-eyebrow{color:#fde68aab;letter-spacing:.42em}.pt-title{margin:-.65rem 0 0;font-family:Georgia,serif;font-size:clamp(2.35rem,7vw,4rem);font-weight:900;letter-spacing:.12em;line-height:1;text-transform:uppercase;color:#f7d774;text-shadow:0 3px 0 #623f13,0 10px 28px #0008}.pt-rules{max-width:42rem;margin:0;text-align:center;font-size:.82rem;line-height:1.6;color:#d1fae5c7}.pt-score{margin:0;padding:.6rem 1.25rem;border:1px solid #fde68a33;border-radius:999px;background:#001b1499;color:#fef3c7;font-family:ui-monospace,monospace;font-size:.8rem;font-weight:800;box-shadow:0 0 40px #f6d36530}.pt-opponent-row,.pt-card-row{display:flex;justify-content:center;gap:.75rem}.pt-community{box-sizing:border-box;width:100%;max-width:46rem;padding:1.25rem;border:1px solid #fde68a1f;border-radius:1.75rem;background:#001b1444;box-shadow:inset 0 8px 32px #00150e55}.pt-community-label{margin-bottom:1rem;text-align:center;color:#fde68acc}.pt-status{box-sizing:border-box;min-height:3rem;max-width:42rem;margin:0;padding:.75rem 1.25rem;border:1px solid #fff2;border-radius:1rem;background:#001b1477;color:#fef3c7;text-align:center;font-size:.88rem;font-weight:700;line-height:1.5}.pt-controls{display:flex;flex-wrap:wrap;justify-content:center;gap:.75rem}.pt-button{padding:.78rem 1.35rem;border-radius:.8rem;font-weight:900;transition:transform .18s,box-shadow .18s,filter .18s}.pt-button-primary{border:0;background:linear-gradient(#fde68a,#d99b26);color:#052e2b;box-shadow:0 8px 18px #0005}.pt-button-secondary{border:1px solid #d1fae533;background:#001b1499;color:#ecfdf5}.pt-button:hover{transform:translateY(-2px);filter:brightness(1.08)}.pt-button:active{transform:translateY(1px)}.pt-history{box-sizing:border-box;width:100%;padding:1rem;border:1px solid #fff2;border-radius:1rem;background:#001b1455}.pt-history-title{margin:0 0 .75rem;text-align:center;text-transform:uppercase;font-size:.75rem;font-weight:900;letter-spacing:.25em;color:#fde68acc}.pt-reveal{box-sizing:border-box;width:100%;max-width:48rem;padding:1.5rem;border:1px solid #fde68a44;border-radius:1.5rem;color:#ecfdf5;background:#020617e8;box-shadow:0 24px 50px #0008}.pt-reveal-eyebrow,.pt-show-label{margin:0;text-align:center;text-transform:uppercase;font-size:.65rem;font-weight:900;letter-spacing:.28em;color:#fde68ab8}.pt-reveal-title{margin:.3rem 0 0;text-align:center;font-family:Georgia,serif;font-size:1.8rem;color:#fef3c7}.pt-showdown{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:1.25rem;margin-top:1.25rem}.pt-show-group{display:flex;flex-direction:column;align-items:center;gap:.55rem}.pt-show-row{display:flex;justify-content:center;gap:.45rem}.pt-player-pair{margin:0;padding:.8rem 1rem;border:1px solid #a7f3d044;border-radius:.8rem;background:#052e2be6;font-family:Georgia,serif;font-size:1.25rem;font-weight:900;letter-spacing:.15em;color:#ecfdf5}.pt-reveal-points{margin:1.25rem 0 0;text-align:center;font-size:.82rem;font-weight:800;color:#fde68a}.pt-card{position:relative;display:block;width:clamp(3.75rem,11vw,5.75rem);aspect-ratio:0.69;overflow:hidden;border-radius:.8rem;border:2px solid #fff;background:linear-gradient(145deg,#fffef8,#e9e5d9);box-shadow:0 10px 22px #00150e80,0 1px 0 #fff inset;transform-style:preserve-3d;transition:transform .22s cubic-bezier(.2,.8,.2,1),box-shadow .22s,border-color .22s;white-space:pre-line}.pt-card-button{cursor:pointer}.pt-card-button:hover{transform:translateY(-10px) rotate(-1deg);box-shadow:0 20px 28px #00150e99,0 0 0 2px #f5d87955}.pt-card-button:focus-visible{outline:3px solid #f8d568;outline-offset:4px}.pt-card-selected{transform:translateY(-16px)!important;border-color:#f8d568!important;box-shadow:0 22px 32px #00150ebb,0 0 0 4px #f8d56855,0 0 30px #fbbf2470!important}.pt-card-corner{position:absolute;left:.48rem;top:.4rem;font-family:Georgia,serif;font-size:clamp(.7rem,2.6vw,1rem);font-weight:900;line-height:.8;text-align:center}.pt-card-corner-bottom{left:auto;right:.48rem;top:auto;bottom:.4rem;transform:rotate(180deg)}.pt-card-pip{position:absolute;inset:0;display:grid;place-items:center;font-family:Georgia,serif;font-size:clamp(2rem,7vw,3.35rem);filter:drop-shadow(0 2px 0 #fff)}.pt-card-red{color:#c51f3b}.pt-card-black{color:#111827}.pt-card-back{background-color:#111827;background-image:linear-gradient(45deg,#f6d36518 25%,transparent 25%),linear-gradient(-45deg,#f6d36518 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#f6d36518 75%),linear-gradient(-45deg,transparent 75%,#f6d36518 75%);background-size:12px 12px;background-position:0 0,0 6px,6px -6px,-6px 0;border:3px solid #f5e7bf;box-shadow:0 8px 18px #00150e88,inset 0 0 0 3px #172554,inset 0 0 0 5px #f5d87966}.pt-card-back:after{content:'PT';position:absolute;inset:16%;display:grid;place-items:center;border:1px solid #f5d87988;border-radius:50%;color:#f5d879;font-family:Georgia,serif;font-size:clamp(.8rem,2.8vw,1.25rem);font-weight:900;letter-spacing:.08em;text-shadow:0 2px 8px #000}.pt-card-static{width:clamp(3rem,8vw,4.5rem);border-width:1px;box-shadow:0 8px 16px #0007}.pt-reveal-card{opacity:0;transform:perspective(700px) rotateY(180deg) translateY(16px);animation:pt-flip .72s cubic-bezier(.2,.75,.2,1) forwards}.pt-card>*{pointer-events:none}@keyframes pt-flip{0%{opacity:0;transform:perspective(700px) rotateY(180deg) translateY(16px) scale(.88)}45%{opacity:1}100%{opacity:1;transform:perspective(700px) rotateY(0) translateY(0) scale(1)}}@media(max-width:640px){#app{padding:.4rem}.pt-table{padding:1.5rem .6rem;gap:1rem;border-width:6px}.pt-card-row{gap:.35rem}.pt-opponent-row{gap:.2rem}.pt-rules{font-size:.72rem}.pt-score{font-size:.68rem;padding:.5rem .75rem}.pt-reveal{padding:1rem}.pt-showdown{grid-template-columns:1fr;gap:1rem}}@media(prefers-reduced-motion:reduce){.pt-card,.pt-button{transition:none}.pt-reveal-card{animation:none;opacity:1;transform:none}}"
+    body:append_child(style)
+end
+
 function pick_count(picks: {i32}): i32
     if #picks > 2 and picks[2] >= 0 then return 3 end
     if picks[1] >= 0 then return 2 end
@@ -53,111 +110,175 @@ function swap_history_text(trick: game.Trick): string
     return "equal proposals; no swap" .. wagers
 end
 
-function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand: {i32}, swap_middle: {i32}): unit
+function append_trick_reveal(document: Document, table_area: Element, trick: game.Trick): unit
+    local reveal: Element = make_element(document, "section", "pt-reveal w-full max-w-3xl overflow-hidden rounded-3xl border border-amber-200/30 p-5 shadow-2xl shadow-black/60 backdrop-blur")
+    reveal.id = "trick-reveal"
+    reveal:set_attribute("aria-live", "polite")
+    table_area:append_child(reveal)
+    local reveal_eyebrow: Element = make_element(document, "p", "pt-reveal-eyebrow")
+    reveal_eyebrow.text_content = "Showdown · Trick " .. tostring(trick.round)
+    reveal:append_child(reveal_eyebrow)
+    local reveal_title: Element = make_element(document, "h2", "pt-reveal-title")
+    if trick.winner > 0 then
+        reveal_title.text_content = "You take the trick"
+    elseif trick.winner < 0 then
+        reveal_title.text_content = "The house takes it"
+    else
+        reveal_title.text_content = "A dead heat"
+    end
+    reveal:append_child(reveal_title)
+
+    local showdown: Element = make_element(document, "div", "pt-showdown")
+    reveal:append_child(showdown)
+
+    local computer_show: Element = make_element(document, "div", "pt-show-group")
+    local computer_show_label: Element = make_element(document, "p", "pt-show-label")
+    computer_show_label.text_content = "House · " .. game.category_name(trick.computer_value)
+    computer_show:append_child(computer_show_label)
+    local computer_show_cards: Element = make_element(document, "div", "pt-show-row")
+    append_showdown_cards(document, computer_show_cards, trick.computer_cards, 0)
+    computer_show:append_child(computer_show_cards)
+    showdown:append_child(computer_show)
+
+    local board_show: Element = make_element(document, "div", "pt-show-group")
+    local board_show_label: Element = make_element(document, "p", "pt-show-label")
+    board_show_label.text_content = "Board"
+    board_show:append_child(board_show_label)
+    local board_show_cards: Element = make_element(document, "div", "pt-show-row")
+    append_showdown_cards(document, board_show_cards, trick.middle, 180)
+    board_show:append_child(board_show_cards)
+    showdown:append_child(board_show)
+
+    local player_show: Element = make_element(document, "div", "pt-show-group")
+    local player_show_label: Element = make_element(document, "p", "pt-show-label")
+    player_show_label.text_content = "You · " .. game.category_name(trick.player_value)
+    player_show:append_child(player_show_label)
+    local player_show_cards: Element = make_element(document, "p", "pt-player-pair")
+    player_show_cards.text_content = game.card_name(trick.player_cards[0]) .. "  " .. game.card_name(trick.player_cards[1])
+    player_show:append_child(player_show_cards)
+    showdown:append_child(player_show)
+
+    local reveal_points: Element = make_element(document, "p", "pt-reveal-points")
+    reveal_points.text_content = "Pot " .. tostring(trick.pot) .. " · Trick value " .. tostring(trick.points) .. " point(s)"
+    reveal:append_child(reveal_points)
+end
+
+function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand: {i32}, swap_middle: {i32}, reveal_trick: bool): unit
     local document: Document = window.document
     local body: HTMLElement = document.body
+    install_poker_styles(document, body)
     local existing: Element? = document:get_element_by_id("app")
     if existing ~= nil then body:remove_child(existing) end
 
-    local root: Element = make_element(document, "main", "min-h-screen bg-emerald-950 p-5 text-emerald-50")
+    local root: Element = make_element(document, "main", "min-h-screen overflow-hidden p-3 text-emerald-50 sm:p-6")
     root.id = "app"
     body:append_child(root)
 
-    local table_area: Element = make_element(document, "section", "mx-auto flex max-w-3xl flex-col items-center gap-5 rounded-3xl border-4 border-amber-700 bg-emerald-800 p-6 shadow-2xl")
+    local table_area: Element = make_element(document, "section", "pt-table mx-auto flex max-w-5xl flex-col items-center gap-4 rounded-[2rem] border-[10px] border-amber-950/80 px-4 py-6 sm:gap-5 sm:px-8 sm:py-8")
     table_area.id = "poker-table"
     root:append_child(table_area)
 
-    local heading: Element = make_element(document, "h1", "text-3xl font-black tracking-wide text-amber-300")
+    local eyebrow: Element = make_element(document, "p", "pt-eyebrow")
+    eyebrow.text_content = "The house presents"
+    table_area:append_child(eyebrow)
+    local heading: Element = make_element(document, "h1", "pt-title")
     heading.text_content = "Poker Tricks"
     table_area:append_child(heading)
 
-    local rules: Element = make_element(document, "p", "max-w-xl text-center text-sm text-emerald-100")
+    local rules: Element = make_element(document, "p", "pt-rules")
     rules.text_content = "Exchange up to three hand cards with the same number of community cards, wagering one point per card, or pass. Then choose two cards for the five-card poker trick."
     table_area:append_child(rules)
 
-    local score: Element = make_element(document, "p", "rounded-full bg-emerald-950 px-5 py-2 font-mono text-amber-100")
+    local score: Element = make_element(document, "p", "pt-score")
     score.id = "poker-score"
     table_area:append_child(score)
 
-    local computer_label: Element = make_element(document, "h2", "font-semibold uppercase tracking-widest text-emerald-200")
-    computer_label.text_content = "Computer"
+    local computer_label: Element = make_element(document, "h2", "pt-section-label")
+    computer_label.text_content = "◆  The House"
     table_area:append_child(computer_label)
-    local computer_row: Element = make_element(document, "div", "flex gap-2")
+    local computer_row: Element = make_element(document, "div", "pt-opponent-row")
     computer_row.id = "computer-hand"
     table_area:append_child(computer_row)
     local computer_cards: {Element} = {}
     for i = 0, 4 do
-        local back: Element = make_element(document, "span", "flex h-20 w-14 items-center justify-center rounded-lg border-2 border-slate-200 bg-slate-800 text-xl shadow")
-        back.text_content = "◆"
+        local back: Element = make_element(document, "span", "pt-card pt-card-back pt-card-static")
         back:set_attribute("data-card-index", tostring(i))
         computer_row:append_child(back)
         table.insert(computer_cards, back)
     end
 
-    local middle_label: Element = make_element(document, "h2", "font-semibold uppercase tracking-widest text-amber-200")
-    middle_label.text_content = "Community cards"
-    table_area:append_child(middle_label)
-    local middle_row: Element = make_element(document, "div", "flex gap-3")
+    local community_stage: Element = make_element(document, "section", "pt-community")
+    community_stage.id = "community-stage"
+    table_area:append_child(community_stage)
+    local middle_label: Element = make_element(document, "h2", "pt-community-label")
+    middle_label.text_content = "The Community"
+    community_stage:append_child(middle_label)
+    local middle_row: Element = make_element(document, "div", "pt-card-row")
     middle_row.id = "middle-cards"
-    table_area:append_child(middle_row)
+    community_stage:append_child(middle_row)
     local middle_cards: {Element} = {}
+    local visible_middle: {game.Card} = state.middle
+    if state.finished and #state.history > 0 then visible_middle = state.history[#state.history - 1].middle end
     for i = 0, 2 do
-        local card: Element = make_element(document, "button", "flex h-24 w-16 items-center justify-center rounded-lg border-2 border-amber-300 bg-white text-2xl font-black text-slate-900 shadow-lg")
+        local card: Element = make_element(document, "button", "pt-card pt-card-button")
         card.id = "middle-card-" .. tostring(i)
         card:set_attribute("type", "button")
         card:set_attribute("aria-label", "Select community card " .. tostring(i + 1))
         card:set_attribute("data-card-index", tostring(i))
+        append_card_face(document, card, visible_middle[i])
         middle_row:append_child(card)
         table.insert(middle_cards, card)
     end
 
-    local player_label: Element = make_element(document, "h2", "font-semibold uppercase tracking-widest text-emerald-200")
+    local player_label: Element = make_element(document, "h2", "pt-section-label")
     if state.swap_open then
         player_label.text_content = "Your hand — select up to three to swap"
     else
         player_label.text_content = "Your hand — pick two for the trick"
     end
     table_area:append_child(player_label)
-    local player_row: Element = make_element(document, "div", "flex gap-2")
+    local player_row: Element = make_element(document, "div", "pt-card-row")
     player_row.id = "player-hand"
     table_area:append_child(player_row)
     local player_cards: {Element} = {}
 
-    local status: Element = make_element(document, "p", "min-h-12 text-center font-medium text-amber-100")
+    local status: Element = make_element(document, "p", "pt-status")
     status.id = "poker-status"
     table_area:append_child(status)
 
-    local controls: Element = make_element(document, "div", "flex flex-wrap justify-center gap-3")
+    if reveal_trick and #state.history > 0 then append_trick_reveal(document, table_area, state.history[#state.history - 1]) end
+
+    local controls: Element = make_element(document, "div", "pt-controls")
     table_area:append_child(controls)
     if state.swap_open then
-        local submit_swap: Element = make_element(document, "button", "rounded-lg bg-amber-400 px-5 py-3 font-bold text-emerald-950 hover:bg-amber-300")
+        local submit_swap: Element = make_element(document, "button", "pt-button pt-button-primary")
         submit_swap.id = "submit-swap"
         submit_swap:set_attribute("type", "button")
         local selected_count: i32 = pick_count(swap_hand)
         submit_swap.text_content = "Attempt swap · Wager " .. tostring(selected_count)
         controls:append_child(submit_swap)
-        local pass_swap: Element = make_element(document, "button", "rounded-lg bg-emerald-950 px-5 py-3 font-bold text-white")
+        local pass_swap: Element = make_element(document, "button", "pt-button pt-button-secondary")
         pass_swap.id = "pass-swap"
         pass_swap:set_attribute("type", "button")
         pass_swap.text_content = "Pass"
         controls:append_child(pass_swap)
     else
-        local play_button: Element = make_element(document, "button", "rounded-lg bg-amber-400 px-5 py-3 font-bold text-emerald-950 hover:bg-amber-300")
+        local play_button: Element = make_element(document, "button", "pt-button pt-button-primary")
         play_button.id = "play-trick"
         play_button:set_attribute("type", "button")
         play_button.text_content = "Play selected cards"
         controls:append_child(play_button)
     end
-    local restart_button: Element = make_element(document, "button", "rounded-lg bg-emerald-950 px-5 py-3 font-bold text-white hover:bg-emerald-900")
+    local restart_button: Element = make_element(document, "button", "pt-button pt-button-secondary")
     restart_button.id = "new-game"
     restart_button:set_attribute("type", "button")
     restart_button.text_content = "New game"
     controls:append_child(restart_button)
 
-    local history_section: Element = make_element(document, "section", "w-full rounded-2xl bg-emerald-950/70 p-4")
+    local history_section: Element = make_element(document, "section", "pt-history")
     history_section.id = "trick-history"
     table_area:append_child(history_section)
-    local history_heading: Element = make_element(document, "h2", "mb-3 text-center font-semibold uppercase tracking-widest text-amber-200")
+    local history_heading: Element = make_element(document, "h2", "pt-history-title")
     history_heading.text_content = "Tricks so far"
     history_section:append_child(history_heading)
     local history_list: Element = make_element(document, "div", "flex flex-col gap-2")
@@ -179,7 +300,7 @@ function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand
             local board: string = game.card_name(trick.middle[0]) .. " " .. game.card_name(trick.middle[1]) .. " " .. game.card_name(trick.middle[2])
             local player_pair: string = game.card_name(trick.player_cards[0]) .. " " .. game.card_name(trick.player_cards[1])
             local computer_pair: string = game.card_name(trick.computer_cards[0]) .. " " .. game.card_name(trick.computer_cards[1])
-            local entry: Element = make_element(document, "article", "trick-history-entry rounded-xl border border-emerald-700 bg-emerald-900 p-3 text-sm")
+            local entry: Element = make_element(document, "article", "trick-history-entry rounded-xl border border-emerald-100/10 bg-emerald-950/40 p-3 text-xs leading-relaxed text-emerald-50/80 sm:text-sm")
             entry:set_attribute("data-round", tostring(trick.round))
             entry.text_content = "Trick " .. tostring(trick.round) .. " · Swap: " .. swap_outcome .. " · " .. outcome .. " · Board: " .. board .. " · You: " .. player_pair .. " (" .. game.category_name(trick.player_value) .. ") · Computer: " .. computer_pair .. " (" .. game.category_name(trick.computer_value) .. ")"
             history_list:append_child(entry)
@@ -191,16 +312,17 @@ function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand
         score.text_content = "Round " .. tostring(shown_round) .. " · You " .. tostring(state.player_points) .. " (" .. tostring(state.player_tricks) .. " tricks) · Computer " .. tostring(state.computer_points) .. " (" .. tostring(state.computer_tricks) .. " tricks) · Deck " .. tostring(#state.deck)
 
         for i, element in player_cards do
-            element.text_content = game.card_name(state.player_hand[i])
             if (state.swap_open and (swap_hand[0] == i or swap_hand[1] == i or swap_hand[2] == i)) or ((not state.swap_open) and (play_selection[0] == i or play_selection[1] == i)) then
-                element.class_name = "flex h-24 w-16 -translate-y-3 items-center justify-center rounded-lg border-4 border-amber-300 bg-white text-2xl font-black text-slate-900 shadow-xl"
+                element.class_name = "pt-card pt-card-button pt-card-selected border-4 border-amber-300"
+                element:set_attribute("aria-pressed", "true")
             else
-                element.class_name = "flex h-24 w-16 items-center justify-center rounded-lg border-2 border-slate-300 bg-white text-2xl font-black text-slate-900 shadow hover:-translate-y-1"
+                element.class_name = "pt-card pt-card-button border-2 border-white"
+                element:set_attribute("aria-pressed", "false")
             end
         end
 
         if state.finished then
-            for element in middle_cards do element.text_content = "—" end
+            for element in middle_cards do element.class_name = "pt-card opacity-50 grayscale" end
             if state.player_points > state.computer_points then
                 status.text_content = "Deck empty — you win " .. tostring(state.player_points) .. " to " .. tostring(state.computer_points) .. "!"
             elseif state.computer_points > state.player_points then
@@ -210,11 +332,12 @@ function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand
             end
         else
             for i, element in middle_cards do
-                element.text_content = game.card_name(state.middle[i])
                 if state.swap_open and (swap_middle[0] == i or swap_middle[1] == i or swap_middle[2] == i) then
-                    element.class_name = "flex h-24 w-16 -translate-y-3 items-center justify-center rounded-lg border-4 border-white bg-amber-100 text-2xl font-black text-slate-900 shadow-xl"
+                    element.class_name = "pt-card pt-card-button pt-card-selected border-4 border-amber-200"
+                    element:set_attribute("aria-pressed", "true")
                 else
-                    element.class_name = "flex h-24 w-16 items-center justify-center rounded-lg border-2 border-amber-300 bg-white text-2xl font-black text-slate-900 shadow-lg"
+                    element.class_name = "pt-card pt-card-button border-2 border-white"
+                    element:set_attribute("aria-pressed", "false")
                 end
             end
             if state.swap_open then
@@ -238,10 +361,10 @@ function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand
         if Element(target) = event.target then
             if target.id == "new-game" then
                 state:reset()
-                render_poker_tricks(state, { -1, -1 }, { -1, -1, -1 }, { -1, -1, -1 })
+                render_poker_tricks(state, { -1, -1 }, { -1, -1, -1 }, { -1, -1, -1 }, false)
             elseif target.id == "pass-swap" and state.swap_open then
                 state:resolve_swap({}, {})
-                render_poker_tricks(state, { -1, -1 }, { -1, -1, -1 }, { -1, -1, -1 })
+                render_poker_tricks(state, { -1, -1 }, { -1, -1, -1 }, { -1, -1, -1 }, false)
             elseif target.id == "submit-swap" and state.swap_open then
                 local hand_count: i32 = pick_count(swap_hand)
                 local middle_count: i32 = pick_count(swap_middle)
@@ -255,12 +378,12 @@ function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand
                     for index in swap_hand do if index >= 0 then table.insert(hand_indices, index) end end
                     for index in swap_middle do if index >= 0 then table.insert(middle_indices, index) end end
                     state:resolve_swap(hand_indices, middle_indices)
-                    render_poker_tricks(state, { -1, -1 }, { -1, -1, -1 }, { -1, -1, -1 })
+                    render_poker_tricks(state, { -1, -1 }, { -1, -1, -1 }, { -1, -1, -1 }, false)
                 end
             elseif target.id == "play-trick" and not state.finished and not state.swap_open then
                 if play_selection[0] >= 0 and play_selection[1] >= 0 then
                     state:play(play_selection[0], play_selection[1])
-                    render_poker_tricks(state, { -1, -1 }, { -1, -1, -1 }, { -1, -1, -1 })
+                    render_poker_tricks(state, { -1, -1 }, { -1, -1, -1 }, { -1, -1, -1 }, true)
                 else
                     status.text_content = "Select exactly two cards first."
                 end
@@ -279,7 +402,7 @@ function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand
                 if hand_index >= 0 then toggle_swap_pick(swap_hand, hand_index) end
                 if middle_index >= 0 then toggle_swap_pick(swap_middle, middle_index) end
                 if hand_index >= 0 or middle_index >= 0 then
-                    render_poker_tricks(state, play_selection, swap_hand, swap_middle)
+                    render_poker_tricks(state, play_selection, swap_hand, swap_middle, false)
                 end
             elseif not state.finished then
                 local index: i32 = -1
@@ -291,7 +414,7 @@ function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand
                 end
                 if index >= 0 then
                     toggle_play_pick(play_selection, index)
-                    render_poker_tricks(state, play_selection, swap_hand, swap_middle)
+                    render_poker_tricks(state, play_selection, swap_hand, swap_middle, false)
                 end
             end
         end
@@ -302,6 +425,7 @@ function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand
         card_button.id = "player-card-" .. tostring(index)
         card_button:set_attribute("type", "button")
         card_button:set_attribute("aria-label", "Select card " .. tostring(index + 1))
+        append_card_face(document, card_button, state.player_hand[index])
         player_row:append_child(card_button)
         table.insert(player_cards, card_button)
     end
@@ -317,5 +441,5 @@ end
 
 window:requestAnimationFrame(function(timestamp: f64): unit
     math.randomseed(timestamp)
-    render_poker_tricks(game.new(), { -1, -1 }, { -1, -1, -1 }, { -1, -1, -1 })
+    render_poker_tricks(game.new(), { -1, -1 }, { -1, -1, -1 }, { -1, -1, -1 }, false)
 end)
