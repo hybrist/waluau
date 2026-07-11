@@ -222,7 +222,7 @@ export const PRESETS = [...SINGLE_PRESETS, MULTI_PRESET, DOM_PRESET, KANBAN_PRES
   left.label.localeCompare(right.label)
 );
 
-export const DEFAULT_PRESET = PRESETS[0] || {
+export const DEFAULT_PRESET = PRESETS.find(({ key }) => key === 'add') || PRESETS[0] || {
   key: 'default',
   label: 'Default',
   files: { '/main.walu': '' },
