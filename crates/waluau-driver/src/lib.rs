@@ -511,6 +511,12 @@ mod tests {
                 "expected a {import} host import:\n{wat}"
             );
         }
+        for unused_import in ["math.acos", "math.atan2", "math.log10", "print"] {
+            assert!(
+                !wat.contains(&format!("(import \"waluau\" \"{unused_import}\"")),
+                "unused builtin {unused_import} should not be imported:\n{wat}"
+            );
+        }
         assert!(
             !wat.contains("f64.sqrt") && !wat.contains("f32.sqrt"),
             "math.sqrt must lower to a host call, not a wasm intrinsic:\n{wat}"

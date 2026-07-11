@@ -1,11 +1,11 @@
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use waluau_ast::{BinaryOp, NumberLiteral, NumericType, SymbolId, Type};
 use waluau_diagnostics::Diagnostic;
 use waluau_ir::{
-    BasicBlock, BitwiseIntrinsic, Function as IrFunction, Instruction as IrInstruction,
-    MathIntrinsic, Module, Terminator, ValueId,
+    BasicBlock, BitwiseIntrinsic, DeclaredImport, Function as IrFunction,
+    Instruction as IrInstruction, MathIntrinsic, Module, Terminator, ValueId,
 };
 use wasm_encoder::{
     AbstractHeapType, BlockType, Catch, CodeSection, ConstExpr, CustomSection, ElementSection,
@@ -126,23 +126,20 @@ fn is_promise_like_extern_type(ty: &Type) -> bool {
     }
 }
 
-fn needs_callback_event_unit_trampoline(module: &Module) -> bool {
-    module
-        .declared_imports
+fn needs_callback_event_unit_trampoline(imports: &[&DeclaredImport]) -> bool {
+    imports
         .iter()
         .any(|declared| declared.params.iter().any(is_event_unit_callback_type))
 }
 
-fn needs_callback_f64_unit_trampoline(module: &Module) -> bool {
-    module
-        .declared_imports
+fn needs_callback_f64_unit_trampoline(imports: &[&DeclaredImport]) -> bool {
+    imports
         .iter()
         .any(|declared| declared.params.iter().any(is_f64_unit_callback_type))
 }
 
-fn needs_callback_unit_extern_trampoline(module: &Module) -> bool {
-    module
-        .declared_imports
+fn needs_callback_unit_extern_trampoline(imports: &[&DeclaredImport]) -> bool {
+    imports
         .iter()
         .any(|declared| declared.params.iter().any(is_unit_extern_callback_type))
 }
@@ -172,8 +169,8 @@ fn needs_lua_error_tag(module: &Module) -> bool {
 /// Returns `true` if the module uses any features that require the closure GC types
 /// (`$anyref_array`, `$func_val`, `$boxed_f64`, `$boxed_bool`) to be declared in
 /// the type section.
-fn needs_closure_gc_types(module: &Module) -> bool {
-    for import in &module.declared_imports {
+fn needs_closure_gc_types(module: &Module, declared_imports: &[&DeclaredImport]) -> bool {
+    for import in declared_imports {
         if import.params.iter().any(type_contains_function_value)
             || type_contains_function_value(&import.return_type)
         {
@@ -229,7 +226,31 @@ pub struct EmitResult {
     pub record_type_indices: HashMap<String, u32>,
 }
 
+/// Select declared host functions that survived parsing and type checking and
+/// were actually selected by lowering. Declaration files intentionally expose
+/// a broad builtin/extern surface; only `HostCall` instructions require entries
+/// in the final Wasm import and type sections.
+fn used_declared_imports(module: &Module) -> Vec<&DeclaredImport> {
+    let used_symbols = module
+        .functions
+        .iter()
+        .flat_map(|function| function.blocks.values())
+        .flat_map(|block| block.instructions.iter())
+        .filter_map(|(_, instruction)| match instruction {
+            IrInstruction::HostCall { symbol_id, .. } => Some(*symbol_id),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+
+    module
+        .declared_imports
+        .iter()
+        .filter(|declared| used_symbols.contains(&declared.symbol_id))
+        .collect()
+}
+
 pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
+    let declared_imports = used_declared_imports(module);
     let array_types = collect_array_types(module);
     let record_types = collect_record_types(module);
     let string_constants = host::collect_string_constants(module);
@@ -260,12 +281,12 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
 
     // Closure GC types ($anyref_array, $func_val, $boxed_f64, $boxed_bool) are only
     // needed when the program uses closures, function-typed values, or boxed unknowns.
-    let callback_event_unit_trampoline = needs_callback_event_unit_trampoline(module);
-    let callback_f64_unit_trampoline = needs_callback_f64_unit_trampoline(module);
-    let callback_unit_extern_trampoline = needs_callback_unit_extern_trampoline(module);
+    let callback_event_unit_trampoline = needs_callback_event_unit_trampoline(&declared_imports);
+    let callback_f64_unit_trampoline = needs_callback_f64_unit_trampoline(&declared_imports);
+    let callback_unit_extern_trampoline = needs_callback_unit_extern_trampoline(&declared_imports);
     let promise_resume_trampoline = needs_promise_resume_trampoline(module);
     let lua_error_tag = needs_lua_error_tag(module);
-    let closure_gc_needed = needs_closure_gc_types(module);
+    let closure_gc_needed = needs_closure_gc_types(module, &declared_imports);
     // Closure GC helper types sit after host types (only when needed):
     //   $anyref_array = (array (ref null any) mutable)
     //   $func_val = (struct { func_idx: i32, env: ref null $anyref_array })
@@ -309,6 +330,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
 
     let signature_registry = collect_user_signatures(
         module,
+        &declared_imports,
         start_thunk.is_some(),
         callback_event_unit_trampoline,
         callback_f64_unit_trampoline,
@@ -873,7 +895,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         );
     }
     let mut declared_import_indices = HashMap::new();
-    for (offset, declared) in module.declared_imports.iter().enumerate() {
+    for (offset, declared) in declared_imports.iter().enumerate() {
         let sig_index = signature_registry
             .get(&declared.params, &declared.return_type)
             .ok_or_else(|| {
@@ -889,7 +911,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         );
         declared_import_indices.insert(declared.symbol_id, import_map.count + offset as u32);
     }
-    let import_func_count = import_map.count + module.declared_imports.len() as u32;
+    let import_func_count = import_map.count + declared_imports.len() as u32;
 
     // Build wrapper slot map: function name → table slot index for its wrapper.
     // Wrappers are placed in table slots N..N+W-1 (after the N user-defined functions).
