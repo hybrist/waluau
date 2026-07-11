@@ -354,6 +354,14 @@ test.describe('DOM Output in Run tab', () => {
       await expect(outputFrame.locator('#play-trick')).toBeVisible();
       await outputFrame.locator('#player-card-0').click();
       await expect(outputFrame.locator('#player-card-0')).toHaveClass(/border-4/);
+      await expect(outputFrame.locator('#player-card-0')).toHaveAttribute(
+        'data-selection-state',
+        'selected',
+      );
+      await expect(outputFrame.locator('#player-card-0')).toHaveCSS(
+        'animation-name',
+        'pt-select-pop',
+      );
       await outputFrame.locator('#player-card-1').click();
       await expect(outputFrame.locator('#player-card-1')).toHaveClass(/border-4/);
       await outputFrame.locator('#play-trick').click();
@@ -364,6 +372,35 @@ test.describe('DOM Output in Run tab', () => {
         'animation-name',
         'pt-flip',
       );
+      const reveal = outputFrame.locator('#trick-reveal');
+      const outcome = await reveal.getAttribute('data-outcome');
+      expect(['player', 'house', 'tie']).toContain(outcome);
+      await expect(reveal.locator('[data-result-impact]')).toHaveAttribute(
+        'data-result-impact',
+        outcome,
+      );
+      await expect(reveal.locator('[data-result-impact]')).toHaveCSS(
+        'animation-name',
+        'pt-result-impact',
+      );
+      await expect(reveal.locator('[data-reward-motion]')).toHaveAttribute(
+        'data-reward-motion',
+        outcome,
+      );
+      await expect(outputFrame.locator('#poker-score')).toHaveAttribute(
+        'data-score-outcome',
+        outcome,
+      );
+      if (outcome === 'tie') {
+        await expect(reveal.locator('[data-hand-result="tie"]')).toHaveCount(2);
+        await expect(reveal.locator('.pt-reward-chip')).toHaveCount(2);
+        await expect(reveal.locator('.pt-reward-badge')).toHaveText('Pot returned');
+      } else {
+        await expect(reveal.locator('[data-hand-result="winner"]')).toHaveCount(1);
+        await expect(reveal.locator('[data-hand-result="loser"]')).toHaveCount(1);
+        await expect(reveal.locator('.pt-reward-chip')).toHaveCount(1);
+        await expect(reveal.locator('.pt-reward-badge')).toContainText(/^\+\d+ to/);
+      }
       const history = outputFrame.locator('.trick-history-entry');
       await expect(history).toHaveCount(round);
       await expect(history.nth(round - 1)).toContainText(`Trick ${round}`);

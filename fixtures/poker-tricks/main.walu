@@ -64,6 +64,7 @@ function install_poker_styles(document: Document, body: HTMLElement): unit
     local style: Element = make_element(document, "style", "")
     style.id = "poker-tricks-style"
     style.text_content = "#app{min-height:100vh;padding:1rem;background:radial-gradient(circle at 50% 0%,#174f45 0%,#062c29 42%,#020b12 100%);color:#ecfdf5;font-family:Inter,ui-sans-serif,system-ui,sans-serif}.pt-table{position:relative;isolation:isolate;box-sizing:border-box;display:flex;max-width:64rem;margin:auto;padding:2rem;flex-direction:column;align-items:center;gap:1.25rem;border:10px solid #3f2415;border-radius:2rem;background:radial-gradient(ellipse at center,#116149 0%,#084332 68%,#052b24 100%);box-shadow:0 32px 90px #0009,inset 0 0 0 2px #f5d87926,inset 0 0 80px #001b14}.pt-table:before{content:'';position:absolute;inset:10px;border:1px solid #f6d98530;border-radius:1.4rem;pointer-events:none;z-index:-1}.pt-eyebrow,.pt-section-label,.pt-community-label{margin:0;text-transform:uppercase;font-size:.68rem;font-weight:900;letter-spacing:.28em;color:#d1fae5b8}.pt-eyebrow{color:#fde68aab;letter-spacing:.42em}.pt-title{margin:-.65rem 0 0;font-family:Georgia,serif;font-size:clamp(2.35rem,7vw,4rem);font-weight:900;letter-spacing:.12em;line-height:1;text-transform:uppercase;color:#f7d774;text-shadow:0 3px 0 #623f13,0 10px 28px #0008}.pt-rules{max-width:42rem;margin:0;text-align:center;font-size:.82rem;line-height:1.6;color:#d1fae5c7}.pt-score{margin:0;padding:.6rem 1.25rem;border:1px solid #fde68a33;border-radius:999px;background:#001b1499;color:#fef3c7;font-family:ui-monospace,monospace;font-size:.8rem;font-weight:800;box-shadow:0 0 40px #f6d36530}.pt-opponent-row,.pt-card-row{display:flex;justify-content:center;gap:.75rem}.pt-community{box-sizing:border-box;width:100%;max-width:46rem;padding:1.25rem;border:1px solid #fde68a1f;border-radius:1.75rem;background:#001b1444;box-shadow:inset 0 8px 32px #00150e55}.pt-community-label{margin-bottom:1rem;text-align:center;color:#fde68acc}.pt-status{box-sizing:border-box;min-height:3rem;max-width:42rem;margin:0;padding:.75rem 1.25rem;border:1px solid #fff2;border-radius:1rem;background:#001b1477;color:#fef3c7;text-align:center;font-size:.88rem;font-weight:700;line-height:1.5}.pt-controls{display:flex;flex-wrap:wrap;justify-content:center;gap:.75rem}.pt-button{padding:.78rem 1.35rem;border-radius:.8rem;font-weight:900;transition:transform .18s,box-shadow .18s,filter .18s}.pt-button-primary{border:0;background:linear-gradient(#fde68a,#d99b26);color:#052e2b;box-shadow:0 8px 18px #0005}.pt-button-secondary{border:1px solid #d1fae533;background:#001b1499;color:#ecfdf5}.pt-button:hover{transform:translateY(-2px);filter:brightness(1.08)}.pt-button:active{transform:translateY(1px)}.pt-history{box-sizing:border-box;width:100%;padding:1rem;border:1px solid #fff2;border-radius:1rem;background:#001b1455}.pt-history-title{margin:0 0 .75rem;text-align:center;text-transform:uppercase;font-size:.75rem;font-weight:900;letter-spacing:.25em;color:#fde68acc}.pt-reveal{box-sizing:border-box;width:100%;max-width:48rem;padding:1.5rem;border:1px solid #fde68a44;border-radius:1.5rem;color:#ecfdf5;background:#020617e8;box-shadow:0 24px 50px #0008}.pt-reveal-eyebrow,.pt-show-label{margin:0;text-align:center;text-transform:uppercase;font-size:.65rem;font-weight:900;letter-spacing:.28em;color:#fde68ab8}.pt-reveal-title{margin:.3rem 0 0;text-align:center;font-family:Georgia,serif;font-size:1.8rem;color:#fef3c7}.pt-showdown{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:1.25rem;margin-top:1.25rem}.pt-show-group{display:flex;flex-direction:column;align-items:center;gap:.55rem}.pt-show-row{display:flex;justify-content:center;gap:.45rem}.pt-player-pair{margin:0;padding:.8rem 1rem;border:1px solid #a7f3d044;border-radius:.8rem;background:#052e2be6;font-family:Georgia,serif;font-size:1.25rem;font-weight:900;letter-spacing:.15em;color:#ecfdf5}.pt-reveal-points{margin:1.25rem 0 0;text-align:center;font-size:.82rem;font-weight:800;color:#fde68a}.pt-card{position:relative;display:block;width:clamp(3.75rem,11vw,5.75rem);aspect-ratio:0.69;overflow:hidden;border-radius:.8rem;border:2px solid #fff;background:linear-gradient(145deg,#fffef8,#e9e5d9);box-shadow:0 10px 22px #00150e80,0 1px 0 #fff inset;transform-style:preserve-3d;transition:transform .22s cubic-bezier(.2,.8,.2,1),box-shadow .22s,border-color .22s;white-space:pre-line}.pt-card-button{cursor:pointer}.pt-card-button:hover{transform:translateY(-10px) rotate(-1deg);box-shadow:0 20px 28px #00150e99,0 0 0 2px #f5d87955}.pt-card-button:focus-visible{outline:3px solid #f8d568;outline-offset:4px}.pt-card-selected{transform:translateY(-16px)!important;border-color:#f8d568!important;box-shadow:0 22px 32px #00150ebb,0 0 0 4px #f8d56855,0 0 30px #fbbf2470!important}.pt-card-corner{position:absolute;left:.48rem;top:.4rem;font-family:Georgia,serif;font-size:clamp(.7rem,2.6vw,1rem);font-weight:900;line-height:.8;text-align:center}.pt-card-corner-bottom{left:auto;right:.48rem;top:auto;bottom:.4rem;transform:rotate(180deg)}.pt-card-pip{position:absolute;inset:0;display:grid;place-items:center;font-family:Georgia,serif;font-size:clamp(2rem,7vw,3.35rem);filter:drop-shadow(0 2px 0 #fff)}.pt-card-red{color:#c51f3b}.pt-card-black{color:#111827}.pt-card-back{background-color:#111827;background-image:linear-gradient(45deg,#f6d36518 25%,transparent 25%),linear-gradient(-45deg,#f6d36518 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#f6d36518 75%),linear-gradient(-45deg,transparent 75%,#f6d36518 75%);background-size:12px 12px;background-position:0 0,0 6px,6px -6px,-6px 0;border:3px solid #f5e7bf;box-shadow:0 8px 18px #00150e88,inset 0 0 0 3px #172554,inset 0 0 0 5px #f5d87966}.pt-card-back:after{content:'PT';position:absolute;inset:16%;display:grid;place-items:center;border:1px solid #f5d87988;border-radius:50%;color:#f5d879;font-family:Georgia,serif;font-size:clamp(.8rem,2.8vw,1.25rem);font-weight:900;letter-spacing:.08em;text-shadow:0 2px 8px #000}.pt-card-static{width:clamp(3rem,8vw,4.5rem);border-width:1px;box-shadow:0 8px 16px #0007}.pt-reveal-card{opacity:0;transform:perspective(700px) rotateY(180deg) translateY(16px);animation:pt-flip .72s cubic-bezier(.2,.75,.2,1) forwards}.pt-card>*{pointer-events:none}@keyframes pt-flip{0%{opacity:0;transform:perspective(700px) rotateY(180deg) translateY(16px) scale(.88)}45%{opacity:1}100%{opacity:1;transform:perspective(700px) rotateY(0) translateY(0) scale(1)}}@media(max-width:640px){#app{padding:.4rem}.pt-table{padding:1.5rem .6rem;gap:1rem;border-width:6px}.pt-card-row{gap:.35rem}.pt-opponent-row{gap:.2rem}.pt-rules{font-size:.72rem}.pt-score{font-size:.68rem;padding:.5rem .75rem}.pt-reveal{padding:1rem}.pt-showdown{grid-template-columns:1fr;gap:1rem}}@media(prefers-reduced-motion:reduce){.pt-card,.pt-button{transition:none}.pt-reveal-card{animation:none;opacity:1;transform:none}}"
+    style.text_content = style.text_content .. ".pt-card-selected{animation:pt-select-pop .38s cubic-bezier(.2,1.45,.35,1) both}.pt-score{position:relative}.pt-score-reward:after{content:attr(data-reward);position:absolute;left:50%;top:50%;z-index:3;padding:.32rem .58rem;border:1px solid #fde68a88;border-radius:999px;background:#f7d774;color:#052e2b;font-size:.72rem;white-space:nowrap;box-shadow:0 8px 25px #0008;opacity:0;animation:pt-score-feed .8s 1.55s cubic-bezier(.2,.8,.2,1) both}.pt-score-player-win{animation:pt-score-player .7s 1.62s ease-out both}.pt-score-house-win{animation:pt-score-house .55s 1.62s ease-out both}.pt-score-tie{animation:pt-score-tie .65s 1.62s ease-out both}.pt-reveal{position:relative;transition:border-color .3s,box-shadow .3s}.pt-outcome-player{border-color:#f7d77488;box-shadow:0 24px 50px #0008,0 0 42px #fbbf2438;animation:pt-reveal-player .75s 1.48s ease-out both}.pt-outcome-house{border-color:#fb718566;box-shadow:0 24px 50px #0008,0 0 36px #9f123938;animation:pt-reveal-house .38s 1.48s ease-out both}.pt-outcome-tie{border-color:#93c5fd66;box-shadow:0 24px 50px #0008,0 0 32px #60a5fa30;animation:pt-reveal-tie .7s 1.48s ease-out both}.pt-result-impact{opacity:0;animation:pt-result-impact .48s 1.28s cubic-bezier(.16,1.4,.35,1) both}.pt-outcome-player .pt-result-impact{color:#f7d774;text-shadow:0 0 24px #fbbf2477}.pt-outcome-house .pt-result-impact{color:#fda4af;text-shadow:0 0 20px #e11d4877}.pt-outcome-tie .pt-result-impact{color:#bfdbfe;text-shadow:0 0 20px #60a5fa66}.pt-hand-winner{animation:pt-hand-winner .7s 1.2s ease-out both}.pt-hand-loser{animation:pt-hand-loser .55s 1.2s ease-out both}.pt-hand-tie{animation:pt-hand-tie .7s 1.2s ease-out both}.pt-hand-winner .pt-show-label{color:#f7d774}.pt-hand-loser .pt-show-label{color:#94a3b8}.pt-hand-tie .pt-show-label{color:#bfdbfe}.pt-reward-motion{position:relative;height:3.2rem;margin:.65rem auto -.3rem;max-width:28rem;overflow:visible}.pt-reward-chip{position:absolute;left:50%;top:.45rem;width:1.5rem;height:1.5rem;margin-left:-.75rem;display:grid;place-items:center;border:3px dashed #7c2d12;border-radius:50%;background:#f7d774;color:#7c2d12;font-size:.65rem;box-shadow:0 3px 0 #92400e,0 8px 18px #0008;opacity:0}.pt-reward-badge{position:absolute;left:50%;top:.55rem;padding:.35rem .65rem;border:1px solid #fde68a66;border-radius:999px;background:#001b14e8;color:#fde68a;font-size:.72rem;font-weight:900;white-space:nowrap;opacity:0}.pt-reward-player .pt-reward-chip{animation:pt-chip-player .9s 1.25s cubic-bezier(.2,.8,.2,1) both}.pt-reward-house .pt-reward-chip{animation:pt-chip-house .9s 1.25s cubic-bezier(.2,.8,.2,1) both}.pt-reward-player .pt-reward-badge{animation:pt-badge-player .65s 1.62s ease-out both}.pt-reward-house .pt-reward-badge{animation:pt-badge-house .65s 1.62s ease-out both}.pt-reward-tie .pt-reward-chip-left{animation:pt-chip-refund-left .8s 1.25s ease-out both}.pt-reward-tie .pt-reward-chip-right{animation:pt-chip-refund-right .8s 1.25s ease-out both}.pt-reward-tie .pt-reward-badge{animation:pt-badge-tie .65s 1.55s ease-out both}@keyframes pt-select-pop{0%{transform:translateY(0) scale(1);filter:brightness(1)}58%{transform:translateY(-22px) scale(1.07);filter:brightness(1.16)}78%{transform:translateY(-12px) scale(.99)}100%{transform:translateY(-16px) scale(1);filter:brightness(1)}}@keyframes pt-result-impact{0%{opacity:0;transform:translateY(-10px) scale(.72);letter-spacing:.02em}65%{opacity:1;transform:translateY(2px) scale(1.08)}100%{opacity:1;transform:none}}@keyframes pt-hand-winner{0%{filter:brightness(1);transform:scale(1)}55%{filter:brightness(1.38) drop-shadow(0 0 16px #fbbf2477);transform:scale(1.045)}100%{filter:brightness(1.15) drop-shadow(0 0 10px #fbbf2455);transform:scale(1.02)}}@keyframes pt-hand-loser{from{opacity:1;filter:none}to{opacity:.42;filter:saturate(.3) brightness(.7)}}@keyframes pt-hand-tie{50%{filter:brightness(1.2) drop-shadow(0 0 12px #60a5fa66);transform:translateY(-3px)}100%{filter:brightness(1.08);transform:none}}@keyframes pt-reveal-player{50%{box-shadow:0 24px 50px #0008,0 0 65px #fbbf2470;transform:scale(1.012)}}@keyframes pt-reveal-house{25%{transform:translateX(-4px)}50%{transform:translateX(4px)}75%{transform:translateX(-2px)}}@keyframes pt-reveal-tie{50%{box-shadow:0 24px 50px #0008,0 0 50px #60a5fa55}}@keyframes pt-chip-player{0%{opacity:0;transform:translate(-50%,0) rotate(0) scale(.6)}20%{opacity:1}100%{opacity:1;transform:translate(8.5rem,-.2rem) rotate(420deg) scale(1)}}@keyframes pt-chip-house{0%{opacity:0;transform:translate(-50%,0) rotate(0) scale(.6)}20%{opacity:1}100%{opacity:1;transform:translate(-10rem,-.2rem) rotate(-420deg) scale(1)}}@keyframes pt-chip-refund-left{0%{opacity:0;transform:translate(-50%,0) scale(.6)}25%{opacity:1}100%{opacity:.85;transform:translate(-8rem,0) scale(.9)}}@keyframes pt-chip-refund-right{0%{opacity:0;transform:translate(-50%,0) scale(.6)}25%{opacity:1}100%{opacity:.85;transform:translate(6.5rem,0) scale(.9)}}@keyframes pt-badge-player{0%{opacity:0;transform:translate(-50%,8px) scale(.7)}100%{opacity:1;transform:translate(3.4rem,0) scale(1)}}@keyframes pt-badge-house{0%{opacity:0;transform:translate(-50%,8px) scale(.7)}100%{opacity:1;transform:translate(-9.8rem,0) scale(1)}}@keyframes pt-badge-tie{0%{opacity:0;transform:translate(-50%,8px) scale(.7)}100%{opacity:1;transform:translate(-50%,0) scale(1)}}@keyframes pt-score-feed{0%{opacity:0;transform:translate(-50%,20px) scale(.65)}45%{opacity:1;transform:translate(-50%,-22px) scale(1.08)}100%{opacity:0;transform:translate(-50%,-38px) scale(.9)}}@keyframes pt-score-player{50%{border-color:#fde68acc;box-shadow:0 0 36px #fbbf2470;transform:scale(1.04)}}@keyframes pt-score-house{35%{border-color:#fb718599;box-shadow:0 0 28px #e11d4855;transform:translateX(-3px)}70%{transform:translateX(3px)}}@keyframes pt-score-tie{50%{border-color:#93c5fbaa;box-shadow:0 0 28px #60a5fa55}}@media(max-width:640px){.pt-reward-motion{max-width:18rem}.pt-reward-player .pt-reward-chip{animation-name:pt-chip-player-mobile}.pt-reward-house .pt-reward-chip{animation-name:pt-chip-house-mobile}@keyframes pt-chip-player-mobile{0%{opacity:0;transform:translate(-50%,0) rotate(0) scale(.6)}100%{opacity:1;transform:translate(5.2rem,0) rotate(360deg)}}@keyframes pt-chip-house-mobile{0%{opacity:0;transform:translate(-50%,0) rotate(0) scale(.6)}100%{opacity:1;transform:translate(-6.7rem,0) rotate(-360deg)}}}@media(prefers-reduced-motion:reduce){.pt-card-selected,.pt-result-impact,.pt-hand-winner,.pt-hand-loser,.pt-hand-tie,.pt-score-reward,.pt-score-reward:after,.pt-reward-chip,.pt-reward-badge,.pt-outcome-player,.pt-outcome-house,.pt-outcome-tie{animation:none!important}.pt-card-selected{transform:translateY(-16px)!important}.pt-result-impact{opacity:1}.pt-hand-winner{filter:brightness(1.15) drop-shadow(0 0 10px #fbbf2455);transform:scale(1.02)}.pt-hand-loser{opacity:.42;filter:saturate(.3) brightness(.7)}.pt-reward-chip{opacity:1}.pt-reward-player .pt-reward-chip{transform:translateX(5rem)}.pt-reward-house .pt-reward-chip{transform:translateX(-6.5rem)}.pt-reward-tie .pt-reward-chip-left{transform:translateX(-5rem)}.pt-reward-tie .pt-reward-chip-right{transform:translateX(3.5rem)}.pt-reward-badge{opacity:1;transform:translateX(-50%)}}"
     body:append_child(style)
 end
 
@@ -112,14 +113,20 @@ function swap_history_text(trick: game.Trick): string
 end
 
 function append_trick_reveal(document: Document, table_area: Element, trick: game.Trick): unit
-    local reveal: Element = make_element(document, "section", "pt-reveal w-full max-w-3xl overflow-hidden rounded-3xl border border-amber-200/30 p-5 shadow-2xl shadow-black/60 backdrop-blur")
+    local outcome_name: string = "tie"
+    if trick.winner > 0 then outcome_name = "player"
+    elseif trick.winner < 0 then outcome_name = "house"
+    end
+    local reveal: Element = make_element(document, "section", "pt-reveal pt-outcome-" .. outcome_name .. " w-full max-w-3xl overflow-hidden rounded-3xl border border-amber-200/30 p-5 shadow-2xl shadow-black/60 backdrop-blur")
     reveal.id = "trick-reveal"
     reveal:set_attribute("aria-live", "polite")
+    reveal:set_attribute("data-outcome", outcome_name)
     table_area:append_child(reveal)
     local reveal_eyebrow: Element = make_element(document, "p", "pt-reveal-eyebrow")
     reveal_eyebrow.text_content = "Showdown · Trick " .. tostring(trick.round)
     reveal:append_child(reveal_eyebrow)
-    local reveal_title: Element = make_element(document, "h2", "pt-reveal-title")
+    local reveal_title: Element = make_element(document, "h2", "pt-reveal-title pt-result-impact")
+    reveal_title:set_attribute("data-result-impact", outcome_name)
     if trick.winner > 0 then
         reveal_title.text_content = "You take the trick"
     elseif trick.winner < 0 then
@@ -132,7 +139,15 @@ function append_trick_reveal(document: Document, table_area: Element, trick: gam
     local showdown: Element = make_element(document, "div", "pt-showdown")
     reveal:append_child(showdown)
 
-    local computer_show: Element = make_element(document, "div", "pt-show-group")
+    local computer_result: string = "pt-hand-tie"
+    if trick.winner > 0 then computer_result = "pt-hand-loser"
+    elseif trick.winner < 0 then computer_result = "pt-hand-winner"
+    end
+    local computer_show: Element = make_element(document, "div", "pt-show-group " .. computer_result)
+    if trick.winner == 0 then computer_show:set_attribute("data-hand-result", "tie")
+    elseif trick.winner < 0 then computer_show:set_attribute("data-hand-result", "winner")
+    else computer_show:set_attribute("data-hand-result", "loser")
+    end
     local computer_show_label: Element = make_element(document, "p", "pt-show-label")
     computer_show_label.text_content = "House · " .. game.category_name(trick.computer_value)
     computer_show:append_child(computer_show_label)
@@ -142,6 +157,7 @@ function append_trick_reveal(document: Document, table_area: Element, trick: gam
     showdown:append_child(computer_show)
 
     local board_show: Element = make_element(document, "div", "pt-show-group")
+    board_show:set_attribute("data-hand-result", "shared")
     local board_show_label: Element = make_element(document, "p", "pt-show-label")
     board_show_label.text_content = "Board"
     board_show:append_child(board_show_label)
@@ -150,7 +166,15 @@ function append_trick_reveal(document: Document, table_area: Element, trick: gam
     board_show:append_child(board_show_cards)
     showdown:append_child(board_show)
 
-    local player_show: Element = make_element(document, "div", "pt-show-group")
+    local player_result: string = "pt-hand-tie"
+    if trick.winner > 0 then player_result = "pt-hand-winner"
+    elseif trick.winner < 0 then player_result = "pt-hand-loser"
+    end
+    local player_show: Element = make_element(document, "div", "pt-show-group " .. player_result)
+    if trick.winner == 0 then player_show:set_attribute("data-hand-result", "tie")
+    elseif trick.winner > 0 then player_show:set_attribute("data-hand-result", "winner")
+    else player_show:set_attribute("data-hand-result", "loser")
+    end
     local player_show_label: Element = make_element(document, "p", "pt-show-label")
     player_show_label.text_content = "You · " .. game.category_name(trick.player_value)
     player_show:append_child(player_show_label)
@@ -158,6 +182,32 @@ function append_trick_reveal(document: Document, table_area: Element, trick: gam
     append_showdown_cards(document, player_show_cards, trick.player_cards, 450)
     player_show:append_child(player_show_cards)
     showdown:append_child(player_show)
+
+    local reward: Element = make_element(document, "div", "pt-reward-motion pt-reward-" .. outcome_name)
+    reward:set_attribute("aria-hidden", "true")
+    reward:set_attribute("data-reward-motion", outcome_name)
+    if trick.winner == 0 then
+        local left_refund: Element = make_element(document, "span", "pt-reward-chip pt-reward-chip-left")
+        left_refund.text_content = "PT"
+        reward:append_child(left_refund)
+        local right_refund: Element = make_element(document, "span", "pt-reward-chip pt-reward-chip-right")
+        right_refund.text_content = "PT"
+        reward:append_child(right_refund)
+    else
+        local reward_chip: Element = make_element(document, "span", "pt-reward-chip")
+        reward_chip.text_content = "PT"
+        reward:append_child(reward_chip)
+    end
+    local reward_badge: Element = make_element(document, "span", "pt-reward-badge")
+    if trick.winner > 0 then
+        reward_badge.text_content = "+" .. tostring(trick.points) .. " to you"
+    elseif trick.winner < 0 then
+        reward_badge.text_content = "+" .. tostring(trick.points) .. " to house"
+    else
+        reward_badge.text_content = "Pot returned"
+    end
+    reward:append_child(reward_badge)
+    reveal:append_child(reward)
 
     local reveal_points: Element = make_element(document, "p", "pt-reveal-points")
     reveal_points.text_content = "Pot " .. tostring(trick.pot) .. " · Trick value " .. tostring(trick.points) .. " point(s)"
@@ -311,14 +361,31 @@ function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand
     local function update(state: game.State): unit
         local shown_round: i32 = state.round
         score.text_content = "Round " .. tostring(shown_round) .. " · You " .. tostring(state.player_points) .. " (" .. tostring(state.player_tricks) .. " tricks) · Computer " .. tostring(state.computer_points) .. " (" .. tostring(state.computer_tricks) .. " tricks) · Deck " .. tostring(#state.deck)
+        if reveal_trick and #state.history > 0 then
+            local latest: game.Trick = state.history[#state.history - 1]
+            score.class_name = "pt-score pt-score-reward pt-score-tie"
+            score:set_attribute("data-score-outcome", "tie")
+            score:set_attribute("data-reward", "Pot returned")
+            if latest.winner > 0 then
+                score.class_name = "pt-score pt-score-reward pt-score-player-win"
+                score:set_attribute("data-score-outcome", "player")
+                score:set_attribute("data-reward", "+" .. tostring(latest.points) .. " you")
+            elseif latest.winner < 0 then
+                score.class_name = "pt-score pt-score-reward pt-score-house-win"
+                score:set_attribute("data-score-outcome", "house")
+                score:set_attribute("data-reward", "+" .. tostring(latest.points) .. " house")
+            end
+        end
 
         for i, element in player_cards do
             if (state.swap_open and (swap_hand[0] == i or swap_hand[1] == i or swap_hand[2] == i)) or ((not state.swap_open) and (play_selection[0] == i or play_selection[1] == i)) then
                 element.class_name = "pt-card pt-card-button pt-card-selected border-4 border-amber-300"
                 element:set_attribute("aria-pressed", "true")
+                element:set_attribute("data-selection-state", "selected")
             else
                 element.class_name = "pt-card pt-card-button border-2 border-white"
                 element:set_attribute("aria-pressed", "false")
+                element:set_attribute("data-selection-state", "idle")
             end
         end
 
@@ -336,9 +403,11 @@ function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand
                 if state.swap_open and (swap_middle[0] == i or swap_middle[1] == i or swap_middle[2] == i) then
                     element.class_name = "pt-card pt-card-button pt-card-selected border-4 border-amber-200"
                     element:set_attribute("aria-pressed", "true")
+                    element:set_attribute("data-selection-state", "selected")
                 else
                     element.class_name = "pt-card pt-card-button border-2 border-white"
                     element:set_attribute("aria-pressed", "false")
+                    element:set_attribute("data-selection-state", "idle")
                 end
             end
             if state.swap_open then
