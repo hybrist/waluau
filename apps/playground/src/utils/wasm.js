@@ -1502,6 +1502,7 @@ export function renderType(type) {
     case 'Bytes': return 'bytes';
     case 'Unit': return 'unit';
     case 'Thread': return 'thread';
+    case 'Nullable': return `${renderType(type.value.innerType)}?`;
     case 'Array': return `{${renderType(type.value.elementType)}}`;
     case 'Record': {
       const fields = type.value.fields;
@@ -1522,6 +1523,7 @@ export function renderType(type) {
 
 export function getDefaultParamValue(type) {
   if (typeof type === 'object' && type !== null) {
+    if (type.kind === 'Nullable') return null;
     if (type.kind === 'Record') {
       const obj = {};
       for (const [name, fieldTy] of getEntries(type.value.fields)) {
@@ -1587,6 +1589,10 @@ export function constructArg(val, type, instance, tagIds) {
     case 'Unit': {
       return null;
     }
+    case 'Nullable': {
+      if (val === null || val === undefined || val === 'nil') return null;
+      return constructArg(val, type.value.innerType, instance, plainTagIds);
+    }
     case 'Record': {
       const typeIdx = type.value.typeIndex;
       const ctorName = `__waluau_new_record_${typeIdx}`;
@@ -1642,6 +1648,7 @@ export function inspectVal(val, type, instance, tagIds) {
     case 'String': return String(val);
     case 'Bytes': return { _isBytes: true, bytes: Array.from(val instanceof Uint8Array ? val : []) };
     case 'Unit': return null;
+    case 'Nullable': return inspectVal(val, type.value.innerType, instance, plainTagIds);
     case 'Record': {
       const typeIdx = type.value.typeIndex;
       const obj = {};

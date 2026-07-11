@@ -1,9 +1,86 @@
 import { getEntries, renderType, getDefaultParamValue } from '../utils/wasm.js';
 
+function NullableInputFields({ funcName, paramIdx, type, currentVal, handleRecordFieldChange, handleInputChange, path = [], isInline = false }) {
+  const innerType = type.value.innerType;
+  const isNil = currentVal === null || currentVal === undefined;
+  const setValue = (value) => {
+    if (path.length === 0) {
+      handleInputChange(funcName, paramIdx, value);
+    } else {
+      handleRecordFieldChange(funcName, paramIdx, path, value);
+    }
+  };
+
+  return (
+    <div style={{ marginLeft: path.length > 0 ? '12px' : '0', marginTop: '4px' }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', opacity: 0.85 }}>
+        <input
+          type="checkbox"
+          checked={!isNil}
+          onChange={(e) => setValue(e.target.checked ? getDefaultParamValue(innerType) : null)}
+        />
+        Provide value (unchecked = nil)
+      </label>
+      {!isNil && (
+        innerType.kind === 'Record' ? (
+          <RecordInputFields
+            funcName={funcName}
+            paramIdx={paramIdx}
+            type={innerType}
+            currentVal={currentVal}
+            handleRecordFieldChange={handleRecordFieldChange}
+            handleInputChange={handleInputChange}
+            path={path}
+            isInline={isInline}
+          />
+        ) : innerType.kind === 'TaggedUnion' ? (
+          <UnionInputFields
+            funcName={funcName}
+            paramIdx={paramIdx}
+            type={innerType}
+            currentVal={currentVal}
+            handleRecordFieldChange={handleRecordFieldChange}
+            handleInputChange={handleInputChange}
+            path={path}
+            isInline={isInline}
+          />
+        ) : (
+          <input
+            type="text"
+            className={isInline ? "inline-runner-field" : "func-input-field"}
+            value={currentVal ?? getDefaultParamValue(innerType)}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder={`Enter ${renderType(innerType)} value`}
+            style={{ marginTop: '4px' }}
+          />
+        )
+      )}
+    </div>
+  );
+}
+
 function RecordInputFields({ funcName, paramIdx, type, currentVal, handleRecordFieldChange, handleInputChange, path = [], isInline = false }) {
   return getEntries(type.value.fields).map(([fieldName, fieldTy]) => {
     const fieldPath = [...path, fieldName];
     const val = currentVal ? currentVal[fieldName] : getDefaultParamValue(fieldTy);
+
+    if (fieldTy.kind === 'Nullable') {
+      return (
+        <div key={fieldName} style={{ marginTop: '6px' }}>
+          <div style={{ fontSize: '12px', opacity: 0.7, fontWeight: 'bold' }}>{fieldName} ({renderType(fieldTy)}):</div>
+          <NullableInputFields
+            funcName={funcName}
+            paramIdx={paramIdx}
+            type={fieldTy}
+            currentVal={val}
+            handleRecordFieldChange={handleRecordFieldChange}
+            handleInputChange={handleInputChange}
+            path={fieldPath}
+            isInline={isInline}
+          />
+        </div>
+      );
+    }
 
     if (fieldTy.kind === 'Record') {
       return (
@@ -138,6 +215,25 @@ function UnionInputFields({ funcName, paramIdx, type, currentVal, handleRecordFi
 }
 
 export function ParamField({ funcName, paramIdx, type, richType, val, handleInputChange, handleRecordFieldChange, isInline = false }) {
+  if (richType && richType.kind === 'Nullable') {
+    return (
+      <div key={paramIdx} style={{ marginTop: '8px', marginBottom: '8px' }}>
+        <div style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--accent-cyan)' }}>
+          param{paramIdx} ({renderType(richType)}):
+        </div>
+        <NullableInputFields
+          funcName={funcName}
+          paramIdx={paramIdx}
+          type={richType}
+          currentVal={val}
+          handleRecordFieldChange={handleRecordFieldChange}
+          handleInputChange={handleInputChange}
+          isInline={isInline}
+        />
+      </div>
+    );
+  }
+
   if (richType && richType.kind === 'Record') {
     return (
       <div key={paramIdx} style={{ marginTop: '8px', marginBottom: '8px' }}>

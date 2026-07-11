@@ -354,11 +354,11 @@ pub(super) fn assert_narrowed_scope(
     narrowed_scopes(condition, vars).0
 }
 
-fn nil_test_subject(condition: &Expr) -> Option<(&str, bool)> {
+fn nil_test_subject(condition: &Expr) -> Option<(&str, Option<&str>, bool)> {
     // A bare `if x then` on a nullable value is a truthiness test: the
     // then-branch sees the non-nil type.
     if let Expr::Name(name, _, _) = condition {
-        return Some((name, true));
+        return Some((name, None, true));
     }
     if let Expr::Unary {
         op: waluau_ast::UnaryOp::Not,
@@ -367,7 +367,7 @@ fn nil_test_subject(condition: &Expr) -> Option<(&str, bool)> {
     } = condition
     {
         if let Expr::Name(name, _, _) = expr.as_ref() {
-            return Some((name, false));
+            return Some((name, None, false));
         }
     }
     let Expr::Binary {
@@ -383,8 +383,31 @@ fn nil_test_subject(condition: &Expr) -> Option<(&str, bool)> {
     };
     match (left.as_ref(), right.as_ref()) {
         (Expr::Name(name, _, _), Expr::Nil(..)) | (Expr::Nil(..), Expr::Name(name, _, _)) => {
-            Some((name, non_null_when_true))
+            Some((name, None, non_null_when_true))
         }
+        (Expr::Field { base, name, .. }, Expr::Nil(..))
+        | (Expr::Nil(..), Expr::Field { base, name, .. }) => {
+            let Expr::Name(base, _, _) = base.as_ref() else {
+                return None;
+            };
+            Some((base, Some(name), non_null_when_true))
+        }
+        _ => None,
+    }
+}
+
+fn narrow_nullable_record_field(ty: &Type, field: &str) -> Option<Type> {
+    match ty {
+        Type::Record(fields) => {
+            let inner = fields.get(field)?.nullable_inner()?;
+            let mut narrowed = fields.clone();
+            narrowed.insert(field.to_string(), inner);
+            Some(Type::Record(narrowed))
+        }
+        Type::Opaque { name, ty } => Some(Type::Opaque {
+            name: name.clone(),
+            ty: Box::new(narrow_nullable_record_field(ty, field)?),
+        }),
         _ => None,
     }
 }
@@ -395,21 +418,31 @@ pub(super) fn narrowed_scopes(
 ) -> (HashMap<String, Binding>, HashMap<String, Binding>) {
     let (mut then_scope, mut else_scope) = narrowed_variant_scopes(condition, vars);
     narrowed_discriminant_scopes(condition, vars, &mut then_scope, &mut else_scope);
-    let Some((name, non_null_when_true)) = nil_test_subject(condition) else {
+    let Some((name, field, non_null_when_true)) = nil_test_subject(condition) else {
         return (then_scope, else_scope);
     };
     let Some(binding) = vars.get(name) else {
         return (then_scope, else_scope);
     };
-    let Some(inner) = binding.ty.nullable_inner() else {
-        return (then_scope, else_scope);
+    let narrowed_ty = if let Some(field) = field {
+        let Some(narrowed) = narrow_nullable_record_field(&binding.ty, field) else {
+            return (then_scope, else_scope);
+        };
+        narrowed
+    } else {
+        let Some(inner) = binding.ty.nullable_inner() else {
+            return (then_scope, else_scope);
+        };
+        inner
     };
     let target = if non_null_when_true {
         &mut then_scope
     } else {
         &mut else_scope
     };
-    target.insert(name.to_string(), binding_for(inner, binding.rebindability));
+    let mut narrowed = binding.clone();
+    narrowed.ty = narrowed_ty;
+    target.insert(name.to_string(), narrowed);
     (then_scope, else_scope)
 }
 

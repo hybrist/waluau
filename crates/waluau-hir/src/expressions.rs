@@ -17,8 +17,8 @@ use super::numeric::{
     require_bool_pair, require_numeric_cast, resolve_number_literal,
 };
 use super::signatures::{
-    FnSignature, OverloadVariant, generic_diagnostic, infer_generic_call,
-    infer_generic_function_expr_call,
+    FnSignature, OverloadVariant, call_arity_matches, generic_diagnostic, infer_generic_call,
+    infer_generic_function_expr_call, required_param_count,
 };
 use super::statements::check_stmt;
 
@@ -44,7 +44,7 @@ fn property_getter_name(base: &str, property: &str) -> String {
 fn record_fields(ty: &Type) -> Option<&BTreeMap<String, Type>> {
     match ty {
         Type::Record(fields) => Some(fields),
-        Type::Opaque { ty, .. } => record_fields(ty),
+        Type::Opaque { ty, .. } | Type::Nullable(ty) => record_fields(ty),
         _ => None,
     }
 }
@@ -313,7 +313,7 @@ pub(super) fn select_overload<'a>(
     let arity_matches = variants
         .iter()
         .filter(|variant| {
-            variant.params.len() == total_args
+            call_arity_matches(&variant.params, total_args)
                 && receiver_ty.is_none_or(|receiver| {
                     variant
                         .params
@@ -332,7 +332,9 @@ pub(super) fn select_overload<'a>(
 
     let mut viable: Vec<(&OverloadVariant, u32)> = Vec::new();
     for variant in arity_matches {
-        let mut cost = 0u32;
+        // Prefer an exact-arity overload over one that requires omitted
+        // nullable parameters to be filled with nil.
+        let mut cost = (variant.params.len() - total_args) as u32;
         let mut candidate_viable = true;
         for (arg, param) in args.iter().zip(variant.params.iter().skip(receiver_len)) {
             let exact = infer_expr(arg, vars, fn_signatures, active_type_params, None)
@@ -867,10 +869,10 @@ pub(super) fn infer_expr(
                     } else {
                         &args[..]
                     };
-                    if !trailing_vararg && explicit.len() < params.len() {
+                    if !trailing_vararg && explicit.len() < required_param_count(params) {
                         return Err(Diagnostic::new(format!(
                             "function expects at least {} arguments, got {}",
-                            params.len(),
+                            required_param_count(params),
                             explicit.len()
                         )));
                     }
@@ -972,7 +974,7 @@ pub(super) fn infer_expr(
                                 vararg: false,
                                 return_type,
                             }) => {
-                                if args.len() != params.len() {
+                                if !call_arity_matches(params, args.len()) {
                                     return Err(Diagnostic::new(format!(
                                         "{dotted} expects {} argument{}, got {}",
                                         params.len(),
@@ -1017,7 +1019,7 @@ pub(super) fn infer_expr(
             };
             let actual_args =
                 infer_expr_list(args, vars, fn_signatures, active_type_params, Some(&params))?;
-            if params.len() != actual_args.len() {
+            if !call_arity_matches(&params, actual_args.len()) {
                 return Err(Diagnostic::new(format!(
                     "function expects {} arguments, got {}",
                     params.len(),
@@ -1186,7 +1188,7 @@ pub(super) fn infer_expr(
                 active_type_params,
                 Some(&params[1..]),
             )?;
-            if params.len() != actual_args.len() + 1 {
+            if !call_arity_matches(&params, actual_args.len() + 1) {
                 return Err(Diagnostic::new(format!(
                     "function expects {} arguments, got {}",
                     params.len(),

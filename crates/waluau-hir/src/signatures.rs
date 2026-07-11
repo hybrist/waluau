@@ -59,6 +59,20 @@ pub(super) enum FnSignature {
     },
 }
 
+/// The number of arguments a call must provide. Only a trailing suffix of
+/// nullable parameters may be omitted; nullable parameters before a required
+/// parameter still occupy a positional slot.
+pub(super) fn required_param_count(params: &[Type]) -> usize {
+    params
+        .iter()
+        .rposition(|param| !param.accepts_nil())
+        .map_or(0, |index| index + 1)
+}
+
+pub(super) fn call_arity_matches(params: &[Type], actual: usize) -> bool {
+    (required_param_count(params)..=params.len()).contains(&actual)
+}
+
 pub(super) fn inference_diagnostic(
     code: &'static str,
     category: DiagnosticCategory,
@@ -529,7 +543,7 @@ pub(super) fn infer_generic_call(
     let ret = substitute_type(&scheme.return_type, &subst);
     let actual_args =
         infer_expr_list(args, vars, fn_signatures, active_type_params, Some(&params))?;
-    if params.len() != actual_args.len() {
+    if !call_arity_matches(&params, actual_args.len()) {
         return Err(Diagnostic::new(format!(
             "function expects {} arguments, got {}",
             params.len(),
