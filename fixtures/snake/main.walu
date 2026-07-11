@@ -1,148 +1,68 @@
--- Snake, rendered into a <canvas> by Waluau. Entry point: builds the DOM
--- shell, wires input, and drives the game loop off requestAnimationFrame.
+-- Snake hosted by the 2D game engine. Game code owns only rules and drawing;
+-- the engine owns the DOM, WebGL canvas, input events, and fixed-step loop.
 
+local engine = require("../../engine/browser")
+local input_module = require("../../engine/input")
+local graphics_module = require("../../engine/graphics")
 local game = require("./game")
 local render = require("./render")
-local window = require("dom:window")
 
-function make_button(document: Document, id: string, label: string): Element
-    local button: Element = document:create_element("button")
-    button.id = id
-    button.class_name = "snake-button rounded-md bg-slate-700 px-3 py-2 text-sm font-medium text-white hover:bg-slate-600"
-    button:set_attribute("type", "button")
-    button.text_content = label
-    return button
-end
+local COLS <const>: i32 = 21
+local ROWS <const>: i32 = 21
+local BOARD_SIZE <const>: u32 = 336
 
 function install_snake(): unit
-    local document: Document = window.document
-    local body: HTMLElement = document.body
+    local state = game.new(COLS, ROWS)
 
-    local existing_root: Element? = document:get_element_by_id("app")
-    if existing_root ~= nil then
-        body:remove_child(existing_root)
+    local function load(): unit
+        -- TODO(waluau-qr53): Seed from an engine entropy service once games
+        -- can vary runs without reaching through the platform abstraction.
+        math.randomseed(42)
+        state:reset()
     end
 
-    local root: Element = document:create_element("div")
-    root.id = "app"
-    root.class_name = "flex flex-col items-center gap-3 bg-slate-950 p-4 text-slate-100"
-    body:append_child(root)
-
-    local heading: Element = document:create_element("h1")
-    heading.class_name = "text-lg font-semibold"
-    heading.text_content = "Waluau Snake"
-    root:append_child(heading)
-
-    local cols: i32 = 21
-    local rows: i32 = 21
-
-    local element: Element = document:create_element("canvas")
-    element.id = "snake-canvas"
-    root:append_child(element)
-
-    if HTMLCanvasElement(canvas) = element then
-        local width_px: f64 = render.CELL_SIZE * cols::f64
-        local height_px: f64 = render.CELL_SIZE * rows::f64
-        -- 336 = 21 cols/rows * 16px cells (render.CELL_SIZE); the width/
-        -- height properties are u32 so the literal is spelled out here.
-        canvas.width = 336
-        canvas.height = 336
-        local style: CSSStyleProperties = canvas.style
-        style:setProperty("width", tostring(width_px) .. "px")
-        style:setProperty("height", tostring(height_px) .. "px")
-        -- The playfield backdrop: render.walu clears the canvas to transparent
-        -- pixels each frame, so plain CSS background-color on the element
-        -- shows through as the board color.
-        style:setProperty("background-color", "#0f172a")
-        style:setProperty("image-rendering", "pixelated")
-
-        local context: CanvasRenderingContext2D? = canvas:get_context("2d")
-        assert(context ~= nil)
-        local ctx: CanvasRenderingContext2D = context::CanvasRenderingContext2D
-
-        local state = game.new(cols, rows)
-
-        -- Input: arrow keys / WASD via a document-level "keydown" listener
-        -- (the Event is downcast to KeyboardEvent to read .key), plus an
-        -- on-screen d-pad for pointer/touch play.
-        local controls: Element = document:create_element("div")
-        controls.id = "snake-controls"
-        controls.class_name = "flex gap-2"
-        root:append_child(controls)
-
-        local function handle_control_event(event: Event): unit
-            if event.type == "click" then
-                if Element(target) = event.target then
-                    if target.id == "snake-up" then
-                        state:turn(0, -1)
-                    elseif target.id == "snake-down" then
-                        state:turn(0, 1)
-                    elseif target.id == "snake-left" then
-                        state:turn(-1, 0)
-                    elseif target.id == "snake-right" then
-                        state:turn(1, 0)
-                    elseif target.id == "snake-restart" then
-                        state:reset()
-                    end
-                end
-            end
-        end
-
-        local button_defs: {{ id: string, label: string }} = {
-            { id = "snake-up", label = "Up" },
-            { id = "snake-down", label = "Down" },
-            { id = "snake-left", label = "Left" },
-            { id = "snake-right", label = "Right" },
-            { id = "snake-restart", label = "Restart" },
-        }
-        for def in button_defs do
-            local button: Element = make_button(document, def.id, def.label)
-            button:add_event_listener("click", handle_control_event)
-            controls:append_child(button)
-        end
-
-        document:add_event_listener("keydown", function(event: Event): unit
-            if KeyboardEvent(kev) = event then
-                local key: string = kev.key
-                if key == "ArrowUp" or key == "w" then
-                    state:turn(0, -1)
-                elseif key == "ArrowDown" or key == "s" then
-                    state:turn(0, 1)
-                elseif key == "ArrowLeft" or key == "a" then
-                    state:turn(-1, 0)
-                elseif key == "ArrowRight" or key == "d" then
-                    state:turn(1, 0)
-                elseif key == "r" then
-                    state:reset()
-                end
-            end
-        end)
-
-        -- Game loop: a self-rescheduling requestAnimationFrame callback that
-        -- steps the game once per fixed tick interval.
-        local tick_ms: f64 = 140.0
-        local started: bool = false
-        local last_step: f64 = 0.0
-        local function frame(timestamp: f64): unit
-            if not started then
-                started = true
-                -- First frame: seed the PRNG from the timestamp so runs differ.
-                math.randomseed(timestamp)
-                last_step = timestamp
-            elseif timestamp - last_step >= tick_ms then
-                last_step = timestamp
-                state:step()
-                render.draw(ctx, state)
-            end
-            window:requestAnimationFrame(frame)
-        end
-        window:requestAnimationFrame(frame)
-
-        -- Paint the initial board before the first tick fires.
-        render.draw(ctx, state)
-    else
-        error("document.create_element(\"canvas\") did not return an HTMLCanvasElement")
+    local function update(dt: f64, input: input_module.Input): unit
+        state:step()
     end
+
+    local function draw(graphics: graphics_module.Graphics, alpha: f64): unit
+        render.draw(graphics, state)
+    end
+
+    local function keypressed(key: string): unit
+        if key == "ArrowUp" or key == "w" then
+            state:turn(0, -1)
+        elseif key == "ArrowDown" or key == "s" then
+            state:turn(0, 1)
+        elseif key == "ArrowLeft" or key == "a" then
+            state:turn(-1, 0)
+        elseif key == "ArrowRight" or key == "d" then
+            state:turn(1, 0)
+        elseif key == "r" then
+            state:reset()
+        end
+    end
+
+    local function keyreleased(key: string): unit
+        -- Required by the initial engine API; Snake only uses key presses.
+    end
+
+    -- TODO(waluau-chsb): Restore touch/on-screen controls when the engine
+    -- exposes pointer and touch input without requiring DOM access here.
+    engine.start({
+        title = "Waluau Snake",
+        width = BOARD_SIZE,
+        height = BOARD_SIZE,
+        update_hz = 1000.0 / 140.0,
+        max_frame_seconds = 0.28,
+        background = "#0f172a",
+    }, {
+        load = load,
+        update = update,
+        draw = draw,
+        keypressed = keypressed,
+        keyreleased = keyreleased,
+    })
 end
 
 install_snake()
