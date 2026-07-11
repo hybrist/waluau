@@ -231,6 +231,7 @@ impl Type {
     pub fn element_type(&self) -> Option<Type> {
         match self {
             Self::Array(element) => Some(*element.clone()),
+            Self::Nullable(inner) | Self::Opaque { ty: inner, .. } => inner.element_type(),
             _ => None,
         }
     }
@@ -249,6 +250,11 @@ impl Type {
             Self::Nullable(inner) => Some(*inner.clone()),
             _ => None,
         }
+    }
+
+    /// Whether a value of this type may be represented by `nil`.
+    pub fn accepts_nil(&self) -> bool {
+        matches!(self, Self::Nullable(_))
     }
 
     /// Nullable types whose inner value type has no null representation in

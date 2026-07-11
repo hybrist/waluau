@@ -401,6 +401,34 @@ fn require_nullable_host_ref_type(ty: &Type) -> Result<(), Diagnostic> {
     }
 }
 
+fn is_nullable_reference_type(ty: &Type) -> bool {
+    match ty {
+        Type::String
+        | Type::Bytes
+        | Type::Array(_)
+        | Type::Record(_)
+        | Type::Function { .. }
+        | Type::Thread
+        | Type::TaggedVariant(_)
+        | Type::TaggedUnion(_) => true,
+        Type::Opaque { ty, .. } => {
+            matches!(ty.as_ref(), Type::Extern | Type::ExternSubtype(_))
+                || is_nullable_reference_type(ty)
+        }
+        _ => false,
+    }
+}
+
+fn require_nullable_reference_type(ty: &Type) -> Result<(), Diagnostic> {
+    if is_nullable_reference_type(ty) {
+        Ok(())
+    } else {
+        Err(Diagnostic::new(format!(
+            "nullable modifier '?' is only supported on reference types, got {ty}"
+        )))
+    }
+}
+
 #[derive(Clone)]
 struct GenericTypeDecl {
     type_params: Vec<String>,
@@ -665,7 +693,7 @@ fn resolve_type_refs_allowing_forward_refs(
                 opaque_cache,
                 stack,
             )?;
-            require_nullable_host_ref_type(&inner)?;
+            require_nullable_reference_type(&inner)?;
             Ok(Type::Nullable(Box::new(inner)))
         }
         Type::Array(inner) => Ok(Type::Array(Box::new(
@@ -1017,7 +1045,7 @@ fn resolve_type_refs_fixpoint(
                 stack,
                 fixpoint_mode,
             )?;
-            require_nullable_host_ref_type(&inner)?;
+            require_nullable_reference_type(&inner)?;
             Ok(Type::Nullable(Box::new(inner)))
         }
         Type::Array(inner) => Ok(Type::Array(Box::new(resolve_type_refs_fixpoint(

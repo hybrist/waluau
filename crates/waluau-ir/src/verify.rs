@@ -747,7 +747,7 @@ fn verify_function(
                             block.id, field
                         ))
                     })?;
-                    if actual_field_ty != *field_ty {
+                    if !types_match(&actual_field_ty, field_ty) {
                         return Err(Diagnostic::new(format!(
                             "struct get in block {:?} field '{}' has type {}, expected {}",
                             block.id, field, actual_field_ty, field_ty

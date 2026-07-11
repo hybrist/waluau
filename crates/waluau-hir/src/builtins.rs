@@ -5,7 +5,7 @@ use waluau_diagnostics::Diagnostic;
 
 use super::Binding;
 use super::numeric::coerce_type;
-use super::signatures::FnSignature;
+use super::signatures::{FnSignature, call_arity_matches};
 
 fn is_promise_like_extern(ty: &Type) -> bool {
     match ty {
@@ -352,7 +352,7 @@ pub(super) fn infer_pcall_builtin_call(
             "{PCALL} expects a function, got {callee_ty}"
         ))));
     };
-    if args.len() - 1 != params.len() {
+    if !call_arity_matches(&params, args.len() - 1) {
         return Some(Err(Diagnostic::new(format!(
             "{PCALL} protected function expects {} arguments, got {}",
             params.len(),

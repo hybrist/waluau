@@ -458,7 +458,7 @@ fn nullable_strings_narrow_after_nil_check() {
 }
 
 #[test]
-fn nullable_modifier_rejects_non_host_ref_types() {
+fn nullable_modifier_rejects_non_reference_types() {
     let source = r#"
         function entry(value: i32?): i32
             return 0
@@ -469,8 +469,50 @@ fn nullable_modifier_rejects_non_host_ref_types() {
     let error = super::type_check_and_infer(&program).expect_err("type check should fail");
     assert_eq!(
         error.to_string(),
-        "nullable modifier '?' is only supported on host reference types, got i32"
+        "nullable modifier '?' is only supported on reference types, got i32"
     );
+}
+
+#[test]
+fn nullable_records_and_arrays_support_options_objects() {
+    let source = r#"
+        type Node = extern
+        type Document = extern
+        type Element = extern extends Node
+
+        declare function Document:create_element(tag: string): Element
+        declare function get_document(): Document
+        declare property Element:id: string
+        declare property Element:class: string
+
+        type ElementOptions = {
+            id: string?,
+            class: string?,
+            children: {Node}?
+        }
+
+        type h = { doc: Document }
+
+        function h:main(opts: ElementOptions?): Element
+            local element: Element = self.doc:create_element("main")
+            if opts == nil then
+                return element
+            end
+            if opts.id ~= nil then
+                element.id = opts.id
+            end
+            if opts.class ~= nil then
+                element.class = opts.class
+            end
+            return element
+        end
+
+        local h: h = { doc = get_document() }
+        h:main()
+        h:main { id = "my-el" }
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program).expect("options-object example should type check");
 }
 
 #[test]
@@ -2148,6 +2190,27 @@ fn rejects_multi_value_call_type_mismatch() {
     let program = parse(source).expect("parse should succeed");
     let error = super::type_check(&program).expect_err("type check should fail");
     assert_eq!(error.to_string(), "cannot implicitly convert bool to i32");
+}
+
+#[test]
+fn allows_omitting_only_trailing_nullable_arguments() {
+    let source = r#"
+        function valid(required: string, optional: string?): string
+            return required
+        end
+
+        function invalid(optional: string?, required: string): string
+            return required
+        end
+
+        function entry(): string
+            local value = valid("value")
+            return invalid()
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("non-trailing omission should fail");
+    assert_eq!(error.to_string(), "function expects 2 arguments, got 0");
 }
 
 #[test]

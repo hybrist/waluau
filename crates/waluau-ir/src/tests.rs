@@ -71,6 +71,95 @@ fn lowers_declared_extern_operator_overload_to_host_call() {
 }
 
 #[test]
+fn lowers_omitted_trailing_nullable_args_as_typed_nulls() {
+    let source = r#"
+        declare function host(value: string?): unit
+
+        function local_sink(value: string?): unit
+        end
+
+        function entry(): unit
+            local_sink()
+            host()
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    let entry = module
+        .functions
+        .iter()
+        .find(|function| function.name == "entry")
+        .expect("entry function should exist");
+
+    let mut null_count = 0;
+    let mut saw_local_call = false;
+    let mut saw_host_call = false;
+    for block in entry.blocks.values() {
+        for (_, instruction) in &block.instructions {
+            match instruction {
+                Instruction::Null { ty } if *ty == Type::String => null_count += 1,
+                Instruction::Call { name, args, .. } if name == "local_sink" => {
+                    saw_local_call = args.len() == 1;
+                }
+                Instruction::HostCall { name, args, .. } if name == "host" => {
+                    saw_host_call = args.len() == 1;
+                }
+                _ => {}
+            }
+        }
+    }
+    assert_eq!(
+        null_count, 2,
+        "expected one typed null per omitted argument"
+    );
+    assert!(saw_local_call, "local call should retain its Wasm arity");
+    assert!(saw_host_call, "host call should retain its Wasm arity");
+}
+
+#[test]
+fn lowers_nullable_options_records_and_missing_fields() {
+    let source = r#"
+        type Node = extern
+        type Document = extern
+        type Element = extern extends Node
+
+        declare function Document:create_element(tag: string): Element
+        declare function get_document(): Document
+        declare property Element:id: string
+        declare property Element:class: string
+
+        type ElementOptions = {
+            id: string?,
+            class: string?,
+            children: {Node}?
+        }
+        type h = { doc: Document }
+
+        function h:main(opts: ElementOptions?): Element
+            local element: Element = self.doc:create_element("main")
+            if opts == nil then
+                return element
+            end
+            if opts.id ~= nil then
+                element.id = opts.id
+            end
+            if opts.class ~= nil then
+                element.class = opts.class
+            end
+            return element
+        end
+
+        local h: h = { doc = get_document() }
+        h:main()
+        h:main { id = "my-el" }
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    build(&typed).expect("options-object program should lower and verify");
+}
+
+#[test]
 fn lowers_if_expression_with_phi_result() {
     let source = r#"
         function entry(flag: bool, x: i32, y: i32): i32

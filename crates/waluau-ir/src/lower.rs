@@ -1565,6 +1565,51 @@ impl Builder<'_> {
         Ok((value, return_type))
     }
 
+    /// Lower a fixed call's explicit arguments and materialize omitted trailing
+    /// nullable parameters as typed null values. Wasm calls retain their full
+    /// declared arity even when the source call uses the shorter form.
+    fn lower_fixed_call_args(
+        &mut self,
+        args: &[Expr],
+        param_types: &[Type],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+    ) -> Result<Vec<ValueId>, Diagnostic> {
+        if !call_arity_matches(param_types, args.len()) {
+            return Err(Diagnostic::new(format!(
+                "function expects {} arguments, got {}",
+                param_types.len(),
+                args.len()
+            )));
+        }
+        let mut lowered = args
+            .iter()
+            .zip(param_types.iter())
+            .map(|(arg, param_ty)| self.lower_expr(arg, env, types, Some(param_ty.clone())))
+            .collect::<Result<Vec<_>, _>>()?;
+        for param_ty in &param_types[lowered.len()..] {
+            lowered.push(self.emit_omitted_nullable_arg(param_ty)?);
+        }
+        Ok(lowered)
+    }
+
+    fn emit_omitted_nullable_arg(&mut self, param_ty: &Type) -> Result<ValueId, Diagnostic> {
+        let Type::Nullable(inner) = param_ty else {
+            return Err(Diagnostic::new(format!(
+                "cannot omit non-nullable argument of type {param_ty}"
+            )));
+        };
+        let runtime_ty = if param_ty.is_boxed_nullable() {
+            param_ty.clone()
+        } else {
+            (**inner).clone()
+        };
+        let null = self.emit(Instruction::Null {
+            ty: runtime_ty.clone(),
+        });
+        self.coerce_value(null, runtime_ty, Some(param_ty.clone()))
+    }
+
     /// Return the stable i32 discriminant for a tagged-union variant name.
     fn variant_tag_id(&self, name: &str) -> Result<i32, Diagnostic> {
         self.tag_ids
@@ -2547,11 +2592,11 @@ impl Builder<'_> {
         (then_types, else_types)
     }
 
-    fn nil_test_subject(condition: &Expr) -> Option<(SymbolId, bool)> {
+    fn nil_test_subject(condition: &Expr) -> Option<(SymbolId, Option<String>, bool)> {
         // A bare `if x then` on a nullable value is a truthiness test: the
         // then-branch sees the non-nil type.
         if let Expr::Name(_, Some(symbol_id), _) = condition {
-            return Some((*symbol_id, true));
+            return Some((*symbol_id, None, true));
         }
         if let Expr::Unary {
             op: UnaryOp::Not,
@@ -2560,7 +2605,7 @@ impl Builder<'_> {
         } = condition
         {
             if let Expr::Name(_, Some(symbol_id), _) = expr.as_ref() {
-                return Some((*symbol_id, false));
+                return Some((*symbol_id, None, false));
             }
         }
         let Expr::Binary {
@@ -2577,8 +2622,31 @@ impl Builder<'_> {
         match (left.as_ref(), right.as_ref()) {
             (Expr::Name(_, Some(symbol_id), _), Expr::Nil(..))
             | (Expr::Nil(..), Expr::Name(_, Some(symbol_id), _)) => {
-                Some((*symbol_id, non_null_when_true))
+                Some((*symbol_id, None, non_null_when_true))
             }
+            (Expr::Field { base, name, .. }, Expr::Nil(..))
+            | (Expr::Nil(..), Expr::Field { base, name, .. }) => {
+                let Expr::Name(_, Some(symbol_id), _) = base.as_ref() else {
+                    return None;
+                };
+                Some((*symbol_id, Some(name.clone()), non_null_when_true))
+            }
+            _ => None,
+        }
+    }
+
+    fn narrow_nullable_record_field(ty: &Type, field: &str) -> Option<Type> {
+        match ty {
+            Type::Record(fields) => {
+                let inner = fields.get(field)?.nullable_inner()?;
+                let mut narrowed = fields.clone();
+                narrowed.insert(field.to_string(), inner);
+                Some(Type::Record(narrowed))
+            }
+            Type::Opaque { name, ty } => Some(Type::Opaque {
+                name: name.clone(),
+                ty: Box::new(Self::narrow_nullable_record_field(ty, field)?),
+            }),
             _ => None,
         }
     }
@@ -2591,16 +2659,27 @@ impl Builder<'_> {
         let (mut then_types, mut else_types) =
             Self::narrowed_variant_type_scopes(condition, types);
         self.narrowed_discriminant_type_scopes(condition, types, &mut then_types, &mut else_types);
-        let Some((symbol_id, non_null_when_true)) = Self::nil_test_subject(condition) else {
+        let Some((symbol_id, field, non_null_when_true)) = Self::nil_test_subject(condition) else {
             return (then_types, else_types);
         };
-        let Some(inner) = types.get(&symbol_id).and_then(Type::nullable_inner) else {
+        let Some(ty) = types.get(&symbol_id) else {
             return (then_types, else_types);
+        };
+        let narrowed = if let Some(field) = field {
+            let Some(narrowed) = Self::narrow_nullable_record_field(ty, &field) else {
+                return (then_types, else_types);
+            };
+            narrowed
+        } else {
+            let Some(inner) = ty.nullable_inner() else {
+                return (then_types, else_types);
+            };
+            inner
         };
         if non_null_when_true {
-            then_types.insert(symbol_id, inner);
+            then_types.insert(symbol_id, narrowed);
         } else {
-            else_types.insert(symbol_id, inner);
+            else_types.insert(symbol_id, narrowed);
         }
         (then_types, else_types)
     }
@@ -2775,6 +2854,18 @@ impl Builder<'_> {
                         && else_narrowed_values.get(&name).copied() == Some(ev)
                         && then_exit != DEAD_BLOCK
                         && else_exit != DEAD_BLOCK;
+                    if then_exit == DEAD_BLOCK
+                        && else_narrowed_values.get(&name).copied() == Some(ev)
+                    {
+                        env.insert(name, ev);
+                        continue;
+                    }
+                    if else_exit == DEAD_BLOCK
+                        && then_narrowed_values.get(&name).copied() == Some(tv)
+                    {
+                        env.insert(name, tv);
+                        continue;
+                    }
                     if then_is_only_narrowed || else_is_only_narrowed || both_narrowed {
                         continue;
                     }
@@ -4005,12 +4096,15 @@ impl Builder<'_> {
                 for (arg, param_ty) in args.iter().zip(param_types.iter().skip(1)) {
                     lowered_args.push(self.lower_expr(arg, env, types, Some(param_ty.clone()))?);
                 }
-                if param_types.len() != lowered_args.len() {
+                if !call_arity_matches(&param_types, lowered_args.len()) {
                     return Err(Diagnostic::new(format!(
                         "function expects {} arguments, got {}",
                         param_types.len(),
                         lowered_args.len()
                     )));
+                }
+                for param_ty in &param_types[lowered_args.len()..] {
+                    lowered_args.push(self.emit_omitted_nullable_arg(param_ty)?);
                 }
                 let value = if let Some((direct_name, _, return_type)) = type_method {
                     if let Some(symbol_id) = self.host_import_names.get(&direct_name) {
@@ -4534,37 +4628,26 @@ impl Builder<'_> {
                 }
                 if let Expr::Name(name, Some(symbol_id), _) = callee.as_ref() {
                     if let Some((param_types, return_type)) =
-                        self.host_import_signatures.get(symbol_id)
+                        self.host_import_signatures.get(symbol_id).cloned()
                     {
-                        let args = args
-                            .iter()
-                            .zip(param_types.iter())
-                            .map(|(arg, param_ty)| {
-                                self.lower_expr(arg, env, types, Some(param_ty.clone()))
-                            })
-                            .collect::<Result<Vec<_>, _>>()?;
+                        let args = self.lower_fixed_call_args(args, &param_types, env, types)?;
                         let value = self.emit(Instruction::HostCall {
                             name: name.clone(),
                             symbol_id: *symbol_id,
                             args,
-                            return_type: return_type.clone(),
+                            return_type,
                         });
                         let actual = self.infer_expr_type(expr, types, None)?;
                         return self.coerce_value(value, actual, expected);
                     }
-                    if let Some((param_types, _)) = self.signatures.get(symbol_id) {
+                    if let Some((param_types, _)) = self.signatures.get(symbol_id).cloned() {
                         let args = if matches!(
                             param_types.last(),
                             Some(Type::Array(element)) if element.as_ref() == &Type::Unknown
                         ) {
-                            self.shape_vararg_call_args(param_types, args, env, types)?
+                            self.shape_vararg_call_args(&param_types, args, env, types)?
                         } else {
-                            args.iter()
-                                .zip(param_types.iter())
-                                .map(|(arg, param_ty)| {
-                                    self.lower_expr(arg, env, types, Some(param_ty.clone()))
-                                })
-                                .collect::<Result<Vec<_>, _>>()?
+                            self.lower_fixed_call_args(args, &param_types, env, types)?
                         };
                         let value = self.emit(Instruction::Call {
                             name: name.clone(),
@@ -4578,13 +4661,7 @@ impl Builder<'_> {
                 if let Some((direct_name, param_types, _)) =
                     direct_field_call_name(callee.as_ref(), self.field_call_signatures)
                 {
-                    let args = args
-                        .iter()
-                        .zip(param_types.iter())
-                        .map(|(arg, param_ty)| {
-                            self.lower_expr(arg, env, types, Some(param_ty.clone()))
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
+                    let args = self.lower_fixed_call_args(args, &param_types, env, types)?;
                     let value = self.emit(Instruction::Call {
                         name: direct_name,
                         symbol_id: None,
@@ -4610,11 +4687,7 @@ impl Builder<'_> {
                         return_type: return_type.clone(),
                     }),
                 )?;
-                let args = args
-                    .iter()
-                    .zip(param_types.iter())
-                    .map(|(arg, param_ty)| self.lower_expr(arg, env, types, Some(param_ty.clone())))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let args = self.lower_fixed_call_args(args, &param_types, env, types)?;
                 let value = self.emit(Instruction::CallValue {
                     callee: callee_value,
                     args: args.clone(),
@@ -4753,24 +4826,21 @@ impl Builder<'_> {
                 self.coerce_value(value, element_ty, expected)?
             }
             Expr::TableLiteral { fields, .. } => {
-                let struct_ty = self.infer_expr_type(expr, types, expected.clone())?;
-                let Type::Record(record_fields) = &struct_ty else {
+                let inferred_ty = self.infer_expr_type(expr, types, expected.clone())?;
+                let Some(record_fields) = type_record_fields(&inferred_ty) else {
                     return Err(Diagnostic::new(
                         "table literal lowering requires a record type",
                     ));
                 };
+                let struct_ty = Type::Record(record_fields.clone());
                 let lowered_fields = record_fields
                     .iter()
                     .map(|(name, field_ty)| {
-                        let field_expr = fields
-                            .iter()
-                            .find(|field| field.name == *name)
-                            .ok_or_else(|| {
-                                Diagnostic::new(format!(
-                                    "missing table literal field '{name}' during lowering"
-                                ))
-                            })?;
-                        self.lower_expr(&field_expr.value, env, types, Some(field_ty.clone()))
+                        if let Some(field_expr) = fields.iter().find(|field| field.name == *name) {
+                            self.lower_expr(&field_expr.value, env, types, Some(field_ty.clone()))
+                        } else {
+                            self.emit_omitted_nullable_arg(field_ty)
+                        }
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let value = self.emit(Instruction::StructNew {
@@ -5212,9 +5282,9 @@ impl Builder<'_> {
             },
             Expr::Nil(..) => coerce_type(Type::Nil, expected),
             Expr::IsVariant { .. } => coerce_type(Type::Bool, expected),
-            Expr::Bool(..) => Ok(Type::Bool),
-            Expr::String(..) => Ok(Type::String),
-            Expr::Bytes(..) => Ok(Type::Bytes),
+            Expr::Bool(..) => coerce_type(Type::Bool, expected),
+            Expr::String(..) => coerce_type(Type::String, expected),
+            Expr::Bytes(..) => coerce_type(Type::Bytes, expected),
             Expr::Vararg(..) => Ok(Type::Array(Box::new(Type::Unknown))),
             Expr::Require(path, _) => Err(Diagnostic::new(format!(
                 "unresolved require(\"{path}\") reached IR lowering"
@@ -5316,7 +5386,7 @@ impl Builder<'_> {
                         params[0], receiver_ty
                     )));
                 }
-                if params.len() != args.len() + 1 {
+                if !call_arity_matches(&params, args.len() + 1) {
                     return Err(Diagnostic::new(format!(
                         "function expects {} arguments, got {}",
                         params.len(),
@@ -5527,10 +5597,7 @@ impl Builder<'_> {
             }
             Expr::TableLiteral { fields, .. } => {
                 let mut record_fields = BTreeMap::new();
-                let expected_fields = match &expected {
-                    Some(Type::Record(fields)) => Some(fields),
-                    _ => None,
-                };
+                let expected_fields = expected.as_ref().and_then(type_record_fields);
                 for field in fields {
                     let expected_field_ty = expected_fields
                         .and_then(|fields| fields.get(&field.name))
@@ -6239,7 +6306,7 @@ impl Builder<'_> {
                 "{PCALL} expects a function, got {callee_ty}"
             ))));
         };
-        if args.len() - 1 != params.len() {
+        if !call_arity_matches(&params, args.len() - 1) {
             return Some(Err(Diagnostic::new(format!(
                 "{PCALL} protected function expects {} arguments, got {}",
                 params.len(),
@@ -6250,13 +6317,7 @@ impl Builder<'_> {
             Ok(value) => value,
             Err(error) => return Some(Err(error)),
         };
-        let lowered_args = match args
-            .iter()
-            .skip(1)
-            .zip(params.iter())
-            .map(|(arg, param_ty)| self.lower_expr(arg, env, types, Some(param_ty.clone())))
-            .collect::<Result<Vec<_>, _>>()
-        {
+        let lowered_args = match self.lower_fixed_call_args(&args[1..], &params, env, types) {
             Ok(args) => args,
             Err(error) => return Some(Err(error)),
         };
@@ -6497,7 +6558,7 @@ impl Builder<'_> {
                 "{PCALL} expects a function, got {callee_ty}"
             ))));
         };
-        if args.len() - 1 != params.len() {
+        if !call_arity_matches(&params, args.len() - 1) {
             return Some(Err(Diagnostic::new(format!(
                 "{PCALL} protected function expects {} arguments, got {}",
                 params.len(),
@@ -6907,15 +6968,23 @@ impl Builder<'_> {
         } else {
             args
         };
-        if !trailing_vararg && explicit.len() < fixed_count {
+        if !trailing_vararg
+            && explicit.len() < required_param_count(&param_types[..fixed_count])
+        {
             return Err(Diagnostic::new(format!(
-                "function expects at least {fixed_count} arguments, got {}",
+                "function expects at least {} arguments, got {}",
+                required_param_count(&param_types[..fixed_count]),
                 explicit.len()
             )));
         }
         let mut lowered = Vec::with_capacity(param_types.len());
         for (arg, param_ty) in explicit.iter().zip(param_types.iter().take(fixed_count)) {
             lowered.push(self.lower_expr(arg, env, types, Some(param_ty.clone()))?);
+        }
+        if !trailing_vararg {
+            for param_ty in &param_types[lowered.len()..fixed_count] {
+                lowered.push(self.emit_omitted_nullable_arg(param_ty)?);
+            }
         }
         let mut extras = Vec::new();
         for arg in explicit.iter().skip(fixed_count) {
@@ -9422,6 +9491,25 @@ fn lua_type_name(ty: &Type) -> &'static str {
     }
 }
 
+fn required_param_count(params: &[Type]) -> usize {
+    params
+        .iter()
+        .rposition(|param| !param.accepts_nil())
+        .map_or(0, |index| index + 1)
+}
+
+fn call_arity_matches(params: &[Type], actual: usize) -> bool {
+    (required_param_count(params)..=params.len()).contains(&actual)
+}
+
+fn type_record_fields(ty: &Type) -> Option<&BTreeMap<String, Type>> {
+    match ty {
+        Type::Record(fields) => Some(fields),
+        Type::Opaque { ty, .. } | Type::Nullable(ty) => type_record_fields(ty),
+        _ => None,
+    }
+}
+
 fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic> {
     match expected {
         None => Ok(actual),
@@ -9455,11 +9543,14 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Nullable(actual_inner) if actual_inner == expected_inner => {
                 Ok(Type::Nullable(expected_inner))
             }
-            other if other == *expected_inner => Ok(Type::Nullable(expected_inner)),
-            other => Err(Diagnostic::new(format!(
-                "cannot implicitly convert {other} to {}?",
-                expected_inner
-            ))),
+            other => coerce_type(other.clone(), Some((*expected_inner).clone()))
+                .map(|_| Type::Nullable(expected_inner.clone()))
+                .map_err(|_| {
+                    Diagnostic::new(format!(
+                        "cannot implicitly convert {other} to {}?",
+                        expected_inner
+                    ))
+                }),
         },
         // Records coerce field-by-field so a field value can box into an `unknown`
         // field. Lowering then targets the expected field types and inserts boxes.
@@ -9472,6 +9563,9 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             };
             for (name, expected_ty) in &expected_fields {
                 let Some(actual_ty) = actual_fields.get(name) else {
+                    if expected_ty.accepts_nil() {
+                        continue;
+                    }
                     return Err(Diagnostic::new(format!("missing record field '{name}'")));
                 };
                 coerce_type(actual_ty.clone(), Some(expected_ty.clone())).map_err(|_| {

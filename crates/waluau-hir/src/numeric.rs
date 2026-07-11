@@ -195,11 +195,14 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             other if is_extern_subtype_of(&other, &expected_inner) => {
                 Ok(Type::Nullable(expected_inner))
             }
-            other if other == *expected_inner => Ok(Type::Nullable(expected_inner)),
-            other => Err(Diagnostic::new(format!(
-                "cannot implicitly convert {other} to {}?",
-                expected_inner
-            ))),
+            other => coerce_type(other.clone(), Some((*expected_inner).clone()))
+                .map(|_| Type::Nullable(expected_inner.clone()))
+                .map_err(|_| {
+                    Diagnostic::new(format!(
+                        "cannot implicitly convert {other} to {}?",
+                        expected_inner
+                    ))
+                }),
         },
         Some(Type::TaggedVariant(expected_variant)) => match actual {
             Type::TaggedVariant(actual_variant) if actual_variant.tag == expected_variant.tag => {
@@ -351,6 +354,9 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
 
             for (name, expected_ty) in &expected_fields {
                 let Some(actual_ty) = actual_fields.get(name) else {
+                    if expected_ty.accepts_nil() {
+                        continue;
+                    }
                     return Err(Diagnostic::new(format!("missing record field '{}'", name)));
                 };
                 // Each field coerces independently, so e.g. an `i32` value boxes
