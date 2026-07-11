@@ -1986,7 +1986,6 @@ impl Builder<'_> {
             Stmt::Expr(expr) => {
                 if let Expr::Call {
                     callee,
-                    type_args: _,
                     args,
                     span,
                     ..
@@ -4416,7 +4415,6 @@ impl Builder<'_> {
             },
             Expr::Call {
                 callee,
-                type_args: _,
                 args,
                 method_call_origin,
                 ..

@@ -262,7 +262,6 @@ fn collect_expr_captures(
         }
         Expr::Call {
             callee,
-            type_args: _,
             args,
             ..
         } => {
@@ -448,7 +447,6 @@ fn collect_nested_from_expr(expr: &Expr, out: &mut HashSet<SymbolId>) {
         }
         Expr::Call {
             callee,
-            type_args: _,
             args,
             ..
         } => {
@@ -641,7 +639,6 @@ fn collect_free_names_in_expr(expr: &Expr, bound: &HashSet<SymbolId>, out: &mut 
         }
         Expr::Call {
             callee,
-            type_args: _,
             args,
             ..
         } => {
