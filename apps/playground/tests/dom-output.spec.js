@@ -318,6 +318,38 @@ test.describe('DOM Output in Run tab', () => {
     await expect.poll(paintedPixels).toBeGreaterThan(0);
   });
 
+  test('plays a complete Poker Tricks game against the computer', async ({ page }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await page.getByRole('button', { name: 'Poker Tricks' }).click();
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    const outputFrame = page.frameLocator('.dom-output-frame');
+    await expect(outputFrame.locator('h1')).toHaveText('Poker Tricks');
+    await expect(outputFrame.locator('#middle-cards').locator('span')).toHaveCount(3);
+    await expect(outputFrame.locator('#player-hand').locator('button')).toHaveCount(5);
+    await expect(outputFrame.locator('#poker-score')).toContainText('Round 1');
+
+    for (let round = 1; round <= 6; round += 1) {
+      await outputFrame.locator('#player-card-0').click();
+      await expect(outputFrame.locator('#player-card-0')).toHaveClass(/border-4/);
+      await outputFrame.locator('#player-card-1').click();
+      await expect(outputFrame.locator('#player-card-1')).toHaveClass(/border-4/);
+      await outputFrame.locator('#play-trick').click();
+      expect(pageErrors).toEqual([]);
+      if (round < 6) {
+        await expect(outputFrame.locator('#poker-score')).toContainText(`Round ${round + 1}`);
+      }
+    }
+
+    await expect(outputFrame.locator('#poker-status')).toContainText('Deck empty');
+    await expect(outputFrame.locator('#poker-score')).toContainText('Round 6');
+    await outputFrame.locator('#new-game').click();
+    await expect(outputFrame.locator('#poker-score')).toContainText('Round 1');
+  });
+
   test('runs Waluau click and input callbacks from DOM Output events', async ({ page }) => {
     await page.locator('.code-textarea').fill(DOM_EVENT_CALLBACK_SAMPLE);
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {

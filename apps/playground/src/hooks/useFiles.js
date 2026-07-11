@@ -2,11 +2,13 @@ import { useState, useMemo, useCallback } from 'react';
 import {
   fixtureModules,
   moduleFixtures,
+  pokerTricksFixtures,
   snakeFixtures,
   conformanceModules,
   filesForConformancePreset,
   MULTI_PRESET,
   KANBAN_PRESET,
+  POKER_TRICKS_PRESET,
   SNAKE_PRESET,
   DEFAULT_PRESET,
   PRESETS
@@ -202,6 +204,22 @@ export default function useFiles() {
         category: 'Fixture',
         onSelect: () => {
           selectPreset(SNAKE_PRESET);
+          setActiveFile(`/${filename}`);
+        }
+      });
+    }
+
+    // 5. Poker Tricks fixture files
+    for (const [path, source] of Object.entries(pokerTricksFixtures)) {
+      const filename = path.split('/').pop();
+      items.push({
+        type: 'fixture',
+        path,
+        name: `poker-tricks/${filename}`,
+        source,
+        category: 'Fixture',
+        onSelect: () => {
+          selectPreset(POKER_TRICKS_PRESET);
           setActiveFile(`/${filename}`);
         }
       });

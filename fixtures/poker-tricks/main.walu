@@ -1,0 +1,193 @@
+-- Interactive browser UI for Poker Tricks.
+
+local game = require("./game")
+local window = require("dom:window")
+
+function make_element(document: Document, tag: string, class_name: string): Element
+    local element: Element = document:create_element(tag)
+    element.class_name = class_name
+    return element
+end
+
+function render_poker_tricks(state: game.State, selection: {i32}): unit
+    local document: Document = window.document
+    local body: HTMLElement = document.body
+    local existing: Element? = document:get_element_by_id("app")
+    if existing ~= nil then body:remove_child(existing) end
+
+    local root: Element = make_element(document, "main", "min-h-screen bg-emerald-950 p-5 text-emerald-50")
+    root.id = "app"
+    body:append_child(root)
+
+    local table_area: Element = make_element(document, "section", "mx-auto flex max-w-3xl flex-col items-center gap-5 rounded-3xl border-4 border-amber-700 bg-emerald-800 p-6 shadow-2xl")
+    table_area.id = "poker-table"
+    root:append_child(table_area)
+
+    local heading: Element = make_element(document, "h1", "text-3xl font-black tracking-wide text-amber-300")
+    heading.text_content = "Poker Tricks"
+    table_area:append_child(heading)
+
+    local rules: Element = make_element(document, "p", "max-w-xl text-center text-sm text-emerald-100")
+    rules.text_content = "Choose two cards to join the three in the middle. Best five-card poker hand wins the trick; later tricks are worth more."
+    table_area:append_child(rules)
+
+    local score: Element = make_element(document, "p", "rounded-full bg-emerald-950 px-5 py-2 font-mono text-amber-100")
+    score.id = "poker-score"
+    table_area:append_child(score)
+
+    local computer_label: Element = make_element(document, "h2", "font-semibold uppercase tracking-widest text-emerald-200")
+    computer_label.text_content = "Computer"
+    table_area:append_child(computer_label)
+    local computer_row: Element = make_element(document, "div", "flex gap-2")
+    computer_row.id = "computer-hand"
+    table_area:append_child(computer_row)
+    local computer_cards: {Element} = {}
+    for i = 0, 4 do
+        local back: Element = make_element(document, "span", "flex h-20 w-14 items-center justify-center rounded-lg border-2 border-slate-200 bg-slate-800 text-xl shadow")
+        back.text_content = "◆"
+        back:set_attribute("data-card-index", tostring(i))
+        computer_row:append_child(back)
+        table.insert(computer_cards, back)
+    end
+
+    local middle_label: Element = make_element(document, "h2", "font-semibold uppercase tracking-widest text-amber-200")
+    middle_label.text_content = "Community cards"
+    table_area:append_child(middle_label)
+    local middle_row: Element = make_element(document, "div", "flex gap-3")
+    middle_row.id = "middle-cards"
+    table_area:append_child(middle_row)
+    local middle_cards: {Element} = {}
+    for i = 0, 2 do
+        local card: Element = make_element(document, "span", "flex h-24 w-16 items-center justify-center rounded-lg border-2 border-amber-300 bg-white text-2xl font-black text-slate-900 shadow-lg")
+        card:set_attribute("data-card-index", tostring(i))
+        middle_row:append_child(card)
+        table.insert(middle_cards, card)
+    end
+
+    local player_label: Element = make_element(document, "h2", "font-semibold uppercase tracking-widest text-emerald-200")
+    player_label.text_content = "Your hand — pick two"
+    table_area:append_child(player_label)
+    local player_row: Element = make_element(document, "div", "flex gap-2")
+    player_row.id = "player-hand"
+    table_area:append_child(player_row)
+    local player_cards: {Element} = {}
+
+    local status: Element = make_element(document, "p", "min-h-12 text-center font-medium text-amber-100")
+    status.id = "poker-status"
+    table_area:append_child(status)
+
+    local controls: Element = make_element(document, "div", "flex gap-3")
+    table_area:append_child(controls)
+    local play_button: Element = make_element(document, "button", "rounded-lg bg-amber-400 px-5 py-3 font-bold text-emerald-950 hover:bg-amber-300")
+    play_button.id = "play-trick"
+    play_button:set_attribute("type", "button")
+    play_button.text_content = "Play selected cards"
+    controls:append_child(play_button)
+    local restart_button: Element = make_element(document, "button", "rounded-lg bg-emerald-950 px-5 py-3 font-bold text-white hover:bg-emerald-900")
+    restart_button.id = "new-game"
+    restart_button:set_attribute("type", "button")
+    restart_button.text_content = "New game"
+    controls:append_child(restart_button)
+
+    local function update(state: game.State, picked: {i32}): unit
+        local shown_round: i32 = state.round
+        score.text_content = "Round " .. tostring(shown_round) .. " · You " .. tostring(state.player_points) .. " (" .. tostring(state.player_tricks) .. " tricks) · Computer " .. tostring(state.computer_points) .. " (" .. tostring(state.computer_tricks) .. " tricks) · Deck " .. tostring(#state.deck)
+
+        for i, element in player_cards do
+            element.text_content = game.card_name(state.player_hand[i])
+            if picked[0] == i or picked[1] == i then
+                element.class_name = "flex h-24 w-16 -translate-y-3 items-center justify-center rounded-lg border-4 border-amber-300 bg-white text-2xl font-black text-slate-900 shadow-xl"
+            else
+                element.class_name = "flex h-24 w-16 items-center justify-center rounded-lg border-2 border-slate-300 bg-white text-2xl font-black text-slate-900 shadow hover:-translate-y-1"
+            end
+        end
+
+        if state.finished then
+            for element in middle_cards do element.text_content = "—" end
+            if state.player_points > state.computer_points then
+                status.text_content = "Deck empty — you win " .. tostring(state.player_points) .. " to " .. tostring(state.computer_points) .. "!"
+            elseif state.computer_points > state.player_points then
+                status.text_content = "Deck empty — computer wins " .. tostring(state.computer_points) .. " to " .. tostring(state.player_points) .. "."
+            else
+                status.text_content = "Deck empty — the game is a draw."
+            end
+        else
+            for i, element in middle_cards do
+                element.text_content = game.card_name(state.middle[i])
+            end
+            if state.last_player_value == 0 and state.last_computer_value == 0 then
+                status.text_content = "Trick " .. tostring(state.round) .. " is worth " .. tostring(state.round) .. " point(s)."
+            elseif state.last_winner > 0 then
+                status.text_content = "You won the last trick: " .. game.category_name(state.last_player_value) .. " beat " .. game.category_name(state.last_computer_value) .. "."
+            elseif state.last_winner < 0 then
+                status.text_content = "Computer won the last trick: " .. game.category_name(state.last_computer_value) .. " beat " .. game.category_name(state.last_player_value) .. "."
+            else
+                status.text_content = "The last trick tied with " .. game.category_name(state.last_player_value) .. "."
+            end
+        end
+    end
+
+    -- One delegated listener owns the authoritative game state. Registering
+    -- separate callback captures for each button would give each capture its
+    -- own record value; click bubbling lets every control share this one.
+    local function handle_interaction(event: Event): unit
+        if Element(target) = event.target then
+            if target.id == "new-game" then
+                state:reset()
+                selection[0] = -1
+                selection[1] = -1
+                render_poker_tricks(state, selection)
+            elseif target.id == "play-trick" and not state.finished then
+                if selection[0] >= 0 and selection[1] >= 0 then
+                    state:play(selection[0], selection[1])
+                    selection[0] = -1
+                    selection[1] = -1
+                    render_poker_tricks(state, selection)
+                else
+                    status.text_content = "Select exactly two cards first."
+                end
+            elseif not state.finished then
+                local index: i32 = -1
+                if target.id == "player-card-0" then index = 0
+                elseif target.id == "player-card-1" then index = 1
+                elseif target.id == "player-card-2" then index = 2
+                elseif target.id == "player-card-3" then index = 3
+                elseif target.id == "player-card-4" then index = 4
+                end
+                if selection[0] == index then
+                    selection[0] = selection[1]
+                    selection[1] = -1
+                elseif selection[1] == index then
+                    selection[1] = -1
+                elseif selection[0] < 0 then
+                    selection[0] = index
+                elseif selection[1] < 0 then
+                    selection[1] = index
+                end
+                render_poker_tricks(state, selection)
+            end
+        end
+    end
+
+    local function add_player_card(index: i32): unit
+        local card_button: Element = make_element(document, "button", "")
+        card_button.id = "player-card-" .. tostring(index)
+        card_button:set_attribute("type", "button")
+        card_button:set_attribute("aria-label", "Select card " .. tostring(index + 1))
+        player_row:append_child(card_button)
+        table.insert(player_cards, card_button)
+    end
+    add_player_card(0)
+    add_player_card(1)
+    add_player_card(2)
+    add_player_card(3)
+    add_player_card(4)
+
+    table_area:add_event_listener("click", handle_interaction)
+    update(state, selection)
+end
+
+window:requestAnimationFrame(function(timestamp: f64): unit
+    math.randomseed(timestamp)
+    render_poker_tricks(game.new(), { -1, -1 })
+end)

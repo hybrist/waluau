@@ -1,0 +1,273 @@
+-- Host-independent rules for Poker Tricks. Two players keep five-card hands,
+-- combine two chosen cards with three shared cards, and compare normal
+-- five-card poker hands. A won trick is worth its round number.
+
+type Card = { rank: i32, suit: i32 }
+type PairChoice = { first: i32, second: i32, value: i32 }
+type State = { deck: {Card}, player_hand: {Card}, computer_hand: {Card}, middle: {Card}, round: i32, player_points: i32, computer_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, finished: bool }
+
+local MIN_RANK <const>: i32 = 2
+local MAX_RANK <const>: i32 = 14
+local MIN_SUIT <const>: i32 = 0
+local MAX_SUIT <const>: i32 = 3
+local ZERO <const>: i32 = 0
+local ONE <const>: i32 = 1
+local TWO <const>: i32 = 2
+
+function make_deck(): {Card}
+    local deck: {Card} = {}
+    for suit = MIN_SUIT, MAX_SUIT do
+        for rank = MIN_RANK, MAX_RANK do
+            table.insert(deck, { rank = rank, suit = suit })
+        end
+    end
+    return deck
+end
+
+function shuffle(deck: {Card}): unit
+    local i: i32 = #deck - ONE
+    while i >= ONE do
+        local j: i32 = math.random(i + ONE) - ONE
+        local card: Card = deck[i]
+        deck[i] = deck[j]
+        deck[j] = card
+        i -= ONE
+    end
+end
+
+function draw(deck: {Card}): Card
+    local card: Card = deck[#deck - ONE]
+    table.remove(deck)
+    return card
+end
+
+function pack(category: i32, a: i32, b: i32, c: i32, d: i32, e: i32): i32
+    local value: i32 = category
+    value = value * 15 + a
+    value = value * 15 + b
+    value = value * 15 + c
+    value = value * 15 + d
+    return value * 15 + e
+end
+
+-- Return a lexicographically sortable score for exactly five cards. Category
+-- occupies the most significant base-15 digit, followed by poker kickers.
+function swap_if_lower(ranks: {i32}, left: i32, right: i32): unit
+    if ranks[left] < ranks[right] then
+        local value: i32 = ranks[left]
+        ranks[left] = ranks[right]
+        ranks[right] = value
+    end
+end
+
+function rank_five(cards: {Card}): i32
+    assert(#cards == 5)
+    local ranks: {i32} = { cards[0].rank, cards[1].rank, cards[2].rank, cards[3].rank, cards[4].rank }
+    -- A fixed five-item bubble sorting network avoids allocating comparator
+    -- closures and keeps the evaluator straightforward.
+    swap_if_lower(ranks, 0, 1)
+    swap_if_lower(ranks, 1, 2)
+    swap_if_lower(ranks, 2, 3)
+    swap_if_lower(ranks, 3, 4)
+    swap_if_lower(ranks, 0, 1)
+    swap_if_lower(ranks, 1, 2)
+    swap_if_lower(ranks, 2, 3)
+    swap_if_lower(ranks, 0, 1)
+    swap_if_lower(ranks, 1, 2)
+    swap_if_lower(ranks, 0, 1)
+
+    local flush: bool = cards[0].suit == cards[1].suit and cards[0].suit == cards[2].suit and cards[0].suit == cards[3].suit and cards[0].suit == cards[4].suit
+    local straight_high: i32 = 0
+    if ranks[0] - ranks[4] == 4 and ranks[0] > ranks[1] and ranks[1] > ranks[2] and ranks[2] > ranks[3] and ranks[3] > ranks[4] then
+        straight_high = ranks[0]
+    elseif ranks[0] == 14 and ranks[1] == 5 and ranks[2] == 4 and ranks[3] == 3 and ranks[4] == 2 then
+        straight_high = 5
+    end
+
+    if flush and straight_high > 0 then
+        return pack(8, straight_high, 0, 0, 0, 0)
+    elseif ranks[0] == ranks[3] then
+        return pack(7, ranks[0], ranks[4], 0, 0, 0)
+    elseif ranks[1] == ranks[4] then
+        return pack(7, ranks[1], ranks[0], 0, 0, 0)
+    elseif ranks[0] == ranks[2] and ranks[3] == ranks[4] then
+        return pack(6, ranks[0], ranks[3], 0, 0, 0)
+    elseif ranks[0] == ranks[1] and ranks[2] == ranks[4] then
+        return pack(6, ranks[2], ranks[0], 0, 0, 0)
+    elseif flush then
+        return pack(5, ranks[0], ranks[1], ranks[2], ranks[3], ranks[4])
+    elseif straight_high > 0 then
+        return pack(4, straight_high, 0, 0, 0, 0)
+    elseif ranks[0] == ranks[2] then
+        return pack(3, ranks[0], ranks[3], ranks[4], 0, 0)
+    elseif ranks[1] == ranks[3] then
+        return pack(3, ranks[1], ranks[0], ranks[4], 0, 0)
+    elseif ranks[2] == ranks[4] then
+        return pack(3, ranks[2], ranks[0], ranks[1], 0, 0)
+    elseif ranks[0] == ranks[1] and ranks[2] == ranks[3] then
+        return pack(2, ranks[0], ranks[2], ranks[4], 0, 0)
+    elseif ranks[0] == ranks[1] and ranks[3] == ranks[4] then
+        return pack(2, ranks[0], ranks[3], ranks[2], 0, 0)
+    elseif ranks[1] == ranks[2] and ranks[3] == ranks[4] then
+        return pack(2, ranks[1], ranks[3], ranks[0], 0, 0)
+    elseif ranks[0] == ranks[1] then
+        return pack(1, ranks[0], ranks[2], ranks[3], ranks[4], 0)
+    elseif ranks[1] == ranks[2] then
+        return pack(1, ranks[1], ranks[0], ranks[3], ranks[4], 0)
+    elseif ranks[2] == ranks[3] then
+        return pack(1, ranks[2], ranks[0], ranks[1], ranks[4], 0)
+    elseif ranks[3] == ranks[4] then
+        return pack(1, ranks[3], ranks[0], ranks[1], ranks[2], 0)
+    end
+    return pack(0, ranks[0], ranks[1], ranks[2], ranks[3], ranks[4])
+end
+
+function value_for_pair(hand: {Card}, middle: {Card}, first: i32, second: i32): i32
+    return rank_five({ middle[0], middle[1], middle[2], hand[first], hand[second] })
+end
+
+function best_pair(hand: {Card}, middle: {Card}): PairChoice
+    local best: PairChoice = { first = 0, second = 1, value = value_for_pair(hand, middle, 0, 1) }
+    for first = ZERO, #hand - TWO do
+        for second = first + ONE, #hand - ONE do
+            local value: i32 = value_for_pair(hand, middle, first, second)
+            if value > best.value then
+                best.first = first
+                best.second = second
+                best.value = value
+            end
+        end
+    end
+    return best
+end
+
+function remove_pair(hand: {Card}, first: i32, second: i32): unit
+    if first > second then
+        table.remove(hand, first)
+        table.remove(hand, second)
+    else
+        table.remove(hand, second)
+        table.remove(hand, first)
+    end
+end
+
+function State:reveal_middle(): unit
+    self.middle = { draw(self.deck), draw(self.deck), draw(self.deck) }
+end
+
+function State:play(first: i32, second: i32): unit
+    if self.finished or first == second or first < 0 or second < 0 or first >= #self.player_hand or second >= #self.player_hand then
+        return
+    end
+
+    local computer: PairChoice = best_pair(self.computer_hand, self.middle)
+    self.last_player_value = value_for_pair(self.player_hand, self.middle, first, second)
+    self.last_computer_value = computer.value
+    self.last_winner = 0
+    if self.last_player_value > self.last_computer_value then
+        self.player_points += self.round
+        self.player_tricks += 1
+        self.last_winner = 1
+    elseif self.last_computer_value > self.last_player_value then
+        self.computer_points += self.round
+        self.computer_tricks += 1
+        self.last_winner = -1
+    end
+
+    remove_pair(self.player_hand, first, second)
+    remove_pair(self.computer_hand, computer.first, computer.second)
+    for _ = 1, 2 do
+        table.insert(self.player_hand, draw(self.deck))
+        table.insert(self.computer_hand, draw(self.deck))
+    end
+
+    if #self.deck == 0 then
+        self.middle = {}
+        self.finished = true
+    else
+        self.round += 1
+        self:reveal_middle()
+    end
+end
+
+function new(): State
+    local deck: {Card} = make_deck()
+    shuffle(deck)
+    local state: State = {
+        deck = deck,
+        player_hand = {},
+        computer_hand = {},
+        middle = {},
+        round = 1,
+        player_points = 0,
+        computer_points = 0,
+        player_tricks = 0,
+        computer_tricks = 0,
+        last_player_value = 0,
+        last_computer_value = 0,
+        last_winner = 0,
+        finished = false,
+    }
+    for _ = 1, 5 do
+        table.insert(state.player_hand, draw(state.deck))
+        table.insert(state.computer_hand, draw(state.deck))
+    end
+    state:reveal_middle()
+    return state
+end
+
+function State:reset(): unit
+    local fresh: State = new()
+    self.deck = fresh.deck
+    self.player_hand = fresh.player_hand
+    self.computer_hand = fresh.computer_hand
+    self.middle = fresh.middle
+    self.round = fresh.round
+    self.player_points = fresh.player_points
+    self.computer_points = fresh.computer_points
+    self.player_tricks = fresh.player_tricks
+    self.computer_tricks = fresh.computer_tricks
+    self.last_player_value = fresh.last_player_value
+    self.last_computer_value = fresh.last_computer_value
+    self.last_winner = fresh.last_winner
+    self.finished = fresh.finished
+end
+
+function rank_name(rank: i32): string
+    if rank == 14 then return "A" end
+    if rank == 13 then return "K" end
+    if rank == 12 then return "Q" end
+    if rank == 11 then return "J" end
+    return tostring(rank)
+end
+
+function card_name(card: Card): string
+    local suit: string = "♣"
+    if card.suit == 1 then suit = "♦"
+    elseif card.suit == 2 then suit = "♥"
+    elseif card.suit == 3 then suit = "♠"
+    end
+    return rank_name(card.rank) .. suit
+end
+
+function category_name(value: i32): string
+    local category: i32 = value // 759375
+    if category == 8 then return "straight flush" end
+    if category == 7 then return "four of a kind" end
+    if category == 6 then return "full house" end
+    if category == 5 then return "flush" end
+    if category == 4 then return "straight" end
+    if category == 3 then return "three of a kind" end
+    if category == 2 then return "two pair" end
+    if category == 1 then return "one pair" end
+    return "high card"
+end
+
+return {
+    new = new,
+    make_deck = make_deck,
+    rank_five = rank_five,
+    best_pair = best_pair,
+    card_name = card_name,
+    category_name = category_name,
+}

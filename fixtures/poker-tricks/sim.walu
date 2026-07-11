@@ -1,0 +1,56 @@
+-- Deterministic, DOM-free checks for Poker Tricks.
+--
+--     cargo run -p waluau-cli -- fixtures/poker-tricks/sim.walu -o sim.wasm
+
+local game = require("./game")
+
+local FIRST_ROUND <const>: i32 = 1
+local LAST_ROUND <const>: i32 = 6
+
+function card(rank: i32, suit: i32): game.Card
+    return { rank = rank, suit = suit }
+end
+
+-- Every major hand category sorts above the category below it.
+local straight_flush: i32 = game.rank_five({ card(10, 3), card(11, 3), card(12, 3), card(13, 3), card(14, 3) })
+local four_kind: i32 = game.rank_five({ card(9, 0), card(9, 1), card(9, 2), card(9, 3), card(2, 0) })
+local full_house: i32 = game.rank_five({ card(8, 0), card(8, 1), card(8, 2), card(4, 0), card(4, 1) })
+local flush: i32 = game.rank_five({ card(14, 2), card(10, 2), card(7, 2), card(5, 2), card(2, 2) })
+local straight: i32 = game.rank_five({ card(9, 0), card(8, 1), card(7, 2), card(6, 3), card(5, 0) })
+local three_kind: i32 = game.rank_five({ card(7, 0), card(7, 1), card(7, 2), card(12, 3), card(2, 0) })
+local two_pair: i32 = game.rank_five({ card(14, 0), card(14, 1), card(3, 0), card(3, 1), card(8, 2) })
+local one_pair: i32 = game.rank_five({ card(13, 0), card(13, 1), card(10, 0), card(6, 1), card(2, 2) })
+local high_card: i32 = game.rank_five({ card(14, 0), card(11, 1), card(8, 0), card(5, 1), card(2, 2) })
+assert(straight_flush > four_kind and four_kind > full_house and full_house > flush)
+assert(flush > straight and straight > three_kind and three_kind > two_pair)
+assert(two_pair > one_pair and one_pair > high_card)
+
+-- The wheel is a five-high straight, below a six-high straight.
+local wheel: i32 = game.rank_five({ card(14, 0), card(2, 1), card(3, 2), card(4, 3), card(5, 0) })
+local six_high: i32 = game.rank_five({ card(2, 0), card(3, 1), card(4, 2), card(5, 3), card(6, 0) })
+assert(six_high > wheel)
+
+-- With three hearts in the middle, the computer finds the two hearts that
+-- complete a flush instead of an unrelated high pair.
+local middle: {game.Card} = { card(2, 2), card(7, 2), card(11, 2) }
+local hand: {game.Card} = { card(14, 0), card(14, 1), card(5, 2), card(13, 2), card(9, 0) }
+local choice = game.best_pair(hand, middle)
+assert(choice.first == 2 and choice.second == 3)
+
+-- A full game is exactly six increasingly valuable tricks. Both hands stay
+-- at five cards after every draw and the shared 52-card deck ends empty.
+math.randomseed(42)
+local state = game.new()
+assert(#state.deck == 39 and #state.middle == 3)
+for expected_round = FIRST_ROUND, LAST_ROUND do
+    assert(state.round == expected_round)
+    assert(#state.player_hand == 5 and #state.computer_hand == 5)
+    state:play(0, 1)
+end
+assert(state.finished)
+assert(#state.deck == 0 and #state.middle == 0)
+assert(state.player_tricks + state.computer_tricks <= 6)
+assert(state.player_points + state.computer_points <= 21)
+local final_points: i32 = state.player_points + state.computer_points
+state:play(0, 1)
+assert(state.player_points + state.computer_points == final_points)
