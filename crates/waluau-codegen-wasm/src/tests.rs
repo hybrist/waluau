@@ -22,6 +22,63 @@ fn wasm_export_func_index(wasm: &[u8], name: &str) -> Option<u32> {
     None
 }
 
+fn wasm_has_start_section(wasm: &[u8]) -> bool {
+    Parser::new(0).parse_all(wasm).any(|payload| {
+        matches!(
+            payload.expect("wasm should parse"),
+            Payload::StartSection { .. }
+        )
+    })
+}
+
+#[test]
+fn exports_top_level_code_as_main_without_a_start_section() {
+    let source = r#"
+        local value: i32 = 1
+        assert(value == 1)
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+
+    assert!(
+        wasm_export_func_index(&wasm, "main").is_some(),
+        "top-level code should have an explicit main entry point"
+    );
+    assert_eq!(
+        wasm_export_func_index(&wasm, "main"),
+        wasm_export_func_index(&wasm, "__waluau_main"),
+        "hosts should be able to identify the generated main entry point"
+    );
+    assert!(
+        !wasm_has_start_section(&wasm),
+        "top-level code must not execute during module instantiation"
+    );
+}
+
+#[test]
+fn top_level_main_entry_point_takes_precedence_over_a_declared_main_export() {
+    let source = r#"
+        function main(): i32
+            return 42
+        end
+
+        assert(true)
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert_eq!(
+        wat.matches("(export \"main\"").count(),
+        1,
+        "the module should expose exactly one main entry point:\n{wat}"
+    );
+}
+
 fn wasm_function_import_count(wasm: &[u8]) -> u32 {
     let mut count = 0;
     for payload in Parser::new(0).parse_all(wasm) {

@@ -2,6 +2,7 @@ import {
   WALUAU_STRING_CONSTANTS_MODULE,
   buildWaluauImports,
   WALUAU_IMPORT_MODULE,
+  WALUAU_MAIN_EXPORT,
 } from '../../playground/src/utils/wasm.js';
 
 export async function compileAndInstantiate(files, entryFile = '/main.walu', options = {}) {
@@ -44,6 +45,7 @@ export async function compileAndInstantiateWithExports(files, entryFile = '/main
     const instance = await WebAssembly.instantiate(wasmModule, imports);
 
     instanceExports = instance.exports;
+    instanceExports[WALUAU_MAIN_EXPORT]?.();
     return instance.exports;
   } finally {
     if (tempIframe) {
@@ -82,6 +84,7 @@ export async function compileAndInstantiateWithDom(files, entryFile = '/main.wal
     const instance = await WebAssembly.instantiate(wasmModule, imports);
 
     instanceExports = instance.exports;
+    instanceExports[WALUAU_MAIN_EXPORT]?.();
 
     const storage = imports[WALUAU_IMPORT_MODULE]['Window.get/localStorage'](domOutputRoot.defaultView);
 

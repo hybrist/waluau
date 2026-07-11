@@ -3,6 +3,7 @@ import { luaPatternMatch, luaGsub, luaGsubGenerator, luaGmatch, makeStringReplac
 
 export const WALUAU_STRING_CONSTANTS_MODULE = 'string_constants';
 export const WALUAU_IMPORT_MODULE = 'waluau';
+export const WALUAU_MAIN_EXPORT = '__waluau_main';
 // Must match waluau_codegen_wasm::host::HOST_IMPORT_COUNT
 export const WALUAU_HOST_IMPORT_COUNT = 24;
 const PROMISE_RESUME_TRAMPOLINE_EXPORT = '__waluau_resume_promise_await';
@@ -1180,10 +1181,8 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
       if (promise == null || typeof promise.then !== 'function') {
         throw new TypeError('coroutine.await_promise expects a Promise-like extern value');
       }
-      // Resolve exports lazily inside invoke: when __waluau_attach_promise is
-      // called from the Wasm start function (module initialisation), the
-      // instance object doesn't exist yet, so getWasmExports() returns null.
-      // By the time the promise settles the instance is always available.
+      // Resolve exports lazily inside invoke because the promise may settle
+      // after the explicit main entry point returns.
       const invoke = (payload, rejected) => {
         const exports = options.getWasmExports?.();
         const resume = exports?.[PROMISE_RESUME_TRAMPOLINE_EXPORT];
@@ -1942,6 +1941,7 @@ export function classifyWasmModuleError(err, phase, requiresWasmGc) {
     inspect: 'inspect the generated WASM module',
     imports: 'prepare imports for the generated WASM module',
     instantiate: 'instantiate the generated WASM module',
+    execute: 'execute the generated WASM module entry point',
   };
   const lines = [`Failed to ${phaseLabels[phase] || 'load the generated WASM module'}: ${detail}`];
 

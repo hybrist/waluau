@@ -7,13 +7,13 @@ self-contained conformance test for the Waluau language.
 
 A conformance test is an ordinary Waluau program that exercises some behaviour
 and checks the results with top-level `assert(...)` statements. Top-level
-statements run during module instantiation (via the WebAssembly `start`
-section), so the harness only has to compile each program and instantiate it:
+statements run through an exported `main` function, which the harness invokes
+explicitly after instantiating the module:
 
-- The test **passes** if the program compiles and instantiates without
-  trapping.
+- The test **passes** if the program compiles, instantiates, and its `main`
+  entry point returns without trapping.
 - The test **fails** if the program fails to compile, or if any top-level
-  `assert(...)` evaluates to `false` (which traps during instantiation).
+  `assert(...)` evaluates to `false` (which traps during `main` execution).
 
 Because the checks are written in Waluau itself, a test reads like the feature
 it documents:
@@ -56,7 +56,7 @@ expected failure starts appearing, the test goes red — remove `pending`. See
 
 | `pending` | `error=` | Kind | Runner verifies |
 |-----------|----------|------|-----------------|
-| no  | no  | pass | compiles and instantiates without trapping |
+| no  | no  | pass | compiles, instantiates, and executes without trapping |
 | yes | no  | pending | currently fails (any way) |
 | no  | yes | fail | fails, and every `error=` fragment is in the message |
 | yes | yes | fail + pending | the expected failure is **not** produced (yet) |
@@ -78,5 +78,6 @@ pnpm --filter conformance-runner test:browser
 
 The harness lives in `apps/conformance-runner`. It discovers every `*.walu`
 file under this directory, compiles and instantiates each with
-`WebAssembly.instantiate()` in a real browser (via Playwright), and reports
+`WebAssembly.instantiate()` in a real browser (via Playwright), invokes its
+exported `main` entry point, and reports
 which ones passed or failed.

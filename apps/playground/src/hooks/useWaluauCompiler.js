@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   WALUAU_STRING_CONSTANTS_MODULE,
+  WALUAU_MAIN_EXPORT,
   buildWaluauImports,
   getWasmExports,
   getDefaultParamValue,
@@ -143,8 +144,11 @@ export default function useWaluauCompiler({ files, entryFile }) {
         phase = 'inspect';
         moduleUsesDomOutput = usesDomImports(wasmModule, wasmBuffer);
         const richSigs = output?.signatures || {};
-        const list = getWasmExports(wasmBuffer)
+        const wasmExports = getWasmExports(wasmBuffer);
+        const hasGeneratedMain = wasmExports.some(func => func.name === WALUAU_MAIN_EXPORT);
+        const list = wasmExports
           .filter(func => !func.name.startsWith('__waluau'))
+          .filter(func => !(hasGeneratedMain && func.name === 'main'))
           .map(func => {
             const richSig = (richSigs instanceof Map || (richSigs && typeof richSigs.get === 'function'))
               ? richSigs.get(func.name)
@@ -191,6 +195,8 @@ export default function useWaluauCompiler({ files, entryFile }) {
         phase = 'instantiate';
         const instance = await WebAssembly.instantiate(wasmModule, imports);
         instanceExports = instance.exports;
+        phase = 'execute';
+        instanceExports[WALUAU_MAIN_EXPORT]?.();
 
         if (active) {
           setRunInstance(instance);
