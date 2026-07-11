@@ -1,0 +1,24 @@
+-- DOM-free assertions for reusable engine state.
+
+local input_module = require("../../engine/input")
+local time_module = require("../../engine/time")
+
+local input = input_module.new()
+assert(not input:is_down("Space"))
+input:set_key("Space", true)
+assert(input:is_down("Space"))
+assert(input:was_pressed("Space"))
+input:end_step()
+assert(input:is_down("Space"))
+assert(not input:was_pressed("Space"))
+input:set_key("Space", false)
+assert(input:was_released("Space"))
+
+local clock = time_module.new(10.0, 0.25)
+assert(clock:advance(1000.0) == 0)
+assert(clock:advance(1050.0) == 0)
+assert(clock:advance(1100.0) == 1)
+assert(clock:alpha() < 0.001)
+-- A one-second host stall is clamped to 250 ms: two updates plus 50 ms left.
+assert(clock:advance(2100.0) == 2)
+assert(clock:alpha() > 0.49 and clock:alpha() < 0.51)

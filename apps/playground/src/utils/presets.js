@@ -19,6 +19,18 @@ const snakeFixtures = import.meta.glob('../../../../fixtures/snake/*.walu', {
   import: 'default'
 });
 
+const gameEngineFixtures = import.meta.glob('../../../../fixtures/game-engine/*.walu', {
+  eager: true,
+  query: '?raw',
+  import: 'default'
+});
+
+const gameEngineModules = import.meta.glob('../../../../engine/*.walu', {
+  eager: true,
+  query: '?raw',
+  import: 'default'
+});
+
 const pokerTricksFixtures = import.meta.glob('../../../../fixtures/poker-tricks/*.walu', {
   eager: true,
   query: '?raw',
@@ -37,7 +49,7 @@ const conformanceIncludeModules = import.meta.glob('../../../../{builtins,extern
   import: 'default'
 });
 
-export { fixtureModules, moduleFixtures, snakeFixtures, pokerTricksFixtures, conformanceModules };
+export { fixtureModules, moduleFixtures, snakeFixtures, gameEngineFixtures, pokerTricksFixtures, conformanceModules };
 
 export function filesForConformancePreset(filename, source) {
   const files = {
@@ -177,6 +189,24 @@ export const SNAKE_PRESET = {
   entryFile: '/main.walu'
 };
 
+export const GAME_ENGINE_PRESET = {
+  key: 'game-engine',
+  label: '2D Game Engine',
+  files: {
+    ...Object.entries(gameEngineModules).reduce((acc, [path, source]) => {
+      const filename = path.split('/').pop();
+      acc[`/engine/${filename}`] = source;
+      return acc;
+    }, {}),
+    ...Object.entries(gameEngineFixtures).reduce((acc, [path, source]) => {
+      const filename = path.split('/').pop();
+      acc[`/fixtures/game-engine/${filename}`] = source;
+      return acc;
+    }, {})
+  },
+  entryFile: '/fixtures/game-engine/main.walu'
+};
+
 export const POKER_TRICKS_PRESET = {
   key: 'poker-tricks',
   label: 'Poker Tricks',
@@ -188,11 +218,11 @@ export const POKER_TRICKS_PRESET = {
   entryFile: '/main.walu'
 };
 
-export const PRESETS = [...SINGLE_PRESETS, MULTI_PRESET, DOM_PRESET, KANBAN_PRESET, POKER_TRICKS_PRESET, SNAKE_PRESET, ...CONFORMANCE_PRESETS].sort((left, right) =>
+export const PRESETS = [...SINGLE_PRESETS, MULTI_PRESET, DOM_PRESET, KANBAN_PRESET, POKER_TRICKS_PRESET, SNAKE_PRESET, GAME_ENGINE_PRESET, ...CONFORMANCE_PRESETS].sort((left, right) =>
   left.label.localeCompare(right.label)
 );
 
-export const DEFAULT_PRESET = PRESETS[0] || {
+export const DEFAULT_PRESET = PRESETS.find(({ key }) => key === 'add') || PRESETS[0] || {
   key: 'default',
   label: 'Default',
   files: { '/main.walu': '' },

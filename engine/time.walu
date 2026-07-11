@@ -1,0 +1,50 @@
+-- Host-independent fixed-step clock. Timestamps arrive in milliseconds (the
+-- browser requestAnimationFrame convention); game updates receive seconds.
+
+type Clock = { step: f64, max_frame: f64, accumulator: f64, last_ms: f64, started: bool }
+
+function Clock.new(update_hz: f64, max_frame_seconds: f64): Clock
+    assert(update_hz > 0.0)
+    assert(max_frame_seconds > 0.0)
+    return {
+        step = 1.0 / update_hz,
+        max_frame = max_frame_seconds,
+        accumulator = 0.0,
+        last_ms = 0.0,
+        started = false,
+    }
+end
+
+-- Add elapsed host time and return the number of fixed updates to run.
+-- Clamping prevents a suspended tab from creating an unbounded catch-up loop.
+function Clock:advance(timestamp_ms: f64): i32
+    if not self.started then
+        self.started = true
+        self.last_ms = timestamp_ms
+        return 0
+    end
+
+    local elapsed: f64 = (timestamp_ms - self.last_ms) / 1000.0
+    self.last_ms = timestamp_ms
+    if elapsed < 0.0 then
+        elapsed = 0.0
+    elseif elapsed > self.max_frame then
+        elapsed = self.max_frame
+    end
+
+    self.accumulator += elapsed
+    local steps: i32 = 0
+    while self.accumulator >= self.step do
+        self.accumulator -= self.step
+        steps += 1
+    end
+    return steps
+end
+
+function Clock:alpha(): f64
+    return self.accumulator / self.step
+end
+
+return {
+    new = Clock.new,
+}

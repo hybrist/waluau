@@ -25,7 +25,7 @@ test.describe('page load', () => {
   });
 
   test('editor is pre-filled with the default preset source', async ({ page }) => {
-    // "Add" is first alphabetically and therefore the default preset.
+    // "Add" remains the explicit default even when another preset sorts before it.
     await expect(page.locator('.code-textarea')).toContainText('function add');
   });
 

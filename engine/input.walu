@@ -1,0 +1,65 @@
+-- Small keyboard state machine. It is deliberately string-keyed so game code
+-- sees the same names on every backend ("ArrowLeft", "a", "Space", ...).
+
+type Button = { key: string, down: bool, pressed: bool, released: bool }
+type Input = { buttons: {Button} }
+
+function Input.new(): Input
+    return { buttons = {} }
+end
+
+function Input:index_of(key: string): i32
+    for i, button in self.buttons do
+        if button.key == key then
+            return i
+        end
+    end
+    return -1
+end
+
+function Input:ensure(key: string): i32
+    local index: i32 = self:index_of(key)
+    if index >= 0 then
+        return index
+    end
+    table.insert(self.buttons, { key = key, down = false, pressed = false, released = false })
+    return #self.buttons - 1
+end
+
+function Input:set_key(key: string, down: bool): unit
+    local index: i32 = self:ensure(key)
+    local button = self.buttons[index]
+    if down and not button.down then
+        button.pressed = true
+    elseif not down and button.down then
+        button.released = true
+    end
+    button.down = down
+end
+
+function Input:is_down(key: string): bool
+    local index: i32 = self:index_of(key)
+    return index >= 0 and self.buttons[index].down
+end
+
+function Input:was_pressed(key: string): bool
+    local index: i32 = self:index_of(key)
+    return index >= 0 and self.buttons[index].pressed
+end
+
+function Input:was_released(key: string): bool
+    local index: i32 = self:index_of(key)
+    return index >= 0 and self.buttons[index].released
+end
+
+-- Edge transitions last until one simulation update consumes them.
+function Input:end_step(): unit
+    for button in self.buttons do
+        button.pressed = false
+        button.released = false
+    end
+end
+
+return {
+    new = Input.new,
+}

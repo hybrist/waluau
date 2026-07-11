@@ -1,0 +1,81 @@
+-- Backend-neutral-looking drawing facade backed by browser Canvas 2D today.
+-- Game modules can name Graphics and call these methods without importing DOM
+-- externs or touching CanvasRenderingContext2D directly.
+
+local window = require("dom:window")
+
+type Graphics = { context: CanvasRenderingContext2D, width: f64, height: f64 }
+
+function Graphics.new(context: CanvasRenderingContext2D, width: f64, height: f64): Graphics
+    return { context = context, width = width, height = height }
+end
+
+function Graphics:clear(color: string): unit
+    self.context:save()
+    self.context:resetTransform()
+    self.context.fillStyle = color
+    self.context:fillRect(0.0, 0.0, self.width, self.height)
+    self.context:restore()
+end
+
+function Graphics:set_color(color: string): unit
+    self.context.fillStyle = color
+    self.context.strokeStyle = color
+end
+
+function Graphics:set_line_width(width: f64): unit
+    self.context.lineWidth = width
+end
+
+function Graphics:fill_rectangle(x: f64, y: f64, width: f64, height: f64): unit
+    self.context:fillRect(x, y, width, height)
+end
+
+function Graphics:stroke_rectangle(x: f64, y: f64, width: f64, height: f64): unit
+    self.context:strokeRect(x, y, width, height)
+end
+
+function Graphics:fill_circle(x: f64, y: f64, radius: f64): unit
+    self.context:beginPath()
+    self.context:arc(x, y, radius, 0.0, math.pi * 2.0)
+    self.context:fill()
+end
+
+function Graphics:line(x1: f64, y1: f64, x2: f64, y2: f64): unit
+    self.context:beginPath()
+    self.context:moveTo(x1, y1)
+    self.context:lineTo(x2, y2)
+    self.context:stroke()
+end
+
+function Graphics:set_font(font: string): unit
+    self.context.font = font
+end
+
+function Graphics:print(text: string, x: f64, y: f64): unit
+    self.context:fillText(text, x, y)
+end
+
+function Graphics:push(): unit
+    self.context:save()
+end
+
+function Graphics:pop(): unit
+    self.context:restore()
+end
+
+function Graphics:translate(x: f64, y: f64): unit
+    self.context:translate(x, y)
+end
+
+function Graphics:rotate(radians: f64): unit
+    self.context:rotate(radians)
+end
+
+function Graphics:scale(x: f64, y: f64): unit
+    self.context:scale(x, y)
+end
+
+return {
+    new = Graphics.new,
+}

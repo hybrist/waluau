@@ -666,6 +666,18 @@ mod tests {
     }
 
     #[test]
+    fn compiles_2d_game_engine_browser_fixture() {
+        super::compile_file(&fixture_path("game-engine/main.walu"))
+            .expect("browser game engine fixture should compile");
+    }
+
+    #[test]
+    fn compiles_2d_game_engine_headless_simulation() {
+        super::compile_file(&fixture_path("game-engine/sim.walu"))
+            .expect("headless game engine simulation should compile");
+    }
+
+    #[test]
     fn compiles_namespace_table_exports() {
         super::compile_file(&fixture_path("modules/namespace_main.walu"))
             .expect("compile should succeed");
