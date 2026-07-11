@@ -36,3 +36,18 @@ cargo run -p waluau-cli -- fixtures/poker-tricks/main.walu -o poker-tricks.wasm
 # Headless rules check:
 cargo run -p waluau-cli -- fixtures/poker-tricks/sim.walu -o sim.wasm
 ```
+
+## Presentation
+
+The table stays DOM-rendered so every playable card remains a keyboard-accessible
+button with a stable label. Layered rank, suit, and pip elements give the cards a
+playing-card face; custom CSS supplies the felt table, patterned card backs,
+hover/focus/selection feedback, and the staggered 3D flip at showdown. The reveal
+sequence then emphasizes the winning five-card hand, dims the loser, lands the
+result title, and sends animated pot chips plus a points badge toward the winner
+and score. Ties pulse both hands and split the pot back outward. Player wins use
+a celebratory gold glow, house wins a restrained red impact, and ties a cool blue
+treatment. Selection uses an entry keyframe so its lift and overshoot remain
+visible even though interaction rerenders the DOM. All movement disables itself
+when the browser requests reduced motion while preserving the same static outcome
+emphasis and accessible result text.
