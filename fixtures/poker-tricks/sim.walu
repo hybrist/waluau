@@ -52,14 +52,25 @@ assert(#swap_state.history == 0) -- the trick cannot start before swap resolutio
 local old_hand = swap_state.player_hand[0]
 local old_middle = swap_state.middle[0]
 local old_deck_size: i32 = #swap_state.deck
-swap_state:resolve_swap(1, { 0 }, { 0 })
+swap_state:resolve_swap({ 0 }, { 0 })
 assert(not swap_state.swap_open and swap_state.swap_winner == 1 and swap_state.swap_count == 1)
 assert(swap_state.player_points == 9 and swap_state.pot == 1)
 assert(swap_state.player_hand[0].rank == old_middle.rank and swap_state.player_hand[0].suit == old_middle.suit)
 assert(swap_state.middle[0].rank == old_hand.rank and swap_state.middle[0].suit == old_hand.suit)
 assert(#swap_state.deck == old_deck_size)
-swap_state:resolve_swap(3, { 1 }, { 1 })
+swap_state:resolve_swap({ 1 }, { 1 })
 assert(swap_state.player_wager == 1 and swap_state.swap_count == 1) -- only one resolution per round
+
+-- Wagers are the number of cards proposed, rather than an independent choice.
+local two_card_state = game.new()
+two_card_state.computer_points = 0
+two_card_state:resolve_swap({ 0, 1 }, { 0, 1 })
+assert(two_card_state.player_wager == 2 and two_card_state.player_points == 8 and two_card_state.pot == 2)
+
+local unaffordable_state = game.new()
+unaffordable_state.player_points = 1
+unaffordable_state:resolve_swap({ 0, 1 }, { 0, 1 })
+assert(unaffordable_state.swap_open and unaffordable_state.player_wager == 0)
 
 -- With three hearts in the middle, the computer finds the two hearts that
 -- complete a flush instead of an unrelated high pair.
@@ -77,7 +88,7 @@ assert(state.player_points == 10 and state.computer_points == 10 and state.swap_
 for expected_round = FIRST_ROUND, LAST_ROUND do
     assert(state.round == expected_round)
     assert(#state.player_hand == 5 and #state.computer_hand == 5)
-    state:resolve_swap(0, {}, {})
+    state:resolve_swap({}, {})
     assert(not state.swap_open)
     state:play(0, 1)
     assert(#state.history == expected_round)

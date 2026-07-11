@@ -5,7 +5,7 @@
 
 type Card = { rank: i32, suit: i32 }
 type PairChoice = { first: i32, second: i32, value: i32 }
-type SwapChoice = { wager: i32, hand_indices: {i32}, middle_indices: {i32}, community_value: i32, hand_value: i32 }
+type SwapChoice = { hand_indices: {i32}, middle_indices: {i32}, community_value: i32, hand_value: i32 }
 type Trick = { round: i32, middle: {Card}, player_cards: {Card}, computer_cards: {Card}, player_value: i32, computer_value: i32, winner: i32, points: i32, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32 }
 type State = { deck: {Card}, player_hand: {Card}, computer_hand: {Card}, middle: {Card}, history: {Trick}, round: i32, player_points: i32, computer_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32, finished: bool }
 
@@ -197,7 +197,6 @@ function proposed_swap(hand: {Card}, middle: {Card}, hand_indices: {i32}, middle
     local proposed_middle: {Card} = clone_cards(middle)
     exchange(proposed_hand, proposed_middle, hand_indices, middle_indices)
     return {
-        wager = 0,
         hand_indices = hand_indices,
         middle_indices = middle_indices,
         community_value = rank_three(proposed_middle),
@@ -207,7 +206,7 @@ end
 
 function best_swap(hand: {Card}, middle: {Card}, points: i32): SwapChoice
     local baseline: i32 = best_pair(hand, middle).value
-    local best: SwapChoice = { wager = 0, hand_indices = {}, middle_indices = {}, community_value = rank_three(middle), hand_value = baseline }
+    local best: SwapChoice = { hand_indices = {}, middle_indices = {}, community_value = rank_three(middle), hand_value = baseline }
     local hand_options: {{i32}} = {
         { 0 }, { 1 }, { 2 }, { 3 }, { 4 },
         { 0, 1 }, { 0, 2 }, { 0, 3 }, { 0, 4 }, { 1, 2 }, { 1, 3 }, { 1, 4 }, { 2, 3 }, { 2, 4 }, { 3, 4 },
@@ -216,7 +215,7 @@ function best_swap(hand: {Card}, middle: {Card}, points: i32): SwapChoice
     local middle_options: {{i32}} = { { 0 }, { 1 }, { 2 }, { 0, 1 }, { 0, 2 }, { 1, 2 }, { 0, 1, 2 } }
     for hand_indices in hand_options do
         for middle_indices in middle_options do
-            if #hand_indices == #middle_indices then
+            if #hand_indices == #middle_indices and #hand_indices <= points then
                 local candidate: SwapChoice = proposed_swap(hand, middle, hand_indices, middle_indices)
                 if candidate.hand_value > best.hand_value or (candidate.hand_value == best.hand_value and candidate.community_value > best.community_value) then
                     best.hand_indices = candidate.hand_indices
@@ -227,12 +226,10 @@ function best_swap(hand: {Card}, middle: {Card}, points: i32): SwapChoice
             end
         end
     end
-    if best.hand_value > baseline and points > 0 then
-        local old_category: i32 = baseline // 759375
-        local new_category: i32 = best.hand_value // 759375
-        best.wager = 1
-        if new_category > old_category then best.wager = 3 end
-        if best.wager > points then best.wager = points end
+    if best.hand_value <= baseline then
+        best.hand_indices = {}
+        best.middle_indices = {}
+        best.community_value = rank_three(middle)
     end
     return best
 end
@@ -251,10 +248,11 @@ function State:reveal_middle(): unit
     self.middle = { draw(self.deck), draw(self.deck), draw(self.deck) }
 end
 
-function State:resolve_swap(player_wager: i32, hand_indices: {i32}, middle_indices: {i32}): unit
+function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): unit
     if self.finished or not self.swap_open then return end
-    local valid_player_swap: bool = player_wager >= 1 and player_wager <= 3 and player_wager <= self.player_points and #hand_indices >= 1 and #hand_indices <= 3 and #hand_indices == #middle_indices
-    if player_wager > 0 and not valid_player_swap then return end
+    local player_wager: i32 = #hand_indices
+    local valid_player_swap: bool = player_wager <= 3 and player_wager <= self.player_points and player_wager == #middle_indices
+    if not valid_player_swap then return end
 
     local computer: SwapChoice = best_swap(self.computer_hand, self.middle, self.computer_points)
     local player_community: i32 = 0
@@ -263,7 +261,7 @@ function State:resolve_swap(player_wager: i32, hand_indices: {i32}, middle_indic
     end
 
     self.player_wager = player_wager
-    self.computer_wager = computer.wager
+    self.computer_wager = #computer.hand_indices
     self.player_points -= self.player_wager
     self.computer_points -= self.computer_wager
     self.pot = self.player_wager + self.computer_wager
