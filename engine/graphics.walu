@@ -28,7 +28,7 @@ type Graphics = {
     gl: WebGL2RenderingContext,
     width: f64,
     height: f64,
-    vertices: Float32Buffer,
+    vertices: Float32Array,
     used: i32,
     red: f64,
     green: f64,
@@ -123,7 +123,7 @@ void main() {
         gl = gl,
         width = width,
         height = height,
-        vertices = dom_new_float32_buffer((MAX_VERTICES * VERTEX_FLOATS)::u32),
+        vertices = Float32Array.create(MAX_VERTICES * VERTEX_FLOATS),
         used = 0,
         red = 1.0,
         green = 1.0,
@@ -141,7 +141,9 @@ function Graphics:flush(): unit
         return
     end
     local gl: WebGL2RenderingContext = self.gl
-    gl:bufferData(GL_ARRAY_BUFFER, self.vertices, GL_DYNAMIC_DRAW)
+    -- Vertices live in wasm linear memory; the view host call wraps them as
+    -- a JS Float32Array (no per-element copies) and bufferData uploads once.
+    gl:bufferData(GL_ARRAY_BUFFER, dom_float32_array_view(self.vertices), GL_DYNAMIC_DRAW)
     gl:drawArrays(GL_TRIANGLES, 0, self.used // VERTEX_FLOATS)
     self.used = 0
 end
@@ -158,7 +160,7 @@ function Graphics:ensure_capacity(vertex_count: i32): unit
 end
 
 function Graphics:push_float(value: f64): unit
-    dom_float32_buffer_set(self.vertices, self.used::u32, value)
+    self.vertices[self.used] = value
     self.used += 1
 end
 

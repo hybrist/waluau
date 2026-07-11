@@ -82,7 +82,7 @@ type WebGLProgram = extern extends WebGLObject
 type WebGLShader = extern extends WebGLObject
 type WebGLUniformLocation = extern
 type WebGL2RenderingContext = extern
-type Float32Buffer = extern
+type BufferSource = extern
 type Promise<T> = extern
 
 declare property Blob:size: u64
@@ -1125,8 +1125,8 @@ declare function WebGL2RenderingContext:getUniformBlockIndex(program: WebGLProgr
 declare function WebGL2RenderingContext:getActiveUniformBlockName(program: WebGLProgram, uniform_block_index: u32): string?
 declare function WebGL2RenderingContext:uniformBlockBinding(program: WebGLProgram, uniform_block_index: u32, uniform_block_binding: u32): unit
 declare function WebGL2RenderingContext:bufferData(target: u32, size: i32, usage: u32): unit
-declare function WebGL2RenderingContext:bufferData(target: u32, src_data: Float32Buffer?, usage: u32): unit
-declare function WebGL2RenderingContext:bufferSubData(target: u32, dst_byte_offset: i32, src_data: Float32Buffer): unit
+declare function WebGL2RenderingContext:bufferData(target: u32, src_data: BufferSource?, usage: u32): unit
+declare function WebGL2RenderingContext:bufferSubData(target: u32, dst_byte_offset: i32, src_data: BufferSource): unit
 declare function WebGL2RenderingContext:texImage2D(target: u32, level: i32, internalformat: i32, width: i32, height: i32, border: i32, format: u32, type: u32, pbo_offset: i32): unit
 declare function WebGL2RenderingContext:texSubImage2D(target: u32, level: i32, xoffset: i32, yoffset: i32, width: i32, height: i32, format: u32, type: u32, pbo_offset: i32): unit
 declare function WebGL2RenderingContext:compressedTexImage2D(target: u32, level: i32, internalformat: u32, width: i32, height: i32, border: i32, image_size: i32, offset: i32): unit
@@ -1134,7 +1134,4 @@ declare function WebGL2RenderingContext:compressedTexSubImage2D(target: u32, lev
 declare function WebGL2RenderingContext:readPixels(x: i32, y: i32, width: i32, height: i32, format: u32, type: u32, offset: i32): unit
 declare function dom_window(): Window
 declare function fetch(input: string): Promise<Response>
-declare function dom_new_float32_buffer(length: u32): Float32Buffer
-declare function dom_float32_buffer_set(data: Float32Buffer, index: u32, value: f64): unit
-declare function dom_float32_buffer_get(data: Float32Buffer, index: u32): f64
-declare function dom_float32_buffer_len(data: Float32Buffer): u32
+declare function dom_float32_array_view(data: Float32Array): BufferSource

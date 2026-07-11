@@ -559,7 +559,7 @@ function resolveDomMemberName(receiver, generatedName) {
   return generatedName;
 }
 
-function createPlaygroundDomHost(wasmImports, domOutputRoot, getWasmExports = () => null) {
+function createPlaygroundDomHost(wasmImports, domOutputRoot, getWasmExports = () => null, getWasmMemory = () => null) {
   const fallbackStorage = new Map();
   const fallbackStorageHost = {
     getItem(key) {
@@ -690,15 +690,19 @@ function createPlaygroundDomHost(wasmImports, domOutputRoot, getWasmExports = ()
     // rendering with readPixels.
     'HTMLCanvasElement.getContextWebgl2': (canvas) =>
       canvas.getContext('webgl2', { preserveDrawingBuffer: true }),
-    // Float32Buffer host helpers: waluau has no typed-array construction or
-    // indexed extern access, so GPU vertex data is built through these
-    // (mirroring the tfjs TensorData pattern).
-    dom_new_float32_buffer: (length) => new Float32Array(length >>> 0),
-    dom_float32_buffer_set: (data, index, value) => {
-      data[index >>> 0] = value;
+    // Wrap a linear-memory typed array (an i32 data pointer; the element
+    // count lives in the 8-byte allocation header preceding the data) as a
+    // JS Float32Array view for BufferSource-typed extern params like
+    // WebGL2's bufferData. The view is created fresh on every call because
+    // memory growth detaches previous ArrayBuffer views.
+    dom_float32_array_view: (pointer) => {
+      const memory = getWasmMemory();
+      if (!(memory instanceof WebAssembly.Memory)) {
+        throw new Error('dom_float32_array_view requires the waluau memory import');
+      }
+      const length = new DataView(memory.buffer).getUint32(pointer - 8, true);
+      return new Float32Array(memory.buffer, pointer, length);
     },
-    dom_float32_buffer_get: (data, index) => data[index >>> 0],
-    dom_float32_buffer_len: (data) => data.length,
     'EventTarget.addEventListener': (target, type, callback) => registerEventListener(target, String(type), callback),
     'Window.requestAnimationFrame': requestAnimationFrame,
     'Node.removeChild': removeChild,
@@ -1147,7 +1151,13 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
       wasmImport.name === 'memory'
   );
   const wasmMemory = needsMemory ? new WebAssembly.Memory({ initial: 1 }) : null;
-  const domHost = createPlaygroundDomHost(wasmImports, options.domOutputRoot, options.getWasmExports);
+  const getWasmMemory = () => wasmMemory;
+  const domHost = createPlaygroundDomHost(
+    wasmImports,
+    options.domOutputRoot,
+    options.getWasmExports,
+    getWasmMemory
+  );
   const tfjsHost = createTfjsHost(options.getWasmExports);
   const hostImports = options.hostImports ?? {};
   const reportAsyncError = (error) => {
