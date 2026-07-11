@@ -6,8 +6,13 @@ to survive the addition of more complete backends and subsystems.
 
 The browser is the first platform. Games depend on the engine facade while
 `browser.walu` alone owns DOM setup, event registration, and
-`requestAnimationFrame`. Drawing currently uses Canvas 2D behind a `Graphics`
-record. The fixed-step clock and keyboard state are host-independent.
+`requestAnimationFrame`. Drawing is GPU-backed: `graphics.walu` batches every
+shape and text call into one interleaved vertex stream (clip-space position
+plus color per vertex) and draws it through WebGL2 with a single draw call
+per flush. Text uses the built-in 5x7 bitmap font in `font.walu`, rendered as
+colored quads, and the push/pop transform stack is applied CPU-side while
+vertices are emitted. The fixed-step clock and keyboard state are
+host-independent.
 
 ## Initial API
 
@@ -32,7 +37,10 @@ engine.start({
 
 `Input` supplies `is_down`, `was_pressed`, and `was_released`. `Graphics`
 supplies clearing, color and line-width state, rectangles, circles, lines,
-text, and a push/pop transform stack with translate/rotate/scale.
+text, and a push/pop transform stack with translate/rotate/scale. Every one
+of those calls renders on the GPU: lines are thin quads, circles are
+triangle fans, and `print` renders uppercased bitmap-font glyphs as quads,
+so a frame batches into very few draw calls.
 
 Callbacks are mandatory for now; games use a no-op callback when they do not
 need a hook. Updates use a fixed timestep. Drawing happens once per animation
@@ -100,6 +108,8 @@ the stable package surface (`waluau-tpil`), GPU-backed renderer (`waluau-vt3k`),
 and asset/audio/save services (`waluau-mi1t`). Beads remains the authoritative
 source for priorities and completion status.
 
-Canvas 2D is useful as a compatibility backend and for validating the API, but
-it cannot provide the shader, mesh, render-target, and batching control expected
-of the eventual primary renderer.
+The renderer draws colored geometry (shapes, lines, and bitmap-font text)
+through WebGL2 today, using the extern surface from `waluau-9tvw`. Textures,
+sprite batches, render targets, and custom shaders remain the domain of the
+full GPU backend tracked by `waluau-vt3k`; a Canvas 2D compatibility backend
+can return once backend polymorphism is expressible in the language.

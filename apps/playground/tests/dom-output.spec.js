@@ -344,14 +344,18 @@ test.describe('DOM Output in Run tab', () => {
     });
 
     const outputFrame = page.frameLocator('.dom-output-frame');
-    await expect(outputFrame.locator('h1')).toHaveText('Walua 2D Engine');
+    await expect(outputFrame.locator('h1')).toHaveText('Walua 2D Engine (WebGL2)');
     const canvas = outputFrame.locator('canvas#walua-game-canvas');
     await expect(canvas).toHaveJSProperty('width', 320);
     await expect(canvas).toHaveJSProperty('height', 200);
 
+    // The engine renders through WebGL2 (acquired with preserveDrawingBuffer),
+    // so the frame signature reads back through gl.readPixels.
     const signature = () =>
       canvas.evaluate((node) => {
-        const data = node.getContext('2d').getImageData(0, 0, node.width, node.height).data;
+        const gl = node.getContext('webgl2');
+        const data = new Uint8Array(node.width * node.height * 4);
+        gl.readPixels(0, 0, node.width, node.height, gl.RGBA, gl.UNSIGNED_BYTE, data);
         let hash = 0;
         for (let i = 0; i < data.length; i += 16) {
           hash = (hash * 33 + data[i] + data[i + 1] * 3 + data[i + 2] * 7) >>> 0;

@@ -19,7 +19,8 @@
     "replaceChild": "replace_child",
     "setAttribute": "set_attribute",
     "setItem": "set_item",
-    "textContent": "text_content"
+    "textContent": "text_content",
+    "getContextWebGL2": "get_context_webgl2"
   },
   "parameterRenames": {
     "Document.createElement.localName": "tag_name",

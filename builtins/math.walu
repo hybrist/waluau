@@ -23,6 +23,11 @@ declare function math.trunc(x: f64): f64
 declare function math.nearest(x: f32): f32
 declare function math.nearest(x: f64): f64
 
+declare function math.cos(x: f32): f32
+declare function math.cos(x: f64): f64
+declare function math.sin(x: f32): f32
+declare function math.sin(x: f64): f64
+
 declare function math.min(a: f32, b: f32): f32
 declare function math.min(a: f64, b: f64): f64
 declare function math.max(a: f32, b: f32): f32

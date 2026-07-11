@@ -1,79 +1,382 @@
--- Backend-neutral-looking drawing facade backed by browser Canvas 2D today.
--- Game modules can name Graphics and call these methods without importing DOM
--- externs or touching CanvasRenderingContext2D directly.
+-- GPU-backed drawing facade behind the same Graphics API games already use.
+-- Everything renders through WebGL2: shapes and text become colored
+-- triangles in one interleaved vertex stream (clip-space x, y plus r, g, b,
+-- a per vertex) that is uploaded and drawn in a single draw call per flush.
+-- Text uses the built-in bitmap font from font.walu, and the push/pop
+-- transform stack is applied CPU-side while vertices are emitted.
 
 local window = require("dom:window")
+local font = require("./font")
 
-type Graphics = { context: CanvasRenderingContext2D, width: f64, height: f64 }
+-- WebGL constants used by the renderer. The extern generator does not emit
+-- Web IDL constants, so the spec-fixed GLenum values live here.
+local GL_COLOR_BUFFER_BIT <const>: u32 = 0x00004000
+local GL_TRIANGLES <const>: u32 = 0x0004
+local GL_ARRAY_BUFFER <const>: u32 = 0x8892
+local GL_DYNAMIC_DRAW <const>: u32 = 0x88E8
+local GL_FLOAT <const>: u32 = 0x1406
+local GL_FRAGMENT_SHADER <const>: u32 = 0x8B30
+local GL_VERTEX_SHADER <const>: u32 = 0x8B31
 
-function Graphics.new(context: CanvasRenderingContext2D, width: f64, height: f64): Graphics
-    return { context = context, width = width, height = height }
+-- Interleaved floats per vertex: clip-space x, y then r, g, b, a.
+local VERTEX_FLOATS <const>: i32 = 6
+-- Vertices per batch before an implicit flush inserts an extra draw call.
+local MAX_VERTICES <const>: i32 = 4096
+local CIRCLE_SEGMENTS <const>: i32 = 32
+
+type Graphics = {
+    gl: WebGL2RenderingContext,
+    width: f64,
+    height: f64,
+    vertices: Float32Buffer,
+    used: i32,
+    red: f64,
+    green: f64,
+    blue: f64,
+    alpha: f64,
+    line_width: f64,
+    font_pixel: f64,
+    transforms: {f64}
+}
+
+function compile_shader(gl: WebGL2RenderingContext, kind: u32, source: string): WebGLShader
+    local maybe_shader: WebGLShader? = gl:createShader(kind)
+    assert(maybe_shader ~= nil)
+    local shader: WebGLShader = maybe_shader::WebGLShader
+    gl:shaderSource(shader, source)
+    gl:compileShader(shader)
+    local log: string? = gl:getShaderInfoLog(shader)
+    if log ~= nil then
+        local text: string = log::string
+        if #text > 0 then
+            error("game engine shader compilation failed: " .. text)
+        end
+    end
+    return shader
+end
+
+function hex_digit(code: i32): i32
+    if code >= 48 and code <= 57 then
+        return code - 48
+    elseif code >= 97 and code <= 102 then
+        return code - 87
+    elseif code >= 65 and code <= 70 then
+        return code - 55
+    end
+    return 0
+end
+
+-- One "#rrggbb" channel (two hex digits at a 1-based index) as 0.0..1.0.
+function channel(color: string, index: i32): f64
+    local high: i32 = string.byte(color, index)
+    local low: i32 = string.byte(color, index + 1)
+    local value: i32 = hex_digit(high) * 16 + hex_digit(low)
+    return (value::f64) / 255.0
+end
+
+function Graphics.new(gl: WebGL2RenderingContext, width: f64, height: f64): Graphics
+    local vertex_source: string = [[
+attribute vec2 a_position;
+attribute vec4 a_color;
+varying vec4 v_color;
+void main() {
+    gl_Position = vec4(a_position, 0.0, 1.0);
+    v_color = a_color;
+}
+]]
+    local fragment_source: string = [[
+precision mediump float;
+varying vec4 v_color;
+void main() {
+    gl_FragColor = v_color;
+}
+]]
+
+    local program: WebGLProgram = gl:createProgram()
+    gl:attachShader(program, compile_shader(gl, GL_VERTEX_SHADER, vertex_source))
+    gl:attachShader(program, compile_shader(gl, GL_FRAGMENT_SHADER, fragment_source))
+    gl:linkProgram(program)
+    local log: string? = gl:getProgramInfoLog(program)
+    if log ~= nil then
+        local text: string = log::string
+        if #text > 0 then
+            error("game engine shader program link failed: " .. text)
+        end
+    end
+    gl:useProgram(program)
+
+    -- The renderer owns one program and one vertex buffer, so attribute
+    -- layout is configured once: stride 24 bytes, position at 0, color at 8.
+    local buffer: WebGLBuffer = gl:createBuffer()
+    gl:bindBuffer(GL_ARRAY_BUFFER, buffer)
+    local position_location: i32 = gl:getAttribLocation(program, "a_position")
+    local color_location: i32 = gl:getAttribLocation(program, "a_color")
+    assert(position_location >= 0 and color_location >= 0)
+    gl:enableVertexAttribArray(position_location::u32)
+    gl:vertexAttribPointer(position_location::u32, 2, GL_FLOAT, false, 24, 0)
+    gl:enableVertexAttribArray(color_location::u32)
+    gl:vertexAttribPointer(color_location::u32, 4, GL_FLOAT, false, 24, 8)
+
+    gl:viewport(0, 0, width::i32, height::i32)
+
+    return {
+        gl = gl,
+        width = width,
+        height = height,
+        vertices = dom_new_float32_buffer((MAX_VERTICES * VERTEX_FLOATS)::u32),
+        used = 0,
+        red = 1.0,
+        green = 1.0,
+        blue = 1.0,
+        alpha = 1.0,
+        line_width = 1.0,
+        font_pixel = 2.0,
+        transforms = { 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 }
+    }
+end
+
+-- Draws the batched vertices accumulated since the previous flush.
+function Graphics:flush(): unit
+    if self.used == 0 then
+        return
+    end
+    local gl: WebGL2RenderingContext = self.gl
+    gl:bufferData(GL_ARRAY_BUFFER, self.vertices, GL_DYNAMIC_DRAW)
+    gl:drawArrays(GL_TRIANGLES, 0, self.used // VERTEX_FLOATS)
+    self.used = 0
+end
+
+-- Called by the platform adapter once per animation frame after draw().
+function Graphics:present(): unit
+    self:flush()
+end
+
+function Graphics:ensure_capacity(vertex_count: i32): unit
+    if self.used + vertex_count * VERTEX_FLOATS > MAX_VERTICES * VERTEX_FLOATS then
+        self:flush()
+    end
+end
+
+function Graphics:push_float(value: f64): unit
+    dom_float32_buffer_set(self.vertices, self.used::u32, value)
+    self.used += 1
+end
+
+function Graphics:emit_vertex(x: f64, y: f64): unit
+    local base: i32 = #self.transforms - 6
+    local world_x: f64 = self.transforms[base] * x + self.transforms[base + 2] * y + self.transforms[base + 4]
+    local world_y: f64 = self.transforms[base + 1] * x + self.transforms[base + 3] * y + self.transforms[base + 5]
+    self:push_float(world_x / self.width * 2.0 - 1.0)
+    self:push_float(1.0 - world_y / self.height * 2.0)
+    self:push_float(self.red)
+    self:push_float(self.green)
+    self:push_float(self.blue)
+    self:push_float(self.alpha)
+end
+
+function Graphics:emit_triangle(x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64): unit
+    self:ensure_capacity(3)
+    self:emit_vertex(x1, y1)
+    self:emit_vertex(x2, y2)
+    self:emit_vertex(x3, y3)
+end
+
+-- Corners in drawing order; split into two triangles.
+function Graphics:emit_quad(x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64, x4: f64, y4: f64): unit
+    self:ensure_capacity(6)
+    self:emit_vertex(x1, y1)
+    self:emit_vertex(x2, y2)
+    self:emit_vertex(x3, y3)
+    self:emit_vertex(x1, y1)
+    self:emit_vertex(x3, y3)
+    self:emit_vertex(x4, y4)
+end
+
+function Graphics:emit_rectangle(x: f64, y: f64, width: f64, height: f64): unit
+    self:emit_quad(x, y, x + width, y, x + width, y + height, x, y + height)
 end
 
 function Graphics:clear(color: string): unit
-    self.context:save()
-    self.context:resetTransform()
-    self.context.fillStyle = color
-    self.context:fillRect(0.0, 0.0, self.width, self.height)
-    self.context:restore()
+    -- Everything batched so far would be erased anyway, so drop it instead
+    -- of drawing it (matches immediate clear-first semantics).
+    self.used = 0
+    local red: f64 = 0.0
+    local green: f64 = 0.0
+    local blue: f64 = 0.0
+    if #color == 7 then
+        red = channel(color, 2)
+        green = channel(color, 4)
+        blue = channel(color, 6)
+    end
+    local gl: WebGL2RenderingContext = self.gl
+    gl:clearColor(red::f32, green::f32, blue::f32, 1.0::f32)
+    gl:clear(GL_COLOR_BUFFER_BIT)
 end
 
 function Graphics:set_color(color: string): unit
-    self.context.fillStyle = color
-    self.context.strokeStyle = color
+    if #color == 7 then
+        self.red = channel(color, 2)
+        self.green = channel(color, 4)
+        self.blue = channel(color, 6)
+        self.alpha = 1.0
+    end
 end
 
 function Graphics:set_line_width(width: f64): unit
-    self.context.lineWidth = width
+    self.line_width = width
 end
 
 function Graphics:fill_rectangle(x: f64, y: f64, width: f64, height: f64): unit
-    self.context:fillRect(x, y, width, height)
+    self:emit_rectangle(x, y, width, height)
 end
 
 function Graphics:stroke_rectangle(x: f64, y: f64, width: f64, height: f64): unit
-    self.context:strokeRect(x, y, width, height)
+    self:line(x, y, x + width, y)
+    self:line(x + width, y, x + width, y + height)
+    self:line(x + width, y + height, x, y + height)
+    self:line(x, y + height, x, y)
 end
 
 function Graphics:fill_circle(x: f64, y: f64, radius: f64): unit
-    self.context:beginPath()
-    self.context:arc(x, y, radius, 0.0, math.pi * 2.0)
-    self.context:fill()
+    local step: f64 = math.pi * 2.0 / (CIRCLE_SEGMENTS::f64)
+    for segment = 0::i32, CIRCLE_SEGMENTS - 1 do
+        local from: f64 = (segment::f64) * step
+        local to: f64 = from + step
+        self:emit_triangle(
+            x, y,
+            x + math.cos(from) * radius, y + math.sin(from) * radius,
+            x + math.cos(to) * radius, y + math.sin(to) * radius
+        )
+    end
 end
 
+-- Lines are thin quads offset by half the line width perpendicular to the
+-- segment, so they batch with every other primitive.
 function Graphics:line(x1: f64, y1: f64, x2: f64, y2: f64): unit
-    self.context:beginPath()
-    self.context:moveTo(x1, y1)
-    self.context:lineTo(x2, y2)
-    self.context:stroke()
+    local dx: f64 = x2 - x1
+    local dy: f64 = y2 - y1
+    local length: f64 = math.sqrt(dx * dx + dy * dy)
+    if length <= 0.0 then
+        return
+    end
+    local half: f64 = self.line_width * 0.5
+    local nx: f64 = -dy / length * half
+    local ny: f64 = dx / length * half
+    self:emit_quad(x1 + nx, y1 + ny, x2 + nx, y2 + ny, x2 - nx, y2 - ny, x1 - nx, y1 - ny)
 end
 
-function Graphics:set_font(font: string): unit
-    self.context.font = font
+-- "<size>px ..." selects the bitmap font scale: one glyph line is 8 font
+-- pixels tall (7 glyph rows plus 1 of spacing), so a font pixel is size / 8.
+function Graphics:set_font(spec: string): unit
+    local size: f64 = 0.0
+    local index: i32 = 1
+    while index <= #spec do
+        local code: i32 = string.byte(spec, index)
+        if code >= 48 and code <= 57 then
+            size = size * 10.0 + ((code - 48)::f64)
+            index += 1
+        else
+            break
+        end
+    end
+    if size <= 0.0 then
+        size = 14.0
+    end
+    self.font_pixel = size / 8.0
 end
 
+-- Length of the horizontal run of set font pixels starting at column.
+-- A helper function (rather than an inline loop) keeps the loop out of the
+-- surrounding if-branch, which miscompiles today (waluau phi-ordering bug;
+-- see the beads issue referenced from waluau-nnd9).
+function glyph_run(slot: i32, row: i32, column: i32): i32
+    local run: i32 = 1
+    while column + run < font.width() and font.pixel(slot, row, column + run) do
+        run += 1
+    end
+    return run
+end
+
+-- Text renders as one quad per horizontal run of set font pixels. The y
+-- coordinate is the baseline, matching the Canvas 2D fillText convention
+-- the previous backend exposed.
 function Graphics:print(text: string, x: f64, y: f64): unit
-    self.context:fillText(text, x, y)
+    local upper: string = string.upper(text)
+    local pixel: f64 = self.font_pixel
+    local top: f64 = y - pixel * (font.height()::f64)
+    local pen: f64 = x
+    for index = 1::i32, #upper do
+        local code: i32 = string.byte(upper, index)
+        local slot: i32 = font.glyph_index(code)
+        if slot < 0 then
+            pen += pixel * ((font.width() + 1)::f64)
+            continue
+        end
+        for row = 0::i32, font.height() - 1 do
+            local column: i32 = 0
+            while column < font.width() do
+                if font.pixel(slot, row, column) then
+                    local run: i32 = glyph_run(slot, row, column)
+                    self:emit_rectangle(
+                        pen + (column::f64) * pixel,
+                        top + (row::f64) * pixel,
+                        (run::f64) * pixel,
+                        pixel
+                    )
+                    column += run
+                else
+                    column += 1
+                end
+            end
+        end
+        pen += pixel * ((font.width() + 1)::f64)
+    end
 end
 
 function Graphics:push(): unit
-    self.context:save()
+    local base: i32 = #self.transforms - 6
+    for offset = 0::i32, 5::i32 do
+        table.insert(self.transforms, self.transforms[base + offset])
+    end
 end
 
 function Graphics:pop(): unit
-    self.context:restore()
+    if #self.transforms > 6 then
+        for _ = 1::i32, 6::i32 do
+            table.remove(self.transforms)
+        end
+    end
+end
+
+-- Right-multiplies the current transform by [a c tx; b d ty].
+function Graphics:apply_transform(a: f64, b: f64, c: f64, d: f64, tx: f64, ty: f64): unit
+    local base: i32 = #self.transforms - 6
+    local ca: f64 = self.transforms[base]
+    local cb: f64 = self.transforms[base + 1]
+    local cc: f64 = self.transforms[base + 2]
+    local cd: f64 = self.transforms[base + 3]
+    local ctx: f64 = self.transforms[base + 4]
+    local cty: f64 = self.transforms[base + 5]
+    self.transforms[base] = ca * a + cc * b
+    self.transforms[base + 1] = cb * a + cd * b
+    self.transforms[base + 2] = ca * c + cc * d
+    self.transforms[base + 3] = cb * c + cd * d
+    self.transforms[base + 4] = ca * tx + cc * ty + ctx
+    self.transforms[base + 5] = cb * tx + cd * ty + cty
 end
 
 function Graphics:translate(x: f64, y: f64): unit
-    self.context:translate(x, y)
+    self:apply_transform(1.0, 0.0, 0.0, 1.0, x, y)
 end
 
 function Graphics:rotate(radians: f64): unit
-    self.context:rotate(radians)
+    local cos: f64 = math.cos(radians)
+    local sin: f64 = math.sin(radians)
+    self:apply_transform(cos, sin, -sin, cos, 0.0, 0.0)
 end
 
 function Graphics:scale(x: f64, y: f64): unit
-    self.context:scale(x, y)
+    self:apply_transform(x, 0.0, 0.0, y, 0.0, 0.0)
 end
 
 return {

@@ -682,6 +682,23 @@ function createPlaygroundDomHost(wasmImports, domOutputRoot, getWasmExports = ()
   const specialImports = {
     dom_window: outputWindow,
     fetch: fetchFromDomContext,
+    // Curated 3D context acquisition (waluau-9tvw): the generated
+    // get_context_webgl2 extern member (imported under its camelized wasm
+    // name) has no matching JS method, so it forwards to
+    // getContext("webgl2") explicitly. preserveDrawingBuffer keeps the frame
+    // readable after the task that drew it, so conformance tests can verify
+    // rendering with readPixels.
+    'HTMLCanvasElement.getContextWebgl2': (canvas) =>
+      canvas.getContext('webgl2', { preserveDrawingBuffer: true }),
+    // Float32Buffer host helpers: waluau has no typed-array construction or
+    // indexed extern access, so GPU vertex data is built through these
+    // (mirroring the tfjs TensorData pattern).
+    dom_new_float32_buffer: (length) => new Float32Array(length >>> 0),
+    dom_float32_buffer_set: (data, index, value) => {
+      data[index >>> 0] = value;
+    },
+    dom_float32_buffer_get: (data, index) => data[index >>> 0],
+    dom_float32_buffer_len: (data) => data.length,
     'EventTarget.addEventListener': (target, type, callback) => registerEventListener(target, String(type), callback),
     'Window.requestAnimationFrame': requestAnimationFrame,
     'Node.removeChild': removeChild,
@@ -1273,6 +1290,8 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
       if (diff > 0.5) return floor + 1;
       return floor % 2 === 0 ? floor : floor + 1;
     },
+    'math.cos': Math.cos,
+    'math.sin': Math.sin,
     'math.min': Math.min,
     'math.max': Math.max,
     'math.copysign': (magnitude, sign) => {

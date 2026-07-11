@@ -76,6 +76,13 @@ type CSSPseudoElement = extern
 type StylePropertyMapReadOnly = extern
 type StylePropertyMap = extern extends StylePropertyMapReadOnly
 type CanvasRenderingContext2D = extern
+type WebGLObject = extern
+type WebGLBuffer = extern extends WebGLObject
+type WebGLProgram = extern extends WebGLObject
+type WebGLShader = extern extends WebGLObject
+type WebGLUniformLocation = extern
+type WebGL2RenderingContext = extern
+type Float32Buffer = extern
 type Promise<T> = extern
 
 declare property Blob:size: u64
@@ -842,6 +849,7 @@ declare property HTMLCanvasElement:height: u32
 declare function HTMLCanvasElement:get_context(context_id: string): CanvasRenderingContext2D?
 declare function HTMLCanvasElement:toDataURL(): string
 declare function HTMLCanvasElement:toDataURL(type: string): string
+declare function HTMLCanvasElement:get_context_webgl2(): WebGL2RenderingContext?
 declare property CanvasRenderingContext2D:canvas: HTMLCanvasElement
 declare function CanvasRenderingContext2D:save(): unit
 declare function CanvasRenderingContext2D:restore(): unit
@@ -922,6 +930,7 @@ declare property Plugin:filename: string
 declare property MimeType:description: string
 declare property MimeType:suffixes: string
 declare property MimeType:enabledPlugin: Plugin
+declare property Storage:length: u32
 declare function Storage:key(index: u32): string?
 declare function Storage:get_item(key: string): string?
 declare function Storage:set_item(key: string, value: string): unit
@@ -992,5 +1001,140 @@ declare function VirtualKeyboard:hide(): unit
 declare property VirtualKeyboard:boundingRect: DOMRect
 declare property VirtualKeyboard:overlaysContent: bool
 declare property VirtualKeyboard:ongeometrychange: (Event) -> unit
+declare property WebGLObject:label: string
+declare property WebGL2RenderingContext:drawingBufferWidth: i32
+declare property WebGL2RenderingContext:drawingBufferHeight: i32
+declare property WebGL2RenderingContext:drawingBufferFormat: u32
+declare function WebGL2RenderingContext:isContextLost(): bool
+declare function WebGL2RenderingContext:drawingBufferStorage(sized_format: u32, width: u32, height: u32): unit
+declare function WebGL2RenderingContext:activeTexture(texture: u32): unit
+declare function WebGL2RenderingContext:attachShader(program: WebGLProgram, shader: WebGLShader): unit
+declare function WebGL2RenderingContext:bindAttribLocation(program: WebGLProgram, index: u32, name: string): unit
+declare function WebGL2RenderingContext:bindBuffer(target: u32, buffer: WebGLBuffer?): unit
+declare function WebGL2RenderingContext:blendColor(red: f32, green: f32, blue: f32, alpha: f32): unit
+declare function WebGL2RenderingContext:blendEquation(mode: u32): unit
+declare function WebGL2RenderingContext:blendEquationSeparate(mode_r_g_b: u32, mode_alpha: u32): unit
+declare function WebGL2RenderingContext:blendFunc(sfactor: u32, dfactor: u32): unit
+declare function WebGL2RenderingContext:blendFuncSeparate(src_r_g_b: u32, dst_r_g_b: u32, src_alpha: u32, dst_alpha: u32): unit
+declare function WebGL2RenderingContext:checkFramebufferStatus(target: u32): u32
+declare function WebGL2RenderingContext:clear(mask: u32): unit
+declare function WebGL2RenderingContext:clearColor(red: f32, green: f32, blue: f32, alpha: f32): unit
+declare function WebGL2RenderingContext:clearDepth(depth: f32): unit
+declare function WebGL2RenderingContext:clearStencil(s: i32): unit
+declare function WebGL2RenderingContext:colorMask(red: bool, green: bool, blue: bool, alpha: bool): unit
+declare function WebGL2RenderingContext:compileShader(shader: WebGLShader): unit
+declare function WebGL2RenderingContext:copyTexImage2D(target: u32, level: i32, internalformat: u32, x: i32, y: i32, width: i32, height: i32, border: i32): unit
+declare function WebGL2RenderingContext:copyTexSubImage2D(target: u32, level: i32, xoffset: i32, yoffset: i32, x: i32, y: i32, width: i32, height: i32): unit
+declare function WebGL2RenderingContext:createBuffer(): WebGLBuffer
+declare function WebGL2RenderingContext:createProgram(): WebGLProgram
+declare function WebGL2RenderingContext:createShader(type: u32): WebGLShader?
+declare function WebGL2RenderingContext:cullFace(mode: u32): unit
+declare function WebGL2RenderingContext:deleteBuffer(buffer: WebGLBuffer?): unit
+declare function WebGL2RenderingContext:deleteProgram(program: WebGLProgram?): unit
+declare function WebGL2RenderingContext:deleteShader(shader: WebGLShader?): unit
+declare function WebGL2RenderingContext:depthFunc(func: u32): unit
+declare function WebGL2RenderingContext:depthMask(flag: bool): unit
+declare function WebGL2RenderingContext:depthRange(z_near: f32, z_far: f32): unit
+declare function WebGL2RenderingContext:detachShader(program: WebGLProgram, shader: WebGLShader): unit
+declare function WebGL2RenderingContext:disable(cap: u32): unit
+declare function WebGL2RenderingContext:disableVertexAttribArray(index: u32): unit
+declare function WebGL2RenderingContext:drawArrays(mode: u32, first: i32, count: i32): unit
+declare function WebGL2RenderingContext:drawElements(mode: u32, count: i32, type: u32, offset: i32): unit
+declare function WebGL2RenderingContext:enable(cap: u32): unit
+declare function WebGL2RenderingContext:enableVertexAttribArray(index: u32): unit
+declare function WebGL2RenderingContext:finish(): unit
+declare function WebGL2RenderingContext:flush(): unit
+declare function WebGL2RenderingContext:frontFace(mode: u32): unit
+declare function WebGL2RenderingContext:generateMipmap(target: u32): unit
+declare function WebGL2RenderingContext:getAttribLocation(program: WebGLProgram, name: string): i32
+declare function WebGL2RenderingContext:getError(): u32
+declare function WebGL2RenderingContext:getProgramInfoLog(program: WebGLProgram): string?
+declare function WebGL2RenderingContext:getShaderInfoLog(shader: WebGLShader): string?
+declare function WebGL2RenderingContext:getShaderSource(shader: WebGLShader): string?
+declare function WebGL2RenderingContext:getUniformLocation(program: WebGLProgram, name: string): WebGLUniformLocation?
+declare function WebGL2RenderingContext:getVertexAttribOffset(index: u32, pname: u32): i32
+declare function WebGL2RenderingContext:hint(target: u32, mode: u32): unit
+declare function WebGL2RenderingContext:isBuffer(buffer: WebGLBuffer?): bool
+declare function WebGL2RenderingContext:isEnabled(cap: u32): bool
+declare function WebGL2RenderingContext:isProgram(program: WebGLProgram?): bool
+declare function WebGL2RenderingContext:isShader(shader: WebGLShader?): bool
+declare function WebGL2RenderingContext:lineWidth(width: f32): unit
+declare function WebGL2RenderingContext:linkProgram(program: WebGLProgram): unit
+declare function WebGL2RenderingContext:pixelStorei(pname: u32, param: i32): unit
+declare function WebGL2RenderingContext:polygonOffset(factor: f32, units: f32): unit
+declare function WebGL2RenderingContext:renderbufferStorage(target: u32, internalformat: u32, width: i32, height: i32): unit
+declare function WebGL2RenderingContext:sampleCoverage(value: f32, invert: bool): unit
+declare function WebGL2RenderingContext:scissor(x: i32, y: i32, width: i32, height: i32): unit
+declare function WebGL2RenderingContext:shaderSource(shader: WebGLShader, source: string): unit
+declare function WebGL2RenderingContext:stencilFunc(func: u32, ref: i32, mask: u32): unit
+declare function WebGL2RenderingContext:stencilFuncSeparate(face: u32, func: u32, ref: i32, mask: u32): unit
+declare function WebGL2RenderingContext:stencilMask(mask: u32): unit
+declare function WebGL2RenderingContext:stencilMaskSeparate(face: u32, mask: u32): unit
+declare function WebGL2RenderingContext:stencilOp(fail: u32, zfail: u32, zpass: u32): unit
+declare function WebGL2RenderingContext:stencilOpSeparate(face: u32, fail: u32, zfail: u32, zpass: u32): unit
+declare function WebGL2RenderingContext:texParameterf(target: u32, pname: u32, param: f32): unit
+declare function WebGL2RenderingContext:texParameteri(target: u32, pname: u32, param: i32): unit
+declare function WebGL2RenderingContext:uniform1f(location: WebGLUniformLocation?, x: f32): unit
+declare function WebGL2RenderingContext:uniform2f(location: WebGLUniformLocation?, x: f32, y: f32): unit
+declare function WebGL2RenderingContext:uniform3f(location: WebGLUniformLocation?, x: f32, y: f32, z: f32): unit
+declare function WebGL2RenderingContext:uniform4f(location: WebGLUniformLocation?, x: f32, y: f32, z: f32, w: f32): unit
+declare function WebGL2RenderingContext:uniform1i(location: WebGLUniformLocation?, x: i32): unit
+declare function WebGL2RenderingContext:uniform2i(location: WebGLUniformLocation?, x: i32, y: i32): unit
+declare function WebGL2RenderingContext:uniform3i(location: WebGLUniformLocation?, x: i32, y: i32, z: i32): unit
+declare function WebGL2RenderingContext:uniform4i(location: WebGLUniformLocation?, x: i32, y: i32, z: i32, w: i32): unit
+declare function WebGL2RenderingContext:useProgram(program: WebGLProgram?): unit
+declare function WebGL2RenderingContext:validateProgram(program: WebGLProgram): unit
+declare function WebGL2RenderingContext:vertexAttrib1f(index: u32, x: f32): unit
+declare function WebGL2RenderingContext:vertexAttrib2f(index: u32, x: f32, y: f32): unit
+declare function WebGL2RenderingContext:vertexAttrib3f(index: u32, x: f32, y: f32, z: f32): unit
+declare function WebGL2RenderingContext:vertexAttrib4f(index: u32, x: f32, y: f32, z: f32, w: f32): unit
+declare function WebGL2RenderingContext:vertexAttribPointer(index: u32, size: i32, type: u32, normalized: bool, stride: i32, offset: i32): unit
+declare function WebGL2RenderingContext:viewport(x: i32, y: i32, width: i32, height: i32): unit
+declare function WebGL2RenderingContext:copyBufferSubData(read_target: u32, write_target: u32, read_offset: i32, write_offset: i32, size: i32): unit
+declare function WebGL2RenderingContext:blitFramebuffer(src_x0: i32, src_y0: i32, src_x1: i32, src_y1: i32, dst_x0: i32, dst_y0: i32, dst_x1: i32, dst_y1: i32, mask: u32, filter: u32): unit
+declare function WebGL2RenderingContext:readBuffer(src: u32): unit
+declare function WebGL2RenderingContext:renderbufferStorageMultisample(target: u32, samples: i32, internalformat: u32, width: i32, height: i32): unit
+declare function WebGL2RenderingContext:texStorage2D(target: u32, levels: i32, internalformat: u32, width: i32, height: i32): unit
+declare function WebGL2RenderingContext:texStorage3D(target: u32, levels: i32, internalformat: u32, width: i32, height: i32, depth: i32): unit
+declare function WebGL2RenderingContext:texImage3D(target: u32, level: i32, internalformat: i32, width: i32, height: i32, depth: i32, border: i32, format: u32, type: u32, pbo_offset: i32): unit
+declare function WebGL2RenderingContext:texSubImage3D(target: u32, level: i32, xoffset: i32, yoffset: i32, zoffset: i32, width: i32, height: i32, depth: i32, format: u32, type: u32, pbo_offset: i32): unit
+declare function WebGL2RenderingContext:copyTexSubImage3D(target: u32, level: i32, xoffset: i32, yoffset: i32, zoffset: i32, x: i32, y: i32, width: i32, height: i32): unit
+declare function WebGL2RenderingContext:compressedTexImage3D(target: u32, level: i32, internalformat: u32, width: i32, height: i32, depth: i32, border: i32, image_size: i32, offset: i32): unit
+declare function WebGL2RenderingContext:compressedTexSubImage3D(target: u32, level: i32, xoffset: i32, yoffset: i32, zoffset: i32, width: i32, height: i32, depth: i32, format: u32, image_size: i32, offset: i32): unit
+declare function WebGL2RenderingContext:getFragDataLocation(program: WebGLProgram, name: string): i32
+declare function WebGL2RenderingContext:uniform1ui(location: WebGLUniformLocation?, v0: u32): unit
+declare function WebGL2RenderingContext:uniform2ui(location: WebGLUniformLocation?, v0: u32, v1: u32): unit
+declare function WebGL2RenderingContext:uniform3ui(location: WebGLUniformLocation?, v0: u32, v1: u32, v2: u32): unit
+declare function WebGL2RenderingContext:uniform4ui(location: WebGLUniformLocation?, v0: u32, v1: u32, v2: u32, v3: u32): unit
+declare function WebGL2RenderingContext:vertexAttribI4i(index: u32, x: i32, y: i32, z: i32, w: i32): unit
+declare function WebGL2RenderingContext:vertexAttribI4ui(index: u32, x: u32, y: u32, z: u32, w: u32): unit
+declare function WebGL2RenderingContext:vertexAttribIPointer(index: u32, size: i32, type: u32, stride: i32, offset: i32): unit
+declare function WebGL2RenderingContext:vertexAttribDivisor(index: u32, divisor: u32): unit
+declare function WebGL2RenderingContext:drawArraysInstanced(mode: u32, first: i32, count: i32, instance_count: i32): unit
+declare function WebGL2RenderingContext:drawElementsInstanced(mode: u32, count: i32, type: u32, offset: i32, instance_count: i32): unit
+declare function WebGL2RenderingContext:drawRangeElements(mode: u32, start: u32, end_: u32, count: i32, type: u32, offset: i32): unit
+declare function WebGL2RenderingContext:clearBufferfi(buffer: u32, drawbuffer: i32, depth: f32, stencil: i32): unit
+declare function WebGL2RenderingContext:endQuery(target: u32): unit
+declare function WebGL2RenderingContext:beginTransformFeedback(primitive_mode: u32): unit
+declare function WebGL2RenderingContext:endTransformFeedback(): unit
+declare function WebGL2RenderingContext:pauseTransformFeedback(): unit
+declare function WebGL2RenderingContext:resumeTransformFeedback(): unit
+declare function WebGL2RenderingContext:bindBufferBase(target: u32, index: u32, buffer: WebGLBuffer?): unit
+declare function WebGL2RenderingContext:bindBufferRange(target: u32, index: u32, buffer: WebGLBuffer?, offset: i32, size: i32): unit
+declare function WebGL2RenderingContext:getUniformBlockIndex(program: WebGLProgram, uniform_block_name: string): u32
+declare function WebGL2RenderingContext:getActiveUniformBlockName(program: WebGLProgram, uniform_block_index: u32): string?
+declare function WebGL2RenderingContext:uniformBlockBinding(program: WebGLProgram, uniform_block_index: u32, uniform_block_binding: u32): unit
+declare function WebGL2RenderingContext:bufferData(target: u32, size: i32, usage: u32): unit
+declare function WebGL2RenderingContext:bufferData(target: u32, src_data: Float32Buffer?, usage: u32): unit
+declare function WebGL2RenderingContext:bufferSubData(target: u32, dst_byte_offset: i32, src_data: Float32Buffer): unit
+declare function WebGL2RenderingContext:texImage2D(target: u32, level: i32, internalformat: i32, width: i32, height: i32, border: i32, format: u32, type: u32, pbo_offset: i32): unit
+declare function WebGL2RenderingContext:texSubImage2D(target: u32, level: i32, xoffset: i32, yoffset: i32, width: i32, height: i32, format: u32, type: u32, pbo_offset: i32): unit
+declare function WebGL2RenderingContext:compressedTexImage2D(target: u32, level: i32, internalformat: u32, width: i32, height: i32, border: i32, image_size: i32, offset: i32): unit
+declare function WebGL2RenderingContext:compressedTexSubImage2D(target: u32, level: i32, xoffset: i32, yoffset: i32, width: i32, height: i32, format: u32, image_size: i32, offset: i32): unit
+declare function WebGL2RenderingContext:readPixels(x: i32, y: i32, width: i32, height: i32, format: u32, type: u32, offset: i32): unit
 declare function dom_window(): Window
 declare function fetch(input: string): Promise<Response>
+declare function dom_new_float32_buffer(length: u32): Float32Buffer
+declare function dom_float32_buffer_set(data: Float32Buffer, index: u32, value: f64): unit
+declare function dom_float32_buffer_get(data: Float32Buffer, index: u32): f64
+declare function dom_float32_buffer_len(data: Float32Buffer): u32
