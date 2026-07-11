@@ -46,9 +46,19 @@ for expected_round = FIRST_ROUND, LAST_ROUND do
     assert(state.round == expected_round)
     assert(#state.player_hand == 5 and #state.computer_hand == 5)
     state:play(0, 1)
+    assert(#state.history == expected_round)
+    local trick = state.history[expected_round - 1]
+    assert(trick.round == expected_round)
+    assert(#trick.middle == 3 and #trick.player_cards == 2 and #trick.computer_cards == 2)
+    if trick.winner == 0 then
+        assert(trick.points == 0)
+    else
+        assert(trick.points == expected_round)
+    end
 end
 assert(state.finished)
 assert(#state.deck == 0 and #state.middle == 0)
+assert(#state.history == 6)
 assert(state.player_tricks + state.computer_tricks <= 6)
 assert(state.player_points + state.computer_points <= 21)
 local final_points: i32 = state.player_points + state.computer_points

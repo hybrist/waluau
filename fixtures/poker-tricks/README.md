@@ -9,7 +9,9 @@ hands.
 The winner earns points equal to the round number, so the six tricks are worth
 1 through 6 points. Played cards are replaced from the shared deck. Starting
 with ten cards in hand and consuming seven cards per round uses all 52 cards
-exactly; the higher point total then wins.
+exactly; the higher point total then wins. A running history keeps every
+completed trick visible, including the board, both played pairs, the resulting
+poker categories, winner, and points awarded.
 
 | File | Purpose |
 | --- | --- |

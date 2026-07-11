@@ -331,6 +331,7 @@ test.describe('DOM Output in Run tab', () => {
     await expect(outputFrame.locator('#middle-cards').locator('span')).toHaveCount(3);
     await expect(outputFrame.locator('#player-hand').locator('button')).toHaveCount(5);
     await expect(outputFrame.locator('#poker-score')).toContainText('Round 1');
+    await expect(outputFrame.locator('#trick-history-empty')).toHaveText('No tricks played yet.');
 
     for (let round = 1; round <= 6; round += 1) {
       await outputFrame.locator('#player-card-0').click();
@@ -339,6 +340,14 @@ test.describe('DOM Output in Run tab', () => {
       await expect(outputFrame.locator('#player-card-1')).toHaveClass(/border-4/);
       await outputFrame.locator('#play-trick').click();
       expect(pageErrors).toEqual([]);
+      const history = outputFrame.locator('.trick-history-entry');
+      await expect(history).toHaveCount(round);
+      await expect(history.nth(round - 1)).toContainText(`Trick ${round}`);
+      await expect(history.nth(round - 1)).toContainText('Board:');
+      await expect(history.nth(round - 1)).toContainText('You:');
+      await expect(history.nth(round - 1)).toContainText('Computer:');
+      await expect(history.nth(round - 1)).toContainText(/You won|Computer won|Tie/);
+      await expect(history.nth(round - 1)).toContainText(/point\(s\)|no points/);
       if (round < 6) {
         await expect(outputFrame.locator('#poker-score')).toContainText(`Round ${round + 1}`);
       }
@@ -348,6 +357,8 @@ test.describe('DOM Output in Run tab', () => {
     await expect(outputFrame.locator('#poker-score')).toContainText('Round 6');
     await outputFrame.locator('#new-game').click();
     await expect(outputFrame.locator('#poker-score')).toContainText('Round 1');
+    await expect(outputFrame.locator('.trick-history-entry')).toHaveCount(0);
+    await expect(outputFrame.locator('#trick-history-empty')).toBeVisible();
   });
 
   test('runs Waluau click and input callbacks from DOM Output events', async ({ page }) => {

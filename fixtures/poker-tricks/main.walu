@@ -89,6 +89,37 @@ function render_poker_tricks(state: game.State, selection: {i32}): unit
     restart_button.text_content = "New game"
     controls:append_child(restart_button)
 
+    local history_section: Element = make_element(document, "section", "w-full rounded-2xl bg-emerald-950/70 p-4")
+    history_section.id = "trick-history"
+    table_area:append_child(history_section)
+    local history_heading: Element = make_element(document, "h2", "mb-3 text-center font-semibold uppercase tracking-widest text-amber-200")
+    history_heading.text_content = "Tricks so far"
+    history_section:append_child(history_heading)
+    local history_list: Element = make_element(document, "div", "flex flex-col gap-2")
+    history_section:append_child(history_list)
+    if #state.history == 0 then
+        local empty_history: Element = make_element(document, "p", "text-center text-sm text-emerald-300")
+        empty_history.id = "trick-history-empty"
+        empty_history.text_content = "No tricks played yet."
+        history_list:append_child(empty_history)
+    else
+        for trick in state.history do
+            local outcome: string = "Tie · no points"
+            if trick.winner > 0 then
+                outcome = "You won " .. tostring(trick.points) .. " point(s)"
+            elseif trick.winner < 0 then
+                outcome = "Computer won " .. tostring(trick.points) .. " point(s)"
+            end
+            local board: string = game.card_name(trick.middle[0]) .. " " .. game.card_name(trick.middle[1]) .. " " .. game.card_name(trick.middle[2])
+            local player_pair: string = game.card_name(trick.player_cards[0]) .. " " .. game.card_name(trick.player_cards[1])
+            local computer_pair: string = game.card_name(trick.computer_cards[0]) .. " " .. game.card_name(trick.computer_cards[1])
+            local entry: Element = make_element(document, "article", "trick-history-entry rounded-xl border border-emerald-700 bg-emerald-900 p-3 text-sm")
+            entry:set_attribute("data-round", tostring(trick.round))
+            entry.text_content = "Trick " .. tostring(trick.round) .. " · " .. outcome .. " · Board: " .. board .. " · You: " .. player_pair .. " (" .. game.category_name(trick.player_value) .. ") · Computer: " .. computer_pair .. " (" .. game.category_name(trick.computer_value) .. ")"
+            history_list:append_child(entry)
+        end
+    end
+
     local function update(state: game.State, picked: {i32}): unit
         local shown_round: i32 = state.round
         score.text_content = "Round " .. tostring(shown_round) .. " · You " .. tostring(state.player_points) .. " (" .. tostring(state.player_tricks) .. " tricks) · Computer " .. tostring(state.computer_points) .. " (" .. tostring(state.computer_tricks) .. " tricks) · Deck " .. tostring(#state.deck)

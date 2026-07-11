@@ -4,7 +4,8 @@
 
 type Card = { rank: i32, suit: i32 }
 type PairChoice = { first: i32, second: i32, value: i32 }
-type State = { deck: {Card}, player_hand: {Card}, computer_hand: {Card}, middle: {Card}, round: i32, player_points: i32, computer_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, finished: bool }
+type Trick = { round: i32, middle: {Card}, player_cards: {Card}, computer_cards: {Card}, player_value: i32, computer_value: i32, winner: i32, points: i32 }
+type State = { deck: {Card}, player_hand: {Card}, computer_hand: {Card}, middle: {Card}, history: {Trick}, round: i32, player_points: i32, computer_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, finished: bool }
 
 local MIN_RANK <const>: i32 = 2
 local MAX_RANK <const>: i32 = 14
@@ -164,15 +165,29 @@ function State:play(first: i32, second: i32): unit
     self.last_player_value = value_for_pair(self.player_hand, self.middle, first, second)
     self.last_computer_value = computer.value
     self.last_winner = 0
+    local trick_points: i32 = 0
     if self.last_player_value > self.last_computer_value then
         self.player_points += self.round
         self.player_tricks += 1
         self.last_winner = 1
+        trick_points = self.round
     elseif self.last_computer_value > self.last_player_value then
         self.computer_points += self.round
         self.computer_tricks += 1
         self.last_winner = -1
+        trick_points = self.round
     end
+
+    table.insert(self.history, {
+        round = self.round,
+        middle = { self.middle[0], self.middle[1], self.middle[2] },
+        player_cards = { self.player_hand[first], self.player_hand[second] },
+        computer_cards = { self.computer_hand[computer.first], self.computer_hand[computer.second] },
+        player_value = self.last_player_value,
+        computer_value = self.last_computer_value,
+        winner = self.last_winner,
+        points = trick_points,
+    })
 
     remove_pair(self.player_hand, first, second)
     remove_pair(self.computer_hand, computer.first, computer.second)
@@ -198,6 +213,7 @@ function new(): State
         player_hand = {},
         computer_hand = {},
         middle = {},
+        history = {},
         round = 1,
         player_points = 0,
         computer_points = 0,
@@ -222,6 +238,7 @@ function State:reset(): unit
     self.player_hand = fresh.player_hand
     self.computer_hand = fresh.computer_hand
     self.middle = fresh.middle
+    self.history = fresh.history
     self.round = fresh.round
     self.player_points = fresh.player_points
     self.computer_points = fresh.computer_points
