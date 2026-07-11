@@ -698,6 +698,109 @@ fn verify_function(
                         )));
                     }
                 }
+                Instruction::BufferNew { kind, elements } => {
+                    let element_ty = Type::Numeric(kind.element_numeric_type());
+                    for element in elements {
+                        let actual = require_dominating_definition(
+                            &definitions,
+                            &dominators,
+                            &seen_in_block,
+                            block.id,
+                            *element,
+                        )?;
+                        if actual != element_ty {
+                            return Err(Diagnostic::new(format!(
+                                "buffer new element in block {:?} has type {}, expected {}",
+                                block.id, actual, element_ty
+                            )));
+                        }
+                    }
+                }
+                Instruction::BufferConst { kind, bytes } => {
+                    if bytes.len() % kind.element_size() as usize != 0 {
+                        return Err(Diagnostic::new(format!(
+                            "buffer const in block {:?} has {} bytes, not a multiple of the {}-byte element size",
+                            block.id,
+                            bytes.len(),
+                            kind.element_size()
+                        )));
+                    }
+                }
+                Instruction::BufferNewSized { len, .. } => {
+                    let len_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *len,
+                    )?;
+                    if len_ty != Type::Numeric(NumericType::I32) {
+                        return Err(Diagnostic::new(format!(
+                            "buffer new length in block {:?} must be i32, got {}",
+                            block.id, len_ty
+                        )));
+                    }
+                }
+                Instruction::BufferGet {
+                    buffer,
+                    index,
+                    kind,
+                } => {
+                    verify_buffer_access(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *buffer,
+                        *index,
+                        *kind,
+                    )?;
+                }
+                Instruction::BufferSet {
+                    buffer,
+                    index,
+                    value,
+                    kind,
+                } => {
+                    verify_buffer_access(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *buffer,
+                        *index,
+                        *kind,
+                    )?;
+                    let value_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *value,
+                    )?;
+                    let element_ty = Type::Numeric(kind.element_numeric_type());
+                    if value_ty != element_ty {
+                        return Err(Diagnostic::new(format!(
+                            "buffer set value in block {:?} has type {}, expected {}",
+                            block.id, value_ty, element_ty
+                        )));
+                    }
+                }
+                Instruction::BufferLen { buffer } => {
+                    let buffer_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *buffer,
+                    )?;
+                    if !matches!(buffer_ty, Type::TypedArray(_)) {
+                        return Err(Diagnostic::new(format!(
+                            "buffer.len operand in block {:?} must be a typed array, got {}",
+                            block.id, buffer_ty
+                        )));
+                    }
+                }
                 Instruction::StructNew { struct_ty, fields } => {
                     let Type::Record(record_fields) = struct_ty else {
                         return Err(Diagnostic::new(format!(
@@ -1056,6 +1159,36 @@ struct ValueDefinition {
     ty: Option<Type>,
 }
 
+fn verify_buffer_access(
+    definitions: &HashMap<ValueId, ValueDefinition>,
+    dominators: &HashMap<BlockId, HashSet<BlockId>>,
+    seen_in_block: &HashSet<ValueId>,
+    use_block: BlockId,
+    buffer: ValueId,
+    index: ValueId,
+    kind: TypedArrayKind,
+) -> Result<(), Diagnostic> {
+    let buffer_ty =
+        require_dominating_definition(definitions, dominators, seen_in_block, use_block, buffer)?;
+    if buffer_ty != Type::TypedArray(kind) {
+        return Err(Diagnostic::new(format!(
+            "buffer access in block {:?} expects {}, got {}",
+            use_block,
+            Type::TypedArray(kind),
+            buffer_ty
+        )));
+    }
+    let index_ty =
+        require_dominating_definition(definitions, dominators, seen_in_block, use_block, index)?;
+    if index_ty != Type::Numeric(NumericType::I32) {
+        return Err(Diagnostic::new(format!(
+            "buffer index in block {:?} must be i32, got {}",
+            use_block, index_ty
+        )));
+    }
+    Ok(())
+}
+
 fn require_dominating_definition(
     definitions: &HashMap<ValueId, ValueDefinition>,
     dominators: &HashMap<BlockId, HashSet<BlockId>>,
@@ -1183,6 +1316,12 @@ fn infer_instruction_type(
         Instruction::ArraySlice { element_ty, .. } => Ok(Type::Array(Box::new(element_ty.clone()))),
         Instruction::BytesGet { .. } => Ok(Type::Numeric(NumericType::I32)),
         Instruction::BytesLen { .. } => Ok(Type::Numeric(NumericType::I32)),
+        Instruction::BufferNew { kind, .. }
+        | Instruction::BufferConst { kind, .. }
+        | Instruction::BufferNewSized { kind, .. } => Ok(Type::TypedArray(*kind)),
+        Instruction::BufferGet { kind, .. } => Ok(Type::Numeric(kind.element_numeric_type())),
+        Instruction::BufferSet { .. } => Ok(Type::Unit),
+        Instruction::BufferLen { .. } => Ok(Type::Numeric(NumericType::I32)),
         Instruction::StructNew { struct_ty, .. } => Ok(struct_ty.clone()),
         Instruction::StructGet { field_ty, .. } => Ok(field_ty.clone()),
         Instruction::StructSet { .. } => Ok(Type::Unit),

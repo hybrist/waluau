@@ -1,0 +1,102 @@
+-- Linear-memory typed arrays (Float32Array & friends): fixed-length numeric
+-- arrays allocated in the module's linear memory. Literals cast (or annotated)
+-- to a typed-array type allocate there; constant literals are stored in the
+-- wasm data section and copied out on every evaluation.
+
+-- Literal construction, length, and element access.
+local buf = {0, 1, 2, 3, 4}::Float32Array
+assert(#buf == 5)
+assert(buf[0] == 0.0)
+assert(buf[4] == 4.0)
+
+-- Elements are mutable; f64 values convert on store (like JS typed arrays).
+buf[3] = 42.5
+assert(buf[3] == 42.5)
+
+-- Annotated declaration and zero-filled sized construction.
+local sized: Float32Array = Float32Array.create(8)
+assert(#sized == 8)
+assert(sized[0] == 0.0)
+assert(sized[7] == 0.0)
+
+-- Every literal evaluation yields a fresh, independently mutable copy.
+function make(): Float32Array
+    return {1, 2, 3}::Float32Array
+end
+local first = make()
+local second = make()
+first[0] = 99
+assert(first[0] == 99)
+assert(second[0] == 1)
+
+-- Equality is identity: same allocation, not same contents.
+assert(first ~= second)
+local alias = first
+assert(first == alias)
+
+-- Typed arrays flow through function parameters and returns.
+function fill(target: Float32Array, value: f64)
+    for i = 0::i32, #target - 1 do
+        target[i] = value
+    end
+end
+fill(sized, 2.5)
+assert(sized[0] == 2.5)
+assert(sized[7] == 2.5)
+
+-- Record fields and growable arrays hold typed arrays.
+type Mesh = { verts: Float32Array, count: i32 }
+local mesh: Mesh = { verts = Float32Array.create(6), count = 0 }
+mesh.verts[5] = 7.5
+assert(mesh.verts[5] == 7.5)
+
+local pool: {Float32Array} = {}
+pool[0] = {9}::Float32Array
+pool[1] = Float32Array.create(2)
+assert(#pool == 2)
+assert(pool[0][0] == 9)
+assert(#pool[1] == 2)
+
+-- Compound assignment reads, computes, and stores.
+local acc = {-1.5, 0, 1.5}::Float64Array
+acc[1] += 2.25
+acc[1] += acc[2]
+assert(acc[0] == -1.5)
+assert(acc[1] == 3.75)
+
+-- Integer kinds truncate on store and widen on load with their signedness.
+local bytes8 = {1, 2, 300}::Uint8Array
+assert(bytes8[2] == 44)
+
+local signed = {-1, -128, 127}::Int8Array
+assert(signed[0] == -1)
+assert(signed[1] == -128)
+assert(signed[2] == 127)
+
+local shorts = {-1, 40000}::Int16Array
+assert(shorts[0] == -1)
+assert(shorts[1] == -25536)
+
+local wide = Uint32Array.create(1)
+wide[0] = 0xFFFFFFFF
+assert(wide[0] == 0xFFFFFFFF)
+
+-- Empty typed arrays are fine.
+local empty = {}::Float32Array
+assert(#empty == 0)
+
+-- Runtime (non-constant) literal elements store one by one.
+local base: f64 = 10
+local dynamic = {base, base * 2, base * 3}::Float32Array
+assert(dynamic[2] == 30.0)
+
+-- create() accepts any numeric length (converted like an array index).
+local n: f64 = 3
+local from_f64_len = Int32Array.create(n)
+assert(#from_f64_len == 3)
+
+-- Large allocations grow the linear memory on demand.
+local big = Float32Array.create(65536)
+big[65535] = 1.25
+assert(big[65535] == 1.25)
+assert(#big == 65536)

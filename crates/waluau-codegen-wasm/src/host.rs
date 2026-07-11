@@ -36,6 +36,10 @@ pub const IMPORT_EXTERN_IS: &str = "extern_is";
 pub const IMPORT_JS_EQ_UNKNOWN: &str = "js_eq_unknown";
 pub const IMPORT_ATTACH_PROMISE: &str = "__waluau_attach_promise";
 pub const IMPORT_MATH_POW: &str = "math_pow";
+/// Linear memory import name (used only by modules with typed arrays). The
+/// host creates the WebAssembly.Memory so views over it can be built even
+/// while the start function runs (before instance exports exist).
+pub const IMPORT_MEMORY: &str = "memory";
 
 /// Maximum number of host function imports (when all are used).
 pub const HOST_IMPORT_COUNT: u32 = 25;

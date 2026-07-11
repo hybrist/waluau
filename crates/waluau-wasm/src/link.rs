@@ -1162,6 +1162,7 @@ impl Rewriter<'_> {
             | Type::Extern
             | Type::Nil
             | Type::TypeParam(_)
+            | Type::TypedArray(_)
             | Type::Thread => {}
         }
     }

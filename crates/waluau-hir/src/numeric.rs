@@ -418,6 +418,10 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             Type::Array(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert array to {expected_numeric}",
             ))),
+            Type::TypedArray(kind) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {} to {expected_numeric}",
+                kind.type_name(),
+            ))),
             Type::Multi(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert multiple values to {expected_numeric}",
             ))),
@@ -552,6 +556,10 @@ pub(super) fn resolve_number_literal(
         Some(Type::Array(_)) => Err(Diagnostic::new(
             "numeric literal is not assignable to array",
         )),
+        Some(Type::TypedArray(kind)) => Err(Diagnostic::new(format!(
+            "numeric literal is not assignable to {}",
+            kind.type_name(),
+        ))),
         Some(Type::Function { .. }) => Err(Diagnostic::new(
             "numeric literal is not assignable to function",
         )),

@@ -1137,6 +1137,16 @@ function createTfjsHost(getWasmExports = () => null) {
 export function buildWaluauImports(wasmModule, initLogger, options = {}) {
   const wasmImports = getWasmImports(wasmModule, options.wasmBytes);
   const bytesConstants = decodeBytesConstantsFromWasm(wasmModule);
+  // Modules that use linear-memory typed arrays import their memory so host
+  // functions can view it even while the start function runs (before the
+  // instance and its exports exist).
+  const needsMemory = wasmImports.some(
+    (wasmImport) =>
+      wasmImport.module === WALUAU_IMPORT_MODULE &&
+      wasmImport.kind === 'memory' &&
+      wasmImport.name === 'memory'
+  );
+  const wasmMemory = needsMemory ? new WebAssembly.Memory({ initial: 1 }) : null;
   const domHost = createPlaygroundDomHost(wasmImports, options.domOutputRoot, options.getWasmExports);
   const tfjsHost = createTfjsHost(options.getWasmExports);
   const hostImports = options.hostImports ?? {};
@@ -1400,6 +1410,9 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
         throw new Error(`Unsupported waluau import: ${wasmImport.name}`);
       };
     }
+  }
+  if (wasmMemory) {
+    waluauImports.memory = wasmMemory;
   }
   return {
     [WALUAU_IMPORT_MODULE]: waluauImports,

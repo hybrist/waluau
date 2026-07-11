@@ -671,6 +671,54 @@ fn infer_table_array_element(
     }
 }
 
+/// `Float32Array.create(len)` (and the other typed-array kinds): allocate a
+/// zero-filled typed array of `len` elements in linear memory.
+pub(super) fn typed_array_create_kind(name: &str) -> Option<waluau_ast::TypedArrayKind> {
+    let (type_name, member) = name.split_once('.')?;
+    if member != "create" {
+        return None;
+    }
+    waluau_ast::TypedArrayKind::from_type_name(type_name)
+}
+
+pub(super) fn infer_typed_array_builtin_call(
+    name: &str,
+    args: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Option<Result<Type, Diagnostic>> {
+    let kind = typed_array_create_kind(name)?;
+    if args.len() != 1 {
+        return Some(Err(Diagnostic::new(format!(
+            "{name} expects 1 argument, got {}",
+            args.len()
+        ))));
+    }
+    // The length accepts any numeric type; lowering converts it to i32 like
+    // an array index.
+    let length_ty = match super::expressions::infer_expr(
+        &args[0],
+        vars,
+        fn_signatures,
+        active_type_params,
+        Some(Type::Numeric(NumericType::I32)),
+    )
+    .or_else(|_| {
+        super::expressions::infer_expr(&args[0], vars, fn_signatures, active_type_params, None)
+    }) {
+        Ok(ty) => ty,
+        Err(error) => return Some(Err(error)),
+    };
+    if !length_ty.is_numeric() {
+        return Some(Err(Diagnostic::new(format!(
+            "{name} expects a numeric length, got {length_ty}"
+        ))));
+    }
+    Some(coerce_type(Type::TypedArray(kind), expected))
+}
+
 pub(super) fn infer_table_builtin_call(
     name: &str,
     args: &[Expr],

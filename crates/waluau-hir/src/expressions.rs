@@ -552,7 +552,9 @@ pub(super) fn infer_expr(
                     Type::Opaque { .. } => {
                         Err(Diagnostic::new("unary '-' requires a numeric operand"))
                     }
-                    Type::Array(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
+                    Type::Array(_) | Type::TypedArray(_) => {
+                        Err(Diagnostic::new("unary '-' requires a numeric operand"))
+                    }
                     Type::Multi(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
                     Type::Function { .. }
                     | Type::Record(_)
@@ -585,7 +587,7 @@ pub(super) fn infer_expr(
                 if actual == Type::String || actual == Type::Bytes || actual == Type::Unknown {
                     return coerce_type(Type::Numeric(NumericType::I32), expected);
                 }
-                if !actual.is_array() {
+                if !actual.is_array() && !matches!(actual, Type::TypedArray(_)) {
                     return Err(Diagnostic::new(
                         "# requires a string, array, or bytes operand",
                     ));
@@ -594,8 +596,11 @@ pub(super) fn infer_expr(
             }
         },
         Expr::Cast { expr, ty, .. } => {
-            let actual = infer_expr(expr, vars, fn_signatures, active_type_params, None)?;
-            if require_numeric_cast(actual, ty.clone()).is_err() {
+            // The unconstrained probe may itself fail (e.g. `{}` needs
+            // context); fall through to inference against the cast target.
+            let numeric_cast = infer_expr(expr, vars, fn_signatures, active_type_params, None)
+                .is_ok_and(|actual| require_numeric_cast(actual, ty.clone()).is_ok());
+            if !numeric_cast {
                 infer_expr(
                     expr,
                     vars,
@@ -773,6 +778,18 @@ pub(super) fn infer_expr(
             }
             if let Some(name) = builtin_name(callee.as_ref()) {
                 if let Some(result) = infer_table_builtin_call(
+                    &name,
+                    args,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    expected.clone(),
+                ) {
+                    return result;
+                }
+            }
+            if let Some(name) = builtin_name(callee.as_ref()) {
+                if let Some(result) = super::builtins::infer_typed_array_builtin_call(
                     &name,
                     args,
                     vars,
@@ -1628,6 +1645,18 @@ pub(super) fn infer_expr(
                     if right_ty != Type::Bytes {
                         return Err(Diagnostic::new("== requires both sides to have same type"));
                     }
+                } else if matches!(left_ty, Type::TypedArray(_)) {
+                    // Typed arrays compare by identity (same allocation).
+                    let right_ty = infer_expr(
+                        right,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        Some(left_ty.clone()),
+                    )?;
+                    if right_ty != left_ty {
+                        return Err(Diagnostic::new("== requires both sides to have same type"));
+                    }
                 } else {
                     return Err(Diagnostic::new(
                         "== supports only numeric, bool, string, and bytes operands in MVP",
@@ -1715,6 +1744,35 @@ fn infer_array_literal(
     active_type_params: &HashSet<String>,
     expected: Option<Type>,
 ) -> Result<Type, Diagnostic> {
+    // A typed-array literal (`{1, 2, 3}::Float32Array` or an annotated let)
+    // allocates in linear memory. Elements accept any numeric type: the store
+    // converts to the element type like an explicit cast, mirroring JS typed
+    // arrays where every write coerces the number.
+    if let Some(Type::TypedArray(kind)) = expected.as_ref() {
+        let element_ty = Type::Numeric(kind.element_numeric_type());
+        for element in elements {
+            if matches!(element, Expr::Vararg(_)) {
+                return Err(Diagnostic::new(
+                    "'...' is not supported in typed-array literals",
+                ));
+            }
+            let actual = infer_expr(
+                element,
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(element_ty.clone()),
+            )
+            .or_else(|_| infer_expr(element, vars, fn_signatures, active_type_params, None))?;
+            if !actual.is_numeric() {
+                return Err(Diagnostic::new(format!(
+                    "{} element must be numeric, got {actual}",
+                    kind.type_name()
+                )));
+            }
+        }
+        return Ok(Type::TypedArray(*kind));
+    }
     if elements.is_empty() {
         if let Some(element_ty) = expected.as_ref().and_then(Type::element_type) {
             return Ok(Type::Array(Box::new(element_ty)));

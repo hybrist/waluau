@@ -1,4 +1,4 @@
-use waluau_ast::{NumericType, TaggedVariant, Type};
+use waluau_ast::{NumericType, TaggedVariant, Type, TypedArrayKind};
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
 
@@ -182,6 +182,13 @@ impl Parser {
                 } else {
                     Ok(Type::TypeParam(name))
                 }
+            }
+            Some(TokenKind::Identifier(name))
+                if TypedArrayKind::from_type_name(&name).is_some() =>
+            {
+                Ok(Type::TypedArray(
+                    TypedArrayKind::from_type_name(&name).expect("checked in guard"),
+                ))
             }
             Some(TokenKind::Identifier(name)) => {
                 // A dotted name (`game.State`) references a type alias
