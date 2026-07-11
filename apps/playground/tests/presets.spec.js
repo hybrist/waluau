@@ -183,7 +183,7 @@ test.describe('preset selector', () => {
 
     await results.filter({ hasText: 'snake/main.walu' }).click();
     await expect(page.locator('.search-modal-container')).not.toBeVisible();
-    await expect(page.locator('.file-item.active').getByText('main.walu', { exact: true })).toBeVisible();
+    await expect(page.locator('.file-item.active')).toContainText('fixtures/snake/main.walu');
     await expect(page.locator('.code-textarea')).toContainText('function install_snake');
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
       timeout: COMPILER_READY_TIMEOUT,

@@ -1,64 +1,61 @@
--- Canvas 2D rendering for the snake fixture: rectangles for the arena and
--- snake, a beginPath()/arc()/fill() circle for the food, and fillText HUD.
+-- Engine Graphics rendering for Snake. This module is platform-independent:
+-- rectangles, circles, and text are submitted to the engine's GPU renderer.
 
+local graphics_module = require("../../engine/graphics")
 local game = require("./game")
 
+type Graphics = graphics_module.Graphics
 type State = game.State
 
--- Size of one grid cell in canvas pixels. main.walu reads this off the
--- module namespace to size the <canvas> element as cols * CELL_SIZE x
--- rows * CELL_SIZE.
 local CELL_SIZE <const>: f64 = 16.0
 
 function cell_px(v: i32): f64
     return v::f64 * CELL_SIZE
 end
 
-function draw(ctx: CanvasRenderingContext2D, state: State): unit
-    local w: f64 = cell_px(state.cols)
-    local h: f64 = cell_px(state.rows)
+function draw(graphics: Graphics, state: State): unit
+    local width: f64 = cell_px(state.cols)
+    local height: f64 = cell_px(state.rows)
 
-    -- The board backdrop is the canvas element's CSS background-color (set in
-    -- main.walu); clearing to transparent pixels lets it show through.
-    ctx:clearRect(0.0, 0.0, w, h)
+    graphics:clear("#0f172a")
 
-    -- Arena border.
-    ctx.strokeStyle = "#f8fafc"
-    ctx.lineWidth = 2.0
-    ctx:strokeRect(1.0, 1.0, w - 2.0, h - 2.0)
+    graphics:set_color("#f8fafc")
+    graphics:set_line_width(2.0)
+    graphics:stroke_rectangle(1.0, 1.0, width - 2.0, height - 2.0)
 
-    -- Food: a filled circle centered in its grid cell. fill() resolves to the
-    -- zero-argument overload of CanvasRenderingContext2D.fill (its Path2D
-    -- variant lives outside the curated extern surface).
-    ctx.fillStyle = "#dc2626"
-    ctx:beginPath()
-    ctx:arc(cell_px(state.food.x) + CELL_SIZE / 2.0, cell_px(state.food.y) + CELL_SIZE / 2.0, CELL_SIZE / 2.0 - 2.0, 0.0, 2.0 * math.pi)
-    ctx:fill()
+    graphics:set_color("#dc2626")
+    graphics:fill_circle(
+        cell_px(state.food.x) + CELL_SIZE / 2.0,
+        cell_px(state.food.y) + CELL_SIZE / 2.0,
+        CELL_SIZE / 2.0 - 2.0
+    )
 
-    -- Snake, head (index 0) drawn brighter than the body.
-    for i, seg in state.snake do
+    for i, segment in state.snake do
         if i == 0 then
-            ctx.fillStyle = "#4ade80"
+            graphics:set_color("#4ade80")
         else
-            ctx.fillStyle = "#16a34a"
+            graphics:set_color("#16a34a")
         end
-        ctx:fillRect(cell_px(seg.x) + 1.0, cell_px(seg.y) + 1.0, CELL_SIZE - 2.0, CELL_SIZE - 2.0)
+        graphics:fill_rectangle(
+            cell_px(segment.x) + 1.0,
+            cell_px(segment.y) + 1.0,
+            CELL_SIZE - 2.0,
+            CELL_SIZE - 2.0
+        )
     end
 
-    -- HUD.
-    ctx.fillStyle = "#f8fafc"
-    ctx.font = "12px monospace"
-    ctx:fillText("Score " .. tostring(state.score), 6.0, 14.0)
+    graphics:set_color("#f8fafc")
+    graphics:set_font("12px monospace")
+    graphics:print("Score " .. tostring(state.score), 6.0, 14.0)
 
     if not state.alive then
-        ctx.font = "20px monospace"
-        ctx:fillText("GAME OVER", w / 2.0 - 54.0, h / 2.0 - 4.0)
-        ctx.font = "12px monospace"
-        ctx:fillText("press Restart", w / 2.0 - 47.0, h / 2.0 + 14.0)
+        graphics:set_font("20px monospace")
+        graphics:print("GAME OVER", width / 2.0 - 54.0, height / 2.0 - 4.0)
+        graphics:set_font("12px monospace")
+        graphics:print("press R", width / 2.0 - 25.0, height / 2.0 + 14.0)
     end
 end
 
 return {
-    CELL_SIZE = CELL_SIZE,
     draw = draw,
 }

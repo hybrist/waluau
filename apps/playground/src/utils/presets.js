@@ -181,12 +181,19 @@ export const KANBAN_PRESET = {
 export const SNAKE_PRESET = {
   key: 'snake-game',
   label: 'Snake Game',
-  files: Object.entries(snakeFixtures).reduce((acc, [path, source]) => {
-    const filename = path.split('/').pop();
-    acc[`/${filename}`] = source;
-    return acc;
-  }, {}),
-  entryFile: '/main.walu'
+  files: {
+    ...Object.entries(gameEngineModules).reduce((acc, [path, source]) => {
+      const filename = path.split('/').pop();
+      acc[`/engine/${filename}`] = source;
+      return acc;
+    }, {}),
+    ...Object.entries(snakeFixtures).reduce((acc, [path, source]) => {
+      const filename = path.split('/').pop();
+      acc[`/fixtures/snake/${filename}`] = source;
+      return acc;
+    }, {})
+  },
+  entryFile: '/fixtures/snake/main.walu'
 };
 
 export const GAME_ENGINE_PRESET = {

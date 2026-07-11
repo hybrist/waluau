@@ -269,12 +269,11 @@ test.describe('DOM Output in Run tab', () => {
     expect(pixel).toEqual([0, 0, 0, 255]);
   });
 
-  test('runs the snake game fixture preset with canvas rendering and controls', async ({ page }) => {
+  test('runs the snake fixture through the 2D game engine', async ({ page }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
     await page.getByRole('button', { name: 'Snake Game' }).click();
 
-    await expect(page.locator('.file-item').getByText('main.walu', { exact: true })).toBeVisible();
-    await expect(page.locator('.file-item').getByText('game.walu', { exact: true })).toBeVisible();
-    await expect(page.locator('.file-item').getByText('render.walu', { exact: true })).toBeVisible();
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
       timeout: COMPILER_READY_TIMEOUT,
     });
@@ -285,56 +284,30 @@ test.describe('DOM Output in Run tab', () => {
     const outputFrame = page.frameLocator('.dom-output-frame');
     await expect(outputFrame.locator('h1')).toHaveText('Waluau Snake');
 
-    const canvas = outputFrame.locator('canvas#snake-canvas');
+    const canvas = outputFrame.locator('canvas#walua-game-canvas');
     await expect(canvas).toHaveJSProperty('width', 336);
     await expect(canvas).toHaveJSProperty('height', 336);
 
-    const paintedPixels = () =>
+    const signature = () =>
       canvas.evaluate((node) => {
-        const data = node
-          .getContext('2d')
-          .getImageData(0, 0, node.width, node.height).data;
-        let painted = 0;
-        for (let i = 3; i < data.length; i += 4) {
-          if (data[i] !== 0) painted += 1;
-        }
-        return painted;
-      });
-
-    // The requestAnimationFrame loop draws the arena, snake, food, and HUD.
-    await expect.poll(paintedPixels).toBeGreaterThan(0);
-
-    // The loop also advances the game: the snake moves one cell per tick, so
-    // the set of painted pixels changes between polls (a static initial paint
-    // would keep the same signature forever).
-    const paintedSignature = () =>
-      canvas.evaluate((node) => {
-        const data = node
-          .getContext('2d')
-          .getImageData(0, 0, node.width, node.height).data;
+        const gl = node.getContext('webgl2');
+        const data = new Uint8Array(node.width * node.height * 4);
+        gl.readPixels(0, 0, node.width, node.height, gl.RGBA, gl.UNSIGNED_BYTE, data);
         let hash = 0;
-        for (let i = 3; i < data.length; i += 4) {
-          if (data[i] !== 0) hash = (hash * 31 + i) >>> 0;
+        for (let i = 0; i < data.length; i += 16) {
+          hash = (hash * 33 + data[i] + data[i + 1] * 3 + data[i + 2] * 7) >>> 0;
         }
         return hash;
       });
-    const initialSignature = await paintedSignature();
-    await expect.poll(paintedSignature).not.toBe(initialSignature);
 
-    // The on-screen d-pad and restart button drive the game without faulting
-    // the wasm instance; the loop keeps painting afterwards.
-    await outputFrame.locator('#snake-down').click();
-    await outputFrame.locator('#snake-restart').click();
-    await expect.poll(paintedPixels).toBeGreaterThan(0);
-
-    // Keyboard input flows through the KeyboardEvent downcast in the
-    // document-level keydown listener; clicking the canvas first moves focus
-    // into the DOM Output iframe so the keys land on its document.
+    const initial = await signature();
+    await expect.poll(signature).not.toBe(initial);
     await canvas.click();
-    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('ArrowDown');
     await page.keyboard.press('s');
     await page.keyboard.press('r');
-    await expect.poll(paintedPixels).toBeGreaterThan(0);
+    await expect.poll(signature).not.toBe(initial);
+    expect(pageErrors).toEqual([]);
   });
 
   test('runs the 2D game engine preset through its platform facade', async ({ page }) => {

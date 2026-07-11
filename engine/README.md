@@ -59,8 +59,9 @@ A small game needs to do four things:
    logical canvas pixels.
 
 [`fixtures/game-engine/main.walu`](../fixtures/game-engine/main.walu) is the
-smallest browser example. Unlike the older Snake fixture, its game module does
-not mention DOM types, canvas contexts, or animation frames.
+smallest browser example. [`fixtures/snake/`](../fixtures/snake/) is a fuller
+port with separate rules and rendering modules; none of its game code mentions
+DOM types, canvas contexts, event listeners, or animation frames.
 [`fixtures/game-engine/sim.walu`](../fixtures/game-engine/sim.walu) runs the
 engine clock and input state without a browser.
 

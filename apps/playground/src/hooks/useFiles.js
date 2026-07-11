@@ -206,7 +206,7 @@ export default function useFiles() {
         category: 'Fixture',
         onSelect: () => {
           selectPreset(SNAKE_PRESET);
-          setActiveFile(`/${filename}`);
+          setActiveFile(`/fixtures/snake/${filename}`);
         }
       });
     }
