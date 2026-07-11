@@ -30,6 +30,37 @@ local wheel: i32 = game.rank_five({ card(14, 0), card(2, 1), card(3, 2), card(4,
 local six_high: i32 = game.rank_five({ card(2, 0), card(3, 1), card(4, 2), card(5, 3), card(6, 0) })
 assert(six_high > wheel)
 
+-- Three-card poker ranks equal swap bids, and wager size takes precedence.
+local three_straight_flush: i32 = game.rank_three({ card(10, 2), card(11, 2), card(12, 2) })
+local three_kind: i32 = game.rank_three({ card(8, 0), card(8, 1), card(8, 2) })
+local three_straight: i32 = game.rank_three({ card(4, 0), card(5, 1), card(6, 2) })
+local three_flush: i32 = game.rank_three({ card(14, 3), card(9, 3), card(3, 3) })
+local three_pair: i32 = game.rank_three({ card(7, 0), card(7, 1), card(2, 2) })
+assert(three_straight_flush > three_kind and three_kind > three_straight)
+assert(three_straight > three_flush and three_flush > three_pair)
+assert(game.swap_priority(3, three_pair, 2, three_straight_flush) == 1)
+assert(game.swap_priority(2, three_straight, 2, three_pair) == 1)
+assert(game.swap_priority(2, three_pair, 2, three_straight) == -1)
+
+-- With the computer unable to wager, a valid player proposal executes and
+-- exchanges the selected hand/community cards without consuming the deck.
+math.randomseed(7)
+local swap_state = game.new()
+swap_state.computer_points = 0
+swap_state:play(0, 1)
+assert(#swap_state.history == 0) -- the trick cannot start before swap resolution
+local old_hand = swap_state.player_hand[0]
+local old_middle = swap_state.middle[0]
+local old_deck_size: i32 = #swap_state.deck
+swap_state:resolve_swap(1, { 0 }, { 0 })
+assert(not swap_state.swap_open and swap_state.swap_winner == 1 and swap_state.swap_count == 1)
+assert(swap_state.player_points == 9 and swap_state.pot == 1)
+assert(swap_state.player_hand[0].rank == old_middle.rank and swap_state.player_hand[0].suit == old_middle.suit)
+assert(swap_state.middle[0].rank == old_hand.rank and swap_state.middle[0].suit == old_hand.suit)
+assert(#swap_state.deck == old_deck_size)
+swap_state:resolve_swap(3, { 1 }, { 1 })
+assert(swap_state.player_wager == 1 and swap_state.swap_count == 1) -- only one resolution per round
+
 -- With three hearts in the middle, the computer finds the two hearts that
 -- complete a flush instead of an unrelated high pair.
 local middle: {game.Card} = { card(2, 2), card(7, 2), card(11, 2) }
@@ -42,25 +73,30 @@ assert(choice.first == 2 and choice.second == 3)
 math.randomseed(42)
 local state = game.new()
 assert(#state.deck == 39 and #state.middle == 3)
+assert(state.player_points == 10 and state.computer_points == 10 and state.swap_open)
 for expected_round = FIRST_ROUND, LAST_ROUND do
     assert(state.round == expected_round)
     assert(#state.player_hand == 5 and #state.computer_hand == 5)
+    state:resolve_swap(0, {}, {})
+    assert(not state.swap_open)
     state:play(0, 1)
     assert(#state.history == expected_round)
     local trick = state.history[expected_round - 1]
     assert(trick.round == expected_round)
+    assert(trick.pot == trick.player_wager + trick.computer_wager)
     assert(#trick.middle == 3 and #trick.player_cards == 2 and #trick.computer_cards == 2)
     if trick.winner == 0 then
         assert(trick.points == 0)
     else
-        assert(trick.points == expected_round)
+        assert(trick.points == expected_round + trick.pot)
     end
 end
 assert(state.finished)
 assert(#state.deck == 0 and #state.middle == 0)
 assert(#state.history == 6)
 assert(state.player_tricks + state.computer_tricks <= 6)
-assert(state.player_points + state.computer_points <= 21)
+assert(state.player_points + state.computer_points >= 20)
+assert(state.player_points + state.computer_points <= 41)
 local final_points: i32 = state.player_points + state.computer_points
 state:play(0, 1)
 assert(state.player_points + state.computer_points == final_points)

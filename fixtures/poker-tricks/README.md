@@ -1,17 +1,24 @@
 # Poker Tricks fixture
 
 A compact player-versus-computer trick-taking game written in Waluau. Each
-player starts with five cards. Three community cards are revealed each round,
-then the player chooses two cards and the computer searches its hand for the
-best two. Those cards and the community cards make ordinary five-card poker
-hands.
+player starts with five cards and 10 points. Three community cards are revealed
+each round. Before playing the trick, either player may pass or wager 1–3 points
+to exchange up to three hand cards with the same number of community cards.
+Only one proposal executes: the higher wager has priority, with equal wagers
+decided by comparing the proposed boards as three-card poker hands. The
+computer searches every legal exchange for an improved five-card hand.
 
-The winner earns points equal to the round number, so the six tricks are worth
-1 through 6 points. Played cards are replaced from the shared deck. Starting
-with ten cards in hand and consuming seven cards per round uses all 52 cards
-exactly; the higher point total then wins. A running history keeps every
-completed trick visible, including the board, both played pairs, the resulting
-poker categories, winner, and points awarded.
+After the single swap opportunity, the player chooses two cards and the
+computer searches its hand for the best two. Those cards and the community
+cards make ordinary five-card poker hands.
+
+The winner earns points equal to the round number plus the complete wager pot,
+so the six base trick values are 1 through 6 points. A tied trick refunds both
+wagers. Played cards are replaced from the shared deck. Starting with ten cards
+in hand and consuming seven cards per round uses all 52 cards exactly; swaps do
+not consume cards. The higher point total then wins. A running history keeps
+every completed trick visible, including swap priority and wagers, the board,
+both played pairs, the resulting poker categories, winner, and points awarded.
 
 | File | Purpose |
 | --- | --- |

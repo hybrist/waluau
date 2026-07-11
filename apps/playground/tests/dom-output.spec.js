@@ -328,12 +328,26 @@ test.describe('DOM Output in Run tab', () => {
 
     const outputFrame = page.frameLocator('.dom-output-frame');
     await expect(outputFrame.locator('h1')).toHaveText('Poker Tricks');
-    await expect(outputFrame.locator('#middle-cards').locator('span')).toHaveCount(3);
+    await expect(outputFrame.locator('#middle-cards').locator('button')).toHaveCount(3);
     await expect(outputFrame.locator('#player-hand').locator('button')).toHaveCount(5);
     await expect(outputFrame.locator('#poker-score')).toContainText('Round 1');
+    await expect(outputFrame.locator('#poker-score')).toContainText('You 10');
+    await expect(outputFrame.locator('#poker-score')).toContainText('Computer 10');
+    await expect(outputFrame.locator('#poker-status')).toContainText('Swap phase');
+    await expect(outputFrame.locator('#submit-swap')).toBeVisible();
     await expect(outputFrame.locator('#trick-history-empty')).toHaveText('No tricks played yet.');
 
     for (let round = 1; round <= 6; round += 1) {
+      if (round === 1) {
+        await outputFrame.locator('#player-card-0').click();
+        await outputFrame.locator('#middle-card-0').click();
+        await outputFrame.locator('#wager-3').click();
+        await outputFrame.locator('#submit-swap').click();
+        await expect(outputFrame.locator('#poker-status')).toContainText('Pot');
+      } else {
+        await outputFrame.locator('#pass-swap').click();
+      }
+      await expect(outputFrame.locator('#play-trick')).toBeVisible();
       await outputFrame.locator('#player-card-0').click();
       await expect(outputFrame.locator('#player-card-0')).toHaveClass(/border-4/);
       await outputFrame.locator('#player-card-1').click();
@@ -343,6 +357,7 @@ test.describe('DOM Output in Run tab', () => {
       const history = outputFrame.locator('.trick-history-entry');
       await expect(history).toHaveCount(round);
       await expect(history.nth(round - 1)).toContainText(`Trick ${round}`);
+      await expect(history.nth(round - 1)).toContainText('Swap:');
       await expect(history.nth(round - 1)).toContainText('Board:');
       await expect(history.nth(round - 1)).toContainText('You:');
       await expect(history.nth(round - 1)).toContainText('Computer:');
@@ -350,6 +365,7 @@ test.describe('DOM Output in Run tab', () => {
       await expect(history.nth(round - 1)).toContainText(/point\(s\)|no points/);
       if (round < 6) {
         await expect(outputFrame.locator('#poker-score')).toContainText(`Round ${round + 1}`);
+        await expect(outputFrame.locator('#poker-status')).toContainText('Swap phase');
       }
     }
 
@@ -357,6 +373,8 @@ test.describe('DOM Output in Run tab', () => {
     await expect(outputFrame.locator('#poker-score')).toContainText('Round 6');
     await outputFrame.locator('#new-game').click();
     await expect(outputFrame.locator('#poker-score')).toContainText('Round 1');
+    await expect(outputFrame.locator('#poker-score')).toContainText('You 10');
+    await expect(outputFrame.locator('#submit-swap')).toBeVisible();
     await expect(outputFrame.locator('.trick-history-entry')).toHaveCount(0);
     await expect(outputFrame.locator('#trick-history-empty')).toBeVisible();
   });
