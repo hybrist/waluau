@@ -359,7 +359,7 @@ test.describe('DOM Output in Run tab', () => {
       await outputFrame.locator('#play-trick').click();
       expect(pageErrors).toEqual([]);
       await expect(outputFrame.locator('#trick-reveal')).toBeVisible();
-      await expect(outputFrame.locator('#trick-reveal .pt-reveal-card')).toHaveCount(5);
+      await expect(outputFrame.locator('#trick-reveal .pt-reveal-card')).toHaveCount(7);
       await expect(outputFrame.locator('#trick-reveal .pt-reveal-card').first()).toHaveCSS(
         'animation-name',
         'pt-flip',

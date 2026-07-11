@@ -44,6 +44,7 @@ end
 
 function make_showdown_card(document: Document, card: game.Card, delay: i32): Element
     local card_element: Element = make_element(document, "div", "pt-card pt-card-static pt-reveal-card")
+    card_element:set_attribute("role", "img")
     card_element:set_attribute("aria-label", game.card_name(card))
     card_element:set_attribute("style", "animation-delay: " .. tostring(delay) .. "ms")
     append_card_face(document, card_element, card)
@@ -153,8 +154,8 @@ function append_trick_reveal(document: Document, table_area: Element, trick: gam
     local player_show_label: Element = make_element(document, "p", "pt-show-label")
     player_show_label.text_content = "You · " .. game.category_name(trick.player_value)
     player_show:append_child(player_show_label)
-    local player_show_cards: Element = make_element(document, "p", "pt-player-pair")
-    player_show_cards.text_content = game.card_name(trick.player_cards[0]) .. "  " .. game.card_name(trick.player_cards[1])
+    local player_show_cards: Element = make_element(document, "div", "pt-show-row")
+    append_showdown_cards(document, player_show_cards, trick.player_cards, 450)
     player_show:append_child(player_show_cards)
     showdown:append_child(player_show)
 
@@ -223,7 +224,7 @@ function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand
         local card: Element = make_element(document, "button", "pt-card pt-card-button")
         card.id = "middle-card-" .. tostring(i)
         card:set_attribute("type", "button")
-        card:set_attribute("aria-label", "Select community card " .. tostring(i + 1))
+        card:set_attribute("aria-label", "Select community card " .. tostring(i + 1) .. ": " .. game.card_name(visible_middle[i]))
         card:set_attribute("data-card-index", tostring(i))
         append_card_face(document, card, visible_middle[i])
         middle_row:append_child(card)
@@ -424,7 +425,7 @@ function render_poker_tricks(state: game.State, play_selection: {i32}, swap_hand
         local card_button: Element = make_element(document, "button", "")
         card_button.id = "player-card-" .. tostring(index)
         card_button:set_attribute("type", "button")
-        card_button:set_attribute("aria-label", "Select card " .. tostring(index + 1))
+        card_button:set_attribute("aria-label", "Select card " .. tostring(index + 1) .. ": " .. game.card_name(state.player_hand[index]))
         append_card_face(document, card_button, state.player_hand[index])
         player_row:append_child(card_button)
         table.insert(player_cards, card_button)
