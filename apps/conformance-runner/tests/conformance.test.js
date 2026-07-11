@@ -10,6 +10,9 @@ import {
   normalizeWhitespace,
   failureMatchesExpected,
 } from '../../../tools/conformance/includes.js';
+import gameEngineSim from '../../../fixtures/game-engine/sim.walu?raw';
+import gameEngineInput from '../../../engine/input.walu?raw';
+import gameEngineTime from '../../../engine/time.walu?raw';
 
 const conformanceModules = import.meta.glob('../../../conformance/**/*.walu', {
   eager: true,
@@ -713,5 +716,16 @@ describe('browser conformance', () => {
     } finally {
       cleanup();
     }
+  });
+
+  it('runs the 2D engine clock and input simulation without a DOM', async () => {
+    await compileAndInstantiate(
+      {
+        '/fixtures/game-engine/sim.walu': gameEngineSim,
+        '/engine/input.walu': gameEngineInput,
+        '/engine/time.walu': gameEngineTime,
+      },
+      '/fixtures/game-engine/sim.walu'
+    );
   });
 });

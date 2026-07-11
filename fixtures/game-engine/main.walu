@@ -1,0 +1,99 @@
+-- A tiny game using only the engine-facing API: no DOM, canvas or animation
+-- frame calls appear in game code.
+
+local engine = require("../../engine/browser")
+local input_module = require("../../engine/input")
+local graphics_module = require("../../engine/graphics")
+
+type State = { x: f64, y: f64, vx: f64, vy: f64, size: f64, score: i32 }
+
+function install_game(): unit
+    local state: State = { x = 48.0, y = 64.0, vx = 120.0, vy = 90.0, size = 22.0, score = 0 }
+
+    local function load(): unit
+        state.x = 48.0
+        state.y = 64.0
+    end
+
+    local function update(dt: f64, input: input_module.Input): unit
+        local speed: f64 = 150.0
+        if input:is_down("ArrowLeft") or input:is_down("a") then
+            state.vx = -speed
+        elseif input:is_down("ArrowRight") or input:is_down("d") then
+            state.vx = speed
+        end
+        if input:is_down("ArrowUp") or input:is_down("w") then
+            state.vy = -speed
+        elseif input:is_down("ArrowDown") or input:is_down("s") then
+            state.vy = speed
+        end
+
+        state.x += state.vx * dt
+        state.y += state.vy * dt
+        if state.x < 0.0 then
+            state.x = 0.0
+            state.vx = -state.vx
+            state.score += 1
+        elseif state.x + state.size > 320.0 then
+            state.x = 320.0 - state.size
+            state.vx = -state.vx
+            state.score += 1
+        end
+        if state.y < 0.0 then
+            state.y = 0.0
+            state.vy = -state.vy
+            state.score += 1
+        elseif state.y + state.size > 200.0 then
+            state.y = 200.0 - state.size
+            state.vy = -state.vy
+            state.score += 1
+        end
+    end
+
+    local function draw(graphics: graphics_module.Graphics, alpha: f64): unit
+        graphics:clear("#0f172a")
+        graphics:set_color("#334155")
+        graphics:set_line_width(1.0)
+        for x = 0, 320, 32 do
+            graphics:line(x::f64, 0.0, x::f64, 200.0)
+        end
+        for y = 0, 200, 32 do
+            graphics:line(0.0, y::f64, 320.0, y::f64)
+        end
+        graphics:set_color("#38bdf8")
+        graphics:fill_rectangle(state.x, state.y, state.size, state.size)
+        graphics:set_color("#f8fafc")
+        graphics:set_font("14px monospace")
+        graphics:print("Bounces " .. tostring(state.score), 8.0, 18.0)
+        graphics:print("Arrows / WASD steer", 8.0, 194.0)
+    end
+
+    local function keypressed(key: string): unit
+        if key == "r" then
+            state.x = 48.0
+            state.y = 64.0
+            state.score = 0
+        end
+    end
+
+    local function keyreleased(key: string): unit
+        -- Required hook in the initial API; intentionally unused by this game.
+    end
+
+    engine.start({
+        title = "Walua 2D Engine",
+        width = 320,
+        height = 200,
+        update_hz = 60.0,
+        max_frame_seconds = 0.25,
+        background = "#0f172a",
+    }, {
+        load = load,
+        update = update,
+        draw = draw,
+        keypressed = keypressed,
+        keyreleased = keyreleased,
+    })
+end
+
+install_game()

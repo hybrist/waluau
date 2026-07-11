@@ -1,0 +1,104 @@
+-- Browser platform adapter: owns DOM setup, keyboard events and the animation
+-- loop. This is the only engine module that decides how a game is hosted.
+
+local input_module = require("./input")
+local graphics_module = require("./graphics")
+local time_module = require("./time")
+local window = require("dom:window")
+
+type Config = {
+    title: string,
+    width: u32,
+    height: u32,
+    update_hz: f64,
+    max_frame_seconds: f64,
+    background: string
+}
+
+-- Callbacks are intentionally mandatory in the initial API. A no-op function
+-- is cheap, while optional function values need broader nullable-function
+-- support from Waluau.
+type Game = {
+    load: () -> unit,
+    update: (f64, input_module.Input) -> unit,
+    draw: (graphics_module.Graphics, f64) -> unit,
+    keypressed: (string) -> unit,
+    keyreleased: (string) -> unit
+}
+
+function start(config: Config, game: Game): unit
+    local document: Document = window.document
+    local body: HTMLElement = document.body
+    local old_root: Element? = document:get_element_by_id("walua-game")
+    if old_root ~= nil then
+        body:remove_child(old_root)
+    end
+
+    local root: Element = document:create_element("main")
+    root.id = "walua-game"
+    root.class_name = "flex flex-col items-center gap-3 bg-slate-950 p-4 text-slate-100"
+    body:append_child(root)
+
+    local heading: Element = document:create_element("h1")
+    heading.class_name = "text-lg font-semibold"
+    heading.text_content = config.title
+    root:append_child(heading)
+
+    local element: Element = document:create_element("canvas")
+    element.id = "walua-game-canvas"
+    root:append_child(element)
+
+    if HTMLCanvasElement(canvas) = element then
+        canvas.width = config.width
+        canvas.height = config.height
+        local style: CSSStyleProperties = canvas.style
+        style:setProperty("width", tostring(config.width) .. "px")
+        style:setProperty("height", tostring(config.height) .. "px")
+        style:setProperty("background-color", config.background)
+        style:setProperty("image-rendering", "pixelated")
+
+        local maybe_context: CanvasRenderingContext2D? = canvas:get_context("2d")
+        assert(maybe_context ~= nil)
+        local context: CanvasRenderingContext2D = maybe_context::CanvasRenderingContext2D
+        local graphics: graphics_module.Graphics = graphics_module.new(context, config.width::f64, config.height::f64)
+        local input: input_module.Input = input_module.new()
+        local clock: time_module.Clock = time_module.new(config.update_hz, config.max_frame_seconds)
+
+        document:add_event_listener("keydown", function(event: Event): unit
+            if KeyboardEvent(key_event) = event then
+                local was_down: bool = input:is_down(key_event.key)
+                input:set_key(key_event.key, true)
+                if not was_down then
+                    game.keypressed(key_event.key)
+                end
+            end
+        end)
+        document:add_event_listener("keyup", function(event: Event): unit
+            if KeyboardEvent(key_event) = event then
+                local was_down: bool = input:is_down(key_event.key)
+                input:set_key(key_event.key, false)
+                if was_down then
+                    game.keyreleased(key_event.key)
+                end
+            end
+        end)
+
+        game.load()
+        local function frame(timestamp_ms: f64): unit
+            local steps: i32 = clock:advance(timestamp_ms)
+            for _ = 1, steps do
+                game.update(clock.step, input)
+                input:end_step()
+            end
+            game.draw(graphics, clock:alpha())
+            window:requestAnimationFrame(frame)
+        end
+        window:requestAnimationFrame(frame)
+    else
+        error("game engine could not create a 2D canvas")
+    end
+end
+
+return {
+    start = start,
+}

@@ -4,12 +4,14 @@ import {
   moduleFixtures,
   pokerTricksFixtures,
   snakeFixtures,
+  gameEngineFixtures,
   conformanceModules,
   filesForConformancePreset,
   MULTI_PRESET,
   KANBAN_PRESET,
   POKER_TRICKS_PRESET,
   SNAKE_PRESET,
+  GAME_ENGINE_PRESET,
   DEFAULT_PRESET,
   PRESETS
 } from '../utils/presets.js';
@@ -221,6 +223,22 @@ export default function useFiles() {
         onSelect: () => {
           selectPreset(POKER_TRICKS_PRESET);
           setActiveFile(`/${filename}`);
+        }
+      });
+    }
+
+    // 6. 2D game engine fixture files
+    for (const [path, source] of Object.entries(gameEngineFixtures)) {
+      const filename = path.split('/').pop();
+      items.push({
+        type: 'fixture',
+        path,
+        name: `game-engine/${filename}`,
+        source,
+        category: 'Fixture',
+        onSelect: () => {
+          selectPreset(GAME_ENGINE_PRESET);
+          setActiveFile(`/fixtures/game-engine/${filename}`);
         }
       });
     }
