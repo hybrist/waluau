@@ -19,6 +19,12 @@ const snakeFixtures = import.meta.glob('../../../../fixtures/snake/*.walu', {
   import: 'default'
 });
 
+const pokerTricksFixtures = import.meta.glob('../../../../fixtures/poker-tricks/*.walu', {
+  eager: true,
+  query: '?raw',
+  import: 'default'
+});
+
 const conformanceModules = import.meta.glob('../../../../conformance/*.walu', {
   eager: true,
   query: '?raw',
@@ -31,7 +37,7 @@ const conformanceIncludeModules = import.meta.glob('../../../../{builtins,extern
   import: 'default'
 });
 
-export { fixtureModules, moduleFixtures, snakeFixtures, conformanceModules };
+export { fixtureModules, moduleFixtures, snakeFixtures, pokerTricksFixtures, conformanceModules };
 
 export function filesForConformancePreset(filename, source) {
   const files = {
@@ -171,7 +177,18 @@ export const SNAKE_PRESET = {
   entryFile: '/main.walu'
 };
 
-export const PRESETS = [...SINGLE_PRESETS, MULTI_PRESET, DOM_PRESET, KANBAN_PRESET, SNAKE_PRESET, ...CONFORMANCE_PRESETS].sort((left, right) =>
+export const POKER_TRICKS_PRESET = {
+  key: 'poker-tricks',
+  label: 'Poker Tricks',
+  files: Object.entries(pokerTricksFixtures).reduce((acc, [path, source]) => {
+    const filename = path.split('/').pop();
+    acc[`/${filename}`] = source;
+    return acc;
+  }, {}),
+  entryFile: '/main.walu'
+};
+
+export const PRESETS = [...SINGLE_PRESETS, MULTI_PRESET, DOM_PRESET, KANBAN_PRESET, POKER_TRICKS_PRESET, SNAKE_PRESET, ...CONFORMANCE_PRESETS].sort((left, right) =>
   left.label.localeCompare(right.label)
 );
 

@@ -189,4 +189,22 @@ test.describe('preset selector', () => {
       timeout: COMPILER_READY_TIMEOUT,
     });
   });
+
+  test('file search finds the Poker Tricks fixture files and loads the preset', async ({ page }) => {
+    await page.getByRole('button', { name: 'Search (Cmd+P)' }).click();
+    await page.locator('.search-input-field').fill('poker-tricks');
+
+    const results = page.locator('.search-item');
+    await expect(results.locator('.search-item-name')).toHaveText([
+      'poker-tricks/game.walu',
+      'poker-tricks/main.walu',
+      'poker-tricks/sim.walu',
+    ]);
+
+    await results.filter({ hasText: 'poker-tricks/main.walu' }).click();
+    await expect(page.locator('.code-textarea')).toContainText('function render_poker_tricks');
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+  });
 });
