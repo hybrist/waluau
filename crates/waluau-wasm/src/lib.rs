@@ -21,6 +21,10 @@ enum TypeJson {
     Bytes,
     Unit,
     Thread,
+    Nullable {
+        #[serde(rename = "innerType")]
+        inner_type: Box<TypeJson>,
+    },
     Array {
         #[serde(rename = "elementType")]
         element_type: Box<TypeJson>,
@@ -72,6 +76,9 @@ fn to_type_json(
         waluau_ast::Type::Bytes => TypeJson::Bytes,
         waluau_ast::Type::Unit => TypeJson::Unit,
         waluau_ast::Type::Thread => TypeJson::Thread,
+        waluau_ast::Type::Nullable(inner_ty) => TypeJson::Nullable {
+            inner_type: Box::new(to_type_json(inner_ty, record_type_indices)),
+        },
         waluau_ast::Type::Opaque { ty, .. } => to_type_json(ty, record_type_indices),
         waluau_ast::Type::Array(elem_ty) => TypeJson::Array {
             element_type: Box::new(to_type_json(elem_ty, record_type_indices)),
@@ -727,5 +734,17 @@ mod tests {
             error,
             "unsupported DOM virtual module \"dom:worker\"; supported specifiers: \"dom:window\""
         );
+    }
+
+    #[test]
+    fn nullable_types_have_structured_signature_metadata() {
+        let json = super::to_type_json(
+            &waluau_ast::Type::Nullable(Box::new(waluau_ast::Type::String)),
+            &std::collections::HashMap::new(),
+        );
+        let super::TypeJson::Nullable { inner_type } = json else {
+            panic!("nullable type should not fall back to unknown metadata");
+        };
+        assert!(matches!(*inner_type, super::TypeJson::String));
     }
 }
