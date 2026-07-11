@@ -211,7 +211,7 @@ export default function RunTab({
             <line x1="12" y1="8" x2="12" y2="12" />
             <line x1="12" y1="16" x2="12.01" y2="16" />
           </svg>
-          <h4>Instantiation Error</h4>
+          <h4>Module Load Error</h4>
           <pre className="diagnostic-output">{runError}</pre>
         </div>
       ) : exportsList.length === 0 ? (

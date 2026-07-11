@@ -417,13 +417,115 @@ export function isDomImportName(name) {
   return name.startsWith('dom_') || /^[A-Z][A-Za-z0-9]*\.[a-z][A-Za-z0-9_]*(?:\/[A-Za-z0-9_]+)?$/.test(name);
 }
 
-export function getWasmImports(wasmModule) {
+export function decodeWasmImports(wasmBytes) {
+  const bytes = wasmBytes instanceof Uint8Array ? wasmBytes : new Uint8Array(wasmBytes);
+  if (
+    bytes.length < 8 ||
+    bytes[0] !== 0x00 ||
+    bytes[1] !== 0x61 ||
+    bytes[2] !== 0x73 ||
+    bytes[3] !== 0x6d
+  ) {
+    throw new Error('invalid WebAssembly module header while decoding imports');
+  }
+
+  let pos = 8;
+  const decoder = new TextDecoder();
+  const readVaruint = () => {
+    let value = 0;
+    let shift = 0;
+    while (pos < bytes.length) {
+      const byte = bytes[pos++];
+      value |= (byte & 0x7f) << shift;
+      if ((byte & 0x80) === 0) return value >>> 0;
+      shift += 7;
+      if (shift > 35) break;
+    }
+    throw new Error('invalid WebAssembly varuint while decoding imports');
+  };
+  const skipSignedLeb = () => {
+    while (pos < bytes.length) {
+      if ((bytes[pos++] & 0x80) === 0) return;
+    }
+    throw new Error('invalid WebAssembly heap type while decoding imports');
+  };
+  const skipUnsignedLeb = (maxBytes) => {
+    for (let index = 0; index < maxBytes && pos < bytes.length; index += 1) {
+      if ((bytes[pos++] & 0x80) === 0) return;
+    }
+    throw new Error('invalid WebAssembly limit while decoding imports');
+  };
+  const readName = () => {
+    const length = readVaruint();
+    const end = pos + length;
+    if (end > bytes.length) throw new Error('truncated WebAssembly import name');
+    const name = decoder.decode(bytes.subarray(pos, end));
+    pos = end;
+    return name;
+  };
+  const skipValueType = () => {
+    const type = bytes[pos++];
+    if (type === 0x63 || type === 0x64) skipSignedLeb();
+  };
+  const skipLimits = () => {
+    const flags = readVaruint();
+    const skipLimit = (flags & 0x04) !== 0
+      ? () => skipUnsignedLeb(10)
+      : () => { readVaruint(); };
+    skipLimit();
+    if ((flags & 0x01) !== 0) skipLimit();
+    if ((flags & 0x08) !== 0) readVaruint();
+  };
+
+  while (pos < bytes.length) {
+    const sectionId = bytes[pos++];
+    const sectionLength = readVaruint();
+    const sectionEnd = pos + sectionLength;
+    if (sectionEnd > bytes.length) throw new Error('truncated WebAssembly section');
+    if (sectionId !== 2) {
+      pos = sectionEnd;
+      continue;
+    }
+
+    const imports = [];
+    const count = readVaruint();
+    const kindNames = ['function', 'table', 'memory', 'global', 'tag'];
+    for (let index = 0; index < count; index += 1) {
+      const module = readName();
+      const name = readName();
+      const kindCode = bytes[pos++];
+      const kind = kindNames[kindCode];
+      if (!kind) throw new Error(`unsupported WebAssembly import kind ${kindCode}`);
+
+      if (kindCode === 0) {
+        readVaruint();
+      } else if (kindCode === 1) {
+        skipValueType();
+        skipLimits();
+      } else if (kindCode === 2) {
+        skipLimits();
+      } else if (kindCode === 3) {
+        skipValueType();
+        pos += 1;
+      } else {
+        readVaruint();
+        readVaruint();
+      }
+      imports.push({ module, name, kind });
+    }
+    return imports;
+  }
+  return [];
+}
+
+export function getWasmImports(wasmModule, wasmBytes) {
+  if (wasmBytes) return decodeWasmImports(wasmBytes);
   if (!wasmModule) return [];
   return WebAssembly.Module.imports(wasmModule);
 }
 
-export function usesDomImports(wasmModule) {
-  return getWasmImports(wasmModule).some((wasmImport) =>
+export function usesDomImports(wasmModule, wasmBytes) {
+  return getWasmImports(wasmModule, wasmBytes).some((wasmImport) =>
     wasmImport.module === WALUAU_IMPORT_MODULE &&
     wasmImport.kind === 'function' &&
     isDomImportName(wasmImport.name)
@@ -457,7 +559,7 @@ function resolveDomMemberName(receiver, generatedName) {
   return generatedName;
 }
 
-function createPlaygroundDomHost(wasmModule, domOutputRoot, getWasmExports = () => null) {
+function createPlaygroundDomHost(wasmImports, domOutputRoot, getWasmExports = () => null) {
   const fallbackStorage = new Map();
   const fallbackStorageHost = {
     getItem(key) {
@@ -588,7 +690,7 @@ function createPlaygroundDomHost(wasmModule, domOutputRoot, getWasmExports = () 
   };
 
   const domImports = {};
-  for (const wasmImport of getWasmImports(wasmModule)) {
+  for (const wasmImport of wasmImports) {
     if (
       wasmImport.module !== WALUAU_IMPORT_MODULE ||
       wasmImport.kind !== 'function' ||
@@ -1016,8 +1118,9 @@ function createTfjsHost(getWasmExports = () => null) {
 }
 
 export function buildWaluauImports(wasmModule, initLogger, options = {}) {
+  const wasmImports = getWasmImports(wasmModule, options.wasmBytes);
   const bytesConstants = decodeBytesConstantsFromWasm(wasmModule);
-  const domHost = createPlaygroundDomHost(wasmModule, options.domOutputRoot, options.getWasmExports);
+  const domHost = createPlaygroundDomHost(wasmImports, options.domOutputRoot, options.getWasmExports);
   const tfjsHost = createTfjsHost(options.getWasmExports);
   const hostImports = options.hostImports ?? {};
   const reportAsyncError = (error) => {
@@ -1245,7 +1348,7 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
       return 0;
     },
   };
-  for (const wasmImport of getWasmImports(wasmModule)) {
+  for (const wasmImport of wasmImports) {
     if (
       wasmImport.module === WALUAU_IMPORT_MODULE &&
       wasmImport.kind === 'function' &&
@@ -1268,7 +1371,7 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
       }
     }
   }
-  for (const wasmImport of getWasmImports(wasmModule)) {
+  for (const wasmImport of wasmImports) {
     if (
       wasmImport.module === WALUAU_IMPORT_MODULE &&
       wasmImport.kind === 'function' &&
@@ -1802,8 +1905,12 @@ export function executeCall(instance, funcName, paramsInfo, richParamsInfo, rich
   }
 }
 
-export function classifyWasmInstantiationError(err, requiresWasmGc) {
+export function classifyWasmModuleError(err, phase, requiresWasmGc) {
   const message = err?.message || String(err);
+  const errorName = err?.name && err.name !== 'Error' ? err.name : '';
+  const detail = errorName && !message.startsWith(errorName)
+    ? `${errorName}: ${message}`
+    : message;
   const isCompileError =
     (typeof WebAssembly !== 'undefined' &&
       (err instanceof WebAssembly.CompileError ||
@@ -1811,11 +1918,18 @@ export function classifyWasmInstantiationError(err, requiresWasmGc) {
     err?.name === 'CompileError' ||
     err?.name === 'LinkError';
 
+  const phaseLabels = {
+    compile: 'compile the generated WASM module',
+    inspect: 'inspect the generated WASM module',
+    imports: 'prepare imports for the generated WASM module',
+    instantiate: 'instantiate the generated WASM module',
+  };
+  const lines = [`Failed to ${phaseLabels[phase] || 'load the generated WASM module'}: ${detail}`];
+
   if (requiresWasmGc && isCompileError) {
-    return [
-      'This module requires Wasm GC (array reference types), which may not be supported or enabled in this browser.',
-      `Instantiation error: ${message}`
-    ].join('\n');
+    lines.push(
+      'This module uses Wasm GC. The browser rejected it during compilation or linking; the exact error above may identify the unsupported instruction or import.',
+    );
   }
-  return `Failed to instantiate WASM module: ${message}`;
+  return lines.join('\n');
 }

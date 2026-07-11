@@ -56,8 +56,35 @@ test.describe('editor', () => {
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
       timeout: COMPILER_READY_TIMEOUT,
     });
-    // The Run tab should show the "Instantiation Error" message
-    await expect(page.locator('.diagnostic-output')).toContainText('Failed to instantiate WASM module:');
+    await expect(page.getByRole('heading', { name: 'Module Load Error' })).toBeVisible();
+    await expect(page.locator('.diagnostic-output')).toContainText('Failed to instantiate the generated WASM module:');
     await expect(page.locator('.diagnostic-output')).not.toContainText('This module requires Wasm GC');
+  });
+
+  test('generated Wasm compile failures show the browser diagnostic in the run tab', async ({ page }) => {
+    await page.evaluate(() => {
+      const originalCompile = WebAssembly.compile;
+      WebAssembly.compile = async (...args) => {
+        WebAssembly.compile = originalCompile;
+        void args;
+        throw new WebAssembly.CompileError(
+          'simulated mobile Safari rejection at byte 42: ref.cast failed',
+        );
+      };
+    });
+
+    await page.locator('.code-textarea').fill(
+      'function identity(values: {i32}): {i32}\n    return values\nend',
+    );
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+    await expect(page.getByRole('heading', { name: 'Module Load Error' })).toBeVisible();
+    await expect(page.locator('.diagnostic-output')).toContainText(
+      'Failed to compile the generated WASM module: CompileError: simulated mobile Safari rejection at byte 42: ref.cast failed',
+    );
+    await expect(page.locator('.diagnostic-output')).toContainText(
+      'This module uses Wasm GC.',
+    );
   });
 });
