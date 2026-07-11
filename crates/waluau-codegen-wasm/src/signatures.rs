@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use waluau_ast::Type;
-use waluau_ir::{Instruction as IrInstruction, Module};
+use waluau_ir::{DeclaredImport, Instruction as IrInstruction, Module};
 
 #[derive(Clone)]
 pub(crate) struct SignatureRegistry {
@@ -63,6 +63,7 @@ impl SignatureRegistry {
 
 pub(crate) fn collect_user_signatures(
     module: &Module,
+    declared_imports: &[&DeclaredImport],
     start_thunk: bool,
     callback_event_unit_trampoline: bool,
     callback_f64_unit_trampoline: bool,
@@ -74,7 +75,7 @@ pub(crate) fn collect_user_signatures(
         let params = function.params.iter().map(|(_, ty)| ty.clone()).collect();
         registry.add(params, function.return_type.clone());
     }
-    for import in &module.declared_imports {
+    for import in declared_imports {
         registry.add(import.params.clone(), import.return_type.clone());
     }
     for function in &module.functions {

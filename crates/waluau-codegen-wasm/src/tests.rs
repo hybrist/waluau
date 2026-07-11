@@ -38,6 +38,15 @@ fn wasm_function_import_count(wasm: &[u8]) -> u32 {
     count
 }
 
+fn wasm_type_count(wasm: &[u8]) -> u32 {
+    for payload in Parser::new(0).parse_all(wasm) {
+        if let Payload::TypeSection(reader) = payload.expect("wasm should parse") {
+            return reader.count();
+        }
+    }
+    0
+}
+
 fn wasm_function_body_has_call_indirect(wasm: &[u8], func_index: u32) -> bool {
     let import_count = wasm_function_import_count(wasm);
     let target_body = func_index
@@ -78,6 +87,50 @@ fn emits_valid_wasm_for_scalar_program() {
     Validator::new()
         .validate_all(&wasm)
         .expect("emitted module should validate");
+}
+
+#[test]
+fn omits_unused_declared_imports_and_their_function_types() {
+    fn compile(source: &str) -> Vec<u8> {
+        let program = waluau_parser::parse(source).expect("parse should succeed");
+        let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+        let ir = waluau_ir::build(&typed).expect("ir should succeed");
+        emit(&ir).expect("emit should succeed")
+    }
+
+    let baseline = compile(
+        r#"
+            function identity(value: i32): i32
+                return value
+            end
+        "#,
+    );
+    let with_unused_declarations = compile(
+        r#"
+            type Resource = extern
+            declare function unused_resource(name: string): Resource
+            declare function unused_number(value: f64): f64
+
+            function identity(value: i32): i32
+                return value
+            end
+        "#,
+    );
+
+    let wat = print_bytes(&with_unused_declarations).expect("wat should print");
+    assert!(
+        !wat.contains("unused_resource"),
+        "unused import emitted:\n{wat}"
+    );
+    assert!(
+        !wat.contains("unused_number"),
+        "unused import emitted:\n{wat}"
+    );
+    assert_eq!(
+        wasm_type_count(&with_unused_declarations),
+        wasm_type_count(&baseline),
+        "unused declarations should not add function type definitions"
+    );
 }
 
 #[test]
@@ -858,6 +911,14 @@ fn generic_extern_specializations_lower_to_distinct_imports_with_externref_signa
 
         declare function take_response(value: Promise<Response>): Promise<Response>
         declare function take_string(value: Promise<string>): Promise<string>
+
+        function use_response(value: Promise<Response>): Promise<Response>
+            return take_response(value)
+        end
+
+        function use_string(value: Promise<string>): Promise<string>
+            return take_string(value)
+        end
     "#;
     let program = waluau_parser::parse(source).expect("parse should succeed");
     let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
@@ -984,7 +1045,7 @@ fn declared_host_event_callback_import_exports_trampoline() {
 }
 
 #[test]
-fn declared_host_event_callback_import_validates_without_call_site() {
+fn unused_host_callback_declaration_omits_import_and_trampoline() {
     let source = r#"
         type Event = extern
 
@@ -1001,10 +1062,15 @@ fn declared_host_event_callback_import_validates_without_call_site() {
     Validator::new()
         .validate_all(&wasm)
         .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
 
     assert!(
-        wasm_export_func_index(&wasm, super::CALLBACK_EVENT_UNIT_TRAMPOLINE_EXPORT).is_some(),
-        "declared event callback imports should make the trampoline ABI available"
+        !wat.contains(r#"(import "waluau" "addEventListener""#),
+        "unused callback declaration should not emit an import:\n{wat}"
+    );
+    assert!(
+        wasm_export_func_index(&wasm, super::CALLBACK_EVENT_UNIT_TRAMPOLINE_EXPORT).is_none(),
+        "unused callback declaration should not emit a trampoline"
     );
 }
 
