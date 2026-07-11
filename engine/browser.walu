@@ -57,10 +57,10 @@ function start(config: Config, game: Game): unit
         style:setProperty("background-color", config.background)
         style:setProperty("image-rendering", "pixelated")
 
-        local maybe_context: CanvasRenderingContext2D? = canvas:get_context("2d")
-        assert(maybe_context ~= nil)
-        local context: CanvasRenderingContext2D = maybe_context::CanvasRenderingContext2D
-        local graphics: graphics_module.Graphics = graphics_module.new(context, config.width::f64, config.height::f64)
+        local maybe_gl: WebGL2RenderingContext? = canvas:get_context_webgl2()
+        assert(maybe_gl ~= nil)
+        local gl: WebGL2RenderingContext = maybe_gl::WebGL2RenderingContext
+        local graphics: graphics_module.Graphics = graphics_module.new(gl, config.width::f64, config.height::f64)
         local input: input_module.Input = input_module.new()
         local clock: time_module.Clock = time_module.new(config.update_hz, config.max_frame_seconds)
 
@@ -91,11 +91,12 @@ function start(config: Config, game: Game): unit
                 input:end_step()
             end
             game.draw(graphics, clock:alpha())
+            graphics:present()
             window:requestAnimationFrame(frame)
         end
         window:requestAnimationFrame(frame)
     else
-        error("game engine could not create a 2D canvas")
+        error("game engine could not create a WebGL2 canvas")
     end
 end
 

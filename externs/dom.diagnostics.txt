@@ -586,7 +586,6 @@ skip ShadowRoot.pointerLockElement: disabled -- member 'attribute:pointerLockEle
 skip ShadowRoot.setHTML: disabled -- member 'operation:setHTML' collides with the same-named member kept on Element (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip ShadowRoot.setHTMLUnsafe: html: unsupported union Web IDL type (TrustedHTML or DOMString) (waluau-o4xs)
 skip ShadowRoot.styleSheets: disabled -- member 'attribute:styleSheets' collides with the same-named member kept on Document (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
-skip Storage.length: disabled -- member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip StylePropertyMap.append: values: unsupported union Web IDL type (CSSStyleValue or USVString) (waluau-o4xs)
 skip StylePropertyMap.clear: disabled -- member 'operation:clear' collides with the same-named member kept on Storage (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip StylePropertyMap.set: values: unsupported union Web IDL type (CSSStyleValue or USVString) (waluau-o4xs)
@@ -610,6 +609,128 @@ skip TreeWalker.previousNode: disabled -- member 'operation:previousNode' collid
 skip TreeWalker.root: disabled -- member 'attribute:root' collides with the same-named member kept on NodeIterator (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip TreeWalker.whatToShow: disabled -- member 'attribute:whatToShow' collides with the same-named member kept on NodeIterator (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both (waluau-1l02)
 skip UIEvent.sourceCapabilities: Web IDL type InputDeviceCapabilities? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.beginQuery: query: Web IDL type WebGLQuery is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.bindFramebuffer: framebuffer: Web IDL type WebGLFramebuffer? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.bindRenderbuffer: renderbuffer: Web IDL type WebGLRenderbuffer? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.bindSampler: sampler: Web IDL type WebGLSampler? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.bindTexture: texture: Web IDL type WebGLTexture? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.bindTransformFeedback: tf: Web IDL type WebGLTransformFeedback? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.bindVertexArray: array: Web IDL type WebGLVertexArrayObject? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.bufferData: srcData: unsupported Web IDL type ArrayBufferView
+skip WebGL2RenderingContext.bufferSubData: srcData: unsupported Web IDL type ArrayBufferView
+skip WebGL2RenderingContext.canvas: unsupported union Web IDL type (HTMLCanvasElement or OffscreenCanvas) (waluau-o4xs)
+skip WebGL2RenderingContext.clearBufferfv: values: unsupported Web IDL type Float32List
+skip WebGL2RenderingContext.clearBufferiv: values: unsupported Web IDL type Int32List
+skip WebGL2RenderingContext.clearBufferuiv: values: unsupported Web IDL type Uint32List
+skip WebGL2RenderingContext.clientWaitSync: sync: Web IDL type WebGLSync is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.compressedTexImage2D: srcData: unsupported Web IDL type ArrayBufferView
+skip WebGL2RenderingContext.compressedTexImage3D: srcData: unsupported Web IDL type ArrayBufferView
+skip WebGL2RenderingContext.compressedTexSubImage2D: srcData: unsupported Web IDL type ArrayBufferView
+skip WebGL2RenderingContext.compressedTexSubImage3D: srcData: unsupported Web IDL type ArrayBufferView
+skip WebGL2RenderingContext.createFramebuffer: Web IDL type WebGLFramebuffer is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.createQuery: Web IDL type WebGLQuery is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.createRenderbuffer: Web IDL type WebGLRenderbuffer is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.createSampler: Web IDL type WebGLSampler is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.createTexture: Web IDL type WebGLTexture is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.createTransformFeedback: Web IDL type WebGLTransformFeedback is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.createVertexArray: Web IDL type WebGLVertexArrayObject is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.deleteFramebuffer: framebuffer: Web IDL type WebGLFramebuffer? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.deleteQuery: query: Web IDL type WebGLQuery? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.deleteRenderbuffer: renderbuffer: Web IDL type WebGLRenderbuffer? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.deleteSampler: sampler: Web IDL type WebGLSampler? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.deleteSync: sync: Web IDL type WebGLSync? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.deleteTexture: texture: Web IDL type WebGLTexture? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.deleteTransformFeedback: tf: Web IDL type WebGLTransformFeedback? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.deleteVertexArray: vertexArray: Web IDL type WebGLVertexArrayObject? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.drawBuffers: buffers: unsupported generic Web IDL type sequence<GLenum> (waluau-utyc)
+skip WebGL2RenderingContext.drawingBufferColorSpace: unsupported Web IDL type PredefinedColorSpace
+skip WebGL2RenderingContext.fenceSync: Web IDL type WebGLSync? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.framebufferRenderbuffer: renderbuffer: Web IDL type WebGLRenderbuffer? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.framebufferTexture2D: texture: Web IDL type WebGLTexture? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.framebufferTextureLayer: texture: Web IDL type WebGLTexture? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.getActiveAttrib: Web IDL type WebGLActiveInfo? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.getActiveUniform: Web IDL type WebGLActiveInfo? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.getActiveUniformBlockParameter: unsupported Web IDL type any (waluau-lxdd)
+skip WebGL2RenderingContext.getActiveUniforms: unsupported Web IDL type any (waluau-lxdd)
+skip WebGL2RenderingContext.getAttachedShaders: unsupported generic Web IDL type sequence<WebGLShader>? (waluau-utyc)
+skip WebGL2RenderingContext.getBufferParameter: unsupported Web IDL type any (waluau-lxdd)
+skip WebGL2RenderingContext.getBufferSubData: dstBuffer: unsupported Web IDL type ArrayBufferView
+skip WebGL2RenderingContext.getContextAttributes: unsupported Web IDL type WebGLContextAttributes?
+skip WebGL2RenderingContext.getExtension: unsupported Web IDL type object? (waluau-lxdd)
+skip WebGL2RenderingContext.getFramebufferAttachmentParameter: unsupported Web IDL type any (waluau-lxdd)
+skip WebGL2RenderingContext.getIndexedParameter: unsupported Web IDL type any (waluau-lxdd)
+skip WebGL2RenderingContext.getInternalformatParameter: unsupported Web IDL type any (waluau-lxdd)
+skip WebGL2RenderingContext.getParameter: unsupported Web IDL type any (waluau-lxdd)
+skip WebGL2RenderingContext.getProgramParameter: unsupported Web IDL type any (waluau-lxdd)
+skip WebGL2RenderingContext.getQuery: Web IDL type WebGLQuery? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.getQueryParameter: unsupported Web IDL type any (waluau-lxdd)
+skip WebGL2RenderingContext.getRenderbufferParameter: unsupported Web IDL type any (waluau-lxdd)
+skip WebGL2RenderingContext.getSamplerParameter: unsupported Web IDL type any (waluau-lxdd)
+skip WebGL2RenderingContext.getShaderParameter: unsupported Web IDL type any (waluau-lxdd)
+skip WebGL2RenderingContext.getShaderPrecisionFormat: Web IDL type WebGLShaderPrecisionFormat? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.getSupportedExtensions: unsupported generic Web IDL type sequence<DOMString>? (waluau-utyc)
+skip WebGL2RenderingContext.getSyncParameter: unsupported Web IDL type any (waluau-lxdd)
+skip WebGL2RenderingContext.getTexParameter: unsupported Web IDL type any (waluau-lxdd)
+skip WebGL2RenderingContext.getTransformFeedbackVarying: Web IDL type WebGLActiveInfo? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.getUniform: unsupported Web IDL type any (waluau-lxdd)
+skip WebGL2RenderingContext.getUniformIndices: unsupported generic Web IDL type sequence<GLuint>? (waluau-utyc)
+skip WebGL2RenderingContext.getVertexAttrib: unsupported Web IDL type any (waluau-lxdd)
+skip WebGL2RenderingContext.invalidateFramebuffer: attachments: unsupported generic Web IDL type sequence<GLenum> (waluau-utyc)
+skip WebGL2RenderingContext.invalidateSubFramebuffer: attachments: unsupported generic Web IDL type sequence<GLenum> (waluau-utyc)
+skip WebGL2RenderingContext.isFramebuffer: framebuffer: Web IDL type WebGLFramebuffer? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.isQuery: query: Web IDL type WebGLQuery? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.isRenderbuffer: renderbuffer: Web IDL type WebGLRenderbuffer? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.isSampler: sampler: Web IDL type WebGLSampler? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.isSync: sync: Web IDL type WebGLSync? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.isTexture: texture: Web IDL type WebGLTexture? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.isTransformFeedback: tf: Web IDL type WebGLTransformFeedback? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.isVertexArray: vertexArray: Web IDL type WebGLVertexArrayObject? is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.makeXRCompatible: unsupported generic Web IDL type Promise<undefined> (waluau-2c6n)
+skip WebGL2RenderingContext.readPixels: dstData: unsupported Web IDL type ArrayBufferView
+skip WebGL2RenderingContext.readPixels: dstData: unsupported Web IDL type ArrayBufferView?
+skip WebGL2RenderingContext.samplerParameterf: sampler: Web IDL type WebGLSampler is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.samplerParameteri: sampler: Web IDL type WebGLSampler is not part of the selected DOM interface surface
+skip WebGL2RenderingContext.texImage2D: pixels: unsupported Web IDL type ArrayBufferView?
+skip WebGL2RenderingContext.texImage2D: source: unsupported Web IDL type TexImageSource
+skip WebGL2RenderingContext.texImage2D: srcData: unsupported Web IDL type ArrayBufferView
+skip WebGL2RenderingContext.texImage3D: source: unsupported Web IDL type TexImageSource
+skip WebGL2RenderingContext.texImage3D: srcData: unsupported Web IDL type ArrayBufferView
+skip WebGL2RenderingContext.texImage3D: srcData: unsupported Web IDL type ArrayBufferView?
+skip WebGL2RenderingContext.texSubImage2D: pixels: unsupported Web IDL type ArrayBufferView?
+skip WebGL2RenderingContext.texSubImage2D: source: unsupported Web IDL type TexImageSource
+skip WebGL2RenderingContext.texSubImage2D: srcData: unsupported Web IDL type ArrayBufferView
+skip WebGL2RenderingContext.texSubImage3D: source: unsupported Web IDL type TexImageSource
+skip WebGL2RenderingContext.texSubImage3D: srcData: unsupported Web IDL type ArrayBufferView?
+skip WebGL2RenderingContext.transformFeedbackVaryings: varyings: unsupported generic Web IDL type sequence<DOMString> (waluau-utyc)
+skip WebGL2RenderingContext.uniform1fv: data: unsupported Web IDL type Float32List
+skip WebGL2RenderingContext.uniform1iv: data: unsupported Web IDL type Int32List
+skip WebGL2RenderingContext.uniform1uiv: data: unsupported Web IDL type Uint32List
+skip WebGL2RenderingContext.uniform2fv: data: unsupported Web IDL type Float32List
+skip WebGL2RenderingContext.uniform2iv: data: unsupported Web IDL type Int32List
+skip WebGL2RenderingContext.uniform2uiv: data: unsupported Web IDL type Uint32List
+skip WebGL2RenderingContext.uniform3fv: data: unsupported Web IDL type Float32List
+skip WebGL2RenderingContext.uniform3iv: data: unsupported Web IDL type Int32List
+skip WebGL2RenderingContext.uniform3uiv: data: unsupported Web IDL type Uint32List
+skip WebGL2RenderingContext.uniform4fv: data: unsupported Web IDL type Float32List
+skip WebGL2RenderingContext.uniform4iv: data: unsupported Web IDL type Int32List
+skip WebGL2RenderingContext.uniform4uiv: data: unsupported Web IDL type Uint32List
+skip WebGL2RenderingContext.uniformMatrix2fv: data: unsupported Web IDL type Float32List
+skip WebGL2RenderingContext.uniformMatrix2x3fv: data: unsupported Web IDL type Float32List
+skip WebGL2RenderingContext.uniformMatrix2x4fv: data: unsupported Web IDL type Float32List
+skip WebGL2RenderingContext.uniformMatrix3fv: data: unsupported Web IDL type Float32List
+skip WebGL2RenderingContext.uniformMatrix3x2fv: data: unsupported Web IDL type Float32List
+skip WebGL2RenderingContext.uniformMatrix3x4fv: data: unsupported Web IDL type Float32List
+skip WebGL2RenderingContext.uniformMatrix4fv: data: unsupported Web IDL type Float32List
+skip WebGL2RenderingContext.uniformMatrix4x2fv: data: unsupported Web IDL type Float32List
+skip WebGL2RenderingContext.uniformMatrix4x3fv: data: unsupported Web IDL type Float32List
+skip WebGL2RenderingContext.unpackColorSpace: unsupported Web IDL type PredefinedColorSpace
+skip WebGL2RenderingContext.vertexAttrib1fv: values: unsupported Web IDL type Float32List
+skip WebGL2RenderingContext.vertexAttrib2fv: values: unsupported Web IDL type Float32List
+skip WebGL2RenderingContext.vertexAttrib3fv: values: unsupported Web IDL type Float32List
+skip WebGL2RenderingContext.vertexAttrib4fv: values: unsupported Web IDL type Float32List
+skip WebGL2RenderingContext.vertexAttribI4iv: values: unsupported Web IDL type Int32List
+skip WebGL2RenderingContext.vertexAttribI4uiv: values: unsupported Web IDL type Uint32List
+skip WebGL2RenderingContext.waitSync: sync: Web IDL type WebGLSync is not part of the selected DOM interface surface
 skip Window.caches: Web IDL type CacheStorage is not part of the selected DOM interface surface
 skip Window.cookieStore: Web IDL type CookieStore is not part of the selected DOM interface surface
 skip Window.crashReport: Web IDL type CrashReportContext is not part of the selected DOM interface surface

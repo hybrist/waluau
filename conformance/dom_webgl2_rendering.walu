@@ -1,0 +1,94 @@
+-- Browser WebGL2 rendering through generated DOM externs: context
+-- acquisition, shader compilation, Float32Buffer vertex upload, and a draw
+-- call, verified host-side with readPixels by the conformance runner.
+
+local window = require("dom:window")
+local document: Document = window.document
+local body: HTMLElement = document.body
+
+local element: Element = document:create_element("canvas")
+element.id = "waluau-canvas-webgl2"
+body:append_child(element)
+
+-- Spec-fixed WebGL enum values; the extern generator does not emit Web IDL
+-- constants.
+local GL_COLOR_BUFFER_BIT <const>: u32 = 0x00004000
+local GL_TRIANGLES <const>: u32 = 0x0004
+local GL_ARRAY_BUFFER <const>: u32 = 0x8892
+local GL_STATIC_DRAW <const>: u32 = 0x88E4
+local GL_FLOAT <const>: u32 = 0x1406
+local GL_FRAGMENT_SHADER <const>: u32 = 0x8B30
+local GL_VERTEX_SHADER <const>: u32 = 0x8B31
+
+function compile_shader(gl: WebGL2RenderingContext, kind: u32, source: string): WebGLShader
+    local maybe_shader: WebGLShader? = gl:createShader(kind)
+    assert(maybe_shader ~= nil)
+    local shader: WebGLShader = maybe_shader::WebGLShader
+    gl:shaderSource(shader, source)
+    gl:compileShader(shader)
+    local log: string? = gl:getShaderInfoLog(shader)
+    if log ~= nil then
+        local text: string = log::string
+        assert(#text == 0)
+    end
+    return shader
+end
+
+if HTMLCanvasElement(canvas) = element then
+    canvas.width = 64
+    canvas.height = 32
+
+    local maybe_gl: WebGL2RenderingContext? = canvas:get_context_webgl2()
+    assert(maybe_gl ~= nil)
+    local gl: WebGL2RenderingContext = maybe_gl::WebGL2RenderingContext
+    gl:viewport(0, 0, 64, 32)
+
+    -- Float32Buffer host helpers round-trip values.
+    local vertices: Float32Buffer = dom_new_float32_buffer(6)
+    assert(dom_float32_buffer_len(vertices) == 6)
+    dom_float32_buffer_set(vertices, 0, -1.0)
+    dom_float32_buffer_set(vertices, 1, -1.0)
+    dom_float32_buffer_set(vertices, 2, 3.0)
+    dom_float32_buffer_set(vertices, 3, -1.0)
+    dom_float32_buffer_set(vertices, 4, -1.0)
+    dom_float32_buffer_set(vertices, 5, 3.0)
+    assert(dom_float32_buffer_get(vertices, 2) == 3.0)
+
+    gl:clearColor(0.0, 0.0, 1.0, 1.0)
+    gl:clear(GL_COLOR_BUFFER_BIT)
+
+    local program: WebGLProgram = gl:createProgram()
+    gl:attachShader(program, compile_shader(gl, GL_VERTEX_SHADER, [[
+attribute vec2 a_position;
+void main() {
+    gl_Position = vec4(a_position, 0.0, 1.0);
+}
+]]))
+    gl:attachShader(program, compile_shader(gl, GL_FRAGMENT_SHADER, [[
+precision mediump float;
+void main() {
+    gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+}
+]]))
+    gl:linkProgram(program)
+    local link_log: string? = gl:getProgramInfoLog(program)
+    if link_log ~= nil then
+        local text: string = link_log::string
+        assert(#text == 0)
+    end
+    gl:useProgram(program)
+
+    -- One oversized triangle covering the whole viewport.
+    local buffer: WebGLBuffer = gl:createBuffer()
+    gl:bindBuffer(GL_ARRAY_BUFFER, buffer)
+    gl:bufferData(GL_ARRAY_BUFFER, vertices, GL_STATIC_DRAW)
+    local position_location: i32 = gl:getAttribLocation(program, "a_position")
+    assert(position_location >= 0)
+    gl:enableVertexAttribArray(position_location::u32)
+    gl:vertexAttribPointer(position_location::u32, 2, GL_FLOAT, false, 0, 0)
+    gl:drawArrays(GL_TRIANGLES, 0, 3)
+
+    assert(gl:getError() == 0)
+else
+    assert(false)
+end

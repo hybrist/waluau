@@ -73,7 +73,14 @@
     "CSSPseudoElement",
     "StylePropertyMapReadOnly",
     "StylePropertyMap",
-    "CanvasRenderingContext2D"
+    "CanvasRenderingContext2D",
+    "WebGLObject",
+    "WebGLBuffer",
+    "WebGLProgram",
+    "WebGLShader",
+    "WebGLUniformLocation",
+    "WebGL2RenderingContext",
+    "Float32Buffer"
   ],
   "disabledMembers": {
     "KeyboardEvent": [
@@ -1821,13 +1828,6 @@
         "issue": "waluau-1l02"
       }
     ],
-    "Storage": [
-      {
-        "member": "attribute:length",
-        "reason": "member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
-        "issue": "waluau-1l02"
-      }
-    ],
     "DOMRectList": [
       {
         "member": "attribute:length",
@@ -2121,6 +2121,58 @@
           "idlType": "RequestInfo"
         }
       ]
+    },
+    {
+      "name": "dom_new_float32_buffer",
+      "returnType": "Float32Buffer",
+      "params": [
+        {
+          "name": "length",
+          "idlType": "unsigned long"
+        }
+      ]
+    },
+    {
+      "name": "dom_float32_buffer_set",
+      "returnType": "undefined",
+      "params": [
+        {
+          "name": "data",
+          "idlType": "Float32Buffer"
+        },
+        {
+          "name": "index",
+          "idlType": "unsigned long"
+        },
+        {
+          "name": "value",
+          "idlType": "double"
+        }
+      ]
+    },
+    {
+      "name": "dom_float32_buffer_get",
+      "returnType": "double",
+      "params": [
+        {
+          "name": "data",
+          "idlType": "Float32Buffer"
+        },
+        {
+          "name": "index",
+          "idlType": "unsigned long"
+        }
+      ]
+    },
+    {
+      "name": "dom_float32_buffer_len",
+      "returnType": "unsigned long",
+      "params": [
+        {
+          "name": "data",
+          "idlType": "Float32Buffer"
+        }
+      ]
     }
   ],
   "typeMap": {
@@ -2157,7 +2209,23 @@
     "ScrollRestoration": "string",
     "OrientationType": "string",
     "AutoplayPolicy": "string",
-    "SpatialNavigationDirection": "string"
+    "SpatialNavigationDirection": "string",
+    "GLenum": "u32",
+    "GLboolean": "bool",
+    "GLbitfield": "u32",
+    "GLbyte": "i32",
+    "GLshort": "i32",
+    "GLint": "i32",
+    "GLsizei": "i32",
+    "GLintptr": "i32",
+    "GLsizeiptr": "i32",
+    "GLubyte": "u32",
+    "GLushort": "u32",
+    "GLuint": "u32",
+    "GLfloat": "f32",
+    "GLclampf": "f32",
+    "BufferSource": "Float32Buffer",
+    "AllowSharedBufferSource": "Float32Buffer"
   },
   "unionTypeMap": {
     "(DOMString or CanvasGradient or CanvasPattern)": "string"

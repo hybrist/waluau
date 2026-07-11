@@ -296,6 +296,34 @@
     {
       "interface": "CanvasRenderingContext2D",
       "parent": null
+    },
+    {
+      "interface": "WebGLObject",
+      "parent": null
+    },
+    {
+      "interface": "WebGLBuffer",
+      "parent": "WebGLObject"
+    },
+    {
+      "interface": "WebGLProgram",
+      "parent": "WebGLObject"
+    },
+    {
+      "interface": "WebGLShader",
+      "parent": "WebGLObject"
+    },
+    {
+      "interface": "WebGLUniformLocation",
+      "parent": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "parent": null
+    },
+    {
+      "interface": "Float32Buffer",
+      "parent": null
     }
   ],
   "emittedMembers": [
@@ -6829,6 +6857,14 @@
       "returnType": "string"
     },
     {
+      "interface": "HTMLCanvasElement",
+      "kind": "operation",
+      "idlName": "getContextWebGL2",
+      "emittedName": "get_context_webgl2",
+      "params": [],
+      "returnType": "WebGL2RenderingContext?"
+    },
+    {
       "interface": "CanvasRenderingContext2D",
       "kind": "attribute",
       "idlName": "canvas",
@@ -7605,6 +7641,14 @@
     },
     {
       "interface": "Storage",
+      "kind": "attribute",
+      "idlName": "length",
+      "emittedName": "length",
+      "type": "u32",
+      "readonly": true
+    },
+    {
+      "interface": "Storage",
       "kind": "operation",
       "idlName": "key",
       "emittedName": "key",
@@ -8300,6 +8344,1561 @@
       "emittedName": "ongeometrychange",
       "type": "(Event) -> unit",
       "readonly": false
+    },
+    {
+      "interface": "WebGLObject",
+      "kind": "attribute",
+      "idlName": "label",
+      "emittedName": "label",
+      "type": "string",
+      "readonly": false
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "attribute",
+      "idlName": "drawingBufferWidth",
+      "emittedName": "drawingBufferWidth",
+      "type": "i32",
+      "readonly": true
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "attribute",
+      "idlName": "drawingBufferHeight",
+      "emittedName": "drawingBufferHeight",
+      "type": "i32",
+      "readonly": true
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "attribute",
+      "idlName": "drawingBufferFormat",
+      "emittedName": "drawingBufferFormat",
+      "type": "u32",
+      "readonly": true
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "isContextLost",
+      "emittedName": "isContextLost",
+      "params": [],
+      "returnType": "bool"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "drawingBufferStorage",
+      "emittedName": "drawingBufferStorage",
+      "params": [
+        "sized_format: u32",
+        "width: u32",
+        "height: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "activeTexture",
+      "emittedName": "activeTexture",
+      "params": [
+        "texture: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "attachShader",
+      "emittedName": "attachShader",
+      "params": [
+        "program: WebGLProgram",
+        "shader: WebGLShader"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "bindAttribLocation",
+      "emittedName": "bindAttribLocation",
+      "params": [
+        "program: WebGLProgram",
+        "index: u32",
+        "name: string"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "bindBuffer",
+      "emittedName": "bindBuffer",
+      "params": [
+        "target: u32",
+        "buffer: WebGLBuffer?"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "blendColor",
+      "emittedName": "blendColor",
+      "params": [
+        "red: f32",
+        "green: f32",
+        "blue: f32",
+        "alpha: f32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "blendEquation",
+      "emittedName": "blendEquation",
+      "params": [
+        "mode: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "blendEquationSeparate",
+      "emittedName": "blendEquationSeparate",
+      "params": [
+        "mode_r_g_b: u32",
+        "mode_alpha: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "blendFunc",
+      "emittedName": "blendFunc",
+      "params": [
+        "sfactor: u32",
+        "dfactor: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "blendFuncSeparate",
+      "emittedName": "blendFuncSeparate",
+      "params": [
+        "src_r_g_b: u32",
+        "dst_r_g_b: u32",
+        "src_alpha: u32",
+        "dst_alpha: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "checkFramebufferStatus",
+      "emittedName": "checkFramebufferStatus",
+      "params": [
+        "target: u32"
+      ],
+      "returnType": "u32"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "clear",
+      "emittedName": "clear",
+      "params": [
+        "mask: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "clearColor",
+      "emittedName": "clearColor",
+      "params": [
+        "red: f32",
+        "green: f32",
+        "blue: f32",
+        "alpha: f32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "clearDepth",
+      "emittedName": "clearDepth",
+      "params": [
+        "depth: f32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "clearStencil",
+      "emittedName": "clearStencil",
+      "params": [
+        "s: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "colorMask",
+      "emittedName": "colorMask",
+      "params": [
+        "red: bool",
+        "green: bool",
+        "blue: bool",
+        "alpha: bool"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "compileShader",
+      "emittedName": "compileShader",
+      "params": [
+        "shader: WebGLShader"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "copyTexImage2D",
+      "emittedName": "copyTexImage2D",
+      "params": [
+        "target: u32",
+        "level: i32",
+        "internalformat: u32",
+        "x: i32",
+        "y: i32",
+        "width: i32",
+        "height: i32",
+        "border: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "copyTexSubImage2D",
+      "emittedName": "copyTexSubImage2D",
+      "params": [
+        "target: u32",
+        "level: i32",
+        "xoffset: i32",
+        "yoffset: i32",
+        "x: i32",
+        "y: i32",
+        "width: i32",
+        "height: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "createBuffer",
+      "emittedName": "createBuffer",
+      "params": [],
+      "returnType": "WebGLBuffer"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "createProgram",
+      "emittedName": "createProgram",
+      "params": [],
+      "returnType": "WebGLProgram"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "createShader",
+      "emittedName": "createShader",
+      "params": [
+        "type: u32"
+      ],
+      "returnType": "WebGLShader?"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "cullFace",
+      "emittedName": "cullFace",
+      "params": [
+        "mode: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "deleteBuffer",
+      "emittedName": "deleteBuffer",
+      "params": [
+        "buffer: WebGLBuffer?"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "deleteProgram",
+      "emittedName": "deleteProgram",
+      "params": [
+        "program: WebGLProgram?"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "deleteShader",
+      "emittedName": "deleteShader",
+      "params": [
+        "shader: WebGLShader?"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "depthFunc",
+      "emittedName": "depthFunc",
+      "params": [
+        "func: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "depthMask",
+      "emittedName": "depthMask",
+      "params": [
+        "flag: bool"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "depthRange",
+      "emittedName": "depthRange",
+      "params": [
+        "z_near: f32",
+        "z_far: f32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "detachShader",
+      "emittedName": "detachShader",
+      "params": [
+        "program: WebGLProgram",
+        "shader: WebGLShader"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "disable",
+      "emittedName": "disable",
+      "params": [
+        "cap: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "disableVertexAttribArray",
+      "emittedName": "disableVertexAttribArray",
+      "params": [
+        "index: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "drawArrays",
+      "emittedName": "drawArrays",
+      "params": [
+        "mode: u32",
+        "first: i32",
+        "count: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "drawElements",
+      "emittedName": "drawElements",
+      "params": [
+        "mode: u32",
+        "count: i32",
+        "type: u32",
+        "offset: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "enable",
+      "emittedName": "enable",
+      "params": [
+        "cap: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "enableVertexAttribArray",
+      "emittedName": "enableVertexAttribArray",
+      "params": [
+        "index: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "finish",
+      "emittedName": "finish",
+      "params": [],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "flush",
+      "emittedName": "flush",
+      "params": [],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "frontFace",
+      "emittedName": "frontFace",
+      "params": [
+        "mode: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "generateMipmap",
+      "emittedName": "generateMipmap",
+      "params": [
+        "target: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "getAttribLocation",
+      "emittedName": "getAttribLocation",
+      "params": [
+        "program: WebGLProgram",
+        "name: string"
+      ],
+      "returnType": "i32"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "getError",
+      "emittedName": "getError",
+      "params": [],
+      "returnType": "u32"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "getProgramInfoLog",
+      "emittedName": "getProgramInfoLog",
+      "params": [
+        "program: WebGLProgram"
+      ],
+      "returnType": "string?"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "getShaderInfoLog",
+      "emittedName": "getShaderInfoLog",
+      "params": [
+        "shader: WebGLShader"
+      ],
+      "returnType": "string?"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "getShaderSource",
+      "emittedName": "getShaderSource",
+      "params": [
+        "shader: WebGLShader"
+      ],
+      "returnType": "string?"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "getUniformLocation",
+      "emittedName": "getUniformLocation",
+      "params": [
+        "program: WebGLProgram",
+        "name: string"
+      ],
+      "returnType": "WebGLUniformLocation?"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "getVertexAttribOffset",
+      "emittedName": "getVertexAttribOffset",
+      "params": [
+        "index: u32",
+        "pname: u32"
+      ],
+      "returnType": "i32"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "hint",
+      "emittedName": "hint",
+      "params": [
+        "target: u32",
+        "mode: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "isBuffer",
+      "emittedName": "isBuffer",
+      "params": [
+        "buffer: WebGLBuffer?"
+      ],
+      "returnType": "bool"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "isEnabled",
+      "emittedName": "isEnabled",
+      "params": [
+        "cap: u32"
+      ],
+      "returnType": "bool"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "isProgram",
+      "emittedName": "isProgram",
+      "params": [
+        "program: WebGLProgram?"
+      ],
+      "returnType": "bool"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "isShader",
+      "emittedName": "isShader",
+      "params": [
+        "shader: WebGLShader?"
+      ],
+      "returnType": "bool"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "lineWidth",
+      "emittedName": "lineWidth",
+      "params": [
+        "width: f32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "linkProgram",
+      "emittedName": "linkProgram",
+      "params": [
+        "program: WebGLProgram"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "pixelStorei",
+      "emittedName": "pixelStorei",
+      "params": [
+        "pname: u32",
+        "param: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "polygonOffset",
+      "emittedName": "polygonOffset",
+      "params": [
+        "factor: f32",
+        "units: f32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "renderbufferStorage",
+      "emittedName": "renderbufferStorage",
+      "params": [
+        "target: u32",
+        "internalformat: u32",
+        "width: i32",
+        "height: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "sampleCoverage",
+      "emittedName": "sampleCoverage",
+      "params": [
+        "value: f32",
+        "invert: bool"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "scissor",
+      "emittedName": "scissor",
+      "params": [
+        "x: i32",
+        "y: i32",
+        "width: i32",
+        "height: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "shaderSource",
+      "emittedName": "shaderSource",
+      "params": [
+        "shader: WebGLShader",
+        "source: string"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "stencilFunc",
+      "emittedName": "stencilFunc",
+      "params": [
+        "func: u32",
+        "ref: i32",
+        "mask: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "stencilFuncSeparate",
+      "emittedName": "stencilFuncSeparate",
+      "params": [
+        "face: u32",
+        "func: u32",
+        "ref: i32",
+        "mask: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "stencilMask",
+      "emittedName": "stencilMask",
+      "params": [
+        "mask: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "stencilMaskSeparate",
+      "emittedName": "stencilMaskSeparate",
+      "params": [
+        "face: u32",
+        "mask: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "stencilOp",
+      "emittedName": "stencilOp",
+      "params": [
+        "fail: u32",
+        "zfail: u32",
+        "zpass: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "stencilOpSeparate",
+      "emittedName": "stencilOpSeparate",
+      "params": [
+        "face: u32",
+        "fail: u32",
+        "zfail: u32",
+        "zpass: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "texParameterf",
+      "emittedName": "texParameterf",
+      "params": [
+        "target: u32",
+        "pname: u32",
+        "param: f32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "texParameteri",
+      "emittedName": "texParameteri",
+      "params": [
+        "target: u32",
+        "pname: u32",
+        "param: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "uniform1f",
+      "emittedName": "uniform1f",
+      "params": [
+        "location: WebGLUniformLocation?",
+        "x: f32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "uniform2f",
+      "emittedName": "uniform2f",
+      "params": [
+        "location: WebGLUniformLocation?",
+        "x: f32",
+        "y: f32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "uniform3f",
+      "emittedName": "uniform3f",
+      "params": [
+        "location: WebGLUniformLocation?",
+        "x: f32",
+        "y: f32",
+        "z: f32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "uniform4f",
+      "emittedName": "uniform4f",
+      "params": [
+        "location: WebGLUniformLocation?",
+        "x: f32",
+        "y: f32",
+        "z: f32",
+        "w: f32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "uniform1i",
+      "emittedName": "uniform1i",
+      "params": [
+        "location: WebGLUniformLocation?",
+        "x: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "uniform2i",
+      "emittedName": "uniform2i",
+      "params": [
+        "location: WebGLUniformLocation?",
+        "x: i32",
+        "y: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "uniform3i",
+      "emittedName": "uniform3i",
+      "params": [
+        "location: WebGLUniformLocation?",
+        "x: i32",
+        "y: i32",
+        "z: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "uniform4i",
+      "emittedName": "uniform4i",
+      "params": [
+        "location: WebGLUniformLocation?",
+        "x: i32",
+        "y: i32",
+        "z: i32",
+        "w: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "useProgram",
+      "emittedName": "useProgram",
+      "params": [
+        "program: WebGLProgram?"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "validateProgram",
+      "emittedName": "validateProgram",
+      "params": [
+        "program: WebGLProgram"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "vertexAttrib1f",
+      "emittedName": "vertexAttrib1f",
+      "params": [
+        "index: u32",
+        "x: f32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "vertexAttrib2f",
+      "emittedName": "vertexAttrib2f",
+      "params": [
+        "index: u32",
+        "x: f32",
+        "y: f32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "vertexAttrib3f",
+      "emittedName": "vertexAttrib3f",
+      "params": [
+        "index: u32",
+        "x: f32",
+        "y: f32",
+        "z: f32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "vertexAttrib4f",
+      "emittedName": "vertexAttrib4f",
+      "params": [
+        "index: u32",
+        "x: f32",
+        "y: f32",
+        "z: f32",
+        "w: f32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "vertexAttribPointer",
+      "emittedName": "vertexAttribPointer",
+      "params": [
+        "index: u32",
+        "size: i32",
+        "type: u32",
+        "normalized: bool",
+        "stride: i32",
+        "offset: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "viewport",
+      "emittedName": "viewport",
+      "params": [
+        "x: i32",
+        "y: i32",
+        "width: i32",
+        "height: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "copyBufferSubData",
+      "emittedName": "copyBufferSubData",
+      "params": [
+        "read_target: u32",
+        "write_target: u32",
+        "read_offset: i32",
+        "write_offset: i32",
+        "size: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "blitFramebuffer",
+      "emittedName": "blitFramebuffer",
+      "params": [
+        "src_x0: i32",
+        "src_y0: i32",
+        "src_x1: i32",
+        "src_y1: i32",
+        "dst_x0: i32",
+        "dst_y0: i32",
+        "dst_x1: i32",
+        "dst_y1: i32",
+        "mask: u32",
+        "filter: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "readBuffer",
+      "emittedName": "readBuffer",
+      "params": [
+        "src: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "renderbufferStorageMultisample",
+      "emittedName": "renderbufferStorageMultisample",
+      "params": [
+        "target: u32",
+        "samples: i32",
+        "internalformat: u32",
+        "width: i32",
+        "height: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "texStorage2D",
+      "emittedName": "texStorage2D",
+      "params": [
+        "target: u32",
+        "levels: i32",
+        "internalformat: u32",
+        "width: i32",
+        "height: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "texStorage3D",
+      "emittedName": "texStorage3D",
+      "params": [
+        "target: u32",
+        "levels: i32",
+        "internalformat: u32",
+        "width: i32",
+        "height: i32",
+        "depth: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "texImage3D",
+      "emittedName": "texImage3D",
+      "params": [
+        "target: u32",
+        "level: i32",
+        "internalformat: i32",
+        "width: i32",
+        "height: i32",
+        "depth: i32",
+        "border: i32",
+        "format: u32",
+        "type: u32",
+        "pbo_offset: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "texSubImage3D",
+      "emittedName": "texSubImage3D",
+      "params": [
+        "target: u32",
+        "level: i32",
+        "xoffset: i32",
+        "yoffset: i32",
+        "zoffset: i32",
+        "width: i32",
+        "height: i32",
+        "depth: i32",
+        "format: u32",
+        "type: u32",
+        "pbo_offset: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "copyTexSubImage3D",
+      "emittedName": "copyTexSubImage3D",
+      "params": [
+        "target: u32",
+        "level: i32",
+        "xoffset: i32",
+        "yoffset: i32",
+        "zoffset: i32",
+        "x: i32",
+        "y: i32",
+        "width: i32",
+        "height: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "compressedTexImage3D",
+      "emittedName": "compressedTexImage3D",
+      "params": [
+        "target: u32",
+        "level: i32",
+        "internalformat: u32",
+        "width: i32",
+        "height: i32",
+        "depth: i32",
+        "border: i32",
+        "image_size: i32",
+        "offset: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "compressedTexSubImage3D",
+      "emittedName": "compressedTexSubImage3D",
+      "params": [
+        "target: u32",
+        "level: i32",
+        "xoffset: i32",
+        "yoffset: i32",
+        "zoffset: i32",
+        "width: i32",
+        "height: i32",
+        "depth: i32",
+        "format: u32",
+        "image_size: i32",
+        "offset: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "getFragDataLocation",
+      "emittedName": "getFragDataLocation",
+      "params": [
+        "program: WebGLProgram",
+        "name: string"
+      ],
+      "returnType": "i32"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "uniform1ui",
+      "emittedName": "uniform1ui",
+      "params": [
+        "location: WebGLUniformLocation?",
+        "v0: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "uniform2ui",
+      "emittedName": "uniform2ui",
+      "params": [
+        "location: WebGLUniformLocation?",
+        "v0: u32",
+        "v1: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "uniform3ui",
+      "emittedName": "uniform3ui",
+      "params": [
+        "location: WebGLUniformLocation?",
+        "v0: u32",
+        "v1: u32",
+        "v2: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "uniform4ui",
+      "emittedName": "uniform4ui",
+      "params": [
+        "location: WebGLUniformLocation?",
+        "v0: u32",
+        "v1: u32",
+        "v2: u32",
+        "v3: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "vertexAttribI4i",
+      "emittedName": "vertexAttribI4i",
+      "params": [
+        "index: u32",
+        "x: i32",
+        "y: i32",
+        "z: i32",
+        "w: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "vertexAttribI4ui",
+      "emittedName": "vertexAttribI4ui",
+      "params": [
+        "index: u32",
+        "x: u32",
+        "y: u32",
+        "z: u32",
+        "w: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "vertexAttribIPointer",
+      "emittedName": "vertexAttribIPointer",
+      "params": [
+        "index: u32",
+        "size: i32",
+        "type: u32",
+        "stride: i32",
+        "offset: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "vertexAttribDivisor",
+      "emittedName": "vertexAttribDivisor",
+      "params": [
+        "index: u32",
+        "divisor: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "drawArraysInstanced",
+      "emittedName": "drawArraysInstanced",
+      "params": [
+        "mode: u32",
+        "first: i32",
+        "count: i32",
+        "instance_count: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "drawElementsInstanced",
+      "emittedName": "drawElementsInstanced",
+      "params": [
+        "mode: u32",
+        "count: i32",
+        "type: u32",
+        "offset: i32",
+        "instance_count: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "drawRangeElements",
+      "emittedName": "drawRangeElements",
+      "params": [
+        "mode: u32",
+        "start: u32",
+        "end_: u32",
+        "count: i32",
+        "type: u32",
+        "offset: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "clearBufferfi",
+      "emittedName": "clearBufferfi",
+      "params": [
+        "buffer: u32",
+        "drawbuffer: i32",
+        "depth: f32",
+        "stencil: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "endQuery",
+      "emittedName": "endQuery",
+      "params": [
+        "target: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "beginTransformFeedback",
+      "emittedName": "beginTransformFeedback",
+      "params": [
+        "primitive_mode: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "endTransformFeedback",
+      "emittedName": "endTransformFeedback",
+      "params": [],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "pauseTransformFeedback",
+      "emittedName": "pauseTransformFeedback",
+      "params": [],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "resumeTransformFeedback",
+      "emittedName": "resumeTransformFeedback",
+      "params": [],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "bindBufferBase",
+      "emittedName": "bindBufferBase",
+      "params": [
+        "target: u32",
+        "index: u32",
+        "buffer: WebGLBuffer?"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "bindBufferRange",
+      "emittedName": "bindBufferRange",
+      "params": [
+        "target: u32",
+        "index: u32",
+        "buffer: WebGLBuffer?",
+        "offset: i32",
+        "size: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "getUniformBlockIndex",
+      "emittedName": "getUniformBlockIndex",
+      "params": [
+        "program: WebGLProgram",
+        "uniform_block_name: string"
+      ],
+      "returnType": "u32"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "getActiveUniformBlockName",
+      "emittedName": "getActiveUniformBlockName",
+      "params": [
+        "program: WebGLProgram",
+        "uniform_block_index: u32"
+      ],
+      "returnType": "string?"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "uniformBlockBinding",
+      "emittedName": "uniformBlockBinding",
+      "params": [
+        "program: WebGLProgram",
+        "uniform_block_index: u32",
+        "uniform_block_binding: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "bufferData",
+      "emittedName": "bufferData",
+      "params": [
+        "target: u32",
+        "size: i32",
+        "usage: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "bufferData",
+      "emittedName": "bufferData",
+      "params": [
+        "target: u32",
+        "src_data: Float32Buffer?",
+        "usage: u32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "bufferSubData",
+      "emittedName": "bufferSubData",
+      "params": [
+        "target: u32",
+        "dst_byte_offset: i32",
+        "src_data: Float32Buffer"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "texImage2D",
+      "emittedName": "texImage2D",
+      "params": [
+        "target: u32",
+        "level: i32",
+        "internalformat: i32",
+        "width: i32",
+        "height: i32",
+        "border: i32",
+        "format: u32",
+        "type: u32",
+        "pbo_offset: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "texSubImage2D",
+      "emittedName": "texSubImage2D",
+      "params": [
+        "target: u32",
+        "level: i32",
+        "xoffset: i32",
+        "yoffset: i32",
+        "width: i32",
+        "height: i32",
+        "format: u32",
+        "type: u32",
+        "pbo_offset: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "compressedTexImage2D",
+      "emittedName": "compressedTexImage2D",
+      "params": [
+        "target: u32",
+        "level: i32",
+        "internalformat: u32",
+        "width: i32",
+        "height: i32",
+        "border: i32",
+        "image_size: i32",
+        "offset: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "compressedTexSubImage2D",
+      "emittedName": "compressedTexSubImage2D",
+      "params": [
+        "target: u32",
+        "level: i32",
+        "xoffset: i32",
+        "yoffset: i32",
+        "width: i32",
+        "height: i32",
+        "format: u32",
+        "image_size: i32",
+        "offset: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "kind": "operation",
+      "idlName": "readPixels",
+      "emittedName": "readPixels",
+      "params": [
+        "x: i32",
+        "y: i32",
+        "width: i32",
+        "height: i32",
+        "format: u32",
+        "type: u32",
+        "offset: i32"
+      ],
+      "returnType": "unit"
     }
   ],
   "emittedHostFunctions": [
@@ -8314,6 +9913,37 @@
         "input: string"
       ],
       "returnType": "Promise<Response>"
+    },
+    {
+      "name": "dom_new_float32_buffer",
+      "params": [
+        "length: u32"
+      ],
+      "returnType": "Float32Buffer"
+    },
+    {
+      "name": "dom_float32_buffer_set",
+      "params": [
+        "data: Float32Buffer",
+        "index: u32",
+        "value: f64"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "name": "dom_float32_buffer_get",
+      "params": [
+        "data: Float32Buffer",
+        "index: u32"
+      ],
+      "returnType": "f64"
+    },
+    {
+      "name": "dom_float32_buffer_len",
+      "params": [
+        "data: Float32Buffer"
+      ],
+      "returnType": "u32"
     }
   ],
   "skippedMembers": [
@@ -12597,13 +14227,6 @@
       "disabled": true
     },
     {
-      "interface": "Storage",
-      "member": "length",
-      "reason": "member 'attribute:length' collides with the same-named member kept on CSSRuleList (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
-      "issue": "waluau-1l02",
-      "disabled": true
-    },
-    {
       "interface": "UIEvent",
       "member": "sourceCapabilities",
       "reason": "Web IDL type InputDeviceCapabilities? is not part of the selected DOM interface surface",
@@ -12648,6 +14271,738 @@
       "reason": "member name 'repeat' is a reserved waluau keyword, so both the emitted 'declare property KeyboardEvent:repeat' line and any 'event.repeat' use site fail to parse (member-name analogue of the reserved parameter-name collision waluau-9szs)",
       "issue": "waluau-9szs",
       "disabled": true
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "canvas",
+      "reason": "unsupported union Web IDL type (HTMLCanvasElement or OffscreenCanvas)",
+      "issue": "waluau-o4xs"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "drawingBufferColorSpace",
+      "reason": "unsupported Web IDL type PredefinedColorSpace",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "unpackColorSpace",
+      "reason": "unsupported Web IDL type PredefinedColorSpace",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getContextAttributes",
+      "reason": "unsupported Web IDL type WebGLContextAttributes?",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getSupportedExtensions",
+      "reason": "unsupported generic Web IDL type sequence<DOMString>?",
+      "issue": "waluau-utyc"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getExtension",
+      "reason": "unsupported Web IDL type object?",
+      "issue": "waluau-lxdd"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "bindFramebuffer",
+      "reason": "framebuffer: Web IDL type WebGLFramebuffer? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "bindRenderbuffer",
+      "reason": "renderbuffer: Web IDL type WebGLRenderbuffer? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "bindTexture",
+      "reason": "texture: Web IDL type WebGLTexture? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "createFramebuffer",
+      "reason": "Web IDL type WebGLFramebuffer is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "createRenderbuffer",
+      "reason": "Web IDL type WebGLRenderbuffer is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "createTexture",
+      "reason": "Web IDL type WebGLTexture is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "deleteFramebuffer",
+      "reason": "framebuffer: Web IDL type WebGLFramebuffer? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "deleteRenderbuffer",
+      "reason": "renderbuffer: Web IDL type WebGLRenderbuffer? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "deleteTexture",
+      "reason": "texture: Web IDL type WebGLTexture? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "framebufferRenderbuffer",
+      "reason": "renderbuffer: Web IDL type WebGLRenderbuffer? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "framebufferTexture2D",
+      "reason": "texture: Web IDL type WebGLTexture? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getActiveAttrib",
+      "reason": "Web IDL type WebGLActiveInfo? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getActiveUniform",
+      "reason": "Web IDL type WebGLActiveInfo? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getAttachedShaders",
+      "reason": "unsupported generic Web IDL type sequence<WebGLShader>?",
+      "issue": "waluau-utyc"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getBufferParameter",
+      "reason": "unsupported Web IDL type any",
+      "issue": "waluau-lxdd"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getParameter",
+      "reason": "unsupported Web IDL type any",
+      "issue": "waluau-lxdd"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getFramebufferAttachmentParameter",
+      "reason": "unsupported Web IDL type any",
+      "issue": "waluau-lxdd"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getProgramParameter",
+      "reason": "unsupported Web IDL type any",
+      "issue": "waluau-lxdd"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getRenderbufferParameter",
+      "reason": "unsupported Web IDL type any",
+      "issue": "waluau-lxdd"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getShaderParameter",
+      "reason": "unsupported Web IDL type any",
+      "issue": "waluau-lxdd"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getShaderPrecisionFormat",
+      "reason": "Web IDL type WebGLShaderPrecisionFormat? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getTexParameter",
+      "reason": "unsupported Web IDL type any",
+      "issue": "waluau-lxdd"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getUniform",
+      "reason": "unsupported Web IDL type any",
+      "issue": "waluau-lxdd"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getVertexAttrib",
+      "reason": "unsupported Web IDL type any",
+      "issue": "waluau-lxdd"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "isFramebuffer",
+      "reason": "framebuffer: Web IDL type WebGLFramebuffer? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "isRenderbuffer",
+      "reason": "renderbuffer: Web IDL type WebGLRenderbuffer? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "isTexture",
+      "reason": "texture: Web IDL type WebGLTexture? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "vertexAttrib1fv",
+      "reason": "values: unsupported Web IDL type Float32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "vertexAttrib2fv",
+      "reason": "values: unsupported Web IDL type Float32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "vertexAttrib3fv",
+      "reason": "values: unsupported Web IDL type Float32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "vertexAttrib4fv",
+      "reason": "values: unsupported Web IDL type Float32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "makeXRCompatible",
+      "reason": "unsupported generic Web IDL type Promise<undefined>",
+      "issue": "waluau-2c6n"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getBufferSubData",
+      "reason": "dstBuffer: unsupported Web IDL type ArrayBufferView",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "framebufferTextureLayer",
+      "reason": "texture: Web IDL type WebGLTexture? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "invalidateFramebuffer",
+      "reason": "attachments: unsupported generic Web IDL type sequence<GLenum>",
+      "issue": "waluau-utyc"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "invalidateSubFramebuffer",
+      "reason": "attachments: unsupported generic Web IDL type sequence<GLenum>",
+      "issue": "waluau-utyc"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getInternalformatParameter",
+      "reason": "unsupported Web IDL type any",
+      "issue": "waluau-lxdd"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "texImage3D",
+      "reason": "source: unsupported Web IDL type TexImageSource",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "texImage3D",
+      "reason": "srcData: unsupported Web IDL type ArrayBufferView?",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "texImage3D",
+      "reason": "srcData: unsupported Web IDL type ArrayBufferView",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "texSubImage3D",
+      "reason": "source: unsupported Web IDL type TexImageSource",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "texSubImage3D",
+      "reason": "srcData: unsupported Web IDL type ArrayBufferView?",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "compressedTexImage3D",
+      "reason": "srcData: unsupported Web IDL type ArrayBufferView",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "compressedTexSubImage3D",
+      "reason": "srcData: unsupported Web IDL type ArrayBufferView",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "uniform1uiv",
+      "reason": "data: unsupported Web IDL type Uint32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "uniform2uiv",
+      "reason": "data: unsupported Web IDL type Uint32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "uniform3uiv",
+      "reason": "data: unsupported Web IDL type Uint32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "uniform4uiv",
+      "reason": "data: unsupported Web IDL type Uint32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "uniformMatrix3x2fv",
+      "reason": "data: unsupported Web IDL type Float32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "uniformMatrix4x2fv",
+      "reason": "data: unsupported Web IDL type Float32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "uniformMatrix2x3fv",
+      "reason": "data: unsupported Web IDL type Float32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "uniformMatrix4x3fv",
+      "reason": "data: unsupported Web IDL type Float32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "uniformMatrix2x4fv",
+      "reason": "data: unsupported Web IDL type Float32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "uniformMatrix3x4fv",
+      "reason": "data: unsupported Web IDL type Float32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "vertexAttribI4iv",
+      "reason": "values: unsupported Web IDL type Int32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "vertexAttribI4uiv",
+      "reason": "values: unsupported Web IDL type Uint32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "drawBuffers",
+      "reason": "buffers: unsupported generic Web IDL type sequence<GLenum>",
+      "issue": "waluau-utyc"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "clearBufferfv",
+      "reason": "values: unsupported Web IDL type Float32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "clearBufferiv",
+      "reason": "values: unsupported Web IDL type Int32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "clearBufferuiv",
+      "reason": "values: unsupported Web IDL type Uint32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "createQuery",
+      "reason": "Web IDL type WebGLQuery is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "deleteQuery",
+      "reason": "query: Web IDL type WebGLQuery? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "isQuery",
+      "reason": "query: Web IDL type WebGLQuery? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "beginQuery",
+      "reason": "query: Web IDL type WebGLQuery is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getQuery",
+      "reason": "Web IDL type WebGLQuery? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getQueryParameter",
+      "reason": "unsupported Web IDL type any",
+      "issue": "waluau-lxdd"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "createSampler",
+      "reason": "Web IDL type WebGLSampler is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "deleteSampler",
+      "reason": "sampler: Web IDL type WebGLSampler? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "isSampler",
+      "reason": "sampler: Web IDL type WebGLSampler? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "bindSampler",
+      "reason": "sampler: Web IDL type WebGLSampler? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "samplerParameteri",
+      "reason": "sampler: Web IDL type WebGLSampler is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "samplerParameterf",
+      "reason": "sampler: Web IDL type WebGLSampler is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getSamplerParameter",
+      "reason": "unsupported Web IDL type any",
+      "issue": "waluau-lxdd"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "fenceSync",
+      "reason": "Web IDL type WebGLSync? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "isSync",
+      "reason": "sync: Web IDL type WebGLSync? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "deleteSync",
+      "reason": "sync: Web IDL type WebGLSync? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "clientWaitSync",
+      "reason": "sync: Web IDL type WebGLSync is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "waitSync",
+      "reason": "sync: Web IDL type WebGLSync is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getSyncParameter",
+      "reason": "unsupported Web IDL type any",
+      "issue": "waluau-lxdd"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "createTransformFeedback",
+      "reason": "Web IDL type WebGLTransformFeedback is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "deleteTransformFeedback",
+      "reason": "tf: Web IDL type WebGLTransformFeedback? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "isTransformFeedback",
+      "reason": "tf: Web IDL type WebGLTransformFeedback? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "bindTransformFeedback",
+      "reason": "tf: Web IDL type WebGLTransformFeedback? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "transformFeedbackVaryings",
+      "reason": "varyings: unsupported generic Web IDL type sequence<DOMString>",
+      "issue": "waluau-utyc"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getTransformFeedbackVarying",
+      "reason": "Web IDL type WebGLActiveInfo? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getIndexedParameter",
+      "reason": "unsupported Web IDL type any",
+      "issue": "waluau-lxdd"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getUniformIndices",
+      "reason": "unsupported generic Web IDL type sequence<GLuint>?",
+      "issue": "waluau-utyc"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getActiveUniforms",
+      "reason": "unsupported Web IDL type any",
+      "issue": "waluau-lxdd"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "getActiveUniformBlockParameter",
+      "reason": "unsupported Web IDL type any",
+      "issue": "waluau-lxdd"
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "createVertexArray",
+      "reason": "Web IDL type WebGLVertexArrayObject is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "deleteVertexArray",
+      "reason": "vertexArray: Web IDL type WebGLVertexArrayObject? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "isVertexArray",
+      "reason": "vertexArray: Web IDL type WebGLVertexArrayObject? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "bindVertexArray",
+      "reason": "array: Web IDL type WebGLVertexArrayObject? is not part of the selected DOM interface surface",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "bufferData",
+      "reason": "srcData: unsupported Web IDL type ArrayBufferView",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "bufferSubData",
+      "reason": "srcData: unsupported Web IDL type ArrayBufferView",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "texImage2D",
+      "reason": "pixels: unsupported Web IDL type ArrayBufferView?",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "texImage2D",
+      "reason": "source: unsupported Web IDL type TexImageSource",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "texSubImage2D",
+      "reason": "pixels: unsupported Web IDL type ArrayBufferView?",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "texSubImage2D",
+      "reason": "source: unsupported Web IDL type TexImageSource",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "texImage2D",
+      "reason": "srcData: unsupported Web IDL type ArrayBufferView",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "texSubImage2D",
+      "reason": "srcData: unsupported Web IDL type ArrayBufferView",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "compressedTexImage2D",
+      "reason": "srcData: unsupported Web IDL type ArrayBufferView",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "compressedTexSubImage2D",
+      "reason": "srcData: unsupported Web IDL type ArrayBufferView",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "uniform1fv",
+      "reason": "data: unsupported Web IDL type Float32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "uniform2fv",
+      "reason": "data: unsupported Web IDL type Float32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "uniform3fv",
+      "reason": "data: unsupported Web IDL type Float32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "uniform4fv",
+      "reason": "data: unsupported Web IDL type Float32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "uniform1iv",
+      "reason": "data: unsupported Web IDL type Int32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "uniform2iv",
+      "reason": "data: unsupported Web IDL type Int32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "uniform3iv",
+      "reason": "data: unsupported Web IDL type Int32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "uniform4iv",
+      "reason": "data: unsupported Web IDL type Int32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "uniformMatrix2fv",
+      "reason": "data: unsupported Web IDL type Float32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "uniformMatrix3fv",
+      "reason": "data: unsupported Web IDL type Float32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "uniformMatrix4fv",
+      "reason": "data: unsupported Web IDL type Float32List",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "readPixels",
+      "reason": "dstData: unsupported Web IDL type ArrayBufferView?",
+      "issue": null
+    },
+    {
+      "interface": "WebGL2RenderingContext",
+      "member": "readPixels",
+      "reason": "dstData: unsupported Web IDL type ArrayBufferView",
+      "issue": null
     }
   ]
 }

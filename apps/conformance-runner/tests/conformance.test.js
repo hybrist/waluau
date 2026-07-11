@@ -11,6 +11,10 @@ import {
   failureMatchesExpected,
 } from '../../../tools/conformance/includes.js';
 import gameEngineSim from '../../../fixtures/game-engine/sim.walu?raw';
+import gameEngineMain from '../../../fixtures/game-engine/main.walu?raw';
+import gameEngineBrowser from '../../../engine/browser.walu?raw';
+import gameEngineGraphics from '../../../engine/graphics.walu?raw';
+import gameEngineFont from '../../../engine/font.walu?raw';
 import gameEngineInput from '../../../engine/input.walu?raw';
 import gameEngineTime from '../../../engine/time.walu?raw';
 
@@ -692,6 +696,91 @@ describe('browser conformance', () => {
       const context = canvas.getContext('2d');
       const pixel = context.getImageData(6, 7, 1, 1).data;
       expect(Array.from(pixel)).toEqual([0, 0, 0, 255]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('renders through generated WebGL2 extern handles', async () => {
+    const testCase = cases.find(({ name }) => name === 'dom_webgl2_rendering.walu');
+    const source = sourceForCase(testCase);
+    const { root, cleanup } = await compileAndInstantiateWithDom({ '/main.walu': source }, '/main.walu');
+
+    try {
+      expect(root.children).toHaveLength(1);
+      const canvas = root.children[0];
+      expect(canvas.tagName).toBe('CANVAS');
+      expect(canvas.id).toBe('waluau-canvas-webgl2');
+      expect(canvas.width).toBe(64);
+      expect(canvas.height).toBe(32);
+
+      // The fixture clears to blue and draws a red full-viewport triangle;
+      // the host bridge acquires the context with preserveDrawingBuffer, so
+      // the drawn frame stays readable here.
+      const gl = canvas.getContext('webgl2');
+      expect(gl).not.toBeNull();
+      const pixel = new Uint8Array(4);
+      gl.readPixels(32, 16, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+      expect(Array.from(pixel)).toEqual([255, 0, 0, 255]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('renders the game-engine fixture through the WebGL2 graphics backend', async () => {
+    const { root, cleanup } = await compileAndInstantiateWithDom(
+      {
+        '/fixtures/game-engine/main.walu': gameEngineMain,
+        '/engine/browser.walu': gameEngineBrowser,
+        '/engine/graphics.walu': gameEngineGraphics,
+        '/engine/font.walu': gameEngineFont,
+        '/engine/input.walu': gameEngineInput,
+        '/engine/time.walu': gameEngineTime,
+      },
+      '/fixtures/game-engine/main.walu'
+    );
+
+    try {
+      const canvas = root.querySelector('#walua-game-canvas');
+      expect(canvas).not.toBeNull();
+      expect(canvas.width).toBe(320);
+      expect(canvas.height).toBe(200);
+      const gl = canvas.getContext('webgl2');
+      expect(gl).not.toBeNull();
+
+      const readFrame = () => {
+        const pixels = new Uint8Array(320 * 200 * 4);
+        gl.readPixels(0, 0, 320, 200, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        return pixels;
+      };
+      const pixelAt = (pixels, x, y) => {
+        // readPixels rows start at the bottom of the canvas.
+        const index = ((200 - 1 - y) * 320 + x) * 4;
+        return [pixels[index], pixels[index + 1], pixels[index + 2], pixels[index + 3]];
+      };
+
+      // Wait until the engine's animation frame presented the scene: the
+      // background clear color #0f172a at a point that stays clear of the
+      // grid lines, the player square, and both text lines.
+      await expect.poll(
+        () => pixelAt(readFrame(), 16, 40),
+        { timeout: 10_000 },
+      ).toEqual([15, 23, 42, 255]);
+
+      // The frame contains the player square color #38bdf8 somewhere.
+      const pixels = readFrame();
+      let foundPlayer = false;
+      for (let i = 0; i < pixels.length; i += 4) {
+        if (
+          Math.abs(pixels[i] - 56) <= 1 &&
+          Math.abs(pixels[i + 1] - 189) <= 1 &&
+          Math.abs(pixels[i + 2] - 248) <= 1
+        ) {
+          foundPlayer = true;
+          break;
+        }
+      }
+      expect(foundPlayer).toBe(true);
     } finally {
       cleanup();
     }
