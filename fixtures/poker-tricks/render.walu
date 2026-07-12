@@ -33,7 +33,7 @@ end
 function school_color(suit: i32): string
     if suit == 0 then return "#ef4444" end
     if suit == 1 then return "#38bdf8" end
-    if suit == 2 then return "#a1a1aa" end
+    if suit == 2 then return "#a855f7" end
     return "#4ade80"
 end
 
@@ -61,9 +61,13 @@ function draw_sigil(graphics: Graphics, suit: i32, x: f64, y: f64): unit
     graphics:set_color(school_color(suit))
     graphics:set_line_width(3.0)
     if suit == 0 then
-        graphics:line(x, y + 17.0, x + 11.0, y - 10.0)
-        graphics:line(x + 11.0, y - 10.0, x + 22.0, y + 17.0)
-        graphics:line(x + 4.0, y + 7.0, x + 18.0, y + 7.0)
+        -- Red school: a cut gem — flat crown, girdle line, pointed pavilion.
+        graphics:line(x + 5.0, y - 9.0, x + 17.0, y - 9.0)
+        graphics:line(x + 17.0, y - 9.0, x + 22.0, y - 1.0)
+        graphics:line(x + 22.0, y - 1.0, x + 11.0, y + 17.0)
+        graphics:line(x + 11.0, y + 17.0, x, y - 1.0)
+        graphics:line(x, y - 1.0, x + 5.0, y - 9.0)
+        graphics:line(x, y - 1.0, x + 22.0, y - 1.0)
     elseif suit == 1 then
         graphics:fill_circle(x + 11.0, y + 3.0, 12.0)
         graphics:set_color("#111827")
@@ -91,7 +95,11 @@ function draw_card(graphics: Graphics, card: game.Card, x: f64, y: f64, selected
         graphics:set_color("#52525b")
         graphics:set_line_width(2.0)
         graphics:stroke_rectangle(x + 9.0, y + 9.0, CARD_W - 18.0, CARD_H - 18.0)
-        draw_sigil(graphics, 2, x + 41.0, y + 55.0)
+        -- Neutral back mark; must not resemble any school's sigil color.
+        graphics:set_color("#52525b")
+        graphics:fill_rectangle(x + 41.0, y + 46.0, 22.0, 22.0)
+        graphics:set_color("#17171c")
+        graphics:fill_rectangle(x + 47.0, y + 52.0, 10.0, 10.0)
         return
     end
     -- Each school's shader effect subtly animates the card face: fire
@@ -178,7 +186,6 @@ function draw_playfield(graphics: Graphics, state: game.State, hand_cursor: i32,
     end
 
     panel(graphics, 278.0, 258.0, 404.0, 148.0, "#101013", "#3f3f46")
-    text(graphics, "THE VAULT WARDS", 397.0, 282.0, 13, "#e4e4e7")
     for i = 0::i32, #state.middle - 1 do
         local selected: bool = state.swap_open and is_picked(swap_wards, i)
         local focused: bool = state.swap_open and cursor_area == 1 and ward_cursor == i
