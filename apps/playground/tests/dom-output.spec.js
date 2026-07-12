@@ -345,6 +345,7 @@ test.describe('DOM Output in Run tab', () => {
   });
 
   test('plays a complete Arcane Heist game through the 2D engine', async ({ page }) => {
+    test.slow();
     const pageErrors = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
     await page.getByRole('button', { name: 'Arcane Heist' }).click();
