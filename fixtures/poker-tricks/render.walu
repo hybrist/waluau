@@ -84,6 +84,78 @@ function draw_sigil(graphics: Graphics, suit: i32, x: f64, y: f64): unit
     end
 end
 
+-- An engraved celestial ward shared by every sealed relic. Keeping the back
+-- in geometry (rather than a bitmap) makes it stay sharp through the card-flip
+-- transform and avoids adding an asynchronous asset path to the renderer.
+function draw_card_back(graphics: Graphics, x: f64, y: f64): unit
+    local ink: string = "#e8dfbd"
+    local muted_ink: string = "#8f8ab0"
+    local ground: string = "#171943"
+    local center_x: f64 = x + CARD_W * 0.5
+    local center_y: f64 = y + CARD_H * 0.5
+
+    -- A faint moving haze gives the flat indigo field the feel of dyed paper.
+    graphics:set_effect(3)
+    graphics:set_color(ground)
+    graphics:fill_rectangle(x + 3.0, y + 3.0, CARD_W - 6.0, CARD_H - 6.0)
+    graphics:set_effect(0)
+
+    graphics:set_color(ink)
+    graphics:set_line_width(1.5)
+    graphics:stroke_rectangle(x + 7.0, y + 7.0, CARD_W - 14.0, CARD_H - 14.0)
+    graphics:set_color(muted_ink)
+    graphics:set_line_width(1.0)
+    graphics:stroke_rectangle(x + 11.0, y + 11.0, CARD_W - 22.0, CARD_H - 22.0)
+
+    -- The central ward: twelve rays around a crescent held inside a halo.
+    graphics:set_color(ink)
+    graphics:set_line_width(1.2)
+    for ray = 0::i32, 11::i32 do
+        local angle: f64 = (ray::f64) * math.pi / 6.0
+        graphics:line(
+            center_x + math.cos(angle) * 17.0,
+            center_y + math.sin(angle) * 17.0,
+            center_x + math.cos(angle) * 28.0,
+            center_y + math.sin(angle) * 28.0
+        )
+    end
+    graphics:fill_circle(center_x, center_y, 13.0)
+    graphics:set_color(ground)
+    graphics:fill_circle(center_x, center_y, 10.0)
+    graphics:set_color(ink)
+    graphics:fill_circle(center_x - 1.5, center_y, 5.5)
+    graphics:set_color(ground)
+    graphics:fill_circle(center_x + 1.0, center_y - 1.0, 5.0)
+
+    -- Mirrored crown stars and constellation paths keep the back rotationally
+    -- symmetric, so its orientation cannot reveal anything during a flip.
+    graphics:set_color(ink)
+    graphics:set_line_width(1.2)
+    for direction = -1::i32, 1::i32, 2::i32 do
+        local star_y: f64 = center_y + (direction::f64) * 40.0
+        graphics:line(center_x, star_y - 5.0, center_x, star_y + 5.0)
+        graphics:line(center_x - 5.0, star_y, center_x + 5.0, star_y)
+        graphics:line(center_x - 3.5, star_y - 3.5, center_x + 3.5, star_y + 3.5)
+        graphics:line(center_x + 3.5, star_y - 3.5, center_x - 3.5, star_y + 3.5)
+
+        local side_x: f64 = center_x + (direction::f64) * 34.0
+        graphics:line(side_x, center_y - 17.0, side_x - (direction::f64) * 6.0, center_y - 7.0)
+        graphics:line(side_x - (direction::f64) * 6.0, center_y - 7.0, side_x, center_y + 3.0)
+        graphics:line(side_x, center_y + 3.0, side_x - (direction::f64) * 7.0, center_y + 15.0)
+        graphics:fill_circle(side_x, center_y - 17.0, 1.8)
+        graphics:fill_circle(side_x - (direction::f64) * 6.0, center_y - 7.0, 1.4)
+        graphics:fill_circle(side_x, center_y + 3.0, 1.8)
+        graphics:fill_circle(side_x - (direction::f64) * 7.0, center_y + 15.0, 1.4)
+    end
+
+    -- Tiny corner pinpricks echo the dotted borders in antique divination decks.
+    graphics:set_color(muted_ink)
+    graphics:fill_circle(x + 15.0, y + 15.0, 1.5)
+    graphics:fill_circle(x + CARD_W - 15.0, y + 15.0, 1.5)
+    graphics:fill_circle(x + 15.0, y + CARD_H - 15.0, 1.5)
+    graphics:fill_circle(x + CARD_W - 15.0, y + CARD_H - 15.0, 1.5)
+end
+
 function draw_card(graphics: Graphics, card: game.Card, x: f64, y: f64, selected: bool, focused: bool, hidden: bool): unit
     local offset: f64 = 0.0
     if selected then offset = -10.0 end
@@ -92,14 +164,7 @@ function draw_card(graphics: Graphics, card: game.Card, x: f64, y: f64, selected
     if focused then edge = "#fbbf24" elseif selected then edge = school_color(card.suit) end
     panel(graphics, x, y, CARD_W, CARD_H, "#17171c", edge)
     if hidden then
-        graphics:set_color("#52525b")
-        graphics:set_line_width(2.0)
-        graphics:stroke_rectangle(x + 9.0, y + 9.0, CARD_W - 18.0, CARD_H - 18.0)
-        -- Neutral back mark; must not resemble any school's sigil color.
-        graphics:set_color("#52525b")
-        graphics:fill_rectangle(x + 41.0, y + 46.0, 22.0, 22.0)
-        graphics:set_color("#17171c")
-        graphics:fill_rectangle(x + 47.0, y + 52.0, 10.0, 10.0)
+        draw_card_back(graphics, x, y)
         return
     end
     -- Each school's shader effect subtly animates the card face: fire

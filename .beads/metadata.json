@@ -2,7 +2,7 @@
   "database": "dolt",
   "backend": "dolt",
   "dolt_mode": "server",
-  "dolt_server_port": 49417,
+  "dolt_server_port": 49416,
   "dolt_database": "waluau",
   "project_id": "335c762e-af4e-46e2-94be-9ee11d5914d6"
 }
