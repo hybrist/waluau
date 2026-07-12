@@ -45,13 +45,23 @@ const DOM_OUTPUT_SRC_DOC = `<!doctype html>
   <body></body>
 </html>`;
 
-function DomOutputFrame({ setDomOutputRoot, onEscape }) {
+function DomOutputFrame({
+  setDomOutputRoot,
+  onEscape,
+  isFullscreen,
+  exportsList,
+  status,
+  runError,
+}) {
   const onEscapeRef = useRef(onEscape);
   useEffect(() => {
     onEscapeRef.current = onEscape;
   }, [onEscape]);
 
+  const iframeRef = useRef(null);
+
   const setFrame = useCallback((node) => {
+    iframeRef.current = node;
     if (!node) {
       setDomOutputRoot(null);
       return;
@@ -85,6 +95,16 @@ function DomOutputFrame({ setDomOutputRoot, onEscape }) {
       setDomOutputRoot(null);
     };
   }, [setDomOutputRoot]);
+
+  useEffect(() => {
+    if (isFullscreen && iframeRef.current) {
+      if (status === 'success' || (status === 'ready' && !runError)) {
+        requestAnimationFrame(() => {
+          iframeRef.current?.contentWindow?.focus();
+        });
+      }
+    }
+  }, [isFullscreen, exportsList, status, runError]);
 
   return (
     <iframe
@@ -195,7 +215,14 @@ export default function RunTab({
               </button>
             </div>
           )}
-          <DomOutputFrame setDomOutputRoot={setDomOutputRoot} onEscape={() => setIsFullscreen(false)} />
+          <DomOutputFrame
+            setDomOutputRoot={setDomOutputRoot}
+            onEscape={() => setIsFullscreen(false)}
+            isFullscreen={isFullscreen}
+            exportsList={exportsList}
+            status={status}
+            runError={runError}
+          />
         </section>
       )}
 

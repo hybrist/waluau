@@ -348,9 +348,15 @@ test.describe('DOM Output in Run tab', () => {
     const pageErrors = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
     await page.getByRole('button', { name: 'Arcane Heist' }).click();
-    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
-      timeout: COMPILER_READY_TIMEOUT,
-    });
+    try {
+      await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+        timeout: 5000,
+      });
+    } catch (err) {
+      await page.getByRole('button', { name: 'Compiler Diagnostics' }).click();
+      console.log("DIAGNOSTIC ERROR IS:\n", await page.locator('.error-block').innerText());
+      throw err;
+    }
 
     const outputFrame = page.frameLocator('.dom-output-frame');
     await expect(outputFrame.locator('h1')).toHaveText('Arcane Heist');
@@ -570,5 +576,74 @@ test.describe('DOM Output in Run tab', () => {
     await exitBtn.click();
     await expect(domOutput).not.toHaveClass(/fullscreen/);
     await expect(page.url()).not.toContain('fullscreen=true');
+  });
+
+  test('automatically moves focus to the iframe when entering fullscreen mode', async ({ page }) => {
+    await page.locator('.code-textarea').fill(DOM_SAMPLE);
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    const domOutput = page.getByLabel('DOM Output');
+    await expect(domOutput).toBeVisible();
+
+    const iframe = domOutput.locator('.dom-output-frame');
+    
+    // By default, the iframe should not have focus
+    await expect(iframe).not.toBeFocused();
+
+    // Click fullscreen button
+    const fullscreenBtn = domOutput.locator('.dom-output-fullscreen-btn');
+    await fullscreenBtn.click();
+
+    // Wait for the iframe to receive focus
+    await expect(iframe).toBeFocused();
+  });
+
+  test('automatically moves focus to the iframe when starting directly in fullscreen mode', async ({ page }) => {
+    // Navigate with fullscreen=true parameter
+    await page.goto('/?fullscreen=true');
+    await page.locator('.code-textarea').fill(DOM_SAMPLE);
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    const domOutput = page.getByLabel('DOM Output');
+    await expect(domOutput).toBeVisible();
+    const iframe = domOutput.locator('.dom-output-frame');
+
+    // Wait for the iframe to automatically receive focus
+    await expect(iframe).toBeFocused();
+  });
+
+  test('automatically moves focus to the iframe when switching fixture/compiling while already in fullscreen mode', async ({ page }) => {
+    await page.locator('.code-textarea').fill(DOM_SAMPLE);
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    const domOutput = page.getByLabel('DOM Output');
+    await expect(domOutput).toBeVisible();
+
+    const iframe = domOutput.locator('.dom-output-frame');
+
+    // Click fullscreen button
+    const fullscreenBtn = domOutput.locator('.dom-output-fullscreen-btn');
+    await fullscreenBtn.click();
+    await expect(iframe).toBeFocused();
+
+    // Focus somewhere else (like the exit button) to lose focus on the iframe
+    const exitBtn = domOutput.locator('.dom-output-exit-btn');
+    await exitBtn.focus();
+    await expect(iframe).not.toBeFocused();
+
+    // Fill the textarea with new source code to trigger re-compilation/run
+    await page.locator('.code-textarea').fill(DOM_SAMPLE + '\n-- rerun focus test');
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    // It compiles and reruns. It should automatically focus the iframe again!
+    await expect(iframe).toBeFocused();
   });
 });

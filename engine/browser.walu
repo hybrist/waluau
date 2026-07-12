@@ -96,6 +96,7 @@ function start(config: Config, game: Game): unit
                 game.update(clock.step, input)
                 input:end_step()
             end
+            graphics:set_time(timestamp_ms / 1000.0)
             game.draw(graphics, clock:alpha())
             graphics:present()
             window:requestAnimationFrame(frame)
