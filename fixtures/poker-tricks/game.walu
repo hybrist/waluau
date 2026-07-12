@@ -5,7 +5,7 @@
 type Card = { rank: i32, suit: i32 }
 type PairChoice = { first: i32, second: i32, value: i32 }
 type SwapChoice = { hand_indices: {i32}, middle_indices: {i32}, community_value: i32, hand_value: i32 }
-type Trick = { round: i32, middle: {Card}, player_cards: {Card}, computer_cards: {Card}, computer_first: i32, computer_second: i32, player_value: i32, computer_value: i32, winner: i32, points: i32, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32 }
+type Trick = { round: i32, middle: {Card}, player_cards: {Card}, computer_cards: {Card}, player_first: i32, player_second: i32, computer_first: i32, computer_second: i32, player_value: i32, computer_value: i32, winner: i32, points: i32, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32 }
 type State = { deck: {Card}, player_hand: {Card}, computer_hand: {Card}, middle: {Card}, history: {Trick}, round: i32, player_points: i32, computer_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32, finished: bool }
 
 local MIN_RANK <const>: i32 = 2
@@ -307,8 +307,10 @@ function State:play(first: i32, second: i32): unit
         middle = { self.middle[0], self.middle[1], self.middle[2] },
         player_cards = { self.player_hand[first], self.player_hand[second] },
         computer_cards = { self.computer_hand[computer.first], self.computer_hand[computer.second] },
-        -- Hand slots the Arch Mage played, so the presentation can flip the
-        -- matching sealed relics in place on the board.
+        -- Hand slots both sides played, so the presentation can resolve the
+        -- trick in place on the board after the hands have been refilled.
+        player_first = first,
+        player_second = second,
         computer_first = computer.first,
         computer_second = computer.second,
         player_value = self.last_player_value,
@@ -431,10 +433,93 @@ function category_name(value: i32): string
     return "lone spark"
 end
 
+function score_component(value: i32, index: i32): i32
+    local divisor: i32 = 1
+    if index == 0 then divisor = 50625
+    elseif index == 1 then divisor = 3375
+    elseif index == 2 then divisor = 225
+    elseif index == 3 then divisor = 15 end
+    local quotient: i32 = value // divisor
+    return quotient - (quotient // 15) * 15
+end
+
+function made_components_match(value: i32, other_value: i32, count: i32): bool
+    for index = 0::i32, count - 1 do
+        if score_component(value, index) ~= score_component(other_value, index) then return false end
+    end
+    return true
+end
+
+function formation_cards(cards: {Card}, value: i32): {bool}
+    assert(#cards == 5)
+    local category: i32 = value // 759375
+    if category == 8 or category == 5 or category == 4 then
+        return { true, true, true, true, true }
+    end
+    local made_components: i32 = 1
+    if category == 6 or category == 2 then made_components = 2 end
+    local marked_ranks: {i32} = {}
+    for index = 0::i32, made_components - 1 do
+        table.insert(marked_ranks, score_component(value, index))
+    end
+    local marked: {bool} = {}
+    for card in cards do
+        local active: bool = false
+        for rank in marked_ranks do
+            if card.rank == rank then active = true end
+        end
+        table.insert(marked, active)
+    end
+    return marked
+end
+
+-- Mark the cards that visibly explain why a winning five-card hand won. The
+-- made formation is always included; when both hands made the same formation,
+-- include kickers through the first score component that breaks the tie.
+function scoring_cards(cards: {Card}, value: i32, other_value: i32): {bool}
+    assert(#cards == 5)
+    local marked_ranks: {i32} = {}
+    local category: i32 = value // 759375
+    local other_category: i32 = other_value // 759375
+
+    if category == 8 or category == 5 or category == 4 then
+        return { true, true, true, true, true }
+    end
+
+    local made_components: i32 = 1
+    if category == 6 or category == 2 then made_components = 2 end
+    if category == 0 then made_components = 0 end
+    for index = 0::i32, made_components - 1 do
+        table.insert(marked_ranks, score_component(value, index))
+    end
+
+    local made_tied: bool = category == other_category and made_components_match(value, other_value, made_components)
+    if made_tied then
+        local first_kicker: i32 = made_components
+        for index = first_kicker, 4::i32 do
+            local rank: i32 = score_component(value, index)
+            if rank == 0 then break end
+            table.insert(marked_ranks, rank)
+            if rank ~= score_component(other_value, index) then break end
+        end
+    end
+
+    local marked: {bool} = {}
+    for card in cards do
+        local active: bool = false
+        for rank in marked_ranks do
+            if card.rank == rank then active = true end
+        end
+        table.insert(marked, active)
+    end
+    return marked
+end
+
 return {
     new = new,
     make_deck = make_deck,
     rank_five = rank_five,
+    value_for_pair = value_for_pair,
     best_pair = best_pair,
     rank_three = rank_three,
     swap_priority = swap_priority,
@@ -442,4 +527,6 @@ return {
     best_swap = best_swap,
     card_name = card_name,
     category_name = category_name,
+    formation_cards = formation_cards,
+    scoring_cards = scoring_cards,
 }
