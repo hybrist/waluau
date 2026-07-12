@@ -220,7 +220,7 @@ const cases = Object.entries(conformanceModules)
   })
   .sort((a, b) => a.name.localeCompare(b.name));
 
-// Cases that have a dedicated test below (async DOM start functions that need
+// Cases that have a dedicated test below (async DOM entry points that need
 // the iframe to stay alive until the async work completes).
 const DEDICATED_ASYNC_DOM_CASES = new Set(['top_level_fetch.walu']);
 
@@ -596,13 +596,13 @@ describe('browser conformance', () => {
     );
   });
 
-  it('passes top_level_fetch.walu with async start-function fetch and DOM write', async () => {
+  it('passes top_level_fetch.walu with async main-entry fetch and DOM write', async () => {
     const testCase = cases.find(({ name }) => name === 'top_level_fetch.walu');
     const source = sourceForCase(testCase);
     const { root, cleanup } = await compileAndInstantiateWithDom({ '/main.walu': source }, '/main.walu');
 
     try {
-      // The Wasm start function launches the coroutine and returns; the fetch
+      // The Wasm main entry point launches the coroutine and returns; the fetch
       // and DOM write happen asynchronously.  Poll until the body is updated.
       await expect.poll(
         () => root.textContent?.trim(),

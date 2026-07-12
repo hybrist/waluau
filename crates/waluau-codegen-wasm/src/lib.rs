@@ -11,8 +11,7 @@ use wasm_encoder::{
     AbstractHeapType, BlockType, Catch, CodeSection, ConstExpr, CustomSection, ElementSection,
     Elements, EntityType, ExportKind, ExportSection, FieldType, Function, FunctionSection,
     GlobalSection, HeapType, ImportSection, Instruction, Module as WasmModule, RefType,
-    StartSection, StorageType, TableSection, TableType, TagKind, TagSection, TagType, TypeSection,
-    ValType,
+    StorageType, TableSection, TableType, TagKind, TagSection, TagType, TypeSection, ValType,
 };
 use wasmparser::{Validator, WasmFeatures};
 
@@ -231,6 +230,9 @@ pub struct EmitResult {
     pub wasm: Vec<u8>,
     pub record_type_indices: HashMap<String, u32>,
 }
+
+const MAIN_EXPORT: &str = "main";
+const INTERNAL_MAIN_EXPORT: &str = "__waluau_main";
 
 /// Select declared host functions that survived parsing and type checking and
 /// were actually selected by lowering. Declaration files intentionally expose
@@ -1027,7 +1029,9 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             .get(&params, &function.return_type)
             .unwrap();
         functions.function(user_type_base + sig_index);
-        if should_export_function(&function.name) {
+        if should_export_function(&function.name)
+            && !(start_thunk.is_some() && function.name == MAIN_EXPORT)
+        {
             exports.export(
                 &function.name,
                 ExportKind::Func,
@@ -1055,6 +1059,16 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     if let Some(start) = start_thunk {
         let thunk_sig_index = signature_registry.get(&[], &Type::Unit).unwrap();
         functions.function(user_type_base + thunk_sig_index);
+        exports.export(
+            MAIN_EXPORT,
+            ExportKind::Func,
+            import_func_count + module.functions.len() as u32,
+        );
+        exports.export(
+            INTERNAL_MAIN_EXPORT,
+            ExportKind::Func,
+            import_func_count + module.functions.len() as u32,
+        );
         let mut thunk = Function::new(Vec::new());
         thunk.instruction(&Instruction::Call(import_func_count + start as u32));
         let n_returns = match &module.functions[start].return_type {
@@ -1277,11 +1291,6 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         wasm.section(&globals);
     }
     wasm.section(&exports);
-    if start_thunk.is_some() {
-        wasm.section(&StartSection {
-            function_index: import_func_count + module.functions.len() as u32,
-        });
-    }
     wasm.section(&elements);
     if buffer_plan.uses_memory {
         wasm.section(&wasm_encoder::DataCountSection {

@@ -51,13 +51,15 @@ test.describe('editor', () => {
     expect(languageId).toBe('waluau');
   });
 
-  test('instantiation error message appears in the run tab when startup code traps', async ({ page }) => {
+  test('entry-point error message appears in the run tab when top-level code traps', async ({ page }) => {
     await page.locator('.code-textarea').fill('assert(false)');
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
       timeout: COMPILER_READY_TIMEOUT,
     });
     await expect(page.getByRole('heading', { name: 'Module Load Error' })).toBeVisible();
-    await expect(page.locator('.diagnostic-output')).toContainText('Failed to instantiate the generated WASM module:');
+    await expect(page.locator('.diagnostic-output')).toContainText(
+      'Failed to execute the generated WASM module entry point:',
+    );
     await expect(page.locator('.diagnostic-output')).not.toContainText('This module requires Wasm GC');
   });
 

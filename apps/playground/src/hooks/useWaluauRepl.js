@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   WALUAU_STRING_CONSTANTS_MODULE,
+  WALUAU_MAIN_EXPORT,
   buildWaluauImports,
   usesDomImports,
   classifyWasmModuleError,
@@ -21,8 +22,8 @@ function stringifyError(err) {
  * the whole program, and run it. Because the program is deterministic and we
  * only ever append, the print output of prior cells reproduces identically as a
  * prefix — so the *new* output is just the tail beyond what the previous run
- * produced. A cell that fails to compile or instantiate is not added to the
- * buffer, leaving the session state intact.
+ * produced. A cell that fails to compile, instantiate, or execute is not added
+ * to the buffer, leaving the session state intact.
  *
  * The session can optionally be *seeded* from the editor program (see `seed`).
  * Seeding snapshots the editor's file map and entry path; subsequent cells are
@@ -72,7 +73,8 @@ export default function useWaluauRepl() {
     return { files: { ...baseFilesRef.current, [entry]: entrySource }, entry };
   }, []);
 
-  // Compile + instantiate a program, capturing every print call. Never throws.
+  // Compile, instantiate, and execute a program, capturing every print call.
+  // Never throws.
   const runProgram = useCallback(async (filesMap, entry) => {
     const compileMulti = compileMultiRef.current;
     if (!compileMulti) return { ok: false, error: 'Compiler not ready' };
@@ -111,6 +113,8 @@ export default function useWaluauRepl() {
       phase = 'instantiate';
       const instance = await WebAssembly.instantiate(wasmModule, imports);
       instanceExports = instance.exports;
+      phase = 'execute';
+      instanceExports[WALUAU_MAIN_EXPORT]?.();
     } catch (err) {
       return {
         ok: false,
