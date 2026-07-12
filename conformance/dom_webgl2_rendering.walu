@@ -1,6 +1,7 @@
 -- Browser WebGL2 rendering through generated DOM externs: context
--- acquisition, shader compilation, Float32Buffer vertex upload, and a draw
--- call, verified host-side with readPixels by the conformance runner.
+-- acquisition, shader compilation, linear-memory typed-array vertex upload
+-- (via dom_float32_array_view), and a draw call, verified host-side with
+-- readPixels by the conformance runner.
 
 local window = require("dom:window")
 local document: Document = window.document
@@ -43,16 +44,10 @@ if HTMLCanvasElement(canvas) = element then
     local gl: WebGL2RenderingContext = maybe_gl::WebGL2RenderingContext
     gl:viewport(0, 0, 64, 32)
 
-    -- Float32Buffer host helpers round-trip values.
-    local vertices: Float32Buffer = dom_new_float32_buffer(6)
-    assert(dom_float32_buffer_len(vertices) == 6)
-    dom_float32_buffer_set(vertices, 0, -1.0)
-    dom_float32_buffer_set(vertices, 1, -1.0)
-    dom_float32_buffer_set(vertices, 2, 3.0)
-    dom_float32_buffer_set(vertices, 3, -1.0)
-    dom_float32_buffer_set(vertices, 4, -1.0)
-    dom_float32_buffer_set(vertices, 5, 3.0)
-    assert(dom_float32_buffer_get(vertices, 2) == 3.0)
+    -- Vertex data lives in wasm linear memory; no per-element host calls.
+    local vertices = {-1.0, -1.0, 3.0, -1.0, -1.0, 3.0}::Float32Array
+    assert(#vertices == 6)
+    assert(vertices[2] == 3.0)
 
     gl:clearColor(0.0, 0.0, 1.0, 1.0)
     gl:clear(GL_COLOR_BUFFER_BIT)
@@ -81,7 +76,7 @@ void main() {
     -- One oversized triangle covering the whole viewport.
     local buffer: WebGLBuffer = gl:createBuffer()
     gl:bindBuffer(GL_ARRAY_BUFFER, buffer)
-    gl:bufferData(GL_ARRAY_BUFFER, vertices, GL_STATIC_DRAW)
+    gl:bufferData(GL_ARRAY_BUFFER, dom_float32_array_view(vertices), GL_STATIC_DRAW)
     local position_location: i32 = gl:getAttribLocation(program, "a_position")
     assert(position_location >= 0)
     gl:enableVertexAttribArray(position_location::u32)

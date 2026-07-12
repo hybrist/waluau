@@ -23,12 +23,13 @@ partial interface Document {
   readonly attribute Element documentElement;
 };
 
-// Waluau-curated GPU canvas additions (waluau-9tvw). Float32Buffer is the
-// extern face of a host JS Float32Array (Float32Array itself is a reserved
-// Web IDL type name), constructed through the dom_float32_buffer_* host
-// functions. getContextWebGL2 is the curated 3D context acquisition path
-// while getContext keeps its Canvas-2D-only signature override.
-interface Float32Buffer {
+// Waluau-curated GPU canvas additions (waluau-9tvw). BufferSource is the
+// extern face of a host JS typed-array view over the module's linear memory,
+// produced by the dom_float32_array_view host function and consumed by
+// BufferSource-typed WebGL params like bufferData. getContextWebGL2 is the
+// curated 3D context acquisition path while getContext keeps its
+// Canvas-2D-only signature override.
+interface BufferSource {
 };
 
 partial interface HTMLCanvasElement {

@@ -322,7 +322,7 @@
       "parent": null
     },
     {
-      "interface": "Float32Buffer",
+      "interface": "BufferSource",
       "parent": null
     }
   ],
@@ -9796,7 +9796,7 @@
       "emittedName": "bufferData",
       "params": [
         "target: u32",
-        "src_data: Float32Buffer?",
+        "src_data: BufferSource?",
         "usage: u32"
       ],
       "returnType": "unit"
@@ -9809,7 +9809,7 @@
       "params": [
         "target: u32",
         "dst_byte_offset: i32",
-        "src_data: Float32Buffer"
+        "src_data: BufferSource"
       ],
       "returnType": "unit"
     },
@@ -9915,35 +9915,11 @@
       "returnType": "Promise<Response>"
     },
     {
-      "name": "dom_new_float32_buffer",
+      "name": "dom_float32_array_view",
       "params": [
-        "length: u32"
+        "data: Float32Array"
       ],
-      "returnType": "Float32Buffer"
-    },
-    {
-      "name": "dom_float32_buffer_set",
-      "params": [
-        "data: Float32Buffer",
-        "index: u32",
-        "value: f64"
-      ],
-      "returnType": "unit"
-    },
-    {
-      "name": "dom_float32_buffer_get",
-      "params": [
-        "data: Float32Buffer",
-        "index: u32"
-      ],
-      "returnType": "f64"
-    },
-    {
-      "name": "dom_float32_buffer_len",
-      "params": [
-        "data: Float32Buffer"
-      ],
-      "returnType": "u32"
+      "returnType": "BufferSource"
     }
   ],
   "skippedMembers": [

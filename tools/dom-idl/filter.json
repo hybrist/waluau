@@ -80,7 +80,7 @@
     "WebGLShader",
     "WebGLUniformLocation",
     "WebGL2RenderingContext",
-    "Float32Buffer"
+    "BufferSource"
   ],
   "disabledMembers": {
     "KeyboardEvent": [
@@ -2123,54 +2123,12 @@
       ]
     },
     {
-      "name": "dom_new_float32_buffer",
-      "returnType": "Float32Buffer",
-      "params": [
-        {
-          "name": "length",
-          "idlType": "unsigned long"
-        }
-      ]
-    },
-    {
-      "name": "dom_float32_buffer_set",
-      "returnType": "undefined",
+      "name": "dom_float32_array_view",
+      "returnType": "BufferSource",
       "params": [
         {
           "name": "data",
-          "idlType": "Float32Buffer"
-        },
-        {
-          "name": "index",
-          "idlType": "unsigned long"
-        },
-        {
-          "name": "value",
-          "idlType": "double"
-        }
-      ]
-    },
-    {
-      "name": "dom_float32_buffer_get",
-      "returnType": "double",
-      "params": [
-        {
-          "name": "data",
-          "idlType": "Float32Buffer"
-        },
-        {
-          "name": "index",
-          "idlType": "unsigned long"
-        }
-      ]
-    },
-    {
-      "name": "dom_float32_buffer_len",
-      "returnType": "unsigned long",
-      "params": [
-        {
-          "name": "data",
-          "idlType": "Float32Buffer"
+          "idlType": "Float32Array"
         }
       ]
     }
@@ -2224,8 +2182,8 @@
     "GLuint": "u32",
     "GLfloat": "f32",
     "GLclampf": "f32",
-    "BufferSource": "Float32Buffer",
-    "AllowSharedBufferSource": "Float32Buffer"
+    "AllowSharedBufferSource": "BufferSource",
+    "Float32Array": "Float32Array"
   },
   "unionTypeMap": {
     "(DOMString or CanvasGradient or CanvasPattern)": "string"
