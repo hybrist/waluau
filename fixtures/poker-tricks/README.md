@@ -5,7 +5,7 @@ game engine. It preserves Poker Tricks' deck, exchange, wager, hand-ranking,
 computer search, and scoring rules while replacing the casino-table presentation
 with a magical robbery inside an arcane vault.
 
-The four suits are now the Red, Blue, Black, and White schools of magic. Cards
+The four suits are now the Red, Blue, Black, and Green schools of magic. Cards
 are relics, the shared board is the vault's wards, points are sparks, exchanges
 are feints, and each trick is a breach. Poker categories are presented as magical
 formations such as a bound pair, arcane sequence, and perfect convergence.

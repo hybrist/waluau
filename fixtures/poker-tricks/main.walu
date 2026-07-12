@@ -15,6 +15,8 @@ type Ui = {
     swap_hand: {i32},
     swap_wards: {i32},
     modal: i32,
+    revealing: bool,
+    reveal_clock: f64,
     message: string
 }
 
@@ -23,6 +25,9 @@ local MODAL_HISTORY <const>: i32 = 1
 local MODAL_HELP <const>: i32 = 2
 local MODAL_REVEAL <const>: i32 = 3
 local MODAL_FINAL <const>: i32 = 4
+-- Board reveal: both staggered flips plus a short hold on the turned cards
+-- before the resolution modal opens.
+local BOARD_REVEAL_SECONDS <const>: f64 = 1.6
 
 function contains(picks: {i32}, value: i32): bool
     for pick in picks do
@@ -54,6 +59,8 @@ function reset_run(state: game.State, ui: Ui): unit
     state:reset()
     clear_picks(ui)
     ui.modal = MODAL_HELP
+    ui.revealing = false
+    ui.reveal_clock = 0.0
     ui.message = "Choose a school relic to begin the breach."
 end
 
@@ -67,6 +74,8 @@ function install_arcane_heist(): unit
         swap_hand = {},
         swap_wards = {},
         modal = MODAL_HELP,
+        revealing = false,
+        reveal_clock = 0.0,
         message = "Choose a school relic to begin the breach.",
     }
 
@@ -76,12 +85,20 @@ function install_arcane_heist(): unit
     end
 
     local function update(dt: f64, input: input_module.Input): unit
-        -- Turns are discrete; all input is handled by keypressed.
+        -- Turns are discrete; the clock only drives the board reveal flip,
+        -- which hands off to the resolution modal when it completes.
+        if ui.revealing then
+            ui.reveal_clock += dt
+            if ui.reveal_clock >= BOARD_REVEAL_SECONDS then
+                ui.revealing = false
+                ui.modal = MODAL_REVEAL
+            end
+        end
     end
 
     local function draw(graphics: graphics_module.Graphics, alpha: f64): unit
         render.draw(graphics, state, ui.hand_cursor, ui.ward_cursor, ui.cursor_area,
-            ui.play_picks, ui.swap_hand, ui.swap_wards, ui.modal, ui.message)
+            ui.play_picks, ui.swap_hand, ui.swap_wards, ui.modal, ui.revealing, ui.reveal_clock, ui.message)
     end
 
     local function close_modal(): unit
@@ -121,11 +138,23 @@ function install_arcane_heist(): unit
         end
         state:play(ui.play_picks[0], ui.play_picks[1])
         clear_picks(ui)
-        ui.modal = MODAL_REVEAL
+        ui.modal = MODAL_NONE
+        ui.revealing = true
+        ui.reveal_clock = 0.0
         ui.message = "The wards answer."
     end
 
     local function keypressed(key: string): unit
+        if ui.revealing then
+            -- Let impatient players skip straight to the resolution modal.
+            if key == "Enter" or key == " " or key == "Escape" then
+                ui.revealing = false
+                ui.modal = MODAL_REVEAL
+            elseif key == "r" or key == "R" then
+                reset_run(state, ui)
+            end
+            return
+        end
         if key == "r" or key == "R" then
             reset_run(state, ui)
             return
@@ -184,7 +213,7 @@ function install_arcane_heist(): unit
         height = 600,
         update_hz = 60.0,
         max_frame_seconds = 0.25,
-        background = "#070511",
+        background = "#09090b",
     }, {
         load = load,
         update = update,
