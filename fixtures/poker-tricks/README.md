@@ -1,53 +1,37 @@
-# Poker Tricks fixture
+# Arcane Heist fixture
 
-A compact player-versus-computer trick-taking game written in Waluau. Each
-player starts with five cards and 10 points. Three community cards are revealed
-each round. Before playing the trick, either player may pass or exchange up to
-three hand cards with the same number of community cards. The wager is one
-point per selected card, so swapping one, two, or three cards wagers 1–3 points.
-Only one proposal executes: the higher wager has priority, with equal wagers
-decided by comparing the proposed boards as three-card poker hands. The
-computer searches every legal exchange for an improved five-card hand.
+A six-breach, player-versus-Arch-Mage trick-taking game built on the Waluau 2D
+game engine. It preserves Poker Tricks' deck, exchange, wager, hand-ranking,
+computer search, and scoring rules while replacing the casino-table presentation
+with a magical robbery inside an arcane vault.
 
-After the single swap opportunity, the player chooses two cards and the
-computer searches its hand for the best two. Those cards and the community
-cards make ordinary five-card poker hands.
+The four suits are now the Red, Blue, Black, and White schools of magic. Cards
+are relics, the shared board is the vault's wards, points are sparks, exchanges
+are feints, and each trick is a breach. Poker categories are presented as magical
+formations such as a bound pair, arcane sequence, and perfect convergence.
 
-The winner earns points equal to the round number plus the complete wager pot,
-so the six base trick values are 1 through 6 points. A tied trick refunds both
-wagers. Played cards are replaced from the shared deck. Starting with ten cards
-in hand and consuming seven cards per round uses all 52 cards exactly; swaps do
-not consume cards. The higher point total then wins. A running history keeps
-every completed trick visible, including swap priority and wagers, the board,
-both played pairs, the resulting poker categories, winner, and points awarded.
+The browser entry imports only the engine facade and contains no DOM or canvas
+host calls. The game, help, reveal, history, and final outcome all render inside
+one 960×600 logical canvas that scales to the viewport.
+
+## Controls
+
+- Arrow keys or WASD move focus; up/down switches between relics and wards.
+- Space binds or unbinds the focused relic or ward.
+- Enter commits a feint or breach.
+- P passes during the feint phase.
+- H opens the breach ledger, ? opens help, and R restarts.
 
 | File | Purpose |
 | --- | --- |
-| `main.walu` | Browser entry point and interactive card-table UI. |
-| `game.walu` | DOM-free deck, poker-hand ranking, computer choice, and scoring rules. |
-| `sim.walu` | Deterministic assertions for rankings, computer play, draws, and game completion. |
+| `main.walu` | Engine entry point and keyboard-driven game flow. |
+| `render.walu` | Platform-independent playfield and modal rendering. |
+| `game.walu` | Host-independent deck, ranking, AI, and scoring rules. |
+| `sim.walu` | Deterministic assertions for rankings and full-game completion. |
 
 ## Building
 
 ```bash
-# Browser entry (requires the playground or another DOM host):
-cargo run -p waluau-cli -- fixtures/poker-tricks/main.walu -o poker-tricks.wasm
-
-# Headless rules check:
+cargo run -p waluau-cli -- fixtures/poker-tricks/main.walu -o arcane-heist.wasm
 cargo run -p waluau-cli -- fixtures/poker-tricks/sim.walu -o sim.wasm
 ```
-
-## Presentation
-
-The table stays DOM-rendered so every playable card remains a keyboard-accessible
-button with a stable label. Layered rank, suit, and pip elements give the cards a
-playing-card face; custom CSS supplies the felt table, patterned card backs,
-hover/focus/selection feedback, and the staggered 3D flip at showdown. The reveal
-sequence then emphasizes the winning five-card hand, dims the loser, lands the
-result title, and sends animated pot chips plus a points badge toward the winner
-and score. Ties pulse both hands and split the pot back outward. Player wins use
-a celebratory gold glow, house wins a restrained red impact, and ties a cool blue
-treatment. Selection uses an entry keyframe so its lift and overshoot remain
-visible even though interaction rerenders the DOM. All movement disables itself
-when the browser requests reduced motion while preserving the same static outcome
-emphasis and accessible result text.

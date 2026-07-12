@@ -344,112 +344,61 @@ test.describe('DOM Output in Run tab', () => {
     await expect.poll(signature).not.toBe(initial);
   });
 
-  test('plays a complete Poker Tricks game against the computer', async ({ page }) => {
+  test('plays a complete Arcane Heist game through the 2D engine', async ({ page }) => {
     const pageErrors = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
-    await page.getByRole('button', { name: 'Poker Tricks' }).click();
+    await page.getByRole('button', { name: 'Arcane Heist' }).click();
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
       timeout: COMPILER_READY_TIMEOUT,
     });
 
     const outputFrame = page.frameLocator('.dom-output-frame');
-    await expect(outputFrame.locator('h1')).toHaveText('Poker Tricks');
-    await expect(outputFrame.locator('#middle-cards').locator('button')).toHaveCount(3);
-    await expect(outputFrame.locator('#player-hand').locator('button')).toHaveCount(5);
-    await expect(outputFrame.locator('#computer-hand .pt-card-back')).toHaveCount(5);
-    await expect(outputFrame.locator('#player-hand .pt-card-pip')).toHaveCount(5);
-    await expect(outputFrame.locator('#middle-cards .pt-card-corner')).toHaveCount(6);
-    await expect(outputFrame.locator('#poker-score')).toContainText('Round 1');
-    await expect(outputFrame.locator('#poker-score')).toContainText('You 10');
-    await expect(outputFrame.locator('#poker-score')).toContainText('Computer 10');
-    await expect(outputFrame.locator('#poker-status')).toContainText('Swap phase');
-    await expect(outputFrame.locator('#submit-swap')).toBeVisible();
-    await expect(outputFrame.locator('[id^="wager-"]')).toHaveCount(0);
-    await expect(outputFrame.locator('#trick-history-empty')).toHaveText('No tricks played yet.');
+    await expect(outputFrame.locator('h1')).toHaveText('Arcane Heist');
+    const canvas = outputFrame.locator('canvas#walua-game-canvas');
+    await expect(canvas).toHaveJSProperty('width', 960);
+    await expect(canvas).toHaveJSProperty('height', 600);
+
+    const signature = () =>
+      canvas.evaluate((node) => {
+        const gl = node.getContext('webgl2');
+        const data = new Uint8Array(node.width * node.height * 4);
+        gl.readPixels(0, 0, node.width, node.height, gl.RGBA, gl.UNSIGNED_BYTE, data);
+        let hash = 0;
+        for (let i = 0; i < data.length; i += 32) {
+          hash = (hash * 33 + data[i] + data[i + 1] * 3 + data[i + 2] * 7) >>> 0;
+        }
+        return hash;
+      });
+
+    await canvas.click();
+    const helpSignature = await signature();
+    await page.keyboard.press('Enter');
+    await expect.poll(signature).not.toBe(helpSignature);
+
+    const playSignature = await signature();
+    await page.keyboard.press('h');
+    await expect.poll(signature).not.toBe(playSignature);
+    await page.keyboard.press('h');
+    await expect.poll(signature).toBe(playSignature);
 
     for (let round = 1; round <= 6; round += 1) {
-      if (round === 1) {
-        await outputFrame.locator('#player-card-0').click();
-        await outputFrame.locator('#middle-card-0').click();
-        await expect(outputFrame.locator('#submit-swap')).toContainText('Wager 1');
-        await outputFrame.locator('#submit-swap').click();
-        await expect(outputFrame.locator('#poker-status')).toContainText('Pot');
-      } else {
-        await outputFrame.locator('#pass-swap').click();
-      }
-      await expect(outputFrame.locator('#play-trick')).toBeVisible();
-      await outputFrame.locator('#player-card-0').click();
-      await expect(outputFrame.locator('#player-card-0')).toHaveClass(/border-4/);
-      await expect(outputFrame.locator('#player-card-0')).toHaveAttribute(
-        'data-selection-state',
-        'selected',
-      );
-      await expect(outputFrame.locator('#player-card-0')).toHaveCSS(
-        'animation-name',
-        'pt-select-pop',
-      );
-      await outputFrame.locator('#player-card-1').click();
-      await expect(outputFrame.locator('#player-card-1')).toHaveClass(/border-4/);
-      await outputFrame.locator('#play-trick').click();
-      expect(pageErrors).toEqual([]);
-      await expect(outputFrame.locator('#trick-reveal')).toBeVisible();
-      await expect(outputFrame.locator('#trick-reveal .pt-reveal-card')).toHaveCount(7);
-      await expect(outputFrame.locator('#trick-reveal .pt-reveal-card').first()).toHaveCSS(
-        'animation-name',
-        'pt-flip',
-      );
-      const reveal = outputFrame.locator('#trick-reveal');
-      const outcome = await reveal.getAttribute('data-outcome');
-      expect(['player', 'house', 'tie']).toContain(outcome);
-      await expect(reveal.locator('[data-result-impact]')).toHaveAttribute(
-        'data-result-impact',
-        outcome,
-      );
-      await expect(reveal.locator('[data-result-impact]')).toHaveCSS(
-        'animation-name',
-        'pt-result-impact',
-      );
-      await expect(reveal.locator('[data-reward-motion]')).toHaveAttribute(
-        'data-reward-motion',
-        outcome,
-      );
-      await expect(outputFrame.locator('#poker-score')).toHaveAttribute(
-        'data-score-outcome',
-        outcome,
-      );
-      if (outcome === 'tie') {
-        await expect(reveal.locator('[data-hand-result="tie"]')).toHaveCount(2);
-        await expect(reveal.locator('.pt-reward-chip')).toHaveCount(2);
-        await expect(reveal.locator('.pt-reward-badge')).toHaveText('Pot returned');
-      } else {
-        await expect(reveal.locator('[data-hand-result="winner"]')).toHaveCount(1);
-        await expect(reveal.locator('[data-hand-result="loser"]')).toHaveCount(1);
-        await expect(reveal.locator('.pt-reward-chip')).toHaveCount(1);
-        await expect(reveal.locator('.pt-reward-badge')).toContainText(/^\+\d+ to/);
-      }
-      const history = outputFrame.locator('.trick-history-entry');
-      await expect(history).toHaveCount(round);
-      await expect(history.nth(round - 1)).toContainText(`Trick ${round}`);
-      await expect(history.nth(round - 1)).toContainText('Swap:');
-      await expect(history.nth(round - 1)).toContainText('Board:');
-      await expect(history.nth(round - 1)).toContainText('You:');
-      await expect(history.nth(round - 1)).toContainText('Computer:');
-      await expect(history.nth(round - 1)).toContainText(/You won|Computer won|Tie/);
-      await expect(history.nth(round - 1)).toContainText(/point\(s\)|no points/);
-      if (round < 6) {
-        await expect(outputFrame.locator('#poker-score')).toContainText(`Round ${round + 1}`);
-        await expect(outputFrame.locator('#poker-status')).toContainText('Swap phase');
-      }
+      await page.keyboard.press('p');
+      await page.keyboard.press('Space');
+      await page.keyboard.press('ArrowRight');
+      await page.keyboard.press('Space');
+      const beforeReveal = await signature();
+      await page.keyboard.press('Enter');
+      await expect.poll(signature).not.toBe(beforeReveal);
+      await page.keyboard.press('Enter');
     }
 
-    await expect(outputFrame.locator('#poker-status')).toContainText('Deck empty');
-    await expect(outputFrame.locator('#poker-score')).toContainText('Round 6');
-    await outputFrame.locator('#new-game').click();
-    await expect(outputFrame.locator('#poker-score')).toContainText('Round 1');
-    await expect(outputFrame.locator('#poker-score')).toContainText('You 10');
-    await expect(outputFrame.locator('#submit-swap')).toBeVisible();
-    await expect(outputFrame.locator('.trick-history-entry')).toHaveCount(0);
-    await expect(outputFrame.locator('#trick-history-empty')).toBeVisible();
+    const finalSignature = await signature();
+    await page.keyboard.press('h');
+    await expect.poll(signature).not.toBe(finalSignature);
+    await page.keyboard.press('h');
+    await page.keyboard.press('r');
+    await expect.poll(signature).not.toBe(finalSignature);
+    expect(pageErrors).toEqual([]);
   });
 
   test('runs Waluau click and input callbacks from DOM Output events', async ({ page }) => {

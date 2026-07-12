@@ -684,6 +684,12 @@ mod tests {
     }
 
     #[test]
+    fn compiles_arcane_heist_game_engine_fixture() {
+        super::compile_file(&fixture_path("poker-tricks/main.walu"))
+            .expect("Arcane Heist game engine fixture should compile");
+    }
+
+    #[test]
     fn compiles_namespace_table_exports() {
         super::compile_file(&fixture_path("modules/namespace_main.walu"))
             .expect("compile should succeed");

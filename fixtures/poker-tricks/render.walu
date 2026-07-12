@@ -1,0 +1,238 @@
+-- Engine-rendered presentation for Arcane Heist. Everything visible to the
+-- player lives on this one logical canvas, including secondary modal screens.
+
+local graphics_module = require("../../engine/graphics")
+local game = require("./game")
+
+type Graphics = graphics_module.Graphics
+
+local WIDTH <const>: f64 = 960.0
+local HEIGHT <const>: f64 = 600.0
+local CARD_W <const>: f64 = 104.0
+local CARD_H <const>: f64 = 128.0
+local MODAL_HISTORY <const>: i32 = 1
+local MODAL_HELP <const>: i32 = 2
+local MODAL_REVEAL <const>: i32 = 3
+local MODAL_FINAL <const>: i32 = 4
+
+function text(graphics: Graphics, value: string, x: f64, y: f64, size: f64, color: string): unit
+    graphics:set_color(color)
+    graphics:set_font(tostring(size) .. "px monospace")
+    graphics:print(value, x, y)
+end
+
+function panel(graphics: Graphics, x: f64, y: f64, width: f64, height: f64, fill: string, edge: string): unit
+    graphics:set_color(fill)
+    graphics:fill_rectangle(x, y, width, height)
+    graphics:set_color(edge)
+    graphics:set_line_width(2.0)
+    graphics:stroke_rectangle(x, y, width, height)
+end
+
+function school_color(suit: i32): string
+    if suit == 0 then return "#ef4444" end
+    if suit == 1 then return "#38bdf8" end
+    if suit == 2 then return "#a78bfa" end
+    return "#f8fafc"
+end
+
+function school_short(suit: i32): string
+    if suit == 0 then return "RED" end
+    if suit == 1 then return "BLUE" end
+    if suit == 2 then return "BLACK" end
+    return "WHITE"
+end
+
+function rank_name(rank: i32): string
+    if rank == 14 then return "A" end
+    if rank == 13 then return "K" end
+    if rank == 12 then return "Q" end
+    if rank == 11 then return "J" end
+    return tostring(rank)
+end
+
+function is_picked(picks: {i32}, value: i32): bool
+    for pick in picks do if pick == value then return true end end
+    return false
+end
+
+function draw_sigil(graphics: Graphics, suit: i32, x: f64, y: f64): unit
+    graphics:set_color(school_color(suit))
+    graphics:set_line_width(3.0)
+    if suit == 0 then
+        graphics:line(x, y + 17.0, x + 11.0, y - 10.0)
+        graphics:line(x + 11.0, y - 10.0, x + 22.0, y + 17.0)
+        graphics:line(x + 4.0, y + 7.0, x + 18.0, y + 7.0)
+    elseif suit == 1 then
+        graphics:fill_circle(x + 11.0, y + 3.0, 12.0)
+        graphics:set_color("#111827")
+        graphics:fill_circle(x + 11.0, y - 1.0, 6.0)
+    elseif suit == 2 then
+        graphics:fill_rectangle(x, y - 9.0, 22.0, 22.0)
+        graphics:set_color("#070511")
+        graphics:fill_rectangle(x + 6.0, y - 3.0, 10.0, 10.0)
+    else
+        graphics:line(x, y + 3.0, x + 22.0, y + 3.0)
+        graphics:line(x + 11.0, y - 8.0, x + 11.0, y + 14.0)
+        graphics:fill_circle(x + 11.0, y + 3.0, 4.0)
+    end
+end
+
+function draw_card(graphics: Graphics, card: game.Card, x: f64, y: f64, selected: bool, focused: bool, hidden: bool): unit
+    local offset: f64 = 0.0
+    if selected then offset = -10.0 end
+    y += offset
+    local edge: string = "#4c466b"
+    if focused then edge = "#fbbf24" elseif selected then edge = school_color(card.suit) end
+    panel(graphics, x, y, CARD_W, CARD_H, "#141126", edge)
+    if hidden then
+        graphics:set_color("#6d28d9")
+        graphics:set_line_width(2.0)
+        graphics:stroke_rectangle(x + 9.0, y + 9.0, CARD_W - 18.0, CARD_H - 18.0)
+        draw_sigil(graphics, 2, x + 41.0, y + 55.0)
+        return
+    end
+    graphics:set_color(school_color(card.suit))
+    graphics:fill_rectangle(x + 7.0, y + 7.0, 5.0, CARD_H - 14.0)
+    text(graphics, rank_name(card.rank), x + 20.0, y + 31.0, 24, "#f8fafc")
+    text(graphics, school_short(card.suit), x + 20.0, y + 51.0, 10, school_color(card.suit))
+    draw_sigil(graphics, card.suit, x + 42.0, y + 82.0)
+    if selected then text(graphics, "BOUND", x + 27.0, y + 119.0, 9, "#fbbf24") end
+end
+
+function draw_backdrop(graphics: Graphics): unit
+    graphics:clear("#070511")
+    graphics:set_color("#120d22")
+    graphics:fill_rectangle(0.0, 0.0, WIDTH, HEIGHT)
+    graphics:set_color("#22143b")
+    graphics:set_line_width(1.0)
+    for x = 0, 960, 48 do graphics:line(x::f64, 0.0, WIDTH - (x::f64), HEIGHT) end
+    graphics:set_color("#7c3aed")
+    graphics:set_line_width(2.0)
+    graphics:stroke_rectangle(18.0, 18.0, WIDTH - 36.0, HEIGHT - 36.0)
+end
+
+function draw_hud(graphics: Graphics, state: game.State): unit
+    text(graphics, "ARCANE HEIST", 32.0, 47.0, 22, "#fbbf24")
+    text(graphics, "BREACH " .. tostring(state.round) .. " / 6", 410.0, 43.0, 14, "#c4b5fd")
+    text(graphics, "ROBBERS " .. tostring(state.player_points), 32.0, 78.0, 15, "#67e8f9")
+    text(graphics, "ARCH MAGE " .. tostring(state.computer_points), 742.0, 78.0, 15, "#fca5a5")
+    graphics:set_color("#3b1d60")
+    graphics:fill_rectangle(327.0, 64.0, 306.0, 6.0)
+    local progress: f64 = (state.round::f64) / 6.0
+    graphics:set_color("#8b5cf6")
+    graphics:fill_rectangle(327.0, 64.0, 306.0 * progress, 6.0)
+end
+
+function draw_playfield(graphics: Graphics, state: game.State, hand_cursor: i32, ward_cursor: i32, cursor_area: i32, play_picks: {i32}, swap_hand: {i32}, swap_wards: {i32}, message: string): unit
+    draw_hud(graphics, state)
+    text(graphics, "THE ARCH MAGE'S SEALED RELICS", 333.0, 103.0, 12, "#a78bfa")
+    for i = 0::i32, 4::i32 do draw_card(graphics, state.computer_hand[i], 190.0 + (i::f64) * 116.0, 116.0, false, false, true) end
+
+    panel(graphics, 278.0, 258.0, 404.0, 148.0, "#0e0a1a", "#4c1d95")
+    text(graphics, "THE VAULT WARDS", 397.0, 282.0, 13, "#f5d0fe")
+    for i = 0::i32, 2::i32 do
+        local selected: bool = state.swap_open and is_picked(swap_wards, i)
+        local focused: bool = state.swap_open and cursor_area == 1 and ward_cursor == i
+        draw_card(graphics, state.middle[i], 302.0 + (i::f64) * 116.0, 292.0, selected, focused, false)
+    end
+
+    if state.swap_open then text(graphics, "FEINT: BIND MATCHING RELICS + WARDS (UP/DOWN)", 242.0, 430.0, 12, "#fbbf24")
+    else text(graphics, "BREACH: BIND TWO RELICS", 361.0, 430.0, 12, "#fbbf24") end
+    for i = 0::i32, 4::i32 do
+        local selected: bool = false
+        if state.swap_open then selected = is_picked(swap_hand, i) else selected = is_picked(play_picks, i) end
+        local focused: bool = cursor_area == 0 and hand_cursor == i
+        draw_card(graphics, state.player_hand[i], 190.0 + (i::f64) * 116.0, 445.0, selected, focused, false)
+    end
+    text(graphics, message, 32.0, 582.0, 11, "#ddd6fe")
+    text(graphics, "ARROWS MOVE  SPACE BIND  ENTER COMMIT  H HISTORY  ? HELP", 458.0, 582.0, 10, "#8b82a7")
+end
+
+function modal_shell(graphics: Graphics, title: string, subtitle: string): unit
+    graphics:set_color("#070511")
+    graphics:fill_rectangle(92.0, 68.0, 776.0, 476.0)
+    graphics:set_color("#a78bfa")
+    graphics:set_line_width(3.0)
+    graphics:stroke_rectangle(92.0, 68.0, 776.0, 476.0)
+    text(graphics, title, 126.0, 117.0, 24, "#fbbf24")
+    text(graphics, subtitle, 126.0, 145.0, 11, "#a78bfa")
+end
+
+function draw_help(graphics: Graphics): unit
+    modal_shell(graphics, "THE JOB", "STEAL SIX SEALS BEFORE THE ARCH MAGE BREAKS YOUR CREW")
+    text(graphics, "FOUR SCHOOLS", 126.0, 192.0, 14, "#f8fafc")
+    text(graphics, "RED MAGES  BLUE MAGES  BLACK MAGES  WHITE MAGES", 126.0, 220.0, 12, "#c4b5fd")
+    text(graphics, "1. FEINT", 126.0, 270.0, 16, "#67e8f9")
+    text(graphics, "BIND UP TO 3 RELICS AND THE SAME NUMBER OF WARDS.", 126.0, 296.0, 11, "#ddd6fe")
+    text(graphics, "EACH CARD RISKS 1 SPARK. PRESS P TO PASS.", 126.0, 318.0, 11, "#ddd6fe")
+    text(graphics, "2. BREACH", 126.0, 364.0, 16, "#67e8f9")
+    text(graphics, "BIND 2 RELICS. THE STRONGEST FIVE-SIGIL FORMATION WINS.", 126.0, 390.0, 11, "#ddd6fe")
+    text(graphics, "LATER BREACHES ARE WORTH MORE SPARKS.", 126.0, 412.0, 11, "#ddd6fe")
+    text(graphics, "ARROWS MOVE   SPACE BIND   ENTER COMMIT   H HISTORY", 126.0, 472.0, 11, "#fbbf24")
+    text(graphics, "PRESS ENTER TO ENTER THE VAULT", 126.0, 515.0, 12, "#f8fafc")
+end
+
+function draw_history(graphics: Graphics, state: game.State): unit
+    modal_shell(graphics, "BREACH LEDGER", "H OR ESC CLOSES THE LEDGER")
+    if #state.history == 0 then
+        text(graphics, "NO DEFENSES BREACHED YET.", 126.0, 220.0, 16, "#8b82a7")
+        return
+    end
+    local y: f64 = 188.0
+    for trick in state.history do
+        local winner: string = "STALEMATE"
+        if trick.winner > 0 then winner = "ROBBERS +" .. tostring(trick.points)
+        elseif trick.winner < 0 then winner = "ARCH MAGE +" .. tostring(trick.points) end
+        text(graphics, "BREACH " .. tostring(trick.round), 126.0, y, 13, "#fbbf24")
+        text(graphics, winner, 250.0, y, 13, "#f8fafc")
+        text(graphics, game.category_name(trick.player_value) .. " VS " .. game.category_name(trick.computer_value), 430.0, y, 10, "#c4b5fd")
+        y += 54.0
+    end
+end
+
+function draw_reveal(graphics: Graphics, state: game.State): unit
+    local trick: game.Trick = state.history[#state.history - 1]
+    local title: string = "THE WARDS HOLD"
+    local color: string = "#fca5a5"
+    if trick.winner > 0 then title = "DEFENSE BREACHED" color = "#67e8f9"
+    elseif trick.winner == 0 then title = "MAGICS CANCEL" color = "#fbbf24" end
+    modal_shell(graphics, title, "BREACH " .. tostring(trick.round) .. " RESOLUTION")
+    text(graphics, "YOUR FORMATION", 130.0, 192.0, 12, "#67e8f9")
+    draw_card(graphics, trick.player_cards[0], 130.0, 210.0, false, false, false)
+    draw_card(graphics, trick.player_cards[1], 246.0, 210.0, false, false, false)
+    text(graphics, game.category_name(trick.player_value), 130.0, 363.0, 12, "#f8fafc")
+    text(graphics, "ARCH MAGE", 602.0, 192.0, 12, "#fca5a5")
+    draw_card(graphics, trick.computer_cards[0], 602.0, 210.0, false, false, false)
+    draw_card(graphics, trick.computer_cards[1], 718.0, 210.0, false, false, false)
+    text(graphics, game.category_name(trick.computer_value), 602.0, 363.0, 12, "#f8fafc")
+    text(graphics, "WARD POT " .. tostring(trick.pot) .. "   REWARD " .. tostring(trick.points), 338.0, 416.0, 13, color)
+    text(graphics, "PRESS ENTER TO CONTINUE", 344.0, 508.0, 12, "#f8fafc")
+end
+
+function draw_final(graphics: Graphics, state: game.State): unit
+    local title: string = "THE ARCH MAGE PREVAILS"
+    if state.player_points > state.computer_points then title = "THE VAULT IS YOURS"
+    elseif state.player_points == state.computer_points then title = "THE VAULT REMAINS SEALED" end
+    modal_shell(graphics, title, "THE SIXTH DEFENSE HAS FALLEN")
+    text(graphics, "ROBBERS", 188.0, 250.0, 18, "#67e8f9")
+    text(graphics, tostring(state.player_points), 220.0, 315.0, 44, "#f8fafc")
+    text(graphics, "ARCH MAGE", 600.0, 250.0, 18, "#fca5a5")
+    text(graphics, tostring(state.computer_points), 654.0, 315.0, 44, "#f8fafc")
+    text(graphics, "R RESTARTS THE HEIST   H OPENS THE LEDGER", 262.0, 482.0, 12, "#fbbf24")
+end
+
+function draw(graphics: Graphics, state: game.State, hand_cursor: i32, ward_cursor: i32, cursor_area: i32, play_picks: {i32}, swap_hand: {i32}, swap_wards: {i32}, modal: i32, message: string): unit
+    draw_backdrop(graphics)
+    if not state.finished then
+        draw_playfield(graphics, state, hand_cursor, ward_cursor, cursor_area, play_picks, swap_hand, swap_wards, message)
+    else
+        draw_hud(graphics, state)
+    end
+    if modal == MODAL_HISTORY then draw_history(graphics, state)
+    elseif modal == MODAL_HELP then draw_help(graphics)
+    elseif modal == MODAL_REVEAL then draw_reveal(graphics, state)
+    elseif modal == MODAL_FINAL then draw_final(graphics, state) end
+end
+
+return { draw = draw }
