@@ -1501,7 +1501,8 @@ impl Builder<'_> {
         id
     }
 
-    fn emit(&mut self, instruction: Instruction) -> ValueId {
+    fn emit(&mut self, mut instruction: Instruction) -> ValueId {
+        sort_phi_incoming(&mut instruction);
         let value = self.function.next_value();
         block_mut(&mut self.function, self.current_block)
             .instructions
@@ -1588,7 +1589,8 @@ impl Builder<'_> {
 
     /// Emit an instruction into a specific block (used for loop exit phis,
     /// which are created before the exit block becomes the current block).
-    fn emit_in(&mut self, block: BlockId, instruction: Instruction) -> ValueId {
+    fn emit_in(&mut self, block: BlockId, mut instruction: Instruction) -> ValueId {
+        sort_phi_incoming(&mut instruction);
         let value = self.function.next_value();
         block_mut(&mut self.function, block)
             .instructions
@@ -10010,6 +10012,18 @@ fn block_mut(function: &mut Function, block: BlockId) -> &mut BasicBlock {
         .blocks
         .get_mut(&block)
         .expect("block must exist when mutating")
+}
+
+/// Keep phi inputs in the same canonical order as the verifier's CFG
+/// predecessor lists. Lowering often visits source branches in then/else
+/// order, but a nested CFG in the then branch can make its exit block newer
+/// than the else exit. Block labels make those edges unambiguous; sorting at
+/// the emission boundary ensures every lowering path represents them in the
+/// verifier's deterministic block-id order.
+fn sort_phi_incoming(instruction: &mut Instruction) {
+    if let Instruction::Phi(incoming) = instruction {
+        incoming.sort_by_key(|(predecessor, _)| *predecessor);
+    }
 }
 
 fn add_phi_incoming(

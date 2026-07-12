@@ -1070,4 +1070,76 @@ mod tests {
     fn compiles_string_ops_fixture() {
         super::compile_file(&fixture_path("string-ops.walu")).expect("compile should succeed");
     }
+
+    #[test]
+    fn compiles_loop_nested_in_if_branch_inside_loop() {
+        let source = r#"
+            function count(width: i32): i32
+                local column: i32 = 0
+                while column < width do
+                    if column % 2 == 0 then
+                        local run: i32 = 1
+                        while column + run < width do
+                            run += 1
+                        end
+                        column += run
+                    else
+                        column += 1
+                    end
+                end
+                return column
+            end
+
+            assert(count(5) == 5)
+        "#;
+
+        super::compile_source(source).expect("nested branch and loop phis should compile");
+    }
+
+    #[test]
+    fn compiles_conditional_aggregate_reassignment_before_card_loop() {
+        let source = r#"
+            type Card = { rank: i32 }
+
+            function render(revealed: bool, cards: {Card}): i32
+                local shown: {Card} = {}
+                local total: i32 = 0
+                if revealed then
+                    shown = cards
+                    for index = 0::i32, #shown - 1 do
+                        if shown[index].rank == 0 then
+                            continue
+                        end
+                        total += shown[index].rank
+                    end
+                end
+                return total + #shown
+            end
+        "#;
+
+        super::compile_source(source)
+            .expect("conditional aggregate and card-loop phis should compile");
+    }
+
+    #[test]
+    fn compiles_branch_initialized_bool_updated_in_numeric_loop() {
+        let source = r#"
+            function resolves_tie(pair_rank: i32, winning_rank: i32, kickers: {i32}): bool
+                local wins: bool = pair_rank > winning_rank
+                if pair_rank == winning_rank then
+                    for index = 0::i32, #kickers - 1 do
+                        if kickers[index] ~= winning_rank then
+                            wins = kickers[index] > winning_rank
+                            break
+                        end
+                    end
+                else
+                    wins = pair_rank > winning_rank
+                end
+                return wins
+            end
+        "#;
+
+        super::compile_source(source).expect("branch-initialized loop-carried bool should compile");
+    }
 }
