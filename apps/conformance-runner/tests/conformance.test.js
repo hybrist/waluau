@@ -226,7 +226,7 @@ const DEDICATED_ASYNC_DOM_CASES = new Set(['top_level_fetch.walu']);
 
 // Runs a case and reports whether it failed (compile/type error, or a trapping
 // top-level assert) along with the failure message. Compile errors surface as
-// thrown strings from compile_multi; instantiation traps surface as a
+// thrown strings from compile_multi; top-level execution traps surface as a
 // WebAssembly.RuntimeError, so we read .message when present and fall back to
 // String(err) otherwise.
 async function runConformanceOutcome(fullSource, options) {

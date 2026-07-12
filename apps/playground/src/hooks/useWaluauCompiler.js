@@ -186,17 +186,16 @@ export default function useWaluauCompiler({ files, entryFile }) {
           domOutputRootRef.current.body.replaceChildren();
         }
         phase = 'imports';
-        let instanceExports = null;
+        let instance;
         const imports = buildWaluauImports(wasmModule, initLogger, {
           wasmBytes: wasmBuffer,
           domOutputRoot: moduleUsesDomOutput ? domOutputRootRef.current : null,
-          getWasmExports: () => instanceExports,
+          getWasmExports: () => instance.exports,
         });
         phase = 'instantiate';
-        const instance = await WebAssembly.instantiate(wasmModule, imports);
-        instanceExports = instance.exports;
+        instance = await WebAssembly.instantiate(wasmModule, imports);
         phase = 'execute';
-        instanceExports[WALUAU_MAIN_EXPORT]?.();
+        instance.exports[WALUAU_MAIN_EXPORT]?.();
 
         if (active) {
           setRunInstance(instance);
