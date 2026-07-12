@@ -216,13 +216,20 @@ export const GAME_ENGINE_PRESET = {
 
 export const POKER_TRICKS_PRESET = {
   key: 'poker-tricks',
-  label: 'Poker Tricks',
-  files: Object.entries(pokerTricksFixtures).reduce((acc, [path, source]) => {
-    const filename = path.split('/').pop();
-    acc[`/${filename}`] = source;
-    return acc;
-  }, {}),
-  entryFile: '/main.walu'
+  label: 'Arcane Heist',
+  files: {
+    ...Object.entries(gameEngineModules).reduce((acc, [path, source]) => {
+      const filename = path.split('/').pop();
+      acc[`/engine/${filename}`] = source;
+      return acc;
+    }, {}),
+    ...Object.entries(pokerTricksFixtures).reduce((acc, [path, source]) => {
+      const filename = path.split('/').pop();
+      acc[`/fixtures/poker-tricks/${filename}`] = source;
+      return acc;
+    }, {})
+  },
+  entryFile: '/fixtures/poker-tricks/main.walu'
 };
 
 export const PRESETS = [...SINGLE_PRESETS, MULTI_PRESET, DOM_PRESET, KANBAN_PRESET, POKER_TRICKS_PRESET, SNAKE_PRESET, GAME_ENGINE_PRESET, ...CONFORMANCE_PRESETS].sort((left, right) =>

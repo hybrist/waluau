@@ -1,7 +1,6 @@
--- Host-independent rules for Poker Tricks. Two players keep five-card hands,
--- combine two chosen cards with three shared cards, and compare normal
--- five-card poker hands. Before each trick they may wager on one community
--- exchange; a won trick is worth its round number plus the wager pot.
+-- Host-independent rules for Arcane Heist. The presentation treats suits as
+-- schools, cards as relics, and the computer as the Arch Mage; the underlying
+-- five-card formation, exchange, wager, and trick rules remain unchanged.
 
 type Card = { rank: i32, suit: i32 }
 type PairChoice = { first: i32, second: i32, value: i32 }
@@ -407,25 +406,25 @@ function rank_name(rank: i32): string
 end
 
 function card_name(card: Card): string
-    local suit: string = "♣"
-    if card.suit == 1 then suit = "♦"
-    elseif card.suit == 2 then suit = "♥"
-    elseif card.suit == 3 then suit = "♠"
+    local school: string = "Red"
+    if card.suit == 1 then school = "Blue"
+    elseif card.suit == 2 then school = "Black"
+    elseif card.suit == 3 then school = "White"
     end
-    return rank_name(card.rank) .. suit
+    return rank_name(card.rank) .. " of " .. school
 end
 
 function category_name(value: i32): string
     local category: i32 = value // 759375
-    if category == 8 then return "straight flush" end
-    if category == 7 then return "four of a kind" end
-    if category == 6 then return "full house" end
-    if category == 5 then return "flush" end
-    if category == 4 then return "straight" end
-    if category == 3 then return "three of a kind" end
-    if category == 2 then return "two pair" end
-    if category == 1 then return "one pair" end
-    return "high card"
+    if category == 8 then return "perfect convergence" end
+    if category == 7 then return "fourfold circle" end
+    if category == 6 then return "bound trinity" end
+    if category == 5 then return "school chorus" end
+    if category == 4 then return "arcane sequence" end
+    if category == 3 then return "triune seal" end
+    if category == 2 then return "twin pacts" end
+    if category == 1 then return "bound pair" end
+    return "lone spark"
 end
 
 return {
