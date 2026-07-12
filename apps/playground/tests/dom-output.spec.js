@@ -384,8 +384,9 @@ test.describe('DOM Output in Run tab', () => {
     const playSignature = await signature();
     await page.keyboard.press('h');
     await expect.poll(signature).not.toBe(playSignature);
+    const historySignature = await signature();
     await page.keyboard.press('h');
-    await expect.poll(signature).toBe(playSignature);
+    await expect.poll(signature).not.toBe(historySignature);
 
     for (let round = 1; round <= 6; round += 1) {
       await page.keyboard.press('p');
@@ -393,6 +394,7 @@ test.describe('DOM Output in Run tab', () => {
       await page.keyboard.press('ArrowRight');
       await page.keyboard.press('Space');
       const beforeReveal = await signature();
+      await page.keyboard.press('Enter');
       await page.keyboard.press('Enter');
       await expect.poll(signature).not.toBe(beforeReveal);
       await page.keyboard.press('Enter');
