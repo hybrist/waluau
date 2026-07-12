@@ -141,7 +141,7 @@ function install_arcane_heist(): unit
         ui.modal = MODAL_NONE
         ui.revealing = true
         ui.reveal_clock = 0.0
-        ui.message = "The wards answer."
+        ui.message = ""
     end
 
     local function keypressed(key: string): unit
