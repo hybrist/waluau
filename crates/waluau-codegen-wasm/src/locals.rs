@@ -41,6 +41,9 @@ pub(crate) struct LocalPlan {
     /// append) and `ArraySlice` (freshly allocated storage), keyed by the array
     /// element type's display string.
     pub(crate) array_scratch: BTreeMap<String, u32>,
+    /// Scratch i32 local holding a freshly allocated typed-array pointer while
+    /// `BufferNew`/`BufferConst` initialize the allocation.
+    pub(crate) buffer_scratch: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -241,6 +244,22 @@ pub(crate) fn build_local_plan(
         }
     }
 
+    let needs_buffer_scratch = function.blocks.values().any(|block| {
+        block.instructions.iter().any(|(_, instruction)| {
+            matches!(
+                instruction,
+                IrInstruction::BufferNew { .. } | IrInstruction::BufferConst { .. }
+            )
+        })
+    });
+    let buffer_scratch = if needs_buffer_scratch {
+        let slot = function.params.len() as u32 + extra_locals.len() as u32;
+        extra_locals.push(ValType::I32);
+        Some(slot)
+    } else {
+        None
+    };
+
     Ok(LocalPlan {
         slots,
         multi_slots,
@@ -256,6 +275,7 @@ pub(crate) fn build_local_plan(
         tagged_resume_state_tmp,
         protected_call_value_tmp,
         array_scratch,
+        buffer_scratch,
     })
 }
 
@@ -343,6 +363,12 @@ pub(crate) fn infer_value_types(
                 }
                 IrInstruction::BytesGet { .. } => Type::Numeric(NumericType::I32),
                 IrInstruction::BytesLen { .. } => Type::Numeric(NumericType::I32),
+                IrInstruction::BufferNew { kind, .. }
+                | IrInstruction::BufferConst { kind, .. }
+                | IrInstruction::BufferNewSized { kind, .. } => Type::TypedArray(*kind),
+                IrInstruction::BufferGet { kind, .. } => Type::Numeric(kind.element_numeric_type()),
+                IrInstruction::BufferSet { .. } => Type::Unit,
+                IrInstruction::BufferLen { .. } => Type::Numeric(NumericType::I32),
                 IrInstruction::StructNew { struct_ty, .. } => struct_ty.clone(),
                 IrInstruction::StructGet { field_ty, .. } => field_ty.clone(),
                 IrInstruction::StructSet { .. } => Type::Unit,
@@ -760,6 +786,17 @@ fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
         IrInstruction::ArraySlice { array, start, .. } => vec![*array, *start],
         IrInstruction::BytesGet { bytes, index } => vec![*bytes, *index],
         IrInstruction::BytesLen { bytes } => vec![*bytes],
+        IrInstruction::BufferNew { elements, .. } => elements.clone(),
+        IrInstruction::BufferConst { .. } => Vec::new(),
+        IrInstruction::BufferNewSized { len, .. } => vec![*len],
+        IrInstruction::BufferGet { buffer, index, .. } => vec![*buffer, *index],
+        IrInstruction::BufferSet {
+            buffer,
+            index,
+            value,
+            ..
+        } => vec![*buffer, *index, *value],
+        IrInstruction::BufferLen { buffer } => vec![*buffer],
         IrInstruction::StructNew { fields, .. } => fields.clone(),
         IrInstruction::StructGet { base, .. } => vec![*base],
         IrInstruction::StructSet { base, value, .. } => vec![*base, *value],
@@ -814,6 +851,13 @@ fn instruction_use_requires_local(instruction: &IrInstruction) -> bool {
             | IrInstruction::CoroutineResume { .. }
             | IrInstruction::CoroutineResumeTagged { .. }
             | IrInstruction::CoroutineClose { .. }
+            // Buffer allocation interleaves operand reads with pointer
+            // arithmetic, and buffer accesses read the pointer twice
+            // (bounds check + address computation).
+            | IrInstruction::BufferNew { .. }
+            | IrInstruction::BufferNewSized { .. }
+            | IrInstruction::BufferGet { .. }
+            | IrInstruction::BufferSet { .. }
     )
 }
 
@@ -857,6 +901,12 @@ fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: Value
         IrInstruction::ArrayPop { .. } => false,
         IrInstruction::BytesGet { .. } => false,
         IrInstruction::BytesLen { bytes } => *bytes == value,
+        IrInstruction::BufferNew { .. }
+        | IrInstruction::BufferConst { .. }
+        | IrInstruction::BufferNewSized { .. }
+        | IrInstruction::BufferGet { .. }
+        | IrInstruction::BufferSet { .. } => false,
+        IrInstruction::BufferLen { buffer } => *buffer == value,
         IrInstruction::StructNew { fields, .. } => fields.first().copied() == Some(value),
         IrInstruction::StructGet { base, .. } => *base == value,
         IrInstruction::StructSet { base, .. } => *base == value,
@@ -914,6 +964,12 @@ pub(crate) fn local(local_plan: &LocalPlan, value: ValueId) -> Result<u32, Diagn
         .get(&value)
         .copied()
         .ok_or_else(|| Diagnostic::new(format!("missing local slot for value {:?}", value)))
+}
+
+pub(crate) fn buffer_scratch_local(local_plan: &LocalPlan) -> Result<u32, Diagnostic> {
+    local_plan
+        .buffer_scratch
+        .ok_or_else(|| Diagnostic::new("missing typed-array scratch local"))
 }
 
 pub(crate) fn array_scratch_local(

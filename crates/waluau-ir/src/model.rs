@@ -216,6 +216,44 @@ pub enum Instruction {
     BytesLen {
         bytes: ValueId,
     },
+    /// Allocate a fresh typed array in linear memory and store each element.
+    /// Result type: TypedArray(kind); the value is the i32 data pointer.
+    BufferNew {
+        kind: TypedArrayKind,
+        elements: Vec<ValueId>,
+    },
+    /// Allocate a fresh typed array and copy its compile-time-constant
+    /// contents (little-endian element bytes) from a passive data segment.
+    /// Each evaluation produces a fresh, independently mutable copy.
+    BufferConst {
+        kind: TypedArrayKind,
+        bytes: Vec<u8>,
+    },
+    /// Allocate a zero-filled typed array of `len` elements (traps when `len`
+    /// is negative). Result type: TypedArray(kind).
+    BufferNewSized {
+        kind: TypedArrayKind,
+        len: ValueId,
+    },
+    /// Bounds-checked element read; traps when `index` is out of range.
+    /// Sub-word integer kinds widen to their 32-bit signedness.
+    BufferGet {
+        buffer: ValueId,
+        index: ValueId,
+        kind: TypedArrayKind,
+    },
+    /// Bounds-checked element write; traps when `index` is out of range.
+    /// `value` has the kind's element numeric type; integer stores truncate.
+    BufferSet {
+        buffer: ValueId,
+        index: ValueId,
+        value: ValueId,
+        kind: TypedArrayKind,
+    },
+    /// Element count of a typed array (read from the allocation header).
+    BufferLen {
+        buffer: ValueId,
+    },
     StructNew {
         struct_ty: Type,
         fields: Vec<ValueId>,

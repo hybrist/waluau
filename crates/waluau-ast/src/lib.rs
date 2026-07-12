@@ -175,6 +175,84 @@ pub enum NumericType {
     F64,
 }
 
+/// Element kind of a linear-memory typed array (`Float32Array` & friends).
+/// Values are pointers into the module's linear memory; the element count
+/// lives in an 8-byte header preceding the data.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum TypedArrayKind {
+    I8,
+    U8,
+    I16,
+    U16,
+    I32,
+    U32,
+    F32,
+    F64,
+}
+
+impl TypedArrayKind {
+    /// The surface type name (`Float32Array` etc.), mirroring JS typed arrays.
+    pub const fn type_name(self) -> &'static str {
+        match self {
+            Self::I8 => "Int8Array",
+            Self::U8 => "Uint8Array",
+            Self::I16 => "Int16Array",
+            Self::U16 => "Uint16Array",
+            Self::I32 => "Int32Array",
+            Self::U32 => "Uint32Array",
+            Self::F32 => "Float32Array",
+            Self::F64 => "Float64Array",
+        }
+    }
+
+    pub const fn from_type_name(name: &str) -> Option<Self> {
+        match name.as_bytes() {
+            b"Int8Array" => Some(Self::I8),
+            b"Uint8Array" => Some(Self::U8),
+            b"Int16Array" => Some(Self::I16),
+            b"Uint16Array" => Some(Self::U16),
+            b"Int32Array" => Some(Self::I32),
+            b"Uint32Array" => Some(Self::U32),
+            b"Float32Array" => Some(Self::F32),
+            b"Float64Array" => Some(Self::F64),
+            _ => None,
+        }
+    }
+
+    /// Size of one element in bytes.
+    pub const fn element_size(self) -> u32 {
+        match self {
+            Self::I8 | Self::U8 => 1,
+            Self::I16 | Self::U16 => 2,
+            Self::I32 | Self::U32 | Self::F32 => 4,
+            Self::F64 => 8,
+        }
+    }
+
+    /// The waluau numeric type produced by reads (and expected by writes,
+    /// modulo implicit numeric coercion). Sub-word integer kinds widen to
+    /// their 32-bit signedness on read; writes truncate.
+    pub const fn element_numeric_type(self) -> NumericType {
+        match self {
+            Self::I8 | Self::I16 | Self::I32 => NumericType::I32,
+            Self::U8 | Self::U16 | Self::U32 => NumericType::U32,
+            Self::F32 => NumericType::F32,
+            Self::F64 => NumericType::F64,
+        }
+    }
+
+    pub const ALL: [Self; 8] = [
+        Self::I8,
+        Self::U8,
+        Self::I16,
+        Self::U16,
+        Self::I32,
+        Self::U32,
+        Self::F32,
+        Self::F64,
+    ];
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Type {
     Numeric(NumericType),
@@ -197,6 +275,9 @@ pub enum Type {
         ty: Box<Type>,
     },
     Array(Box<Type>),
+    /// A fixed-length numeric array in linear memory (`Float32Array` etc.).
+    /// Runtime value: i32 pointer to the element data; see [`TypedArrayKind`].
+    TypedArray(TypedArrayKind),
     Multi(Vec<Type>),
     Function {
         params: Vec<Type>,
@@ -231,6 +312,7 @@ impl Type {
     pub fn element_type(&self) -> Option<Type> {
         match self {
             Self::Array(element) => Some(*element.clone()),
+            Self::TypedArray(kind) => Some(Self::Numeric(kind.element_numeric_type())),
             Self::Nullable(inner) | Self::Opaque { ty: inner, .. } => inner.element_type(),
             _ => None,
         }
@@ -388,6 +470,7 @@ impl std::fmt::Display for Type {
             }
             Self::Opaque { name, .. } => f.write_str(name),
             Self::Array(element) => write!(f, "{{{element}}}"),
+            Self::TypedArray(kind) => f.write_str(kind.type_name()),
             Self::Multi(types) => {
                 for (index, ty) in types.iter().enumerate() {
                     if index > 0 {
@@ -743,6 +826,11 @@ impl Resolver {
         ] {
             let id = resolver.next_id();
             global_bindings.insert(builtin.to_string(), id);
+        }
+        // Typed-array constructor namespaces (`Float32Array.create(n)` etc.).
+        for kind in TypedArrayKind::ALL {
+            let id = resolver.next_id();
+            global_bindings.insert(kind.type_name().to_string(), id);
         }
 
         resolver.scopes.push(global_bindings);

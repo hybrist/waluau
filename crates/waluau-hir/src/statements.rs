@@ -618,20 +618,58 @@ fn collect_return_types_with_scope(
                 let element_ty = base_ty.element_type().ok_or_else(|| {
                     Diagnostic::new("array element assignment requires an array operand")
                 })?;
-                let _ = infer_expr(
-                    index,
-                    &scope,
-                    fn_signatures,
-                    active_type_params,
-                    Some(Type::Numeric(NumericType::I32)),
-                )?;
-                let _ = infer_expr(
-                    value,
-                    &scope,
-                    fn_signatures,
-                    active_type_params,
-                    Some(element_ty),
-                )?;
+                if let Type::TypedArray(kind) = &base_ty {
+                    // Typed arrays accept any numeric index and value; the
+                    // lowering converts both (index to i32, value to the
+                    // element type) like explicit casts.
+                    let index_ty = infer_expr(
+                        index,
+                        &scope,
+                        fn_signatures,
+                        active_type_params,
+                        Some(Type::Numeric(NumericType::I32)),
+                    )
+                    .or_else(|_| {
+                        infer_expr(index, &scope, fn_signatures, active_type_params, None)
+                    })?;
+                    if !index_ty.is_numeric() {
+                        return Err(Diagnostic::new(format!(
+                            "{} index must be numeric, got {index_ty}",
+                            kind.type_name()
+                        )));
+                    }
+                    let value_ty = infer_expr(
+                        value,
+                        &scope,
+                        fn_signatures,
+                        active_type_params,
+                        Some(element_ty),
+                    )
+                    .or_else(|_| {
+                        infer_expr(value, &scope, fn_signatures, active_type_params, None)
+                    })?;
+                    if !value_ty.is_numeric() {
+                        return Err(Diagnostic::new(format!(
+                            "{} element must be numeric, got {value_ty}",
+                            kind.type_name()
+                        )));
+                    }
+                } else {
+                    let _ = infer_expr(
+                        index,
+                        &scope,
+                        fn_signatures,
+                        active_type_params,
+                        Some(Type::Numeric(NumericType::I32)),
+                    )?;
+                    let _ = infer_expr(
+                        value,
+                        &scope,
+                        fn_signatures,
+                        active_type_params,
+                        Some(element_ty),
+                    )?;
+                }
             }
             Stmt::FieldAssign {
                 base, name, value, ..
@@ -1237,6 +1275,40 @@ pub(super) fn check_stmt(
                         bin_op.compound_target_kind()
                     )));
                 }
+            }
+            if let Type::TypedArray(kind) = &base_ty {
+                // Typed arrays accept any numeric index and value; lowering
+                // converts both (index to i32, value to the element type)
+                // like explicit casts.
+                let index_ty = infer_expr(
+                    index,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    Some(Type::Numeric(NumericType::I32)),
+                )
+                .or_else(|_| infer_expr(index, vars, fn_signatures, active_type_params, None))?;
+                if !index_ty.is_numeric() {
+                    return Err(Diagnostic::new(format!(
+                        "{} index must be numeric, got {index_ty}",
+                        kind.type_name()
+                    )));
+                }
+                let value_ty = infer_expr(
+                    value,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    Some(element_ty),
+                )
+                .or_else(|_| infer_expr(value, vars, fn_signatures, active_type_params, None))?;
+                if !value_ty.is_numeric() {
+                    return Err(Diagnostic::new(format!(
+                        "{} element must be numeric, got {value_ty}",
+                        kind.type_name()
+                    )));
+                }
+                return Ok(false);
             }
             let index_ty = infer_expr(
                 index,

@@ -17,6 +17,7 @@ use wasm_encoder::{
 use wasmparser::{Validator, WasmFeatures};
 
 mod arrays;
+mod buffers;
 mod coroutines;
 pub mod host;
 mod locals;
@@ -26,6 +27,11 @@ mod wasm_types;
 use arrays::{
     ArrayTypeRegistry, RuntimeGcTypes, array_storage_type, collect_array_types,
     collect_record_types, record_storage_type,
+};
+use buffers::{
+    BUFFER_HEAP_BASE, BufferPlan, MEMORY_EXPORT_NAME, element_size_log2,
+    emit_buffer_alloc_function, emit_buffer_element_address, emit_buffer_len_from_stack,
+    emit_buffer_load, emit_buffer_store,
 };
 use coroutines::{
     AWAIT_STATUS_FULFILLED, AWAIT_STATUS_NONE, AWAIT_STATUS_REJECTED, CoroutinePlan,
@@ -255,6 +261,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     let record_types = collect_record_types(module);
     let string_constants = host::collect_string_constants(module);
     let bytes_constants = host::collect_bytes_constants(module);
+    let buffer_plan = BufferPlan::new(module);
     let coroutine_plan = CoroutinePlan::new(module, string_constants.len() as u32);
     let start_thunk = module.start;
 
@@ -654,6 +661,17 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     } else {
         None
     };
+    // Typed-array bump-allocation helper: (len, elem_size_log2) -> data ptr.
+    let buffer_alloc_type_idx = if buffer_plan.uses_memory {
+        let type_idx = type_idx_counter;
+        types
+            .ty()
+            .function(vec![ValType::I32, ValType::I32], vec![ValType::I32]);
+        type_idx_counter += 1;
+        Some(type_idx)
+    } else {
+        None
+    };
 
     struct RecordHelpersInfo {
         record_idx: u32,
@@ -922,12 +940,72 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         .map(|(i, name)| (name.clone(), module.functions.len() as u32 + i as u32))
         .collect();
 
+    // The bump-allocation helper is the last defined function; its index must
+    // be known while user function bodies are emitted, so pre-compute it from
+    // the counts of everything emitted before it (asserted below when the
+    // helper is actually appended).
+    let trampoline_func_count = [
+        callback_event_unit_trampoline,
+        callback_f64_unit_trampoline,
+        callback_unit_extern_trampoline,
+        promise_resume_trampoline,
+        promise_resume_trampoline, // reset-active helper accompanies resume
+    ]
+    .iter()
+    .filter(|&&needed| needed)
+    .count() as u32;
+    let record_helper_func_count = record_helpers
+        .iter()
+        .map(|info| 1 + info.getter_type_indices.len() as u32)
+        .sum::<u32>();
+    let buffer_alloc_func = buffer_plan.uses_memory.then(|| {
+        import_func_count
+            + module.functions.len() as u32
+            + u32::from(start_thunk.is_some())
+            + closure_targets.len() as u32
+            + trampoline_func_count
+            + record_helper_func_count
+    });
+    // Defined globals follow the imported string-constant globals; the heap
+    // pointer sits after the coroutine active-instance global when present.
+    let buffer_heap_ptr_global =
+        string_constants.len() as u32 + u32::from(coroutine_plan.has_state());
+
     let mut functions = FunctionSection::new();
     let mut tables = TableSection::new();
     let mut elements = ElementSection::new();
     let mut globals = GlobalSection::new();
     if let Some(state_type) = coroutine_state_type {
         coroutine_plan.emit_globals(&mut globals, state_type);
+    }
+    let mut data = wasm_encoder::DataSection::new();
+    if buffer_plan.uses_memory {
+        // The linear memory is imported (not defined) so the JS host holds
+        // the WebAssembly.Memory object before instantiation — host calls
+        // like dom_float32_array_view run from the start function, before
+        // the instance (and its exports) exists.
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_MEMORY,
+            EntityType::Memory(wasm_encoder::MemoryType {
+                minimum: 1,
+                maximum: None,
+                memory64: false,
+                shared: false,
+                page_size_log2: None,
+            }),
+        );
+        globals.global(
+            wasm_encoder::GlobalType {
+                val_type: ValType::I32,
+                mutable: true,
+                shared: false,
+            },
+            &ConstExpr::i32_const(BUFFER_HEAP_BASE),
+        );
+        for segment in &buffer_plan.data_segments {
+            data.passive(segment.iter().copied());
+        }
     }
     let mut tags = TagSection::new();
     if let Some(func_type_idx) = lua_error_tag_type_idx {
@@ -970,6 +1048,8 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             &import_map,
             &declared_import_indices,
             import_func_count,
+            &buffer_plan,
+            buffer_alloc_func,
         )?);
     }
     if let Some(start) = start_thunk {
@@ -1148,6 +1228,19 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         }
     }
 
+    if let Some(type_idx) = buffer_alloc_type_idx {
+        functions.function(type_idx);
+        debug_assert_eq!(
+            buffer_alloc_func,
+            Some(import_func_count + helper_func_idx_counter),
+            "pre-computed buffer alloc index must match emission order"
+        );
+        helper_func_idx_counter += 1;
+        codes.function(&emit_buffer_alloc_function(buffer_heap_ptr_global));
+        exports.export(MEMORY_EXPORT_NAME, ExportKind::Memory, 0);
+    }
+    let _ = helper_func_idx_counter;
+
     let defined_func_count = module.functions.len() as u64;
     let wrapper_count = closure_targets.len() as u64;
     let table_size = import_func_count as u64 + defined_func_count + wrapper_count;
@@ -1180,7 +1273,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     if !tags.is_empty() {
         wasm.section(&tags);
     }
-    if coroutine_plan.has_state() {
+    if coroutine_plan.has_state() || buffer_plan.uses_memory {
         wasm.section(&globals);
     }
     wasm.section(&exports);
@@ -1190,7 +1283,15 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         });
     }
     wasm.section(&elements);
+    if buffer_plan.uses_memory {
+        wasm.section(&wasm_encoder::DataCountSection {
+            count: buffer_plan.data_segments.len() as u32,
+        });
+    }
     wasm.section(&codes);
+    if buffer_plan.uses_memory {
+        wasm.section(&data);
+    }
     wasm.section(&CustomSection {
         name: host::BYTES_CUSTOM_SECTION_NAME.into(),
         data: Cow::Owned(host::encode_bytes_constants_section(&bytes_constants)),
@@ -1237,6 +1338,10 @@ struct EmissionContext<'a> {
     import_map: &'a host::HostImportMap,
     declared_import_indices: &'a HashMap<SymbolId, u32>,
     import_func_count: u32,
+    /// Linear-memory typed-array plan (data segments for constant literals).
+    buffer_plan: &'a BufferPlan,
+    /// Function index of the typed-array bump-allocation helper.
+    buffer_alloc_func: Option<u32>,
 }
 
 impl EmissionContext<'_> {
@@ -1270,6 +1375,11 @@ impl EmissionContext<'_> {
         self.coroutine_body_wrapper_type
             .ok_or_else(|| Diagnostic::new("missing coroutine body wrapper type"))
     }
+
+    fn buffer_alloc_func(&self) -> Result<u32, Diagnostic> {
+        self.buffer_alloc_func
+            .ok_or_else(|| Diagnostic::new("missing typed-array allocation helper"))
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1287,6 +1397,8 @@ fn emit_function(
     import_map: &host::HostImportMap,
     declared_import_indices: &HashMap<SymbolId, u32>,
     import_func_count: u32,
+    buffer_plan: &BufferPlan,
+    buffer_alloc_func: Option<u32>,
 ) -> Result<Function, Diagnostic> {
     let ctx = EmissionContext {
         signatures,
@@ -1301,6 +1413,8 @@ fn emit_function(
         import_map,
         declared_import_indices,
         import_func_count,
+        buffer_plan,
+        buffer_alloc_func,
     };
     let value_types = infer_value_types(function, signatures)?;
     let local_plan = build_local_plan(function, &value_types, array_registry)?;
@@ -3492,6 +3606,80 @@ fn emit_block_instructions(
                 ));
                 emit_value_store(out, local_plan, *value)?;
             }
+            IrInstruction::BufferNew { kind, elements } => {
+                let scratch = locals::buffer_scratch_local(local_plan)?;
+                out.instruction(&Instruction::I32Const(elements.len() as i32));
+                out.instruction(&Instruction::I32Const(element_size_log2(*kind)));
+                out.instruction(&Instruction::Call(ctx.buffer_alloc_func()?));
+                out.instruction(&Instruction::LocalSet(scratch));
+                let element_size = u64::from(kind.element_size());
+                for (offset, element) in elements.iter().enumerate() {
+                    out.instruction(&Instruction::LocalGet(scratch));
+                    emit_value_operand(out, local_plan, *element)?;
+                    emit_buffer_store(out, *kind, offset as u64 * element_size);
+                }
+                out.instruction(&Instruction::LocalGet(scratch));
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::BufferConst { kind, bytes } => {
+                let scratch = locals::buffer_scratch_local(local_plan)?;
+                let len = bytes.len() as i32 / kind.element_size() as i32;
+                out.instruction(&Instruction::I32Const(len));
+                out.instruction(&Instruction::I32Const(element_size_log2(*kind)));
+                out.instruction(&Instruction::Call(ctx.buffer_alloc_func()?));
+                out.instruction(&Instruction::LocalSet(scratch));
+                if !bytes.is_empty() {
+                    out.instruction(&Instruction::LocalGet(scratch));
+                    out.instruction(&Instruction::I32Const(0));
+                    out.instruction(&Instruction::I32Const(bytes.len() as i32));
+                    out.instruction(&Instruction::MemoryInit {
+                        mem: 0,
+                        data_index: ctx.buffer_plan.data_segment_index(bytes)?,
+                    });
+                }
+                out.instruction(&Instruction::LocalGet(scratch));
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::BufferNewSized { kind, len } => {
+                emit_value_operand(out, local_plan, *len)?;
+                out.instruction(&Instruction::I32Const(element_size_log2(*kind)));
+                out.instruction(&Instruction::Call(ctx.buffer_alloc_func()?));
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::BufferGet {
+                buffer,
+                index,
+                kind,
+            } => {
+                emit_buffer_element_address(
+                    out,
+                    *kind,
+                    local(local_plan, *buffer)?,
+                    local(local_plan, *index)?,
+                );
+                emit_buffer_load(out, *kind, 0);
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::BufferSet {
+                buffer,
+                index,
+                value: stored,
+                kind,
+            } => {
+                emit_buffer_element_address(
+                    out,
+                    *kind,
+                    local(local_plan, *buffer)?,
+                    local(local_plan, *index)?,
+                );
+                emit_value_operand(out, local_plan, *stored)?;
+                emit_buffer_store(out, *kind, 0);
+            }
+            IrInstruction::BufferLen { buffer } => {
+                emit_value_operand(out, local_plan, *buffer)?;
+                emit_buffer_len_from_stack(out);
+                emit_value_store(out, local_plan, *value)?;
+            }
             IrInstruction::StructNew { struct_ty, fields } => {
                 let struct_type_index = ctx.array_registry.record_index(struct_ty)?;
                 for field in fields {
@@ -4495,7 +4683,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) => unreachable!(),
+            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value add is not supported during wasm emission",
@@ -4563,7 +4751,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) => unreachable!(),
+            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value sub is not supported during wasm emission",
@@ -4614,7 +4802,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) => unreachable!(),
+            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value mul is not supported during wasm emission",
@@ -4671,7 +4859,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) => unreachable!(),
+            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value div is not supported during wasm emission",
@@ -4695,7 +4883,11 @@ fn emit_binary(
             unreachable!("handled before stack binary emission")
         }
         BinaryOp::Eq => match operand_ty {
-            Type::Numeric(NumericType::U32 | NumericType::I32) | Type::Bool => {
+            // Typed arrays compare by identity: two values are equal exactly
+            // when they point at the same linear-memory allocation.
+            Type::Numeric(NumericType::U32 | NumericType::I32)
+            | Type::Bool
+            | Type::TypedArray(_) => {
                 out.instruction(&Instruction::I32Eq);
             }
             Type::Numeric(NumericType::U64 | NumericType::I64) => {
@@ -4785,7 +4977,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) => unreachable!(),
+            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value comparison is not supported during wasm emission",
@@ -4846,7 +5038,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) => unreachable!(),
+            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value comparison is not supported during wasm emission",
@@ -4907,7 +5099,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) => unreachable!(),
+            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value comparison is not supported during wasm emission",
@@ -4968,7 +5160,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) => unreachable!(),
+            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value comparison is not supported during wasm emission",

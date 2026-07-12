@@ -354,6 +354,12 @@ fn collect_record_types_from_instruction(
         | IrInstruction::Null { .. }
         | IrInstruction::IsNull { .. }
         | IrInstruction::ExternCastTest { .. }
+        | IrInstruction::BufferNew { .. }
+        | IrInstruction::BufferConst { .. }
+        | IrInstruction::BufferNewSized { .. }
+        | IrInstruction::BufferGet { .. }
+        | IrInstruction::BufferSet { .. }
+        | IrInstruction::BufferLen { .. }
         | IrInstruction::MultiGet { .. } => {}
     }
 }
@@ -372,6 +378,8 @@ pub(crate) fn array_storage_type(
             Ok(StorageType::Val(externref_val_type()))
         }
         Type::Nullable(inner) => array_storage_type(inner, registry),
+        // Typed arrays are i32 pointers into linear memory.
+        Type::TypedArray(_) => Ok(StorageType::Val(ValType::I32)),
         Type::Unknown => Ok(StorageType::Val(crate::wasm_types::anyref_val_type())),
         // Array values are growable wrapper structs. `array_types` is
         // depth-sorted and each wrapper struct is emitted right after its raw
@@ -424,6 +432,8 @@ pub(crate) fn record_storage_type(
             Ok(StorageType::Val(externref_val_type()))
         }
         Type::Nullable(inner) => record_storage_type(inner, registry),
+        // Typed arrays are i32 pointers into linear memory.
+        Type::TypedArray(_) => Ok(StorageType::Val(ValType::I32)),
         Type::Array(inner) => {
             let index = registry.growable_array_index(inner)?;
             Ok(StorageType::Val(ValType::Ref(RefType {

@@ -310,6 +310,7 @@ fn collect_type_variant_tags(ty: &Type, tag_ids: &mut BTreeMap<String, i32>) {
         | Type::Nil
         | Type::Unknown
         | Type::Thread
+        | Type::TypedArray(_)
         | Type::TypeParam(_) => {}
     }
 }
@@ -1232,6 +1233,93 @@ fn expr_string_len(expr: &Expr) -> Option<i32> {
     i32::try_from(value.chars().count()).ok()
 }
 
+/// `Float32Array.create` (and the other typed-array kinds' `create`).
+fn typed_array_create_kind(name: &str) -> Option<TypedArrayKind> {
+    let (type_name, member) = name.split_once('.')?;
+    if member != "create" {
+        return None;
+    }
+    TypedArrayKind::from_type_name(type_name)
+}
+
+/// When every element of a typed-array literal is a compile-time numeric
+/// constant, encode the little-endian element bytes for a passive data
+/// segment. Fractional or otherwise non-trivial elements return `None` so the
+/// runtime store path (with its single conversion story) handles them.
+fn const_typed_array_bytes(kind: TypedArrayKind, elements: &[Expr]) -> Option<Vec<u8>> {
+    fn literal_parts(expr: &Expr) -> Option<(&str, bool)> {
+        match expr {
+            Expr::Number(literal, _) => Some((literal.raw.as_str(), false)),
+            Expr::Unary {
+                op: UnaryOp::Neg,
+                expr,
+                ..
+            } => match expr.as_ref() {
+                Expr::Number(literal, _) => Some((literal.raw.as_str(), true)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn parse_const_f64(raw: &str) -> Option<f64> {
+        if let Some(hex) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
+            return u128::from_str_radix(hex, 16).ok().map(|value| value as f64);
+        }
+        raw.parse::<f64>().ok()
+    }
+
+    fn parse_const_integer(raw: &str) -> Option<i128> {
+        if let Some(hex) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
+            return i128::from_str_radix(hex, 16).ok();
+        }
+        raw.parse::<i128>().ok()
+    }
+
+    let mut bytes = Vec::with_capacity(elements.len() * kind.element_size() as usize);
+    for element in elements {
+        let (raw, negative) = literal_parts(element)?;
+        let raw = raw.replace('_', "");
+        match kind {
+            TypedArrayKind::F32 | TypedArrayKind::F64 => {
+                let mut value = parse_const_f64(&raw)?;
+                if negative {
+                    value = -value;
+                }
+                match kind {
+                    TypedArrayKind::F32 => bytes.extend_from_slice(&(value as f32).to_le_bytes()),
+                    TypedArrayKind::F64 => bytes.extend_from_slice(&value.to_le_bytes()),
+                    _ => unreachable!(),
+                }
+            }
+            TypedArrayKind::I8
+            | TypedArrayKind::U8
+            | TypedArrayKind::I16
+            | TypedArrayKind::U16
+            | TypedArrayKind::I32
+            | TypedArrayKind::U32 => {
+                let mut value = parse_const_integer(&raw)?;
+                if negative {
+                    value = -value;
+                }
+                // Out-of-range constants wrap to the element width, matching
+                // the runtime store's truncating behavior.
+                match kind {
+                    TypedArrayKind::I8 | TypedArrayKind::U8 => bytes.push(value as u8),
+                    TypedArrayKind::I16 | TypedArrayKind::U16 => {
+                        bytes.extend_from_slice(&(value as u16).to_le_bytes());
+                    }
+                    TypedArrayKind::I32 | TypedArrayKind::U32 => {
+                        bytes.extend_from_slice(&(value as u32).to_le_bytes());
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+    }
+    Some(bytes)
+}
+
 fn normalize_lua_index(index: i32, len: i32) -> i32 {
     let normalized = if index < 0 { len + index + 1 } else { index };
     normalized.clamp(1, len)
@@ -1862,6 +1950,45 @@ impl Builder<'_> {
                 value,
             } => {
                 let base_ty = self.infer_expr_type(base, types, None)?;
+                if let Type::TypedArray(kind) = &base_ty {
+                    let kind = *kind;
+                    let element_ty = Type::Numeric(kind.element_numeric_type());
+                    let buffer = self.lower_expr(base, env, types, Some(base_ty.clone()))?;
+                    let index = self.lower_index_to_i32(index, env, types)?;
+                    let stored = match op {
+                        AssignOp::Set => {
+                            self.lower_numeric_to(value, &element_ty, env, types)?
+                        }
+                        AssignOp::Compound(bin_op) => {
+                            if !bin_op.compound_target_ok(&element_ty) {
+                                return Err(Diagnostic::new(format!(
+                                    "compound array assignment requires {} elements",
+                                    bin_op.compound_target_kind()
+                                )));
+                            }
+                            let current = self.emit(Instruction::BufferGet {
+                                buffer,
+                                index,
+                                kind,
+                            });
+                            let rhs = self.lower_numeric_to(value, &element_ty, env, types)?;
+                            self.emit(Instruction::Binary {
+                                op: *bin_op,
+                                left: current,
+                                right: rhs,
+                                operand_ty: element_ty.clone(),
+                                result_ty: element_ty.clone(),
+                            })
+                        }
+                    };
+                    self.emit(Instruction::BufferSet {
+                        buffer,
+                        index,
+                        value: stored,
+                        kind,
+                    });
+                    return Ok(());
+                }
                 let element_ty = base_ty.element_type().ok_or_else(|| {
                     Diagnostic::new("array element assignment requires an array operand")
                 })?;
@@ -3866,6 +3993,12 @@ impl Builder<'_> {
                             "numeric literal is not assignable to array",
                         ));
                     }
+                    Type::TypedArray(kind) => {
+                        return Err(Diagnostic::new(format!(
+                            "numeric literal is not assignable to {}",
+                            kind.type_name(),
+                        )));
+                    }
                     Type::Function { .. } => {
                         return Err(Diagnostic::new(
                             "numeric literal is not assignable to function",
@@ -4201,7 +4334,7 @@ impl Builder<'_> {
                                     "unary '-' requires a numeric operand",
                                 ));
                             }
-                            Type::Array(_) => {
+                            Type::Array(_) | Type::TypedArray(_) => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -4302,6 +4435,15 @@ impl Builder<'_> {
                                 expected,
                             );
                         }
+                        if matches!(actual, Type::TypedArray(_)) {
+                            let buffer = self.lower_expr(expr, env, types, Some(actual))?;
+                            let len = self.emit(Instruction::BufferLen { buffer });
+                            return self.coerce_value(
+                                len,
+                                Type::Numeric(NumericType::I32),
+                                expected,
+                            );
+                        }
                         if !actual.is_array() {
                             return Err(Diagnostic::new(
                                 "# requires a string, array, or bytes operand",
@@ -4314,8 +4456,12 @@ impl Builder<'_> {
                 }
             }
             Expr::Cast { expr, ty, .. } => {
-                let actual = self.infer_expr_type(expr, types, None)?;
-                let cast = if require_numeric_cast(actual.clone(), ty.clone()).is_ok() {
+                // The unconstrained probe may itself fail (e.g. `{}` needs
+                // context); fall through to lowering against the cast target.
+                let probed = self.infer_expr_type(expr, types, None).ok();
+                let cast = if let Some(actual) = probed
+                    .filter(|actual| require_numeric_cast(actual.clone(), ty.clone()).is_ok())
+                {
                     let value = self.lower_expr(expr, env, types, None)?;
                     self.explicit_cast(value, actual, ty.clone())?
                 } else {
@@ -4615,6 +4761,15 @@ impl Builder<'_> {
                     {
                         return result;
                     }
+                    if let Some(result) = self.lower_typed_array_builtin_call(
+                        &name,
+                        args,
+                        env,
+                        types,
+                        expected.clone(),
+                    ) {
+                        return result;
+                    }
                     if let Some(result) =
                         self.lower_print_builtin_call(&name, args, env, types, expected.clone())
                     {
@@ -4735,6 +4890,9 @@ impl Builder<'_> {
                 )));
             }
             Expr::ArrayLiteral { elements, .. } => {
+                if let Some(Type::TypedArray(kind)) = expected.as_ref() {
+                    return self.lower_typed_array_literal(*kind, elements, env, types);
+                }
                 if elements.is_empty()
                     && matches!(expected.as_ref(), Some(Type::Record(_)))
                 {
@@ -4812,6 +4970,21 @@ impl Builder<'_> {
                     let index = self.lower_index_to_i32(index, env, types)?;
                     let value = self.emit(Instruction::DynIndex { value: base, index });
                     return self.coerce_value(value, Type::Unknown, expected);
+                }
+                if let Type::TypedArray(kind) = &base_ty {
+                    let kind = *kind;
+                    let buffer = self.lower_expr(base, env, types, Some(base_ty.clone()))?;
+                    let index = self.lower_index_to_i32(index, env, types)?;
+                    let value = self.emit(Instruction::BufferGet {
+                        buffer,
+                        index,
+                        kind,
+                    });
+                    return self.coerce_value(
+                        value,
+                        Type::Numeric(kind.element_numeric_type()),
+                        expected,
+                    );
                 }
                 let element_ty = base_ty
                     .element_type()
@@ -5258,6 +5431,10 @@ impl Builder<'_> {
                 Some(Type::Array(_)) => Err(Diagnostic::new(
                     "numeric literal is not assignable to array",
                 )),
+                Some(Type::TypedArray(kind)) => Err(Diagnostic::new(format!(
+                    "numeric literal is not assignable to {}",
+                    kind.type_name(),
+                ))),
                 Some(Type::Function { .. }) => Err(Diagnostic::new(
                     "numeric literal is not assignable to function",
                 )),
@@ -5438,7 +5615,7 @@ impl Builder<'_> {
                         Type::Nil | Type::Nullable(_) | Type::Named { .. } | Type::Opaque { .. } => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
-                        Type::Array(_) => {
+                        Type::Array(_) | Type::TypedArray(_) => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                         Type::Function { .. } | Type::Record(_) => {
@@ -5472,6 +5649,7 @@ impl Builder<'_> {
                         || actual == Type::Bytes
                         || actual == Type::Unknown
                         || actual.is_array()
+                        || matches!(actual, Type::TypedArray(_))
                     {
                         coerce_type(Type::Numeric(NumericType::I32), expected)
                     } else {
@@ -5480,8 +5658,12 @@ impl Builder<'_> {
                 }
             },
             Expr::Cast { expr, ty, .. } => {
-                let actual = self.infer_expr_type(expr, types, None)?;
-                if require_numeric_cast(actual, ty.clone()).is_err() {
+                // The unconstrained probe may itself fail (e.g. `{}` needs
+                // context); fall through to inference against the cast target.
+                let numeric_cast = self
+                    .infer_expr_type(expr, types, None)
+                    .is_ok_and(|actual| require_numeric_cast(actual, ty.clone()).is_ok());
+                if !numeric_cast {
                     self.infer_expr_type(expr, types, Some(ty.clone()))?;
                 }
                 Ok(ty.clone())
@@ -5567,6 +5749,11 @@ impl Builder<'_> {
                     if let Some(result) = self.infer_table_builtin_call_type(&name, expr, types) {
                         return result;
                     }
+                    if let Some(result) =
+                        self.infer_typed_array_builtin_call_type(&name, args, types, expected.clone())
+                    {
+                        return result;
+                    }
                     if let Some(result) = self.infer_print_builtin_call_type(&name, expr, types) {
                         return result;
                     }
@@ -5578,7 +5765,11 @@ impl Builder<'_> {
                 }
                 let callee_ty = self.infer_expr_type(callee, types, None)?;
                 match callee_ty {
-                    Type::Function { return_type, .. } => Ok(*return_type),
+                    // Coerce the return type against the expected type so a
+                    // call result adapts like any other expression (e.g. an
+                    // extern result in an extern? argument position), matching
+                    // the HIR inference path.
+                    Type::Function { return_type, .. } => coerce_type(*return_type, expected),
                     other => Err(Diagnostic::new(format!(
                         "attempt to call non-function value of type {other}",
                     ))),
@@ -5768,6 +5959,16 @@ impl Builder<'_> {
                     let right_ty = self.infer_expr_type(right, types, Some(Type::Bytes))?;
                     if right_ty == Type::Bytes {
                         Ok(Type::Bytes)
+                    } else {
+                        Err(Diagnostic::new(
+                            "could not resolve operand type during IR lowering",
+                        ))
+                    }
+                } else if matches!(left_ty, Type::TypedArray(_)) {
+                    // Typed arrays compare by identity (same allocation).
+                    let right_ty = self.infer_expr_type(right, types, Some(left_ty.clone()))?;
+                    if right_ty == left_ty {
+                        Ok(left_ty)
                     } else {
                         Err(Diagnostic::new(
                             "could not resolve operand type during IR lowering",
@@ -6012,6 +6213,30 @@ impl Builder<'_> {
         types: &HashMap<SymbolId, Type>,
         expected: Option<Type>,
     ) -> Result<Type, Diagnostic> {
+        // Typed-array literals allocate in linear memory; elements accept any
+        // numeric type (converted on store, see infer_array_literal in
+        // waluau-hir).
+        if let Some(Type::TypedArray(kind)) = expected.as_ref() {
+            let element_ty = Type::Numeric(kind.element_numeric_type());
+            for element in elements {
+                if matches!(element, Expr::Vararg(_)) {
+                    return Err(Diagnostic::new(
+                        "'...' is not supported in typed-array literals",
+                    ));
+                }
+                let actual = self
+                    .infer_expr_type(element, types, Some(element_ty.clone()))
+                    .or_else(|_| self.infer_expr_type(element, types, None))
+                    .map(first_of_multi)?;
+                if !actual.is_numeric() {
+                    return Err(Diagnostic::new(format!(
+                        "{} element must be numeric, got {actual}",
+                        kind.type_name()
+                    )));
+                }
+            }
+            return Ok(Type::TypedArray(*kind));
+        }
         if elements.is_empty() {
             if let Some(element_ty) = expected.as_ref().and_then(Type::element_type) {
                 return coerce_type(Type::Array(Box::new(element_ty)), expected);
@@ -7061,6 +7286,116 @@ impl Builder<'_> {
             }
         }
         self.lower_expr(index, env, types, Some(i32_ty))
+    }
+
+    /// Lower a numeric expression, inserting an explicit-cast-style conversion
+    /// when its own type differs from `target` (mirrors `lower_index_to_i32`).
+    /// Typed-array element writes use this so any number converts on store,
+    /// like JS typed arrays.
+    fn lower_numeric_to(
+        &mut self,
+        expr: &Expr,
+        target: &Type,
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        if !matches!(expr, Expr::Number(..)) {
+            if let Ok(actual) = self.infer_expr_type(expr, types, None).map(first_of_multi) {
+                if actual.is_numeric() && &actual != target {
+                    let value = self.lower_expr(expr, env, types, Some(actual.clone()))?;
+                    return Ok(self.emit(Instruction::Cast {
+                        value,
+                        from: actual,
+                        to: target.clone(),
+                    }));
+                }
+            }
+        }
+        self.lower_expr(expr, env, types, Some(target.clone()))
+    }
+
+    /// Lower a typed-array literal. Fully constant literals become a
+    /// `BufferConst` backed by a passive data segment; anything else
+    /// allocates and stores each element at runtime.
+    fn lower_typed_array_literal(
+        &mut self,
+        kind: TypedArrayKind,
+        elements: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        for element in elements {
+            if matches!(element, Expr::Vararg(_)) {
+                return Err(Diagnostic::new(
+                    "'...' is not supported in typed-array literals",
+                ));
+            }
+        }
+        if let Some(bytes) = const_typed_array_bytes(kind, elements) {
+            return Ok(self.emit(Instruction::BufferConst { kind, bytes }));
+        }
+        let element_ty = Type::Numeric(kind.element_numeric_type());
+        let lowered = elements
+            .iter()
+            .map(|element| self.lower_numeric_to(element, &element_ty, env, types))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(self.emit(Instruction::BufferNew {
+            kind,
+            elements: lowered,
+        }))
+    }
+
+    fn lower_typed_array_builtin_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<ValueId, Diagnostic>> {
+        let kind = typed_array_create_kind(name)?;
+        if args.len() != 1 {
+            return Some(Err(Diagnostic::new(format!(
+                "{name} expects 1 argument, got {}",
+                args.len()
+            ))));
+        }
+        let len = match self.lower_index_to_i32(&args[0], env, types) {
+            Ok(len) => len,
+            Err(error) => return Some(Err(error)),
+        };
+        let value = self.emit(Instruction::BufferNewSized { kind, len });
+        Some(self.coerce_value(value, Type::TypedArray(kind), expected))
+    }
+
+    fn infer_typed_array_builtin_call_type(
+        &self,
+        name: &str,
+        args: &[Expr],
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Option<Result<Type, Diagnostic>> {
+        let kind = typed_array_create_kind(name)?;
+        if args.len() != 1 {
+            return Some(Err(Diagnostic::new(format!(
+                "{name} expects 1 argument, got {}",
+                args.len()
+            ))));
+        }
+        let length_ty = match self
+            .infer_expr_type(&args[0], types, Some(Type::Numeric(NumericType::I32)))
+            .or_else(|_| self.infer_expr_type(&args[0], types, None))
+            .map(first_of_multi)
+        {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        if !length_ty.is_numeric() {
+            return Some(Err(Diagnostic::new(format!(
+                "{name} expects a numeric length, got {length_ty}"
+            ))));
+        }
+        Some(coerce_type(Type::TypedArray(kind), expected))
     }
 
     /// Append every element of `src` (an `Array(Unknown)` value) to the
@@ -9482,6 +9817,8 @@ fn lua_type_name(ty: &Type) -> &'static str {
         | Type::TaggedUnion(_) => "table",
         Type::Function { .. } => "function",
         Type::Thread => "thread",
+        // Matches Luau, where typeof(buffer.create(n)) == "buffer".
+        Type::TypedArray(_) => "buffer",
         Type::Extern | Type::ExternSubtype(_) => "userdata",
         Type::Nullable(_) => "nil",
         Type::Unknown => "unknown",
@@ -9614,6 +9951,10 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             ))),
             Type::Array(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert array to {expected_numeric}",
+            ))),
+            Type::TypedArray(kind) => Err(Diagnostic::new(format!(
+                "cannot implicitly convert {} to {expected_numeric}",
+                kind.type_name(),
             ))),
             Type::Multi(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert multiple values to {expected_numeric}",
