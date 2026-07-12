@@ -49,7 +49,7 @@ test.describe('function calling tab', () => {
     await expect(page.locator('.func-result-value.error')).toBeVisible();
   });
 
-  test('shows print output during initialization and function execution', async ({ page }) => {
+  test('shows print output during top-level and function execution', async ({ page }) => {
     await page.getByRole('button', { name: 'Top_level_statements' }).click();
     await expect(page.locator('.status-text')).toHaveText(
       'Compilation Succeeded',
@@ -57,7 +57,7 @@ test.describe('function calling tab', () => {
     );
     await page.getByRole('button', { name: 'Run' }).click();
 
-    // Verify module initialization print output is outside of individual function cards
+    // Verify top-level print output is outside of individual function cards
     await expect(page.locator('.init-logs-box')).toBeVisible();
     await expect(page.locator('.init-logs-value')).toHaveText('Init statement run\nFunction called');
 
