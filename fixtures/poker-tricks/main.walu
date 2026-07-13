@@ -78,7 +78,8 @@ function install_arcane_heist(): unit
     }
 
     local function load(): unit
-        math.randomseed(42)
+        -- No reseed: the host seeds math.random per instance, so each run
+        -- deals a different shuffle. sim.walu pins its own seeds for tests.
         reset_run(state, ui)
     end
 
