@@ -23,10 +23,8 @@ type Ui = {
 local MODAL_NONE <const>: i32 = 0
 local MODAL_HISTORY <const>: i32 = 1
 local MODAL_HELP <const>: i32 = 2
-local MODAL_REVEAL <const>: i32 = 3
 local MODAL_FINAL <const>: i32 = 4
--- Board reveal: both staggered flips plus a short hold on the turned cards
--- before the resolution modal opens.
+-- Both staggered flips finish before the first continue press advances play.
 local BOARD_REVEAL_SECONDS <const>: f64 = 1.6
 
 function contains(picks: {i32}, value: i32): bool
@@ -85,13 +83,11 @@ function install_arcane_heist(): unit
     end
 
     local function update(dt: f64, input: input_module.Input): unit
-        -- Turns are discrete; the clock only drives the board reveal flip,
-        -- which hands off to the resolution modal when it completes.
+        -- Turns are discrete; the clock only drives the board reveal flip.
         if ui.revealing then
             ui.reveal_clock += dt
             if ui.reveal_clock >= BOARD_REVEAL_SECONDS then
-                ui.revealing = false
-                ui.modal = MODAL_REVEAL
+                ui.reveal_clock = BOARD_REVEAL_SECONDS
             end
         end
     end
@@ -102,9 +98,7 @@ function install_arcane_heist(): unit
     end
 
     local function close_modal(): unit
-        if ui.modal == MODAL_REVEAL then
-            if state.finished then ui.modal = MODAL_FINAL else ui.modal = MODAL_NONE end
-        elseif ui.modal ~= MODAL_FINAL then
+        if ui.modal ~= MODAL_FINAL then
             ui.modal = MODAL_NONE
         end
     end
@@ -146,10 +140,15 @@ function install_arcane_heist(): unit
 
     local function keypressed(key: string): unit
         if ui.revealing then
-            -- Let impatient players skip straight to the resolution modal.
+            -- The first press completes the animation; a later press advances.
             if key == "Enter" or key == " " or key == "Escape" then
-                ui.revealing = false
-                ui.modal = MODAL_REVEAL
+                if ui.reveal_clock < BOARD_REVEAL_SECONDS then
+                    ui.reveal_clock = BOARD_REVEAL_SECONDS
+                else
+                    ui.revealing = false
+                    if state.finished then ui.modal = MODAL_FINAL
+                    else ui.message = "Choose a school relic to begin the next feint." end
+                end
             elseif key == "r" or key == "R" then
                 reset_run(state, ui)
             end

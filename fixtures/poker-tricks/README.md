@@ -11,8 +11,9 @@ are feints, and each trick is a breach. Poker categories are presented as magica
 formations such as a bound pair, arcane sequence, and perfect convergence.
 
 The browser entry imports only the engine facade and contains no DOM or canvas
-host calls. The game, help, reveal, history, and final outcome all render inside
-one 960×600 logical canvas that scales to the viewport.
+host calls. The game, help, history, and final outcome all render inside one
+960×600 logical canvas that scales to the viewport. Trick results remain on the
+board, where color identifies the winning formation and any decisive kickers.
 
 ## Controls
 

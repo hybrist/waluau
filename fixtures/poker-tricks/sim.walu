@@ -25,6 +25,23 @@ assert(straight_flush > four_kind and four_kind > full_house and full_house > fl
 assert(flush > straight and straight > three_kind and three_kind > two_pair)
 assert(two_pair > one_pair and one_pair > high_card)
 
+-- Result emphasis includes the made hand and only the kickers needed to break
+-- a same-category tie. Here the pair of kings ties and the ace decides it.
+local winning_pair_cards: {game.Card} = { card(13, 0), card(13, 1), card(14, 2), card(7, 3), card(4, 0) }
+local losing_pair_cards: {game.Card} = { card(13, 2), card(13, 3), card(12, 0), card(7, 1), card(4, 2) }
+local winning_pair_value: i32 = game.rank_five(winning_pair_cards)
+local losing_pair_value: i32 = game.rank_five(losing_pair_cards)
+local pair_marks: {bool} = game.scoring_cards(winning_pair_cards, winning_pair_value, losing_pair_value)
+assert(pair_marks[0] and pair_marks[1] and pair_marks[2])
+assert(not pair_marks[3] and not pair_marks[4])
+local lower_pair_value: i32 = game.rank_five({ card(12, 1), card(12, 2), card(14, 3), card(9, 0), card(8, 1) })
+local made_pair_marks: {bool} = game.scoring_cards(winning_pair_cards, winning_pair_value, lower_pair_value)
+assert(made_pair_marks[0] and made_pair_marks[1])
+assert(not made_pair_marks[2] and not made_pair_marks[3] and not made_pair_marks[4])
+local formation_marks: {bool} = game.formation_cards(winning_pair_cards, winning_pair_value)
+assert(formation_marks[0] and formation_marks[1])
+assert(not formation_marks[2] and not formation_marks[3] and not formation_marks[4])
+
 -- The wheel is a five-high straight, below a six-high straight.
 local wheel: i32 = game.rank_five({ card(14, 0), card(2, 1), card(3, 2), card(4, 3), card(5, 0) })
 local six_high: i32 = game.rank_five({ card(2, 0), card(3, 1), card(4, 2), card(5, 3), card(6, 0) })
@@ -96,6 +113,7 @@ for expected_round = FIRST_ROUND, LAST_ROUND do
     assert(trick.round == expected_round)
     assert(trick.pot == trick.player_wager + trick.computer_wager)
     assert(#trick.middle == 3 and #trick.player_cards == 2 and #trick.computer_cards == 2)
+    assert(trick.player_first == 0 and trick.player_second == 1)
     if trick.winner == 0 then
         assert(trick.points == 0)
     else
