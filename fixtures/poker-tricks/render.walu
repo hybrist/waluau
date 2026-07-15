@@ -14,6 +14,7 @@ local MODAL_HISTORY <const>: i32 = 1
 local MODAL_HELP <const>: i32 = 2
 local MODAL_FINAL <const>: i32 = 4
 local FLIP_SECONDS <const>: f64 = 0.55
+local TOTAL_ROUNDS <const>: i32 = 5
 
 -- Board anchors card animations travel between. main.walu mirrors these ids
 -- when it builds animations, the same way it mirrors the modal ids above.
@@ -323,16 +324,43 @@ function draw_backdrop(graphics: Graphics): unit
     for x = 0, 960, 48 do graphics:line(x::f64, 0.0, WIDTH - (x::f64), HEIGHT) end
 end
 
-function draw_hud(graphics: Graphics, state: game.State, display_round: i32): unit
+function draw_round_orbs(graphics: Graphics, state: game.State): unit
+    for round = 0::i32, TOTAL_ROUNDS - 1 do
+        local x: f64 = 412.0 + (round::f64) * 34.0
+        local edge: string = "#52525b"
+        local fill: string = "#17171c"
+        if round < #state.history then
+            if state.history[round].winner > 0 then
+                edge = "#cffafe"
+                fill = "#22d3ee"
+            else
+                -- A cancelled breach did not defeat the ward, so it shares
+                -- the lost state rather than introducing a fourth orb state.
+                edge = "#fecaca"
+                fill = "#f87171"
+            end
+        end
+        graphics:set_color(edge)
+        graphics:fill_circle(x, 52.0, 10.0)
+        graphics:set_color(fill)
+        graphics:fill_circle(x, 52.0, 7.0)
+        if round < #state.history then
+            graphics:set_color("#ffffff")
+            graphics:fill_circle(x - 2.5, 49.5, 1.5)
+        end
+    end
+end
+
+function draw_hud(graphics: Graphics, state: game.State): unit
     text(graphics, "ARCANE HEIST", 32.0, 47.0, 22, "#fbbf24")
-    text(graphics, "BREACH " .. tostring(display_round) .. " / 6", 410.0, 43.0, 14, "#b5b5bd")
-    text(graphics, "ROBBERS " .. tostring(state.player_points), 32.0, 78.0, 15, "#67e8f9")
-    text(graphics, "ARCH MAGE " .. tostring(state.computer_points), 742.0, 78.0, 15, "#fca5a5")
-    graphics:set_color("#27272a")
-    graphics:fill_rectangle(327.0, 64.0, 306.0, 6.0)
-    local progress: f64 = (display_round::f64) / 6.0
-    graphics:set_color("#a1a1aa")
-    graphics:fill_rectangle(327.0, 64.0, 306.0 * progress, 6.0)
+    draw_round_orbs(graphics, state)
+    local score: string = tostring(state.player_points)
+    local score_width: f64 = ((#score)::f64) * 16.5
+    text(graphics, score, WIDTH - 32.0 - score_width, 47.0, 22, "#67e8f9")
+end
+
+function draw_footer(graphics: Graphics): unit
+    text(graphics, "? HELP", 883.0, 582.0, 10, "#8a8a92")
 end
 
 function trick_scoring(trick: game.Trick): {bool}
@@ -346,11 +374,11 @@ end
 
 function draw_resolution_board(graphics: Graphics, state: game.State, reveal_clock: f64): unit
     local trick: game.Trick = state.history[#state.history - 1]
-    draw_hud(graphics, state, trick.round)
+    draw_hud(graphics, state)
     draw_deck(graphics, #state.deck)
     local scoring: {bool} = trick_scoring(trick)
     if trick.winner > 0 then text(graphics, "DEFENSE BREACHED +" .. tostring(trick.points), 350.0, 103.0, 14, "#67e8f9")
-    elseif trick.winner < 0 then text(graphics, "THE WARDS HOLD +" .. tostring(trick.points), 370.0, 103.0, 14, "#fca5a5")
+    elseif trick.winner < 0 then text(graphics, "THE WARDS HOLD", 402.0, 103.0, 14, "#fca5a5")
     else text(graphics, "MAGICS CANCEL", 410.0, 103.0, 14, "#fbbf24") end
     text(graphics, game.category_name(trick.player_value) .. "  VS  " .. game.category_name(trick.computer_value), 330.0, 252.0, 11, "#d4d4d8")
 
@@ -383,8 +411,7 @@ function draw_resolution_board(graphics: Graphics, state: game.State, reveal_clo
             draw_card(graphics, state.player_hand[i], x, 445.0, false, false, false, false)
         end
     end
-    text(graphics, "WARD POT " .. tostring(trick.pot) .. "   REWARD " .. tostring(trick.points), 32.0, 582.0, 11, "#d4d4d8")
-    text(graphics, "ARROWS MOVE  SPACE BIND  ENTER COMMIT  H HISTORY  ? HELP", 458.0, 582.0, 10, "#8a8a92")
+    draw_footer(graphics)
 end
 
 function preview_scoring(state: game.State, play_picks: {i32}): {bool}
@@ -403,12 +430,12 @@ function preview_player_colored(index: i32, play_picks: {i32}, preview: {bool}):
     return false
 end
 
-function draw_playfield(graphics: Graphics, state: game.State, hand_cursor: i32, ward_cursor: i32, cursor_area: i32, play_picks: {i32}, swap_hand: {i32}, swap_wards: {i32}, revealing: bool, reveal_clock: f64, message: string, anims: {Anim}, anim_clock: f64): unit
+function draw_playfield(graphics: Graphics, state: game.State, hand_cursor: i32, ward_cursor: i32, cursor_area: i32, play_picks: {i32}, swap_hand: {i32}, swap_wards: {i32}, revealing: bool, reveal_clock: f64, anims: {Anim}, anim_clock: f64): unit
     if revealing and #state.history > 0 then
         draw_resolution_board(graphics, state, reveal_clock)
         return
     end
-    draw_hud(graphics, state, state.round)
+    draw_hud(graphics, state)
     draw_deck(graphics, #state.deck)
     -- Slots claimed by an in-flight card stay empty until it lands, so the
     -- already-updated game state cannot leak ahead of the animation.
@@ -440,8 +467,7 @@ function draw_playfield(graphics: Graphics, state: game.State, hand_cursor: i32,
             draw_card(graphics, state.player_hand[i], slot_x(SLOT_PLAYER, i), slot_y(SLOT_PLAYER, i), selected, focused, false, preview_player_colored(i, play_picks, preview))
         end
     end
-    text(graphics, message, 32.0, 582.0, 11, "#d4d4d8")
-    text(graphics, "ARROWS MOVE  SPACE BIND  ENTER COMMIT  H HISTORY  ? HELP", 458.0, 582.0, 10, "#8a8a92")
+    draw_footer(graphics)
     draw_anims(graphics, anims, anim_clock)
 end
 
@@ -456,7 +482,7 @@ function modal_shell(graphics: Graphics, title: string, subtitle: string): unit
 end
 
 function draw_help(graphics: Graphics): unit
-    modal_shell(graphics, "THE JOB", "STEAL SIX SEALS BEFORE THE ARCH MAGE BREAKS YOUR CREW")
+    modal_shell(graphics, "THE JOB", "SURVIVE FIVE BREACHES. THREE WARD HOLDS END THE HEIST")
     text(graphics, "FOUR SCHOOLS", 126.0, 192.0, 14, "#f8fafc")
     text(graphics, "RED MAGES  BLUE MAGES  BLACK MAGES  GREEN MAGES", 126.0, 220.0, 12, "#b5b5bd")
     text(graphics, "1. FEINT", 126.0, 270.0, 16, "#67e8f9")
@@ -479,7 +505,7 @@ function draw_history(graphics: Graphics, state: game.State): unit
     for trick in state.history do
         local winner: string = "STALEMATE"
         if trick.winner > 0 then winner = "ROBBERS +" .. tostring(trick.points)
-        elseif trick.winner < 0 then winner = "ARCH MAGE +" .. tostring(trick.points) end
+        elseif trick.winner < 0 then winner = "ARCH MAGE" end
         text(graphics, "BREACH " .. tostring(trick.round), 126.0, y, 13, "#fbbf24")
         text(graphics, winner, 250.0, y, 13, "#f8fafc")
         text(graphics, game.category_name(trick.player_value) .. " VS " .. game.category_name(trick.computer_value), 430.0, y, 10, "#b5b5bd")
@@ -488,25 +514,27 @@ function draw_history(graphics: Graphics, state: game.State): unit
 end
 
 function draw_final(graphics: Graphics, state: game.State): unit
-    local title: string = "THE ARCH MAGE PREVAILS"
-    if state.player_points > state.computer_points then title = "THE VAULT IS YOURS"
-    elseif state.player_points == state.computer_points then title = "THE VAULT REMAINS SEALED" end
-    modal_shell(graphics, title, "THE SIXTH DEFENSE HAS FALLEN")
-    text(graphics, "ROBBERS", 188.0, 250.0, 18, "#67e8f9")
-    text(graphics, tostring(state.player_points), 220.0, 315.0, 44, "#f8fafc")
-    text(graphics, "ARCH MAGE", 600.0, 250.0, 18, "#fca5a5")
-    text(graphics, tostring(state.computer_points), 654.0, 315.0, 44, "#f8fafc")
+    local title: string = "THE VAULT IS YOURS"
+    local subtitle: string = "FIVE BREACHES COMPLETE"
+    if state.computer_tricks >= 3 then
+        title = "THE ARCH MAGE PREVAILS"
+        subtitle = "THREE WARDS HELD. THE HEIST IS OVER"
+    end
+    modal_shell(graphics, title, subtitle)
+    text(graphics, "SPARKS STOLEN", 399.0, 250.0, 18, "#67e8f9")
+    text(graphics, tostring(state.player_points), 452.0, 325.0, 44, "#f8fafc")
+    text(graphics, "BREACHES WON " .. tostring(state.player_tricks) .. " / 5", 390.0, 376.0, 13, "#d4d4d8")
     text(graphics, "R RESTARTS THE HEIST   H OPENS THE LEDGER", 262.0, 482.0, 12, "#fbbf24")
 end
 
-function draw(graphics: Graphics, state: game.State, hand_cursor: i32, ward_cursor: i32, cursor_area: i32, play_picks: {i32}, swap_hand: {i32}, swap_wards: {i32}, modal: i32, revealing: bool, reveal_clock: f64, message: string, anims: {Anim}, anim_clock: f64): unit
+function draw(graphics: Graphics, state: game.State, hand_cursor: i32, ward_cursor: i32, cursor_area: i32, play_picks: {i32}, swap_hand: {i32}, swap_wards: {i32}, modal: i32, revealing: bool, reveal_clock: f64, anims: {Anim}, anim_clock: f64): unit
     draw_backdrop(graphics)
-    -- The final breach still flips on the board, so keep the playfield up
+    -- The terminal breach still flips on the board, so keep the playfield up
     -- while a reveal is running even after the game finishes.
     if not state.finished or revealing then
-        draw_playfield(graphics, state, hand_cursor, ward_cursor, cursor_area, play_picks, swap_hand, swap_wards, revealing, reveal_clock, message, anims, anim_clock)
+        draw_playfield(graphics, state, hand_cursor, ward_cursor, cursor_area, play_picks, swap_hand, swap_wards, revealing, reveal_clock, anims, anim_clock)
     else
-        draw_hud(graphics, state, state.round)
+        draw_hud(graphics, state)
     end
     if modal == MODAL_HISTORY then draw_history(graphics, state)
     elseif modal == MODAL_HELP then draw_help(graphics)

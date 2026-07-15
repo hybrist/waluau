@@ -20,8 +20,7 @@ type Ui = {
     anims: {render.Anim},
     anim_clock: f64,
     anim_total: f64,
-    anim_kind: i32,
-    message: string
+    anim_kind: i32
 }
 
 local MODAL_NONE <const>: i32 = 0
@@ -267,7 +266,6 @@ function reset_run(state: game.State, ui: Ui): unit
     ui.modal = MODAL_NONE
     ui.revealing = false
     ui.reveal_clock = 0.0
-    ui.message = "Choose a school relic to begin the breach."
     -- The deal waits behind the help modal; its clock starts once play does.
     queue_initial_deal(state, ui)
 end
@@ -288,7 +286,6 @@ function install_arcane_heist(): unit
         anim_clock = 0.0,
         anim_total = 0.0,
         anim_kind = ANIM_NONE,
-        message = "Choose a school relic to begin the breach.",
     }
 
     local function load(): unit
@@ -315,7 +312,7 @@ function install_arcane_heist(): unit
 
     local function draw(graphics: graphics_module.Graphics, alpha: f64): unit
         render.draw(graphics, state, ui.hand_cursor, ui.ward_cursor, ui.cursor_area,
-            ui.play_picks, ui.swap_hand, ui.swap_wards, ui.modal, ui.revealing, ui.reveal_clock, ui.message,
+            ui.play_picks, ui.swap_hand, ui.swap_wards, ui.modal, ui.revealing, ui.reveal_clock,
             ui.anims, ui.anim_clock)
     end
 
@@ -329,33 +326,17 @@ function install_arcane_heist(): unit
         if #ui.swap_hand == 0 and #ui.swap_wards == 0 then
             state:resolve_swap({}, {})
             clear_picks(ui)
-            if state.swap_winner < 0 then
-                ui.message = "The Arch Mage seizes the feint. Select two relics."
-            else
-                ui.message = "Both plans are revealed. Select two relics for the breach."
-            end
             queue_swap_animation(state, ui)
-        elseif #ui.swap_hand ~= #ui.swap_wards then
-            ui.message = "Mark the same number of relics and wards."
-        elseif #ui.swap_hand > state.player_points then
-            ui.message = "You lack enough sparks for that wager."
-        else
-            state:resolve_swap(ui.swap_hand, ui.swap_wards)
-            clear_picks(ui)
-            if state.swap_winner > 0 then
-                ui.message = "Your feint pierced the wards. Select two relics."
-            elseif state.swap_winner < 0 then
-                ui.message = "The Arch Mage anticipated the feint. Select two relics."
-            else
-                ui.message = "The feints canceled. Select two relics."
-            end
-            queue_swap_animation(state, ui)
+            return
         end
+        if #ui.swap_hand ~= #ui.swap_wards or #ui.swap_hand > state.player_points then return end
+        state:resolve_swap(ui.swap_hand, ui.swap_wards)
+        clear_picks(ui)
+        queue_swap_animation(state, ui)
     end
 
     local function submit_breach(): unit
         if #ui.play_picks ~= 2 then
-            ui.message = "Bind exactly two relics before breaching."
             return
         end
         state:play(ui.play_picks[0], ui.play_picks[1])
@@ -363,7 +344,6 @@ function install_arcane_heist(): unit
         ui.modal = MODAL_NONE
         ui.revealing = true
         ui.reveal_clock = 0.0
-        ui.message = ""
     end
 
     local function keypressed(key: string): unit
@@ -378,7 +358,6 @@ function install_arcane_heist(): unit
                         ui.modal = MODAL_FINAL
                     else
                         queue_refill_deal(state, ui)
-                        ui.message = "Choose a school relic to begin the next feint."
                     end
                 end
             elseif key == "r" or key == "R" then
