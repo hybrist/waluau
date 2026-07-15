@@ -15,6 +15,65 @@ local MODAL_HELP <const>: i32 = 2
 local MODAL_FINAL <const>: i32 = 4
 local FLIP_SECONDS <const>: f64 = 0.55
 
+-- Board anchors card animations travel between. main.walu mirrors these ids
+-- when it builds animations, the same way it mirrors the modal ids above.
+local SLOT_PLAYER <const>: i32 = 0
+local SLOT_COMPUTER <const>: i32 = 1
+local SLOT_MIDDLE <const>: i32 = 2
+local SLOT_DECK <const>: i32 = 3
+local SLOT_ASIDE <const>: i32 = 4
+
+-- Faces an animated card shows along its flight: stay sealed, stay revealed,
+-- or flip between the two mid-flight. main.walu mirrors these values too.
+local FACES_DOWN <const>: i32 = 0
+local FACES_UP <const>: i32 = 1
+local FACES_FLIP_UP <const>: i32 = 2
+local FACES_FLIP_DOWN <const>: i32 = 3
+
+-- One leg of a card's journey across the board. The card renders at x0/y0
+-- until start, travels to x1/y1 over duration, and only exists on screen
+-- inside [appear, vanish) — outside that window an adjacent leg or the real
+-- board slot owns the card. Legs whose dest_kind names a board slot keep
+-- that slot empty until they vanish, so state that already changed is not
+-- revealed ahead of the animation.
+type Anim = {
+    card: game.Card,
+    faces: i32,
+    x0: f64,
+    y0: f64,
+    x1: f64,
+    y1: f64,
+    start: f64,
+    duration: f64,
+    appear: f64,
+    vanish: f64,
+    dest_kind: i32,
+    dest_index: i32
+}
+
+function slot_x(kind: i32, index: i32): f64
+    if kind == SLOT_PLAYER or kind == SLOT_COMPUTER then return 190.0 + (index::f64) * 116.0 end
+    if kind == SLOT_MIDDLE then return 302.0 + (index::f64) * 116.0 end
+    if kind == SLOT_DECK then return 56.0 end
+    return 800.0 + (index::f64) * 4.0
+end
+
+function slot_y(kind: i32, index: i32): f64
+    if kind == SLOT_PLAYER then return 445.0 end
+    if kind == SLOT_COMPUTER then return 116.0 end
+    if kind == SLOT_ASIDE then return 292.0 + (index::f64) * 12.0 end
+    return 292.0
+end
+
+function slot_hidden(anims: {Anim}, clock: f64, kind: i32, index: i32): bool
+    for anim in anims do
+        if anim.dest_kind == kind and anim.dest_index == index and clock < anim.vanish then
+            return true
+        end
+    end
+    return false
+end
+
 function text(graphics: Graphics, value: string, x: f64, y: f64, size: f64, color: string): unit
     graphics:set_color(color)
     graphics:set_font(tostring(size) .. "px monospace")
@@ -207,6 +266,54 @@ function draw_flipping_card(graphics: Graphics, card: game.Card, x: f64, y: f64,
     graphics:pop()
 end
 
+-- The sealed draw pile every dealt relic and ward flies out of. The stack
+-- silhouette thins as the run burns down; the label tracks the exact count.
+function draw_deck(graphics: Graphics, count: i32): unit
+    if count <= 0 then return end
+    local x: f64 = slot_x(SLOT_DECK, 0)
+    local y: f64 = slot_y(SLOT_DECK, 0)
+    if count > 18 then panel(graphics, x + 6.0, y + 6.0, CARD_W, CARD_H, "#17171c", "#3f3f46") end
+    if count > 6 then panel(graphics, x + 3.0, y + 3.0, CARD_W, CARD_H, "#17171c", "#3f3f46") end
+    panel(graphics, x, y, CARD_W, CARD_H, "#17171c", "#52525b")
+    draw_card_back(graphics, x, y)
+    text(graphics, tostring(count) .. " SEALED", x + 10.0, y + CARD_H + 26.0, 10, "#8a8a92")
+end
+
+-- A card mid-deal or mid-swap: eased travel between two board anchors with
+-- an optional mid-flight flip, lifted slightly toward the viewer while it
+-- moves (matching the reveal flip's midair feel).
+function draw_anim_card(graphics: Graphics, anim: Anim, clock: f64): unit
+    if clock < anim.appear or clock >= anim.vanish then return end
+    local t: f64 = 1.0
+    if anim.duration > 0.0 then t = (clock - anim.start) / anim.duration end
+    if t < 0.0 then t = 0.0 end
+    if t > 1.0 then t = 1.0 end
+    local ease: f64 = t * t * (3.0 - 2.0 * t)
+    local x: f64 = anim.x0 + (anim.x1 - anim.x0) * ease
+    local y: f64 = anim.y0 + (anim.y1 - anim.y0) * ease
+    local hidden: bool = anim.faces == FACES_DOWN
+    local width_scale: f64 = 1.0
+    if anim.faces == FACES_FLIP_UP or anim.faces == FACES_FLIP_DOWN then
+        local flat: f64 = math.cos(t * math.pi)
+        if anim.faces == FACES_FLIP_UP then hidden = flat >= 0.0 else hidden = flat < 0.0 end
+        width_scale = flat
+        if width_scale < 0.0 then width_scale = -width_scale end
+    end
+    local depth: f64 = math.sin(t * math.pi)
+    local lift: f64 = 1.0 + 0.08 * depth
+    graphics:push()
+    graphics:translate(x + CARD_W * 0.5, y + CARD_H * 0.5 - 8.0 * depth)
+    graphics:apply_transform(width_scale * lift, 0.0, 0.0, lift, 0.0, 0.0)
+    draw_card(graphics, anim.card, -(CARD_W * 0.5), -(CARD_H * 0.5), false, false, hidden, false)
+    graphics:pop()
+end
+
+function draw_anims(graphics: Graphics, anims: {Anim}, clock: f64): unit
+    for anim in anims do
+        draw_anim_card(graphics, anim, clock)
+    end
+end
+
 function draw_backdrop(graphics: Graphics): unit
     graphics:clear("#09090b")
     graphics:set_color("#111114")
@@ -240,6 +347,7 @@ end
 function draw_resolution_board(graphics: Graphics, state: game.State, reveal_clock: f64): unit
     local trick: game.Trick = state.history[#state.history - 1]
     draw_hud(graphics, state, trick.round)
+    draw_deck(graphics, #state.deck)
     local scoring: {bool} = trick_scoring(trick)
     if trick.winner > 0 then text(graphics, "DEFENSE BREACHED +" .. tostring(trick.points), 350.0, 103.0, 14, "#67e8f9")
     elseif trick.winner < 0 then text(graphics, "THE WARDS HOLD +" .. tostring(trick.points), 370.0, 103.0, 14, "#fca5a5")
@@ -295,14 +403,19 @@ function preview_player_colored(index: i32, play_picks: {i32}, preview: {bool}):
     return false
 end
 
-function draw_playfield(graphics: Graphics, state: game.State, hand_cursor: i32, ward_cursor: i32, cursor_area: i32, play_picks: {i32}, swap_hand: {i32}, swap_wards: {i32}, revealing: bool, reveal_clock: f64, message: string): unit
+function draw_playfield(graphics: Graphics, state: game.State, hand_cursor: i32, ward_cursor: i32, cursor_area: i32, play_picks: {i32}, swap_hand: {i32}, swap_wards: {i32}, revealing: bool, reveal_clock: f64, message: string, anims: {Anim}, anim_clock: f64): unit
     if revealing and #state.history > 0 then
         draw_resolution_board(graphics, state, reveal_clock)
         return
     end
     draw_hud(graphics, state, state.round)
+    draw_deck(graphics, #state.deck)
+    -- Slots claimed by an in-flight card stay empty until it lands, so the
+    -- already-updated game state cannot leak ahead of the animation.
     for i = 0::i32, 4::i32 do
-        draw_card(graphics, state.computer_hand[i], 190.0 + (i::f64) * 116.0, 116.0, false, false, true, false)
+        if not slot_hidden(anims, anim_clock, SLOT_COMPUTER, i) then
+            draw_card(graphics, state.computer_hand[i], slot_x(SLOT_COMPUTER, i), slot_y(SLOT_COMPUTER, i), false, false, true, false)
+        end
     end
     local preview: {bool} = preview_scoring(state, play_picks)
     if not state.swap_open and #play_picks == 2 then
@@ -313,7 +426,9 @@ function draw_playfield(graphics: Graphics, state: game.State, hand_cursor: i32,
     for i = 0::i32, #state.middle - 1 do
         local selected: bool = state.swap_open and is_picked(swap_wards, i)
         local focused: bool = state.swap_open and cursor_area == 1 and ward_cursor == i
-        draw_card(graphics, state.middle[i], 302.0 + (i::f64) * 116.0, 292.0, selected, focused, false, preview[i])
+        if not slot_hidden(anims, anim_clock, SLOT_MIDDLE, i) then
+            draw_card(graphics, state.middle[i], slot_x(SLOT_MIDDLE, i), slot_y(SLOT_MIDDLE, i), selected, focused, false, preview[i])
+        end
     end
     if state.swap_open then text(graphics, "FEINT: BIND MATCHING RELICS + WARDS (UP/DOWN)", 242.0, 430.0, 12, "#fbbf24")
     else text(graphics, "BREACH: BIND TWO RELICS", 361.0, 430.0, 12, "#fbbf24") end
@@ -321,10 +436,13 @@ function draw_playfield(graphics: Graphics, state: game.State, hand_cursor: i32,
         local selected: bool = false
         if state.swap_open then selected = is_picked(swap_hand, i) else selected = is_picked(play_picks, i) end
         local focused: bool = cursor_area == 0 and hand_cursor == i
-        draw_card(graphics, state.player_hand[i], 190.0 + (i::f64) * 116.0, 445.0, selected, focused, false, preview_player_colored(i, play_picks, preview))
+        if not slot_hidden(anims, anim_clock, SLOT_PLAYER, i) then
+            draw_card(graphics, state.player_hand[i], slot_x(SLOT_PLAYER, i), slot_y(SLOT_PLAYER, i), selected, focused, false, preview_player_colored(i, play_picks, preview))
+        end
     end
     text(graphics, message, 32.0, 582.0, 11, "#d4d4d8")
     text(graphics, "ARROWS MOVE  SPACE BIND  ENTER COMMIT  H HISTORY  ? HELP", 458.0, 582.0, 10, "#8a8a92")
+    draw_anims(graphics, anims, anim_clock)
 end
 
 function modal_shell(graphics: Graphics, title: string, subtitle: string): unit
@@ -381,12 +499,12 @@ function draw_final(graphics: Graphics, state: game.State): unit
     text(graphics, "R RESTARTS THE HEIST   H OPENS THE LEDGER", 262.0, 482.0, 12, "#fbbf24")
 end
 
-function draw(graphics: Graphics, state: game.State, hand_cursor: i32, ward_cursor: i32, cursor_area: i32, play_picks: {i32}, swap_hand: {i32}, swap_wards: {i32}, modal: i32, revealing: bool, reveal_clock: f64, message: string): unit
+function draw(graphics: Graphics, state: game.State, hand_cursor: i32, ward_cursor: i32, cursor_area: i32, play_picks: {i32}, swap_hand: {i32}, swap_wards: {i32}, modal: i32, revealing: bool, reveal_clock: f64, message: string, anims: {Anim}, anim_clock: f64): unit
     draw_backdrop(graphics)
     -- The final breach still flips on the board, so keep the playfield up
     -- while a reveal is running even after the game finishes.
     if not state.finished or revealing then
-        draw_playfield(graphics, state, hand_cursor, ward_cursor, cursor_area, play_picks, swap_hand, swap_wards, revealing, reveal_clock, message)
+        draw_playfield(graphics, state, hand_cursor, ward_cursor, cursor_area, play_picks, swap_hand, swap_wards, revealing, reveal_clock, message, anims, anim_clock)
     else
         draw_hud(graphics, state, state.round)
     end
@@ -395,4 +513,8 @@ function draw(graphics: Graphics, state: game.State, hand_cursor: i32, ward_curs
     elseif modal == MODAL_FINAL then draw_final(graphics, state) end
 end
 
-return { draw = draw }
+return {
+    draw = draw,
+    slot_x = slot_x,
+    slot_y = slot_y,
+}

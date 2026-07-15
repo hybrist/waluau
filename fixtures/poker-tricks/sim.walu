@@ -71,6 +71,9 @@ local old_middle = swap_state.middle[0]
 local old_deck_size: i32 = #swap_state.deck
 swap_state:resolve_swap({ 0 }, { 0 })
 assert(not swap_state.swap_open and swap_state.swap_winner == 1 and swap_state.swap_count == 1)
+-- The executed exchange is recorded slot by slot for the presentation.
+assert(#swap_state.swap_hand_indices == 1 and swap_state.swap_hand_indices[0] == 0)
+assert(#swap_state.swap_middle_indices == 1 and swap_state.swap_middle_indices[0] == 0)
 assert(swap_state.player_points == 9 and swap_state.pot == 1)
 assert(swap_state.player_hand[0].rank == old_middle.rank and swap_state.player_hand[0].suit == old_middle.suit)
 assert(swap_state.middle[0].rank == old_hand.rank and swap_state.middle[0].suit == old_hand.suit)
@@ -105,8 +108,11 @@ assert(state.player_points == 10 and state.computer_points == 10 and state.swap_
 for expected_round = FIRST_ROUND, LAST_ROUND do
     assert(state.round == expected_round)
     assert(#state.player_hand == 5 and #state.computer_hand == 5)
+    assert(#state.swap_hand_indices == 0 and #state.swap_middle_indices == 0)
     state:resolve_swap({}, {})
     assert(not state.swap_open)
+    assert(#state.swap_hand_indices == state.swap_count)
+    assert(#state.swap_middle_indices == state.swap_count)
     state:play(0, 1)
     assert(#state.history == expected_round)
     local trick = state.history[expected_round - 1]

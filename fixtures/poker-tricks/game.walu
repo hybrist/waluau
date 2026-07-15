@@ -6,7 +6,7 @@ type Card = { rank: i32, suit: i32 }
 type PairChoice = { first: i32, second: i32, value: i32 }
 type SwapChoice = { hand_indices: {i32}, middle_indices: {i32}, community_value: i32, hand_value: i32 }
 type Trick = { round: i32, middle: {Card}, player_cards: {Card}, computer_cards: {Card}, player_first: i32, player_second: i32, computer_first: i32, computer_second: i32, player_value: i32, computer_value: i32, winner: i32, points: i32, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32 }
-type State = { deck: {Card}, player_hand: {Card}, computer_hand: {Card}, middle: {Card}, history: {Trick}, round: i32, player_points: i32, computer_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32, finished: bool }
+type State = { deck: {Card}, player_hand: {Card}, computer_hand: {Card}, middle: {Card}, history: {Trick}, round: i32, player_points: i32, computer_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool }
 
 local MIN_RANK <const>: i32 = 2
 local MAX_RANK <const>: i32 = 14
@@ -266,12 +266,21 @@ function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): unit
     self.pot = self.player_wager + self.computer_wager
     self.swap_winner = swap_priority(self.player_wager, player_community, self.computer_wager, computer.community_value)
     self.swap_count = 0
+    -- The executed exchange, slot by slot, so the presentation can animate
+    -- exactly which relics and wards traded places (the Arch Mage's picks
+    -- are otherwise invisible outside this module).
+    self.swap_hand_indices = {}
+    self.swap_middle_indices = {}
     if self.swap_winner > 0 then
         exchange(self.player_hand, self.middle, hand_indices, middle_indices)
         self.swap_count = #hand_indices
+        self.swap_hand_indices = hand_indices
+        self.swap_middle_indices = middle_indices
     elseif self.swap_winner < 0 then
         exchange(self.computer_hand, self.middle, computer.hand_indices, computer.middle_indices)
         self.swap_count = #computer.hand_indices
+        self.swap_hand_indices = computer.hand_indices
+        self.swap_middle_indices = computer.middle_indices
     end
     self.swap_open = false
 end
@@ -343,6 +352,8 @@ function State:play(first: i32, second: i32): unit
         self.computer_wager = 0
         self.swap_winner = 0
         self.swap_count = 0
+        self.swap_hand_indices = {}
+        self.swap_middle_indices = {}
     end
 end
 
@@ -369,6 +380,8 @@ function new(): State
         computer_wager = 0,
         swap_winner = 0,
         swap_count = 0,
+        swap_hand_indices = {},
+        swap_middle_indices = {},
         finished = false,
     }
     for _ = 1, 5 do
@@ -400,6 +413,8 @@ function State:reset(): unit
     self.computer_wager = fresh.computer_wager
     self.swap_winner = fresh.swap_winner
     self.swap_count = fresh.swap_count
+    self.swap_hand_indices = fresh.swap_hand_indices
+    self.swap_middle_indices = fresh.swap_middle_indices
     self.finished = fresh.finished
 end
 

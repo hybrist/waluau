@@ -15,6 +15,13 @@ host calls. The game, help, history, and final outcome all render inside one
 960×600 logical canvas that scales to the viewport. Trick results remain on the
 board, where color identifies the winning formation and any decisive kickers.
 
+Cards never simply appear: every relic and ward is dealt off a visible
+face-down pile beside the board — the opening hands, each round's wards, and
+the two replacements both sides draw after a breach. A won feint plays out in
+three beats: the winner's relics rise out of the hand, the displaced wards are
+set aside at the board's edge, and both groups then travel to their final
+slots, flipping face up or face down to match where they land.
+
 ## Controls
 
 - Arrow keys or WASD move focus; up/down switches between relics and wards.
@@ -22,6 +29,7 @@ board, where color identifies the winning formation and any decisive kickers.
 - Enter commits a feint or breach.
 - P passes during the feint phase.
 - H opens the breach ledger, ? opens help, and R restarts.
+- Enter, Space, or Esc skips a running deal or feint animation.
 
 | File | Purpose |
 | --- | --- |
