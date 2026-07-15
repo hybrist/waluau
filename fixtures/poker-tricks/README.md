@@ -1,6 +1,6 @@
 # Arcane Heist fixture
 
-A six-breach, player-versus-Arch-Mage trick-taking game built on the Waluau 2D
+A five-breach, player-versus-Arch-Mage trick-taking game built on the Waluau 2D
 game engine. It preserves Poker Tricks' deck, exchange, wager, hand-ranking,
 computer search, and scoring rules while replacing the casino-table presentation
 with a magical robbery inside an arcane vault.
@@ -9,6 +9,9 @@ The four suits are now the Red, Blue, Black, and Green schools of magic. Cards
 are relics, the shared board is the vault's wards, points are sparks, exchanges
 are feints, and each trick is a breach. Poker categories are presented as magical
 formations such as a bound pair, arcane sequence, and perfect convergence.
+The Arch Mage can commit any valid feint without a spark balance. Its third
+breach win ends the heist, while player wins never end the five-breach run early,
+leaving room to maximize the final spark score.
 
 The browser entry imports only the engine facade and contains no DOM or canvas
 host calls. The game, help, history, and final outcome all render inside one
