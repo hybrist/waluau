@@ -378,10 +378,6 @@ test.describe('DOM Output in Run tab', () => {
       });
 
     await canvas.click();
-    const helpSignature = await signature();
-    await page.keyboard.press('Enter');
-    await expect.poll(signature).not.toBe(helpSignature);
-
     const playSignature = await signature();
     await page.keyboard.press('h');
     await expect.poll(signature).not.toBe(playSignature);

@@ -56,7 +56,7 @@ end
 function reset_run(state: game.State, ui: Ui): unit
     state:reset()
     clear_picks(ui)
-    ui.modal = MODAL_HELP
+    ui.modal = MODAL_NONE
     ui.revealing = false
     ui.reveal_clock = 0.0
     ui.message = "Choose a school relic to begin the breach."
@@ -71,7 +71,7 @@ function install_arcane_heist(): unit
         play_picks = {},
         swap_hand = {},
         swap_wards = {},
-        modal = MODAL_HELP,
+        modal = MODAL_NONE,
         revealing = false,
         reveal_clock = 0.0,
         message = "Choose a school relic to begin the breach.",
