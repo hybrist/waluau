@@ -1,0 +1,84 @@
+-- Browser conformance fixture for backend-neutral Graphics paths. It covers
+-- transformed closed paths, quadratic and cubic curves, multiple subpaths,
+-- and a stroke large enough to cross the renderer's implicit batch flush.
+
+local engine = require("../../engine/browser")
+local graphics_module = require("../../engine/graphics")
+local input_module = require("../../engine/input")
+
+function install_graphics_paths_fixture(): unit
+    local function load(): unit
+    end
+
+    local function update(dt: f64, input: input_module.Input): unit
+    end
+
+    local function draw(graphics: graphics_module.Graphics, alpha: f64): unit
+        graphics:clear("#000000")
+        graphics:set_line_width(2.0)
+
+        -- A closed rectangle stroked after a non-uniform transform.
+        graphics:set_color("#ff4040")
+        graphics:begin_path()
+        graphics:move_to(10.0, 10.0)
+        graphics:line_to(30.0, 10.0)
+        graphics:line_to(30.0, 30.0)
+        graphics:line_to(10.0, 30.0)
+        graphics:close_path()
+        graphics:push()
+        graphics:translate(20.0, 10.0)
+        graphics:scale(2.0, 1.5)
+        graphics:stroke()
+        graphics:pop()
+
+        graphics:set_color("#40ff40")
+        graphics:begin_path()
+        graphics:move_to(20.0, 100.0)
+        graphics:quadratic_curve_to(60.0, 60.0, 100.0, 100.0)
+        graphics:stroke()
+
+        graphics:set_color("#4080ff")
+        graphics:begin_path()
+        graphics:move_to(140.0, 120.0)
+        graphics:cubic_curve_to(160.0, 60.0, 200.0, 60.0, 220.0, 120.0)
+        graphics:stroke()
+
+        -- More than 682 line quads exceed the 4096-vertex batch. The final
+        -- vertical tail verifies stroke continues after the implicit flush.
+        graphics:set_color("#ff40ff")
+        graphics:begin_path()
+        graphics:move_to(10.0, 170.0)
+        for step = 1::i32, 691::i32 do
+            if step % 2 == 0 then
+                graphics:line_to(10.0, 170.0)
+            else
+                graphics:line_to(310.0, 170.0)
+            end
+        end
+        graphics:line_to(310.0, 190.0)
+        graphics:stroke()
+    end
+
+    local function keypressed(key: string): unit
+    end
+
+    local function keyreleased(key: string): unit
+    end
+
+    engine.start({
+        title = "Graphics path conformance",
+        width = 320,
+        height = 200,
+        update_hz = 60.0,
+        max_frame_seconds = 0.25,
+        background = "#000000",
+    }, {
+        load = load,
+        update = update,
+        draw = draw,
+        keypressed = keypressed,
+        keyreleased = keyreleased,
+    })
+end
+
+install_graphics_paths_fixture()

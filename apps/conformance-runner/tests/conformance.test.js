@@ -13,6 +13,7 @@ import {
 import gameEngineSim from '../../../fixtures/game-engine/sim.walu?raw';
 import gameEngineMain from '../../../fixtures/game-engine/main.walu?raw';
 import gameEngineTextAlignment from '../../../fixtures/game-engine/text-alignment.walu?raw';
+import gameEngineGraphicsPaths from '../../../fixtures/game-engine/graphics-paths.walu?raw';
 import gameEngineBrowser from '../../../engine/browser.walu?raw';
 import gameEngineGraphics from '../../../engine/graphics.walu?raw';
 import gameEngineFont from '../../../engine/font.walu?raw';
@@ -849,6 +850,64 @@ describe('browser conformance', () => {
       expect(boundsForColor(pixels, [64, 128, 255])).toEqual(
         { minX: 136, maxX: 158, minY: 113, maxY: 119 },
       );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('strokes transformed, curved, closed, and oversized game-engine paths', async () => {
+    const { root, cleanup } = await compileAndInstantiateWithDom(
+      {
+        '/fixtures/game-engine/graphics-paths.walu': gameEngineGraphicsPaths,
+        '/engine/browser.walu': gameEngineBrowser,
+        '/engine/graphics.walu': gameEngineGraphics,
+        '/engine/font.walu': gameEngineFont,
+        '/engine/input.walu': gameEngineInput,
+        '/engine/time.walu': gameEngineTime,
+      },
+      '/fixtures/game-engine/graphics-paths.walu'
+    );
+
+    try {
+      const canvas = root.querySelector('#walua-game-canvas');
+      expect(canvas).not.toBeNull();
+      const gl = canvas.getContext('webgl2');
+      expect(gl).not.toBeNull();
+
+      const pixelAt = (pixels, x, y) => {
+        const index = ((200 - 1 - y) * 320 + x) * 4;
+        return [pixels[index], pixels[index + 1], pixels[index + 2]];
+      };
+      const hasColorNear = (pixels, x, y, color, radius = 2) => {
+        for (let sampleY = y - radius; sampleY <= y + radius; sampleY += 1) {
+          for (let sampleX = x - radius; sampleX <= x + radius; sampleX += 1) {
+            const sample = pixelAt(pixels, sampleX, sampleY);
+            if (sample.every((channel, index) => Math.abs(channel - color[index]) <= 1)) {
+              return true;
+            }
+          }
+        }
+        return false;
+      };
+      const readFrame = () => {
+        const pixels = new Uint8Array(320 * 200 * 4);
+        gl.readPixels(0, 0, 320, 200, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        return pixels;
+      };
+
+      await expect.poll(
+        () => hasColorNear(readFrame(), 60, 25, [255, 64, 64]),
+        { timeout: 10_000 },
+      ).toBe(true);
+
+      const pixels = readFrame();
+      // All four sides prove close_path and the deferred non-uniform transform.
+      expect(hasColorNear(pixels, 80, 40, [255, 64, 64])).toBe(true);
+      expect(hasColorNear(pixels, 60, 55, [255, 64, 64])).toBe(true);
+      expect(hasColorNear(pixels, 40, 40, [255, 64, 64])).toBe(true);
+      expect(hasColorNear(pixels, 60, 80, [64, 255, 64])).toBe(true);
+      expect(hasColorNear(pixels, 180, 75, [64, 128, 255])).toBe(true);
+      expect(hasColorNear(pixels, 310, 182, [255, 64, 255])).toBe(true);
     } finally {
       cleanup();
     }
