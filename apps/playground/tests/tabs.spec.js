@@ -41,7 +41,7 @@ test.describe('output tabs', () => {
 
   test('Compiler Diagnostics tab shows error details after a failed compile', async ({ page }) => {
     // Switch to a preset that intentionally fails.
-    await page.getByRole('button', { name: 'Mismatch' }).click();
+    await page.getByRole('button', { name: 'Mismatch', exact: true }).click();
     await expect(page.locator('.status-text')).toHaveText('Compilation Failed', {
       timeout: COMPILER_READY_TIMEOUT,
     });
