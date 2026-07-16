@@ -865,12 +865,22 @@ describe('browser conformance', () => {
       throw new Error('generated glue must not reflect on Wasm imports');
     };
     try {
-      const minimal = await compileAndRunGeneratedGlue({
-        '/main.walu': 'function answer(): i32\n    return 42\nend',
-      });
+      const packagedAssets = {
+        'assets/message.txt': { url: './assets/message.fingerprint.txt', type: 'text' },
+      };
+      const minimal = await compileAndRunGeneratedGlue(
+        { '/main.walu': 'function answer(): i32\n    return 42\nend' },
+        '/main.walu',
+        {
+          assetBaseUrl: new URL('./packaged/', window.location.href),
+          assetManifest: packagedAssets,
+        }
+      );
       try {
         expect(minimal.exports.answer()).toBe(42);
         expect(Object.keys(minimal.imports)).toEqual([]);
+        expect(minimal.assetManifest).toBe(packagedAssets);
+        expect(minimal.assetBaseUrl.pathname).toContain('/packaged/');
       } finally {
         minimal.cleanup();
       }
