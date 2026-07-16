@@ -8,8 +8,7 @@ import {
   executeCall,
   classifyWasmModuleError,
   usesDomImports,
-  cleanupDomEventListeners,
-  cancelPendingAnimationFrames,
+  cleanupDomOutput,
 } from '../utils/wasm.js';
 
 export default function useWaluauCompiler({ files, entryFile }) {
@@ -181,8 +180,7 @@ export default function useWaluauCompiler({ files, entryFile }) {
           return;
         }
         if (moduleUsesDomOutput) {
-          cleanupDomEventListeners(domOutputRootRef.current.body);
-          cancelPendingAnimationFrames(domOutputRootRef.current);
+          cleanupDomOutput(domOutputRootRef.current);
           domOutputRootRef.current.body.replaceChildren();
         }
         phase = 'imports';

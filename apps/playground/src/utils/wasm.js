@@ -370,6 +370,34 @@ export function cancelPendingAnimationFrames(documentOrWindow) {
   handles.clear();
 }
 
+export function cleanupDomOutput(doc) {
+  if (!doc) return;
+  cleanupDomEventListeners(doc.body);
+
+  const docRecords = domEventListeners.get(doc);
+  if (docRecords) {
+    for (const { type, listener } of docRecords) {
+      doc.removeEventListener(type, listener);
+    }
+    docRecords.clear();
+    domEventListeners.delete(doc);
+  }
+
+  const win = doc.defaultView;
+  if (win) {
+    const winRecords = domEventListeners.get(win);
+    if (winRecords) {
+      for (const { type, listener } of winRecords) {
+        win.removeEventListener(type, listener);
+      }
+      winRecords.clear();
+      domEventListeners.delete(win);
+    }
+  }
+
+  cancelPendingAnimationFrames(doc);
+}
+
 export function decodeBytesConstantsFromWasm(wasmModule) {
   const section = WebAssembly.Module.customSections(wasmModule, 'waluau.bytc')[0];
   if (!section) return [];
