@@ -26,6 +26,29 @@ type Game = {
     keyreleased: (string) -> unit
 }
 
+-- Canvas dimensions are device pixels, while CSS dimensions and game
+-- coordinates are logical pixels. Keeping those spaces separate avoids the
+-- browser upscaling a low-resolution WebGL buffer on high-density displays.
+-- DOM test hosts do not perform layout, so fall back to the configured logical
+-- size when clientWidth/clientHeight are unavailable.
+function sync_canvas_size(canvas: HTMLCanvasElement, fallback_width: u32, fallback_height: u32): bool
+    local css_width: i32 = canvas.clientWidth
+    local css_height: i32 = canvas.clientHeight
+    if css_width <= 0 then css_width = fallback_width::i32 end
+    if css_height <= 0 then css_height = fallback_height::i32 end
+
+    local pixel_ratio: f64 = window.devicePixelRatio
+    if pixel_ratio <= 0.0 then pixel_ratio = 1.0 end
+    local pixel_width: u32 = math.floor((css_width::f64) * pixel_ratio + 0.5)::u32
+    local pixel_height: u32 = math.floor((css_height::f64) * pixel_ratio + 0.5)::u32
+    local changed: bool = canvas.width ~= pixel_width or canvas.height ~= pixel_height
+    if changed then
+        canvas.width = pixel_width
+        canvas.height = pixel_height
+    end
+    return changed
+end
+
 function start(config: Config, game: Game): unit
     local document: Document = window.document
     local body: HTMLElement = document.body
@@ -52,9 +75,12 @@ function start(config: Config, game: Game): unit
     root:append_child(element)
 
     if HTMLCanvasElement(canvas) = element then
-        canvas.width = config.width
-        canvas.height = config.height
-        local style: CSSStyleProperties = canvas.style
+        -- Give the pattern-bound handle an ordinary local before capturing it
+        -- in the animation-frame closure.
+        local game_canvas: HTMLCanvasElement = canvas
+        game_canvas.width = config.width
+        game_canvas.height = config.height
+        local style: CSSStyleProperties = game_canvas.style
         style:setProperty("width", "min(" .. tostring(config.width) .. "px, calc(100vw - 16px))")
         style:setProperty("height", "auto")
         style:setProperty("max-height", "calc(100vh - 16px)")
@@ -63,7 +89,9 @@ function start(config: Config, game: Game): unit
         style:setProperty("background-color", config.background)
         style:setProperty("image-rendering", "pixelated")
 
-        local maybe_gl: WebGL2RenderingContext? = canvas:get_context_webgl2()
+        sync_canvas_size(game_canvas, config.width, config.height)
+
+        local maybe_gl: WebGL2RenderingContext? = game_canvas:get_context_webgl2()
         assert(maybe_gl ~= nil)
         local gl: WebGL2RenderingContext = maybe_gl::WebGL2RenderingContext
         local graphics: graphics_module.Graphics = graphics_module.new(gl, config.width::f64, config.height::f64)
@@ -91,6 +119,9 @@ function start(config: Config, game: Game): unit
 
         game.load()
         local function frame(timestamp_ms: f64): unit
+            if sync_canvas_size(game_canvas, config.width, config.height) then
+                graphics:resize()
+            end
             local steps: i32 = clock:advance(timestamp_ms)
             for _ = 1, steps do
                 game.update(clock.step, input)

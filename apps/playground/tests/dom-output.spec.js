@@ -362,8 +362,12 @@ test.describe('DOM Output in Run tab', () => {
     const outputFrame = page.frameLocator('.dom-output-frame');
     await expect(outputFrame.locator('h1')).toHaveText('Arcane Heist');
     const canvas = outputFrame.locator('canvas#walua-game-canvas');
-    await expect(canvas).toHaveJSProperty('width', 960);
-    await expect(canvas).toHaveJSProperty('height', 600);
+    await expect.poll(() =>
+      canvas.evaluate((node) => ({
+        widthMatches: node.width === Math.round(node.clientWidth * window.devicePixelRatio),
+        heightMatches: node.height === Math.round(node.clientHeight * window.devicePixelRatio),
+      })),
+    ).toEqual({ widthMatches: true, heightMatches: true });
 
     const signature = () =>
       canvas.evaluate((node) => {
