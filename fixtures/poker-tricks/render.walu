@@ -47,11 +47,13 @@ local FAN_TILT <const>: f64 = 0.075
 local FAN_DROP <const>: f64 = 2.8
 local FAN_CENTER_X <const>: f64 = 480.0
 local FAN_CENTER_Y <const>: f64 = 509.0
--- How far the rest of the fan parts from the focused relic. Relics keep their
--- dealt stacking order, so the focused one is only as visible as the gap its
--- neighbours leave: FAN_PITCH + FAN_PART must clear CARD_W, or the relic to the
--- right would clip the focus edge of the very relic the cursor is on.
-local FAN_PART <const>: f64 = 34.0
+-- How far the fan slides open around the focused relic, in the same steps as
+-- everything else here — about a quarter of the gap to its neighbour. This is
+-- deliberately short of the ~0.41 steps it would take for FAN_PITCH to clear
+-- CARD_W: relics keep their dealt stacking order, so the focused one still
+-- tucks under the relic to its right, and the parting reads as the fan
+-- breathing rather than a card climbing out of it.
+local FAN_PART <const>: f64 = 0.23
 -- A focus of FAN_CLOSED — one past the last of the five relics — closes the
 -- fan, leaving every relic at its resting slot. Focus only exists while the
 -- cursor can actually move, so cards in flight and a resolving breach both draw
@@ -94,13 +96,27 @@ type Anim = {
     dest_index: i32
 }
 
--- Steps from the middle relic, negative to its left.
-function hand_step(index: i32): f64
-    return (index::f64) - FAN_MIDDLE
+-- Where a relic sits along the fan: steps from the middle relic, negative to
+-- its left, plus however far the parting has pushed it. This one number is the
+-- fan's only degree of freedom — slide, dip, and tilt all read off it — so a
+-- parting relic travels along the arc the fan already describes instead of
+-- skidding sideways out of the curve.
+function hand_step(index: i32, part: f64): f64
+    return (index::f64) - FAN_MIDDLE + part
 end
 
-function hand_angle(index: i32): f64
-    return hand_step(index) * FAN_TILT
+function hand_angle(index: i32, part: f64): f64
+    return hand_step(index, part) * FAN_TILT
+end
+
+-- Top-left of a relic's card box, in its own tilted frame.
+function hand_x(index: i32, part: f64): f64
+    return FAN_CENTER_X + hand_step(index, part) * FAN_PITCH - CARD_W * 0.5
+end
+
+function hand_y(index: i32, part: f64): f64
+    local step: f64 = hand_step(index, part)
+    return FAN_CENTER_Y + step * step * FAN_DROP - CARD_H * 0.5
 end
 
 -- Where a relic's parting offset is headed: the fan opens around the focused
@@ -115,16 +131,6 @@ function hand_part_target(index: i32, focus: i32): f64
     return 0.0
 end
 
--- Top-left of a relic's card box in its own tilted frame, parted by `part`.
-function hand_x(index: i32, part: f64): f64
-    return FAN_CENTER_X + hand_step(index) * FAN_PITCH + part - CARD_W * 0.5
-end
-
-function hand_y(index: i32): f64
-    local step: f64 = hand_step(index)
-    return FAN_CENTER_Y + step * step * FAN_DROP - CARD_H * 0.5
-end
-
 function slot_x(kind: i32, index: i32): f64
     if kind == SLOT_PLAYER then return hand_x(index, 0.0) end
     if kind == SLOT_COMPUTER then return 190.0 + (index::f64) * 116.0 end
@@ -134,7 +140,7 @@ function slot_x(kind: i32, index: i32): f64
 end
 
 function slot_y(kind: i32, index: i32): f64
-    if kind == SLOT_PLAYER then return hand_y(index) end
+    if kind == SLOT_PLAYER then return hand_y(index, 0.0) end
     if kind == SLOT_COMPUTER then return 116.0 end
     if kind == SLOT_ASIDE then return 292.0 + (index::f64) * 12.0 end
     return 292.0
@@ -322,8 +328,8 @@ end
 -- the card.
 function draw_hand_card(graphics: Graphics, card: game.Card, index: i32, part: f64, selected: bool, focused: bool, colored: bool): unit
     graphics:push()
-    graphics:translate(hand_x(index, part) + CARD_W * 0.5, hand_y(index) + CARD_H * 0.5)
-    graphics:rotate(hand_angle(index))
+    graphics:translate(hand_x(index, part) + CARD_W * 0.5, hand_y(index, part) + CARD_H * 0.5)
+    graphics:rotate(hand_angle(index, part))
     draw_card(graphics, card, -(CARD_W * 0.5), -(CARD_H * 0.5), selected, focused, false, colored)
     graphics:pop()
 end
@@ -669,5 +675,6 @@ return {
     slot_y = slot_y,
     hand_angle = hand_angle,
     hand_x = hand_x,
+    hand_y = hand_y,
     hand_part_target = hand_part_target,
 }

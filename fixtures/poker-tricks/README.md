@@ -27,8 +27,9 @@ slots, flipping face up or face down to match where they land.
 
 The player's relics are held as an overlapping, tilted fan. Relics keep the
 order they were dealt in; the fan slides open around whichever one the cursor
-holds, so the focused relic is cleared by the gap its neighbours leave rather
-than by being lifted in front of them. Relics turn into and out of that tilt as
+holds, giving it room rather than lifting it in front of its neighbours. Parting
+moves a relic along the fan's arc, so it tilts and dips as it goes instead of
+skidding sideways out of the curve, and relics turn into and out of that tilt as
 they are dealt or spent. The Arch Mage's sealed row and the board's wards stay
 flat.
 
