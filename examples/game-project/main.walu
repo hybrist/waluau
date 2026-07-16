@@ -1,0 +1,38 @@
+-- Minimal standalone project using only the embedded stable engine package.
+local engine = require("waluau:engine")
+
+local x: f64 = 24.0
+
+local function load(): unit
+end
+
+local function update(dt: f64, input: engine.Input): unit
+    if input:is_down("ArrowRight") then
+        x = x + 60.0 * dt
+    end
+end
+
+local function draw(graphics: engine.Graphics, alpha: f64): unit
+    graphics:set_color("#38bdf8")
+    graphics:fill_rectangle(x, 24.0, 32.0, 32.0)
+    graphics:set_color("#f8fafc")
+    graphics:print("WALUA ENGINE " .. engine.VERSION, 16.0, 80.0)
+end
+
+local function keypressed(key: string): unit
+end
+
+engine.start({
+    title = "Waluau Engine Package",
+    width = 320,
+    height = 180,
+    update_hz = 60.0,
+    max_frame_seconds = 0.25,
+    background = "#0f172a",
+}, {
+    load = load,
+    update = update,
+    draw = draw,
+    keypressed = keypressed,
+    keyreleased = nil,
+})

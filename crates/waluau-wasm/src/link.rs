@@ -7,6 +7,7 @@ const DOM_WINDOW_REQUIRE: &str = "dom:window";
 const DOM_WINDOW_FUNCTION: &str = "dom_window";
 const DOM_WINDOW_TYPE: &str = "Window";
 const TFJS_REQUIRE: &str = "tfjs";
+const ENGINE_REQUIRE: &str = "waluau:engine";
 
 pub struct LoadedModule {
     pub program: Program,
@@ -171,6 +172,11 @@ impl<'a> Loader<'a> {
         let mut requires = HashMap::new();
         let mut virtual_requires = HashSet::new();
         for raw in raw_paths {
+            if engine_module_name(&raw).is_some() {
+                let target = self.load_engine(&raw)?;
+                requires.insert(raw, target);
+                continue;
+            }
             if raw == DOM_WINDOW_REQUIRE {
                 self.requires_dom_externs = true;
                 virtual_requires.insert(raw);
@@ -185,6 +191,9 @@ impl<'a> Loader<'a> {
                 return Err(unsupported_dom_require(&raw));
             }
             if is_unsupported_virtual_require(&raw) {
+                return Err(unsupported_virtual_require(&raw));
+            }
+            if raw.starts_with("waluau:") {
                 return Err(unsupported_virtual_require(&raw));
             }
             if requires.contains_key(&raw) {
@@ -208,6 +217,73 @@ impl<'a> Loader<'a> {
             virtual_requires,
         });
         self.by_path.insert(path.to_string(), id);
+        Ok(id)
+    }
+
+    fn load_engine(&mut self, specifier: &str) -> Result<usize, String> {
+        let module =
+            engine_module_name(specifier).ok_or_else(|| unsupported_virtual_require(specifier))?;
+        let key = format!("/@waluau/engine/v1/{module}.walu");
+        if let Some(&id) = self.by_path.get(&key) {
+            return Ok(id);
+        }
+        if self.stack.iter().any(|entry| entry == &key) {
+            return Err(format!(
+                "circular module import: {}",
+                self.stack
+                    .iter()
+                    .chain(std::iter::once(&key))
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" -> ")
+            ));
+        }
+
+        let source = engine_module_source(module).expect("validated engine module name");
+        let display_path = format!("package:waluau-engine/v1/{module}.walu");
+        let program = waluau_parser::parse_with_path(source, &display_path)
+            .map_err(|error| format!("in module \"{display_path}\": {error}"))?;
+        let mut raw_paths = Vec::new();
+        collect_require_paths(&program, &mut raw_paths);
+
+        self.stack.push(key.clone());
+        let mut requires = HashMap::new();
+        let mut virtual_requires = HashSet::new();
+        for raw in raw_paths {
+            if engine_module_name(&raw).is_some() {
+                let target = self.load_engine(&raw)?;
+                requires.insert(raw, target);
+                continue;
+            }
+            if raw.starts_with("./") {
+                let target_specifier = engine_relative_specifier(&raw)?;
+                let target = self.load_engine(&target_specifier)?;
+                requires.insert(raw, target);
+                continue;
+            }
+            if raw == DOM_WINDOW_REQUIRE {
+                self.requires_dom_externs = true;
+                virtual_requires.insert(raw);
+                continue;
+            }
+            if raw == TFJS_REQUIRE {
+                self.requires_tfjs_externs = true;
+                virtual_requires.insert(raw);
+                continue;
+            }
+            return Err(format!(
+                "engine package module '{module}' has unsupported require \"{raw}\""
+            ));
+        }
+        self.stack.pop();
+
+        let id = self.modules.len();
+        self.modules.push(LoadedModule {
+            program,
+            requires,
+            virtual_requires,
+        });
+        self.by_path.insert(key, id);
         Ok(id)
     }
 
@@ -272,8 +348,46 @@ fn is_unsupported_virtual_require(raw: &str) -> bool {
 
 fn unsupported_virtual_require(raw: &str) -> String {
     format!(
-        "unsupported virtual module \"{raw}\"; supported specifiers: \"{DOM_WINDOW_REQUIRE}\", \"{TFJS_REQUIRE}\""
+        "unsupported virtual module \"{raw}\"; supported specifiers: \"{DOM_WINDOW_REQUIRE}\", \"{TFJS_REQUIRE}\", \"{ENGINE_REQUIRE}\""
     )
+}
+
+fn engine_module_name(specifier: &str) -> Option<&str> {
+    match specifier {
+        "waluau:engine" | "waluau:engine/v1" => Some("init"),
+        "waluau:engine/browser" | "waluau:engine/v1/browser" => Some("browser"),
+        "waluau:engine/input" | "waluau:engine/v1/input" => Some("input"),
+        "waluau:engine/graphics" | "waluau:engine/v1/graphics" => Some("graphics"),
+        "waluau:engine/time" | "waluau:engine/v1/time" => Some("time"),
+        "waluau:engine/font" | "waluau:engine/v1/font" => Some("font"),
+        _ => None,
+    }
+}
+
+fn engine_relative_specifier(raw: &str) -> Result<String, String> {
+    let module = raw
+        .strip_prefix("./")
+        .and_then(|path| path.strip_suffix(".walu").or(Some(path)))
+        .filter(|path| !path.is_empty() && !path.contains('/'))
+        .ok_or_else(|| format!("invalid engine package require \"{raw}\""))?;
+    let specifier = format!("waluau:engine/v1/{module}");
+    if engine_module_name(&specifier).is_some() {
+        Ok(specifier)
+    } else {
+        Err(format!("unknown engine package module \"{raw}\""))
+    }
+}
+
+fn engine_module_source(module: &str) -> Option<&'static str> {
+    match module {
+        "init" => Some(include_str!("../../../engine/init.walu")),
+        "browser" => Some(include_str!("../../../engine/browser.walu")),
+        "input" => Some(include_str!("../../../engine/input.walu")),
+        "graphics" => Some(include_str!("../../../engine/graphics.walu")),
+        "time" => Some(include_str!("../../../engine/time.walu")),
+        "font" => Some(include_str!("../../../engine/font.walu")),
+        _ => None,
+    }
 }
 
 fn module_prefix(id: usize, entry_id: usize) -> String {
@@ -664,15 +778,15 @@ fn module_function_names(functions: &[Function], export: &Option<Expr>) -> HashS
     names
 }
 
-/// Maps a module's require-binding names to the (prefix, type-alias names)
-/// of the module each binding resolves to, so `game.State` in a type
-/// position can be rewritten to the imported module's prefixed alias.
+/// Maps each require binding's exported type names to their canonical linked
+/// declarations, preserving identity across aggregate-module re-exports.
 fn module_type_namespaces(
     modules: &[LoadedModule],
     module: &LoadedModule,
     entry_id: usize,
-) -> HashMap<String, (String, HashSet<String>)> {
+) -> HashMap<String, HashMap<String, String>> {
     let mut type_namespaces = HashMap::new();
+    let mut cache = HashMap::new();
     for stmt in &module.program.top_level {
         let Stmt::Let {
             name,
@@ -685,15 +799,73 @@ fn module_type_namespaces(
         let Some(&target_id) = module.requires.get(path) else {
             continue;
         };
-        let types: HashSet<String> = modules[target_id]
-            .program
-            .type_declarations
-            .iter()
-            .map(|decl| decl.name.clone())
-            .collect();
-        type_namespaces.insert(name.clone(), (module_prefix(target_id, entry_id), types));
+        let types = exported_type_names(modules, target_id, entry_id, &mut cache);
+        type_namespaces.insert(name.clone(), types);
     }
     type_namespaces
+}
+
+fn exported_type_names(
+    modules: &[LoadedModule],
+    module_id: usize,
+    entry_id: usize,
+    cache: &mut HashMap<usize, HashMap<String, String>>,
+) -> HashMap<String, String> {
+    if let Some(types) = cache.get(&module_id) {
+        return types.clone();
+    }
+
+    let module = &modules[module_id];
+    let prefix = module_prefix(module_id, entry_id);
+    let mut types = module
+        .program
+        .type_declarations
+        .iter()
+        .map(|decl| (decl.name.clone(), format!("{prefix}{}", decl.name)))
+        .collect::<HashMap<_, _>>();
+    cache.insert(module_id, types.clone());
+
+    let require_bindings = module
+        .program
+        .top_level
+        .iter()
+        .filter_map(|stmt| {
+            let Stmt::Let {
+                name,
+                value: Expr::Require(path, _),
+                ..
+            } = stmt
+            else {
+                return None;
+            };
+            module
+                .requires
+                .get(path)
+                .map(|target| (name.as_str(), *target))
+        })
+        .collect::<HashMap<_, _>>();
+
+    for declaration in &module.program.type_declarations {
+        let Type::Named { name, type_args } = &declaration.ty else {
+            continue;
+        };
+        if !type_args.is_empty() {
+            continue;
+        }
+        let Some((namespace, member)) = name.split_once('.') else {
+            continue;
+        };
+        let Some(&target_id) = require_bindings.get(namespace) else {
+            continue;
+        };
+        let target_types = exported_type_names(modules, target_id, entry_id, cache);
+        if let Some(canonical) = target_types.get(member) {
+            types.insert(declaration.name.clone(), canonical.clone());
+        }
+    }
+
+    cache.insert(module_id, types.clone());
+    types
 }
 
 fn process_reexport_bindings(
@@ -912,9 +1084,8 @@ struct Rewriter<'a> {
     prefix: &'a str,
     func_names: &'a HashSet<String>,
     type_names: &'a HashSet<String>,
-    /// Require-binding name -> (target module prefix, target's type aliases),
-    /// for resolving `binding.Type` references in type positions.
-    type_namespaces: &'a HashMap<String, (String, HashSet<String>)>,
+    /// Require-binding name -> exported type name -> canonical linked name.
+    type_namespaces: &'a HashMap<String, HashMap<String, String>>,
     imports: &'a HashMap<String, ResolvedImport>,
     re_exports: HashMap<String, String>,
     namespaces: HashMap<String, ModuleNamespace>,
@@ -1122,10 +1293,12 @@ impl Rewriter<'_> {
                     // binding; resolve it to the imported module's prefixed
                     // declaration. Unknown bindings or members are left
                     // as-is so type resolution reports the dotted name.
-                    if let Some((target_prefix, types)) = self.type_namespaces.get(namespace) {
-                        if types.contains(member) {
-                            *name = format!("{target_prefix}{member}");
-                        }
+                    if let Some(canonical) = self
+                        .type_namespaces
+                        .get(namespace)
+                        .and_then(|types| types.get(member))
+                    {
+                        *name = canonical.clone();
                     }
                 } else if self.type_names.contains(name) {
                     *name = format!("{}{name}", self.prefix);
