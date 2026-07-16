@@ -16,6 +16,15 @@ local MODAL_FINAL <const>: i32 = 4
 local FLIP_SECONDS <const>: f64 = 0.55
 local TOTAL_ROUNDS <const>: i32 = 5
 
+-- The three outcomes a resolved breach can have. The help legend draws the
+-- same orbs from these, so a colour only ever means one thing on screen.
+local ORB_ROBBERS_EDGE <const>: string = "#cffafe"
+local ORB_ROBBERS_FILL <const>: string = "#22d3ee"
+local ORB_ARCH_MAGE_EDGE <const>: string = "#fecaca"
+local ORB_ARCH_MAGE_FILL <const>: string = "#f87171"
+local ORB_STALEMATE_EDGE <const>: string = "#e4e4e7"
+local ORB_STALEMATE_FILL <const>: string = "#a1a1aa"
+
 -- Board anchors card animations travel between. main.walu mirrors these ids
 -- when it builds animations, the same way it mirrors the modal ids above.
 local SLOT_PLAYER <const>: i32 = 0
@@ -324,30 +333,40 @@ function draw_backdrop(graphics: Graphics): unit
     for x = 0, 960, 48 do graphics:line(x::f64, 0.0, WIDTH - (x::f64), HEIGHT) end
 end
 
+function draw_orb(graphics: Graphics, x: f64, y: f64, edge: string, fill: string, played: bool): unit
+    graphics:set_color(edge)
+    graphics:fill_circle(x, y, 10.0)
+    graphics:set_color(fill)
+    graphics:fill_circle(x, y, 7.0)
+    if played then
+        graphics:set_color("#ffffff")
+        graphics:fill_circle(x - 2.5, y - 2.5, 1.5)
+    end
+end
+
 function draw_round_orbs(graphics: Graphics, state: game.State): unit
     for round = 0::i32, TOTAL_ROUNDS - 1 do
         local x: f64 = 412.0 + (round::f64) * 34.0
         local edge: string = "#52525b"
         local fill: string = "#17171c"
-        if round < #state.history then
-            if state.history[round].winner > 0 then
-                edge = "#cffafe"
-                fill = "#22d3ee"
+        local played: bool = round < #state.history
+        if played then
+            local winner: i32 = state.history[round].winner
+            if winner > 0 then
+                edge = ORB_ROBBERS_EDGE
+                fill = ORB_ROBBERS_FILL
+            elseif winner < 0 then
+                edge = ORB_ARCH_MAGE_EDGE
+                fill = ORB_ARCH_MAGE_FILL
             else
-                -- A cancelled breach did not defeat the ward, so it shares
-                -- the lost state rather than introducing a fourth orb state.
-                edge = "#fecaca"
-                fill = "#f87171"
+                -- A stalemate is not a ward hold: it does not count toward the
+                -- Arch Mage's three wins, so it must not wear the lost colour
+                -- or the run looks like it should have ended early.
+                edge = ORB_STALEMATE_EDGE
+                fill = ORB_STALEMATE_FILL
             end
         end
-        graphics:set_color(edge)
-        graphics:fill_circle(x, 52.0, 10.0)
-        graphics:set_color(fill)
-        graphics:fill_circle(x, 52.0, 7.0)
-        if round < #state.history then
-            graphics:set_color("#ffffff")
-            graphics:fill_circle(x - 2.5, 49.5, 1.5)
-        end
+        draw_orb(graphics, x, 52.0, edge, fill, played)
     end
 end
 
@@ -482,7 +501,9 @@ function modal_shell(graphics: Graphics, title: string, subtitle: string): unit
 end
 
 function draw_help(graphics: Graphics): unit
-    modal_shell(graphics, "THE JOB", "SURVIVE FIVE BREACHES. THREE WARD HOLDS END THE HEIST")
+    -- "Three ward holds" read as though a stalemate counted; only breaches the
+    -- Arch Mage actually wins end the run early.
+    modal_shell(graphics, "THE JOB", "SURVIVE FIVE BREACHES. THREE ARCH MAGE WINS END THE HEIST")
     text(graphics, "FOUR SCHOOLS", 126.0, 192.0, 14, "#f8fafc")
     text(graphics, "RED MAGES  BLUE MAGES  BLACK MAGES  GREEN MAGES", 126.0, 220.0, 12, "#b5b5bd")
     text(graphics, "1. FEINT", 126.0, 270.0, 16, "#67e8f9")
@@ -491,6 +512,16 @@ function draw_help(graphics: Graphics): unit
     text(graphics, "2. BREACH", 126.0, 364.0, 16, "#67e8f9")
     text(graphics, "BIND 2 RELICS. THE STRONGEST FIVE-SIGIL FORMATION WINS.", 126.0, 390.0, 11, "#d4d4d8")
     text(graphics, "LATER BREACHES ARE WORTH MORE SPARKS.", 126.0, 412.0, 11, "#d4d4d8")
+    -- Names match the ledger's rows, so a silver orb and a STALEMATE line are
+    -- recognisably the same outcome.
+    text(graphics, "EACH ORB", 126.0, 444.0, 11, "#f8fafc")
+    draw_orb(graphics, 225.0, 440.0, ORB_ROBBERS_EDGE, ORB_ROBBERS_FILL, true)
+    text(graphics, "ROBBERS", 240.0, 444.0, 11, "#d4d4d8")
+    draw_orb(graphics, 330.0, 440.0, ORB_ARCH_MAGE_EDGE, ORB_ARCH_MAGE_FILL, true)
+    text(graphics, "ARCH MAGE", 345.0, 444.0, 11, "#d4d4d8")
+    draw_orb(graphics, 450.0, 440.0, ORB_STALEMATE_EDGE, ORB_STALEMATE_FILL, true)
+    text(graphics, "STALEMATE", 465.0, 444.0, 11, "#d4d4d8")
+    text(graphics, "STALEMATES COUNT FOR NEITHER SIDE.", 570.0, 444.0, 11, "#8a8a92")
     text(graphics, "ARROWS MOVE   SPACE BIND   ENTER COMMIT   H HISTORY", 126.0, 472.0, 11, "#fbbf24")
     text(graphics, "PRESS ENTER TO ENTER THE VAULT", 126.0, 515.0, 12, "#f8fafc")
 end
