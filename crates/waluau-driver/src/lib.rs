@@ -690,6 +690,12 @@ mod tests {
     }
 
     #[test]
+    fn compiles_2d_game_engine_resource_services_contract() {
+        super::compile_file(&fixture_path("game-engine/resources.walu"))
+            .expect("resource, audio and save-data contract should compile");
+    }
+
+    #[test]
     fn compiles_snake_game_engine_fixture() {
         super::compile_file(&fixture_path("snake/main.walu"))
             .expect("Snake game engine fixture should compile");

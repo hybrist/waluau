@@ -65,6 +65,70 @@ DOM types, canvas contexts, event listeners, or animation frames.
 [`fixtures/game-engine/sim.walu`](../fixtures/game-engine/sim.walu) runs the
 engine clock and input state without a browser.
 
+## Resource, audio, and save-data services
+
+Games import [`resources.walu`](resources.walu), [`audio.walu`](audio.walu),
+and [`save.walu`](save.walu); none of those modules expose DOM objects. Loads
+run inside an ordinary Waluau coroutine and return a structured result:
+
+```walu
+local resources = require("../../engine/resources")
+
+local co = coroutine.create(function(): i32
+    local path: string = "/assets/level.txt"
+    local handle: i32 = coroutine.await_promise(resources.load_text(path))::i32
+    local result: resources.LoadResult = resources.finish_text(handle, path)
+    if result.ok then
+        print(resources.text(result.resource))
+        resources.release(result.resource)
+    else
+        print(result.error.code .. ": " .. result.error.message)
+    end
+    return 0
+end)
+coroutine.resume(co)
+```
+
+Each load has an explicit request/finish pair. `load_*` returns the host
+promise; the owning coroutine awaits its integer handle, then `finish_*` copies
+readiness or failure into Waluau records. Keeping the suspension in the caller
+is a temporary language/runtime constraint: module-local generic Promise aliases
+in host declarations and transitive awaits that preserve aggregate caller
+locals are tracked as compiler follow-ups. The service ABI itself remains
+Promise-based and does not change when those wrappers become expressible.
+
+Packaged assets and save data are deliberately separate:
+
+- `resources.load_text/load_bytes/load_image/load_font` request validated,
+  read-only project paths; their matching `finish_*` functions produce a
+  `LoadResult`. Browser loads use `fetch`; image and font handles do not become
+  ready until decoding succeeds.
+- `audio.load_sound` fully downloads and decodes an effect. `load_stream`
+  readies a streaming media source. `play` returns `false` when playback cannot
+  start, so browsers may retry from a user-input callback.
+- `save.read_*/write_*/delete` use logical slot names in a versioned,
+  per-game namespace. They are asynchronous even though the browser adapter
+  uses local storage, preserving the API for future native atomic file I/O.
+
+Host promises always resolve to either a ready handle or a structured failure;
+raw fetch, decode, storage, and device exceptions do not cross into game code.
+Stable error codes currently include `invalid_path`, `invalid_key`,
+`not_found`, `http_error`, `decode_failed`, `unavailable`,
+`permission_denied`, `storage_full`, `storage_failed`, and `wrong_type`.
+
+Every successful load owns one handle. Call `resources.release` when it is no
+longer needed; release is idempotent and closes image objects, unregisters font
+faces, stops decoded sources, and detaches streams. This first slice has no
+implicit cache. [`fixtures/game-engine/resources.walu`](../fixtures/game-engine/resources.walu)
+is the backend-neutral contract sample for image/font/audio readiness, safe
+failure, and save reload behavior.
+
+The browser host accepts already-served project paths. A distributable manifest
+and fingerprinting pipeline remains tracked separately, as do a native adapter
+and the GPU texture/glyph integration required to draw loaded image/font
+handles. Until the latter exists, games retain their procedural rendering
+fallbacks.
+
 ## Intended API surface
 
 The long-term public surface should remain small and subsystem-oriented:
@@ -93,11 +157,11 @@ Reaching LÖVE-like usability requires these architectural capabilities:
 | Area | Waluau/language requirement | Platform/runtime requirement |
 | --- | --- | --- |
 | Distribution | Stable package/virtual-module imports instead of repository-relative paths; API versioning | Generated loader/glue and a standard game project/build layout |
-| Resources | General resource handles, nullable callbacks, ergonomic byte buffers and host-array transfer | Async image/font/audio decoding, caching, lifetime management and failure reporting |
+| Resources | Stable package manifests and optional readiness callbacks | Browser async text/bytes/image/font handles, explicit lifetime and structured failures; production packaging and caching remain |
 | GPU graphics | Typed buffers, numeric/vector data, shader and uniform-friendly APIs | WebGL/WebGPU or native GPU backend, batching, render targets, shader compilation and capability discovery |
 | Input | Extensible event/value representation without a closed hard-coded record | Keyboard normalization, pointer/touch/gamepad polling, focus and fullscreen handling |
-| Audio | Stable opaque handles and callbacks/promises for asynchronous readiness | Web Audio/native mixer, streaming, buses, effects and device lifecycle |
-| Files | Byte/string I/O results and structured errors | Packaged assets, browser fetch/storage, desktop paths and save-data policy |
+| Audio | Optional readiness callbacks and richer source state | Browser decoded effects and streamed music; native mixer, buses, effects and device lifecycle remain |
+| Files | Stable project/package layout | Browser packaged fetch plus namespaced text/byte saves; desktop paths and atomic native save adapter remain |
 | Tooling | Source locations and protected error propagation across host callbacks | Project runner, asset pipeline, hot reload, debugger/profiler and distributable packaging |
 | Performance | Predictable allocation, reusable buffers, broader numeric/vector operations | Batched submission, off-main-thread work where available, frame/memory profiling |
 

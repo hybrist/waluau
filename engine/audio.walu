@@ -1,0 +1,59 @@
+-- Backend-neutral decoded and streaming audio resources. Loading is safe to
+-- start before a browser user gesture; play() reports whether playback could
+-- be started, allowing a game to retry from its next input callback.
+
+local resources = require("./resources")
+
+declare function game_audio_load_sound(path: string): extern
+declare function game_audio_load_stream(path: string): extern
+declare function game_audio_play(handle: i32, looped: bool, volume: f64): bool
+declare function game_audio_pause(handle: i32): unit
+declare function game_audio_stop(handle: i32): unit
+declare function game_audio_is_playing(handle: i32): bool
+
+function load_sound(path: string): extern
+    return game_audio_load_sound(path)
+end
+
+function finish_sound(handle: i32, path: string): resources.LoadResult
+    return resources.from_handle(handle, "sound", path)
+end
+
+function load_stream(path: string): extern
+    return game_audio_load_stream(path)
+end
+
+function finish_stream(handle: i32, path: string): resources.LoadResult
+    return resources.from_handle(handle, "stream", path)
+end
+
+function play(resource: resources.Resource, looped: bool, volume: f64): bool
+    assert(resource.kind == "sound" or resource.kind == "stream")
+    return game_audio_play(resource.handle, looped, volume)
+end
+
+function pause(resource: resources.Resource): unit
+    assert(resource.kind == "stream")
+    game_audio_pause(resource.handle)
+end
+
+function stop(resource: resources.Resource): unit
+    assert(resource.kind == "sound" or resource.kind == "stream")
+    game_audio_stop(resource.handle)
+end
+
+function is_playing(resource: resources.Resource): bool
+    assert(resource.kind == "sound" or resource.kind == "stream")
+    return game_audio_is_playing(resource.handle)
+end
+
+return {
+    load_sound = load_sound,
+    finish_sound = finish_sound,
+    load_stream = load_stream,
+    finish_stream = finish_stream,
+    play = play,
+    pause = pause,
+    stop = stop,
+    is_playing = is_playing,
+}

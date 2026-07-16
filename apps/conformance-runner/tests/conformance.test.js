@@ -19,6 +19,10 @@ import gameEngineGraphics from '../../../engine/graphics.walu?raw';
 import gameEngineFont from '../../../engine/font.walu?raw';
 import gameEngineInput from '../../../engine/input.walu?raw';
 import gameEngineTime from '../../../engine/time.walu?raw';
+import gameEngineResources from '../../../engine/resources.walu?raw';
+import gameEngineAudio from '../../../engine/audio.walu?raw';
+import gameEngineSave from '../../../engine/save.walu?raw';
+import gameEngineResourceSample from '../../../fixtures/game-engine/resources.walu?raw';
 import arcaneHeistSim from '../../../fixtures/poker-tricks/sim.walu?raw';
 import arcaneHeistGame from '../../../fixtures/poker-tricks/game.walu?raw';
 
@@ -943,6 +947,49 @@ describe('browser conformance', () => {
       },
       '/fixtures/game-engine/sim.walu'
     );
+  });
+
+  it('runs the backend-neutral resource, audio and save-data contract sample', async () => {
+    let completed = 0;
+    const asyncErrors = [];
+    await compileAndInstantiate(
+      {
+        '/fixtures/game-engine/resources.walu': gameEngineResourceSample,
+        '/engine/resources.walu': gameEngineResources,
+        '/engine/audio.walu': gameEngineAudio,
+        '/engine/save.walu': gameEngineSave,
+      },
+      '/fixtures/game-engine/resources.walu',
+      {
+        hostImports: {
+          game_resource_load_text: (path) => Promise.resolve(path.includes('missing') ? 7 : 1),
+          game_resource_load_bytes: () => Promise.resolve(2),
+          game_resource_load_image: () => Promise.resolve(3),
+          game_resource_load_font: () => Promise.resolve(4),
+          game_audio_load_sound: () => Promise.resolve(5),
+          game_audio_load_stream: () => Promise.resolve(6),
+          game_save_write_text: () => Promise.resolve(8),
+          game_save_read_text: () => Promise.resolve(9),
+          game_resource_ok: (handle) => handle !== 7,
+          game_resource_error_code: (handle) => handle === 7 ? 'not_found' : '',
+          game_resource_error_message: () => 'missing packaged asset',
+          game_resource_text: (handle) => handle === 1 ? 'packaged text' : 'breach=3',
+          game_resource_bytes: () => new Uint8Array([1, 2, 3, 4]),
+          game_resource_font_family: () => 'Sample Game',
+          game_resource_release: () => {},
+          game_audio_play: () => true,
+          game_audio_pause: () => {},
+          game_audio_stop: () => {},
+          game_audio_is_playing: () => false,
+          record_resource_sample_complete: () => { completed += 1; },
+        },
+        onAsyncError: (error) => { asyncErrors.push(error); },
+      },
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(asyncErrors).toEqual([]);
+    expect(completed).toBe(1);
   });
 
   // The fixture's rules module is host-independent, so its seeded assertions
