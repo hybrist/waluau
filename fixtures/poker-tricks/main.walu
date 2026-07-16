@@ -17,6 +17,8 @@ type Ui = {
     modal: i32,
     revealing: bool,
     reveal_clock: f64,
+    -- Each relic's current parting offset, eased toward where the fan wants it.
+    fan_parts: {f64},
     anims: {render.Anim},
     anim_clock: f64,
     anim_total: f64,
@@ -40,6 +42,17 @@ local SLOT_COMPUTER <const>: i32 = 1
 local SLOT_MIDDLE <const>: i32 = 2
 local SLOT_DECK <const>: i32 = 3
 local SLOT_ASIDE <const>: i32 = 4
+
+-- Mirrors render's "no relic holds focus" sentinel, which sits one past the
+-- last relic rather than at -1; see the TODO on FAN_CLOSED in render.walu.
+local FAN_CLOSED <const>: i32 = 5
+-- How fast a relic slides to its parted position, in px/s: one cursor step
+-- moves a relic FAN_PART, so this is about a seventh of a second of travel.
+-- The ceiling is the shortest card flight: a card in the air aims at its
+-- closed-fan slot (see slot_x_now), so the fan has to finish shutting before
+-- the first one lands. Queuing an animation closes the fan from at most
+-- FAN_PART away, which at this speed takes well under DEAL_SECONDS.
+local FAN_EASE_SPEED <const>: f64 = 240.0
 
 -- Mirrors the faces modes of render's animated cards.
 local FACES_DOWN <const>: i32 = 0
@@ -80,6 +93,30 @@ function clear_picks(ui: Ui): unit
     ui.ward_cursor = 0
 end
 
+-- The relic the cursor holds, or FAN_CLOSED when none does. Focus only counts
+-- while the player can actually move it: a resolving breach and cards in flight
+-- both swallow input, so neither should leave the fan hanging open.
+function fan_focus(ui: Ui): i32
+    if ui.revealing or ui.anim_kind ~= ANIM_NONE then return FAN_CLOSED end
+    if ui.cursor_area ~= 0 then return FAN_CLOSED end
+    return ui.hand_cursor
+end
+
+-- Walks each relic toward its parted position at a fixed speed, so the fan
+-- opens and closes over a few frames instead of teleporting. Linear rather than
+-- proportional easing so a relic actually arrives, and within a bounded time:
+-- the animation endpoints in render.slot_x assume a settled fan.
+function update_fan(ui: Ui, dt: f64): unit
+    local focus: i32 = fan_focus(ui)
+    local step: f64 = FAN_EASE_SPEED * dt
+    for i = 0::i32, 4::i32 do
+        local delta: f64 = render.hand_part_target(i, focus) - ui.fan_parts[i]
+        if delta > step then delta = step end
+        if delta < -step then delta = -step end
+        ui.fan_parts[i] += delta
+    end
+end
+
 function begin_anims(ui: Ui, anims: {render.Anim}, total: f64, kind: i32): unit
     ui.anims = anims
     ui.anim_clock = 0.0
@@ -99,6 +136,16 @@ end
 function slot_tilt(kind: i32, index: i32): f64
     if kind == SLOT_PLAYER then return render.hand_angle(index) end
     return 0.0
+end
+
+-- Where a card sits *right now*, which is only interesting for a relic leaving
+-- the hand: a feint commits straight out of a parted fan, so the relic has to
+-- set off from where the player last saw it. The other direction needs no such
+-- care — every flight outlasts the fan's ease, so a card still in the air is
+-- safe to aim at the closed-fan slot render.slot_x describes.
+function slot_x_now(ui: Ui, kind: i32, index: i32): f64
+    if kind == SLOT_PLAYER then return render.hand_x(index, ui.fan_parts[index]) end
+    return render.slot_x(kind, index)
 end
 
 -- One card dealt off the draw pile into a board slot; returns when it lands.
@@ -186,12 +233,15 @@ function queue_swap_animation(state: game.State, ui: Ui): unit
         local outgoing: game.Card = state.middle[middle_index]
         local incoming: game.Card = state.player_hand[hand_index]
         if not player_won then incoming = state.computer_hand[hand_index] end
+        -- The relic rises from wherever the fan currently holds it, but the
+        -- ward coming back lands in the fan's settled slot.
+        local leave_x: f64 = slot_x_now(ui, hand_kind, hand_index)
         local hand_x: f64 = render.slot_x(hand_kind, hand_index)
         local hand_y: f64 = render.slot_y(hand_kind, hand_index)
         local hand_angle: f64 = slot_tilt(hand_kind, hand_index)
         local mid_x: f64 = render.slot_x(SLOT_MIDDLE, middle_index)
         local mid_y: f64 = render.slot_y(SLOT_MIDDLE, middle_index)
-        local hover_x: f64 = hand_x + (mid_x - hand_x) * 0.35
+        local hover_x: f64 = leave_x + (mid_x - leave_x) * 0.35
         local hover_y: f64 = hand_y - 45.0
         if not player_won then hover_y = hand_y + 45.0 end
         local stagger: f64 = SWAP_STEP * (k::f64)
@@ -211,7 +261,7 @@ function queue_swap_animation(state: game.State, ui: Ui): unit
         table.insert(anims, {
             card = outgoing,
             faces = leave_faces,
-            x0 = hand_x,
+            x0 = leave_x,
             y0 = hand_y,
             x1 = hover_x,
             y1 = hover_y,
@@ -285,6 +335,9 @@ function reset_run(state: game.State, ui: Ui): unit
     ui.modal = MODAL_NONE
     ui.revealing = false
     ui.reveal_clock = 0.0
+    -- A restart deals onto a settled board, so the fan starts shut rather than
+    -- easing out of whatever the abandoned run left it parted around.
+    ui.fan_parts = { 0.0, 0.0, 0.0, 0.0, 0.0 }
     -- The deal waits behind the help modal; its clock starts once play does.
     queue_initial_deal(state, ui)
 end
@@ -301,6 +354,7 @@ function install_arcane_heist(): unit
         modal = MODAL_NONE,
         revealing = false,
         reveal_clock = 0.0,
+        fan_parts = { 0.0, 0.0, 0.0, 0.0, 0.0 },
         anims = {},
         anim_clock = 0.0,
         anim_total = 0.0,
@@ -314,6 +368,9 @@ function install_arcane_heist(): unit
     end
 
     local function update(dt: f64, input: input_module.Input): unit
+        -- The fan chases the cursor whatever else is happening: a modal hides
+        -- it, but it should have settled by the time the modal lifts.
+        update_fan(ui, dt)
         -- Turns are discrete; the clocks only drive the board reveal flip
         -- and the card-motion animations (which pause under any modal).
         if ui.revealing then
@@ -330,7 +387,7 @@ function install_arcane_heist(): unit
     end
 
     local function draw(graphics: graphics_module.Graphics, alpha: f64): unit
-        render.draw(graphics, state, ui.hand_cursor, ui.ward_cursor, ui.cursor_area,
+        render.draw(graphics, state, fan_focus(ui), ui.fan_parts, ui.ward_cursor, ui.cursor_area,
             ui.play_picks, ui.swap_hand, ui.swap_wards, ui.modal, ui.revealing, ui.reveal_clock,
             ui.anims, ui.anim_clock)
     end
