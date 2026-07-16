@@ -24,6 +24,7 @@ local GL_BLEND <const>: u32 = 0x0BE2
 local GL_ONE <const>: u32 = 1
 local GL_SRC_ALPHA <const>: u32 = 0x0302
 local GL_ONE_MINUS_SRC_ALPHA <const>: u32 = 0x0303
+local GL_DST_COLOR <const>: u32 = 0x0306
 
 -- Interleaved floats per vertex: clip-space x, y then r, g, b, a, effect id.
 local VERTEX_FLOATS <const>: i32 = 7
@@ -59,6 +60,10 @@ type Graphics = {
     path_start_x: f64,
     path_start_y: f64
 }
+
+type GraphicsError = { code: string, message: string }
+type Material = { name: string, effect: i32, released: bool }
+type MaterialResult = { ok: bool, material: Material, error: GraphicsError }
 
 function compile_shader(gl: WebGL2RenderingContext, kind: u32, source: string): WebGLShader
     local maybe_shader: WebGLShader? = gl:createShader(kind)
@@ -320,6 +325,91 @@ end
 
 function Graphics:set_line_width(width: f64): unit
     self.line_width = width
+end
+
+function material_effect(name: string): i32
+    if name == "plain" then return 0
+    elseif name == "fire" then return 1
+    elseif name == "water" then return 2
+    elseif name == "shadow" then return 3
+    elseif name == "nature" then return 4
+    elseif name == "fire-selected" then return 5
+    elseif name == "water-selected" then return 6
+    elseif name == "shadow-selected" then return 7
+    elseif name == "nature-selected" then return 8
+    end
+    return -1
+end
+
+-- Portable named materials are resources even though the WebGL backend packs
+-- their selector into each vertex. Creation and use never expose shader ids.
+function Graphics:create_material(name: string): MaterialResult
+    local effect: i32 = material_effect(name)
+    if effect < 0 then
+        return {
+            ok = false,
+            material = { name = "plain", effect = 0, released = true },
+            error = { code = "unknown_material", message = "unknown built-in material: " .. name },
+        }
+    end
+    return {
+        ok = true,
+        material = { name = name, effect = effect, released = false },
+        error = { code = "", message = "" },
+    }
+end
+
+-- Custom source is a queryable structured failure until waluau-ukso adds the
+-- backend program resource and compile/link diagnostics.
+function Graphics:create_custom_material(source: string): MaterialResult
+    return {
+        ok = false,
+        material = { name = "plain", effect = 0, released = true },
+        error = { code = "unsupported", message = "custom shaders are not supported by this backend build" },
+    }
+end
+
+function Graphics:release_material(material: Material): unit
+    material.released = true
+end
+
+function Graphics:use_material(material: Material): bool
+    if material.released then return false end
+    self.effect = material.effect::f64
+    return true
+end
+
+-- Convenience for durable built-ins; returns false for an unknown name.
+function Graphics:set_material(name: string): bool
+    local effect: i32 = material_effect(name)
+    if effect < 0 then return false end
+    self.effect = effect::f64
+    return true
+end
+
+-- Capability names are backend-neutral. Compatibility backends must return
+-- false rather than accepting a command they cannot preserve.
+function Graphics:supports(capability: string): bool
+    return capability == "gpu"
+        or capability == "named-materials"
+        or capability == "blend-modes"
+        or capability == "paths"
+        or capability == "text-alignment"
+end
+
+-- State changes flush first so one batch always has one blend equation.
+function Graphics:set_blend_mode(mode: string): bool
+    self:flush()
+    if mode == "alpha" then
+        self.gl:blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
+    elseif mode == "add" then
+        self.gl:blendFuncSeparate(GL_SRC_ALPHA, GL_ONE, GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
+    elseif mode == "multiply" then
+        self.gl:blendFuncSeparate(GL_DST_COLOR, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
+    else
+        return false
+    end
+    return true
 end
 
 -- Selects the animated fragment-shader overlay applied to subsequently

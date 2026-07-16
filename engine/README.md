@@ -75,6 +75,14 @@ of those calls renders on the GPU: lines are thin quads, circles are
 triangle fans, and `print` renders uppercased bitmap-font glyphs as quads,
 so a frame batches into very few draw calls.
 
+The WebGL backend also exposes `supports(name)`, portable named `Material`
+resources, and `alpha`, `add`, and `multiply` blend modes. Material creation
+returns a structured result; releasing a material is explicit and later use is
+rejected predictably. Capabilities currently report textures, sprite batches,
+render targets, and custom shaders as unsupported. Those GPU resource bridges
+are tracked by `waluau-isvj` and `waluau-ukso`; compatibility backends must
+likewise return `false` instead of silently changing semantics.
+
 `keyreleased` may be `nil`; the other lifecycle callbacks are currently
 required. Updates use a fixed timestep. Drawing happens once per animation
 frame and receives an interpolation alpha in `[0, 1)`. Long frame delays are
@@ -206,8 +214,8 @@ the stable package surface (`waluau-tpil`), GPU-backed renderer (`waluau-vt3k`),
 and asset/audio/save services (`waluau-mi1t`). Beads remains the authoritative
 source for priorities and completion status.
 
-The renderer draws colored geometry (shapes, lines, and bitmap-font text)
-through WebGL2 today, using the extern surface from `waluau-9tvw`. Textures,
-sprite batches, render targets, and custom shaders remain the domain of the
-full GPU backend tracked by `waluau-vt3k`; a Canvas 2D compatibility backend
+The renderer draws colored geometry (shapes, lines, paths, and bitmap-font
+text) through WebGL2 today, using the extern surface from `waluau-9tvw`.
+Loaded textures, sprite batches, render targets, and custom shader resources
+remain explicit follow-ups of `waluau-vt3k`; a Canvas 2D compatibility backend
 can return once backend polymorphism is expressible in the language.
