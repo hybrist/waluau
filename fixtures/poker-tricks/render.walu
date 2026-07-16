@@ -6,32 +6,32 @@ local game = require("./game")
 
 type Graphics = graphics_module.Graphics
 
-local WIDTH <const>: f64 = 960.0
-local HEIGHT <const>: f64 = 600.0
-local CARD_W <const>: f64 = 104.0
-local CARD_H <const>: f64 = 128.0
-local MODAL_HISTORY <const>: i32 = 1
-local MODAL_HELP <const>: i32 = 2
-local MODAL_FINAL <const>: i32 = 4
-local FLIP_SECONDS <const>: f64 = 0.55
-local TOTAL_ROUNDS <const>: i32 = 5
-local SELECTION_HIGHLIGHT <const>: string = "#fbbf24"
+const WIDTH: f64 = 960.0
+const HEIGHT: f64 = 600.0
+const CARD_W: f64 = 104.0
+const CARD_H: f64 = 128.0
+const MODAL_HISTORY: i32 = 1
+const MODAL_HELP: i32 = 2
+const MODAL_FINAL: i32 = 4
+const FLIP_SECONDS: f64 = 0.55
+const TOTAL_ROUNDS: i32 = 5
+const SELECTION_HIGHLIGHT: string = "#fbbf24"
 
 -- The three outcomes a resolved breach can have. The help legend draws the
 -- same orbs from these, so a colour only ever means one thing on screen.
-local ORB_ROBBERS_EDGE <const>: string = "#cffafe"
-local ORB_ROBBERS_FILL <const>: string = "#22d3ee"
-local ORB_ARCH_MAGE_EDGE <const>: string = "#fecaca"
-local ORB_ARCH_MAGE_FILL <const>: string = "#f87171"
-local ORB_STALEMATE_EDGE <const>: string = "#e4e4e7"
-local ORB_STALEMATE_FILL <const>: string = "#a1a1aa"
+const ORB_ROBBERS_EDGE: string = "#cffafe"
+const ORB_ROBBERS_FILL: string = "#22d3ee"
+const ORB_ARCH_MAGE_EDGE: string = "#fecaca"
+const ORB_ARCH_MAGE_FILL: string = "#f87171"
+const ORB_STALEMATE_EDGE: string = "#e4e4e7"
+const ORB_STALEMATE_FILL: string = "#a1a1aa"
 
 -- The watched-relic mark, in parchment ink rather than either side's colour:
 -- the same eye means the same thing on both rows, and it must not be mistaken
 -- for a SELECTION_HIGHLIGHT focus edge or a school-coloured bind. The mark says
 -- something about the card itself, not about what the cursor is doing.
-local EYE_INK <const>: string = "#e8dfbd"
-local EYE_GROUND <const>: string = "#0b0b10"
+const EYE_INK: string = "#e8dfbd"
+const EYE_GROUND: string = "#0b0b10"
 -- The eye rides the middle of a card's top edge, centred on the edge itself so
 -- half of it stands clear of the card: it reads as a tag pinned to the relic
 -- rather than part of the artwork, and it stays off the rank, the school and
@@ -39,23 +39,23 @@ local EYE_GROUND <const>: string = "#0b0b10"
 -- relic's right edge under its neighbour, so a mark out there is invisible on
 -- four of the five, and the left corner already carries the rank. FAN_PITCH is
 -- how much of a fanned relic stays uncovered, and the eye sits well inside it.
-local EYE_HALF_W <const>: f64 = 7.0
-local EYE_LID <const>: f64 = 4.6
-local EYE_SEGMENTS <const>: i32 = 6
+const EYE_HALF_W: f64 = 7.0
+const EYE_LID: f64 = 4.6
+const EYE_SEGMENTS: i32 = 6
 -- How much of a sealed relic's face shows through when the other side has
 -- already seen it: only the seal's field is veiled, so the card reads as
 -- sealed-but-not-secret rather than simply half drawn. Low enough that the
 -- rank and school can be read at a glance — the mark is worth nothing if the
 -- player still has to remember what is under it.
-local VEIL_ALPHA <const>: string = "80"
+const VEIL_ALPHA: string = "80"
 
 -- Board anchors card animations travel between. main.walu mirrors these ids
 -- when it builds animations, the same way it mirrors the modal ids above.
-local SLOT_PLAYER <const>: i32 = 0
-local SLOT_COMPUTER <const>: i32 = 1
-local SLOT_MIDDLE <const>: i32 = 2
-local SLOT_DECK <const>: i32 = 3
-local SLOT_ASIDE <const>: i32 = 4
+const SLOT_PLAYER: i32 = 0
+const SLOT_COMPUTER: i32 = 1
+const SLOT_MIDDLE: i32 = 2
+const SLOT_DECK: i32 = 3
+const SLOT_ASIDE: i32 = 4
 
 -- The player holds their five relics in a fan rather than a row: each step
 -- outward from the middle relic slides FAN_PITCH sideways, tilts FAN_TILT
@@ -63,21 +63,21 @@ local SLOT_ASIDE <const>: i32 = 4
 -- CARD_W, so relics overlap; because each one covers only its neighbour's
 -- right edge, the rank and school in the top-left corner stay readable. The
 -- Arch Mage's sealed row and the wards keep their flat layout.
-local FAN_MIDDLE <const>: f64 = 2.0
-local FAN_PITCH <const>: f64 = 74.0
-local FAN_TILT <const>: f64 = 0.075
+const FAN_MIDDLE: f64 = 2.0
+const FAN_PITCH: f64 = 74.0
+const FAN_TILT: f64 = 0.075
 -- The arc's dip per squared step: the outermost relics sit 4 * FAN_DROP below
 -- the middle one, which approximates a pivot far below the board.
-local FAN_DROP <const>: f64 = 2.8
-local FAN_CENTER_X <const>: f64 = 480.0
-local FAN_CENTER_Y <const>: f64 = 509.0
+const FAN_DROP: f64 = 2.8
+const FAN_CENTER_X: f64 = 480.0
+const FAN_CENTER_Y: f64 = 509.0
 -- How far the fan slides open around the focused relic, in the same steps as
 -- everything else here — about a quarter of the gap to its neighbour. This is
 -- deliberately short of the ~0.41 steps it would take for FAN_PITCH to clear
 -- CARD_W: relics keep their dealt stacking order, so the focused one still
 -- tucks under the relic to its right, and the parting reads as the fan
 -- breathing rather than a card climbing out of it.
-local FAN_PART <const>: f64 = 0.23
+const FAN_PART: f64 = 0.23
 -- A focus of FAN_CLOSED — one past the last of the five relics — closes the
 -- fan, leaving every relic at its resting slot. Focus only exists while the
 -- cursor can actually move, so cards in flight and a resolving breach both draw
@@ -86,14 +86,14 @@ local FAN_PART <const>: f64 = 0.23
 -- TODO(waluau-iipk): Say "no relic" as -1, the obvious sentinel, once a module
 -- constant can hold a negated literal. Today that silently fails to inline and
 -- every use dies with "unknown name", so the sentinel has to sit past the hand.
-local FAN_CLOSED <const>: i32 = 5
+const FAN_CLOSED: i32 = 5
 
 -- Faces an animated card shows along its flight: stay sealed, stay revealed,
 -- or flip between the two mid-flight. main.walu mirrors these values too.
-local FACES_DOWN <const>: i32 = 0
-local FACES_UP <const>: i32 = 1
-local FACES_FLIP_UP <const>: i32 = 2
-local FACES_FLIP_DOWN <const>: i32 = 3
+const FACES_DOWN: i32 = 0
+const FACES_UP: i32 = 1
+const FACES_FLIP_UP: i32 = 2
+const FACES_FLIP_DOWN: i32 = 3
 
 -- One leg of a card's journey across the board. The card renders at x0/y0
 -- until start, travels to x1/y1 over duration, and only exists on screen

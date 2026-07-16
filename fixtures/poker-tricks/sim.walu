@@ -4,8 +4,8 @@
 
 local game = require("./game")
 
-local FIRST_ROUND <const>: i32 = 1
-local LAST_ROUND <const>: i32 = 5
+const FIRST_ROUND: i32 = 1
+const LAST_ROUND: i32 = 5
 
 function card(rank: i32, suit: i32): game.Card
     return { rank = rank, suit = suit }
