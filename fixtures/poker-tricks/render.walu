@@ -1,6 +1,8 @@
 -- Engine-rendered presentation for Arcane Heist. Everything visible to the
 -- player lives on this one logical canvas, including secondary modal screens.
 
+-- TODO(waluau-tpil): Import Graphics through the stable aggregate engine
+-- package once cross-module type re-exports preserve alias identity.
 local graphics_module = require("../../engine/graphics")
 local game = require("./game")
 
@@ -254,6 +256,8 @@ end
 -- wards: an open eye, drawn about its own centre on its own dark ground so it
 -- reads over both a card's face and its seal. The lids are quadratic arcs the
 -- line API has no curve for, so each is walked out in EYE_SEGMENTS steps.
+-- TODO(waluau-eooi): Replace the hand-subdivided lids with Graphics quadratic
+-- paths once the engine exposes backend-neutral curve primitives.
 function draw_eye(graphics: Graphics, x: f64, y: f64): unit
     graphics:set_color(EYE_GROUND)
     graphics:fill_circle(x, y, 9.0)
@@ -278,6 +282,8 @@ end
 -- An engraved celestial ward shared by every sealed relic. Keeping the back
 -- in geometry (rather than a bitmap) makes it stay sharp through the card-flip
 -- transform and avoids adding an asynchronous asset path to the renderer.
+-- TODO(waluau-mi1t): Replace this procedural asset fallback with packaged art
+-- once the engine owns asynchronous image lookup, readiness, and failures.
 function draw_card_back(graphics: Graphics, x: f64, y: f64, veiled: bool): unit
     local ink: string = "#e8dfbd"
     local muted_ink: string = "#8f8ab0"
@@ -358,6 +364,8 @@ end
 function draw_card_face(graphics: Graphics, card: game.Card, x: f64, y: f64, selected: bool, colored: bool): unit
     -- Suit marks always keep their school color. Selection activates the
     -- school's grayscale pattern; contributing cards use its colored variant.
+    -- TODO(waluau-vt3k): Replace arithmetic effect ids with named shader or
+    -- material resources when the full GPU graphics API can express them.
     if colored then graphics:set_effect(card.suit + 1)
     elseif selected then graphics:set_effect(card.suit + 5) end
     graphics:set_color("#17171c")
@@ -536,6 +544,8 @@ function draw_hud(graphics: Graphics, state: game.State): unit
     text(graphics, "ARCANE HEIST", 32.0, 47.0, 22, "#fbbf24")
     draw_round_orbs(graphics, state)
     local score: string = tostring(state.player_points)
+    -- TODO(waluau-cn6h): Right-align with Graphics text metrics instead of a
+    -- bitmap-font-specific width estimate.
     local score_width: f64 = ((#score)::f64) * 16.5
     text(graphics, score, WIDTH - 32.0 - score_width, 47.0, 22, "#67e8f9")
 end

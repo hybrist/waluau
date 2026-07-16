@@ -1,6 +1,9 @@
 -- Arcane Heist: Poker Tricks hosted by the 2D game engine. The rules remain
 -- host-independent; this module translates keyboard input into game actions.
 
+-- TODO(waluau-tpil): Replace the repository-relative, split subsystem imports
+-- with the stable aggregate engine package once re-exported callback types keep
+-- their identity.
 local engine = require("../../engine/browser")
 local input_module = require("../../engine/input")
 local graphics_module = require("../../engine/graphics")
@@ -44,7 +47,7 @@ const SLOT_DECK: i32 = 3
 const SLOT_ASIDE: i32 = 4
 
 -- Mirrors render's "no relic holds focus" sentinel, which sits one past the
--- last relic rather than at -1; see the TODO on FAN_CLOSED in render.walu.
+-- last relic rather than at -1; see FAN_CLOSED's issue in render.walu.
 const FAN_CLOSED: i32 = 5
 -- How fast a relic slides to its parted position, in fan steps per second: one
 -- cursor move parts a relic by FAN_PART, so this is about a seventh of a second
@@ -530,6 +533,8 @@ function install_arcane_heist(): unit
         end
     end
 
+    -- TODO(waluau-lqjs): Make unused lifecycle hooks nullable once Waluau can
+    -- express optional function fields, then drop this mandatory no-op.
     local function keyreleased(key: string): unit end
 
     engine.start({
