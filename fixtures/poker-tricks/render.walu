@@ -286,10 +286,10 @@ function draw_card_back(graphics: Graphics, x: f64, y: f64, veiled: bool): unit
     if veiled then field = ground .. VEIL_ALPHA end
 
     -- A faint moving haze gives the flat indigo field the feel of dyed paper.
-    graphics:set_effect(3)
+    graphics:set_material("shadow")
     graphics:set_color(field)
     graphics:fill_rectangle(x + 3.0, y + 3.0, CARD_W - 6.0, CARD_H - 6.0)
-    graphics:set_effect(0)
+    graphics:set_material("plain")
 
     graphics:set_color(ink)
     graphics:set_line_width(1.5)
@@ -347,16 +347,23 @@ function draw_card_back(graphics: Graphics, x: f64, y: f64, veiled: bool): unit
     graphics:fill_circle(x + CARD_W - 15.0, y + CARD_H - 15.0, 1.5)
 end
 
+function school_material(suit: i32, selected: bool): string
+    local name: string = "fire"
+    if suit == 1 then name = "water"
+    elseif suit == 2 then name = "shadow"
+    elseif suit == 3 then name = "nature" end
+    if selected then return name .. "-selected" end
+    return name
+end
+
 function draw_card_face(graphics: Graphics, card: game.Card, x: f64, y: f64, selected: bool, colored: bool): unit
     -- Suit marks always keep their school color. Selection activates the
     -- school's grayscale pattern; contributing cards use its colored variant.
-    -- TODO(waluau-vt3k): Replace arithmetic effect ids with named shader or
-    -- material resources when the full GPU graphics API can express them.
-    if colored then graphics:set_effect(card.suit + 1)
-    elseif selected then graphics:set_effect(card.suit + 5) end
+    if colored then graphics:set_material(school_material(card.suit, false))
+    elseif selected then graphics:set_material(school_material(card.suit, true)) end
     graphics:set_color("#17171c")
     graphics:fill_rectangle(x + 2.0, y + 2.0, CARD_W - 4.0, CARD_H - 4.0)
-    if colored or selected then graphics:set_effect(0) end
+    if colored or selected then graphics:set_material("plain") end
     local accent: string = school_color(card.suit)
     graphics:set_color(accent)
     graphics:fill_rectangle(x + 7.0, y + 7.0, 5.0, CARD_H - 14.0)

@@ -15,6 +15,7 @@ import gameEngineMain from '../../../fixtures/game-engine/main.walu?raw';
 import gameEngineTextAlignment from '../../../fixtures/game-engine/text-alignment.walu?raw';
 import gameEngineGraphicsPaths from '../../../fixtures/game-engine/graphics-paths.walu?raw';
 import stableEngineProject from '../../../examples/game-project/main.walu?raw';
+import gameEngineGpuMaterials from '../../../fixtures/game-engine/gpu-materials.walu?raw';
 import gameEngineBrowser from '../../../engine/browser.walu?raw';
 import gameEngineGraphics from '../../../engine/graphics.walu?raw';
 import gameEngineFont from '../../../engine/font.walu?raw';
@@ -938,6 +939,32 @@ describe('browser conformance', () => {
       expect(hasColorNear(pixels, 60, 80, [64, 255, 64])).toBe(true);
       expect(hasColorNear(pixels, 180, 75, [64, 128, 255])).toBe(true);
       expect(hasColorNear(pixels, 310, 182, [255, 64, 255])).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('reports GPU capabilities and uses named material resources safely', async () => {
+    const { root, cleanup } = await compileAndInstantiateWithDom(
+      {
+        '/fixtures/game-engine/gpu-materials.walu': gameEngineGpuMaterials,
+        '/engine/browser.walu': gameEngineBrowser,
+        '/engine/graphics.walu': gameEngineGraphics,
+        '/engine/font.walu': gameEngineFont,
+        '/engine/input.walu': gameEngineInput,
+        '/engine/time.walu': gameEngineTime,
+      },
+      '/fixtures/game-engine/gpu-materials.walu'
+    );
+    try {
+      const canvas = root.querySelector('#walua-game-canvas');
+      expect(canvas).not.toBeNull();
+      const gl = canvas.getContext('webgl2');
+      const pixel = new Uint8Array(4);
+      await expect.poll(() => {
+        gl.readPixels(32, 100 - 1 - 32, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+        return pixel[1];
+      }, { timeout: 10_000 }).toBeGreaterThan(200);
     } finally {
       cleanup();
     }
