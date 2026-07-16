@@ -771,6 +771,12 @@ mod tests {
     }
 
     #[test]
+    fn compiles_transitive_await_state_fixture() {
+        super::compile_file(&fixture_path("coroutine-await-state/main.walu"))
+            .expect("transitive await state fixture should compile");
+    }
+
+    #[test]
     fn compiles_snake_game_engine_fixture() {
         super::compile_file(&fixture_path("snake/main.walu"))
             .expect("Snake game engine fixture should compile");

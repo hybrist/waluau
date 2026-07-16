@@ -117,8 +117,7 @@ local resources = require("../../engine/resources")
 
 local co = coroutine.create(function(): i32
     local path: string = "/assets/level.txt"
-    local handle: i32 = coroutine.await_promise(resources.load_text(path))::i32
-    local result: resources.LoadResult = resources.finish_text(handle, path)
+    local result: resources.LoadResult = resources.await_text(path)
     if result.ok then
         print(resources.text(result.resource))
         resources.release(result.resource)
@@ -130,20 +129,18 @@ end)
 coroutine.resume(co)
 ```
 
-Each load has an explicit request/finish pair. `load_*` returns the host
-promise; the owning coroutine awaits its integer handle, then `finish_*` copies
-readiness or failure into Waluau records. Keeping the suspension in the caller
-is a temporary language/runtime constraint: module-local generic Promise aliases
-in host declarations and transitive awaits that preserve aggregate caller
-locals are tracked as compiler follow-ups. The service ABI itself remains
-Promise-based and does not change when those wrappers become expressible.
+The `await_*` helpers suspend the owning coroutine and return structured results.
+The lower-level request/finish pairs remain available: `load_*` returns the host
+promise, and `finish_*` copies its resolved integer handle into Waluau records.
+The service ABI remains Promise-based; host declarations use bare `extern`
+promises until module-local generic Promise aliases link across required modules.
 
 Packaged assets and save data are deliberately separate:
 
-- `resources.load_text/load_bytes/load_image/load_font` request validated,
-  read-only project paths; their matching `finish_*` functions produce a
-  `LoadResult`. Browser loads use `fetch`; image and font handles do not become
-  ready until decoding succeeds.
+- `resources.await_text/await_bytes/await_image/await_font` load validated,
+  read-only project paths and produce a `LoadResult`; matching `load_*` and
+  `finish_*` calls expose the two-phase form. Browser loads use `fetch`; image
+  and font handles do not become ready until decoding succeeds.
 - `audio.load_sound` fully downloads and decodes an effect. `load_stream`
   readies a streaming media source. `play` returns `false` when playback cannot
   start, so browsers may retry from a user-input callback.

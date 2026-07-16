@@ -29,12 +29,22 @@ function finish_read_text(handle: i32, slot: string): resources.LoadResult
     return resources.from_handle(handle, "save-text", slot)
 end
 
+function await_read_text(slot: string): resources.LoadResult
+    local handle: i32 = coroutine.await_promise(read_text(slot))::i32
+    return finish_read_text(handle, slot)
+end
+
 function read_bytes(slot: string): extern
     return game_save_read_bytes(slot)
 end
 
 function finish_read_bytes(handle: i32, slot: string): resources.LoadResult
     return resources.from_handle(handle, "save-bytes", slot)
+end
+
+function await_read_bytes(slot: string): resources.LoadResult
+    local handle: i32 = coroutine.await_promise(read_bytes(slot))::i32
+    return finish_read_bytes(handle, slot)
 end
 
 function write_text(slot: string, value: string): extern
@@ -53,13 +63,33 @@ function finish_operation(handle: i32, slot: string): SaveResult
     return operation_result(handle, slot)
 end
 
+function await_write_text(slot: string, value: string): SaveResult
+    local handle: i32 = coroutine.await_promise(write_text(slot, value))::i32
+    return finish_operation(handle, slot)
+end
+
+function await_write_bytes(slot: string, value: bytes): SaveResult
+    local handle: i32 = coroutine.await_promise(write_bytes(slot, value))::i32
+    return finish_operation(handle, slot)
+end
+
+function await_delete(slot: string): SaveResult
+    local handle: i32 = coroutine.await_promise(delete(slot))::i32
+    return finish_operation(handle, slot)
+end
+
 return {
     read_text = read_text,
     finish_read_text = finish_read_text,
+    await_read_text = await_read_text,
     read_bytes = read_bytes,
     finish_read_bytes = finish_read_bytes,
+    await_read_bytes = await_read_bytes,
     write_text = write_text,
     write_bytes = write_bytes,
     delete = delete,
     finish_operation = finish_operation,
+    await_write_text = await_write_text,
+    await_write_bytes = await_write_bytes,
+    await_delete = await_delete,
 }

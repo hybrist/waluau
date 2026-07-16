@@ -520,7 +520,7 @@ fn reuses_i32_local_slots_for_disjoint_live_ranges() {
             boxed_bool_struct_type: 0,
         },
     );
-    let local_plan = super::build_local_plan(function, &value_types, &array_registry)
+    let local_plan = super::build_local_plan(function, &value_types, &array_registry, false)
         .expect("plan should build");
 
     let block = function

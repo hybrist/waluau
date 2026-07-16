@@ -55,12 +55,22 @@ function finish_text(handle: i32, path: string): LoadResult
     return from_handle(handle, "text", path)
 end
 
+function await_text(path: string): LoadResult
+    local handle: i32 = coroutine.await_promise(load_text(path))::i32
+    return finish_text(handle, path)
+end
+
 function load_bytes(path: string): extern
     return game_resource_load_bytes(path)
 end
 
 function finish_bytes(handle: i32, path: string): LoadResult
     return from_handle(handle, "bytes", path)
+end
+
+function await_bytes(path: string): LoadResult
+    local handle: i32 = coroutine.await_promise(load_bytes(path))::i32
+    return finish_bytes(handle, path)
 end
 
 function load_image(path: string): extern
@@ -71,12 +81,22 @@ function finish_image(handle: i32, path: string): LoadResult
     return from_handle(handle, "image", path)
 end
 
+function await_image(path: string): LoadResult
+    local handle: i32 = coroutine.await_promise(load_image(path))::i32
+    return finish_image(handle, path)
+end
+
 function load_font(path: string, family: string): extern
     return game_resource_load_font(path, family)
 end
 
 function finish_font(handle: i32, path: string): LoadResult
     return from_handle(handle, "font", path)
+end
+
+function await_font(path: string, family: string): LoadResult
+    local handle: i32 = coroutine.await_promise(load_font(path, family))::i32
+    return finish_font(handle, path)
 end
 
 function text(resource: Resource): string
@@ -104,12 +124,16 @@ return {
     from_handle = from_handle,
     load_text = load_text,
     finish_text = finish_text,
+    await_text = await_text,
     load_bytes = load_bytes,
     finish_bytes = finish_bytes,
+    await_bytes = await_bytes,
     load_image = load_image,
     finish_image = finish_image,
+    await_image = await_image,
     load_font = load_font,
     finish_font = finish_font,
+    await_font = await_font,
     text = text,
     byte_data = byte_data,
     font_family = font_family,

@@ -1,0 +1,22 @@
+type NestedResult = {
+    value: i32
+}
+
+type AwaitResult = {
+    inner: NestedResult,
+    request: i32
+}
+
+declare function make_state_promise(value: i32): extern
+
+function await_record(value: i32): AwaitResult
+    local settled: i32 = coroutine.await_promise(make_state_promise(value))::i32
+    return {
+        inner = { value = settled },
+        request = value
+    }
+end
+
+return {
+    await_record = await_record
+}

@@ -11,61 +11,56 @@ declare function record_resource_sample_complete(): unit
 function run_resource_sample(): unit
     local co: thread = coroutine.create(function(): i32
         local text_path: string = "/assets/message.txt"
-        local text_handle: i32 = coroutine.await_promise(resources.load_text(text_path))::i32
-        local text_result: resources.LoadResult = resources.finish_text(text_handle, text_path)
+        local text_result: resources.LoadResult = resources.await_text(text_path)
         assert(text_result.ok)
         assert(resources.text(text_result.resource) == "packaged text")
-        resources.release(text_result.resource)
 
         local bytes_path: string = "/assets/data.bin"
-        local bytes_handle: i32 = coroutine.await_promise(resources.load_bytes(bytes_path))::i32
-        local bytes_result: resources.LoadResult = resources.finish_bytes(bytes_handle, bytes_path)
+        local bytes_result: resources.LoadResult = resources.await_bytes(bytes_path)
         assert(bytes_result.ok)
         assert(#resources.byte_data(bytes_result.resource) == 4)
-        resources.release(bytes_result.resource)
 
         local image_path: string = "/assets/card-back.svg"
-        local image_handle: i32 = coroutine.await_promise(resources.load_image(image_path))::i32
-        local image_result: resources.LoadResult = resources.finish_image(image_handle, image_path)
+        local image_result: resources.LoadResult = resources.await_image(image_path)
         assert(image_result.ok)
-        resources.release(image_result.resource)
 
         local font_path: string = "/assets/game.woff2"
-        local font_handle: i32 = coroutine.await_promise(resources.load_font(font_path, "Sample Game"))::i32
-        local font_result: resources.LoadResult = resources.finish_font(font_handle, font_path)
+        local font_result: resources.LoadResult = resources.await_font(font_path, "Sample Game")
         assert(font_result.ok)
         assert(resources.font_family(font_result.resource) == "Sample Game")
-        resources.release(font_result.resource)
 
         local sound_path: string = "/assets/click.wav"
-        local sound_handle: i32 = coroutine.await_promise(audio.load_sound(sound_path))::i32
-        local sound_result: resources.LoadResult = audio.finish_sound(sound_handle, sound_path)
+        local sound_result: resources.LoadResult = audio.await_sound(sound_path)
         assert(sound_result.ok)
         assert(audio.play(sound_result.resource, false, 0.5))
         audio.stop(sound_result.resource)
-        resources.release(sound_result.resource)
 
         local music_path: string = "/assets/music.ogg"
-        local music_handle: i32 = coroutine.await_promise(audio.load_stream(music_path))::i32
-        local music_result: resources.LoadResult = audio.finish_stream(music_handle, music_path)
+        local music_result: resources.LoadResult = audio.await_stream(music_path)
         assert(music_result.ok)
         assert(audio.play(music_result.resource, true, 0.25))
         audio.pause(music_result.resource)
-        resources.release(music_result.resource)
 
         local missing_path: string = "/assets/missing.txt"
-        local missing_handle: i32 = coroutine.await_promise(resources.load_text(missing_path))::i32
-        local missing: resources.LoadResult = resources.finish_text(missing_handle, missing_path)
+        local missing: resources.LoadResult = resources.await_text(missing_path)
         assert(not missing.ok)
         assert(missing.error.code == "not_found")
 
-        local write_handle: i32 = coroutine.await_promise(save.write_text("progress", "breach=3"))::i32
-        local write_result: save.SaveResult = save.finish_operation(write_handle, "progress")
+        local write_result: save.SaveResult = save.await_write_text("progress", "breach=3")
         assert(write_result.ok)
-        local read_handle: i32 = coroutine.await_promise(save.read_text("progress"))::i32
-        local read_result: resources.LoadResult = save.finish_read_text(read_handle, "progress")
+        local read_result: resources.LoadResult = save.await_read_text("progress")
         assert(read_result.ok)
         assert(resources.text(read_result.resource) == "breach=3")
+
+        -- Keep successful aggregate results across later transitive awaits. This
+        -- exercises concrete GC record spill/restore instead of requiring games
+        -- to release every result before requesting the next asset.
+        resources.release(text_result.resource)
+        resources.release(bytes_result.resource)
+        resources.release(image_result.resource)
+        resources.release(font_result.resource)
+        resources.release(sound_result.resource)
+        resources.release(music_result.resource)
         resources.release(read_result.resource)
 
         record_resource_sample_complete()
