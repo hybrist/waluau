@@ -1,0 +1,117 @@
+-- Backend-neutral packaged resource API. The browser host implements these
+-- imports with fetch/decode services; a native host can implement the same ABI
+-- with an application bundle. Loads are asynchronous and always resolve to a
+-- handle, including failures, so games receive structured errors instead of
+-- raw host promise rejections. The caller owns the await and then passes the
+-- handle to finish_*; this keeps suspension explicit until transitive async
+-- wrappers can preserve caller continuations and aggregate locals reliably.
+
+type Resource = { handle: i32, kind: string, path: string }
+type ResourceError = { code: string, message: string, path: string }
+type LoadResult = { ok: bool, resource: Resource, error: ResourceError }
+
+declare function game_resource_load_text(path: string): extern
+declare function game_resource_load_bytes(path: string): extern
+declare function game_resource_load_image(path: string): extern
+declare function game_resource_load_font(path: string, family: string): extern
+declare function game_resource_ok(handle: i32): bool
+declare function game_resource_error_code(handle: i32): string
+declare function game_resource_error_message(handle: i32): string
+declare function game_resource_text(handle: i32): string
+declare function game_resource_bytes(handle: i32): bytes
+declare function game_resource_font_family(handle: i32): string
+declare function game_resource_release(handle: i32): unit
+
+function failed_resource(kind: string, path: string): Resource
+    return { handle = 0, kind = kind, path = path }
+end
+
+-- Shared result conversion for resources, audio and save-data modules. Failed
+-- host entries are released after their error has been copied into Waluau.
+function from_handle(handle: i32, kind: string, path: string): LoadResult
+    if game_resource_ok(handle) then
+        return {
+            ok = true,
+            resource = { handle = handle, kind = kind, path = path },
+            error = { code = "", message = "", path = path },
+        }
+    end
+
+    local code: string = game_resource_error_code(handle)
+    local message: string = game_resource_error_message(handle)
+    game_resource_release(handle)
+    return {
+        ok = false,
+        resource = failed_resource(kind, path),
+        error = { code = code, message = message, path = path },
+    }
+end
+
+function load_text(path: string): extern
+    return game_resource_load_text(path)
+end
+
+function finish_text(handle: i32, path: string): LoadResult
+    return from_handle(handle, "text", path)
+end
+
+function load_bytes(path: string): extern
+    return game_resource_load_bytes(path)
+end
+
+function finish_bytes(handle: i32, path: string): LoadResult
+    return from_handle(handle, "bytes", path)
+end
+
+function load_image(path: string): extern
+    return game_resource_load_image(path)
+end
+
+function finish_image(handle: i32, path: string): LoadResult
+    return from_handle(handle, "image", path)
+end
+
+function load_font(path: string, family: string): extern
+    return game_resource_load_font(path, family)
+end
+
+function finish_font(handle: i32, path: string): LoadResult
+    return from_handle(handle, "font", path)
+end
+
+function text(resource: Resource): string
+    assert(resource.kind == "text" or resource.kind == "save-text")
+    return game_resource_text(resource.handle)
+end
+
+function byte_data(resource: Resource): bytes
+    assert(resource.kind == "bytes" or resource.kind == "save-bytes")
+    return game_resource_bytes(resource.handle)
+end
+
+function font_family(resource: Resource): string
+    assert(resource.kind == "font")
+    return game_resource_font_family(resource.handle)
+end
+
+function release(resource: Resource): unit
+    if resource.handle ~= 0 then
+        game_resource_release(resource.handle)
+    end
+end
+
+return {
+    from_handle = from_handle,
+    load_text = load_text,
+    finish_text = finish_text,
+    load_bytes = load_bytes,
+    finish_bytes = finish_bytes,
+    load_image = load_image,
+    finish_image = finish_image,
+    load_font = load_font,
+    finish_font = finish_font,
+    text = text,
+    byte_data = byte_data,
+    font_family = font_family,
+    release = release,
+}

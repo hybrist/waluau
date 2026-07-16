@@ -1,0 +1,65 @@
+-- Mutable save-data namespace. Slots are logical names, not filesystem paths,
+-- and are kept completely separate from packaged read-only asset lookup. All
+-- operations are async so a future native host may use atomic file I/O without
+-- changing game source.
+
+local resources = require("./resources")
+
+type SaveResult = { ok: bool, error: resources.ResourceError }
+
+declare function game_save_read_text(slot: string): extern
+declare function game_save_read_bytes(slot: string): extern
+declare function game_save_write_text(slot: string, value: string): extern
+declare function game_save_write_bytes(slot: string, value: bytes): extern
+declare function game_save_delete(slot: string): extern
+
+function operation_result(handle: i32, slot: string): SaveResult
+    local result: resources.LoadResult = resources.from_handle(handle, "save-operation", slot)
+    if result.ok then
+        resources.release(result.resource)
+    end
+    return { ok = result.ok, error = result.error }
+end
+
+function read_text(slot: string): extern
+    return game_save_read_text(slot)
+end
+
+function finish_read_text(handle: i32, slot: string): resources.LoadResult
+    return resources.from_handle(handle, "save-text", slot)
+end
+
+function read_bytes(slot: string): extern
+    return game_save_read_bytes(slot)
+end
+
+function finish_read_bytes(handle: i32, slot: string): resources.LoadResult
+    return resources.from_handle(handle, "save-bytes", slot)
+end
+
+function write_text(slot: string, value: string): extern
+    return game_save_write_text(slot, value)
+end
+
+function write_bytes(slot: string, value: bytes): extern
+    return game_save_write_bytes(slot, value)
+end
+
+function delete(slot: string): extern
+    return game_save_delete(slot)
+end
+
+function finish_operation(handle: i32, slot: string): SaveResult
+    return operation_result(handle, slot)
+end
+
+return {
+    read_text = read_text,
+    finish_read_text = finish_read_text,
+    read_bytes = read_bytes,
+    finish_read_bytes = finish_read_bytes,
+    write_text = write_text,
+    write_bytes = write_bytes,
+    delete = delete,
+    finish_operation = finish_operation,
+}

@@ -750,6 +750,356 @@ function createPlaygroundDomHost(wasmImports, domOutputRoot, getWasmExports = ()
   };
 }
 
+class GameServiceError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
+}
+
+function memoryStorage() {
+  const values = new Map();
+  return {
+    getItem(key) {
+      const normalized = String(key);
+      return values.has(normalized) ? values.get(normalized) : null;
+    },
+    setItem(key, value) {
+      values.set(String(key), String(value));
+    },
+    removeItem(key) {
+      values.delete(String(key));
+    },
+  };
+}
+
+function encodeBase64(bytes) {
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function decodeBase64(value) {
+  const binary = atob(String(value));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function validatedAssetPath(path) {
+  const value = String(path);
+  if (
+    value.length === 0 ||
+    value.startsWith('//') ||
+    value.includes('\0') ||
+    value.includes('\\') ||
+    value.includes('?') ||
+    value.includes('#') ||
+    /^[a-z][a-z0-9+.-]*:/i.test(value) ||
+    /%(?:2e|2f|5c)/i.test(value) ||
+    value.split('/').includes('..')
+  ) {
+    throw new GameServiceError('invalid_path', `invalid packaged asset path: ${value}`);
+  }
+  return value;
+}
+
+function validatedSavePart(value, label) {
+  const normalized = String(value);
+  if (!/^[A-Za-z0-9._-]{1,128}$/.test(normalized)) {
+    throw new GameServiceError('invalid_key', `invalid save ${label}: ${normalized}`);
+  }
+  return normalized;
+}
+
+function serviceErrorCode(error, fallback) {
+  if (error instanceof GameServiceError) return error.code;
+  if (error?.name === 'NotAllowedError') return 'permission_denied';
+  if (error?.name === 'QuotaExceededError') return 'storage_full';
+  return fallback;
+}
+
+// Browser implementation of engine/resources.walu, audio.walu and save.walu.
+// Dependencies are injectable so the browser conformance suite can exercise
+// decoding, playback and storage deterministically without network or devices.
+export function createGameServicesHost(options = {}) {
+  const document = options.document ?? globalThis.document;
+  const fetchImpl = options.fetch ?? globalThis.fetch;
+  const createBitmap = options.createImageBitmap ?? globalThis.createImageBitmap;
+  const FontFaceCtor = options.FontFace ?? globalThis.FontFace;
+  const fontSet = options.fontSet ?? document?.fonts;
+  const AudioContextCtor =
+    options.AudioContext ?? globalThis.AudioContext ?? globalThis.webkitAudioContext;
+  const AudioCtor = options.Audio ?? globalThis.Audio;
+  const baseUrl = options.assetBaseUrl ?? document?.baseURI ?? globalThis.location?.href;
+  const storage = options.storage ?? (() => {
+    try {
+      return document?.defaultView?.localStorage ?? globalThis.localStorage;
+    } catch {
+      return null;
+    }
+  })() ?? memoryStorage();
+  const saveNamespace = validatedSavePart(options.saveNamespace ?? 'default', 'namespace');
+
+  const resources = new Map();
+  let nextHandle = 1;
+  let audioContext = null;
+
+  const remember = (entry) => {
+    const handle = nextHandle++;
+    resources.set(handle, entry);
+    return handle;
+  };
+  const success = (kind, value, extra = {}) => remember({ ok: true, kind, value, ...extra });
+  const failure = (path, error, fallbackCode) => remember({
+    ok: false,
+    kind: 'error',
+    path,
+    code: serviceErrorCode(error, fallbackCode),
+    message: error instanceof Error ? error.message : String(error),
+  });
+  const entryFor = (handle) => resources.get(Number(handle));
+  const fetchAsset = async (path) => {
+    const normalized = validatedAssetPath(path);
+    if (typeof fetchImpl !== 'function') {
+      throw new GameServiceError('unavailable', 'fetch is unavailable in this host');
+    }
+    const url = baseUrl ? new URL(normalized, baseUrl).href : normalized;
+    const response = await fetchImpl(url);
+    if (!response?.ok) {
+      const status = Number(response?.status);
+      const code = status === 404 ? 'not_found' : 'http_error';
+      throw new GameServiceError(code, `asset fetch failed (${status || 'unknown'}): ${normalized}`);
+    }
+    return response;
+  };
+  const load = async (kind, path, decode) => {
+    try {
+      const response = await fetchAsset(path);
+      return success(kind, await decode(response));
+    } catch (error) {
+      return failure(String(path), error, 'decode_failed');
+    }
+  };
+  const context = () => {
+    if (typeof AudioContextCtor !== 'function') {
+      throw new GameServiceError('unavailable', 'Web Audio is unavailable in this host');
+    }
+    audioContext ??= new AudioContextCtor();
+    return audioContext;
+  };
+  const saveKey = (slot) =>
+    `waluau.save.v1:${saveNamespace}:${validatedSavePart(slot, 'slot')}`;
+  const saveOperation = async (slot, operation) => {
+    try {
+      const key = saveKey(slot);
+      return success('save-operation', await operation(key));
+    } catch (error) {
+      return failure(String(slot), error, 'storage_failed');
+    }
+  };
+
+  const release = (handle) => {
+    const normalized = Number(handle);
+    const entry = resources.get(normalized);
+    if (!entry) return;
+    resources.delete(normalized);
+    if (!entry.ok) return;
+    if (entry.kind === 'image') entry.value?.close?.();
+    if (entry.kind === 'font') fontSet?.delete?.(entry.value);
+    if (entry.kind === 'sound') {
+      for (const source of entry.sources) {
+        try { source.stop(); } catch { /* already stopped */ }
+        source.disconnect?.();
+      }
+      entry.sources.clear();
+    }
+    if (entry.kind === 'stream') {
+      entry.value.pause?.();
+      entry.value.removeAttribute?.('src');
+      entry.value.load?.();
+    }
+  };
+
+  return {
+    game_resource_load_text: (path) => load('text', path, (response) => response.text()),
+    game_resource_load_bytes: (path) =>
+      load('bytes', path, async (response) => new Uint8Array(await response.arrayBuffer())),
+    game_resource_load_image: (path) => load('image', path, async (response) => {
+      if (typeof createBitmap !== 'function') {
+        throw new GameServiceError('unavailable', 'createImageBitmap is unavailable in this host');
+      }
+      return createBitmap(await response.blob());
+    }),
+    game_resource_load_font: (path, family) => load('font', path, async (response) => {
+      if (typeof FontFaceCtor !== 'function' || !fontSet?.add) {
+        throw new GameServiceError('unavailable', 'FontFace loading is unavailable in this host');
+      }
+      const face = new FontFaceCtor(String(family), await response.arrayBuffer());
+      const loaded = await face.load();
+      fontSet.add(loaded);
+      return loaded;
+    }),
+    game_resource_ok: (handle) => Boolean(entryFor(handle)?.ok),
+    game_resource_error_code: (handle) => {
+      const entry = entryFor(handle);
+      return entry?.ok ? '' : (entry?.code ?? 'invalid_handle');
+    },
+    game_resource_error_message: (handle) => {
+      const entry = entryFor(handle);
+      return entry?.ok ? '' : (entry?.message ?? `unknown resource handle: ${handle}`);
+    },
+    game_resource_text: (handle) => {
+      const entry = entryFor(handle);
+      return entry?.ok && (entry.kind === 'text' || entry.kind === 'save-text')
+        ? String(entry.value)
+        : '';
+    },
+    game_resource_bytes: (handle) => {
+      const entry = entryFor(handle);
+      return entry?.ok && (entry.kind === 'bytes' || entry.kind === 'save-bytes')
+        ? entry.value.slice()
+        : new Uint8Array();
+    },
+    game_resource_font_family: (handle) => {
+      const entry = entryFor(handle);
+      return entry?.ok && entry.kind === 'font' ? String(entry.value.family ?? '') : '';
+    },
+    game_resource_release: release,
+
+    game_audio_load_sound: (path) => load('sound', path, async (response) => {
+      const ctx = context();
+      const buffer = await ctx.decodeAudioData(await response.arrayBuffer());
+      return { buffer, context: ctx };
+    }).then((handle) => {
+      const entry = entryFor(handle);
+      if (entry?.ok) {
+        entry.sources = new Set();
+        entry.context = entry.value.context;
+        entry.value = entry.value.buffer;
+      }
+      return handle;
+    }),
+    game_audio_load_stream: async (path) => {
+      try {
+        const normalized = validatedAssetPath(path);
+        if (typeof AudioCtor !== 'function') {
+          throw new GameServiceError('unavailable', 'streaming audio is unavailable in this host');
+        }
+        const url = baseUrl ? new URL(normalized, baseUrl).href : normalized;
+        const audio = new AudioCtor(url);
+        audio.preload = 'auto';
+        await new Promise((resolve, reject) => {
+          if (audio.readyState >= 3) {
+            resolve();
+            return;
+          }
+          audio.addEventListener('canplaythrough', resolve, { once: true });
+          audio.addEventListener('error', () => reject(
+            new GameServiceError('decode_failed', `streaming audio failed: ${normalized}`)
+          ), { once: true });
+          audio.load?.();
+        });
+        return success('stream', audio);
+      } catch (error) {
+        return failure(String(path), error, 'decode_failed');
+      }
+    },
+    game_audio_play: (handle, looped, volume) => {
+      const entry = entryFor(handle);
+      if (!entry?.ok) return false;
+      const normalizedVolume = Math.max(0, Math.min(1, Number(volume)));
+      try {
+        if (entry.kind === 'sound') {
+          const source = entry.context.createBufferSource();
+          const gain = entry.context.createGain();
+          source.buffer = entry.value;
+          source.loop = Boolean(looped);
+          gain.gain.value = normalizedVolume;
+          source.connect(gain);
+          gain.connect(entry.context.destination);
+          source.onended = () => entry.sources.delete(source);
+          entry.sources.add(source);
+          entry.context.resume?.().catch?.(() => {});
+          source.start();
+          return true;
+        }
+        if (entry.kind === 'stream') {
+          entry.value.loop = Boolean(looped);
+          entry.value.volume = normalizedVolume;
+          entry.value.play?.().catch?.(() => {});
+          return true;
+        }
+      } catch {
+        return false;
+      }
+      return false;
+    },
+    game_audio_pause: (handle) => {
+      const entry = entryFor(handle);
+      if (entry?.ok && entry.kind === 'stream') entry.value.pause?.();
+    },
+    game_audio_stop: (handle) => {
+      const entry = entryFor(handle);
+      if (!entry?.ok) return;
+      if (entry.kind === 'sound') {
+        for (const source of entry.sources) {
+          try { source.stop(); } catch { /* already stopped */ }
+        }
+        entry.sources.clear();
+      } else if (entry.kind === 'stream') {
+        entry.value.pause?.();
+        entry.value.currentTime = 0;
+      }
+    },
+    game_audio_is_playing: (handle) => {
+      const entry = entryFor(handle);
+      if (!entry?.ok) return false;
+      if (entry.kind === 'sound') return entry.sources.size > 0;
+      return entry.kind === 'stream' && !entry.value.paused && !entry.value.ended;
+    },
+
+    game_save_read_text: (slot) => saveOperation(slot, (key) => {
+      const value = storage.getItem(key);
+      if (value == null) throw new GameServiceError('not_found', `save slot not found: ${slot}`);
+      if (!value.startsWith('text:')) {
+        throw new GameServiceError('wrong_type', `save slot does not contain text: ${slot}`);
+      }
+      return value.slice(5);
+    }).then((handle) => {
+      const entry = entryFor(handle);
+      if (entry?.ok) entry.kind = 'save-text';
+      return handle;
+    }),
+    game_save_read_bytes: (slot) => saveOperation(slot, (key) => {
+      const value = storage.getItem(key);
+      if (value == null) throw new GameServiceError('not_found', `save slot not found: ${slot}`);
+      if (!value.startsWith('bytes:')) {
+        throw new GameServiceError('wrong_type', `save slot does not contain bytes: ${slot}`);
+      }
+      return decodeBase64(value.slice(6));
+    }).then((handle) => {
+      const entry = entryFor(handle);
+      if (entry?.ok) entry.kind = 'save-bytes';
+      return handle;
+    }),
+    game_save_write_text: (slot, value) => saveOperation(slot, (key) => {
+      storage.setItem(key, `text:${String(value)}`);
+      return null;
+    }),
+    game_save_write_bytes: (slot, value) => saveOperation(slot, (key) => {
+      storage.setItem(key, `bytes:${encodeBase64(value)}`);
+      return null;
+    }),
+    game_save_delete: (slot) => saveOperation(slot, (key) => {
+      storage.removeItem(key);
+      return null;
+    }),
+  };
+}
+
 function createTfjsHost(getWasmExports = () => null) {
   const graphModels = new Map();
   const layersModels = new Map();
@@ -1160,6 +1510,10 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
     getWasmMemory
   );
   const tfjsHost = createTfjsHost(options.getWasmExports);
+  const gameServicesHost = createGameServicesHost({
+    document: options.domOutputRoot,
+    ...(options.gameServices ?? {}),
+  });
   const hostImports = options.hostImports ?? {};
   const reportAsyncError = (error) => {
     if (typeof options.onAsyncError === 'function') {
@@ -1196,6 +1550,7 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
   const waluauImports = {
     ...domHost,
     ...tfjsHost,
+    ...gameServicesHost,
     ...hostImports,
     __waluau_attach_promise: (threadHandle, promise) => {
       if (promise == null || typeof promise.then !== 'function') {
