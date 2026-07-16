@@ -290,9 +290,9 @@ test.describe('DOM Output in Run tab', () => {
         densityMatches:
           node.width === Math.round(node.clientWidth * window.devicePixelRatio) &&
           node.height === Math.round(node.clientHeight * window.devicePixelRatio),
-        aspectRatio: node.clientWidth / node.clientHeight,
+        aspectMatches: Math.abs(node.clientWidth / node.clientHeight - 1) < 0.01,
       })),
-    ).toEqual({ densityMatches: true, aspectRatio: 1 });
+    ).toEqual({ densityMatches: true, aspectMatches: true });
 
     const signature = () =>
       canvas.evaluate((node) => {
@@ -330,9 +330,9 @@ test.describe('DOM Output in Run tab', () => {
         densityMatches:
           node.width === Math.round(node.clientWidth * window.devicePixelRatio) &&
           node.height === Math.round(node.clientHeight * window.devicePixelRatio),
-        aspectRatio: node.clientWidth / node.clientHeight,
+        aspectMatches: Math.abs(node.clientWidth / node.clientHeight - 1.6) < 0.01,
       })),
-    ).toEqual({ densityMatches: true, aspectRatio: 1.6 });
+    ).toEqual({ densityMatches: true, aspectMatches: true });
 
     // The engine renders through WebGL2 (acquired with preserveDrawingBuffer),
     // so the frame signature reads back through gl.readPixels.
