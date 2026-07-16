@@ -562,7 +562,11 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     let callback_unit_extern_trampoline = needs_callback_unit_extern_trampoline(&declared_imports);
     let promise_resume_trampoline = needs_promise_resume_trampoline(module);
     let lua_error_tag = needs_lua_error_tag(module);
-    let closure_gc_needed = needs_closure_gc_types(module, &declared_imports);
+    // Coroutine state stores a continuation closure and its body uses the
+    // closure wrapper ABI, even when the module only links await-capable
+    // functions and never creates a coroutine itself.
+    let closure_gc_needed =
+        needs_closure_gc_types(module, &declared_imports) || coroutine_plan.has_state();
     // Closure GC helper types sit after host types (only when needed):
     //   $anyref_array = (array (ref null any) mutable)
     //   $func_val = (struct { func_idx: i32, env: ref null $anyref_array })
@@ -604,7 +608,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     array_registry.coroutine_state_type = coroutine_state_type;
     array_registry.closure_gc_present = closure_gc_needed;
 
-    let signature_registry = collect_user_signatures(
+    let mut signature_registry = collect_user_signatures(
         module,
         &declared_imports,
         start_thunk.is_some(),
@@ -613,6 +617,9 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         callback_unit_extern_trampoline,
         promise_resume_trampoline,
     );
+    if coroutine_plan.has_state() {
+        signature_registry.add_wrapper(Vec::new(), Type::Numeric(NumericType::I32));
+    }
     let coroutine_body_wrapper_type = if coroutine_plan.has_state() {
         Some(
             signature_registry

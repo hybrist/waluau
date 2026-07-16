@@ -1560,6 +1560,30 @@ fn promise_await_bridge_imports_and_exports_runtime_helpers() {
 }
 
 #[test]
+fn await_capable_function_without_coroutine_creation_emits_valid_runtime_types() {
+    let source = r#"
+        declare function makePromise(): extern
+
+        function await_but_do_not_start(): i32
+            return coroutine.await_promise(makePromise())::i32
+        end
+
+        function main(): i32
+            return 1
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+}
+
+#[test]
 fn typed_promise_await_forms_lower_through_coroutine_bridge() {
     let source = r#"
         type Response = extern
