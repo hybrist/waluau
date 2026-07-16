@@ -597,6 +597,47 @@ mod tests {
     }
 
     #[test]
+    fn compile_multi_rewrites_module_aliases_in_declared_import_params_and_returns() {
+        let files = HashMap::from([
+            (
+                "/main.walu".to_string(),
+                r#"
+                    local service = require("./service")
+
+                    function exchange(value: service.Promise<i32>): service.Promise<string>
+                        return service.exchange(value)
+                    end
+                "#
+                .to_string(),
+            ),
+            (
+                "/service.walu".to_string(),
+                r#"
+                    type Promise<T> = extern
+
+                    declare function host_exchange(value: Promise<i32>): Promise<string>
+
+                    function exchange(value: Promise<i32>): Promise<string>
+                        return host_exchange(value)
+                    end
+
+                    return { exchange = exchange }
+                "#
+                .to_string(),
+            ),
+        ]);
+
+        let result = compile_sources(&files, "/main.walu")
+            .expect("module-local aliases in host import signatures should compile");
+        assert!(
+            result
+                .required_imports
+                .iter()
+                .any(|import| import.name == "host_exchange")
+        );
+    }
+
+    #[test]
     fn compile_multi_supports_negated_module_constants_in_functions() {
         let files = std::collections::HashMap::from([(
             "main.walu".to_string(),
