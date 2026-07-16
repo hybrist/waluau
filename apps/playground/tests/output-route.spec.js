@@ -50,3 +50,48 @@ test.describe('/output/poker-tricks', () => {
     await expect.poll(signature).not.toBe(beforeHistory);
   });
 });
+
+test.describe('/output/poker-tricks on high-DPI displays', () => {
+  test.use({ deviceScaleFactor: 2, viewport: { width: 1200, height: 800 } });
+
+  test('matches the WebGL backing buffer to CSS size and device density', async ({ page }) => {
+    await page.goto('/output/poker-tricks');
+    const canvas = page.locator('canvas#walua-game-canvas');
+    await expect(canvas).toHaveJSProperty('width', 1920, { timeout: COMPILER_READY_TIMEOUT });
+
+    const metrics = () =>
+      canvas.evaluate((node) => {
+        const gl = node.getContext('webgl2');
+        return {
+          ratio: window.devicePixelRatio,
+          cssWidth: node.clientWidth,
+          cssHeight: node.clientHeight,
+          width: node.width,
+          height: node.height,
+          drawingBufferWidth: gl.drawingBufferWidth,
+          drawingBufferHeight: gl.drawingBufferHeight,
+        };
+      });
+
+    await expect.poll(metrics).toEqual({
+      ratio: 2,
+      cssWidth: 960,
+      cssHeight: 600,
+      width: 1920,
+      height: 1200,
+      drawingBufferWidth: 1920,
+      drawingBufferHeight: 1200,
+    });
+
+    await page.setViewportSize({ width: 800, height: 600 });
+    await expect.poll(metrics).toEqual({
+      ratio: 2,
+      cssWidth: 784,
+      cssHeight: 490,
+      width: 1568,
+      height: 980,
+      drawingBufferWidth: 1568,
+      drawingBufferHeight: 980,
+    });
+  });
+});

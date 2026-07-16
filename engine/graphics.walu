@@ -41,6 +41,7 @@ type Graphics = {
     line_width: f64,
     font_pixel: f64,
     time_location: WebGLUniformLocation?,
+    pixel_scale_location: WebGLUniformLocation?,
     transforms: {f64}
 }
 
@@ -100,9 +101,10 @@ precision mediump float;
 varying vec4 v_color;
 varying float v_effect;
 uniform float u_time;
+uniform vec2 u_pixel_scale;
 void main() {
     vec3 color = v_color.rgb;
-    vec2 p = gl_FragCoord.xy;
+    vec2 p = gl_FragCoord.xy / u_pixel_scale;
     float effect = v_effect;
     bool grayscale = effect > 4.5;
     if (grayscale) effect -= 4.0;
@@ -155,7 +157,14 @@ void main() {
     gl:enableVertexAttribArray(effect_location::u32)
     gl:vertexAttribPointer(effect_location::u32, 1, GL_FLOAT, false, 28, 24)
 
-    gl:viewport(0, 0, width::i32, height::i32)
+    gl:viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight)
+
+    local pixel_scale_location: WebGLUniformLocation? = gl:getUniformLocation(program, "u_pixel_scale")
+    gl:uniform2f(
+        pixel_scale_location,
+        ((gl.drawingBufferWidth::f64) / width)::f32,
+        ((gl.drawingBufferHeight::f64) / height)::f32
+    )
 
     return {
         gl = gl,
@@ -171,8 +180,22 @@ void main() {
         line_width = 1.0,
         font_pixel = 2.0,
         time_location = gl:getUniformLocation(program, "u_time"),
+        pixel_scale_location = pixel_scale_location,
         transforms = { 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 }
     }
+end
+
+-- Resizing the canvas changes its WebGL drawing buffer but preserves the
+-- engine's logical coordinate system. Refresh both the viewport and the scale
+-- used to express fragment effects in logical pixels.
+function Graphics:resize(): unit
+    local gl: WebGL2RenderingContext = self.gl
+    gl:viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight)
+    gl:uniform2f(
+        self.pixel_scale_location,
+        ((gl.drawingBufferWidth::f64) / self.width)::f32,
+        ((gl.drawingBufferHeight::f64) / self.height)::f32
+    )
 end
 
 -- Draws the batched vertices accumulated since the previous flush.
