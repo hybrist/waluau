@@ -118,7 +118,7 @@ run inside an ordinary Waluau coroutine and return a structured result:
 local resources = require("../../engine/resources")
 
 local co = coroutine.create(function(): i32
-    local path: string = "/assets/level.txt"
+    local path: string = "assets/level.txt"
     local handle: i32 = coroutine.await_promise(resources.load_text(path))::i32
     local result: resources.LoadResult = resources.finish_text(handle, path)
     if result.ok then
@@ -158,6 +158,8 @@ raw fetch, decode, storage, and device exceptions do not cross into game code.
 Stable error codes currently include `invalid_path`, `invalid_key`,
 `not_found`, `http_error`, `decode_failed`, `unavailable`,
 `permission_denied`, `storage_full`, `storage_failed`, and `wrong_type`.
+Manifest-backed hosts additionally report `undeclared_asset`,
+`wrong_asset_type`, and `invalid_manifest` without attempting a network load.
 
 Every successful load owns one handle. Call `resources.release` when it is no
 longer needed; release is idempotent and closes image objects, unregisters font
@@ -176,9 +178,14 @@ offscreen composition. Texture and target release is explicit and idempotent,
 and later use returns `false`; creation returns structured `invalid_resource`,
 `wrong_type`, `invalid_size`, `unavailable`, upload, and framebuffer failures.
 
-The browser host accepts already-served project paths. A distributable manifest
-and fingerprinting pipeline remains tracked separately, as do a native adapter
-and GPU glyph integration for loaded font handles.
+The version-1 `waluau.assets.json` contract and `--manifest` CLI option package
+typed, read-only project assets with content fingerprints. Generated sibling
+glue exports the logical-path manifest and an import-meta-relative base URL;
+the browser host maps logical requests to emitted URLs and rejects undeclared
+or wrongly typed requests. Save namespaces never consult this manifest. See
+[`examples/game-project`](../examples/game-project/) for the complete layout
+and build command. A native adapter and GPU glyph integration for loaded font
+handles remain separate follow-ups.
 
 ## Intended API surface
 
@@ -207,8 +214,8 @@ Reaching LÖVE-like usability requires these architectural capabilities:
 
 | Area | Waluau/language requirement | Platform/runtime requirement |
 | --- | --- | --- |
-| Distribution | Stable package/virtual-module imports, API versioning and a standard project layout are available | Generated sibling JavaScript glue (`waluau-884g`) |
-| Resources | Backend-neutral opaque handles, nullable callbacks and host byte transfer are available | Browser async text/bytes/image/font/audio handles, decoded-image GPU upload, explicit lifetime and structured failures are available; production packaging/caching and native adapters remain |
+| Distribution | Stable package/virtual-module imports, API versioning and a standard project layout are available | Generated sibling JavaScript glue and typed fingerprinted asset manifests are available |
+| Resources | Backend-neutral opaque handles, nullable callbacks and host byte transfer are available | Browser async text/bytes/image/font/audio handles, decoded-image GPU upload, explicit lifetime, structured failures, and production packaging are available; caching and native adapters remain |
 | GPU graphics | Typed buffers, numeric/vector data, shader and uniform-friendly APIs | WebGL2 geometry, texture/sprite batching and render targets are available; custom shader compilation, WebGPU/native adapters and broader capability discovery remain |
 | Input | Extensible event/value representation without a closed hard-coded record | Keyboard normalization, pointer/touch/gamepad polling, focus and fullscreen handling |
 | Audio | Optional readiness callbacks and richer source state | Browser decoded effects and streamed music; native mixer, buses, effects and device lifecycle remain |

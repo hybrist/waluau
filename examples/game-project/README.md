@@ -9,7 +9,8 @@ Build the project with an installed compiler:
 
 ```sh
 mkdir -p dist
-waluau main.walu -o dist/game.wasm --emit-js
+waluau main.walu -o dist/game.wasm --emit-js \
+  --manifest waluau.assets.json
 ```
 
 From a Waluau repository checkout, the equivalent command is:
@@ -17,13 +18,32 @@ From a Waluau repository checkout, the equivalent command is:
 ```sh
 mkdir -p examples/game-project/dist
 cargo run -p waluau-cli -- examples/game-project/main.walu \
-  -o examples/game-project/dist/game.wasm --emit-js
+  -o examples/game-project/dist/game.wasm --emit-js \
+  --manifest examples/game-project/waluau.assets.json
 ```
 
-This writes `game.wasm` and its ES-module sibling `game.js`. The generated
-module exports `requiredImports`, `bytesConstants`, `wasmUrl`, `instantiate`,
-and `run`. It resolves `game.wasm` relative to `import.meta.url` and never
-reflects on or parses the Wasm import section:
+This writes `game.wasm`, its ES-module sibling `game.js`, and fingerprinted
+copies of every declared asset. The version-1 manifest accepts exactly
+`text`, `bytes`, `image`, `font`, and `audio` entries. Paths are normalized,
+project-relative logical names; schemes, absolute paths, traversal, encoded
+traversal, duplicate declarations, missing files, and unknown types are build
+errors.
+
+```json
+{
+  "version": 1,
+  "assets": [
+    { "path": "assets/welcome.txt", "type": "text" },
+    { "path": "assets/player.svg", "type": "image" }
+  ]
+}
+```
+
+The generated module exports `requiredImports`, `bytesConstants`, `wasmUrl`, `instantiate`,
+`run`, `assetBaseUrl`, and `assetManifest`. Manifest values contain the
+fingerprinted import-meta-relative URL and declared type, while game code keeps
+requesting the original logical path. It resolves `game.wasm` relative to
+`import.meta.url` and never reflects on or parses the Wasm import section:
 
 ```js
 import { run } from './dist/game.js';
@@ -39,7 +59,11 @@ await run({
 the compiler-known imports used by the module. It also receives `wasmUrl`,
 `assetBaseUrl`, `assetManifest`, and `hostOptions`. Asset metadata is separate
 from the Wasm ABI: a packager can pass a normalized logical-path manifest and
-an `import.meta.url`-relative base URL without changing module imports.
+an `import.meta.url`-relative base URL without changing module imports. Missing
+logical entries and requests through the wrong typed loader resolve to
+structured `undeclared_asset` and `wrong_asset_type` resource errors. Save
+slots remain separately validated and namespaced; they never consult this
+read-only manifest.
 
 The browser conformance suite builds this source as the only project file,
 instantiates it with the standard Waluau browser host, and verifies its first

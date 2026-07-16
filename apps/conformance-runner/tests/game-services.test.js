@@ -151,6 +151,42 @@ describe('browser game resource services', () => {
     expect(host.game_gpu_resource_error_code(badTarget)).toBe('invalid_size');
   });
 
+  it('resolves logical packaged paths through typed fingerprint manifests', async () => {
+    const requested = [];
+    const host = createGameServicesHost({
+      assetBaseUrl: 'https://game.test/dist/',
+      assetManifest: {
+        'assets/message.txt': { url: './assets/message.a1b2.txt', type: 'text' },
+        'assets/data.bin': { url: './assets/data.c3d4.bin', type: 'bytes' },
+      },
+      fetch: async (url) => {
+        requested.push(url);
+        return new Response(url.endsWith('.txt') ? 'manifest text' : new Uint8Array([4, 2]), {
+          status: 200,
+        });
+      },
+      storage: mapStorage(),
+    });
+
+    const text = await host.game_resource_load_text('assets/message.txt');
+    const bytes = await host.game_resource_load_bytes('assets/data.bin');
+    expect(host.game_resource_text(text)).toBe('manifest text');
+    expect(Array.from(host.game_resource_bytes(bytes))).toEqual([4, 2]);
+    expect(requested).toEqual([
+      'https://game.test/dist/assets/message.a1b2.txt',
+      'https://game.test/dist/assets/data.c3d4.bin',
+    ]);
+
+    const undeclared = await host.game_resource_load_text('assets/missing.txt');
+    const wrongType = await host.game_resource_load_image('assets/message.txt');
+    expect(host.game_resource_error_code(undeclared)).toBe('undeclared_asset');
+    expect(host.game_resource_error_code(wrongType)).toBe('wrong_asset_type');
+
+    expect(host.game_resource_ok(
+      await host.game_save_write_text('progress', 'separate-from-assets')
+    )).toBe(true);
+  });
+
   it('loads packaged text, bytes, images and fonts with explicit lifetime', async () => {
     const { host, bitmap, fontSet } = serviceHarness();
     const text = await host.game_resource_load_text('/assets/message.txt');

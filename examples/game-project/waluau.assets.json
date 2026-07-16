@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "assets": [
+    { "path": "assets/welcome.txt", "type": "text" },
+    { "path": "assets/palette.bin", "type": "bytes" },
+    { "path": "assets/player.svg", "type": "image" },
+    { "path": "assets/interface.woff2", "type": "font" },
+    { "path": "assets/theme.ogg", "type": "audio" }
+  ]
+}
