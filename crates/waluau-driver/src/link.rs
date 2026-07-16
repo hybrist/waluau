@@ -289,7 +289,7 @@ fn merge_with_builtins(
         // Top-level statements after the `local` keep using the local itself
         // (the binding gates the alias), which is equivalent: the initializer
         // is a literal and const locals cannot be rebound.
-        value_aliases.extend(module_constants(&module.program.top_level));
+        value_aliases.extend(module_constants(&module.program.top_level)?);
         let type_namespaces = module_type_namespaces(modules, module, entry_id);
 
         let mut rewriter = Rewriter {
@@ -547,7 +547,7 @@ fn function_expr_to_function(name: &str, function: &FunctionExpr) -> Function {
 /// function body (top-level locals are otherwise invisible there) and
 /// wherever a consumer reads them off the module's export table. A numeric
 /// literal keeps its annotated type through an explicit cast.
-fn module_constants(top_level: &[Stmt]) -> HashMap<String, Expr> {
+fn module_constants(top_level: &[Stmt]) -> Result<HashMap<String, Expr>, Diagnostic> {
     let mut constants = HashMap::new();
     for stmt in top_level {
         let Stmt::Let {
@@ -560,30 +560,46 @@ fn module_constants(top_level: &[Stmt]) -> HashMap<String, Expr> {
         else {
             continue;
         };
-        if let Some(literal) = constant_literal(ty.as_ref(), value) {
-            constants.insert(name.clone(), literal);
-        }
+        let literal = constant_literal(ty.as_ref(), value).ok_or_else(|| {
+            let diagnostic = Diagnostic::new(format!(
+                "top-level const '{name}' initializer must be an inlinable literal"
+            ));
+            match value.span() {
+                Some(span) => diagnostic.with_span(span),
+                None => diagnostic,
+            }
+        })?;
+        constants.insert(name.clone(), literal);
     }
-    constants
+    Ok(constants)
 }
 
 /// The inlinable expression for a constant initializer, or `None` when the
 /// initializer is not a literal (only literals can be duplicated freely).
 fn constant_literal(ty: Option<&Type>, value: &Expr) -> Option<Expr> {
     match value {
-        Expr::Number(..) => match ty {
-            // Keep the annotated numeric type: a bare literal would default
-            // to f64 in unconstrained positions.
-            Some(ty @ Type::Numeric(_)) => Some(Expr::Cast {
-                expr: Box::new(value.clone()),
-                ty: ty.clone(),
-                span: None,
-            }),
-            None => Some(value.clone()),
-            Some(_) => None,
-        },
+        Expr::Number(..) => numeric_constant_literal(ty, value),
+        Expr::Unary {
+            op: waluau_ast::UnaryOp::Neg,
+            expr,
+            ..
+        } if matches!(&**expr, Expr::Number(..)) => numeric_constant_literal(ty, value),
         Expr::Bool(..) | Expr::String(..) => Some(value.clone()),
         _ => None,
+    }
+}
+
+fn numeric_constant_literal(ty: Option<&Type>, value: &Expr) -> Option<Expr> {
+    match ty {
+        // Keep the annotated numeric type: a bare literal would default to f64
+        // in unconstrained positions.
+        Some(ty @ Type::Numeric(_)) => Some(Expr::Cast {
+            expr: Box::new(value.clone()),
+            ty: ty.clone(),
+            span: None,
+        }),
+        None => Some(value.clone()),
+        Some(_) => None,
     }
 }
 
@@ -613,7 +629,7 @@ fn compute_module_export(
     let top_level_names = module_function_names(&module_functions, &module.program.export);
     let (re_exports, namespaces, _) =
         process_reexport_bindings(&module.program.top_level, &imports);
-    let constants = module_constants(&module.program.top_level);
+    let constants = module_constants(&module.program.top_level)?;
 
     let resolved = resolve_module_export(
         module.program.export.as_ref(),

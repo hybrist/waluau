@@ -80,15 +80,12 @@ const FAN_CENTER_Y: f64 = 509.0
 -- tucks under the relic to its right, and the parting reads as the fan
 -- breathing rather than a card climbing out of it.
 const FAN_PART: f64 = 0.23
--- A focus of FAN_CLOSED — one past the last of the five relics — closes the
+-- A focus of FAN_CLOSED — below the first of the five relics — closes the
 -- fan, leaving every relic at its resting slot. Focus only exists while the
 -- cursor can actually move, so cards in flight and a resolving breach both draw
 -- the hand closed, which is what keeps animation endpoints honest: slot_x and
 -- slot_y describe the closed fan.
--- TODO(waluau-iipk): Say "no relic" as -1, the obvious sentinel, once a module
--- constant can hold a negated literal. Today that silently fails to inline and
--- every use dies with "unknown name", so the sentinel has to sit past the hand.
-const FAN_CLOSED: i32 = 5
+const FAN_CLOSED: i32 = -1
 
 -- Faces an animated card shows along its flight: stay sealed, stay revealed,
 -- or flip between the two mid-flight. main.walu mirrors these values too.
