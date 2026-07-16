@@ -46,9 +46,8 @@ const SLOT_MIDDLE: i32 = 2
 const SLOT_DECK: i32 = 3
 const SLOT_ASIDE: i32 = 4
 
--- Mirrors render's "no relic holds focus" sentinel, which sits one past the
--- last relic rather than at -1; see FAN_CLOSED's issue in render.walu.
-const FAN_CLOSED: i32 = 5
+-- Mirrors render's "no relic holds focus" sentinel.
+const FAN_CLOSED: i32 = -1
 -- How fast a relic slides to its parted position, in fan steps per second: one
 -- cursor move parts a relic by FAN_PART, so this is about a seventh of a second
 -- of travel. The ceiling is the shortest card flight: a card in the air aims at

@@ -922,15 +922,27 @@ mod tests {
             r#"
                 local CELL_SIZE <const>: f64 = 16.0
                 local TITLE <const> = "snake"
+                local NEGATIVE_INDEX <const>: i32 = -1
+                local NEGATIVE_SCALE <const>: f64 = -1.5
 
                 function cell_px(v: i32): f64
                     return v::f64 * CELL_SIZE
+                end
+
+                function negative_index(): i32
+                    return NEGATIVE_INDEX
+                end
+
+                function negative_scale(): f64
+                    return NEGATIVE_SCALE
                 end
 
                 return {
                     CELL_SIZE = CELL_SIZE,
                     TITLE = TITLE,
                     cell_px = cell_px,
+                    negative_index = negative_index,
+                    negative_scale = negative_scale,
                 }
             "#,
         )
@@ -944,6 +956,8 @@ mod tests {
                 assert(config.CELL_SIZE == 16.0)
                 assert(config.TITLE == "snake")
                 assert(config.cell_px(2) == 32.0)
+                assert(config.negative_index() == -1)
+                assert(config.negative_scale() == -1.5)
 
                 function in_function(): f64
                     return config.CELL_SIZE + 1.0
@@ -958,20 +972,28 @@ mod tests {
     }
 
     #[test]
-    fn compile_file_rejects_non_literal_constant_export() {
+    fn compile_file_rejects_non_literal_module_constant_at_declaration() {
         let tempdir = tempdir().expect("tempdir should exist");
         fs::write(
             tempdir.path().join("config.walu"),
             r#"
-                local SIZES <const> = { 16.0 }
+                function first(): i32
+                    return 16
+                end
 
-                function first(): f64
+                local SIZE <const>: i32 = first()
+
+                function read_size(): i32
+                    return SIZE
+                end
+
+                function unrelated(): f64
                     return 16.0
                 end
 
                 return {
-                    SIZES = SIZES,
-                    first = first,
+                    read_size = read_size,
+                    unrelated = unrelated,
                 }
             "#,
         )
@@ -981,18 +1003,21 @@ mod tests {
             &input_path,
             r#"
                 local config = require("./config")
-                assert(config.first() == 16.0)
+                assert(config.unrelated() == 16.0)
             "#,
         )
         .expect("main module should write");
 
-        // A `<const>` local with a non-literal initializer is not a module
-        // constant, so the export field does not resolve.
+        // Reject the declaration itself rather than allowing later references
+        // to fail as unknown names.
         let error = super::compile_file(&input_path).expect_err("compile should fail");
+        assert_eq!(
+            error.to_string(),
+            "top-level const 'SIZE' initializer must be an inlinable literal"
+        );
         assert!(
-            error
-                .to_string()
-                .contains("module export field 'SIZES' references unknown function 'SIZES'")
+            error.span().is_some(),
+            "diagnostic should point at the initializer"
         );
     }
 

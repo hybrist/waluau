@@ -540,6 +540,59 @@ mod tests {
     }
 
     #[test]
+    fn compile_multi_supports_negated_module_constants_in_functions() {
+        let files = std::collections::HashMap::from([(
+            "main.walu".to_string(),
+            r#"
+                local NEGATIVE_INDEX <const>: i32 = -1
+                local NEGATIVE_SCALE <const>: f64 = -1.5
+
+                function negative_index(): i32
+                    return NEGATIVE_INDEX
+                end
+
+                function negative_scale(): f64
+                    return NEGATIVE_SCALE
+                end
+
+                assert(negative_index() == -1)
+                assert(negative_scale() == -1.5)
+            "#
+            .to_string(),
+        )]);
+
+        let result = super::compile_sources(&files, "main.walu")
+            .expect("negated module constants should compile");
+        assert!(result.wat.contains("(module"));
+    }
+
+    #[test]
+    fn compile_multi_rejects_non_literal_module_constant_at_declaration() {
+        let files = std::collections::HashMap::from([(
+            "main.walu".to_string(),
+            r#"
+                function initial(): i32
+                    return 1
+                end
+
+                local SIZE <const>: i32 = initial()
+
+                function read_size(): i32
+                    return SIZE
+                end
+            "#
+            .to_string(),
+        )]);
+
+        let error = super::compile_sources(&files, "main.walu")
+            .expect_err("non-literal module constant should fail");
+        assert_eq!(
+            error,
+            "top-level const 'SIZE' initializer must be an inlinable literal"
+        );
+    }
+
+    #[test]
     fn compile_reexported_bindings() {
         let mut files = std::collections::HashMap::new();
         files.insert(
