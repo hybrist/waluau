@@ -118,6 +118,52 @@ fn lowers_omitted_trailing_nullable_args_as_typed_nulls() {
 }
 
 #[test]
+fn lowers_nil_for_declared_nullable_callback_parameter() {
+    let source = r#"
+        type Event = extern
+        declare function listen(callback: ((Event) -> unit)?): unit
+
+        function clear(): unit
+            listen(nil)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    let clear = module
+        .functions
+        .iter()
+        .find(|function| function.name == "clear")
+        .expect("clear function should exist");
+
+    let mut saw_function_null = false;
+    let mut saw_host_call = false;
+    for block in clear.blocks.values() {
+        for (_, instruction) in &block.instructions {
+            match instruction {
+                Instruction::Null {
+                    ty: Type::Function { .. },
+                } => {
+                    saw_function_null = true;
+                }
+                Instruction::HostCall { name, args, .. } if name == "listen" => {
+                    saw_host_call = args.len() == 1;
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(
+        saw_function_null,
+        "nil should lower to a typed function null"
+    );
+    assert!(
+        saw_host_call,
+        "nullable callback host call should retain its Wasm arity"
+    );
+}
+
+#[test]
 fn lowers_nullable_options_records_and_missing_fields() {
     let source = r#"
         type Node = extern

@@ -333,13 +333,6 @@ function mapType(idlType, filter, knownInterfaces, include, options = {}) {
 
 function finishMapType(idlType, mapped, nullable) {
   if (nullable) {
-    // waluau-lqjs: '?' has no syntax for function/callback types (EventListener?, EventHandler?)
-    if (mapped.includes('->')) {
-      return {
-        error: `nullable callback Web IDL type ${idlType} has no extern syntax representation`,
-        category: 'nullable-callback-type',
-      };
-    }
     // waluau-pq7p: '?' is only supported on host reference types (string, extern); the type
     // checker rejects nullable numerics/bool/unit (e.g. unsigned long?, double?, boolean?)
     if (NULLABLE_REJECTED_TYPES.has(mapped)) {
@@ -349,7 +342,8 @@ function finishMapType(idlType, mapped, nullable) {
       };
     }
   }
-  return { type: nullable ? `${mapped}?` : mapped };
+  if (!nullable) return { type: mapped };
+  return { type: mapped.includes('->') ? `(${mapped})?` : `${mapped}?` };
 }
 
 const NULLABLE_REJECTED_TYPES = new Set(['u32', 'u64', 'i32', 'i64', 'f32', 'f64', 'bool', 'unit']);

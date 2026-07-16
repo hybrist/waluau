@@ -5578,7 +5578,7 @@ impl Builder<'_> {
                 for (expected_param, arg) in params.iter().skip(1).zip(args.iter()) {
                     let actual =
                         self.infer_expr_type(arg, types, Some(expected_param.clone()))?;
-                    if expected_param != &actual {
+                    if coerce_type(actual.clone(), Some(expected_param.clone())).is_err() {
                         return Err(Diagnostic::new(format!(
                             "call expected {}, got {}",
                             expected_param, actual

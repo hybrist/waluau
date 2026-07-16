@@ -443,6 +443,9 @@ impl std::fmt::Display for Type {
             Self::Extern => f.write_str("extern"),
             Self::ExternSubtype(parent) => write!(f, "extern extends {parent}"),
             Self::Nil => f.write_str("nil"),
+            Self::Nullable(inner) if matches!(inner.as_ref(), Self::Function { .. }) => {
+                write!(f, "({inner})?")
+            }
             Self::Nullable(inner) => write!(f, "{inner}?"),
             Self::TaggedVariant(variant) => write!(f, "{}({})", variant.tag, variant.payload),
             Self::TaggedUnion(variants) => {

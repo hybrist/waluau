@@ -532,10 +532,6 @@ function install_arcane_heist(): unit
         end
     end
 
-    -- TODO(waluau-lqjs): Make unused lifecycle hooks nullable once Waluau can
-    -- express optional function fields, then drop this mandatory no-op.
-    local function keyreleased(key: string): unit end
-
     engine.start({
         title = "Arcane Heist",
         width = 960,
@@ -548,7 +544,7 @@ function install_arcane_heist(): unit
         update = update,
         draw = draw,
         keypressed = keypressed,
-        keyreleased = keyreleased,
+        keyreleased = nil,
     })
 end
 

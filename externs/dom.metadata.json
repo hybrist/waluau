@@ -5058,23 +5058,34 @@
     {
       "interface": "EventTarget",
       "kind": "operation",
+      "idlName": "addEventListener",
+      "emittedName": "add_event_listener",
+      "params": [
+        "type: string",
+        "callback: ((Event) -> unit)?"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "EventTarget",
+      "kind": "operation",
+      "idlName": "removeEventListener",
+      "emittedName": "remove_event_listener",
+      "params": [
+        "type: string",
+        "callback: ((Event) -> unit)?"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "EventTarget",
+      "kind": "operation",
       "idlName": "dispatchEvent",
       "emittedName": "dispatchEvent",
       "params": [
         "event: Event"
       ],
       "returnType": "bool"
-    },
-    {
-      "interface": "EventTarget",
-      "kind": "operation",
-      "idlName": "addEventListener",
-      "emittedName": "add_event_listener",
-      "params": [
-        "type: string",
-        "callback: (Event) -> unit"
-      ],
-      "returnType": "unit"
     },
     {
       "interface": "HTMLCollection",
@@ -12955,18 +12966,6 @@
       "member": "composedPath",
       "reason": "unsupported generic Web IDL type sequence<EventTarget>",
       "issue": "waluau-utyc"
-    },
-    {
-      "interface": "EventTarget",
-      "member": "addEventListener",
-      "reason": "callback: nullable callback Web IDL type EventListener? has no extern syntax representation",
-      "issue": "waluau-lqjs"
-    },
-    {
-      "interface": "EventTarget",
-      "member": "removeEventListener",
-      "reason": "callback: nullable callback Web IDL type EventListener? has no extern syntax representation",
-      "issue": "waluau-lqjs"
     },
     {
       "interface": "EventTarget",

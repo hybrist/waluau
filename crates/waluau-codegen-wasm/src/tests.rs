@@ -1102,6 +1102,45 @@ fn declared_host_event_callback_import_exports_trampoline() {
 }
 
 #[test]
+fn declared_nullable_host_callback_accepts_callback_and_nil() {
+    let source = r#"
+        type Event = extern
+
+        declare function listen(handler: ((Event) -> unit)?): unit
+
+        function register(): unit
+            listen(function(event: Event): unit
+            end)
+        end
+
+        function clear(): unit
+            listen(nil)
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        wat.contains(r#"(import "waluau" "listen""#),
+        "expected declared nullable callback import in:\n{wat}"
+    );
+    assert!(
+        wasm_export_func_index(&wasm, super::CALLBACK_EVENT_UNIT_TRAMPOLINE_EXPORT).is_some(),
+        "nullable callback import should export the callback trampoline"
+    );
+    assert!(
+        wat.contains("ref.null"),
+        "nil callback should emit a null reference:\n{wat}"
+    );
+}
+
+#[test]
 fn unused_host_callback_declaration_omits_import_and_trampoline() {
     let source = r#"
         type Event = extern
