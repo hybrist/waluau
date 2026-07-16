@@ -30,6 +30,11 @@ local VERTEX_FLOATS <const>: i32 = 7
 -- Vertices per batch before an implicit flush inserts an extra draw call.
 local MAX_VERTICES <const>: i32 = 4096
 local CIRCLE_SEGMENTS <const>: i32 = 32
+-- Curves are tessellated from their logical-coordinate control polygon. The
+-- step count targets this maximum logical-pixel length, then caps at 64 so
+-- coordinates far outside the canvas cannot make path cost unbounded.
+local CURVE_STEP_LENGTH <const>: f64 = 4.0
+local CURVE_MAX_STEPS <const>: i32 = 64
 
 type Graphics = {
     gl: WebGL2RenderingContext,
@@ -46,7 +51,13 @@ type Graphics = {
     font_pixel: f64,
     time_location: WebGLUniformLocation?,
     pixel_scale_location: WebGLUniformLocation?,
-    transforms: {f64}
+    transforms: {f64},
+    path_x: {f64},
+    path_y: {f64},
+    path_move: {bool},
+    path_has_current: bool,
+    path_start_x: f64,
+    path_start_y: f64
 }
 
 function compile_shader(gl: WebGL2RenderingContext, kind: u32, source: string): WebGLShader
@@ -192,7 +203,13 @@ void main() {
         font_pixel = 2.0,
         time_location = gl:getUniformLocation(program, "u_time"),
         pixel_scale_location = pixel_scale_location,
-        transforms = { 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 }
+        transforms = { 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 },
+        path_x = {},
+        path_y = {},
+        path_move = {},
+        path_has_current = false,
+        path_start_x = 0.0,
+        path_start_y = 0.0
     }
 end
 
@@ -356,6 +373,127 @@ function Graphics:line(x1: f64, y1: f64, x2: f64, y2: f64): unit
     local nx: f64 = -dy / length * half
     local ny: f64 = dx / length * half
     self:emit_quad(x1 + nx, y1 + ny, x2 + nx, y2 + ny, x2 - nx, y2 - ny, x1 - nx, y1 - ny)
+end
+
+function path_append(graphics: Graphics, x: f64, y: f64, move: bool): unit
+    table.insert(graphics.path_x, x)
+    table.insert(graphics.path_y, y)
+    table.insert(graphics.path_move, move)
+end
+
+-- Starts a reusable logical-coordinate path. Path commands only build its
+-- geometry; stroke applies the then-current color, line width, and transform.
+function Graphics:begin_path(): unit
+    self.path_x = {}
+    self.path_y = {}
+    self.path_move = {}
+    self.path_has_current = false
+end
+
+function Graphics:move_to(x: f64, y: f64): unit
+    path_append(self, x, y, true)
+    self.path_has_current = true
+    self.path_start_x = x
+    self.path_start_y = y
+end
+
+-- With no current subpath, line_to starts one at its destination.
+function Graphics:line_to(x: f64, y: f64): unit
+    if not self.path_has_current then
+        self:move_to(x, y)
+        return
+    end
+    path_append(self, x, y, false)
+end
+
+function curve_steps(length: f64): i32
+    local steps: i32 = math.ceil(length / CURVE_STEP_LENGTH)::i32
+    if steps < 1 then
+        return 1
+    elseif steps > CURVE_MAX_STEPS then
+        return CURVE_MAX_STEPS
+    end
+    return steps
+end
+
+-- Adds a quadratic Bézier from the current point through one control point.
+-- With no current subpath, the control point becomes its start, matching the
+-- browser canvas path convention.
+function Graphics:quadratic_curve_to(cx: f64, cy: f64, x: f64, y: f64): unit
+    if not self.path_has_current then
+        self:move_to(cx, cy)
+    end
+    local index: i32 = #self.path_x - 1
+    local from_x: f64 = self.path_x[index]
+    local from_y: f64 = self.path_y[index]
+    local length: f64 = math.sqrt((cx - from_x) * (cx - from_x) + (cy - from_y) * (cy - from_y))
+        + math.sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy))
+    local steps: i32 = curve_steps(length)
+    for step = 1::i32, steps do
+        local t: f64 = (step::f64) / (steps::f64)
+        local inverse: f64 = 1.0 - t
+        path_append(
+            self,
+            inverse * inverse * from_x + 2.0 * inverse * t * cx + t * t * x,
+            inverse * inverse * from_y + 2.0 * inverse * t * cy + t * t * y,
+            false
+        )
+    end
+end
+
+-- Adds a cubic Bézier from the current point through two control points.
+function Graphics:cubic_curve_to(cx1: f64, cy1: f64, cx2: f64, cy2: f64, x: f64, y: f64): unit
+    if not self.path_has_current then
+        self:move_to(cx1, cy1)
+    end
+    local index: i32 = #self.path_x - 1
+    local from_x: f64 = self.path_x[index]
+    local from_y: f64 = self.path_y[index]
+    local length: f64 = math.sqrt((cx1 - from_x) * (cx1 - from_x) + (cy1 - from_y) * (cy1 - from_y))
+        + math.sqrt((cx2 - cx1) * (cx2 - cx1) + (cy2 - cy1) * (cy2 - cy1))
+        + math.sqrt((x - cx2) * (x - cx2) + (y - cy2) * (y - cy2))
+    local steps: i32 = curve_steps(length)
+    for step = 1::i32, steps do
+        local t: f64 = (step::f64) / (steps::f64)
+        local inverse: f64 = 1.0 - t
+        path_append(
+            self,
+            inverse * inverse * inverse * from_x
+                + 3.0 * inverse * inverse * t * cx1
+                + 3.0 * inverse * t * t * cx2
+                + t * t * t * x,
+            inverse * inverse * inverse * from_y
+                + 3.0 * inverse * inverse * t * cy1
+                + 3.0 * inverse * t * t * cy2
+                + t * t * t * y,
+            false
+        )
+    end
+end
+
+-- Closes only the current subpath. A later move_to can start another one in
+-- the same path without stroke connecting the two.
+function Graphics:close_path(): unit
+    if not self.path_has_current then
+        return
+    end
+    local index: i32 = #self.path_x - 1
+    if self.path_x[index] ~= self.path_start_x or self.path_y[index] ~= self.path_start_y then
+        path_append(self, self.path_start_x, self.path_start_y, false)
+    end
+end
+
+-- Strokes every subpath through the existing batched line implementation, so
+-- long paths retain its implicit-flush capacity behavior and transform rules.
+function Graphics:stroke(): unit
+    for index = 1::i32, #self.path_x - 1 do
+        if not self.path_move[index] then
+            self:line(
+                self.path_x[index - 1], self.path_y[index - 1],
+                self.path_x[index], self.path_y[index]
+            )
+        end
+    end
 end
 
 -- "<size>px ..." selects the bitmap font scale: one glyph line is 8 font

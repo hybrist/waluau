@@ -43,7 +43,6 @@ const EYE_GROUND: string = "#0b0b10"
 -- how much of a fanned relic stays uncovered, and the eye sits well inside it.
 const EYE_HALF_W: f64 = 7.0
 const EYE_LID: f64 = 4.6
-const EYE_SEGMENTS: i32 = 6
 -- How much of a sealed relic's face shows through when the other side has
 -- already seen it: only the seal's field is veiled, so the card reads as
 -- sealed-but-not-secret rather than simply half drawn. Low enough that the
@@ -251,28 +250,20 @@ end
 
 -- The mark a relic carries once the other side has watched it come off the
 -- wards: an open eye, drawn about its own centre on its own dark ground so it
--- reads over both a card's face and its seal. The lids are quadratic arcs the
--- line API has no curve for, so each is walked out in EYE_SEGMENTS steps.
--- TODO(waluau-eooi): Replace the hand-subdivided lids with Graphics quadratic
--- paths once the engine exposes backend-neutral curve primitives.
+-- reads over both a card's face and its seal. Both quadratic lids share one
+-- path and use control points twice their centre offset so the curve peaks at
+-- EYE_LID halfway across.
 function draw_eye(graphics: Graphics, x: f64, y: f64): unit
     graphics:set_color(EYE_GROUND)
     graphics:fill_circle(x, y, 9.0)
     graphics:set_color(EYE_INK)
     graphics:set_line_width(1.3)
-    for lid = -1::i32, 1::i32, 2::i32 do
-        local dip: f64 = (lid::f64) * EYE_LID
-        local px: f64 = x - EYE_HALF_W
-        local py: f64 = y
-        for step = 1::i32, EYE_SEGMENTS do
-            local t: f64 = -1.0 + 2.0 * (step::f64) / (EYE_SEGMENTS::f64)
-            local nx: f64 = x + t * EYE_HALF_W
-            local ny: f64 = y + dip * (1.0 - t * t)
-            graphics:line(px, py, nx, ny)
-            px = nx
-            py = ny
-        end
-    end
+    graphics:begin_path()
+    graphics:move_to(x - EYE_HALF_W, y)
+    graphics:quadratic_curve_to(x, y - EYE_LID * 2.0, x + EYE_HALF_W, y)
+    graphics:move_to(x - EYE_HALF_W, y)
+    graphics:quadratic_curve_to(x, y + EYE_LID * 2.0, x + EYE_HALF_W, y)
+    graphics:stroke()
     graphics:fill_circle(x, y, 2.4)
 end
 
