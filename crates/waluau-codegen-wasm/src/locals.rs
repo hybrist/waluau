@@ -58,6 +58,7 @@ pub(crate) fn build_local_plan(
     function: &IrFunction,
     value_types: &BTreeMap<ValueId, Type>,
     array_registry: &ArrayTypeRegistry,
+    force_all_locals: bool,
 ) -> Result<LocalPlan, Diagnostic> {
     let mut slots = BTreeMap::new();
     let unit_values = value_types
@@ -96,6 +97,13 @@ pub(crate) fn build_local_plan(
             &global_uses,
         );
         stack_values.extend(block_stack_values);
+    }
+    // A suspending function is re-entered through its saved program counter in
+    // a fresh Wasm invocation. Values that would normally live only on the
+    // operand stack must therefore have locals so they can be copied into the
+    // coroutine state before unwinding and restored on re-entry.
+    if force_all_locals {
+        stack_values.clear();
     }
     stack_values.retain(|v| !matches!(value_types.get(v), Some(Type::Multi(_)) | Some(Type::Unit)));
 

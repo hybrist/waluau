@@ -520,7 +520,7 @@ fn reuses_i32_local_slots_for_disjoint_live_ranges() {
             boxed_bool_struct_type: 0,
         },
     );
-    let local_plan = super::build_local_plan(function, &value_types, &array_registry)
+    let local_plan = super::build_local_plan(function, &value_types, &array_registry, false)
         .expect("plan should build");
 
     let block = function
@@ -1557,6 +1557,30 @@ fn promise_await_bridge_imports_and_exports_runtime_helpers() {
         wasm_export_func_index(&wasm, super::PROMISE_RESET_ACTIVE_EXPORT).is_some(),
         "promise active-reset helper should be exported"
     );
+}
+
+#[test]
+fn await_capable_function_without_coroutine_creation_emits_valid_runtime_types() {
+    let source = r#"
+        declare function makePromise(): extern
+
+        function await_but_do_not_start(): i32
+            return coroutine.await_promise(makePromise())::i32
+        end
+
+        function main(): i32
+            return 1
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
 }
 
 #[test]

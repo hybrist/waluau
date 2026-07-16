@@ -19,12 +19,22 @@ function finish_sound(handle: i32, path: string): resources.LoadResult
     return resources.from_handle(handle, "sound", path)
 end
 
+function await_sound(path: string): resources.LoadResult
+    local handle: i32 = coroutine.await_promise(load_sound(path))::i32
+    return finish_sound(handle, path)
+end
+
 function load_stream(path: string): extern
     return game_audio_load_stream(path)
 end
 
 function finish_stream(handle: i32, path: string): resources.LoadResult
     return resources.from_handle(handle, "stream", path)
+end
+
+function await_stream(path: string): resources.LoadResult
+    local handle: i32 = coroutine.await_promise(load_stream(path))::i32
+    return finish_stream(handle, path)
 end
 
 function play(resource: resources.Resource, looped: bool, volume: f64): bool
@@ -50,8 +60,10 @@ end
 return {
     load_sound = load_sound,
     finish_sound = finish_sound,
+    await_sound = await_sound,
     load_stream = load_stream,
     finish_stream = finish_stream,
+    await_stream = await_stream,
     play = play,
     pause = pause,
     stop = stop,

@@ -551,7 +551,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     let string_constants = host::collect_string_constants(module);
     let bytes_constants = host::collect_bytes_constants(module);
     let buffer_plan = BufferPlan::new(module);
-    let coroutine_plan = CoroutinePlan::new(module, string_constants.len() as u32);
+    let mut coroutine_plan = CoroutinePlan::new(module, string_constants.len() as u32);
     let start_thunk = module.start;
 
     // Each array type occupies two type-section slots: the raw storage array
@@ -588,7 +588,11 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     let callback_unit_extern_trampoline = needs_callback_unit_extern_trampoline(&declared_imports);
     let promise_resume_trampoline = needs_promise_resume_trampoline(module);
     let lua_error_tag = needs_lua_error_tag(module);
-    let closure_gc_needed = needs_closure_gc_types(module, &declared_imports);
+    // Coroutine state stores a continuation closure and its body uses the
+    // closure wrapper ABI, even when the module only links await-capable
+    // functions and never creates a coroutine itself.
+    let closure_gc_needed =
+        needs_closure_gc_types(module, &declared_imports) || coroutine_plan.has_state();
     // Closure GC helper types sit after host types (only when needed):
     //   $anyref_array = (array (ref null any) mutable)
     //   $func_val = (struct { func_idx: i32, env: ref null $anyref_array })
@@ -630,7 +634,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     array_registry.coroutine_state_type = coroutine_state_type;
     array_registry.closure_gc_present = closure_gc_needed;
 
-    let signature_registry = collect_user_signatures(
+    let mut signature_registry = collect_user_signatures(
         module,
         &declared_imports,
         start_thunk.is_some(),
@@ -639,6 +643,9 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         callback_unit_extern_trampoline,
         promise_resume_trampoline,
     );
+    if coroutine_plan.has_state() {
+        signature_registry.add_wrapper(Vec::new(), Type::Numeric(NumericType::I32));
+    }
     let coroutine_body_wrapper_type = if coroutine_plan.has_state() {
         Some(
             signature_registry
@@ -664,6 +671,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             )
         })
         .collect::<HashMap<_, _>>();
+    coroutine_plan.configure_spills(module, &signatures, &array_registry)?;
 
     let mut wasm = WasmModule::new();
     let mut types = TypeSection::new();
@@ -772,7 +780,9 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     // Coroutine GC types (before user function types so `thread` params can reference them).
     if let Some(state_type) = coroutine_state_type {
         // State struct: { tag:i32, yielded:anyref, continuation:func_val,
-        // await_status:i32, pc_*:i32 }.
+        // await_status:i32, pc_*:i32, spill_* }. Concrete GC references are
+        // stored as anyref because record types are declared after this state
+        // type; function re-entry casts them back to their precise local type.
         let mut fields = vec![
             FieldType {
                 element_type: StorageType::Val(ValType::I32),
@@ -797,6 +807,12 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         for _ in 0..coroutine_plan.pc_field_count() {
             fields.push(FieldType {
                 element_type: StorageType::Val(ValType::I32),
+                mutable: true,
+            });
+        }
+        for ty in coroutine_plan.spill_field_types() {
+            fields.push(FieldType {
+                element_type: StorageType::Val(coroutine_spill_storage_type(ty, &array_registry)?),
                 mutable: true,
             });
         }
@@ -1721,31 +1737,50 @@ fn emit_function(
         buffer_alloc_func,
     };
     let value_types = infer_value_types(function, signatures)?;
-    let local_plan = build_local_plan(function, &value_types, array_registry)?;
+    let suspending = ctx.coroutine_plan.function_yields(&function.name);
+    let local_plan = build_local_plan(function, &value_types, array_registry, suspending)?;
     let value_defs = build_value_definition_map(function);
     let locals = compress_locals(local_plan.extra_locals.clone());
     let mut out = Function::new(locals);
-    if try_emit_structured_fast_path(
-        &mut out,
-        function,
-        &ctx,
-        &value_types,
-        &local_plan,
-        &value_defs,
-    )? {
+    if !suspending
+        && try_emit_structured_fast_path(
+            &mut out,
+            function,
+            &ctx,
+            &value_types,
+            &local_plan,
+            &value_defs,
+        )?
+    {
         out.instruction(&Instruction::End);
         return Ok(out);
     }
 
     let pc_local = local_plan.pc_local;
     if let Some(pc_field) = ctx.coroutine_plan.pc_field(&function.name) {
-        // A directly-yielding function resumes at the program counter saved in the
-        // active instance's state struct.
+        // Every directly or transitively suspending function has its own
+        // continuation PC. Fresh calls outside an active coroutine still start
+        // at entry; re-entry restores locals before dispatching to the saved
+        // direct-await block or synthetic yielding-call site.
+        emit_active_state_ref(&mut out, &ctx)?;
+        out.instruction(&Instruction::RefIsNull);
+        out.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+        out.instruction(&Instruction::I32Const(function.entry.0 as i32));
+        out.instruction(&Instruction::Else);
         emit_active_state_field_get(&mut out, &ctx, pc_field)?;
+        out.instruction(&Instruction::End);
     } else {
         out.instruction(&Instruction::I32Const(function.entry.0 as i32));
     }
     out.instruction(&Instruction::LocalSet(pc_local));
+    if suspending {
+        out.instruction(&Instruction::LocalGet(pc_local));
+        out.instruction(&Instruction::I32Const(function.entry.0 as i32));
+        out.instruction(&Instruction::I32Ne);
+        out.instruction(&Instruction::If(BlockType::Empty));
+        emit_coroutine_restore_locals(&mut out, function, &ctx)?;
+        out.instruction(&Instruction::End);
+    }
     out.instruction(&Instruction::Loop(BlockType::Empty));
 
     for block in function.blocks.values() {
@@ -1757,6 +1792,30 @@ fn emit_function(
             &mut out,
             function,
             block,
+            &ctx,
+            &value_types,
+            &local_plan,
+            &value_defs,
+        )?;
+        out.instruction(&Instruction::End);
+    }
+
+    for point in ctx.coroutine_plan.call_resume_points(&function.name) {
+        let block = function.blocks.get(&point.block).ok_or_else(|| {
+            Diagnostic::new(format!(
+                "missing coroutine call-resume block {:?} in '{}'",
+                point.block, function.name
+            ))
+        })?;
+        out.instruction(&Instruction::LocalGet(pc_local));
+        out.instruction(&Instruction::I32Const(point.pc));
+        out.instruction(&Instruction::I32Eq);
+        out.instruction(&Instruction::If(BlockType::Empty));
+        emit_block_from_instruction(
+            &mut out,
+            function,
+            block,
+            point.instruction_index,
             &ctx,
             &value_types,
             &local_plan,
@@ -2241,6 +2300,7 @@ fn try_emit_structured_fast_path(
                 out,
                 function,
                 entry,
+                0,
                 ctx,
                 value_types,
                 local_plan,
@@ -2302,6 +2362,7 @@ fn try_emit_structured_fast_path(
                                 out,
                                 function,
                                 entry,
+                                0,
                                 ctx,
                                 value_types,
                                 local_plan,
@@ -2325,6 +2386,7 @@ fn try_emit_structured_fast_path(
                                 out,
                                 function,
                                 else_bb,
+                                0,
                                 ctx,
                                 value_types,
                                 local_plan,
@@ -2373,6 +2435,7 @@ fn try_emit_structured_fast_path(
                     out,
                     function,
                     entry,
+                    0,
                     ctx,
                     value_types,
                     local_plan,
@@ -2385,6 +2448,7 @@ fn try_emit_structured_fast_path(
                     out,
                     function,
                     second,
+                    0,
                     ctx,
                     value_types,
                     local_plan,
@@ -2398,6 +2462,7 @@ fn try_emit_structured_fast_path(
                     out,
                     function,
                     then_bb.expect("checked above"),
+                    0,
                     ctx,
                     value_types,
                     local_plan,
@@ -2440,6 +2505,7 @@ fn try_emit_structured_fast_path(
                     out,
                     function,
                     entry,
+                    0,
                     ctx,
                     value_types,
                     local_plan,
@@ -2452,6 +2518,7 @@ fn try_emit_structured_fast_path(
                     out,
                     function,
                     body,
+                    0,
                     ctx,
                     value_types,
                     local_plan,
@@ -2462,6 +2529,7 @@ fn try_emit_structured_fast_path(
                     out,
                     function,
                     second,
+                    0,
                     ctx,
                     value_types,
                     local_plan,
@@ -2499,10 +2567,34 @@ fn emit_block(
     local_plan: &LocalPlan,
     value_defs: &HashMap<ValueId, IrInstruction>,
 ) -> Result<(), Diagnostic> {
+    emit_block_from_instruction(
+        out,
+        function,
+        block,
+        0,
+        ctx,
+        value_types,
+        local_plan,
+        value_defs,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_block_from_instruction(
+    out: &mut Function,
+    function: &IrFunction,
+    block: &BasicBlock,
+    start_index: usize,
+    ctx: &EmissionContext<'_>,
+    value_types: &BTreeMap<ValueId, Type>,
+    local_plan: &LocalPlan,
+    value_defs: &HashMap<ValueId, IrInstruction>,
+) -> Result<(), Diagnostic> {
     emit_block_instructions(
         out,
         function,
         block,
+        start_index,
         ctx,
         value_types,
         local_plan,
@@ -2571,6 +2663,7 @@ fn emit_block(
             out.instruction(&Instruction::Unreachable);
             out.instruction(&Instruction::End);
 
+            emit_coroutine_spill_locals(out, function, ctx)?;
             // Save the resume point so re-entry dispatches to the right block.
             emit_active_state_ref(out, ctx)?;
             out.instruction(&Instruction::I32Const(resume_block.0 as i32));
@@ -2633,6 +2726,7 @@ fn emit_block(
             out.instruction(&Instruction::Unreachable);
             out.instruction(&Instruction::End);
 
+            emit_coroutine_spill_locals(out, function, ctx)?;
             emit_active_state_ref(out, ctx)?;
             out.instruction(&Instruction::I32Const(resume_block.0 as i32));
             out.instruction(&Instruction::StructSet {
@@ -2664,6 +2758,7 @@ fn emit_block(
             // instance finished tentatively before the call, and only `coroutine.yield`
             // flips it back to suspended. So a return that is *not* a yield leaves the
             // finished tag in place, and `coroutine.resume` reads the body's result directly.
+            emit_coroutine_pc_set_if_active(out, function, ctx, function.entry.0 as i32)?;
             if !matches!(return_ty, Type::Unit) {
                 emit_value_operand(out, local_plan, *value)?;
             }
@@ -2676,16 +2771,18 @@ fn emit_block(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_block_instructions(
     out: &mut Function,
     function: &IrFunction,
     block: &BasicBlock,
+    start_index: usize,
     ctx: &EmissionContext<'_>,
     value_types: &BTreeMap<ValueId, Type>,
     local_plan: &LocalPlan,
     value_defs: &HashMap<ValueId, IrInstruction>,
 ) -> Result<(), Diagnostic> {
-    for (value, instruction) in &block.instructions {
+    for (value, instruction) in block.instructions.iter().skip(start_index) {
         match instruction {
             IrInstruction::Param(_) | IrInstruction::Phi(_) => {}
             IrInstruction::Unit => {
@@ -3051,6 +3148,20 @@ fn emit_block_instructions(
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::Call { name, args, .. } => {
+                let yielding_call = ctx.coroutine_plan.function_yields(name);
+                if yielding_call {
+                    let resume_pc = ctx
+                        .coroutine_plan
+                        .call_resume_point(&function.name, *value)
+                        .ok_or_else(|| {
+                            Diagnostic::new(format!(
+                                "missing coroutine call resume point for {:?} in '{}'",
+                                value, function.name
+                            ))
+                        })?;
+                    emit_coroutine_pc_set_if_active(out, function, ctx, resume_pc)?;
+                    emit_coroutine_spill_locals(out, function, ctx)?;
+                }
                 for arg in args {
                     emit_value_operand(out, local_plan, *arg)?;
                 }
@@ -3059,8 +3170,9 @@ fn emit_block_instructions(
                 })?;
                 out.instruction(&Instruction::Call(ctx.wasm_func_index(callee.index)));
                 emit_value_store(out, local_plan, *value)?;
-                if ctx.coroutine_plan.function_yields(name) {
+                if yielding_call {
                     emit_return_if_coroutine_yielded(out, function, ctx)?;
+                    emit_coroutine_pc_set_if_active(out, function, ctx, function.entry.0 as i32)?;
                 }
             }
             IrInstruction::HostCall {
@@ -3214,7 +3326,8 @@ fn emit_block_instructions(
             IrInstruction::CoroutineCreate { callee } => {
                 let state_ty = ctx.coroutine_state_type()?;
                 // struct.new $coroutine_state {
-                //   tag=suspended, yielded=null, continuation, await_status=none, pc*=0
+                //   tag=suspended, yielded=null, continuation, await_status=none,
+                //   pc*=entry, spill*=default
                 // }
                 out.instruction(&Instruction::I32Const(TAG_SUSPENDED));
                 out.instruction(&Instruction::RefNull(HeapType::Abstract {
@@ -3225,8 +3338,11 @@ fn emit_block_instructions(
                 // non-capturing coroutine bodies through the zero-arg wrapper uniformly.
                 emit_value_operand(out, local_plan, *callee)?;
                 out.instruction(&Instruction::I32Const(AWAIT_STATUS_NONE));
-                for _ in 0..ctx.coroutine_plan.pc_field_count() {
-                    out.instruction(&Instruction::I32Const(0));
+                for entry in ctx.coroutine_plan.pc_initial_values() {
+                    out.instruction(&Instruction::I32Const(*entry));
+                }
+                for ty in ctx.coroutine_plan.spill_field_types() {
+                    emit_coroutine_spill_default(out, ty, ctx.array_registry)?;
                 }
                 out.instruction(&Instruction::StructNew(state_ty));
                 emit_value_store(out, local_plan, *value)?;
@@ -4157,6 +4273,118 @@ fn emit_default_value(
         Type::Unit => Ok(()),
         _ => emit_ref_null(out, ty, array_registry),
     }
+}
+
+fn coroutine_spill_storage_type(
+    ty: &Type,
+    array_registry: &ArrayTypeRegistry,
+) -> Result<ValType, Diagnostic> {
+    let value_type = wasm_type(ty, array_registry)?;
+    match value_type {
+        ValType::Ref(reference)
+            if matches!(
+                reference.heap_type,
+                HeapType::Abstract {
+                    ty: AbstractHeapType::Extern,
+                    ..
+                }
+            ) =>
+        {
+            Ok(ValType::Ref(reference))
+        }
+        ValType::Ref(_) => Ok(anyref_val_type()),
+        scalar => Ok(scalar),
+    }
+}
+
+fn emit_coroutine_spill_default(
+    out: &mut Function,
+    ty: &Type,
+    array_registry: &ArrayTypeRegistry,
+) -> Result<(), Diagnostic> {
+    match coroutine_spill_storage_type(ty, array_registry)? {
+        ValType::I32 => out.instruction(&Instruction::I32Const(0)),
+        ValType::I64 => out.instruction(&Instruction::I64Const(0)),
+        ValType::F32 => out.instruction(&Instruction::F32Const(0.0)),
+        ValType::F64 => out.instruction(&Instruction::F64Const(0.0)),
+        ValType::V128 => out.instruction(&Instruction::V128Const(0)),
+        ValType::Ref(reference) => out.instruction(&Instruction::RefNull(reference.heap_type)),
+    };
+    Ok(())
+}
+
+fn emit_coroutine_spill_locals(
+    out: &mut Function,
+    function: &IrFunction,
+    ctx: &EmissionContext<'_>,
+) -> Result<(), Diagnostic> {
+    let state_ty = ctx.coroutine_state_type()?;
+    emit_active_state_ref(out, ctx)?;
+    out.instruction(&Instruction::RefIsNull);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    out.instruction(&Instruction::Else);
+    for spill in ctx.coroutine_plan.spill_slots(&function.name) {
+        emit_active_state_ref(out, ctx)?;
+        out.instruction(&Instruction::LocalGet(spill.local));
+        out.instruction(&Instruction::StructSet {
+            struct_type_index: state_ty,
+            field_index: spill.field,
+        });
+    }
+    out.instruction(&Instruction::End);
+    Ok(())
+}
+
+fn emit_coroutine_restore_locals(
+    out: &mut Function,
+    function: &IrFunction,
+    ctx: &EmissionContext<'_>,
+) -> Result<(), Diagnostic> {
+    let state_ty = ctx.coroutine_state_type()?;
+    for spill in ctx.coroutine_plan.spill_slots(&function.name) {
+        emit_active_state_ref(out, ctx)?;
+        out.instruction(&Instruction::StructGet {
+            struct_type_index: state_ty,
+            field_index: spill.field,
+        });
+        let storage_type = coroutine_spill_storage_type(&spill.ty, ctx.array_registry)?;
+        let local_type = wasm_type(&spill.ty, ctx.array_registry)?;
+        if storage_type != local_type {
+            let ValType::Ref(reference) = local_type else {
+                return Err(Diagnostic::new(format!(
+                    "coroutine spill type mismatch for {}",
+                    spill.ty
+                )));
+            };
+            out.instruction(&Instruction::RefCastNullable(reference.heap_type));
+        }
+        out.instruction(&Instruction::LocalSet(spill.local));
+    }
+    Ok(())
+}
+
+fn emit_coroutine_pc_set_if_active(
+    out: &mut Function,
+    function: &IrFunction,
+    ctx: &EmissionContext<'_>,
+    pc: i32,
+) -> Result<(), Diagnostic> {
+    let Some(pc_field) = ctx.coroutine_plan.pc_field(&function.name) else {
+        return Ok(());
+    };
+    let state_ty = ctx.coroutine_state_type()?;
+    emit_active_state_ref(out, ctx)?;
+    out.instruction(&Instruction::RefIsNull);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    out.instruction(&Instruction::Else);
+    emit_active_state_ref(out, ctx)?;
+    out.instruction(&Instruction::I32Const(pc));
+    out.instruction(&Instruction::StructSet {
+        struct_type_index: state_ty,
+        field_index: pc_field,
+    });
+    out.instruction(&Instruction::End);
+    Ok(())
 }
 
 /// After calling a function that may suspend, unwind toward the current resume entrypoint

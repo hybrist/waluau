@@ -27,6 +27,8 @@ import gameEngineResources from '../../../engine/resources.walu?raw';
 import gameEngineAudio from '../../../engine/audio.walu?raw';
 import gameEngineSave from '../../../engine/save.walu?raw';
 import gameEngineResourceSample from '../../../fixtures/game-engine/resources.walu?raw';
+import transitiveAwaitStateMain from '../../../fixtures/coroutine-await-state/main.walu?raw';
+import transitiveAwaitStateWorker from '../../../fixtures/coroutine-await-state/worker.walu?raw';
 import arcaneHeistSim from '../../../fixtures/poker-tricks/sim.walu?raw';
 import arcaneHeistGame from '../../../fixtures/poker-tricks/game.walu?raw';
 
@@ -520,6 +522,39 @@ describe('browser conformance', () => {
 
     expect(harness.responseCount).toBe(2);
     expect(harness.strings).toEqual(['typed body', 'typed body']);
+  });
+
+  it('preserves transitive await progress and concrete record locals', async () => {
+    const steps = [];
+    const asyncErrors = [];
+    await compileAndInstantiateWithExports(
+      {
+        '/main.walu': transitiveAwaitStateMain,
+        '/worker.walu': transitiveAwaitStateWorker,
+      },
+      '/main.walu',
+      {
+        hostImports: {
+          make_state_promise(value) {
+            return Promise.resolve(value + 100);
+          },
+          record_state_step(value) {
+            steps.push(value);
+          },
+        },
+        onAsyncError(error) {
+          asyncErrors.push(error);
+        },
+      },
+    );
+
+    for (let index = 0; index < 8; index += 1) {
+      await Promise.resolve();
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(steps).toEqual([1, 2, 3, 367]);
+    expect(asyncErrors).toEqual([]);
   });
 
   it('passes tfjs_host_api.walu async data readback checks', async () => {
