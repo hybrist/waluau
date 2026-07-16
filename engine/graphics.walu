@@ -20,6 +20,10 @@ local GL_DYNAMIC_DRAW <const>: u32 = 0x88E8
 local GL_FLOAT <const>: u32 = 0x1406
 local GL_FRAGMENT_SHADER <const>: u32 = 0x8B30
 local GL_VERTEX_SHADER <const>: u32 = 0x8B31
+local GL_BLEND <const>: u32 = 0x0BE2
+local GL_ONE <const>: u32 = 1
+local GL_SRC_ALPHA <const>: u32 = 0x0302
+local GL_ONE_MINUS_SRC_ALPHA <const>: u32 = 0x0303
 
 -- Interleaved floats per vertex: clip-space x, y then r, g, b, a, effect id.
 local VERTEX_FLOATS <const>: i32 = 7
@@ -72,7 +76,7 @@ function hex_digit(code: i32): i32
     return 0
 end
 
--- One "#rrggbb" channel (two hex digits at a 1-based index) as 0.0..1.0.
+-- One hex color channel (two digits at a 1-based index) as 0.0..1.0.
 function channel(color: string, index: i32): f64
     local high: i32 = string.byte(color, index)
     local low: i32 = string.byte(color, index + 1)
@@ -140,6 +144,13 @@ void main() {
         end
     end
     gl:useProgram(program)
+
+    -- Colors carry an alpha channel, so a translucent shape has to mix with
+    -- what is already there rather than replace it. The alpha channel blends
+    -- separately: the canvas composites over the page, and src-alpha weighting
+    -- there would punch a hole in the frame instead of covering it.
+    gl:enable(GL_BLEND)
+    gl:blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
 
     -- The renderer owns one program and one vertex buffer, so attribute
     -- layout is configured once: stride 28 bytes, position at 0, color at 8,
@@ -279,12 +290,14 @@ function Graphics:clear(color: string): unit
     gl:clear(GL_COLOR_BUFFER_BIT)
 end
 
+-- Accepts "#rrggbb" and "#rrggbbaa"; without an alpha pair the color is opaque.
 function Graphics:set_color(color: string): unit
-    if #color == 7 then
+    if #color == 7 or #color == 9 then
         self.red = channel(color, 2)
         self.green = channel(color, 4)
         self.blue = channel(color, 6)
         self.alpha = 1.0
+        if #color == 9 then self.alpha = channel(color, 8) end
     end
 end
 

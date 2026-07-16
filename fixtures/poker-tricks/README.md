@@ -25,6 +25,16 @@ three beats: the winner's relics rise out of the hand, the displaced wards are
 set aside at the board's edge, and both groups then travel to their final
 slots, flipping face up or face down to match where they land.
 
+A feint is the only way a relic's identity crosses the table: both sides are
+looking at the wards, so whichever hand takes one has gained a card the other
+side has already read. Those slots are tracked and wear a small eye until the
+relic is spent — on the player's fan the eye warns that the Arch Mage knows
+that relic, and on the Arch Mage's sealed row it marks a relic the player is
+owed a look at, so the seal there is only veiled: its field goes translucent
+and the rank and school show through while the engraving stays crisp. Cards
+drawn off the pile are secret again, and a ward on the board is public anyway,
+so neither is ever marked.
+
 The player's relics are held as an overlapping, tilted fan. Relics keep the
 order they were dealt in; the fan slides open around whichever one the cursor
 holds, giving it room rather than lifting it in front of its neighbours. Parting

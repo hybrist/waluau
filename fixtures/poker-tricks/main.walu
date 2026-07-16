@@ -166,11 +166,14 @@ function slot_tilt_now(ui: Ui, kind: i32, index: i32): f64
 end
 
 -- One card dealt off the draw pile into a board slot; returns when it lands.
+-- A dealt card comes off the sealed deck, so it is never a card either side
+-- has already seen.
 function push_deal(anims: {render.Anim}, card: game.Card, kind: i32, index: i32, faces: i32, start: f64): f64
     local finish: f64 = start + DEAL_SECONDS
     table.insert(anims, {
         card = card,
         faces = faces,
+        known = false,
         x0 = render.slot_x(SLOT_DECK, 0),
         y0 = render.slot_y(SLOT_DECK, 0),
         x1 = render.slot_x(kind, index),
@@ -276,10 +279,13 @@ function queue_swap_animation(state: game.State, ui: Ui): unit
             return_faces = FACES_FLIP_DOWN
         end
         -- The winner's relic leaves the hand and hovers short of the wards,
-        -- straightening out of the fan's tilt as it goes...
+        -- straightening out of the fan's tilt as it goes. It flies unmarked:
+        -- the Arch Mage's relic is not the player's to read until it lands
+        -- face up on the wards a beat later, and by then it is a ward.
         table.insert(anims, {
             card = outgoing,
             faces = leave_faces,
+            known = false,
             x0 = leave_x,
             y0 = leave_y,
             x1 = hover_x,
@@ -297,6 +303,7 @@ function queue_swap_animation(state: game.State, ui: Ui): unit
         table.insert(anims, {
             card = outgoing,
             faces = settle_faces,
+            known = false,
             x0 = hover_x,
             y0 = hover_y,
             x1 = mid_x,
@@ -310,10 +317,13 @@ function queue_swap_animation(state: game.State, ui: Ui): unit
             dest_kind = SLOT_MIDDLE,
             dest_index = middle_index,
         })
-        -- The displaced ward is set aside at the board's edge...
+        -- The displaced ward is set aside at the board's edge, marked from the
+        -- moment it leaves: it spent the whole feint face up on the board, so
+        -- whichever hand takes it, the other side already knows it...
         table.insert(anims, {
             card = incoming,
             faces = FACES_UP,
+            known = true,
             x0 = mid_x,
             y0 = mid_y,
             x1 = render.slot_x(SLOT_ASIDE, k),
@@ -327,10 +337,13 @@ function queue_swap_animation(state: game.State, ui: Ui): unit
             dest_kind = -1,
             dest_index = 0,
         })
-        -- ...and finally joins the winning hand, completing the swap.
+        -- ...and finally joins the winning hand, completing the swap. Sealing
+        -- into the Arch Mage's row veils the card rather than hiding it, which
+        -- is the whole point of having watched it cross.
         table.insert(anims, {
             card = incoming,
             faces = return_faces,
+            known = true,
             x0 = render.slot_x(SLOT_ASIDE, k),
             y0 = render.slot_y(SLOT_ASIDE, k),
             x1 = land_x,
