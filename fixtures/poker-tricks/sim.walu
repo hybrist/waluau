@@ -101,6 +101,9 @@ repack_state:resolve_swap({ 3 }, { 0 })
 assert(repack_state.swap_winner == 1 and repack_state.player_known[3])
 repack_state:play(0, 1)
 assert(#repack_state.player_known == 5 and #repack_state.player_hand == 5)
+local repack_trick = repack_state.history[0]
+assert(repack_trick.player_known[3] and not repack_trick.player_known[1])
+assert(repack_trick.player_hand[3].rank == marked_card.rank and repack_trick.player_hand[3].suit == marked_card.suit)
 assert(repack_state.player_known[1] and not repack_state.player_known[0])
 assert(repack_state.player_hand[1].rank == marked_card.rank and repack_state.player_hand[1].suit == marked_card.suit)
 assert(not repack_state.player_known[2])
@@ -180,6 +183,11 @@ for expected_round = FIRST_ROUND, LAST_ROUND do
     assert(trick.pot == trick.player_wager + trick.computer_wager)
     assert(trick.points == expected_round + trick.pot)
     assert(#trick.middle == 3 and #trick.player_cards == 2 and #trick.computer_cards == 2)
+    assert(#trick.player_hand == 5 and #trick.computer_hand == 5)
+    -- The reveal retains the original slot layout even though the live hands
+    -- have already discarded two cards and drawn their replacements.
+    assert(trick.player_hand[2].rank == 2 and trick.player_hand[2].suit == 1)
+    assert(state.player_hand[2].rank == 6 and state.player_hand[2].suit == 3)
     if expected_round < LAST_ROUND then assert(not state.finished) end
 end
 assert(state.finished and state.player_tricks == 5 and state.computer_tricks == 0)

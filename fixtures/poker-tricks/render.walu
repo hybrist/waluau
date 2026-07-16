@@ -572,7 +572,7 @@ function draw_resolution_board(graphics: Graphics, state: game.State, fan_parts:
         elseif i == trick.computer_second then
             draw_flipping_card(graphics, trick.computer_cards[1], x, 116.0, reveal_clock, 0.2 + FLIP_SECONDS * 0.7, trick.winner < 0 and scoring[4])
         else
-            draw_card(graphics, state.computer_hand[i], x, 116.0, false, false, true, false, state.computer_known[i])
+            draw_card(graphics, trick.computer_hand[i], x, 116.0, false, false, true, false, trick.computer_known[i])
         end
     end
 
@@ -591,7 +591,7 @@ function draw_resolution_board(graphics: Graphics, state: game.State, fan_parts:
         elseif i == trick.player_second then
             draw_hand_card(graphics, trick.player_cards[1], i, fan_parts[i], true, false, trick.winner > 0 and scoring[4], false)
         else
-            draw_hand_card(graphics, state.player_hand[i], i, fan_parts[i], false, false, false, state.player_known[i])
+            draw_hand_card(graphics, trick.player_hand[i], i, fan_parts[i], false, false, false, trick.player_known[i])
         end
     end
     draw_footer(graphics)
