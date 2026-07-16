@@ -12,15 +12,15 @@ type Trick = { round: i32, middle: {Card}, player_hand: {Card}, computer_hand: {
 -- deck are secret; only an exchange leaks one.
 type State = { deck: {Card}, player_hand: {Card}, computer_hand: {Card}, player_known: {bool}, computer_known: {bool}, middle: {Card}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool }
 
-local MIN_RANK <const>: i32 = 2
-local MAX_RANK <const>: i32 = 14
-local MIN_SUIT <const>: i32 = 0
-local MAX_SUIT <const>: i32 = 3
-local ZERO <const>: i32 = 0
-local ONE <const>: i32 = 1
-local TWO <const>: i32 = 2
-local MAX_ROUNDS <const>: i32 = 5
-local ARCH_MAGE_WINS_TO_END <const>: i32 = 3
+const MIN_RANK: i32 = 2
+const MAX_RANK: i32 = 14
+const MIN_SUIT: i32 = 0
+const MAX_SUIT: i32 = 3
+const ZERO: i32 = 0
+const ONE: i32 = 1
+const TWO: i32 = 2
+const MAX_ROUNDS: i32 = 5
+const ARCH_MAGE_WINS_TO_END: i32 = 3
 
 function make_deck(): {Card}
     local deck: {Card} = {}

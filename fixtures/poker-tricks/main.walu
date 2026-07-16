@@ -25,47 +25,47 @@ type Ui = {
     anim_kind: i32
 }
 
-local MODAL_NONE <const>: i32 = 0
-local MODAL_HISTORY <const>: i32 = 1
-local MODAL_HELP <const>: i32 = 2
-local MODAL_FINAL <const>: i32 = 4
+const MODAL_NONE: i32 = 0
+const MODAL_HISTORY: i32 = 1
+const MODAL_HELP: i32 = 2
+const MODAL_FINAL: i32 = 4
 -- Both staggered flips finish before the first continue press advances play.
-local BOARD_REVEAL_SECONDS <const>: f64 = 1.6
+const BOARD_REVEAL_SECONDS: f64 = 1.6
 
-local ANIM_NONE <const>: i32 = 0
-local ANIM_DEAL <const>: i32 = 1
-local ANIM_SWAP <const>: i32 = 2
+const ANIM_NONE: i32 = 0
+const ANIM_DEAL: i32 = 1
+const ANIM_SWAP: i32 = 2
 
 -- Mirrors the board anchor ids render.slot_x/slot_y understand.
-local SLOT_PLAYER <const>: i32 = 0
-local SLOT_COMPUTER <const>: i32 = 1
-local SLOT_MIDDLE <const>: i32 = 2
-local SLOT_DECK <const>: i32 = 3
-local SLOT_ASIDE <const>: i32 = 4
+const SLOT_PLAYER: i32 = 0
+const SLOT_COMPUTER: i32 = 1
+const SLOT_MIDDLE: i32 = 2
+const SLOT_DECK: i32 = 3
+const SLOT_ASIDE: i32 = 4
 
 -- Mirrors render's "no relic holds focus" sentinel, which sits one past the
 -- last relic rather than at -1; see the TODO on FAN_CLOSED in render.walu.
-local FAN_CLOSED <const>: i32 = 5
+const FAN_CLOSED: i32 = 5
 -- How fast a relic slides to its parted position, in fan steps per second: one
 -- cursor move parts a relic by FAN_PART, so this is about a seventh of a second
 -- of travel. The ceiling is the shortest card flight: a card in the air aims at
 -- its closed-fan slot (see slot_x_now), so the fan has to finish shutting before
 -- the first one lands. Queuing an animation closes the fan from at most FAN_PART
 -- away, which at this speed takes well under DEAL_SECONDS.
-local FAN_EASE_SPEED <const>: f64 = 1.6
+const FAN_EASE_SPEED: f64 = 1.6
 
 -- Mirrors the faces modes of render's animated cards.
-local FACES_DOWN <const>: i32 = 0
-local FACES_UP <const>: i32 = 1
-local FACES_FLIP_UP <const>: i32 = 2
-local FACES_FLIP_DOWN <const>: i32 = 3
+const FACES_DOWN: i32 = 0
+const FACES_UP: i32 = 1
+const FACES_FLIP_UP: i32 = 2
+const FACES_FLIP_DOWN: i32 = 3
 
-local DEAL_STEP <const>: f64 = 0.1
-local DEAL_SECONDS <const>: f64 = 0.38
-local SWAP_STEP <const>: f64 = 0.12
-local SWAP_LEAVE_SECONDS <const>: f64 = 0.4
-local SWAP_ASIDE_SECONDS <const>: f64 = 0.4
-local SWAP_PLACE_SECONDS <const>: f64 = 0.5
+const DEAL_STEP: f64 = 0.1
+const DEAL_SECONDS: f64 = 0.38
+const SWAP_STEP: f64 = 0.12
+const SWAP_LEAVE_SECONDS: f64 = 0.4
+const SWAP_ASIDE_SECONDS: f64 = 0.4
+const SWAP_PLACE_SECONDS: f64 = 0.5
 
 function contains(picks: {i32}, value: i32): bool
     for pick in picks do
