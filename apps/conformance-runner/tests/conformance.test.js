@@ -18,6 +18,9 @@ import gameEngineGraphicsPaths from '../../../fixtures/game-engine/graphics-path
 import stableEngineProject from '../../../examples/game-project/main.walu?raw';
 import gameEngineGpuMaterials from '../../../fixtures/game-engine/gpu-materials.walu?raw';
 import gameEngineGpuResources from '../../../fixtures/game-engine/gpu-resources.walu?raw';
+import gameEngineGpuFontResources from '../../../fixtures/game-engine/gpu-font-resources.walu?raw';
+import pokerCardBack from '../../../fixtures/poker-tricks/assets/card-back.svg?raw';
+import pokerFontUrl from '../../../fixtures/poker-tricks/assets/PressStart2P-Regular.ttf?url';
 import gameEngineBrowser from '../../../engine/browser.walu?raw';
 import gameEngineGraphics from '../../../engine/graphics.walu?raw';
 import gameEngineFont from '../../../engine/font.walu?raw';
@@ -31,6 +34,8 @@ import transitiveAwaitStateMain from '../../../fixtures/coroutine-await-state/ma
 import transitiveAwaitStateWorker from '../../../fixtures/coroutine-await-state/worker.walu?raw';
 import arcaneHeistSim from '../../../fixtures/poker-tricks/sim.walu?raw';
 import arcaneHeistGame from '../../../fixtures/poker-tricks/game.walu?raw';
+import arcaneHeistMain from '../../../fixtures/poker-tricks/main.walu?raw';
+import arcaneHeistRender from '../../../fixtures/poker-tricks/render.walu?raw';
 
 const conformanceModules = import.meta.glob('../../../conformance/**/*.walu', {
   eager: true,
@@ -1130,6 +1135,149 @@ describe('browser conformance', () => {
       expect(pixelAt(20, 20)).toEqual([255, 0, 0, 255]);
       expect(pixelAt(56, 20)).toEqual([0, 255, 0, 255]);
       expect(pixelAt(90, 14)).toEqual([32, 64, 255, 255]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('renders packaged image and custom-font resources with safe failure and release', async () => {
+    const steps = [];
+    const asyncErrors = [];
+    const atlasPixels = new Uint8ClampedArray([
+      255, 32, 32, 255, 32, 255, 32, 255,
+      32, 32, 255, 255, 255, 255, 255, 255,
+    ]);
+    const { root, cleanup } = await compileAndInstantiateWithDom(
+      {
+        '/fixtures/game-engine/gpu-font-resources.walu': gameEngineGpuFontResources,
+        '/engine/browser.walu': gameEngineBrowser,
+        '/engine/graphics.walu': gameEngineGraphics,
+        '/engine/font.walu': gameEngineFont,
+        '/engine/input.walu': gameEngineInput,
+        '/engine/time.walu': gameEngineTime,
+        '/engine/resources.walu': gameEngineResources,
+      },
+      '/fixtures/game-engine/gpu-font-resources.walu',
+      {
+        gameServices: {
+          assetBaseUrl: 'https://game.test/dist/',
+          assetManifest: {
+            'assets/card-back.svg': { url: './assets/card-back.hash.svg', type: 'image' },
+            'assets/PressStart2P-Regular.ttf': { url: './assets/vault.hash.ttf', type: 'font' },
+            'assets/missing.svg': { url: './assets/missing.hash.svg', type: 'image' },
+          },
+          fetch: async (url) => {
+            if (url.endsWith('card-back.hash.svg')) {
+              return new Response(pokerCardBack, {
+                status: 200,
+                headers: { 'Content-Type': 'image/svg+xml' },
+              });
+            }
+            if (url.endsWith('vault.hash.ttf')) return fetch(pokerFontUrl);
+            return new Response('', { status: 404 });
+          },
+          createImageBitmap: async () => createImageBitmap(new ImageData(atlasPixels, 2, 2)),
+        },
+        hostImports: {
+          record_gpu_font_step: (step) => steps.push(String(step)),
+        },
+        onAsyncError: (error) => asyncErrors.push(error),
+      },
+    );
+    try {
+      const canvas = root.querySelector('#walua-game-canvas');
+      const gl = canvas.getContext('webgl2');
+      await expect.poll(() => steps, { timeout: 10_000 }).toContain('released');
+      expect(asyncErrors).toEqual([]);
+      expect(steps).toEqual(['ready-and-failure', 'rendered', 'released']);
+
+      const imagePixel = new Uint8Array(4);
+      gl.readPixels(16, 64 - 1 - 16, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, imagePixel);
+      expect(Array.from(imagePixel)).toEqual([255, 32, 32, 255]);
+
+      const pixels = new Uint8Array(220 * 64 * 4);
+      gl.readPixels(0, 0, 220, 64, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      let cyanPixels = 0;
+      for (let index = 0; index < pixels.length; index += 4) {
+        if (pixels[index] >= 32 && pixels[index] <= 96 && pixels[index + 1] > 180 && pixels[index + 2] > 180) {
+          cyanPixels += 1;
+        }
+      }
+      expect(cyanPixels).toBeGreaterThan(20);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('renders poker-tricks through its typed packaged image and font manifest', async () => {
+    const requested = [];
+    const asyncErrors = [];
+    let imageDecodeCount = 0;
+    const { root, cleanup } = await compileAndInstantiateWithDom(
+      {
+        '/fixtures/poker-tricks/main.walu': arcaneHeistMain,
+        '/fixtures/poker-tricks/game.walu': arcaneHeistGame,
+        '/fixtures/poker-tricks/render.walu': arcaneHeistRender,
+      },
+      '/fixtures/poker-tricks/main.walu',
+      {
+        gameServices: {
+          assetBaseUrl: 'https://game.test/dist/',
+          assetManifest: {
+            'assets/card-back.svg': { url: './assets/card-back.hash.svg', type: 'image' },
+            'assets/PressStart2P-Regular.ttf': { url: './assets/vault.hash.ttf', type: 'font' },
+          },
+          fetch: async (url) => {
+            requested.push(url);
+            if (url.endsWith('card-back.hash.svg')) {
+              return new Response(pokerCardBack, {
+                status: 200,
+                headers: { 'Content-Type': 'image/svg+xml' },
+              });
+            }
+            if (url.endsWith('vault.hash.ttf')) return fetch(pokerFontUrl);
+            return new Response('', { status: 404 });
+          },
+          createImageBitmap: async (blob) => {
+            imageDecodeCount += 1;
+            const url = URL.createObjectURL(blob);
+            try {
+              const image = new Image();
+              image.src = url;
+              await image.decode();
+              return createImageBitmap(image);
+            } finally {
+              URL.revokeObjectURL(url);
+            }
+          },
+        },
+        onAsyncError: (error) => asyncErrors.push(error),
+      },
+    );
+    try {
+      const canvas = root.querySelector('#walua-game-canvas');
+      const gl = canvas.getContext('webgl2');
+      const countCardInk = () => {
+        const pixels = new Uint8Array(104 * 128 * 4);
+        gl.readPixels(56, 600 - 292 - 128, 104, 128, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        let count = 0;
+        for (let index = 0; index < pixels.length; index += 4) {
+          if (
+            Math.abs(pixels[index] - 232) <= 12 &&
+            Math.abs(pixels[index + 1] - 223) <= 12 &&
+            Math.abs(pixels[index + 2] - 189) <= 12
+          ) count += 1;
+        }
+        return count;
+      };
+      await expect.poll(() => requested.length, { timeout: 10_000 }).toBe(2);
+      await expect.poll(countCardInk, { timeout: 10_000 }).toBeGreaterThan(40);
+      expect(imageDecodeCount).toBe(1);
+      expect(requested).toEqual([
+        'https://game.test/dist/assets/card-back.hash.svg',
+        'https://game.test/dist/assets/vault.hash.ttf',
+      ]);
+      expect(asyncErrors).toEqual([]);
     } finally {
       cleanup();
     }

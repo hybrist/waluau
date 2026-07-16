@@ -58,10 +58,30 @@ flat.
 | `render.walu` | Platform-independent playfield and modal rendering. |
 | `game.walu` | Host-independent deck, ranking, AI, and scoring rules. |
 | `sim.walu` | Deterministic assertions for rankings and full-game completion. |
+| `waluau.assets.json` | Typed package manifest for the card back and vault font. |
+
+The sealed-card artwork is the committed vector
+[`assets/card-back.svg`](assets/card-back.svg). Until its asynchronous image
+load and GPU copy complete—or if either reports a structured failure—the
+renderer keeps the equivalent procedural ward as a visual fallback. Text uses
+the packaged Press Start 2P font after its FontFace resource has been copied to
+a GPU glyph atlas, with the built-in bitmap font as the not-ready/failure
+fallback. Source image/font resources are released immediately after the GPU
+copies succeed; GPU resources retain their own explicit lifetime.
+
+Press Start 2P is distributed under the SIL Open Font License 1.1; the bundled
+license is [`assets/OFL-PressStart2P.txt`](assets/OFL-PressStart2P.txt).
 
 ## Building
 
 ```bash
-cargo run -p waluau-cli -- fixtures/poker-tricks/main.walu -o arcane-heist.wasm
+cargo run -p waluau-cli -- fixtures/poker-tricks/main.walu \
+  -o dist/arcane-heist.wasm --emit-js \
+  --manifest fixtures/poker-tricks/waluau.assets.json
 cargo run -p waluau-cli -- fixtures/poker-tricks/sim.walu -o sim.wasm
 ```
+
+The distributable build copies both declared assets under `dist/assets/` with
+content fingerprints. Generated sibling JavaScript maps the logical Waluau
+paths (`assets/card-back.svg` and `assets/PressStart2P-Regular.ttf`) to those
+emitted URLs and carries their image/font types into the browser host.

@@ -2,8 +2,20 @@
 -- host-independent; this module translates keyboard input into game actions.
 
 local engine = require("waluau:engine")
+local graphics_module = require("waluau:engine/graphics")
+local resources = require("waluau:engine/resources")
 local game = require("./game")
 local render = require("./render")
+
+type AssetState = {
+    image_source: resources.Resource,
+    font_source: resources.Resource,
+    texture: graphics_module.Texture?,
+    font: graphics_module.Font?,
+    image_finished: bool,
+    font_finished: bool,
+    error: string
+}
 
 type Ui = {
     hand_cursor: i32,
@@ -373,6 +385,15 @@ end
 
 function install_arcane_heist(): unit
     local state: game.State = game.new()
+    local assets: AssetState = {
+        image_source = { handle = 0, kind = "image", path = "assets/card-back.svg" },
+        font_source = { handle = 0, kind = "font", path = "assets/PressStart2P-Regular.ttf" },
+        texture = nil,
+        font = nil,
+        image_finished = false,
+        font_finished = false,
+        error = "",
+    }
     local ui: Ui = {
         hand_cursor = 0,
         ward_cursor = 0,
@@ -390,10 +411,32 @@ function install_arcane_heist(): unit
         anim_kind = ANIM_NONE,
     }
 
+    local function load_assets_async(): i32
+        local image_path: string = "assets/card-back.svg"
+        local image_result: resources.LoadResult = resources.await_image(image_path)
+        if image_result.ok then assets.image_source = image_result.resource
+        else
+            assets.image_finished = true
+            assets.error = image_result.error.code .. ": " .. image_result.error.message
+        end
+
+        local font_path: string = "assets/PressStart2P-Regular.ttf"
+        local font_result: resources.LoadResult = resources.await_font(font_path, "Arcane Vault")
+        if font_result.ok then assets.font_source = font_result.resource
+        else
+            assets.font_finished = true
+            if #assets.error > 0 then assets.error ..= "; " end
+            assets.error ..= font_result.error.code .. ": " .. font_result.error.message
+        end
+        return 0
+    end
+
     local function load(): unit
         -- No reseed: the host seeds math.random per instance, so each run
         -- deals a different shuffle. sim.walu pins its own seeds for tests.
         reset_run(state, ui)
+        local loader: thread = coroutine.create(load_assets_async)
+        coroutine.resume(loader)
     end
 
     local function update(dt: f64, input: engine.Input): unit
@@ -416,9 +459,36 @@ function install_arcane_heist(): unit
     end
 
     local function draw(graphics: engine.Graphics, alpha: f64): unit
+        if not assets.image_finished and assets.image_source.handle ~= 0 then
+            local source: resources.Resource = assets.image_source
+            local result: graphics_module.TextureResult = graphics:texture_from_resource(source)
+            resources.release(source)
+            assets.image_source = { handle = 0, kind = "image", path = source.path }
+            assets.image_finished = true
+            if result.ok then assets.texture = result.texture
+            else assets.error = result.error.code .. ": " .. result.error.message end
+        end
+        if not assets.font_finished and assets.font_source.handle ~= 0 then
+            local source: resources.Resource = assets.font_source
+            local result: graphics_module.FontResult = graphics:font_from_resource(source)
+            resources.release(source)
+            assets.font_source = { handle = 0, kind = "font", path = source.path }
+            assets.font_finished = true
+            if result.ok then assets.font = result.font
+            else
+                if #assets.error > 0 then assets.error ..= "; " end
+                assets.error ..= result.error.code .. ": " .. result.error.message
+            end
+        end
+        local maybe_gpu_font: graphics_module.Font? = assets.font
+        local custom_font_ready: bool = false
+        if maybe_gpu_font ~= nil then
+            custom_font_ready = graphics:set_font_resource(maybe_gpu_font::graphics_module.Font, 14.0)
+        end
+        if not custom_font_ready then graphics:use_builtin_font() end
         render.draw(graphics, state, fan_focus(ui), ui.fan_parts, ui.ward_cursor, ui.cursor_area,
             ui.play_picks, ui.swap_hand, ui.swap_wards, ui.modal, ui.revealing, ui.reveal_clock,
-            ui.anims, ui.anim_clock)
+            ui.anims, ui.anim_clock, assets.texture)
     end
 
     local function close_modal(): unit

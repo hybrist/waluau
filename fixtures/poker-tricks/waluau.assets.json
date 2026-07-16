@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "assets": [
+    { "path": "assets/card-back.svg", "type": "image" },
+    { "path": "assets/PressStart2P-Regular.ttf", "type": "font" }
+  ]
+}

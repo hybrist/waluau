@@ -831,6 +831,45 @@ export function createGameServicesHost(options = {}) {
   const createBitmap = options.createImageBitmap ?? globalThis.createImageBitmap;
   const FontFaceCtor = options.FontFace ?? globalThis.FontFace;
   const fontSet = options.fontSet ?? document?.fonts;
+  const createFontAtlas = options.createFontAtlas ?? ((face) => {
+    const firstCode = 32;
+    const glyphCount = 95;
+    const columns = 16;
+    const cellWidth = 40;
+    const cellHeight = 44;
+    const baseSize = 32;
+    const advance = 32;
+    const rows = Math.ceil(glyphCount / columns);
+    const canvas = document?.createElement?.('canvas');
+    const context = canvas?.getContext?.('2d');
+    if (!canvas || !context) {
+      throw new GameServiceError('unavailable', 'font atlas canvas is unavailable');
+    }
+    canvas.width = columns * cellWidth;
+    canvas.height = rows * cellHeight;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = '#ffffff';
+    context.font = `${baseSize}px ${JSON.stringify(String(face.family))}`;
+    context.textBaseline = 'top';
+    context.textAlign = 'left';
+    for (let offset = 0; offset < glyphCount; offset += 1) {
+      const column = offset % columns;
+      const row = Math.floor(offset / columns);
+      context.fillText(String.fromCharCode(firstCode + offset), column * cellWidth + 4, row * cellHeight + 4);
+    }
+    return {
+      source: canvas,
+      width: canvas.width,
+      height: canvas.height,
+      firstCode,
+      glyphCount,
+      columns,
+      cellWidth,
+      cellHeight,
+      baseSize,
+      advance,
+    };
+  });
   const AudioContextCtor =
     options.AudioContext ?? globalThis.AudioContext ?? globalThis.webkitAudioContext;
   const AudioCtor = options.Audio ?? globalThis.Audio;
@@ -1002,6 +1041,46 @@ export function createGameServicesHost(options = {}) {
       return gpuFailure('upload_failed', error instanceof Error ? error.message : String(error));
     }
   };
+  const createGpuFont = (gl, resourceHandle) => {
+    const source = entryFor(resourceHandle);
+    if (!source?.ok) return gpuFailure('invalid_resource', `invalid font resource: ${resourceHandle}`);
+    if (source.kind !== 'font') return gpuFailure('wrong_type', `resource is ${source.kind}, expected font`);
+    let texture = null;
+    try {
+      const atlas = createFontAtlas(source.value);
+      if (!atlas?.source || !Number.isFinite(atlas.width) || !Number.isFinite(atlas.height)) {
+        return gpuFailure('atlas_failed', 'font atlas generator returned invalid metadata');
+      }
+      texture = gl?.createTexture?.();
+      if (!texture) return gpuFailure('unavailable', 'WebGL font texture creation is unavailable');
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, atlas.source);
+      return rememberGpu({
+        ok: true,
+        kind: 'font',
+        gl,
+        texture,
+        width: atlas.width,
+        height: atlas.height,
+        firstCode: atlas.firstCode,
+        glyphCount: atlas.glyphCount,
+        columns: atlas.columns,
+        cellWidth: atlas.cellWidth,
+        cellHeight: atlas.cellHeight,
+        baseSize: atlas.baseSize,
+        advance: atlas.advance,
+      });
+    } catch (error) {
+      gl?.deleteTexture?.(texture);
+      const code = error instanceof GameServiceError ? error.code : 'atlas_failed';
+      return gpuFailure(code, error instanceof Error ? error.message : String(error));
+    }
+  };
   const createRenderTarget = (gl, width, height) => {
     const w = Number(width);
     const h = Number(height);
@@ -1097,12 +1176,20 @@ export function createGameServicesHost(options = {}) {
     },
     game_resource_release: release,
     game_gpu_texture_from_resource: createGpuTexture,
+    game_gpu_font_from_resource: createGpuFont,
     game_gpu_render_target_create: createRenderTarget,
     game_gpu_resource_ok: (handle) => Boolean(gpuEntryFor(handle)?.ok),
     game_gpu_resource_error_code: gpuErrorCode,
     game_gpu_resource_error_message: gpuErrorMessage,
     game_gpu_resource_width: (handle) => Number(gpuEntryFor(handle)?.width ?? 0),
     game_gpu_resource_height: (handle) => Number(gpuEntryFor(handle)?.height ?? 0),
+    game_gpu_font_first_code: (handle) => Number(gpuEntryFor(handle)?.firstCode ?? 0),
+    game_gpu_font_glyph_count: (handle) => Number(gpuEntryFor(handle)?.glyphCount ?? 0),
+    game_gpu_font_columns: (handle) => Number(gpuEntryFor(handle)?.columns ?? 0),
+    game_gpu_font_cell_width: (handle) => Number(gpuEntryFor(handle)?.cellWidth ?? 0),
+    game_gpu_font_cell_height: (handle) => Number(gpuEntryFor(handle)?.cellHeight ?? 0),
+    game_gpu_font_base_size: (handle) => Number(gpuEntryFor(handle)?.baseSize ?? 0),
+    game_gpu_font_advance: (handle) => Number(gpuEntryFor(handle)?.advance ?? 0),
     game_gpu_texture_bind: (gl, handle) => {
       const entry = gpuEntryFor(handle);
       if (!entry?.ok || entry.gl !== gl) return false;
