@@ -26,6 +26,29 @@ local ORB_ARCH_MAGE_FILL <const>: string = "#f87171"
 local ORB_STALEMATE_EDGE <const>: string = "#e4e4e7"
 local ORB_STALEMATE_FILL <const>: string = "#a1a1aa"
 
+-- The watched-relic mark, in parchment ink rather than either side's colour:
+-- the same eye means the same thing on both rows, and it must not be mistaken
+-- for a SELECTION_HIGHLIGHT focus edge or a school-coloured bind. The mark says
+-- something about the card itself, not about what the cursor is doing.
+local EYE_INK <const>: string = "#e8dfbd"
+local EYE_GROUND <const>: string = "#0b0b10"
+-- The eye rides the middle of a card's top edge, centred on the edge itself so
+-- half of it stands clear of the card: it reads as a tag pinned to the relic
+-- rather than part of the artwork, and it stays off the rank, the school and
+-- the seal's ward. The card's middle rather than a corner: the fan tucks every
+-- relic's right edge under its neighbour, so a mark out there is invisible on
+-- four of the five, and the left corner already carries the rank. FAN_PITCH is
+-- how much of a fanned relic stays uncovered, and the eye sits well inside it.
+local EYE_HALF_W <const>: f64 = 7.0
+local EYE_LID <const>: f64 = 4.6
+local EYE_SEGMENTS <const>: i32 = 6
+-- How much of a sealed relic's face shows through when the other side has
+-- already seen it: only the seal's field is veiled, so the card reads as
+-- sealed-but-not-secret rather than simply half drawn. Low enough that the
+-- rank and school can be read at a glance — the mark is worth nothing if the
+-- player still has to remember what is under it.
+local VEIL_ALPHA <const>: string = "80"
+
 -- Board anchors card animations travel between. main.walu mirrors these ids
 -- when it builds animations, the same way it mirrors the modal ids above.
 local SLOT_PLAYER <const>: i32 = 0
@@ -79,10 +102,13 @@ local FACES_FLIP_DOWN <const>: i32 = 3
 -- is how a relic joins or leaves the player's tilted fan without snapping
 -- upright at either end. Legs whose dest_kind names a board slot keep that
 -- slot empty until they vanish, so state that already changed is not revealed
--- ahead of the animation.
+-- ahead of the animation. `known` matches the slot the card is headed for, so a
+-- ward crossing into a hand carries its eye the whole way rather than sprouting
+-- one the instant it lands.
 type Anim = {
     card: game.Card,
     faces: i32,
+    known: bool,
     x0: f64,
     y0: f64,
     x1: f64,
@@ -224,19 +250,52 @@ function draw_sigil(graphics: Graphics, suit: i32, x: f64, y: f64): unit
     end
 end
 
+-- The mark a relic carries once the other side has watched it come off the
+-- wards: an open eye, drawn about its own centre on its own dark ground so it
+-- reads over both a card's face and its seal. The lids are quadratic arcs the
+-- line API has no curve for, so each is walked out in EYE_SEGMENTS steps.
+function draw_eye(graphics: Graphics, x: f64, y: f64): unit
+    graphics:set_color(EYE_GROUND)
+    graphics:fill_circle(x, y, 9.0)
+    graphics:set_color(EYE_INK)
+    graphics:set_line_width(1.3)
+    for lid = -1::i32, 1::i32, 2::i32 do
+        local dip: f64 = (lid::f64) * EYE_LID
+        local px: f64 = x - EYE_HALF_W
+        local py: f64 = y
+        for step = 1::i32, EYE_SEGMENTS do
+            local t: f64 = -1.0 + 2.0 * (step::f64) / (EYE_SEGMENTS::f64)
+            local nx: f64 = x + t * EYE_HALF_W
+            local ny: f64 = y + dip * (1.0 - t * t)
+            graphics:line(px, py, nx, ny)
+            px = nx
+            py = ny
+        end
+    end
+    graphics:fill_circle(x, y, 2.4)
+end
+
 -- An engraved celestial ward shared by every sealed relic. Keeping the back
 -- in geometry (rather than a bitmap) makes it stay sharp through the card-flip
 -- transform and avoids adding an asynchronous asset path to the renderer.
-function draw_card_back(graphics: Graphics, x: f64, y: f64): unit
+function draw_card_back(graphics: Graphics, x: f64, y: f64, veiled: bool): unit
     local ink: string = "#e8dfbd"
     local muted_ink: string = "#8f8ab0"
     local ground: string = "#171943"
     local center_x: f64 = x + CARD_W * 0.5
     local center_y: f64 = y + CARD_H * 0.5
+    -- Veiling only the field, and leaving every engraved stroke over it opaque,
+    -- is what keeps a seen relic legible: the ward, borders and stars stay as
+    -- crisp as on any other seal, while the rank and school painted on the face
+    -- underneath show through the empty indigo around them. Going translucent
+    -- everywhere instead would dissolve the ward, whose crescent is punched out
+    -- of its own halo by overdrawing it in the field's colour.
+    local field: string = ground
+    if veiled then field = ground .. VEIL_ALPHA end
 
     -- A faint moving haze gives the flat indigo field the feel of dyed paper.
     graphics:set_effect(3)
-    graphics:set_color(ground)
+    graphics:set_color(field)
     graphics:fill_rectangle(x + 3.0, y + 3.0, CARD_W - 6.0, CARD_H - 6.0)
     graphics:set_effect(0)
 
@@ -296,17 +355,7 @@ function draw_card_back(graphics: Graphics, x: f64, y: f64): unit
     graphics:fill_circle(x + CARD_W - 15.0, y + CARD_H - 15.0, 1.5)
 end
 
-function draw_card(graphics: Graphics, card: game.Card, x: f64, y: f64, selected: bool, focused: bool, hidden: bool, colored: bool): unit
-    local offset: f64 = 0.0
-    if selected then offset = -10.0 end
-    y += offset
-    local edge: string = "#52525b"
-    if focused then edge = SELECTION_HIGHLIGHT elseif selected then edge = school_color(card.suit) end
-    panel(graphics, x, y, CARD_W, CARD_H, "#17171c", edge)
-    if hidden then
-        draw_card_back(graphics, x, y)
-        return
-    end
+function draw_card_face(graphics: Graphics, card: game.Card, x: f64, y: f64, selected: bool, colored: bool): unit
     -- Suit marks always keep their school color. Selection activates the
     -- school's grayscale pattern; contributing cards use its colored variant.
     if colored then graphics:set_effect(card.suit + 1)
@@ -323,15 +372,35 @@ function draw_card(graphics: Graphics, card: game.Card, x: f64, y: f64, selected
     if selected then text(graphics, "BOUND", x + 27.0, y + 119.0, 9, SELECTION_HIGHLIGHT) end
 end
 
+-- `known` says the opponent has seen this card, which the eye announces on
+-- either face. A sealed card that is also known is drawn face first and then
+-- veiled by its own seal, so the player reads the Arch Mage's relic through the
+-- back instead of having to remember it.
+function draw_card(graphics: Graphics, card: game.Card, x: f64, y: f64, selected: bool, focused: bool, hidden: bool, colored: bool, known: bool): unit
+    local offset: f64 = 0.0
+    if selected then offset = -10.0 end
+    y += offset
+    local edge: string = "#52525b"
+    if focused then edge = SELECTION_HIGHLIGHT elseif selected then edge = school_color(card.suit) end
+    panel(graphics, x, y, CARD_W, CARD_H, "#17171c", edge)
+    if hidden then
+        if known then draw_card_face(graphics, card, x, y, false, false) end
+        draw_card_back(graphics, x, y, known)
+    else
+        draw_card_face(graphics, card, x, y, selected, colored)
+    end
+    if known then draw_eye(graphics, x + CARD_W * 0.5, y) end
+end
+
 -- A relic sitting in the player's fan. Drawing it about its own centre lets
 -- the tilt carry everything with it — the bind lift rises along the card's own
 -- axis rather than straight up the screen, and the focus edge stays square to
 -- the card.
-function draw_hand_card(graphics: Graphics, card: game.Card, index: i32, part: f64, selected: bool, focused: bool, colored: bool): unit
+function draw_hand_card(graphics: Graphics, card: game.Card, index: i32, part: f64, selected: bool, focused: bool, colored: bool, known: bool): unit
     graphics:push()
     graphics:translate(hand_x(index, part) + CARD_W * 0.5, hand_y(index, part) + CARD_H * 0.5)
     graphics:rotate(hand_angle(index, part))
-    draw_card(graphics, card, -(CARD_W * 0.5), -(CARD_H * 0.5), selected, focused, false, colored)
+    draw_card(graphics, card, -(CARD_W * 0.5), -(CARD_H * 0.5), selected, focused, false, colored, known)
     graphics:pop()
 end
 
@@ -356,7 +425,10 @@ function draw_flipping_card(graphics: Graphics, card: game.Card, x: f64, y: f64,
     graphics:push()
     graphics:translate(x + CARD_W * 0.5, y + CARD_H * 0.5 - 10.0 * depth)
     graphics:apply_transform(width_scale * lift, 0.18 * depth, 0.0, lift, 0.0, 0.0)
-    draw_card(graphics, card, -(CARD_W * 0.5), -(CARD_H * 0.5), false, false, hidden, colored)
+    -- A card being turned over is on its way to public: whether the other side
+    -- knew it a moment ago stops mattering the instant it lands face up, so no
+    -- eye rides the flip.
+    draw_card(graphics, card, -(CARD_W * 0.5), -(CARD_H * 0.5), false, false, hidden, colored, false)
     graphics:pop()
 end
 
@@ -369,7 +441,7 @@ function draw_deck(graphics: Graphics, count: i32): unit
     if count > 18 then panel(graphics, x + 6.0, y + 6.0, CARD_W, CARD_H, "#17171c", "#3f3f46") end
     if count > 6 then panel(graphics, x + 3.0, y + 3.0, CARD_W, CARD_H, "#17171c", "#3f3f46") end
     panel(graphics, x, y, CARD_W, CARD_H, "#17171c", "#52525b")
-    draw_card_back(graphics, x, y)
+    draw_card_back(graphics, x, y, false)
     text(graphics, tostring(count) .. " SEALED", x + 10.0, y + CARD_H + 26.0, 10, "#8a8a92")
 end
 
@@ -400,7 +472,7 @@ function draw_anim_card(graphics: Graphics, anim: Anim, clock: f64): unit
     graphics:translate(x + CARD_W * 0.5, y + CARD_H * 0.5 - 8.0 * depth)
     graphics:rotate(anim.angle0 + (anim.angle1 - anim.angle0) * ease)
     graphics:apply_transform(width_scale * lift, 0.0, 0.0, lift, 0.0, 0.0)
-    draw_card(graphics, anim.card, -(CARD_W * 0.5), -(CARD_H * 0.5), false, false, hidden, false)
+    draw_card(graphics, anim.card, -(CARD_W * 0.5), -(CARD_H * 0.5), false, false, hidden, false, anim.known)
     graphics:pop()
 end
 
@@ -500,13 +572,13 @@ function draw_resolution_board(graphics: Graphics, state: game.State, fan_parts:
         elseif i == trick.computer_second then
             draw_flipping_card(graphics, trick.computer_cards[1], x, 116.0, reveal_clock, 0.2 + FLIP_SECONDS * 0.7, trick.winner < 0 and scoring[4])
         else
-            draw_card(graphics, state.computer_hand[i], x, 116.0, false, false, true, false)
+            draw_card(graphics, state.computer_hand[i], x, 116.0, false, false, true, false, state.computer_known[i])
         end
     end
 
     panel(graphics, 278.0, 258.0, 404.0, 148.0, "#101013", "#3f3f46")
     for i = 0::i32, 2::i32 do
-        draw_card(graphics, trick.middle[i], 302.0 + (i::f64) * 116.0, 292.0, false, false, false, trick.winner ~= 0 and scoring[i])
+        draw_card(graphics, trick.middle[i], 302.0 + (i::f64) * 116.0, 292.0, false, false, false, trick.winner ~= 0 and scoring[i], false)
     end
 
     text(graphics, "ENTER CONTINUE", 414.0, 430.0, 12, "#fbbf24")
@@ -514,11 +586,11 @@ function draw_resolution_board(graphics: Graphics, state: game.State, fan_parts:
     -- easing shut; it settles closed behind the flips.
     for i = 0::i32, 4::i32 do
         if i == trick.player_first then
-            draw_hand_card(graphics, trick.player_cards[0], i, fan_parts[i], false, false, trick.winner > 0 and scoring[3])
+            draw_hand_card(graphics, trick.player_cards[0], i, fan_parts[i], false, false, trick.winner > 0 and scoring[3], false)
         elseif i == trick.player_second then
-            draw_hand_card(graphics, trick.player_cards[1], i, fan_parts[i], false, false, trick.winner > 0 and scoring[4])
+            draw_hand_card(graphics, trick.player_cards[1], i, fan_parts[i], false, false, trick.winner > 0 and scoring[4], false)
         else
-            draw_hand_card(graphics, state.player_hand[i], i, fan_parts[i], false, false, false)
+            draw_hand_card(graphics, state.player_hand[i], i, fan_parts[i], false, false, false, state.player_known[i])
         end
     end
     draw_footer(graphics)
@@ -546,7 +618,7 @@ function draw_hand_slot(graphics: Graphics, state: game.State, index: i32, focus
     local selected: bool = is_picked(play_picks, index)
     if state.swap_open then selected = is_picked(swap_hand, index) end
     draw_hand_card(graphics, state.player_hand[index], index, parts[index], selected, index == focus,
-        preview_player_colored(index, play_picks, preview))
+        preview_player_colored(index, play_picks, preview), state.player_known[index])
 end
 
 -- hand_focus is the relic the cursor holds, or FAN_CLOSED when nothing does;
@@ -564,7 +636,7 @@ function draw_playfield(graphics: Graphics, state: game.State, hand_focus: i32, 
     -- already-updated game state cannot leak ahead of the animation.
     for i = 0::i32, 4::i32 do
         if not slot_hidden(anims, anim_clock, SLOT_COMPUTER, i) then
-            draw_card(graphics, state.computer_hand[i], slot_x(SLOT_COMPUTER, i), slot_y(SLOT_COMPUTER, i), false, false, true, false)
+            draw_card(graphics, state.computer_hand[i], slot_x(SLOT_COMPUTER, i), slot_y(SLOT_COMPUTER, i), false, false, true, false, state.computer_known[i])
         end
     end
     local preview: {bool} = preview_scoring(state, play_picks)
@@ -577,7 +649,11 @@ function draw_playfield(graphics: Graphics, state: game.State, hand_focus: i32, 
         local selected: bool = state.swap_open and is_picked(swap_wards, i)
         local focused: bool = state.swap_open and cursor_area == 1 and ward_cursor == i
         if not slot_hidden(anims, anim_clock, SLOT_MIDDLE, i) then
-            draw_card(graphics, state.middle[i], slot_x(SLOT_MIDDLE, i), slot_y(SLOT_MIDDLE, i), selected, focused, false, preview[i])
+            -- A ward at rest is face up for both sides to read, so it never
+            -- carries an eye: the mark only says something about a hand. One
+            -- crossing into a hand does wear it, but that card is an
+            -- animation leg rather than this slot.
+            draw_card(graphics, state.middle[i], slot_x(SLOT_MIDDLE, i), slot_y(SLOT_MIDDLE, i), selected, focused, false, preview[i], false)
         end
     end
     if state.swap_open then text(graphics, "FEINT: BIND MATCHING RELICS + WARDS (UP/DOWN)", 242.0, 430.0, 12, "#fbbf24")
@@ -611,20 +687,24 @@ function draw_help(graphics: Graphics): unit
     text(graphics, "1. FEINT", 126.0, 270.0, 16, "#67e8f9")
     text(graphics, "BIND UP TO 3 RELICS AND THE SAME NUMBER OF WARDS.", 126.0, 296.0, 11, "#d4d4d8")
     text(graphics, "EACH CARD RISKS 1 SPARK. PRESS P TO PASS.", 126.0, 318.0, 11, "#d4d4d8")
-    text(graphics, "2. BREACH", 126.0, 364.0, 16, "#67e8f9")
-    text(graphics, "BIND 2 RELICS. THE STRONGEST FIVE-SIGIL FORMATION WINS.", 126.0, 390.0, 11, "#d4d4d8")
-    text(graphics, "LATER BREACHES ARE WORTH MORE SPARKS.", 126.0, 412.0, 11, "#d4d4d8")
+    -- The eye is drawn from the same routine that marks the relics themselves,
+    -- so the legend cannot drift from the mark it explains.
+    draw_eye(graphics, 133.0, 337.0)
+    text(graphics, "A RELIC TAKEN OFF THE WARDS: BOTH SIDES WATCHED IT MOVE.", 148.0, 341.0, 11, "#d4d4d8")
+    text(graphics, "2. BREACH", 126.0, 374.0, 16, "#67e8f9")
+    text(graphics, "BIND 2 RELICS. THE STRONGEST FIVE-SIGIL FORMATION WINS.", 126.0, 400.0, 11, "#d4d4d8")
+    text(graphics, "LATER BREACHES ARE WORTH MORE SPARKS.", 126.0, 422.0, 11, "#d4d4d8")
     -- Names match the ledger's rows, so a silver orb and a STALEMATE line are
     -- recognisably the same outcome.
-    text(graphics, "EACH ORB", 126.0, 444.0, 11, "#f8fafc")
-    draw_orb(graphics, 225.0, 440.0, ORB_ROBBERS_EDGE, ORB_ROBBERS_FILL, true)
-    text(graphics, "ROBBERS", 240.0, 444.0, 11, "#d4d4d8")
-    draw_orb(graphics, 330.0, 440.0, ORB_ARCH_MAGE_EDGE, ORB_ARCH_MAGE_FILL, true)
-    text(graphics, "ARCH MAGE", 345.0, 444.0, 11, "#d4d4d8")
-    draw_orb(graphics, 450.0, 440.0, ORB_STALEMATE_EDGE, ORB_STALEMATE_FILL, true)
-    text(graphics, "STALEMATE", 465.0, 444.0, 11, "#d4d4d8")
-    text(graphics, "STALEMATES COUNT FOR NEITHER SIDE.", 570.0, 444.0, 11, "#8a8a92")
-    text(graphics, "ARROWS MOVE   SPACE BIND   ENTER COMMIT   H HISTORY", 126.0, 472.0, 11, "#fbbf24")
+    text(graphics, "EACH ORB", 126.0, 452.0, 11, "#f8fafc")
+    draw_orb(graphics, 225.0, 448.0, ORB_ROBBERS_EDGE, ORB_ROBBERS_FILL, true)
+    text(graphics, "ROBBERS", 240.0, 452.0, 11, "#d4d4d8")
+    draw_orb(graphics, 330.0, 448.0, ORB_ARCH_MAGE_EDGE, ORB_ARCH_MAGE_FILL, true)
+    text(graphics, "ARCH MAGE", 345.0, 452.0, 11, "#d4d4d8")
+    draw_orb(graphics, 450.0, 448.0, ORB_STALEMATE_EDGE, ORB_STALEMATE_FILL, true)
+    text(graphics, "STALEMATE", 465.0, 452.0, 11, "#d4d4d8")
+    text(graphics, "STALEMATES COUNT FOR NEITHER SIDE.", 570.0, 452.0, 11, "#8a8a92")
+    text(graphics, "ARROWS MOVE   SPACE BIND   ENTER COMMIT   H HISTORY", 126.0, 480.0, 11, "#fbbf24")
     text(graphics, "PRESS ENTER TO ENTER THE VAULT", 126.0, 515.0, 12, "#f8fafc")
 end
 

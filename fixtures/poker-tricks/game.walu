@@ -6,7 +6,11 @@ type Card = { rank: i32, suit: i32 }
 type PairChoice = { first: i32, second: i32, value: i32 }
 type SwapChoice = { hand_indices: {i32}, middle_indices: {i32}, community_value: i32, hand_value: i32 }
 type Trick = { round: i32, middle: {Card}, player_cards: {Card}, computer_cards: {Card}, player_first: i32, player_second: i32, computer_first: i32, computer_second: i32, player_value: i32, computer_value: i32, winner: i32, points: i32, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32 }
-type State = { deck: {Card}, player_hand: {Card}, computer_hand: {Card}, middle: {Card}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool }
+-- player_known and computer_known run parallel to the hands: slot i is marked
+-- when the card sitting there arrived from the middle, which both sides were
+-- looking at, and so is no longer secret from the opponent. Cards drawn off the
+-- deck are secret; only an exchange leaks one.
+type State = { deck: {Card}, player_hand: {Card}, computer_hand: {Card}, player_known: {bool}, computer_known: {bool}, middle: {Card}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool }
 
 local MIN_RANK <const>: i32 = 2
 local MAX_RANK <const>: i32 = 14
@@ -160,6 +164,14 @@ function exchange(hand: {Card}, middle: {Card}, hand_indices: {i32}, middle_indi
     end
 end
 
+-- Every slot an exchange touched now holds a card that was face up in the
+-- middle a moment ago, so the opponent knows all of them. Whatever the slot
+-- held before is gone, and with it any secrecy it still had. Kept apart from
+-- exchange itself, which also runs over the throwaway clones best_swap scores.
+function mark_known(known: {bool}, hand_indices: {i32}): unit
+    for index in hand_indices do known[index] = true end
+end
+
 -- Three-card poker ordering used only to break equal swap wagers:
 -- straight flush > three of a kind > straight > flush > pair > high card.
 function rank_three(cards: {Card}): i32
@@ -245,6 +257,19 @@ function remove_pair(hand: {Card}, first: i32, second: i32): unit
     end
 end
 
+-- The same removal against a hand's parallel marks. Spending two cards shifts
+-- every slot above them down, and the marks have to shift with them or they
+-- start describing the wrong cards.
+function remove_pair_known(known: {bool}, first: i32, second: i32): unit
+    if first > second then
+        table.remove(known, first)
+        table.remove(known, second)
+    else
+        table.remove(known, second)
+        table.remove(known, first)
+    end
+end
+
 function State:reveal_middle(): unit
     self.middle = { draw(self.deck), draw(self.deck), draw(self.deck) }
 end
@@ -274,11 +299,13 @@ function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): unit
     self.swap_middle_indices = {}
     if self.swap_winner > 0 then
         exchange(self.player_hand, self.middle, hand_indices, middle_indices)
+        mark_known(self.player_known, hand_indices)
         self.swap_count = #hand_indices
         self.swap_hand_indices = hand_indices
         self.swap_middle_indices = middle_indices
     elseif self.swap_winner < 0 then
         exchange(self.computer_hand, self.middle, computer.hand_indices, computer.middle_indices)
+        mark_known(self.computer_known, computer.hand_indices)
         self.swap_count = #computer.hand_indices
         self.swap_hand_indices = computer.hand_indices
         self.swap_middle_indices = computer.middle_indices
@@ -333,9 +360,14 @@ function State:play(first: i32, second: i32): unit
 
     remove_pair(self.player_hand, first, second)
     remove_pair(self.computer_hand, computer.first, computer.second)
+    remove_pair_known(self.player_known, first, second)
+    remove_pair_known(self.computer_known, computer.first, computer.second)
+    -- Replacements come off the sealed deck, so neither side has seen them.
     for _ = 1, 2 do
         table.insert(self.player_hand, draw(self.deck))
         table.insert(self.computer_hand, draw(self.deck))
+        table.insert(self.player_known, false)
+        table.insert(self.computer_known, false)
     end
 
     if self.computer_tricks >= ARCH_MAGE_WINS_TO_END or self.round >= MAX_ROUNDS then
@@ -362,6 +394,8 @@ function new(): State
         deck = deck,
         player_hand = {},
         computer_hand = {},
+        player_known = {},
+        computer_known = {},
         middle = {},
         history = {},
         round = 1,
@@ -384,6 +418,8 @@ function new(): State
     for _ = 1, 5 do
         table.insert(state.player_hand, draw(state.deck))
         table.insert(state.computer_hand, draw(state.deck))
+        table.insert(state.player_known, false)
+        table.insert(state.computer_known, false)
     end
     state:reveal_middle()
     return state
@@ -394,6 +430,8 @@ function State:reset(): unit
     self.deck = fresh.deck
     self.player_hand = fresh.player_hand
     self.computer_hand = fresh.computer_hand
+    self.player_known = fresh.player_known
+    self.computer_known = fresh.computer_known
     self.middle = fresh.middle
     self.history = fresh.history
     self.round = fresh.round

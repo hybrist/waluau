@@ -17,6 +17,8 @@ import gameEngineGraphics from '../../../engine/graphics.walu?raw';
 import gameEngineFont from '../../../engine/font.walu?raw';
 import gameEngineInput from '../../../engine/input.walu?raw';
 import gameEngineTime from '../../../engine/time.walu?raw';
+import arcaneHeistSim from '../../../fixtures/poker-tricks/sim.walu?raw';
+import arcaneHeistGame from '../../../fixtures/poker-tricks/game.walu?raw';
 
 const conformanceModules = import.meta.glob('../../../conformance/**/*.walu', {
   eager: true,
@@ -815,6 +817,18 @@ describe('browser conformance', () => {
         '/engine/time.walu': gameEngineTime,
       },
       '/fixtures/game-engine/sim.walu'
+    );
+  });
+
+  // The fixture's rules module is host-independent, so its seeded assertions
+  // run here with no engine and no DOM; any of them trapping fails this test.
+  it('runs the Arcane Heist rules simulation without a DOM', async () => {
+    await compileAndInstantiate(
+      {
+        '/fixtures/poker-tricks/sim.walu': arcaneHeistSim,
+        '/fixtures/poker-tricks/game.walu': arcaneHeistGame,
+      },
+      '/fixtures/poker-tricks/sim.walu'
     );
   });
 });
