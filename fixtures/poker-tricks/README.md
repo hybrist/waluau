@@ -25,6 +25,14 @@ three beats: the winner's relics rise out of the hand, the displaced wards are
 set aside at the board's edge, and both groups then travel to their final
 slots, flipping face up or face down to match where they land.
 
+The player's relics are held as an overlapping, tilted fan. Relics keep the
+order they were dealt in; the fan slides open around whichever one the cursor
+holds, giving it room rather than lifting it in front of its neighbours. Parting
+moves a relic along the fan's arc, so it tilts and dips as it goes instead of
+skidding sideways out of the curve, and relics turn into and out of that tilt as
+they are dealt or spent. The Arch Mage's sealed row and the board's wards stay
+flat.
+
 ## Controls
 
 - Arrow keys or WASD move focus; up/down switches between relics and wards.

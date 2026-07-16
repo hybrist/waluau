@@ -33,6 +33,37 @@ local SLOT_MIDDLE <const>: i32 = 2
 local SLOT_DECK <const>: i32 = 3
 local SLOT_ASIDE <const>: i32 = 4
 
+-- The player holds their five relics in a fan rather than a row: each step
+-- outward from the middle relic slides FAN_PITCH sideways, tilts FAN_TILT
+-- further from upright, and dips along a shallow arc. FAN_PITCH is well under
+-- CARD_W, so relics overlap; because each one covers only its neighbour's
+-- right edge, the rank and school in the top-left corner stay readable. The
+-- Arch Mage's sealed row and the wards keep their flat layout.
+local FAN_MIDDLE <const>: f64 = 2.0
+local FAN_PITCH <const>: f64 = 74.0
+local FAN_TILT <const>: f64 = 0.075
+-- The arc's dip per squared step: the outermost relics sit 4 * FAN_DROP below
+-- the middle one, which approximates a pivot far below the board.
+local FAN_DROP <const>: f64 = 2.8
+local FAN_CENTER_X <const>: f64 = 480.0
+local FAN_CENTER_Y <const>: f64 = 509.0
+-- How far the fan slides open around the focused relic, in the same steps as
+-- everything else here — about a quarter of the gap to its neighbour. This is
+-- deliberately short of the ~0.41 steps it would take for FAN_PITCH to clear
+-- CARD_W: relics keep their dealt stacking order, so the focused one still
+-- tucks under the relic to its right, and the parting reads as the fan
+-- breathing rather than a card climbing out of it.
+local FAN_PART <const>: f64 = 0.23
+-- A focus of FAN_CLOSED — one past the last of the five relics — closes the
+-- fan, leaving every relic at its resting slot. Focus only exists while the
+-- cursor can actually move, so cards in flight and a resolving breach both draw
+-- the hand closed, which is what keeps animation endpoints honest: slot_x and
+-- slot_y describe the closed fan.
+-- TODO(waluau-iipk): Say "no relic" as -1, the obvious sentinel, once a module
+-- constant can hold a negated literal. Today that silently fails to inline and
+-- every use dies with "unknown name", so the sentinel has to sit past the hand.
+local FAN_CLOSED <const>: i32 = 5
+
 -- Faces an animated card shows along its flight: stay sealed, stay revealed,
 -- or flip between the two mid-flight. main.walu mirrors these values too.
 local FACES_DOWN <const>: i32 = 0
@@ -43,9 +74,11 @@ local FACES_FLIP_DOWN <const>: i32 = 3
 -- One leg of a card's journey across the board. The card renders at x0/y0
 -- until start, travels to x1/y1 over duration, and only exists on screen
 -- inside [appear, vanish) — outside that window an adjacent leg or the real
--- board slot owns the card. Legs whose dest_kind names a board slot keep
--- that slot empty until they vanish, so state that already changed is not
--- revealed ahead of the animation.
+-- board slot owns the card. The card also turns from angle0 to angle1, which
+-- is how a relic joins or leaves the player's tilted fan without snapping
+-- upright at either end. Legs whose dest_kind names a board slot keep that
+-- slot empty until they vanish, so state that already changed is not revealed
+-- ahead of the animation.
 type Anim = {
     card: game.Card,
     faces: i32,
@@ -53,6 +86,8 @@ type Anim = {
     y0: f64,
     x1: f64,
     y1: f64,
+    angle0: f64,
+    angle1: f64,
     start: f64,
     duration: f64,
     appear: f64,
@@ -61,15 +96,51 @@ type Anim = {
     dest_index: i32
 }
 
+-- Where a relic sits along the fan: steps from the middle relic, negative to
+-- its left, plus however far the parting has pushed it. This one number is the
+-- fan's only degree of freedom — slide, dip, and tilt all read off it — so a
+-- parting relic travels along the arc the fan already describes instead of
+-- skidding sideways out of the curve.
+function hand_step(index: i32, part: f64): f64
+    return (index::f64) - FAN_MIDDLE + part
+end
+
+function hand_angle(index: i32, part: f64): f64
+    return hand_step(index, part) * FAN_TILT
+end
+
+-- Top-left of a relic's card box, in its own tilted frame.
+function hand_x(index: i32, part: f64): f64
+    return FAN_CENTER_X + hand_step(index, part) * FAN_PITCH - CARD_W * 0.5
+end
+
+function hand_y(index: i32, part: f64): f64
+    local step: f64 = hand_step(index, part)
+    return FAN_CENTER_Y + step * step * FAN_DROP - CARD_H * 0.5
+end
+
+-- Where a relic's parting offset is headed: the fan opens around the focused
+-- relic, everything left of it sliding left and everything right sliding right,
+-- while the focused relic itself holds still. main.walu eases each relic toward
+-- its target rather than reading this straight, so the fan parts over a few
+-- frames instead of snapping as the cursor steps along the hand.
+function hand_part_target(index: i32, focus: i32): f64
+    if focus == FAN_CLOSED then return 0.0 end
+    if index < focus then return -FAN_PART end
+    if index > focus then return FAN_PART end
+    return 0.0
+end
+
 function slot_x(kind: i32, index: i32): f64
-    if kind == SLOT_PLAYER or kind == SLOT_COMPUTER then return 190.0 + (index::f64) * 116.0 end
+    if kind == SLOT_PLAYER then return hand_x(index, 0.0) end
+    if kind == SLOT_COMPUTER then return 190.0 + (index::f64) * 116.0 end
     if kind == SLOT_MIDDLE then return 302.0 + (index::f64) * 116.0 end
     if kind == SLOT_DECK then return 56.0 end
     return 800.0 + (index::f64) * 4.0
 end
 
 function slot_y(kind: i32, index: i32): f64
-    if kind == SLOT_PLAYER then return 445.0 end
+    if kind == SLOT_PLAYER then return hand_y(index, 0.0) end
     if kind == SLOT_COMPUTER then return 116.0 end
     if kind == SLOT_ASIDE then return 292.0 + (index::f64) * 12.0 end
     return 292.0
@@ -251,6 +322,18 @@ function draw_card(graphics: Graphics, card: game.Card, x: f64, y: f64, selected
     if selected then text(graphics, "BOUND", x + 27.0, y + 119.0, 9, "#fbbf24") end
 end
 
+-- A relic sitting in the player's fan. Drawing it about its own centre lets
+-- the tilt carry everything with it — the bind lift rises along the card's own
+-- axis rather than straight up the screen, and the focus edge stays square to
+-- the card.
+function draw_hand_card(graphics: Graphics, card: game.Card, index: i32, part: f64, selected: bool, focused: bool, colored: bool): unit
+    graphics:push()
+    graphics:translate(hand_x(index, part) + CARD_W * 0.5, hand_y(index, part) + CARD_H * 0.5)
+    graphics:rotate(hand_angle(index, part))
+    draw_card(graphics, card, -(CARD_W * 0.5), -(CARD_H * 0.5), selected, focused, false, colored)
+    graphics:pop()
+end
+
 -- Fakes a card picked up off the table and turned over midair: cos
 -- collapses the width (back, edge-on, then face) while sin lifts the card
 -- toward the viewer — rising and growing around mid-flip — so the rotation
@@ -290,8 +373,9 @@ function draw_deck(graphics: Graphics, count: i32): unit
 end
 
 -- A card mid-deal or mid-swap: eased travel between two board anchors with
--- an optional mid-flight flip, lifted slightly toward the viewer while it
--- moves (matching the reveal flip's midair feel).
+-- an optional mid-flight flip, turning to meet the tilt of wherever it lands
+-- and lifted slightly toward the viewer while it moves (matching the reveal
+-- flip's midair feel).
 function draw_anim_card(graphics: Graphics, anim: Anim, clock: f64): unit
     if clock < anim.appear or clock >= anim.vanish then return end
     local t: f64 = 1.0
@@ -313,6 +397,7 @@ function draw_anim_card(graphics: Graphics, anim: Anim, clock: f64): unit
     local lift: f64 = 1.0 + 0.08 * depth
     graphics:push()
     graphics:translate(x + CARD_W * 0.5, y + CARD_H * 0.5 - 8.0 * depth)
+    graphics:rotate(anim.angle0 + (anim.angle1 - anim.angle0) * ease)
     graphics:apply_transform(width_scale * lift, 0.0, 0.0, lift, 0.0, 0.0)
     draw_card(graphics, anim.card, -(CARD_W * 0.5), -(CARD_H * 0.5), false, false, hidden, false)
     graphics:pop()
@@ -391,7 +476,7 @@ function trick_scoring(trick: game.Trick): {bool}
     return { false, false, false, false, false }
 end
 
-function draw_resolution_board(graphics: Graphics, state: game.State, reveal_clock: f64): unit
+function draw_resolution_board(graphics: Graphics, state: game.State, fan_parts: {f64}, reveal_clock: f64): unit
     local trick: game.Trick = state.history[#state.history - 1]
     draw_hud(graphics, state)
     draw_deck(graphics, #state.deck)
@@ -420,14 +505,15 @@ function draw_resolution_board(graphics: Graphics, state: game.State, reveal_clo
     end
 
     text(graphics, "ENTER CONTINUE", 414.0, 430.0, 12, "#fbbf24")
+    -- The cursor is not live while a breach resolves, so the fan is already
+    -- easing shut; it settles closed behind the flips.
     for i = 0::i32, 4::i32 do
-        local x: f64 = 190.0 + (i::f64) * 116.0
         if i == trick.player_first then
-            draw_card(graphics, trick.player_cards[0], x, 445.0, false, false, false, trick.winner > 0 and scoring[3])
+            draw_hand_card(graphics, trick.player_cards[0], i, fan_parts[i], false, false, trick.winner > 0 and scoring[3])
         elseif i == trick.player_second then
-            draw_card(graphics, trick.player_cards[1], x, 445.0, false, false, false, trick.winner > 0 and scoring[4])
+            draw_hand_card(graphics, trick.player_cards[1], i, fan_parts[i], false, false, trick.winner > 0 and scoring[4])
         else
-            draw_card(graphics, state.player_hand[i], x, 445.0, false, false, false, false)
+            draw_hand_card(graphics, state.player_hand[i], i, fan_parts[i], false, false, false)
         end
     end
     draw_footer(graphics)
@@ -449,9 +535,22 @@ function preview_player_colored(index: i32, play_picks: {i32}, preview: {bool}):
     return false
 end
 
-function draw_playfield(graphics: Graphics, state: game.State, hand_cursor: i32, ward_cursor: i32, cursor_area: i32, play_picks: {i32}, swap_hand: {i32}, swap_wards: {i32}, revealing: bool, reveal_clock: f64, anims: {Anim}, anim_clock: f64): unit
+-- One relic of the fan, unless a card bound for that slot is still in flight.
+function draw_hand_slot(graphics: Graphics, state: game.State, index: i32, focus: i32, parts: {f64}, play_picks: {i32}, swap_hand: {i32}, preview: {bool}, anims: {Anim}, anim_clock: f64): unit
+    if slot_hidden(anims, anim_clock, SLOT_PLAYER, index) then return end
+    local selected: bool = is_picked(play_picks, index)
+    if state.swap_open then selected = is_picked(swap_hand, index) end
+    draw_hand_card(graphics, state.player_hand[index], index, parts[index], selected, index == focus,
+        preview_player_colored(index, play_picks, preview))
+end
+
+-- hand_focus is the relic the cursor holds, or FAN_CLOSED when nothing does;
+-- fan_parts carries each relic's eased parting offset. main.walu owns both, so
+-- the fan's motion survives a frame and the focus edge and the parting can
+-- never disagree about which relic is active.
+function draw_playfield(graphics: Graphics, state: game.State, hand_focus: i32, fan_parts: {f64}, ward_cursor: i32, cursor_area: i32, play_picks: {i32}, swap_hand: {i32}, swap_wards: {i32}, revealing: bool, reveal_clock: f64, anims: {Anim}, anim_clock: f64): unit
     if revealing and #state.history > 0 then
-        draw_resolution_board(graphics, state, reveal_clock)
+        draw_resolution_board(graphics, state, fan_parts, reveal_clock)
         return
     end
     draw_hud(graphics, state)
@@ -478,13 +577,11 @@ function draw_playfield(graphics: Graphics, state: game.State, hand_cursor: i32,
     end
     if state.swap_open then text(graphics, "FEINT: BIND MATCHING RELICS + WARDS (UP/DOWN)", 242.0, 430.0, 12, "#fbbf24")
     else text(graphics, "BREACH: BIND TWO RELICS", 361.0, 430.0, 12, "#fbbf24") end
+    -- Relics keep the order they were dealt in, focused or not: pulling the
+    -- focused one to the front would slide it through its neighbours instead of
+    -- opening a gap for it. The parting alone gives it room.
     for i = 0::i32, 4::i32 do
-        local selected: bool = false
-        if state.swap_open then selected = is_picked(swap_hand, i) else selected = is_picked(play_picks, i) end
-        local focused: bool = cursor_area == 0 and hand_cursor == i
-        if not slot_hidden(anims, anim_clock, SLOT_PLAYER, i) then
-            draw_card(graphics, state.player_hand[i], slot_x(SLOT_PLAYER, i), slot_y(SLOT_PLAYER, i), selected, focused, false, preview_player_colored(i, play_picks, preview))
-        end
+        draw_hand_slot(graphics, state, i, hand_focus, fan_parts, play_picks, swap_hand, preview, anims, anim_clock)
     end
     draw_footer(graphics)
     draw_anims(graphics, anims, anim_clock)
@@ -558,12 +655,12 @@ function draw_final(graphics: Graphics, state: game.State): unit
     text(graphics, "R RESTARTS THE HEIST   H OPENS THE LEDGER", 262.0, 482.0, 12, "#fbbf24")
 end
 
-function draw(graphics: Graphics, state: game.State, hand_cursor: i32, ward_cursor: i32, cursor_area: i32, play_picks: {i32}, swap_hand: {i32}, swap_wards: {i32}, modal: i32, revealing: bool, reveal_clock: f64, anims: {Anim}, anim_clock: f64): unit
+function draw(graphics: Graphics, state: game.State, hand_focus: i32, fan_parts: {f64}, ward_cursor: i32, cursor_area: i32, play_picks: {i32}, swap_hand: {i32}, swap_wards: {i32}, modal: i32, revealing: bool, reveal_clock: f64, anims: {Anim}, anim_clock: f64): unit
     draw_backdrop(graphics)
     -- The terminal breach still flips on the board, so keep the playfield up
     -- while a reveal is running even after the game finishes.
     if not state.finished or revealing then
-        draw_playfield(graphics, state, hand_cursor, ward_cursor, cursor_area, play_picks, swap_hand, swap_wards, revealing, reveal_clock, anims, anim_clock)
+        draw_playfield(graphics, state, hand_focus, fan_parts, ward_cursor, cursor_area, play_picks, swap_hand, swap_wards, revealing, reveal_clock, anims, anim_clock)
     else
         draw_hud(graphics, state)
     end
@@ -576,4 +673,8 @@ return {
     draw = draw,
     slot_x = slot_x,
     slot_y = slot_y,
+    hand_angle = hand_angle,
+    hand_x = hand_x,
+    hand_y = hand_y,
+    hand_part_target = hand_part_target,
 }
