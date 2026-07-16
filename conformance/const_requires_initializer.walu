@@ -1,0 +1,8 @@
+-- Unlike `local`, a const binding must be initialized at the point of
+-- declaration (RFC #166), so omitting the `=` is a parse error.
+-- conformance: error=const bindings must be initialized
+
+function entry(): f64
+    const x
+    return 0.0
+end
