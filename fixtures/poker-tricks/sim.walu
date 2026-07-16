@@ -165,3 +165,39 @@ for expected_round = FIRST_ROUND, 3 do
 end
 assert(loss_state.finished and loss_state.computer_tricks == 3)
 assert(loss_state.player_tricks == 0 and #loss_state.history == 3 and #loss_state.middle == 0)
+
+-- Identical formations cancel: the ward is not held and no relic is taken, so
+-- both sides keep their counters and the wager comes back.
+function force_stalemate(state: game.State): unit
+    state.middle = { card(7, 3), card(2, 3), card(8, 2) }
+    state.player_hand = { card(13, 0), card(13, 1), card(4, 0), card(5, 1), card(6, 0) }
+    state.computer_hand = { card(13, 2), card(13, 3), card(4, 2), card(5, 3), card(6, 2) }
+end
+
+math.randomseed(44)
+local tie_state = game.new()
+tie_state:resolve_swap({}, {})
+force_stalemate(tie_state)
+local tie_points: i32 = tie_state.player_points
+tie_state:play(0, 1)
+assert(tie_state.history[0].winner == 0 and tie_state.history[0].points == 0)
+assert(tie_state.player_tricks == 0 and tie_state.computer_tricks == 0)
+assert(tie_state.player_points == tie_points and not tie_state.finished)
+assert(tie_state.round == 2)
+
+-- Two ward holds plus a stalemate is not three ward holds, so the heist runs
+-- on. The HUD used to paint all three of these orbs red, which made a correct
+-- run look like it should have ended early.
+math.randomseed(45)
+local mixed_state = game.new()
+for _ = 1, 2 do
+    mixed_state:resolve_swap({}, {})
+    force_computer_win(mixed_state)
+    mixed_state:play(0, 1)
+end
+mixed_state:resolve_swap({}, {})
+force_stalemate(mixed_state)
+mixed_state:play(0, 1)
+assert(#mixed_state.history == 3 and mixed_state.history[2].winner == 0)
+assert(mixed_state.computer_tricks == 2 and mixed_state.player_tricks == 0)
+assert(not mixed_state.finished and mixed_state.round == 4)
