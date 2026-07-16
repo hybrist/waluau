@@ -15,15 +15,12 @@ type Config = {
     background: string
 }
 
--- Callbacks are intentionally mandatory in the initial API. A no-op function
--- is cheap, while optional function values need broader nullable-function
--- support from Waluau.
 type Game = {
     load: () -> unit,
     update: (f64, input_module.Input) -> unit,
     draw: (graphics_module.Graphics, f64) -> unit,
     keypressed: (string) -> unit,
-    keyreleased: (string) -> unit
+    keyreleased: ((string) -> unit)?
 }
 
 -- Canvas dimensions are device pixels, while CSS dimensions and game
@@ -130,7 +127,10 @@ function start(config: Config, game: Game): unit
                 local was_down: bool = input:is_down(key_event.key)
                 input:set_key(key_event.key, false)
                 if was_down then
-                    game.keyreleased(key_event.key)
+                    local keyreleased: ((string) -> unit)? = game.keyreleased
+                    if keyreleased ~= nil then
+                        keyreleased(key_event.key)
+                    end
                 end
             end
         end)

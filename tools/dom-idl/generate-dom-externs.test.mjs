@@ -127,9 +127,10 @@ test('skip diagnostics reference tracked compiler/tooling limitations where appl
   assert.match(diagnostics, /unsupported generic Web IDL type sequence<[^>]*> \(waluau-utyc\)/);
   assert.match(diagnostics, /unsupported generic Web IDL type Promise<[^>]*> \(waluau-2c6n\)/);
   assert.match(diagnostics, /unsupported union Web IDL type \([^)]*\) \(waluau-o4xs\)/);
-  assert.match(diagnostics, /nullable callback Web IDL type .+ has no extern syntax representation \(waluau-lqjs\)/);
+  assert.doesNotMatch(diagnostics, /nullable callback Web IDL type/);
   assert.match(diagnostics, /nullable modifier rejects primitive Web IDL type .+ \(waluau-pq7p\)/);
   assert.match(diagnostics, /unsupported Web IDL type (any|object\??) \(waluau-lxdd\)/);
+  assert.match(diagnostics, /skip Document\.onerror: unsupported Web IDL type OnErrorEventHandler/);
   assert.match(diagnostics, /collides with .* \(waluau-1l02\)/);
 });
 
@@ -142,6 +143,10 @@ test('generated externs emit DOM inheritance syntax', () => {
   assert.match(externs, /^type Element = extern extends Node$/m);
   assert.match(externs, /^type HTMLElement = extern extends Element$/m);
   assert.match(externs, /^type HTMLHeadingElement = extern extends HTMLElement$/m);
+  assert.match(
+    externs,
+    /^declare function EventTarget:remove_event_listener\(type: string, callback: \(\(Event\) -> unit\)\?\): unit$/m,
+  );
 });
 
 test('generated DOM externs keep nullable-parent inheritance chains parent-first', () => {
@@ -247,7 +252,10 @@ test('generated externs expose minimal DOM event callbacks', () => {
   const externs = readRepoFile('externs/dom.walu');
   assert.match(externs, /^declare property Event:type: string$/m);
   assert.match(externs, /^declare property Event:target: EventTarget$/m);
-  assert.match(externs, /^declare function EventTarget:add_event_listener\(type: string, callback: \(Event\) -> unit\): unit$/m);
+  assert.match(
+    externs,
+    /^declare function EventTarget:add_event_listener\(type: string, callback: \(\(Event\) -> unit\)\?\): unit$/m,
+  );
 });
 
 test('generated externs expose minimal DOM mutation and storage APIs', () => {

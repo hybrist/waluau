@@ -87,6 +87,10 @@ fn type_contains_function_value(ty: &Type) -> bool {
 }
 
 fn is_event_unit_callback_type(ty: &Type) -> bool {
+    let ty = match ty {
+        Type::Nullable(inner) => inner.as_ref(),
+        _ => ty,
+    };
     let Type::Function {
         params,
         return_type,
@@ -99,6 +103,10 @@ fn is_event_unit_callback_type(ty: &Type) -> bool {
 }
 
 fn is_f64_unit_callback_type(ty: &Type) -> bool {
+    let ty = match ty {
+        Type::Nullable(inner) => inner.as_ref(),
+        _ => ty,
+    };
     let Type::Function {
         params,
         return_type,
@@ -112,6 +120,10 @@ fn is_f64_unit_callback_type(ty: &Type) -> bool {
 }
 
 fn is_unit_extern_callback_type(ty: &Type) -> bool {
+    let ty = match ty {
+        Type::Nullable(inner) => inner.as_ref(),
+        _ => ty,
+    };
     let Type::Function {
         params,
         return_type,

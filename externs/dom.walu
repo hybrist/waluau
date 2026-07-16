@@ -639,8 +639,9 @@ declare property Event:timeStamp: f64
 declare function Event:initEvent(type: string): unit
 declare function Event:initEvent(type: string, bubbles: bool): unit
 declare function Event:initEvent(type: string, bubbles: bool, cancelable: bool): unit
+declare function EventTarget:add_event_listener(type: string, callback: ((Event) -> unit)?): unit
+declare function EventTarget:remove_event_listener(type: string, callback: ((Event) -> unit)?): unit
 declare function EventTarget:dispatchEvent(event: Event): bool
-declare function EventTarget:add_event_listener(type: string, callback: (Event) -> unit): unit
 declare function HTMLCollection:namedItem(name: string): Element?
 declare property Node:nodeType: u32
 declare property Node:node_name: string

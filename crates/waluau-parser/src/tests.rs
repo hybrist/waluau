@@ -388,6 +388,55 @@ fn parses_nullable_extern_annotations_and_nil_checks() {
 }
 
 #[test]
+fn parses_grouped_nullable_function_types() {
+    let source = r#"
+        type Event = extern
+
+        function register(
+            callback: ((Event) -> unit)?,
+            higher_order: (((Event) -> unit) -> unit)?
+        ): unit
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let event_callback = Type::Function {
+        params: vec![Type::Named {
+            name: "Event".into(),
+            type_args: vec![],
+        }],
+        return_type: Box::new(Type::Unit),
+    };
+    assert_eq!(
+        program.functions[0].params[0].ty,
+        Type::Nullable(Box::new(event_callback.clone()))
+    );
+    assert_eq!(
+        program.functions[0].params[1].ty,
+        Type::Nullable(Box::new(Type::Function {
+            params: vec![event_callback],
+            return_type: Box::new(Type::Unit),
+        }))
+    );
+    assert_eq!(
+        program.functions[0].params[0].ty.to_string(),
+        "((Event) -> unit)?"
+    );
+}
+
+#[test]
+fn rejects_grouped_multi_type_outside_return_position() {
+    let error = parse("function invalid(value: (i32, string)?): unit end")
+        .expect_err("grouping more than one type should fail");
+    assert!(
+        error
+            .to_string()
+            .starts_with("parenthesized type grouping must contain exactly one type"),
+        "unexpected diagnostic: {error}"
+    );
+}
+
+#[test]
 fn parses_generic_type_declarations_and_references() {
     let source = r#"
         type Pair<A, B> = {first: A, second: B}

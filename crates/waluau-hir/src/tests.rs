@@ -458,6 +458,32 @@ fn nullable_strings_narrow_after_nil_check() {
 }
 
 #[test]
+fn nullable_function_values_support_locals_aliases_and_nil_narrowing() {
+    let source = r#"
+        type Callback = () -> unit
+
+        function invoke(callback: () -> unit): unit
+            callback()
+        end
+
+        function run(callback: (() -> unit)?): unit
+            local unused: Callback? = nil
+            if callback ~= nil then
+                invoke(callback)
+            end
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+    assert!(matches!(
+        &typed.functions[1].params[0].ty,
+        Type::Nullable(inner) if matches!(inner.as_ref(), Type::Function { params, return_type }
+            if params.is_empty() && return_type.as_ref() == &Type::Unit)
+    ));
+}
+
+#[test]
 fn nullable_modifier_rejects_non_reference_types() {
     let source = r#"
         function entry(value: i32?): i32

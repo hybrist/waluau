@@ -15,6 +15,7 @@
     "querySelector": "query_selector",
     "removeAttribute": "remove_attribute",
     "removeChild": "remove_child",
+    "removeEventListener": "remove_event_listener",
     "removeItem": "remove_item",
     "replaceChild": "replace_child",
     "setAttribute": "set_attribute",

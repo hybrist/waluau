@@ -1,7 +1,3 @@
-partial interface EventTarget {
-  undefined addEventListener(DOMString type, EventListener callback);
-};
-
 partial interface Event {
   readonly attribute EventTarget target;
 };

@@ -128,10 +128,16 @@ impl Parser {
                 }
             }
             self.expect_simple(TokenKind::RParen, "expected ')' after function type params")?;
-            if params.is_empty() && !self.check_simple(&TokenKind::Arrow) {
-                return Ok(Type::Unit);
+            if !self.check_simple(&TokenKind::Arrow) {
+                return match params.len() {
+                    0 => Ok(Type::Unit),
+                    1 => Ok(params.remove(0)),
+                    _ => Err(self.diagnostic_at_current(
+                        "parenthesized type grouping must contain exactly one type",
+                    )),
+                };
             }
-            self.expect_simple(TokenKind::Arrow, "expected '->' in function type")?;
+            self.advance();
             let return_type = self.parse_return_type()?;
             return Ok(Type::Function {
                 params,
