@@ -129,6 +129,11 @@ export async function compileAndRunGeneratedGlue(files, entryFile = '/main.walu'
         bytesConstants: context.bytesConstants,
         domOutputRoot,
         getWasmExports: context.getWasmExports,
+        gameServices: {
+          ...(options.gameServices ?? {}),
+          assetBaseUrl: context.assetBaseUrl,
+          assetManifest: context.assetManifest,
+        },
       }),
     });
     return {

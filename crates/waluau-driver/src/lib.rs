@@ -1,7 +1,9 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde::Deserialize;
 use waluau_diagnostics::Diagnostic;
 
 mod link;
@@ -17,7 +19,7 @@ pub fn compile_source(source: &str) -> Result<Vec<u8>, Diagnostic> {
     // Add builtin declarations to standalone programs
     add_builtins_to_program(&mut program)?;
 
-    Ok(compile_program(program, "program.wasm")?.wasm)
+    Ok(compile_program(program, "program.wasm", empty_asset_manifest())?.wasm)
 }
 
 /// Compile `path`, resolving and linking any modules it imports with `require`.
@@ -39,19 +41,28 @@ pub fn compile_file_artifacts(
     path: &Path,
     wasm_file_name: &str,
 ) -> Result<CompileArtifacts, Diagnostic> {
+    compile_file_artifacts_with_assets(path, wasm_file_name, &BTreeMap::new())
+}
+
+fn compile_file_artifacts_with_assets(
+    path: &Path,
+    wasm_file_name: &str,
+    assets: &BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>,
+) -> Result<CompileArtifacts, Diagnostic> {
     let program = link::link_program(path)?;
-    compile_program(program, wasm_file_name)
+    compile_program(program, wasm_file_name, assets)
 }
 
 fn compile_program(
     program: waluau_ast::Program,
     wasm_file_name: &str,
+    assets: &BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>,
 ) -> Result<CompileArtifacts, Diagnostic> {
     let mut typed_program = waluau_hir::type_check_and_infer(&program)?;
     waluau_ast::resolve_symbols(&mut typed_program)?;
     let ir = waluau_ir::build(&typed_program)?;
     let emitted = waluau_codegen_wasm::emit(&ir)?;
-    let js = waluau_codegen_wasm::generate_js_glue(wasm_file_name, &emitted);
+    let js = waluau_codegen_wasm::generate_js_glue_with_assets(wasm_file_name, &emitted, assets);
     Ok(CompileArtifacts {
         wasm: emitted.wasm,
         js,
@@ -69,12 +80,24 @@ where
     I: IntoIterator<Item = OsString>,
 {
     let options = parse_args(args)?;
+    if options.manifest.is_some() && !options.emit_js {
+        return Err(Diagnostic::new("--manifest requires --emit-js"));
+    }
+    let asset_package = options
+        .manifest
+        .as_deref()
+        .map(prepare_asset_package)
+        .transpose()?;
     let wasm_file_name = options
         .output
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| Diagnostic::new("output Wasm path must have a UTF-8 file name"))?;
-    let artifacts = compile_file_artifacts(&options.input, wasm_file_name)?;
+    let assets = asset_package
+        .as_ref()
+        .map(|package| &package.generated)
+        .unwrap_or_else(|| empty_asset_manifest());
+    let artifacts = compile_file_artifacts_with_assets(&options.input, wasm_file_name, assets)?;
     fs::write(&options.output, artifacts.wasm)
         .map_err(|error| io_error("write output file", &options.output, error))?;
     if options.emit_js {
@@ -82,7 +105,17 @@ where
         fs::write(&js_output, artifacts.js)
             .map_err(|error| io_error("write JavaScript glue", &js_output, error))?;
     }
+    if let Some(package) = asset_package {
+        let output_dir = options.output.parent().unwrap_or_else(|| Path::new("."));
+        package.write_to(output_dir)?;
+    }
     Ok(())
+}
+
+fn empty_asset_manifest() -> &'static BTreeMap<String, waluau_codegen_wasm::GeneratedAsset> {
+    static EMPTY: std::sync::OnceLock<BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>> =
+        std::sync::OnceLock::new();
+    EMPTY.get_or_init(BTreeMap::new)
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -90,6 +123,13 @@ struct CliOptions {
     input: PathBuf,
     output: PathBuf,
     emit_js: bool,
+    manifest: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy)]
+enum PendingPath {
+    Output,
+    Manifest,
 }
 
 fn parse_args<I>(args: I) -> Result<CliOptions, Diagnostic>
@@ -98,42 +138,50 @@ where
 {
     let mut input = None;
     let mut output = None;
-    let mut pending_output_flag = false;
+    let mut manifest = None;
+    let mut pending_path = None;
     let mut emit_js = false;
 
     for arg in args {
-        if pending_output_flag {
-            output = Some(PathBuf::from(arg));
-            pending_output_flag = false;
+        if let Some(pending) = pending_path.take() {
+            match pending {
+                PendingPath::Output => output = Some(PathBuf::from(arg)),
+                PendingPath::Manifest => manifest = Some(PathBuf::from(arg)),
+            }
             continue;
         }
 
         match arg.to_str() {
-            Some("-o" | "--output") => pending_output_flag = true,
+            Some("-o" | "--output") => pending_path = Some(PendingPath::Output),
+            Some("--manifest") => pending_path = Some(PendingPath::Manifest),
             Some("--emit-js") => emit_js = true,
             Some(flag) if flag.starts_with('-') => {
                 return Err(Diagnostic::new(format!(
-                    "unsupported flag `{flag}`\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js]"
+                    "unsupported flag `{flag}`\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--manifest <waluau.assets.json>]"
                 )));
             }
             _ if input.is_none() => input = Some(PathBuf::from(arg)),
             _ => {
                 return Err(Diagnostic::new(
-                    "too many positional arguments\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js]",
+                    "too many positional arguments\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--manifest <waluau.assets.json>]",
                 ));
             }
         }
     }
 
-    if pending_output_flag {
-        return Err(Diagnostic::new(
-            "missing path after -o/--output\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js]",
-        ));
+    if let Some(pending) = pending_path {
+        let flag = match pending {
+            PendingPath::Output => "-o/--output",
+            PendingPath::Manifest => "--manifest",
+        };
+        return Err(Diagnostic::new(format!(
+            "missing path after {flag}\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--manifest <waluau.assets.json>]"
+        )));
     }
 
     let input = input.ok_or_else(|| {
         Diagnostic::new(
-            "missing input path\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js]",
+            "missing input path\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--manifest <waluau.assets.json>]",
         )
     })?;
     let output = output.unwrap_or_else(|| default_output_path(&input));
@@ -142,6 +190,7 @@ where
         input,
         output,
         emit_js,
+        manifest,
     })
 }
 
@@ -172,6 +221,168 @@ fn add_builtins_to_program(program: &mut waluau_ast::Program) -> Result<(), Diag
     }
 
     Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectAssetManifest {
+    version: u32,
+    assets: Vec<AssetDeclaration>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AssetDeclaration {
+    path: String,
+    #[serde(rename = "type")]
+    kind: AssetKind,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum AssetKind {
+    Text,
+    Bytes,
+    Image,
+    Font,
+    Audio,
+}
+
+impl AssetKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Bytes => "bytes",
+            Self::Image => "image",
+            Self::Font => "font",
+            Self::Audio => "audio",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct PreparedAsset {
+    output_relative: PathBuf,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug)]
+struct PreparedAssetPackage {
+    generated: BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>,
+    files: Vec<PreparedAsset>,
+}
+
+impl PreparedAssetPackage {
+    fn write_to(self, output_dir: &Path) -> Result<(), Diagnostic> {
+        for asset in self.files {
+            let output = output_dir.join(&asset.output_relative);
+            if let Some(parent) = output.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|error| io_error("create asset output directory", parent, error))?;
+            }
+            fs::write(&output, asset.bytes)
+                .map_err(|error| io_error("write packaged asset", &output, error))?;
+        }
+        Ok(())
+    }
+}
+
+fn prepare_asset_package(path: &Path) -> Result<PreparedAssetPackage, Diagnostic> {
+    let source =
+        fs::read_to_string(path).map_err(|error| io_error("read asset manifest", path, error))?;
+    let manifest: ProjectAssetManifest = serde_json::from_str(&source).map_err(|error| {
+        Diagnostic::new(format!(
+            "invalid asset manifest `{}`: {error}",
+            path.display()
+        ))
+    })?;
+    if manifest.version != 1 {
+        return Err(Diagnostic::new(format!(
+            "unsupported asset manifest version {}; expected 1",
+            manifest.version
+        )));
+    }
+    let root = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut logical_paths = BTreeSet::new();
+    let mut output_paths = BTreeSet::new();
+    let mut generated = BTreeMap::new();
+    let mut files = Vec::new();
+    for declaration in manifest.assets {
+        validate_logical_asset_path(&declaration.path)?;
+        if !logical_paths.insert(declaration.path.clone()) {
+            return Err(Diagnostic::new(format!(
+                "duplicate asset manifest entry `{}`",
+                declaration.path
+            )));
+        }
+        let bytes = fs::read(root.join(&declaration.path)).map_err(|error| {
+            io_error("read declared asset", &root.join(&declaration.path), error)
+        })?;
+        let output_relative = fingerprinted_asset_path(&declaration.path, &bytes)?;
+        if !output_paths.insert(output_relative.clone()) {
+            return Err(Diagnostic::new(format!(
+                "asset output collision at `{}`",
+                output_relative.display()
+            )));
+        }
+        let url = format!("./{}", output_relative.to_string_lossy().replace('\\', "/"));
+        generated.insert(
+            declaration.path,
+            waluau_codegen_wasm::GeneratedAsset {
+                url,
+                kind: declaration.kind.as_str().to_string(),
+            },
+        );
+        files.push(PreparedAsset {
+            output_relative,
+            bytes,
+        });
+    }
+    Ok(PreparedAssetPackage { generated, files })
+}
+
+fn validate_logical_asset_path(path: &str) -> Result<(), Diagnostic> {
+    let lower = path.to_ascii_lowercase();
+    let invalid = path.is_empty()
+        || path.starts_with('/')
+        || path.contains('\\')
+        || path.contains('?')
+        || path.contains('#')
+        || path.contains(':')
+        || lower.contains("%2e")
+        || lower.contains("%2f")
+        || lower.contains("%5c")
+        || path
+            .split('/')
+            .any(|component| component.is_empty() || component == "." || component == "..");
+    if invalid {
+        return Err(Diagnostic::new(format!(
+            "invalid logical asset path `{path}`"
+        )));
+    }
+    Ok(())
+}
+
+fn fingerprinted_asset_path(logical: &str, bytes: &[u8]) -> Result<PathBuf, Diagnostic> {
+    let path = Path::new(logical);
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| Diagnostic::new(format!("asset path `{logical}` has no UTF-8 file name")))?;
+    let (stem, extension) = match file_name.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() && !extension.is_empty() => {
+            (stem, Some(extension))
+        }
+        _ => (file_name, None),
+    };
+    let hash = bytes.iter().fold(0xcbf29ce484222325u64, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+    });
+    let fingerprinted = match extension {
+        Some(extension) => format!("{stem}.{hash:016x}.{extension}"),
+        None => format!("{stem}.{hash:016x}"),
+    };
+    Ok(path.with_file_name(fingerprinted))
 }
 
 fn io_error(action: &str, path: &Path, error: std::io::Error) -> Diagnostic {
@@ -662,6 +873,112 @@ mod tests {
         assert!(js.contains("new URL(\"./game.wasm\", import.meta.url)"));
         assert!(js.contains("export async function instantiate"));
         assert!(!js.contains("WebAssembly.Module.imports"));
+    }
+
+    #[test]
+    fn cli_packages_typed_asset_manifest_with_fingerprinted_outputs() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("main.walu");
+        let manifest_path = tempdir.path().join("waluau.assets.json");
+        let dist = tempdir.path().join("dist");
+        fs::create_dir_all(tempdir.path().join("assets")).expect("asset dir should exist");
+        fs::create_dir_all(&dist).expect("dist should exist");
+        fs::write(&input_path, fixture_source("add")).expect("fixture should write");
+        let declarations = [
+            ("story.txt", "text", b"story".as_slice()),
+            ("data.bin", "bytes", b"bytes".as_slice()),
+            ("sprite.png", "image", b"image".as_slice()),
+            ("typeface.woff2", "font", b"font".as_slice()),
+            ("theme.ogg", "audio", b"audio".as_slice()),
+        ];
+        for (name, _, bytes) in declarations {
+            fs::write(tempdir.path().join("assets").join(name), bytes).expect("asset should write");
+        }
+        fs::write(
+            &manifest_path,
+            r#"{
+                "version": 1,
+                "assets": [
+                    {"path":"assets/story.txt","type":"text"},
+                    {"path":"assets/data.bin","type":"bytes"},
+                    {"path":"assets/sprite.png","type":"image"},
+                    {"path":"assets/typeface.woff2","type":"font"},
+                    {"path":"assets/theme.ogg","type":"audio"}
+                ]
+            }"#,
+        )
+        .expect("manifest should write");
+
+        super::run_with_args([
+            os(&input_path),
+            OsString::from("--output"),
+            os(dist.join("game.wasm")),
+            OsString::from("--emit-js"),
+            OsString::from("--manifest"),
+            os(&manifest_path),
+        ])
+        .expect("packaged CLI run should succeed");
+
+        let js = fs::read_to_string(dist.join("game.js")).expect("glue should exist");
+        for (name, kind, bytes) in declarations {
+            let logical = format!("assets/{name}");
+            let emitted = super::fingerprinted_asset_path(&logical, bytes)
+                .expect("fingerprinted path should build");
+            assert!(
+                dist.join(&emitted).exists(),
+                "{} should be copied",
+                emitted.display()
+            );
+            assert!(js.contains(&format!("\"{logical}\"")));
+            assert!(js.contains(&format!("type: \"{kind}\"")));
+            assert!(js.contains(&emitted.to_string_lossy().replace('\\', "/")));
+        }
+        assert!(js.contains("export const assetBaseUrl"));
+        assert!(js.contains("export const assetManifest"));
+    }
+
+    #[test]
+    fn asset_manifest_diagnoses_missing_duplicate_and_unknown_types() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let missing = tempdir.path().join("missing.json");
+        fs::write(
+            &missing,
+            r#"{"version":1,"assets":[{"path":"assets/nope.txt","type":"text"}]}"#,
+        )
+        .expect("manifest should write");
+        let error = super::prepare_asset_package(&missing).expect_err("missing asset should fail");
+        assert!(error.to_string().contains("assets/nope.txt"));
+
+        fs::write(tempdir.path().join("same.txt"), "same").expect("asset should write");
+        let duplicate = tempdir.path().join("duplicate.json");
+        fs::write(
+            &duplicate,
+            r#"{"version":1,"assets":[{"path":"same.txt","type":"text"},{"path":"same.txt","type":"bytes"}]}"#,
+        )
+        .expect("manifest should write");
+        let error = super::prepare_asset_package(&duplicate).expect_err("duplicate should fail");
+        assert!(error.to_string().contains("duplicate asset manifest entry"));
+
+        let unknown = tempdir.path().join("unknown.json");
+        fs::write(
+            &unknown,
+            r#"{"version":1,"assets":[{"path":"same.txt","type":"shader"}]}"#,
+        )
+        .expect("manifest should write");
+        let error = super::prepare_asset_package(&unknown).expect_err("unknown type should fail");
+        assert!(error.to_string().contains("unknown variant `shader`"));
+
+        for invalid_path in ["/absolute.txt", "../escape.txt", "assets/%2e%2e/escape.txt"] {
+            let invalid = tempdir.path().join("invalid.json");
+            fs::write(
+                &invalid,
+                format!(r#"{{"version":1,"assets":[{{"path":"{invalid_path}","type":"text"}}]}}"#),
+            )
+            .expect("manifest should write");
+            let error =
+                super::prepare_asset_package(&invalid).expect_err("invalid path should fail");
+            assert!(error.to_string().contains("invalid logical asset path"));
+        }
     }
 
     #[test]

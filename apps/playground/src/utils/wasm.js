@@ -835,6 +835,11 @@ export function createGameServicesHost(options = {}) {
     options.AudioContext ?? globalThis.AudioContext ?? globalThis.webkitAudioContext;
   const AudioCtor = options.Audio ?? globalThis.Audio;
   const baseUrl = options.assetBaseUrl ?? document?.baseURI ?? globalThis.location?.href;
+  const assetManifest = options.assetManifest == null
+    ? null
+    : new Map(options.assetManifest instanceof Map
+      ? options.assetManifest
+      : Object.entries(options.assetManifest));
   const storage = options.storage ?? (() => {
     try {
       return document?.defaultView?.localStorage ?? globalThis.localStorage;
@@ -883,12 +888,37 @@ export function createGameServicesHost(options = {}) {
     if (!code) return '';
     return gpuEntryFor(handle)?.message ?? `${code} GPU resource: ${handle}`;
   };
-  const fetchAsset = async (path) => {
+  const resolveAssetUrl = (path, expectedType) => {
+    const normalized = validatedAssetPath(path);
+    if (assetManifest) {
+      if (!assetManifest.has(normalized)) {
+        throw new GameServiceError(
+          'undeclared_asset',
+          `packaged asset is not declared in the manifest: ${normalized}`
+        );
+      }
+      const entry = assetManifest.get(normalized);
+      const emittedUrl = typeof entry === 'string' ? entry : entry?.url;
+      const declaredType = typeof entry === 'string' ? null : entry?.type;
+      if (typeof emittedUrl !== 'string' || emittedUrl.length === 0) {
+        throw new GameServiceError('invalid_manifest', `invalid manifest URL for: ${normalized}`);
+      }
+      if (declaredType && declaredType !== expectedType) {
+        throw new GameServiceError(
+          'wrong_asset_type',
+          `asset ${normalized} is declared as ${declaredType}, not ${expectedType}`
+        );
+      }
+      return baseUrl ? new URL(emittedUrl, baseUrl).href : emittedUrl;
+    }
+    return baseUrl ? new URL(normalized, baseUrl).href : normalized;
+  };
+  const fetchAsset = async (path, expectedType) => {
     const normalized = validatedAssetPath(path);
     if (typeof fetchImpl !== 'function') {
       throw new GameServiceError('unavailable', 'fetch is unavailable in this host');
     }
-    const url = baseUrl ? new URL(normalized, baseUrl).href : normalized;
+    const url = resolveAssetUrl(normalized, expectedType);
     const response = await fetchImpl(url);
     if (!response?.ok) {
       const status = Number(response?.status);
@@ -899,7 +929,8 @@ export function createGameServicesHost(options = {}) {
   };
   const load = async (kind, path, decode) => {
     try {
-      const response = await fetchAsset(path);
+      const expectedType = kind === 'sound' || kind === 'stream' ? 'audio' : kind;
+      const response = await fetchAsset(path, expectedType);
       return success(kind, await decode(response));
     } catch (error) {
       return failure(String(path), error, 'decode_failed');
@@ -1111,7 +1142,7 @@ export function createGameServicesHost(options = {}) {
         if (typeof AudioCtor !== 'function') {
           throw new GameServiceError('unavailable', 'streaming audio is unavailable in this host');
         }
-        const url = baseUrl ? new URL(normalized, baseUrl).href : normalized;
+        const url = resolveAssetUrl(normalized, 'audio');
         const audio = new AudioCtor(url);
         audio.preload = 'auto';
         await new Promise((resolve, reject) => {
