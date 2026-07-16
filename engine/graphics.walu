@@ -4,21 +4,30 @@
 -- a and an effect id per vertex) that is uploaded and drawn in a single draw
 -- call per flush. The effect id selects an animated fragment-shader overlay
 -- (0 renders the plain vertex color); the platform adapter advances the
--- shader clock once per frame via set_time. Text uses the built-in bitmap
--- font from font.walu, and the push/pop transform stack is applied CPU-side
--- while vertices are emitted.
+-- shader clock once per frame via set_time. Text uses either the built-in
+-- bitmap font from font.walu or a custom font resource uploaded as a GPU
+-- atlas, and the push/pop transform stack is applied CPU-side while vertices
+-- are emitted.
 
 local window = require("dom:window")
 local font = require("./font")
 local resources = require("./resources")
 
 declare function game_gpu_texture_from_resource(gl: WebGL2RenderingContext, resource_handle: i32): i32
+declare function game_gpu_font_from_resource(gl: WebGL2RenderingContext, resource_handle: i32): i32
 declare function game_gpu_render_target_create(gl: WebGL2RenderingContext, width: i32, height: i32): i32
 declare function game_gpu_resource_ok(handle: i32): bool
 declare function game_gpu_resource_error_code(handle: i32): string
 declare function game_gpu_resource_error_message(handle: i32): string
 declare function game_gpu_resource_width(handle: i32): i32
 declare function game_gpu_resource_height(handle: i32): i32
+declare function game_gpu_font_first_code(handle: i32): i32
+declare function game_gpu_font_glyph_count(handle: i32): i32
+declare function game_gpu_font_columns(handle: i32): i32
+declare function game_gpu_font_cell_width(handle: i32): i32
+declare function game_gpu_font_cell_height(handle: i32): i32
+declare function game_gpu_font_base_size(handle: i32): i32
+declare function game_gpu_font_advance(handle: i32): i32
 declare function game_gpu_texture_bind(gl: WebGL2RenderingContext, handle: i32): bool
 declare function game_gpu_target_bind(gl: WebGL2RenderingContext, handle: i32): bool
 declare function game_gpu_screen_bind(gl: WebGL2RenderingContext): unit
@@ -65,6 +74,17 @@ type Graphics = {
     effect: f64,
     line_width: f64,
     font_pixel: f64,
+    current_font: i32,
+    custom_font_size: f64,
+    custom_font_width: i32,
+    custom_font_height: i32,
+    custom_font_first_code: i32,
+    custom_font_glyph_count: i32,
+    custom_font_columns: i32,
+    custom_font_cell_width: i32,
+    custom_font_cell_height: i32,
+    custom_font_base_size: i32,
+    custom_font_advance: i32,
     time_location: WebGLUniformLocation?,
     pixel_scale_location: WebGLUniformLocation?,
     transforms: {f64},
@@ -83,6 +103,20 @@ type Material = { name: string, effect: i32, released: bool }
 type MaterialResult = { ok: bool, material: Material, error: GraphicsError }
 type Texture = { handle: i32, width: i32, height: i32, released: bool }
 type TextureResult = { ok: bool, texture: Texture, error: GraphicsError }
+type Font = {
+    handle: i32,
+    width: i32,
+    height: i32,
+    first_code: i32,
+    glyph_count: i32,
+    columns: i32,
+    cell_width: i32,
+    cell_height: i32,
+    base_size: i32,
+    advance: i32,
+    released: bool
+}
+type FontResult = { ok: bool, font: Font, error: GraphicsError }
 type RenderTarget = { handle: i32, width: i32, height: i32, released: bool }
 type RenderTargetResult = { ok: bool, target: RenderTarget, error: GraphicsError }
 
@@ -246,6 +280,17 @@ void main() {
         effect = 0.0,
         line_width = 1.0,
         font_pixel = 2.0,
+        current_font = 0,
+        custom_font_size = 14.0,
+        custom_font_width = 0,
+        custom_font_height = 0,
+        custom_font_first_code = 0,
+        custom_font_glyph_count = 0,
+        custom_font_columns = 0,
+        custom_font_cell_width = 0,
+        custom_font_cell_height = 0,
+        custom_font_base_size = 0,
+        custom_font_advance = 0,
         time_location = gl:getUniformLocation(program, "u_time"),
         pixel_scale_location = pixel_scale_location,
         transforms = { 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 },
@@ -457,6 +502,7 @@ function Graphics:supports(capability: string): bool
         or capability == "textures"
         or capability == "sprite-batches"
         or capability == "render-targets"
+        or capability == "custom-fonts"
         or capability == "paths"
         or capability == "text-alignment"
 end
@@ -492,6 +538,50 @@ function Graphics:texture_from_resource(resource: resources.Resource): TextureRe
     }
 end
 
+-- Rasterizes a loaded host font once into an opaque GPU atlas. Upload copies
+-- the glyph pixels, so releasing the source FontFace Resource is independent.
+function Graphics:font_from_resource(resource: resources.Resource): FontResult
+    self:flush()
+    local handle: i32 = game_gpu_font_from_resource(self.gl, resource.handle)
+    self.current_texture = 0
+    if not game_gpu_resource_ok(handle) then
+        return {
+            ok = false,
+            font = {
+                handle = handle, width = 0, height = 0, first_code = 0,
+                glyph_count = 0, columns = 0, cell_width = 0, cell_height = 0,
+                base_size = 0, advance = 0, released = true,
+            },
+            error = gpu_error(handle),
+        }
+    end
+    return {
+        ok = true,
+        font = {
+            handle = handle,
+            width = game_gpu_resource_width(handle),
+            height = game_gpu_resource_height(handle),
+            first_code = game_gpu_font_first_code(handle),
+            glyph_count = game_gpu_font_glyph_count(handle),
+            columns = game_gpu_font_columns(handle),
+            cell_width = game_gpu_font_cell_width(handle),
+            cell_height = game_gpu_font_cell_height(handle),
+            base_size = game_gpu_font_base_size(handle),
+            advance = game_gpu_font_advance(handle),
+            released = false,
+        },
+        error = { code = "", message = "" },
+    }
+end
+
+function Graphics:font_error(value: Font): GraphicsError
+    return gpu_error(value.handle)
+end
+
+function Graphics:texture_error(value: Texture): GraphicsError
+    return gpu_error(value.handle)
+end
+
 function Graphics:create_render_target(width: i32, height: i32): RenderTargetResult
     -- Framebuffer allocation also binds its backing texture.
     self:flush()
@@ -516,6 +606,14 @@ function Graphics:release_texture(texture: Texture): unit
     if not texture.released then game_gpu_resource_release(texture.handle) end
     texture.released = true
     if self.current_texture == texture.handle then self.current_texture = 0 end
+end
+
+function Graphics:release_font(value: Font): unit
+    if self.current_texture == value.handle then self:flush() end
+    if not value.released then game_gpu_resource_release(value.handle) end
+    value.released = true
+    if self.current_texture == value.handle then self.current_texture = 0 end
+    if self.current_font == value.handle then self.current_font = 0 end
 end
 
 function Graphics:release_render_target(target: RenderTarget): unit
@@ -785,8 +883,9 @@ function Graphics:stroke(): unit
     end
 end
 
--- "<size>px ..." selects the bitmap font scale: one glyph line is 8 font
--- pixels tall (7 glyph rows plus 1 of spacing), so a font pixel is size / 8.
+-- "<size>px ..." changes the selected font size. For the built-in bitmap,
+-- one glyph line is 8 font pixels tall (7 glyph rows plus 1 of spacing), so a
+-- font pixel is size / 8.
 function Graphics:set_font(spec: string): unit
     local size: f64 = 0.0
     local index: i32 = 1
@@ -802,7 +901,34 @@ function Graphics:set_font(spec: string): unit
     if size <= 0.0 then
         size = 14.0
     end
-    self.font_pixel = size / 8.0
+    if self.current_font ~= 0 and game_gpu_resource_ok(self.current_font) then
+        self.custom_font_size = size
+    else
+        self.current_font = 0
+        self.font_pixel = size / 8.0
+    end
+end
+
+function Graphics:use_builtin_font(): unit
+    self.current_font = 0
+end
+
+-- Selects a loaded custom font atlas at a logical-pixel size. Returns false
+-- for released or invalid GPU fonts so callers can retain a bitmap fallback.
+function Graphics:set_font_resource(value: Font, size: f64): bool
+    if value.released or size <= 0.0 or not game_gpu_resource_ok(value.handle) then return false end
+    self.current_font = value.handle
+    self.custom_font_size = size
+    self.custom_font_width = value.width
+    self.custom_font_height = value.height
+    self.custom_font_first_code = value.first_code
+    self.custom_font_glyph_count = value.glyph_count
+    self.custom_font_columns = value.columns
+    self.custom_font_cell_width = value.cell_width
+    self.custom_font_cell_height = value.cell_height
+    self.custom_font_base_size = value.base_size
+    self.custom_font_advance = value.advance
+    return true
 end
 
 -- Length of the horizontal run of set font pixels starting at column.
@@ -821,6 +947,12 @@ end
 -- the same pen advance print uses, including the inter-glyph spacing after the
 -- final character, so callers never need to know the bitmap font dimensions.
 function Graphics:text_width(text: string): f64
+    if self.current_font ~= 0 then
+        if game_gpu_resource_ok(self.current_font) and self.custom_font_base_size > 0 then
+            return (#text::f64) * (self.custom_font_advance::f64) * self.custom_font_size / (self.custom_font_base_size::f64)
+        end
+        self.current_font = 0
+    end
     local width: f64 = 0.0
     local advance: f64 = self.font_pixel * ((font.width() + 1)::f64)
     for _ = 1::i32, #text do
@@ -829,10 +961,48 @@ function Graphics:text_width(text: string): f64
     return width
 end
 
+function Graphics:print_custom(text: string, x: f64, y: f64): bool
+    if self.current_font == 0 or self.custom_font_base_size <= 0 or self.custom_font_columns <= 0 then return false end
+    if not game_gpu_resource_ok(self.current_font) then
+        self.current_font = 0
+        return false
+    end
+    local scale: f64 = self.custom_font_size / (self.custom_font_base_size::f64)
+    local pen: f64 = x
+    local atlas: Texture = {
+        handle = self.current_font,
+        width = self.custom_font_width,
+        height = self.custom_font_height,
+        released = false,
+    }
+    for index = 1::i32, #text do
+        local code: i32 = string.byte(text, index)
+        local offset: i32 = code - self.custom_font_first_code
+        if offset >= 0 and offset < self.custom_font_glyph_count then
+            local column: i32 = offset % self.custom_font_columns
+            local row: i32 = offset // self.custom_font_columns
+            if not self:draw_sprite_region(
+                atlas,
+                pen, y - self.custom_font_size,
+                (self.custom_font_cell_width::f64) * scale,
+                (self.custom_font_cell_height::f64) * scale,
+                (column * self.custom_font_cell_width)::f64,
+                (row * self.custom_font_cell_height)::f64,
+                self.custom_font_cell_width::f64,
+                self.custom_font_cell_height::f64,
+                false
+            ) then return false end
+        end
+        pen += (self.custom_font_advance::f64) * scale
+    end
+    return true
+end
+
 -- Text renders as one quad per horizontal run of set font pixels. The y
 -- coordinate is the baseline, matching the Canvas 2D fillText convention
 -- the previous backend exposed.
 function Graphics:print(text: string, x: f64, y: f64): unit
+    if self.current_font ~= 0 and self:print_custom(text, x, y) then return end
     local upper: string = string.upper(text)
     local pixel: f64 = self.font_pixel
     local top: f64 = y - pixel * (font.height()::f64)

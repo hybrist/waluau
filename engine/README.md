@@ -9,10 +9,10 @@ The browser is the first platform. Games depend on the engine facade while
 `requestAnimationFrame`. Drawing is GPU-backed: `graphics.walu` batches every
 shape and text call into one interleaved vertex stream (clip-space position
 plus color per vertex) and draws it through WebGL2 with a single draw call
-per flush. Text uses the built-in 5x7 bitmap font in `font.walu`, rendered as
-colored quads, and the push/pop transform stack is applied CPU-side while
-vertices are emitted. The fixed-step clock and keyboard state are
-host-independent.
+per flush. Text uses either the built-in 5x7 bitmap font or a loaded custom
+font rasterized once into a GPU glyph atlas; both render as colored quads.
+The push/pop transform stack is applied CPU-side while vertices are emitted.
+The fixed-step clock and keyboard state are host-independent.
 
 ## Initial API
 
@@ -81,9 +81,10 @@ resources, and `alpha`, `add`, and `multiply` blend modes. Material creation
 returns a structured result; releasing a material is explicit and later use is
 rejected predictably. The same backend uploads decoded image resources as
 textures, batches atlas sprites by texture, and can render into and composite
-offscreen targets. Custom shaders remain unsupported and are tracked by
-`waluau-ukso`; compatibility backends must likewise return `false` instead of
-silently changing semantics.
+offscreen targets. Loaded font resources become batched glyph atlases and keep
+the bitmap font as a safe fallback. Custom shaders remain unsupported and are
+tracked by `waluau-ukso`; compatibility backends must likewise return `false`
+instead of silently changing semantics.
 
 `keyreleased` may be `nil`; the other lifecycle callbacks are currently
 required. Updates use a fixed timestep. Drawing happens once per animation
@@ -174,6 +175,11 @@ the same texture remain in one batch. `create_render_target`,
 offscreen composition. Texture and target release is explicit and idempotent,
 and later use returns `false`; creation returns structured `invalid_resource`,
 `wrong_type`, `invalid_size`, `unavailable`, upload, and framebuffer failures.
+`font_from_resource` similarly copies a loaded font into a GPU atlas;
+`set_font_resource` selects it at a logical-pixel size, while `font_error`
+exposes invalid or `released` status and `use_builtin_font` restores the
+always-available fallback. Releasing the decoded FontFace after atlas creation
+does not invalidate already-uploaded glyphs.
 
 The version-1 `waluau.assets.json` contract and `--manifest` CLI option package
 typed, read-only project assets with content fingerprints. Generated sibling
@@ -181,8 +187,7 @@ glue exports the logical-path manifest and an import-meta-relative base URL;
 the browser host maps logical requests to emitted URLs and rejects undeclared
 or wrongly typed requests. Save namespaces never consult this manifest. See
 [`examples/game-project`](../examples/game-project/) for the complete layout
-and build command. A native adapter and GPU glyph integration for loaded font
-handles remain separate follow-ups.
+and build command. A native resource adapter remains a separate follow-up.
 
 ## Intended API surface
 
@@ -213,7 +218,7 @@ Reaching LÖVE-like usability requires these architectural capabilities:
 | --- | --- | --- |
 | Distribution | Stable package/virtual-module imports, API versioning and a standard project layout are available | Generated sibling JavaScript glue and typed fingerprinted asset manifests are available |
 | Resources | Backend-neutral opaque handles, nullable callbacks and host byte transfer are available | Browser async text/bytes/image/font/audio handles, decoded-image GPU upload, explicit lifetime, structured failures, and production packaging are available; caching and native adapters remain |
-| GPU graphics | Typed buffers, numeric/vector data, shader and uniform-friendly APIs | WebGL2 geometry, texture/sprite batching and render targets are available; custom shader compilation, WebGPU/native adapters and broader capability discovery remain |
+| GPU graphics | Typed buffers, numeric/vector data, shader and uniform-friendly APIs | WebGL2 geometry, texture/sprite/glyph batching and render targets are available; custom shader compilation, WebGPU/native adapters and broader capability discovery remain |
 | Input | Extensible event/value representation without a closed hard-coded record | Keyboard normalization, pointer/touch/gamepad polling, focus and fullscreen handling |
 | Audio | Optional readiness callbacks and richer source state | Browser decoded effects and streamed music; native mixer, buses, effects and device lifecycle remain |
 | Files | Stable project/package layout | Browser packaged fetch plus namespaced text/byte saves; desktop paths and atomic native save adapter remain |
@@ -228,9 +233,8 @@ the stable package surface (`waluau-tpil`), GPU-backed renderer (`waluau-vt3k`),
 and asset/audio/save services (`waluau-mi1t`). Beads remains the authoritative
 source for priorities and completion status.
 
-The renderer draws colored geometry (shapes, lines, paths, and bitmap-font
-text) through WebGL2 today, using the extern surface from `waluau-9tvw`.
-Loaded textures, atlas sprite batches, and render targets are implemented by
-the browser WebGL2 backend. Custom shader resources remain an explicit follow-up
-of `waluau-vt3k`; a Canvas 2D compatibility backend can return once backend
-polymorphism is expressible in the language.
+The renderer draws colored geometry, loaded textures, bitmap or custom-font
+glyphs, atlas sprite batches, and render targets through WebGL2 today, using
+the extern surface from `waluau-9tvw`. Custom shader resources remain an
+explicit follow-up of `waluau-vt3k`; a Canvas 2D compatibility backend can
+return once backend polymorphism is expressible in the language.

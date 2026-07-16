@@ -81,6 +81,7 @@ function mapStorage() {
 
 function serviceHarness() {
   const bitmap = { width: 2, height: 2, closed: false, close() { this.closed = true; } };
+  const fontAtlas = { atlas: true };
   const fontSet = new Set();
   const bodies = new Map([
     ['/assets/message.txt', 'packaged text'],
@@ -97,6 +98,7 @@ function serviceHarness() {
 
   return {
     bitmap,
+    fontAtlas,
     fontSet,
     host: createGameServicesHost({
       assetBaseUrl: 'https://game.test/',
@@ -106,6 +108,18 @@ function serviceHarness() {
       createImageBitmap: async () => bitmap,
       FontFace: FakeFontFace,
       fontSet,
+      createFontAtlas: () => ({
+        source: fontAtlas,
+        width: 640,
+        height: 264,
+        firstCode: 32,
+        glyphCount: 95,
+        columns: 16,
+        cellWidth: 40,
+        cellHeight: 44,
+        baseSize: 32,
+        advance: 32,
+      }),
       AudioContext: FakeAudioContext,
       Audio: FakeAudio,
     }),
@@ -114,7 +128,7 @@ function serviceHarness() {
 
 describe('browser game resource services', () => {
   it('copies decoded images into opaque GPU handles with structured lifetime errors', async () => {
-    const { host, bitmap } = serviceHarness();
+    const { host, bitmap, fontAtlas, fontSet } = serviceHarness();
     const calls = [];
     const gl = {
       TEXTURE_2D: 1, TEXTURE_MIN_FILTER: 2, TEXTURE_MAG_FILTER: 3,
@@ -149,6 +163,20 @@ describe('browser game resource services', () => {
     expect(host.game_gpu_resource_error_code(invalid)).toBe('invalid_resource');
     const badTarget = host.game_gpu_render_target_create(gl, 0, 16);
     expect(host.game_gpu_resource_error_code(badTarget)).toBe('invalid_size');
+
+    const loadedFont = await host.game_resource_load_font('/assets/game.woff2', 'Sample Game');
+    const gpuFont = host.game_gpu_font_from_resource(gl, loadedFont);
+    expect(host.game_gpu_resource_ok(gpuFont)).toBe(true);
+    expect(host.game_gpu_font_first_code(gpuFont)).toBe(32);
+    expect(host.game_gpu_font_glyph_count(gpuFont)).toBe(95);
+    expect(host.game_gpu_font_advance(gpuFont)).toBe(32);
+    expect(calls.find((call) => call.at(-1) === fontAtlas)).toBeDefined();
+    host.game_resource_release(loadedFont);
+    expect(fontSet.size).toBe(0);
+    expect(host.game_gpu_texture_bind(gl, gpuFont)).toBe(true);
+    host.game_gpu_resource_release(gpuFont);
+    host.game_gpu_resource_release(gpuFont);
+    expect(host.game_gpu_resource_error_code(gpuFont)).toBe('released');
   });
 
   it('resolves logical packaged paths through typed fingerprint manifests', async () => {
