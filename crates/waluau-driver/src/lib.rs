@@ -17,20 +17,47 @@ pub fn compile_source(source: &str) -> Result<Vec<u8>, Diagnostic> {
     // Add builtin declarations to standalone programs
     add_builtins_to_program(&mut program)?;
 
-    compile_program(program)
+    Ok(compile_program(program, "program.wasm")?.wasm)
 }
 
 /// Compile `path`, resolving and linking any modules it imports with `require`.
 pub fn compile_file(path: &Path) -> Result<Vec<u8>, Diagnostic> {
-    let program = link::link_program(path)?;
-    compile_program(program)
+    Ok(compile_file_artifacts(path, "program.wasm")?.wasm)
 }
 
-fn compile_program(program: waluau_ast::Program) -> Result<Vec<u8>, Diagnostic> {
+#[derive(Debug)]
+pub struct CompileArtifacts {
+    pub wasm: Vec<u8>,
+    pub js: String,
+    pub required_imports: Vec<waluau_codegen_wasm::RequiredImport>,
+    pub bytes_constants: Vec<Vec<u8>>,
+}
+
+/// Compile a linked file and return both in-memory artifacts. `wasm_file_name`
+/// becomes the import-meta-relative sibling URL embedded in the JavaScript.
+pub fn compile_file_artifacts(
+    path: &Path,
+    wasm_file_name: &str,
+) -> Result<CompileArtifacts, Diagnostic> {
+    let program = link::link_program(path)?;
+    compile_program(program, wasm_file_name)
+}
+
+fn compile_program(
+    program: waluau_ast::Program,
+    wasm_file_name: &str,
+) -> Result<CompileArtifacts, Diagnostic> {
     let mut typed_program = waluau_hir::type_check_and_infer(&program)?;
     waluau_ast::resolve_symbols(&mut typed_program)?;
     let ir = waluau_ir::build(&typed_program)?;
-    Ok(waluau_codegen_wasm::emit(&ir)?.wasm)
+    let emitted = waluau_codegen_wasm::emit(&ir)?;
+    let js = waluau_codegen_wasm::generate_js_glue(wasm_file_name, &emitted);
+    Ok(CompileArtifacts {
+        wasm: emitted.wasm,
+        js,
+        required_imports: emitted.required_imports,
+        bytes_constants: emitted.bytes_constants,
+    })
 }
 
 pub fn run() -> Result<(), Diagnostic> {
@@ -42,9 +69,19 @@ where
     I: IntoIterator<Item = OsString>,
 {
     let options = parse_args(args)?;
-    let wasm = compile_file(&options.input)?;
-    fs::write(&options.output, wasm)
+    let wasm_file_name = options
+        .output
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| Diagnostic::new("output Wasm path must have a UTF-8 file name"))?;
+    let artifacts = compile_file_artifacts(&options.input, wasm_file_name)?;
+    fs::write(&options.output, artifacts.wasm)
         .map_err(|error| io_error("write output file", &options.output, error))?;
+    if options.emit_js {
+        let js_output = options.output.with_extension("js");
+        fs::write(&js_output, artifacts.js)
+            .map_err(|error| io_error("write JavaScript glue", &js_output, error))?;
+    }
     Ok(())
 }
 
@@ -52,6 +89,7 @@ where
 struct CliOptions {
     input: PathBuf,
     output: PathBuf,
+    emit_js: bool,
 }
 
 fn parse_args<I>(args: I) -> Result<CliOptions, Diagnostic>
@@ -61,6 +99,7 @@ where
     let mut input = None;
     let mut output = None;
     let mut pending_output_flag = false;
+    let mut emit_js = false;
 
     for arg in args {
         if pending_output_flag {
@@ -71,15 +110,16 @@ where
 
         match arg.to_str() {
             Some("-o" | "--output") => pending_output_flag = true,
+            Some("--emit-js") => emit_js = true,
             Some(flag) if flag.starts_with('-') => {
                 return Err(Diagnostic::new(format!(
-                    "unsupported flag `{flag}`\nusage: waluau <input.walu> [-o <output.wasm>]"
+                    "unsupported flag `{flag}`\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js]"
                 )));
             }
             _ if input.is_none() => input = Some(PathBuf::from(arg)),
             _ => {
                 return Err(Diagnostic::new(
-                    "too many positional arguments\nusage: waluau <input.walu> [-o <output.wasm>]",
+                    "too many positional arguments\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js]",
                 ));
             }
         }
@@ -87,16 +127,22 @@ where
 
     if pending_output_flag {
         return Err(Diagnostic::new(
-            "missing path after -o/--output\nusage: waluau <input.walu> [-o <output.wasm>]",
+            "missing path after -o/--output\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js]",
         ));
     }
 
     let input = input.ok_or_else(|| {
-        Diagnostic::new("missing input path\nusage: waluau <input.walu> [-o <output.wasm>]")
+        Diagnostic::new(
+            "missing input path\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js]",
+        )
     })?;
     let output = output.unwrap_or_else(|| default_output_path(&input));
 
-    Ok(CliOptions { input, output })
+    Ok(CliOptions {
+        input,
+        output,
+        emit_js,
+    })
 }
 
 fn default_output_path(input: &Path) -> PathBuf {
@@ -593,6 +639,29 @@ mod tests {
             fs::metadata(&output_path).expect("output metadata").len() > 0,
             "output wasm should be non-empty"
         );
+    }
+
+    #[test]
+    fn cli_optionally_writes_sibling_javascript_glue() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("add.walu");
+        let wasm_path = tempdir.path().join("game.wasm");
+        let js_path = tempdir.path().join("game.js");
+        fs::write(&input_path, fixture_source("add")).expect("fixture should write");
+
+        super::run_with_args([
+            os(&input_path),
+            OsString::from("--output"),
+            os(&wasm_path),
+            OsString::from("--emit-js"),
+        ])
+        .expect("CLI run should succeed");
+
+        assert!(wasm_path.exists(), "Wasm sibling should exist");
+        let js = fs::read_to_string(&js_path).expect("JavaScript sibling should exist");
+        assert!(js.contains("new URL(\"./game.wasm\", import.meta.url)"));
+        assert!(js.contains("export async function instantiate"));
+        assert!(!js.contains("WebAssembly.Module.imports"));
     }
 
     #[test]

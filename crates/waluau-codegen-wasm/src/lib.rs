@@ -241,6 +241,255 @@ fn needs_closure_gc_types(module: &Module, declared_imports: &[&DeclaredImport])
 pub struct EmitResult {
     pub wasm: Vec<u8>,
     pub record_type_indices: HashMap<String, u32>,
+    /// Exact imports emitted into the Wasm module. Browser consumers can use
+    /// this metadata instead of reflecting on or parsing the binary.
+    pub required_imports: Vec<RequiredImport>,
+    /// Byte literals in the same order used by the `bytes_literal` host ABI.
+    pub bytes_constants: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ImportKind {
+    Function,
+    Memory,
+    Global,
+}
+
+impl ImportKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Function => "function",
+            Self::Memory => "memory",
+            Self::Global => "global",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RequiredImport {
+    pub module: String,
+    pub name: String,
+    pub kind: ImportKind,
+}
+
+fn required_import(
+    module: impl Into<String>,
+    name: impl Into<String>,
+    kind: ImportKind,
+) -> RequiredImport {
+    RequiredImport {
+        module: module.into(),
+        name: name.into(),
+        kind,
+    }
+}
+
+fn push_required_function_import(
+    imports: &mut Vec<RequiredImport>,
+    needed: bool,
+    module: &str,
+    name: &str,
+) {
+    if needed {
+        imports.push(required_import(module, name, ImportKind::Function));
+    }
+}
+
+fn collect_required_imports(
+    used: &host::UsedHostImports,
+    declared: &[&DeclaredImport],
+    string_constants: &[String],
+    uses_memory: bool,
+) -> Vec<RequiredImport> {
+    let mut imports = Vec::new();
+    push_required_function_import(
+        &mut imports,
+        used.js_string_eq,
+        host::JS_STRING_BUILTINS_MODULE,
+        host::IMPORT_JS_STRING_EQ,
+    );
+    push_required_function_import(
+        &mut imports,
+        used.js_string_concat,
+        host::JS_STRING_BUILTINS_MODULE,
+        host::IMPORT_JS_STRING_CONCAT,
+    );
+    push_required_function_import(
+        &mut imports,
+        used.js_string_compare,
+        host::JS_STRING_BUILTINS_MODULE,
+        host::IMPORT_JS_STRING_COMPARE,
+    );
+    for (needed, name) in [
+        (used.bytes_literal, host::IMPORT_BYTES_LITERAL),
+        (used.bytes_get, host::IMPORT_BYTES_GET),
+        (used.bytes_len, host::IMPORT_BYTES_LEN),
+        (used.bytes_concat, host::IMPORT_BYTES_CONCAT),
+        (used.bytes_eq, host::IMPORT_BYTES_EQ),
+        (used.bytes_compare, host::IMPORT_BYTES_COMPARE),
+    ] {
+        push_required_function_import(&mut imports, needed, host::IMPORT_MODULE, name);
+    }
+    for constant in string_constants {
+        imports.push(required_import(
+            host::IMPORTED_STRING_CONSTANTS_MODULE,
+            constant,
+            ImportKind::Global,
+        ));
+    }
+    for (needed, name) in [
+        (used.print, host::IMPORT_PRINT),
+        (used.js_tostring_i32, host::IMPORT_JS_TOSTRING_I32),
+        (used.js_tostring_u32, host::IMPORT_JS_TOSTRING_U32),
+        (used.js_tostring_i64, host::IMPORT_JS_TOSTRING_I64),
+        (used.js_tostring_u64, host::IMPORT_JS_TOSTRING_U64),
+        (used.js_tostring_f32, host::IMPORT_JS_TOSTRING_F32),
+        (used.js_tostring_f64, host::IMPORT_JS_TOSTRING_F64),
+        (used.js_tostring_bool, host::IMPORT_JS_TOSTRING_BOOL),
+        (used.js_tostring_unknown, host::IMPORT_JS_TOSTRING_UNKNOWN),
+        (used.js_typeof_unknown, host::IMPORT_JS_TYPEOF_UNKNOWN),
+        (used.js_tonumber_string, host::IMPORT_JS_TONUMBER_STRING),
+        (used.js_tonumber_unknown, host::IMPORT_JS_TONUMBER_UNKNOWN),
+        (used.extern_is, host::IMPORT_EXTERN_IS),
+        (used.attach_promise, host::IMPORT_ATTACH_PROMISE),
+        (used.math_pow, host::IMPORT_MATH_POW),
+        (used.js_eq_unknown, host::IMPORT_JS_EQ_UNKNOWN),
+    ] {
+        push_required_function_import(&mut imports, needed, host::IMPORT_MODULE, name);
+    }
+    for import in declared {
+        imports.push(required_import(
+            import.module.clone(),
+            import.host_name.clone(),
+            ImportKind::Function,
+        ));
+    }
+    if uses_memory {
+        imports.push(required_import(
+            host::IMPORT_MODULE,
+            host::IMPORT_MEMORY,
+            ImportKind::Memory,
+        ));
+    }
+    imports
+}
+
+fn js_string_literal(value: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '\"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            control if control <= '\u{1f}' => {
+                out.push_str(&format!("\\u{:04x}", control as u32));
+            }
+            other => out.push(other),
+        }
+    }
+    out.push('\"');
+    out
+}
+
+/// Generate an ES module that loads a sibling Wasm file using compiler-known
+/// metadata. The host factory may expose a broad runtime surface; the glue
+/// filters it down to exactly the explicit imports required by this module.
+pub fn generate_js_glue(wasm_file_name: &str, emitted: &EmitResult) -> String {
+    let mut js = String::from(
+        "// Generated by Waluau. Do not edit.\n\
+export const requiredImports = Object.freeze([\n",
+    );
+    for import in &emitted.required_imports {
+        js.push_str("  Object.freeze({ module: ");
+        js.push_str(&js_string_literal(&import.module));
+        js.push_str(", name: ");
+        js.push_str(&js_string_literal(&import.name));
+        js.push_str(", kind: ");
+        js.push_str(&js_string_literal(import.kind.as_str()));
+        js.push_str(" }),\n");
+    }
+    js.push_str("]);\nexport const bytesConstants = Object.freeze([\n");
+    for bytes in &emitted.bytes_constants {
+        js.push_str("  Object.freeze([");
+        for (index, byte) in bytes.iter().enumerate() {
+            if index > 0 {
+                js.push_str(", ");
+            }
+            js.push_str(&byte.to_string());
+        }
+        js.push_str("]),\n");
+    }
+    js.push_str("]);\nfunction siblingWasmUrl() {\n  try { return new URL(");
+    js.push_str(&js_string_literal(&format!("./{wasm_file_name}")));
+    js.push_str(", import.meta.url); } catch { return null; }\n}\nexport const wasmUrl = siblingWasmUrl();\n\n");
+    js.push_str(
+        "const implicitImportModules = new Set(['wasm:js-string', 'string_constants']);\n\
+export function selectImports(availableImports = {}) {\n\
+  const selected = {};\n\
+  for (const descriptor of requiredImports) {\n\
+    if (implicitImportModules.has(descriptor.module)) continue;\n\
+    const namespace = availableImports[descriptor.module];\n\
+    if (!namespace || !Object.prototype.hasOwnProperty.call(namespace, descriptor.name)) {\n\
+      throw new Error(`Missing required ${descriptor.kind} import ${descriptor.module}.${descriptor.name}`);\n\
+    }\n\
+    (selected[descriptor.module] ??= {})[descriptor.name] = namespace[descriptor.name];\n\
+  }\n\
+  return selected;\n\
+}\n\n\
+function compilerOptions() {\n\
+  const options = {};\n\
+  if (requiredImports.some(({ module }) => module === 'wasm:js-string')) {\n\
+    options.builtins = ['js-string'];\n\
+  }\n\
+  if (requiredImports.some(({ module }) => module === 'string_constants')) {\n\
+    options.importedStringConstants = 'string_constants';\n\
+  }\n\
+  return options;\n\
+}\n\n\
+async function loadModule(source, url) {\n\
+  if (source instanceof WebAssembly.Module) return source;\n\
+  let bytes = source;\n\
+  if (bytes == null) {\n\
+    if (!url) throw new Error('No Wasm bytes or sibling Wasm URL were provided');\n\
+    const response = await fetch(url);\n\
+    if (!response.ok) throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);\n\
+    bytes = await response.arrayBuffer();\n\
+  }\n\
+  return WebAssembly.compile(bytes, compilerOptions());\n\
+}\n\n\
+export async function instantiate(options = {}) {\n\
+  const resolvedWasmUrl = options.wasmUrl ?? wasmUrl;\n\
+  const module = await loadModule(options.wasm, resolvedWasmUrl);\n\
+  let instance;\n\
+  const context = {\n\
+    requiredImports,\n\
+    bytesConstants: bytesConstants.map((value) => new Uint8Array(value)),\n\
+    wasmUrl: resolvedWasmUrl,\n\
+    assetBaseUrl: options.assetBaseUrl ?? (resolvedWasmUrl ? new URL('.', resolvedWasmUrl) : null),\n\
+    assetManifest: options.assetManifest ?? null,\n\
+    hostOptions: options.hostOptions ?? {},\n\
+    getWasmExports: () => instance?.exports ?? null,\n\
+  };\n\
+  const availableImports = options.createImports\n\
+    ? await options.createImports(context)\n\
+    : (options.imports ?? {});\n\
+  const imports = selectImports(availableImports);\n\
+  instance = await WebAssembly.instantiate(module, imports);\n\
+  return { module, instance, exports: instance.exports, imports, ...context };\n\
+}\n\n\
+export async function run(options = {}) {\n\
+  const loaded = await instantiate(options);\n\
+  loaded.exports.__waluau_main?.();\n\
+  return loaded;\n\
+}\n",
+    );
+    js
 }
 
 const MAIN_EXPORT: &str = "main";
@@ -287,6 +536,12 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     // index remapping so callers can use canonical slot numbers.
     let used_imports = host::collect_used_host_imports(module);
     let import_map = used_imports.to_import_map();
+    let required_imports = collect_required_imports(
+        &used_imports,
+        &declared_imports,
+        &string_constants,
+        buffer_plan.uses_memory,
+    );
 
     // Only emit host function type entries for the slots that are actually used.
     // Build a map from canonical slot index (0–8) to the actual type-section index.
@@ -1329,6 +1584,8 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     Ok(EmitResult {
         wasm: bytes,
         record_type_indices,
+        required_imports,
+        bytes_constants,
     })
 }
 

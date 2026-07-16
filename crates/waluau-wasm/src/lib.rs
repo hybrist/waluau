@@ -49,15 +49,41 @@ struct FunctionSignatureJson {
 }
 
 #[derive(Debug, Serialize)]
+struct RequiredImportJson {
+    module: String,
+    name: String,
+    kind: String,
+}
+
+#[derive(Debug, Serialize)]
 struct CompileResult {
     ir: String,
     wat: String,
     wasm: Vec<u8>,
+    #[serde(rename = "jsGlue")]
+    js_glue: String,
+    #[serde(rename = "requiredImports")]
+    required_imports: Vec<RequiredImportJson>,
+    #[serde(rename = "bytesConstants")]
+    bytes_constants: Vec<Vec<u8>>,
     #[serde(rename = "requiresWasmGc")]
     requires_wasm_gc: bool,
     signatures: std::collections::HashMap<String, FunctionSignatureJson>,
     #[serde(rename = "tagIds")]
     tag_ids: std::collections::BTreeMap<String, i32>,
+}
+
+fn required_imports_json(
+    imports: &[waluau_codegen_wasm::RequiredImport],
+) -> Vec<RequiredImportJson> {
+    imports
+        .iter()
+        .map(|import| RequiredImportJson {
+            module: import.module.clone(),
+            name: import.name.clone(),
+            kind: import.kind.as_str().to_string(),
+        })
+        .collect()
 }
 
 fn to_type_json(
@@ -191,6 +217,8 @@ fn compile_sources(
 
     let emit_res = waluau_codegen_wasm::emit(&module).map_err(|e| e.to_string())?;
     let wat = wasmprinter::print_bytes(&emit_res.wasm).map_err(|e| e.to_string())?;
+    let js_glue = waluau_codegen_wasm::generate_js_glue("program.wasm", &emit_res);
+    let required_imports = required_imports_json(&emit_res.required_imports);
 
     let mut signatures = std::collections::HashMap::new();
     for function in &module.functions {
@@ -212,6 +240,9 @@ fn compile_sources(
         ir: ir_dump,
         wat,
         wasm: emit_res.wasm,
+        js_glue,
+        required_imports,
+        bytes_constants: emit_res.bytes_constants,
         requires_wasm_gc,
         signatures,
         tag_ids: module.tag_ids.clone(),
@@ -236,6 +267,8 @@ fn compile_source(source: &str) -> Result<CompileResult, String> {
 
     let emit_res = waluau_codegen_wasm::emit(&module).map_err(|e| e.to_string())?;
     let wat = wasmprinter::print_bytes(&emit_res.wasm).map_err(|e| e.to_string())?;
+    let js_glue = waluau_codegen_wasm::generate_js_glue("program.wasm", &emit_res);
+    let required_imports = required_imports_json(&emit_res.required_imports);
 
     let mut signatures = std::collections::HashMap::new();
     for function in &module.functions {
@@ -257,6 +290,9 @@ fn compile_source(source: &str) -> Result<CompileResult, String> {
         ir: ir_dump,
         wat,
         wasm: emit_res.wasm,
+        js_glue,
+        required_imports,
+        bytes_constants: emit_res.bytes_constants,
         requires_wasm_gc,
         signatures,
         tag_ids: module.tag_ids.clone(),
@@ -342,6 +378,9 @@ mod tests {
         "#;
         let result = compile_source(source).expect("compile should succeed");
         assert!(!result.requires_wasm_gc);
+        assert!(result.required_imports.is_empty());
+        assert!(result.js_glue.contains("export async function instantiate"));
+        assert!(!result.js_glue.contains("WebAssembly.Module.imports"));
     }
 
     #[test]
@@ -362,6 +401,11 @@ mod tests {
             .expect("browser compiler should resolve the embedded engine package");
         assert!(result.wat.contains("dom_window"));
         assert!(result.wat.contains("requestAnimationFrame"));
+        assert!(result.required_imports.iter().any(|import| {
+            import.module == "waluau" && import.name == "Window.requestAnimationFrame"
+        }));
+        assert!(result.js_glue.contains("assetManifest"));
+        assert!(result.js_glue.contains("createImports(context)"));
     }
 
     #[test]

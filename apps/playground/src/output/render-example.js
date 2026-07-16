@@ -42,6 +42,8 @@ export async function renderExample({ files, entryFile, label }) {
     let instance;
     const imports = buildWaluauImports(wasmModule, (msg) => console.log(msg), {
       wasmBytes,
+      requiredImports: compiled.requiredImports,
+      bytesConstants: compiled.bytesConstants,
       domOutputRoot: document,
       getWasmExports: () => instance.exports,
       onAsyncError: reportError,

@@ -96,7 +96,7 @@ export default function useWaluauRepl() {
       });
 
       phase = 'inspect';
-      if (usesDomImports(wasmModule, wasmBuffer)) {
+      if (usesDomImports(wasmModule, wasmBuffer, result.requiredImports)) {
         return {
           ok: false,
           error: 'This program uses DOM imports, which the REPL does not host yet. Use the Run tab for DOM presets.',
@@ -107,6 +107,8 @@ export default function useWaluauRepl() {
       let instance;
       const imports = buildWaluauImports(wasmModule, (msg) => logs.push(msg), {
         wasmBytes: wasmBuffer,
+        requiredImports: result.requiredImports,
+        bytesConstants: result.bytesConstants,
         getWasmExports: () => instance.exports,
       });
 

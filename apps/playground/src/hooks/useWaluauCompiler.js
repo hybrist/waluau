@@ -142,7 +142,7 @@ export default function useWaluauCompiler({ files, entryFile }) {
         });
 
         phase = 'inspect';
-        moduleUsesDomOutput = usesDomImports(wasmModule, wasmBuffer);
+        moduleUsesDomOutput = usesDomImports(wasmModule, wasmBuffer, output?.requiredImports);
         const richSigs = output?.signatures || {};
         const wasmExports = getWasmExports(wasmBuffer);
         const hasGeneratedMain = wasmExports.some(func => func.name === WALUAU_MAIN_EXPORT);
@@ -189,6 +189,8 @@ export default function useWaluauCompiler({ files, entryFile }) {
         let instance;
         const imports = buildWaluauImports(wasmModule, initLogger, {
           wasmBytes: wasmBuffer,
+          requiredImports: output?.requiredImports,
+          bytesConstants: output?.bytesConstants,
           domOutputRoot: moduleUsesDomOutput ? domOutputRootRef.current : null,
           getWasmExports: () => instance.exports,
         });
