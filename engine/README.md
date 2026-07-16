@@ -61,6 +61,7 @@ Subsystem modules remain supported for focused and host-independent programs:
 | --- | --- | --- |
 | `waluau:engine/input` | `waluau:engine/v1/input` | keyboard state and `Input` |
 | `waluau:engine/graphics` | `waluau:engine/v1/graphics` | GPU drawing and `Graphics` |
+| `waluau:engine/resources` | `waluau:engine/v1/resources` | packaged resource loading and handles |
 | `waluau:engine/time` | `waluau:engine/v1/time` | deterministic fixed-step clock |
 | `waluau:engine/browser` | `waluau:engine/v1/browser` | browser lifecycle adapter |
 
