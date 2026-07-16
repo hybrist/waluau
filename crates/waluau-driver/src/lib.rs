@@ -708,6 +708,42 @@ mod tests {
     }
 
     #[test]
+    fn compiles_stable_engine_package_from_outside_repository() {
+        let project = tempdir().expect("temp project should exist");
+        let entry = project.path().join("main.walu");
+        fs::write(
+            &entry,
+            include_str!("../../../examples/game-project/main.walu"),
+        )
+        .expect("external project entry should write");
+
+        super::compile_file(&entry)
+            .expect("embedded engine package and its re-exported callback types should compile");
+    }
+
+    #[test]
+    fn compiles_pinned_engine_subsystem_package() {
+        let project = tempdir().expect("temp project should exist");
+        let entry = project.path().join("main.walu");
+        fs::write(
+            &entry,
+            r#"
+                local input_module = require("waluau:engine/v1/input")
+
+                function consume(input: input_module.Input): bool
+                    return input:is_down("Space")
+                end
+
+                local input: input_module.Input = input_module.new()
+                assert(not consume(input))
+            "#,
+        )
+        .expect("external subsystem project should write");
+
+        super::compile_file(&entry).expect("versioned subsystem import should compile");
+    }
+
+    #[test]
     fn compiles_namespace_table_exports() {
         super::compile_file(&fixture_path("modules/namespace_main.walu"))
             .expect("compile should succeed");

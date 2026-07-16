@@ -14,6 +14,7 @@ import gameEngineSim from '../../../fixtures/game-engine/sim.walu?raw';
 import gameEngineMain from '../../../fixtures/game-engine/main.walu?raw';
 import gameEngineTextAlignment from '../../../fixtures/game-engine/text-alignment.walu?raw';
 import gameEngineGraphicsPaths from '../../../fixtures/game-engine/graphics-paths.walu?raw';
+import stableEngineProject from '../../../examples/game-project/main.walu?raw';
 import gameEngineBrowser from '../../../engine/browser.walu?raw';
 import gameEngineGraphics from '../../../engine/graphics.walu?raw';
 import gameEngineFont from '../../../engine/font.walu?raw';
@@ -789,6 +790,31 @@ describe('browser conformance', () => {
         }
       }
       expect(foundPlayer).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('builds and launches a standalone project through the stable engine package', async () => {
+    const { root, cleanup } = await compileAndInstantiateWithDom(
+      { '/main.walu': stableEngineProject },
+      '/main.walu'
+    );
+
+    try {
+      const canvas = root.querySelector('#walua-game-canvas');
+      expect(canvas).not.toBeNull();
+      expect(canvas.width).toBe(320);
+      expect(canvas.height).toBe(180);
+      const gl = canvas.getContext('webgl2');
+      expect(gl).not.toBeNull();
+
+      await expect.poll(() => {
+        const pixel = new Uint8Array(4);
+        // The example's cyan rectangle covers this point after the first frame.
+        gl.readPixels(32, 180 - 32, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+        return Array.from(pixel);
+      }, { timeout: 10_000 }).toEqual([56, 189, 248, 255]);
     } finally {
       cleanup();
     }

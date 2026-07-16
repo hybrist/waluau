@@ -1,0 +1,18 @@
+-- Stable aggregate package facade. The linker embeds this module and its
+-- subsystem dependencies, so consumers never need repository-relative paths.
+
+local browser = require("waluau:engine/v1/browser")
+local input_module = require("waluau:engine/v1/input")
+local graphics_module = require("waluau:engine/v1/graphics")
+
+type Config = browser.Config
+type Game = browser.Game
+type Input = input_module.Input
+type Graphics = graphics_module.Graphics
+
+local VERSION <const>: string = "1.0.0"
+
+return {
+    VERSION = VERSION,
+    start = browser.start,
+}

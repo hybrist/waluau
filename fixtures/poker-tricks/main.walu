@@ -1,12 +1,7 @@
 -- Arcane Heist: Poker Tricks hosted by the 2D game engine. The rules remain
 -- host-independent; this module translates keyboard input into game actions.
 
--- TODO(waluau-tpil): Replace the repository-relative, split subsystem imports
--- with the stable aggregate engine package once re-exported callback types keep
--- their identity.
-local engine = require("../../engine/browser")
-local input_module = require("../../engine/input")
-local graphics_module = require("../../engine/graphics")
+local engine = require("waluau:engine")
 local game = require("./game")
 local render = require("./render")
 
@@ -401,7 +396,7 @@ function install_arcane_heist(): unit
         reset_run(state, ui)
     end
 
-    local function update(dt: f64, input: input_module.Input): unit
+    local function update(dt: f64, input: engine.Input): unit
         -- The fan chases the cursor whatever else is happening: a modal hides
         -- it, but it should have settled by the time the modal lifts.
         update_fan(ui, dt)
@@ -420,7 +415,7 @@ function install_arcane_heist(): unit
         end
     end
 
-    local function draw(graphics: graphics_module.Graphics, alpha: f64): unit
+    local function draw(graphics: engine.Graphics, alpha: f64): unit
         render.draw(graphics, state, fan_focus(ui), ui.fan_parts, ui.ward_cursor, ui.cursor_area,
             ui.play_picks, ui.swap_hand, ui.swap_wards, ui.modal, ui.revealing, ui.reveal_clock,
             ui.anims, ui.anim_clock)

@@ -17,7 +17,13 @@ host-independent.
 ## Initial API
 
 ```walu
-local engine = require("../../engine/browser")
+local engine = require("waluau:engine")
+
+local function update(dt: f64, input: engine.Input): unit
+end
+
+local function draw(graphics: engine.Graphics, alpha: f64): unit
+end
 
 engine.start({
     title = "My game",
@@ -35,6 +41,33 @@ engine.start({
 })
 ```
 
+## Package and version contract
+
+The compiler embeds the engine sources. `waluau:engine` selects the current
+stable major version and `waluau:engine/v1` pins major version 1. Both expose
+the same aggregate facade:
+
+- `VERSION`: the semantic API version (`1.0.0`)
+- `start`: the browser lifecycle entry point
+- `Config`, `Game`, `Input`, and `Graphics`: canonical public types
+
+Aggregate type exports are identity-preserving aliases. For example,
+`engine.Input`, `input.Input`, and the `Input` accepted inside the browser
+adapter all resolve to the same linked type declaration.
+
+Subsystem modules remain supported for focused and host-independent programs:
+
+| Current-major import | Pinned import | Surface |
+| --- | --- | --- |
+| `waluau:engine/input` | `waluau:engine/v1/input` | keyboard state and `Input` |
+| `waluau:engine/graphics` | `waluau:engine/v1/graphics` | GPU drawing and `Graphics` |
+| `waluau:engine/time` | `waluau:engine/v1/time` | deterministic fixed-step clock |
+| `waluau:engine/browser` | `waluau:engine/v1/browser` | browser lifecycle adapter |
+
+Relative imports remain valid for engine development, but applications should
+use package imports. See [`examples/game-project`](../examples/game-project/)
+for the version-1 project layout and build/launch commands.
+
 `Input` supplies `is_down`, `was_pressed`, and `was_released`. `Graphics`
 supplies clearing, color and line-width state, rectangles, circles, lines,
 text, and a push/pop transform stack with translate/rotate/scale. Every one
@@ -42,8 +75,8 @@ of those calls renders on the GPU: lines are thin quads, circles are
 triangle fans, and `print` renders uppercased bitmap-font glyphs as quads,
 so a frame batches into very few draw calls.
 
-Callbacks are mandatory for now; games use a no-op callback when they do not
-need a hook. Updates use a fixed timestep. Drawing happens once per animation
+`keyreleased` may be `nil`; the other lifecycle callbacks are currently
+required. Updates use a fixed timestep. Drawing happens once per animation
 frame and receives an interpolation alpha in `[0, 1)`. Long frame delays are
 clamped by `max_frame_seconds` to avoid an unbounded catch-up loop.
 
@@ -156,8 +189,8 @@ Reaching LÖVE-like usability requires these architectural capabilities:
 
 | Area | Waluau/language requirement | Platform/runtime requirement |
 | --- | --- | --- |
-| Distribution | Stable package/virtual-module imports instead of repository-relative paths; API versioning | Generated loader/glue and a standard game project/build layout |
-| Resources | Stable package manifests and optional readiness callbacks | Browser async text/bytes/image/font handles, explicit lifetime and structured failures; production packaging and caching remain |
+| Distribution | Stable package/virtual-module imports, API versioning and a standard project layout are available | Generated sibling JavaScript glue (`waluau-884g`) |
+| Resources | Backend-neutral opaque handles, nullable callbacks and host byte transfer are available | Browser async text/bytes/image/font/audio handles, explicit lifetime and structured failures are available; production packaging/caching, GPU upload and native adapters remain |
 | GPU graphics | Typed buffers, numeric/vector data, shader and uniform-friendly APIs | WebGL/WebGPU or native GPU backend, batching, render targets, shader compilation and capability discovery |
 | Input | Extensible event/value representation without a closed hard-coded record | Keyboard normalization, pointer/touch/gamepad polling, focus and fullscreen handling |
 | Audio | Optional readiness callbacks and richer source state | Browser decoded effects and streamed music; native mixer, buses, effects and device lifecycle remain |
