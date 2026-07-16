@@ -5,7 +5,7 @@
 type Card = { rank: i32, suit: i32 }
 type PairChoice = { first: i32, second: i32, value: i32 }
 type SwapChoice = { hand_indices: {i32}, middle_indices: {i32}, community_value: i32, hand_value: i32 }
-type Trick = { round: i32, middle: {Card}, player_cards: {Card}, computer_cards: {Card}, player_first: i32, player_second: i32, computer_first: i32, computer_second: i32, player_value: i32, computer_value: i32, winner: i32, points: i32, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32 }
+type Trick = { round: i32, middle: {Card}, player_hand: {Card}, computer_hand: {Card}, player_known: {bool}, computer_known: {bool}, player_cards: {Card}, computer_cards: {Card}, player_first: i32, player_second: i32, computer_first: i32, computer_second: i32, player_value: i32, computer_value: i32, winner: i32, points: i32, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32 }
 -- player_known and computer_known run parallel to the hands: slot i is marked
 -- when the card sitting there arrived from the middle, which both sides were
 -- looking at, and so is no longer secret from the opponent. Cards drawn off the
@@ -339,6 +339,13 @@ function State:play(first: i32, second: i32): unit
     table.insert(self.history, {
         round = self.round,
         middle = { self.middle[0], self.middle[1], self.middle[2] },
+        -- Resolution runs after the live hands have been compacted and
+        -- refilled. Preserve every original slot and its watched mark so
+        -- replacement cards do not appear until their deal animation starts.
+        player_hand = { self.player_hand[0], self.player_hand[1], self.player_hand[2], self.player_hand[3], self.player_hand[4] },
+        computer_hand = { self.computer_hand[0], self.computer_hand[1], self.computer_hand[2], self.computer_hand[3], self.computer_hand[4] },
+        player_known = { self.player_known[0], self.player_known[1], self.player_known[2], self.player_known[3], self.player_known[4] },
+        computer_known = { self.computer_known[0], self.computer_known[1], self.computer_known[2], self.computer_known[3], self.computer_known[4] },
         player_cards = { self.player_hand[first], self.player_hand[second] },
         computer_cards = { self.computer_hand[computer.first], self.computer_hand[computer.second] },
         -- Hand slots both sides played, so the presentation can resolve the
