@@ -583,12 +583,13 @@ function draw_resolution_board(graphics: Graphics, state: game.State, fan_parts:
 
     text(graphics, "ENTER CONTINUE", 414.0, 430.0, 12, "#fbbf24")
     -- The cursor is not live while a breach resolves, so the fan is already
-    -- easing shut; it settles closed behind the flips.
+    -- easing shut; it settles closed behind the flips. Keep the committed
+    -- relics bound and lifted so it stays clear which cards face the Arch Mage.
     for i = 0::i32, 4::i32 do
         if i == trick.player_first then
-            draw_hand_card(graphics, trick.player_cards[0], i, fan_parts[i], false, false, trick.winner > 0 and scoring[3], false)
+            draw_hand_card(graphics, trick.player_cards[0], i, fan_parts[i], true, false, trick.winner > 0 and scoring[3], false)
         elseif i == trick.player_second then
-            draw_hand_card(graphics, trick.player_cards[1], i, fan_parts[i], false, false, trick.winner > 0 and scoring[4], false)
+            draw_hand_card(graphics, trick.player_cards[1], i, fan_parts[i], true, false, trick.winner > 0 and scoring[4], false)
         else
             draw_hand_card(graphics, state.player_hand[i], i, fan_parts[i], false, false, false, state.player_known[i])
         end
