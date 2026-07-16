@@ -81,7 +81,8 @@ function start(config: Config, game: Game): unit
         game_canvas.width = config.width
         game_canvas.height = config.height
         local style: CSSStyleProperties = game_canvas.style
-        style:setProperty("width", "min(" .. tostring(config.width) .. "px, calc(100vw - 16px))")
+        style:setProperty("width", "auto")
+        style:setProperty("max-width", "calc(100vw - 16px)")
         style:setProperty("height", "auto")
         style:setProperty("max-height", "calc(100vh - 16px)")
         style:setProperty("aspect-ratio", tostring(config.width) .. " / " .. tostring(config.height))

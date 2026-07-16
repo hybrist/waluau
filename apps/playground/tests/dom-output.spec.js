@@ -285,8 +285,14 @@ test.describe('DOM Output in Run tab', () => {
     await expect(outputFrame.locator('h1')).toHaveText('Waluau Snake');
 
     const canvas = outputFrame.locator('canvas#walua-game-canvas');
-    await expect(canvas).toHaveJSProperty('width', 336);
-    await expect(canvas).toHaveJSProperty('height', 336);
+    await expect.poll(() =>
+      canvas.evaluate((node) => ({
+        densityMatches:
+          node.width === Math.round(node.clientWidth * window.devicePixelRatio) &&
+          node.height === Math.round(node.clientHeight * window.devicePixelRatio),
+        aspectRatio: node.clientWidth / node.clientHeight,
+      })),
+    ).toEqual({ densityMatches: true, aspectRatio: 1 });
 
     const signature = () =>
       canvas.evaluate((node) => {
@@ -319,8 +325,14 @@ test.describe('DOM Output in Run tab', () => {
     const outputFrame = page.frameLocator('.dom-output-frame');
     await expect(outputFrame.locator('h1')).toHaveText('Walua 2D Engine (WebGL2)');
     const canvas = outputFrame.locator('canvas#walua-game-canvas');
-    await expect(canvas).toHaveJSProperty('width', 320);
-    await expect(canvas).toHaveJSProperty('height', 200);
+    await expect.poll(() =>
+      canvas.evaluate((node) => ({
+        densityMatches:
+          node.width === Math.round(node.clientWidth * window.devicePixelRatio) &&
+          node.height === Math.round(node.clientHeight * window.devicePixelRatio),
+        aspectRatio: node.clientWidth / node.clientHeight,
+      })),
+    ).toEqual({ densityMatches: true, aspectRatio: 1.6 });
 
     // The engine renders through WebGL2 (acquired with preserveDrawingBuffer),
     // so the frame signature reads back through gl.readPixels.
