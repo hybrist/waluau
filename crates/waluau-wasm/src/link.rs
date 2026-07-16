@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use waluau_ast::{
-    Expr, Function, FunctionExpr, FunctionName, Program, Stmt, TableField, Type, TypeDeclaration,
+    DeclaredImport, Expr, Function, FunctionExpr, FunctionName, Program, Stmt, TableField, Type,
+    TypeDeclaration,
 };
 
 const DOM_WINDOW_REQUIRE: &str = "dom:window";
@@ -494,10 +495,14 @@ fn merge_with_ambient_declarations(
         // Collect declared imports and constants from all modules (mainly
         // builtins)
         for import in &module.program.declared_imports {
-            declared_imports.push(import.clone());
+            let mut lowered = import.clone();
+            rewriter.rewrite_declared_import_types(&mut lowered);
+            declared_imports.push(lowered);
         }
         for constant in &module.program.declared_constants {
-            declared_constants.push(constant.clone());
+            let mut lowered = constant.clone();
+            rewriter.rewrite_type(&mut lowered.ty);
+            declared_constants.push(lowered);
         }
 
         for function in &module_functions {
@@ -1095,6 +1100,13 @@ struct Rewriter<'a> {
 }
 
 impl Rewriter<'_> {
+    fn rewrite_declared_import_types(&self, import: &mut DeclaredImport) {
+        for param in &mut import.params {
+            self.rewrite_type(&mut param.ty);
+        }
+        self.rewrite_type(&mut import.return_type);
+    }
+
     fn rewrite_function_types(&self, function: &mut Function) {
         for param in &mut function.params {
             self.rewrite_type(&mut param.ty);

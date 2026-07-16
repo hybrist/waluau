@@ -1052,6 +1052,42 @@ mod tests {
     }
 
     #[test]
+    fn compile_file_rewrites_module_aliases_in_declared_import_params_and_returns() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            tempdir.path().join("service.walu"),
+            r#"
+                type Promise<T> = extern
+
+                declare function host_exchange(value: Promise<i32>): Promise<string>
+
+                function exchange(value: Promise<i32>): Promise<string>
+                    return host_exchange(value)
+                end
+
+                return { exchange = exchange }
+            "#,
+        )
+        .expect("service module should write");
+        fs::write(
+            &input_path,
+            r#"
+                local service = require("./service")
+
+                function exchange(value: service.Promise<i32>): service.Promise<string>
+                    return service.exchange(value)
+                end
+            "#,
+        )
+        .expect("entry module should write");
+
+        let artifacts = super::compile_file_artifacts(&input_path, "game.wasm")
+            .expect("module-local aliases in host import signatures should compile");
+        assert!(artifacts.js.contains("host_exchange"));
+    }
+
+    #[test]
     fn compiles_2d_game_engine_browser_fixture() {
         super::compile_file(&fixture_path("game-engine/main.walu"))
             .expect("browser game engine fixture should compile");
