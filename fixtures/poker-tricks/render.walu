@@ -32,20 +32,22 @@ local ORB_STALEMATE_FILL <const>: string = "#a1a1aa"
 -- something about the card itself, not about what the cursor is doing.
 local EYE_INK <const>: string = "#e8dfbd"
 local EYE_GROUND <const>: string = "#0b0b10"
--- Its centre, from a card's top left. The obvious home would be a corner, but
--- the fan overlaps every relic's right edge and the left one carries the rank,
--- so the eye lives in the band the face leaves clear between the school label
--- and the sigil. That column stays visible on a fanned relic, which is the
--- only place the mark has to compete with anything.
-local EYE_X <const>: f64 = 27.0
-local EYE_Y <const>: f64 = 82.0
+-- The eye rides the middle of a card's top edge, centred on the edge itself so
+-- half of it stands clear of the card: it reads as a tag pinned to the relic
+-- rather than part of the artwork, and it stays off the rank, the school and
+-- the seal's ward. The card's middle rather than a corner: the fan tucks every
+-- relic's right edge under its neighbour, so a mark out there is invisible on
+-- four of the five, and the left corner already carries the rank. FAN_PITCH is
+-- how much of a fanned relic stays uncovered, and the eye sits well inside it.
 local EYE_HALF_W <const>: f64 = 7.0
 local EYE_LID <const>: f64 = 4.6
 local EYE_SEGMENTS <const>: i32 = 6
 -- How much of a sealed relic's face shows through when the other side has
 -- already seen it: only the seal's field is veiled, so the card reads as
--- sealed-but-not-secret rather than simply half drawn.
-local VEIL_ALPHA <const>: string = "b3"
+-- sealed-but-not-secret rather than simply half drawn. Low enough that the
+-- rank and school can be read at a glance — the mark is worth nothing if the
+-- player still has to remember what is under it.
+local VEIL_ALPHA <const>: string = "80"
 
 -- Board anchors card animations travel between. main.walu mirrors these ids
 -- when it builds animations, the same way it mirrors the modal ids above.
@@ -387,7 +389,7 @@ function draw_card(graphics: Graphics, card: game.Card, x: f64, y: f64, selected
     else
         draw_card_face(graphics, card, x, y, selected, colored)
     end
-    if known then draw_eye(graphics, x + EYE_X, y + EYE_Y) end
+    if known then draw_eye(graphics, x + CARD_W * 0.5, y) end
 end
 
 -- A relic sitting in the player's fan. Drawing it about its own centre lets
