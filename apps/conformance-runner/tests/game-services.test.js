@@ -80,7 +80,7 @@ function mapStorage() {
 }
 
 function serviceHarness() {
-  const bitmap = { closed: false, close() { this.closed = true; } };
+  const bitmap = { width: 2, height: 2, closed: false, close() { this.closed = true; } };
   const fontSet = new Set();
   const bodies = new Map([
     ['/assets/message.txt', 'packaged text'],
@@ -113,6 +113,44 @@ function serviceHarness() {
 }
 
 describe('browser game resource services', () => {
+  it('copies decoded images into opaque GPU handles with structured lifetime errors', async () => {
+    const { host, bitmap } = serviceHarness();
+    const calls = [];
+    const gl = {
+      TEXTURE_2D: 1, TEXTURE_MIN_FILTER: 2, TEXTURE_MAG_FILTER: 3,
+      TEXTURE_WRAP_S: 4, TEXTURE_WRAP_T: 5, NEAREST: 6, CLAMP_TO_EDGE: 7,
+      UNPACK_PREMULTIPLY_ALPHA_WEBGL: 8, RGBA: 9, UNSIGNED_BYTE: 10,
+      TEXTURE0: 11, FRAMEBUFFER: 12, COLOR_ATTACHMENT0: 13, FRAMEBUFFER_COMPLETE: 14,
+      drawingBufferWidth: 160, drawingBufferHeight: 100,
+      createTexture: () => ({ texture: true }), createFramebuffer: () => ({ framebuffer: true }),
+      bindTexture: (...args) => calls.push(['bindTexture', ...args]),
+      texParameteri: () => {}, pixelStorei: () => {},
+      texImage2D: (...args) => calls.push(['texImage2D', ...args]),
+      bindFramebuffer: () => {}, framebufferTexture2D: () => {},
+      checkFramebufferStatus: () => 14, activeTexture: () => {}, viewport: () => {},
+      deleteTexture: (...args) => calls.push(['deleteTexture', ...args]),
+      deleteFramebuffer: () => {},
+    };
+    const image = await host.game_resource_load_image('/assets/card-back.svg');
+    const texture = host.game_gpu_texture_from_resource(gl, image);
+    expect(host.game_gpu_resource_ok(texture)).toBe(true);
+    expect(host.game_gpu_resource_width(texture)).toBe(2);
+    expect(calls.find(([name]) => name === 'texImage2D').at(-1)).toBe(bitmap);
+    host.game_resource_release(image);
+    expect(bitmap.closed).toBe(true);
+    expect(host.game_gpu_texture_bind(gl, texture)).toBe(true);
+    host.game_gpu_resource_release(texture);
+    host.game_gpu_resource_release(texture);
+    expect(host.game_gpu_resource_error_code(texture)).toBe('released');
+    expect(host.game_gpu_texture_bind(gl, texture)).toBe(false);
+
+    const invalid = host.game_gpu_texture_from_resource(gl, image);
+    expect(host.game_gpu_resource_ok(invalid)).toBe(false);
+    expect(host.game_gpu_resource_error_code(invalid)).toBe('invalid_resource');
+    const badTarget = host.game_gpu_render_target_create(gl, 0, 16);
+    expect(host.game_gpu_resource_error_code(badTarget)).toBe('invalid_size');
+  });
+
   it('loads packaged text, bytes, images and fonts with explicit lifetime', async () => {
     const { host, bitmap, fontSet } = serviceHarness();
     const text = await host.game_resource_load_text('/assets/message.txt');

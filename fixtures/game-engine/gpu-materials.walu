@@ -12,8 +12,9 @@ function install_gpu_material_fixture(): unit
         assert(graphics:supports("gpu"))
         assert(graphics:supports("named-materials"))
         assert(graphics:supports("blend-modes"))
-        assert(not graphics:supports("textures"))
-        assert(not graphics:supports("render-targets"))
+        assert(graphics:supports("textures"))
+        assert(graphics:supports("sprite-batches"))
+        assert(graphics:supports("render-targets"))
         assert(not graphics:supports("custom-shaders"))
 
         local missing: graphics_module.MaterialResult = graphics:create_material("missing")

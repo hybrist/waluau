@@ -1,0 +1,87 @@
+-- Real browser fixture for decoded Resource -> GPU texture copying, atlas
+-- sprites, offscreen targets, and explicit released/invalid behavior.
+local engine = require("../../engine/browser")
+local graphics_module = require("../../engine/graphics")
+local input_module = require("../../engine/input")
+local resources = require("../../engine/resources")
+
+declare function record_gpu_resource_step(step: string): unit
+
+type FixtureState = { loaded_image: resources.Resource?, load_error: resources.ResourceError?, rendered: bool }
+
+function install_gpu_resources_fixture(): unit
+    local state: FixtureState = { loaded_image = nil, load_error = nil, rendered = false }
+    local function load_async(): i32
+        local path: string = "/assets/atlas.svg"
+        local handle: i32 = coroutine.await_promise(resources.load_image(path))::i32
+        local result: resources.LoadResult = resources.finish_image(handle, path)
+        if result.ok then
+            state.loaded_image = result.resource
+            record_gpu_resource_step("decoded")
+        else
+            state.load_error = result.error
+            record_gpu_resource_step("decode-failed:" .. result.error.code)
+        end
+        return 0
+    end
+    local function load(): unit
+        local co: thread = coroutine.create(load_async)
+        coroutine.resume(co)
+    end
+
+    local function update(dt: f64, input: input_module.Input): unit
+    end
+
+    local function draw(graphics: graphics_module.Graphics, alpha: f64): unit
+        if state.rendered or state.loaded_image == nil then return end
+        assert(state.load_error == nil)
+        assert(graphics:supports("textures") and graphics:supports("sprite-batches"))
+        assert(graphics:supports("render-targets"))
+
+        local maybe_source: resources.Resource? = state.loaded_image
+        assert(maybe_source ~= nil)
+        local source: resources.Resource = maybe_source::resources.Resource
+        local texture_result: graphics_module.TextureResult = graphics:texture_from_resource(source)
+        assert(texture_result.ok)
+        record_gpu_resource_step("uploaded")
+        local texture: graphics_module.Texture = texture_result.texture
+        -- Upload is a copy: source release cannot invalidate the texture.
+        resources.release(source)
+
+        graphics:clear("#000000")
+        graphics:set_color("#ffffff")
+        assert(graphics:draw_sprite(texture, 8.0, 8.0, 32.0, 32.0, 0.0, 0.0, 1.0, 1.0))
+        assert(graphics:draw_sprite(texture, 44.0, 8.0, 32.0, 32.0, 1.0, 0.0, 1.0, 1.0))
+
+        local target_result: graphics_module.RenderTargetResult = graphics:create_render_target(32, 32)
+        assert(target_result.ok)
+        local target: graphics_module.RenderTarget = target_result.target
+        assert(graphics:set_render_target(target))
+        graphics:clear("#2040ff")
+        assert(graphics:draw_sprite(texture, 8.0, 8.0, 16.0, 16.0, 0.0, 1.0, 1.0, 1.0))
+        graphics:set_screen_target()
+        assert(graphics:draw_render_target(target, 84.0, 8.0, 48.0, 48.0))
+        graphics:flush()
+        record_gpu_resource_step("rendered")
+
+        graphics:release_render_target(target)
+        graphics:release_render_target(target)
+        assert(not graphics:draw_render_target(target, 0.0, 0.0, 10.0, 10.0))
+        graphics:release_texture(texture)
+        graphics:release_texture(texture)
+        assert(not graphics:draw_image(texture, 0.0, 0.0))
+        state.rendered = true
+    end
+
+    local function keypressed(key: string): unit end
+    local function keyreleased(key: string): unit end
+    engine.start({
+        title = "GPU resource conformance", width = 144, height = 64,
+        update_hz = 60.0, max_frame_seconds = 0.25, background = "#000000",
+    }, {
+        load = load, update = update, draw = draw,
+        keypressed = keypressed, keyreleased = keyreleased,
+    })
+end
+
+install_gpu_resources_fixture()

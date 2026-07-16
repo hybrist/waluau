@@ -61,6 +61,7 @@ Subsystem modules remain supported for focused and host-independent programs:
 | --- | --- | --- |
 | `waluau:engine/input` | `waluau:engine/v1/input` | keyboard state and `Input` |
 | `waluau:engine/graphics` | `waluau:engine/v1/graphics` | GPU drawing and `Graphics` |
+| `waluau:engine/resources` | `waluau:engine/v1/resources` | packaged resource loading and handles |
 | `waluau:engine/time` | `waluau:engine/v1/time` | deterministic fixed-step clock |
 | `waluau:engine/browser` | `waluau:engine/v1/browser` | browser lifecycle adapter |
 
@@ -78,10 +79,11 @@ so a frame batches into very few draw calls.
 The WebGL backend also exposes `supports(name)`, portable named `Material`
 resources, and `alpha`, `add`, and `multiply` blend modes. Material creation
 returns a structured result; releasing a material is explicit and later use is
-rejected predictably. Capabilities currently report textures, sprite batches,
-render targets, and custom shaders as unsupported. Those GPU resource bridges
-are tracked by `waluau-isvj` and `waluau-ukso`; compatibility backends must
-likewise return `false` instead of silently changing semantics.
+rejected predictably. The same backend uploads decoded image resources as
+textures, batches atlas sprites by texture, and can render into and composite
+offscreen targets. Custom shaders remain unsupported and are tracked by
+`waluau-ukso`; compatibility backends must likewise return `false` instead of
+silently changing semantics.
 
 `keyreleased` may be `nil`; the other lifecycle callbacks are currently
 required. Updates use a fixed timestep. Drawing happens once per animation
@@ -161,11 +163,19 @@ implicit cache. [`fixtures/game-engine/resources.walu`](../fixtures/game-engine/
 is the backend-neutral contract sample for image/font/audio readiness, safe
 failure, and save reload behavior.
 
+`Graphics:texture_from_resource` copies a ready image into GPU storage without
+fetching or decoding it again. The decoded source may therefore be released as
+soon as upload succeeds. `draw_image` and `draw_sprite` use top-left logical
+coordinates (including atlas source rectangles); consecutive sprites that use
+the same texture remain in one batch. `create_render_target`,
+`set_render_target`, `set_screen_target`, and `draw_render_target` provide
+offscreen composition. Texture and target release is explicit and idempotent,
+and later use returns `false`; creation returns structured `invalid_resource`,
+`wrong_type`, `invalid_size`, `unavailable`, upload, and framebuffer failures.
+
 The browser host accepts already-served project paths. A distributable manifest
 and fingerprinting pipeline remains tracked separately, as do a native adapter
-and the GPU texture/glyph integration required to draw loaded image/font
-handles. Until the latter exists, games retain their procedural rendering
-fallbacks.
+and GPU glyph integration for loaded font handles.
 
 ## Intended API surface
 
@@ -195,8 +205,8 @@ Reaching LÖVE-like usability requires these architectural capabilities:
 | Area | Waluau/language requirement | Platform/runtime requirement |
 | --- | --- | --- |
 | Distribution | Stable package/virtual-module imports, API versioning and a standard project layout are available | Generated sibling JavaScript glue (`waluau-884g`) |
-| Resources | Backend-neutral opaque handles, nullable callbacks and host byte transfer are available | Browser async text/bytes/image/font/audio handles, explicit lifetime and structured failures are available; production packaging/caching, GPU upload and native adapters remain |
-| GPU graphics | Typed buffers, numeric/vector data, shader and uniform-friendly APIs | WebGL/WebGPU or native GPU backend, batching, render targets, shader compilation and capability discovery |
+| Resources | Backend-neutral opaque handles, nullable callbacks and host byte transfer are available | Browser async text/bytes/image/font/audio handles, decoded-image GPU upload, explicit lifetime and structured failures are available; production packaging/caching and native adapters remain |
+| GPU graphics | Typed buffers, numeric/vector data, shader and uniform-friendly APIs | WebGL2 geometry, texture/sprite batching and render targets are available; custom shader compilation, WebGPU/native adapters and broader capability discovery remain |
 | Input | Extensible event/value representation without a closed hard-coded record | Keyboard normalization, pointer/touch/gamepad polling, focus and fullscreen handling |
 | Audio | Optional readiness callbacks and richer source state | Browser decoded effects and streamed music; native mixer, buses, effects and device lifecycle remain |
 | Files | Stable project/package layout | Browser packaged fetch plus namespaced text/byte saves; desktop paths and atomic native save adapter remain |
@@ -213,6 +223,7 @@ source for priorities and completion status.
 
 The renderer draws colored geometry (shapes, lines, paths, and bitmap-font
 text) through WebGL2 today, using the extern surface from `waluau-9tvw`.
-Loaded textures, sprite batches, render targets, and custom shader resources
-remain explicit follow-ups of `waluau-vt3k`; a Canvas 2D compatibility backend
-can return once backend polymorphism is expressible in the language.
+Loaded textures, atlas sprite batches, and render targets are implemented by
+the browser WebGL2 backend. Custom shader resources remain an explicit follow-up
+of `waluau-vt3k`; a Canvas 2D compatibility backend can return once backend
+polymorphism is expressible in the language.

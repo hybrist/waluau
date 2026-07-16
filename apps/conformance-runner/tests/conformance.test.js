@@ -17,6 +17,7 @@ import gameEngineTextAlignment from '../../../fixtures/game-engine/text-alignmen
 import gameEngineGraphicsPaths from '../../../fixtures/game-engine/graphics-paths.walu?raw';
 import stableEngineProject from '../../../examples/game-project/main.walu?raw';
 import gameEngineGpuMaterials from '../../../fixtures/game-engine/gpu-materials.walu?raw';
+import gameEngineGpuResources from '../../../fixtures/game-engine/gpu-resources.walu?raw';
 import gameEngineBrowser from '../../../engine/browser.walu?raw';
 import gameEngineGraphics from '../../../engine/graphics.walu?raw';
 import gameEngineFont from '../../../engine/font.walu?raw';
@@ -779,6 +780,7 @@ describe('browser conformance', () => {
         '/fixtures/game-engine/main.walu': gameEngineMain,
         '/engine/browser.walu': gameEngineBrowser,
         '/engine/graphics.walu': gameEngineGraphics,
+        '/engine/resources.walu': gameEngineResources,
         '/engine/font.walu': gameEngineFont,
         '/engine/input.walu': gameEngineInput,
         '/engine/time.walu': gameEngineTime,
@@ -918,6 +920,7 @@ describe('browser conformance', () => {
         '/fixtures/game-engine/text-alignment.walu': gameEngineTextAlignment,
         '/engine/browser.walu': gameEngineBrowser,
         '/engine/graphics.walu': gameEngineGraphics,
+        '/engine/resources.walu': gameEngineResources,
         '/engine/font.walu': gameEngineFont,
         '/engine/input.walu': gameEngineInput,
         '/engine/time.walu': gameEngineTime,
@@ -983,6 +986,7 @@ describe('browser conformance', () => {
         '/fixtures/game-engine/graphics-paths.walu': gameEngineGraphicsPaths,
         '/engine/browser.walu': gameEngineBrowser,
         '/engine/graphics.walu': gameEngineGraphics,
+        '/engine/resources.walu': gameEngineResources,
         '/engine/font.walu': gameEngineFont,
         '/engine/input.walu': gameEngineInput,
         '/engine/time.walu': gameEngineTime,
@@ -1041,6 +1045,7 @@ describe('browser conformance', () => {
         '/fixtures/game-engine/gpu-materials.walu': gameEngineGpuMaterials,
         '/engine/browser.walu': gameEngineBrowser,
         '/engine/graphics.walu': gameEngineGraphics,
+        '/engine/resources.walu': gameEngineResources,
         '/engine/font.walu': gameEngineFont,
         '/engine/input.walu': gameEngineInput,
         '/engine/time.walu': gameEngineTime,
@@ -1056,6 +1061,65 @@ describe('browser conformance', () => {
         gl.readPixels(32, 100 - 1 - 32, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
         return pixel[1];
       }, { timeout: 10_000 }).toBeGreaterThan(200);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('uploads Resource images, batches atlas sprites, and composites an offscreen target', async () => {
+    const steps = [];
+    const asyncErrors = [];
+    const atlasPixels = new Uint8ClampedArray([
+      255, 0, 0, 255, 0, 255, 0, 255,
+      0, 0, 255, 255, 255, 255, 255, 255,
+    ]);
+    let fetchCount = 0;
+    let decodeCount = 0;
+    const { root, cleanup } = await compileAndInstantiateWithDom(
+      {
+        '/fixtures/game-engine/gpu-resources.walu': gameEngineGpuResources,
+        '/engine/browser.walu': gameEngineBrowser,
+        '/engine/graphics.walu': gameEngineGraphics,
+        '/engine/font.walu': gameEngineFont,
+        '/engine/input.walu': gameEngineInput,
+        '/engine/time.walu': gameEngineTime,
+        '/engine/resources.walu': gameEngineResources,
+      },
+      '/fixtures/game-engine/gpu-resources.walu',
+      {
+        gameServices: {
+          assetBaseUrl: 'https://game.test/',
+          fetch: async () => {
+            fetchCount += 1;
+            return new Response(new Uint8Array([1]), { status: 200 });
+          },
+          createImageBitmap: async () => {
+            decodeCount += 1;
+            return createImageBitmap(new ImageData(atlasPixels, 2, 2));
+          },
+        },
+        hostImports: {
+          record_gpu_resource_step: (step) => steps.push(String(step)),
+        },
+        onAsyncError: (error) => asyncErrors.push(error),
+      },
+    );
+    try {
+      const canvas = root.querySelector('#walua-game-canvas');
+      const gl = canvas.getContext('webgl2');
+      const pixelAt = (x, y) => {
+        const pixel = new Uint8Array(4);
+        gl.readPixels(x, 64 - 1 - y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+        return Array.from(pixel);
+      };
+      await expect.poll(() => steps, { timeout: 10_000 }).toContain('rendered');
+      expect(asyncErrors).toEqual([]);
+      expect(steps).toEqual(['decoded', 'uploaded', 'rendered']);
+      expect(fetchCount).toBe(1);
+      expect(decodeCount).toBe(1);
+      expect(pixelAt(20, 20)).toEqual([255, 0, 0, 255]);
+      expect(pixelAt(56, 20)).toEqual([0, 255, 0, 255]);
+      expect(pixelAt(90, 14)).toEqual([32, 64, 255, 255]);
     } finally {
       cleanup();
     }
