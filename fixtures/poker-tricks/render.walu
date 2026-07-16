@@ -15,6 +15,7 @@ local MODAL_HELP <const>: i32 = 2
 local MODAL_FINAL <const>: i32 = 4
 local FLIP_SECONDS <const>: f64 = 0.55
 local TOTAL_ROUNDS <const>: i32 = 5
+local SELECTION_HIGHLIGHT <const>: string = "#fbbf24"
 
 -- The three outcomes a resolved breach can have. The help legend draws the
 -- same orbs from these, so a colour only ever means one thing on screen.
@@ -300,7 +301,7 @@ function draw_card(graphics: Graphics, card: game.Card, x: f64, y: f64, selected
     if selected then offset = -10.0 end
     y += offset
     local edge: string = "#52525b"
-    if focused then edge = "#fbbf24" elseif selected then edge = school_color(card.suit) end
+    if focused then edge = SELECTION_HIGHLIGHT elseif selected then edge = school_color(card.suit) end
     panel(graphics, x, y, CARD_W, CARD_H, "#17171c", edge)
     if hidden then
         draw_card_back(graphics, x, y)
@@ -319,7 +320,7 @@ function draw_card(graphics: Graphics, card: game.Card, x: f64, y: f64, selected
     text(graphics, rank_name(card.rank), x + 20.0, y + 31.0, 24, "#f8fafc")
     text(graphics, school_short(card.suit), x + 20.0, y + 51.0, 10, accent)
     draw_sigil(graphics, card.suit, x + 42.0, y + 82.0)
-    if selected then text(graphics, "BOUND", x + 27.0, y + 119.0, 9, "#fbbf24") end
+    if selected then text(graphics, "BOUND", x + 27.0, y + 119.0, 9, SELECTION_HIGHLIGHT) end
 end
 
 -- A relic sitting in the player's fan. Drawing it about its own centre lets
@@ -450,6 +451,10 @@ function draw_round_orbs(graphics: Graphics, state: game.State): unit
                 edge = ORB_STALEMATE_EDGE
                 fill = ORB_STALEMATE_FILL
             end
+        end
+        if round == state.round - 1 then
+            graphics:set_color(SELECTION_HIGHLIGHT)
+            graphics:fill_circle(x, 52.0, 12.0)
         end
         draw_orb(graphics, x, 52.0, edge, fill, played)
     end
