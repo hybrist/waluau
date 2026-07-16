@@ -16,6 +16,38 @@ fn method_signature_name(base: &str, method: &str) -> String {
     format!("{base}.{method}")
 }
 
+/// The per-binding expected types for a multi-binding declaration. Annotated
+/// names use their annotation; unannotated names (Luau allows mixing the two
+/// freely) fall back to the unconstrained type of their initializer slot, so
+/// a mixed declaration checks like a fully annotated one.
+fn expected_binding_types(
+    bindings: &[waluau_ast::Binding],
+    values: &[Expr],
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+) -> Result<Vec<Type>, Diagnostic> {
+    if bindings.iter().all(|binding| binding.ty.is_some()) {
+        return Ok(bindings
+            .iter()
+            .map(|binding| binding.ty.clone().expect("checked above"))
+            .collect());
+    }
+    let unconstrained = infer_expr_list(values, vars, fn_signatures, active_type_params, None)?;
+    if unconstrained.len() < bindings.len() {
+        return Err(Diagnostic::new(format!(
+            "multi-binding declaration expects {} values, got {}",
+            bindings.len(),
+            unconstrained.len()
+        )));
+    }
+    Ok(bindings
+        .iter()
+        .zip(unconstrained)
+        .map(|(binding, inferred)| binding.ty.clone().unwrap_or(inferred))
+        .collect())
+}
+
 fn property_setter_name(base: &str, property: &str) -> String {
     format!("{base}.set/{property}")
 }
@@ -964,18 +996,15 @@ fn collect_return_types_with_scope(
                 )?));
             }
             Stmt::LetMulti { bindings, values } => {
-                let all_typed = bindings.iter().all(|binding| binding.ty.is_some());
                 let any_typed = bindings.iter().any(|binding| binding.ty.is_some());
-                if any_typed && !all_typed {
-                    return Err(Diagnostic::new(
-                        "multi-binding declaration must either annotate all bindings or none",
-                    ));
-                }
-                let actual = if all_typed {
-                    let expected: Vec<Type> = bindings
-                        .iter()
-                        .map(|binding| binding.ty.clone().expect("checked above"))
-                        .collect();
+                let actual = if any_typed {
+                    let expected = expected_binding_types(
+                        bindings,
+                        values,
+                        &scope,
+                        fn_signatures,
+                        active_type_params,
+                    )?;
                     let actual = infer_expr_list(
                         values,
                         &scope,
@@ -993,7 +1022,9 @@ fn collect_return_types_with_scope(
                     for (index, (binding, value_ty)) in
                         bindings.iter().zip(actual.iter()).enumerate()
                     {
-                        let expected_ty = binding.ty.as_ref().expect("checked above");
+                        let Some(expected_ty) = binding.ty.as_ref() else {
+                            continue;
+                        };
                         if expected_ty != value_ty {
                             return Err(Diagnostic::new(format!(
                                 "multi-binding declaration value {} expects {}, got {}",
@@ -1818,18 +1849,15 @@ pub(super) fn check_stmt(
             Ok(true)
         }
         Stmt::LetMulti { bindings, values } => {
-            let all_typed = bindings.iter().all(|binding| binding.ty.is_some());
             let any_typed = bindings.iter().any(|binding| binding.ty.is_some());
-            if any_typed && !all_typed {
-                return Err(Diagnostic::new(
-                    "multi-binding declaration must either annotate all bindings or none",
-                ));
-            }
-            let actual = if all_typed {
-                let expected: Vec<Type> = bindings
-                    .iter()
-                    .map(|binding| binding.ty.clone().expect("checked above"))
-                    .collect();
+            let actual = if any_typed {
+                let expected = expected_binding_types(
+                    bindings,
+                    values,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                )?;
                 let actual = infer_expr_list(
                     values,
                     vars,
@@ -1845,7 +1873,9 @@ pub(super) fn check_stmt(
                     )));
                 }
                 for (index, (binding, value_ty)) in bindings.iter().zip(actual.iter()).enumerate() {
-                    let expected_ty = binding.ty.as_ref().expect("checked above");
+                    let Some(expected_ty) = binding.ty.as_ref() else {
+                        continue;
+                    };
                     if expected_ty != value_ty {
                         return Err(Diagnostic::new(format!(
                             "multi-binding declaration value {} expects {}, got {}",
