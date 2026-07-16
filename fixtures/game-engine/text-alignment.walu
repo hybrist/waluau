@@ -1,0 +1,60 @@
+-- Browser conformance fixture for Graphics text metrics and alignment. The
+-- renderer assertions cover multiple string lengths and font sizes; the
+-- browser test checks the colored glyphs' actual pixel bounds around a shared
+-- anchor.
+
+local engine = require("../../engine/browser")
+local graphics_module = require("../../engine/graphics")
+local input_module = require("../../engine/input")
+
+function install_text_alignment_fixture(): unit
+    local function load(): unit
+    end
+
+    local function update(dt: f64, input: input_module.Input): unit
+    end
+
+    local function draw(graphics: graphics_module.Graphics, alpha: f64): unit
+        graphics:clear("#000000")
+
+        graphics:set_font("8px monospace")
+        assert(graphics:text_width("") == 0.0)
+        assert(graphics:text_width("M") == 6.0)
+        assert(graphics:text_width("MMMM") == 24.0)
+
+        graphics:set_font("16px monospace")
+        assert(graphics:text_width("M") == 12.0)
+        assert(graphics:text_width("MMMM") == 48.0)
+
+        graphics:set_font("8px monospace")
+        graphics:set_color("#ff4040")
+        graphics:print_aligned("MMMM", 160.0, 40.0, "left")
+        graphics:set_color("#40ff40")
+        graphics:print_aligned("MMMM", 160.0, 80.0, "center")
+        graphics:set_color("#4080ff")
+        graphics:print_aligned("MMMM", 160.0, 120.0, "right")
+    end
+
+    local function keypressed(key: string): unit
+    end
+
+    local function keyreleased(key: string): unit
+    end
+
+    engine.start({
+        title = "Graphics text alignment conformance",
+        width = 320,
+        height = 200,
+        update_hz = 60.0,
+        max_frame_seconds = 0.25,
+        background = "#000000",
+    }, {
+        load = load,
+        update = update,
+        draw = draw,
+        keypressed = keypressed,
+        keyreleased = keyreleased,
+    })
+end
+
+install_text_alignment_fixture()

@@ -12,6 +12,7 @@ import {
 } from '../../../tools/conformance/includes.js';
 import gameEngineSim from '../../../fixtures/game-engine/sim.walu?raw';
 import gameEngineMain from '../../../fixtures/game-engine/main.walu?raw';
+import gameEngineTextAlignment from '../../../fixtures/game-engine/text-alignment.walu?raw';
 import gameEngineBrowser from '../../../engine/browser.walu?raw';
 import gameEngineGraphics from '../../../engine/graphics.walu?raw';
 import gameEngineFont from '../../../engine/font.walu?raw';
@@ -783,6 +784,71 @@ describe('browser conformance', () => {
         }
       }
       expect(foundPlayer).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('measures and aligns game-engine text in logical pixels', async () => {
+    const { root, cleanup } = await compileAndInstantiateWithDom(
+      {
+        '/fixtures/game-engine/text-alignment.walu': gameEngineTextAlignment,
+        '/engine/browser.walu': gameEngineBrowser,
+        '/engine/graphics.walu': gameEngineGraphics,
+        '/engine/font.walu': gameEngineFont,
+        '/engine/input.walu': gameEngineInput,
+        '/engine/time.walu': gameEngineTime,
+      },
+      '/fixtures/game-engine/text-alignment.walu'
+    );
+
+    try {
+      const canvas = root.querySelector('#walua-game-canvas');
+      expect(canvas).not.toBeNull();
+      const gl = canvas.getContext('webgl2');
+      expect(gl).not.toBeNull();
+
+      const boundsForColor = (pixels, color) => {
+        let minX = 320;
+        let maxX = -1;
+        let minY = 200;
+        let maxY = -1;
+        for (let index = 0; index < pixels.length; index += 4) {
+          if (
+            Math.abs(pixels[index] - color[0]) <= 1 &&
+            Math.abs(pixels[index + 1] - color[1]) <= 1 &&
+            Math.abs(pixels[index + 2] - color[2]) <= 1
+          ) {
+            const pixelIndex = index / 4;
+            const x = pixelIndex % 320;
+            const y = 200 - 1 - Math.floor(pixelIndex / 320);
+            minX = Math.min(minX, x);
+            maxX = Math.max(maxX, x);
+            minY = Math.min(minY, y);
+            maxY = Math.max(maxY, y);
+          }
+        }
+        return { minX, maxX, minY, maxY };
+      };
+
+      const readFrame = () => {
+        const pixels = new Uint8Array(320 * 200 * 4);
+        gl.readPixels(0, 0, 320, 200, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        return pixels;
+      };
+
+      await expect.poll(
+        () => boundsForColor(readFrame(), [255, 64, 64]),
+        { timeout: 10_000 },
+      ).toEqual({ minX: 160, maxX: 182, minY: 33, maxY: 39 });
+
+      const pixels = readFrame();
+      expect(boundsForColor(pixels, [64, 255, 64])).toEqual(
+        { minX: 148, maxX: 170, minY: 73, maxY: 79 },
+      );
+      expect(boundsForColor(pixels, [64, 128, 255])).toEqual(
+        { minX: 136, maxX: 158, minY: 113, maxY: 119 },
+      );
     } finally {
       cleanup();
     }

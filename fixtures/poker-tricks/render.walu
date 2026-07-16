@@ -541,10 +541,9 @@ function draw_hud(graphics: Graphics, state: game.State): unit
     text(graphics, "ARCANE HEIST", 32.0, 47.0, 22, "#fbbf24")
     draw_round_orbs(graphics, state)
     local score: string = tostring(state.player_points)
-    -- TODO(waluau-cn6h): Right-align with Graphics text metrics instead of a
-    -- bitmap-font-specific width estimate.
-    local score_width: f64 = ((#score)::f64) * 16.5
-    text(graphics, score, WIDTH - 32.0 - score_width, 47.0, 22, "#67e8f9")
+    graphics:set_font("22px monospace")
+    graphics:set_color("#67e8f9")
+    graphics:print_aligned(score, WIDTH - 32.0, 47.0, "right")
 end
 
 function draw_footer(graphics: Graphics): unit
