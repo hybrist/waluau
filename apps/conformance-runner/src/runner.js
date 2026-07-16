@@ -35,9 +35,12 @@ export async function compileAndInstantiateWithExports(files, entryFile = '/main
     });
 
     let instance;
+    const useCompilerMetadata = options.compilerMetadata !== false;
     const imports = buildWaluauImports(wasmModule, undefined, {
       ...options,
       wasmBytes: wasmBuffer,
+      requiredImports: useCompilerMetadata ? output.requiredImports : undefined,
+      bytesConstants: useCompilerMetadata ? output.bytesConstants : undefined,
       domOutputRoot,
       getWasmExports: () => instance.exports,
     });
@@ -75,6 +78,8 @@ export async function compileAndInstantiateWithDom(files, entryFile = '/main.wal
     let instance;
     const imports = buildWaluauImports(wasmModule, undefined, {
       wasmBytes: wasmBuffer,
+      requiredImports: output.requiredImports,
+      bytesConstants: output.bytesConstants,
       domOutputRoot,
       getWasmExports: () => instance.exports,
     });
@@ -95,5 +100,45 @@ export async function compileAndInstantiateWithDom(files, entryFile = '/main.wal
   } catch (err) {
     iframe.remove();
     throw err;
+  }
+}
+
+export async function compileAndRunGeneratedGlue(files, entryFile = '/main.walu', options = {}) {
+  const compiler = await import('./waluau-wasm/waluau_wasm.js');
+  await compiler.default();
+  const output = compiler.compile_multi(files, entryFile);
+  const blobUrl = URL.createObjectURL(new Blob([output.jsGlue], { type: 'text/javascript' }));
+  const iframe = document.createElement('iframe');
+  iframe.style.display = 'none';
+  document.body.appendChild(iframe);
+  const domOutputRoot = iframe.contentDocument;
+  domOutputRoot.open();
+  domOutputRoot.write('<!doctype html><html><body></body></html>');
+  domOutputRoot.close();
+
+  try {
+    const glue = await import(/* @vite-ignore */ blobUrl);
+    const loaded = await glue.run({
+      wasm: new Uint8Array(output.wasm),
+      assetBaseUrl: new URL('./', window.location.href),
+      ...options,
+      createImports: (context) => buildWaluauImports(null, undefined, {
+        ...options,
+        requiredImports: context.requiredImports,
+        bytesConstants: context.bytesConstants,
+        domOutputRoot,
+        getWasmExports: context.getWasmExports,
+      }),
+    });
+    return {
+      ...loaded,
+      root: domOutputRoot.body,
+      cleanup: () => iframe.remove(),
+    };
+  } catch (error) {
+    iframe.remove();
+    throw error;
+  } finally {
+    URL.revokeObjectURL(blobUrl);
   }
 }

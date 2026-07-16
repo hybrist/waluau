@@ -525,8 +525,9 @@ export function getWasmImports(wasmModule, wasmBytes) {
   return WebAssembly.Module.imports(wasmModule);
 }
 
-export function usesDomImports(wasmModule, wasmBytes) {
-  return getWasmImports(wasmModule, wasmBytes).some((wasmImport) =>
+export function usesDomImports(wasmModule, wasmBytes, requiredImports) {
+  const imports = requiredImports ?? getWasmImports(wasmModule, wasmBytes);
+  return imports.some((wasmImport) =>
     wasmImport.module === WALUAU_IMPORT_MODULE &&
     wasmImport.kind === 'function' &&
     isDomImportName(wasmImport.name)
@@ -1490,8 +1491,13 @@ function createTfjsHost(getWasmExports = () => null) {
 }
 
 export function buildWaluauImports(wasmModule, initLogger, options = {}) {
-  const wasmImports = getWasmImports(wasmModule, options.wasmBytes);
-  const bytesConstants = decodeBytesConstantsFromWasm(wasmModule);
+  // Compiler metadata is authoritative for new artifacts. Reflection, binary
+  // import decoding, and the byte-constant custom section remain as a
+  // compatibility fallback for older callers/artifacts during migration.
+  const wasmImports = options.requiredImports ?? getWasmImports(wasmModule, options.wasmBytes);
+  const bytesConstants = options.bytesConstants
+    ? Array.from(options.bytesConstants, (value) => new Uint8Array(value))
+    : decodeBytesConstantsFromWasm(wasmModule);
   // Modules that use linear-memory typed arrays import their memory so host
   // functions can view it even while the start function runs (before the
   // instance and its exports exist).

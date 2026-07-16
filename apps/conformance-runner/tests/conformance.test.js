@@ -3,6 +3,7 @@ import {
   compileAndInstantiate,
   compileAndInstantiateWithDom,
   compileAndInstantiateWithExports,
+  compileAndRunGeneratedGlue,
 } from '../src/runner.js';
 import {
   conformanceIncludePaths,
@@ -818,6 +819,61 @@ describe('browser conformance', () => {
       }, { timeout: 10_000 }).toEqual([56, 189, 248, 255]);
     } finally {
       cleanup();
+    }
+  });
+
+  it('runs minimal and feature-rich modules through compiler-generated JavaScript glue', async () => {
+    const originalImports = WebAssembly.Module.imports;
+    WebAssembly.Module.imports = () => {
+      throw new Error('generated glue must not reflect on Wasm imports');
+    };
+    try {
+      const minimal = await compileAndRunGeneratedGlue({
+        '/main.walu': 'function answer(): i32\n    return 42\nend',
+      });
+      try {
+        expect(minimal.exports.answer()).toBe(42);
+        expect(Object.keys(minimal.imports)).toEqual([]);
+      } finally {
+        minimal.cleanup();
+      }
+
+      const game = await compileAndRunGeneratedGlue(
+        { '/main.walu': stableEngineProject },
+        '/main.walu'
+      );
+      try {
+        expect(Object.keys(game.imports)).toEqual(['waluau']);
+        const canvas = game.root.querySelector('#walua-game-canvas');
+        expect(canvas).not.toBeNull();
+        await expect.poll(() => {
+          const gl = canvas.getContext('webgl2');
+          const pixel = new Uint8Array(4);
+          gl.readPixels(32, 180 - 32, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+          return Array.from(pixel);
+        }, { timeout: 10_000 }).toEqual([56, 189, 248, 255]);
+      } finally {
+        game.cleanup();
+      }
+    } finally {
+      WebAssembly.Module.imports = originalImports;
+    }
+  });
+
+  it('retains byte-decoding compatibility for artifacts without compiler metadata', async () => {
+    const originalImports = WebAssembly.Module.imports;
+    WebAssembly.Module.imports = () => {
+      throw new Error('legacy compatibility should decode supplied Wasm bytes first');
+    };
+    try {
+      const exports = await compileAndInstantiateWithExports(
+        { '/main.walu': 'function literal(): bytes\n    return b"AB"\nend' },
+        '/main.walu',
+        { compilerMetadata: false }
+      );
+      expect(Array.from(exports.literal())).toEqual([65, 66]);
+    } finally {
+      WebAssembly.Module.imports = originalImports;
     }
   });
 

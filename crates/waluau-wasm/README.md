@@ -15,7 +15,7 @@ import init, { compile } from './waluau-wasm/waluau_wasm.js';
 
 await init();
 
-const { ir, wat, wasm, requiresWasmGc } = compile(sourceCode);
+const { ir, wat, wasm, jsGlue, requiredImports, bytesConstants, requiresWasmGc } = compile(sourceCode);
 // wasm is a Uint8Array of the compiled module bytes
 ```
 
@@ -36,6 +36,9 @@ Compiles Waluau source and returns:
 | `ir` | `string` | Textual IR dump |
 | `wat` | `string` | WebAssembly text format |
 | `wasm` | `Uint8Array` | Compiled Wasm bytes |
+| `jsGlue` | `string` | Generated ES module for loading a `program.wasm` sibling or supplied in-memory bytes |
+| `requiredImports` | `Array<{module, name, kind}>` | Exact compiler-known Wasm imports |
+| `bytesConstants` | `Uint8Array[]` | Byte literals required by the host ABI, without parsing a custom section |
 | `requiresWasmGc` | `boolean` | `true` when the module uses array reference types and needs a Wasm GC-capable engine |
 
 Throws a string error message when parsing, type-checking, IR construction, or codegen fails.
@@ -53,4 +56,8 @@ Callers copied UTF-8 bytes into Wasm linear memory, read a null-terminated resul
 
 The wasm-bindgen surface replaces that with a single `compile(source)` call. There is no public allocation API anymore. Success and error handling use normal JavaScript values instead of the `Success:\n` / `Error:\n` prefixed C strings.
 
-The compile surface remains wasm-bindgen based and now returns `{ ir, wat, wasm, requiresWasmGc }`.
+The compile surface remains wasm-bindgen based. Generated glue accepts
+in-memory `wasm`, an explicit import object, or a `createImports(context)` host
+factory, and filters the result to `requiredImports`. The Playground passes
+this metadata directly; its older reflection and binary-decoding path remains
+available for compatibility with previously generated artifacts.
