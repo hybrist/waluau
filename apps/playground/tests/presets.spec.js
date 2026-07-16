@@ -33,14 +33,14 @@ test.describe('preset selector', () => {
   });
 
   test('Mismatch preset triggers a compilation error', async ({ page }) => {
-    await page.getByRole('button', { name: 'Mismatch' }).click();
+    await page.getByRole('button', { name: 'Mismatch', exact: true }).click();
     await expect(page.locator('.status-text')).toHaveText('Compilation Failed', {
       timeout: COMPILER_READY_TIMEOUT,
     });
   });
 
   test('switching back to Add after an error restores success status', async ({ page }) => {
-    await page.getByRole('button', { name: 'Mismatch' }).click();
+    await page.getByRole('button', { name: 'Mismatch', exact: true }).click();
     await expect(page.locator('.status-text')).toHaveText('Compilation Failed', {
       timeout: COMPILER_READY_TIMEOUT,
     });
