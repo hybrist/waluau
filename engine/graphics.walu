@@ -10,6 +10,19 @@
 
 local window = require("dom:window")
 local font = require("./font")
+local resources = require("./resources")
+
+declare function game_gpu_texture_from_resource(gl: WebGL2RenderingContext, resource_handle: i32): i32
+declare function game_gpu_render_target_create(gl: WebGL2RenderingContext, width: i32, height: i32): i32
+declare function game_gpu_resource_ok(handle: i32): bool
+declare function game_gpu_resource_error_code(handle: i32): string
+declare function game_gpu_resource_error_message(handle: i32): string
+declare function game_gpu_resource_width(handle: i32): i32
+declare function game_gpu_resource_height(handle: i32): i32
+declare function game_gpu_texture_bind(gl: WebGL2RenderingContext, handle: i32): bool
+declare function game_gpu_target_bind(gl: WebGL2RenderingContext, handle: i32): bool
+declare function game_gpu_screen_bind(gl: WebGL2RenderingContext): unit
+declare function game_gpu_resource_release(handle: i32): unit
 
 -- WebGL constants used by the renderer. The extern generator does not emit
 -- Web IDL constants, so the spec-fixed GLenum values live here.
@@ -26,8 +39,8 @@ local GL_SRC_ALPHA <const>: u32 = 0x0302
 local GL_ONE_MINUS_SRC_ALPHA <const>: u32 = 0x0303
 local GL_DST_COLOR <const>: u32 = 0x0306
 
--- Interleaved floats per vertex: clip-space x, y then r, g, b, a, effect id.
-local VERTEX_FLOATS <const>: i32 = 7
+-- Interleaved floats per vertex: clip x/y, color, effect, UV, textured flag.
+local VERTEX_FLOATS <const>: i32 = 10
 -- Vertices per batch before an implicit flush inserts an extra draw call.
 local MAX_VERTICES <const>: i32 = 4096
 local CIRCLE_SEGMENTS <const>: i32 = 32
@@ -41,6 +54,8 @@ type Graphics = {
     gl: WebGL2RenderingContext,
     width: f64,
     height: f64,
+    draw_width: f64,
+    draw_height: f64,
     vertices: Float32Array,
     used: i32,
     red: f64,
@@ -58,12 +73,18 @@ type Graphics = {
     path_move: {bool},
     path_has_current: bool,
     path_start_x: f64,
-    path_start_y: f64
+    path_start_y: f64,
+    current_texture: i32,
+    current_target: i32
 }
 
 type GraphicsError = { code: string, message: string }
 type Material = { name: string, effect: i32, released: bool }
 type MaterialResult = { ok: bool, material: Material, error: GraphicsError }
+type Texture = { handle: i32, width: i32, height: i32, released: bool }
+type TextureResult = { ok: bool, texture: Texture, error: GraphicsError }
+type RenderTarget = { handle: i32, width: i32, height: i32, released: bool }
+type RenderTargetResult = { ok: bool, target: RenderTarget, error: GraphicsError }
 
 function compile_shader(gl: WebGL2RenderingContext, kind: u32, source: string): WebGLShader
     local maybe_shader: WebGLShader? = gl:createShader(kind)
@@ -105,12 +126,18 @@ function Graphics.new(gl: WebGL2RenderingContext, width: f64, height: f64): Grap
 attribute vec2 a_position;
 attribute vec4 a_color;
 attribute float a_effect;
+attribute vec2 a_uv;
+attribute float a_textured;
 varying vec4 v_color;
 varying float v_effect;
+varying vec2 v_uv;
+varying float v_textured;
 void main() {
     gl_Position = vec4(a_position, 0.0, 1.0);
     v_color = a_color;
     v_effect = a_effect;
+    v_uv = a_uv;
+    v_textured = a_textured;
 }
 ]]
     -- Effect ids layer a subtle animated pattern over the vertex color:
@@ -120,8 +147,11 @@ void main() {
 precision mediump float;
 varying vec4 v_color;
 varying float v_effect;
+varying vec2 v_uv;
+varying float v_textured;
 uniform float u_time;
 uniform vec2 u_pixel_scale;
+uniform sampler2D u_texture;
 void main() {
     vec3 color = v_color.rgb;
     vec2 p = gl_FragCoord.xy / u_pixel_scale;
@@ -144,7 +174,9 @@ void main() {
         vec3 tint = grayscale ? vec3(0.045) : vec3(0.09, 0.03, 0.0);
         color += tint * (0.5 + 0.5 * flicker);
     }
-    gl_FragColor = vec4(color, v_color.a);
+    vec4 outputColor = vec4(color, v_color.a);
+    if (v_textured > 0.5) outputColor *= texture2D(u_texture, v_uv);
+    gl_FragColor = outputColor;
 }
 ]]
 
@@ -169,20 +201,26 @@ void main() {
     gl:blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
 
     -- The renderer owns one program and one vertex buffer, so attribute
-    -- layout is configured once: stride 28 bytes, position at 0, color at 8,
-    -- effect id at 24.
+    -- layout is configured once: stride 40 bytes, with UV/use fields last.
     local buffer: WebGLBuffer = gl:createBuffer()
     gl:bindBuffer(GL_ARRAY_BUFFER, buffer)
     local position_location: i32 = gl:getAttribLocation(program, "a_position")
     local color_location: i32 = gl:getAttribLocation(program, "a_color")
     local effect_location: i32 = gl:getAttribLocation(program, "a_effect")
-    assert(position_location >= 0 and color_location >= 0 and effect_location >= 0)
+    local uv_location: i32 = gl:getAttribLocation(program, "a_uv")
+    local textured_location: i32 = gl:getAttribLocation(program, "a_textured")
+    assert(position_location >= 0 and color_location >= 0 and effect_location >= 0 and uv_location >= 0 and textured_location >= 0)
     gl:enableVertexAttribArray(position_location::u32)
-    gl:vertexAttribPointer(position_location::u32, 2, GL_FLOAT, false, 28, 0)
+    gl:vertexAttribPointer(position_location::u32, 2, GL_FLOAT, false, 40, 0)
     gl:enableVertexAttribArray(color_location::u32)
-    gl:vertexAttribPointer(color_location::u32, 4, GL_FLOAT, false, 28, 8)
+    gl:vertexAttribPointer(color_location::u32, 4, GL_FLOAT, false, 40, 8)
     gl:enableVertexAttribArray(effect_location::u32)
-    gl:vertexAttribPointer(effect_location::u32, 1, GL_FLOAT, false, 28, 24)
+    gl:vertexAttribPointer(effect_location::u32, 1, GL_FLOAT, false, 40, 24)
+    gl:enableVertexAttribArray(uv_location::u32)
+    gl:vertexAttribPointer(uv_location::u32, 2, GL_FLOAT, false, 40, 28)
+    gl:enableVertexAttribArray(textured_location::u32)
+    gl:vertexAttribPointer(textured_location::u32, 1, GL_FLOAT, false, 40, 36)
+    gl:uniform1i(gl:getUniformLocation(program, "u_texture"), 0)
 
     gl:viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight)
 
@@ -197,6 +235,8 @@ void main() {
         gl = gl,
         width = width,
         height = height,
+        draw_width = width,
+        draw_height = height,
         vertices = Float32Array.create(MAX_VERTICES * VERTEX_FLOATS),
         used = 0,
         red = 1.0,
@@ -214,7 +254,9 @@ void main() {
         path_move = {},
         path_has_current = false,
         path_start_x = 0.0,
-        path_start_y = 0.0
+        path_start_y = 0.0,
+        current_texture = 0,
+        current_target = 0
     }
 end
 
@@ -264,13 +306,32 @@ function Graphics:emit_vertex(x: f64, y: f64): unit
     local base: i32 = #self.transforms - 6
     local world_x: f64 = self.transforms[base] * x + self.transforms[base + 2] * y + self.transforms[base + 4]
     local world_y: f64 = self.transforms[base + 1] * x + self.transforms[base + 3] * y + self.transforms[base + 5]
-    self:push_float(world_x / self.width * 2.0 - 1.0)
-    self:push_float(1.0 - world_y / self.height * 2.0)
+    self:push_float(world_x / self.draw_width * 2.0 - 1.0)
+    self:push_float(1.0 - world_y / self.draw_height * 2.0)
     self:push_float(self.red)
     self:push_float(self.green)
     self:push_float(self.blue)
     self:push_float(self.alpha)
     self:push_float(self.effect)
+    self:push_float(0.0)
+    self:push_float(0.0)
+    self:push_float(0.0)
+end
+
+function Graphics:emit_sprite_vertex(x: f64, y: f64, u: f64, v: f64): unit
+    local base: i32 = #self.transforms - 6
+    local world_x: f64 = self.transforms[base] * x + self.transforms[base + 2] * y + self.transforms[base + 4]
+    local world_y: f64 = self.transforms[base + 1] * x + self.transforms[base + 3] * y + self.transforms[base + 5]
+    self:push_float(world_x / self.draw_width * 2.0 - 1.0)
+    self:push_float(1.0 - world_y / self.draw_height * 2.0)
+    self:push_float(self.red)
+    self:push_float(self.green)
+    self:push_float(self.blue)
+    self:push_float(self.alpha)
+    self:push_float(self.effect)
+    self:push_float(u)
+    self:push_float(v)
+    self:push_float(1.0)
 end
 
 function Graphics:emit_triangle(x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64): unit
@@ -393,8 +454,146 @@ function Graphics:supports(capability: string): bool
     return capability == "gpu"
         or capability == "named-materials"
         or capability == "blend-modes"
+        or capability == "textures"
+        or capability == "sprite-batches"
+        or capability == "render-targets"
         or capability == "paths"
         or capability == "text-alignment"
+end
+
+function gpu_error(handle: i32): GraphicsError
+    return { code = game_gpu_resource_error_code(handle), message = game_gpu_resource_error_message(handle) }
+end
+
+-- Upload copies decoded pixels into GPU storage. The source Resource may be
+-- released immediately after this function succeeds.
+function Graphics:texture_from_resource(resource: resources.Resource): TextureResult
+    -- Upload mutates WebGL texture binding, so preserve all queued vertices
+    -- against the texture selected when they were emitted.
+    self:flush()
+    local handle: i32 = game_gpu_texture_from_resource(self.gl, resource.handle)
+    self.current_texture = 0
+    if not game_gpu_resource_ok(handle) then
+        return {
+            ok = false,
+            texture = { handle = handle, width = 0, height = 0, released = true },
+            error = gpu_error(handle),
+        }
+    end
+    return {
+        ok = true,
+        texture = {
+            handle = handle,
+            width = game_gpu_resource_width(handle),
+            height = game_gpu_resource_height(handle),
+            released = false,
+        },
+        error = { code = "", message = "" },
+    }
+end
+
+function Graphics:create_render_target(width: i32, height: i32): RenderTargetResult
+    -- Framebuffer allocation also binds its backing texture.
+    self:flush()
+    local handle: i32 = game_gpu_render_target_create(self.gl, width, height)
+    self.current_texture = 0
+    if not game_gpu_resource_ok(handle) then
+        return {
+            ok = false,
+            target = { handle = handle, width = 0, height = 0, released = true },
+            error = gpu_error(handle),
+        }
+    end
+    return {
+        ok = true,
+        target = { handle = handle, width = width, height = height, released = false },
+        error = { code = "", message = "" },
+    }
+end
+
+function Graphics:release_texture(texture: Texture): unit
+    if self.current_texture == texture.handle then self:flush() end
+    if not texture.released then game_gpu_resource_release(texture.handle) end
+    texture.released = true
+    if self.current_texture == texture.handle then self.current_texture = 0 end
+end
+
+function Graphics:release_render_target(target: RenderTarget): unit
+    if self.current_target == target.handle then self:set_screen_target()
+    elseif self.current_texture == target.handle then self:flush() end
+    if not target.released then game_gpu_resource_release(target.handle) end
+    target.released = true
+    if self.current_texture == target.handle then self.current_texture = 0 end
+end
+
+function Graphics:bind_sprite_texture(handle: i32): bool
+    if self.current_texture == handle then return true end
+    self:flush()
+    if not game_gpu_texture_bind(self.gl, handle) then return false end
+    self.current_texture = handle
+    return true
+end
+
+function Graphics:draw_sprite_region(texture: Texture, x: f64, y: f64, width: f64, height: f64, source_x: f64, source_y: f64, source_width: f64, source_height: f64, render_target: bool): bool
+    if texture.released or texture.width <= 0 or texture.height <= 0 then return false end
+    if not self:bind_sprite_texture(texture.handle) then return false end
+    self:ensure_capacity(6)
+    local u1: f64 = source_x / (texture.width::f64)
+    local u2: f64 = (source_x + source_width) / (texture.width::f64)
+    local v1: f64 = source_y / (texture.height::f64)
+    local v2: f64 = (source_y + source_height) / (texture.height::f64)
+    -- Decoded DOM images store their first row at v=0, while framebuffer
+    -- textures store logical top at v=1.
+    if render_target then
+        v1 = 1.0 - v1
+        v2 = 1.0 - v2
+    end
+    self:emit_sprite_vertex(x, y, u1, v1)
+    self:emit_sprite_vertex(x + width, y, u2, v1)
+    self:emit_sprite_vertex(x + width, y + height, u2, v2)
+    self:emit_sprite_vertex(x, y, u1, v1)
+    self:emit_sprite_vertex(x + width, y + height, u2, v2)
+    self:emit_sprite_vertex(x, y + height, u1, v2)
+    return true
+end
+
+-- Source coordinates select an atlas region in top-left logical pixels.
+-- Consecutive sprites using the same texture remain in one vertex batch.
+function Graphics:draw_sprite(texture: Texture, x: f64, y: f64, width: f64, height: f64, source_x: f64, source_y: f64, source_width: f64, source_height: f64): bool
+    return self:draw_sprite_region(texture, x, y, width, height, source_x, source_y, source_width, source_height, false)
+end
+
+function Graphics:draw_image(texture: Texture, x: f64, y: f64): bool
+    return self:draw_sprite(
+        texture, x, y, texture.width::f64, texture.height::f64,
+        0.0, 0.0, texture.width::f64, texture.height::f64
+    )
+end
+
+function Graphics:set_render_target(target: RenderTarget): bool
+    if target.released then return false end
+    self:flush()
+    if not game_gpu_target_bind(self.gl, target.handle) then return false end
+    self.current_target = target.handle
+    self.current_texture = 0
+    self.draw_width = target.width::f64
+    self.draw_height = target.height::f64
+    return true
+end
+
+function Graphics:set_screen_target(): unit
+    self:flush()
+    game_gpu_screen_bind(self.gl)
+    self.current_target = 0
+    self.current_texture = 0
+    self.draw_width = self.width
+    self.draw_height = self.height
+end
+
+function Graphics:draw_render_target(target: RenderTarget, x: f64, y: f64, width: f64, height: f64): bool
+    if target.released or self.current_target == target.handle then return false end
+    local texture: Texture = { handle = target.handle, width = target.width, height = target.height, released = false }
+    return self:draw_sprite_region(texture, x, y, width, height, 0.0, 0.0, target.width::f64, target.height::f64, true)
 end
 
 -- State changes flush first so one batch always has one blend equation.

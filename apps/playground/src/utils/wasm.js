@@ -845,7 +845,10 @@ export function createGameServicesHost(options = {}) {
   const saveNamespace = validatedSavePart(options.saveNamespace ?? 'default', 'namespace');
 
   const resources = new Map();
+  const gpuResources = new Map();
+  const releasedGpuResources = new Set();
   let nextHandle = 1;
+  let nextGpuHandle = 1;
   let audioContext = null;
 
   const remember = (entry) => {
@@ -862,6 +865,24 @@ export function createGameServicesHost(options = {}) {
     message: error instanceof Error ? error.message : String(error),
   });
   const entryFor = (handle) => resources.get(Number(handle));
+  const rememberGpu = (entry) => {
+    const handle = nextGpuHandle++;
+    gpuResources.set(handle, entry);
+    return handle;
+  };
+  const gpuFailure = (code, message) => rememberGpu({ ok: false, code, message });
+  const gpuEntryFor = (handle) => gpuResources.get(Number(handle));
+  const gpuErrorCode = (handle) => {
+    const normalized = Number(handle);
+    if (releasedGpuResources.has(normalized)) return 'released';
+    const entry = gpuResources.get(normalized);
+    return entry?.ok ? '' : (entry?.code ?? 'invalid_handle');
+  };
+  const gpuErrorMessage = (handle) => {
+    const code = gpuErrorCode(handle);
+    if (!code) return '';
+    return gpuEntryFor(handle)?.message ?? `${code} GPU resource: ${handle}`;
+  };
   const fetchAsset = async (path) => {
     const normalized = validatedAssetPath(path);
     if (typeof fetchImpl !== 'function') {
@@ -924,6 +945,81 @@ export function createGameServicesHost(options = {}) {
     }
   };
 
+  const createGpuTexture = (gl, resourceHandle) => {
+    const source = entryFor(resourceHandle);
+    if (!source?.ok) return gpuFailure('invalid_resource', `invalid image resource: ${resourceHandle}`);
+    if (source.kind !== 'image') return gpuFailure('wrong_type', `resource is ${source.kind}, expected image`);
+    let texture = null;
+    try {
+      texture = gl?.createTexture?.();
+      if (!texture) return gpuFailure('unavailable', 'WebGL texture creation is unavailable');
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source.value);
+      // texImage2D copies the decoded pixels, so releasing the source bitmap
+      // cannot invalidate this GPU resource.
+      return rememberGpu({
+        ok: true, kind: 'texture', gl, texture,
+        width: Number(source.value.width), height: Number(source.value.height),
+      });
+    } catch (error) {
+      gl?.deleteTexture?.(texture);
+      return gpuFailure('upload_failed', error instanceof Error ? error.message : String(error));
+    }
+  };
+  const createRenderTarget = (gl, width, height) => {
+    const w = Number(width);
+    const h = Number(height);
+    if (!Number.isInteger(w) || !Number.isInteger(h) || w <= 0 || h <= 0) {
+      return gpuFailure('invalid_size', `invalid render target size: ${width}x${height}`);
+    }
+    let texture = null;
+    let framebuffer = null;
+    try {
+      texture = gl?.createTexture?.();
+      framebuffer = gl?.createFramebuffer?.();
+      if (!texture || !framebuffer) {
+        gl?.deleteFramebuffer?.(framebuffer);
+        gl?.deleteTexture?.(texture);
+        return gpuFailure('unavailable', 'WebGL render targets are unavailable');
+      }
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+      const complete = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      if (!complete) {
+        gl.deleteFramebuffer(framebuffer);
+        gl.deleteTexture(texture);
+        return gpuFailure('incomplete_target', 'WebGL framebuffer is incomplete');
+      }
+      return rememberGpu({ ok: true, kind: 'render-target', gl, texture, framebuffer, width: w, height: h });
+    } catch (error) {
+      gl?.deleteFramebuffer?.(framebuffer);
+      gl?.deleteTexture?.(texture);
+      return gpuFailure('creation_failed', error instanceof Error ? error.message : String(error));
+    }
+  };
+  const releaseGpu = (handle) => {
+    const normalized = Number(handle);
+    const entry = gpuResources.get(normalized);
+    if (!entry) return;
+    gpuResources.delete(normalized);
+    releasedGpuResources.add(normalized);
+    if (!entry.ok) return;
+    if (entry.framebuffer) entry.gl.deleteFramebuffer?.(entry.framebuffer);
+    if (entry.texture) entry.gl.deleteTexture?.(entry.texture);
+  };
+
   return {
     game_resource_load_text: (path) => load('text', path, (response) => response.text()),
     game_resource_load_bytes: (path) =>
@@ -969,6 +1065,32 @@ export function createGameServicesHost(options = {}) {
       return entry?.ok && entry.kind === 'font' ? String(entry.value.family ?? '') : '';
     },
     game_resource_release: release,
+    game_gpu_texture_from_resource: createGpuTexture,
+    game_gpu_render_target_create: createRenderTarget,
+    game_gpu_resource_ok: (handle) => Boolean(gpuEntryFor(handle)?.ok),
+    game_gpu_resource_error_code: gpuErrorCode,
+    game_gpu_resource_error_message: gpuErrorMessage,
+    game_gpu_resource_width: (handle) => Number(gpuEntryFor(handle)?.width ?? 0),
+    game_gpu_resource_height: (handle) => Number(gpuEntryFor(handle)?.height ?? 0),
+    game_gpu_texture_bind: (gl, handle) => {
+      const entry = gpuEntryFor(handle);
+      if (!entry?.ok || entry.gl !== gl) return false;
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, entry.texture);
+      return true;
+    },
+    game_gpu_target_bind: (gl, handle) => {
+      const entry = gpuEntryFor(handle);
+      if (!entry?.ok || entry.kind !== 'render-target' || entry.gl !== gl) return false;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, entry.framebuffer);
+      gl.viewport(0, 0, entry.width, entry.height);
+      return true;
+    },
+    game_gpu_screen_bind: (gl) => {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+    },
+    game_gpu_resource_release: releaseGpu,
 
     game_audio_load_sound: (path) => load('sound', path, async (response) => {
       const ctx = context();

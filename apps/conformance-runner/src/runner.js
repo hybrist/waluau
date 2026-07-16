@@ -55,7 +55,7 @@ export async function compileAndInstantiateWithExports(files, entryFile = '/main
   }
 }
 
-export async function compileAndInstantiateWithDom(files, entryFile = '/main.walu') {
+export async function compileAndInstantiateWithDom(files, entryFile = '/main.walu', options = {}) {
   const iframe = document.createElement('iframe');
   iframe.style.display = 'none';
   document.body.appendChild(iframe);
@@ -77,6 +77,7 @@ export async function compileAndInstantiateWithDom(files, entryFile = '/main.wal
 
     let instance;
     const imports = buildWaluauImports(wasmModule, undefined, {
+      ...options,
       wasmBytes: wasmBuffer,
       requiredImports: output.requiredImports,
       bytesConstants: output.bytesConstants,
