@@ -1,0 +1,11 @@
+-- Bindings introduced by a multi-binding `const` declaration are each
+-- const; a multi-assignment that targets one must fail.
+-- conformance: error=cannot rebind const local
+-- conformance: error='b'
+
+function entry(): f64
+    const a, b = 1.0, 2.0
+    local other = 0.0
+    other, b = 3.0, 4.0
+    return a + other
+end

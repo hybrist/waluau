@@ -1,0 +1,89 @@
+-- Luau `const` bindings (RFC #166, https://rfcs.luau.org/const-keyword.html;
+-- docs https://luau.org/syntax/#const-bindings): `const` works anywhere
+-- `local` does but forbids reassignment of the binding. The vendored Luau
+-- suite predates the keyword, so these cases are derived from the RFC/docs.
+
+-- Untyped const infers its type like `local`.
+const untyped = 5
+assert(untyped == 5)
+
+-- Optional type annotation.
+const typed: f64 = 2.5
+assert(typed * 2.0 == 5.0)
+
+-- Multiple bindings, unannotated and per-name annotated. (Waluau requires
+-- multi-binding declarations to annotate all names or none — a pre-existing
+-- `local` restriction, not a const one — so the two styles are not mixed.)
+const a, b = 1, 2
+assert(a + b == 3)
+const c: i32, d: i32 = 10, 20
+assert(c + d == 30)
+
+-- A top-level untyped const literal is a module constant, visible inside
+-- function bodies just like `local NAME <const> = <literal>`.
+const SCALE = 3.0
+
+function scaled(v: f64): f64
+    return v * SCALE
+end
+
+assert(scaled(2.0) == 6.0)
+
+-- `const function` declares a non-rebindable function binding; like
+-- `local function`, the name is visible inside its own body for recursion.
+function const_function_form(): i32
+    const function fact(n: i32): i32
+        if n <= 1 then
+            return 1
+        end
+        return n * fact(n - 1)
+    end
+    return fact(5)
+end
+
+assert(const_function_form() == 120)
+
+-- Shadowing is permitted: an inner scope may rebind the same name.
+function shadowing(): f64
+    const s = 1.0
+    if true then
+        const s = 2.0
+        assert(s == 2.0)
+    end
+    return s
+end
+
+assert(shadowing() == 1.0)
+
+-- Closures may read captured const bindings.
+function closure_reads_const(): f64
+    const base = 10.0
+    local read = function(): f64
+        return base
+    end
+    return read()
+end
+
+assert(closure_reads_const() == 10.0)
+
+-- const makes the *binding* immutable, not the value: the contents of a
+-- table reached through a const binding stay mutable.
+function value_stays_mutable(): f64
+    const items = { 1.0, 2.0 }
+    items[1] = 10.0
+    return items[1]
+end
+
+assert(value_stays_mutable() == 10.0)
+
+-- `const` stays contextual: it is still a valid variable name, and
+-- assignments to it still parse as assignments, not declarations.
+function const_as_name(): f64
+    local const = 1.0
+    const = 2.0
+    local other = 0.0
+    const, other = 3.0, 4.0
+    return const + other
+end
+
+assert(const_as_name() == 7.0)

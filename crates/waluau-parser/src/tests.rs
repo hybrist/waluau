@@ -1322,6 +1322,96 @@ fn parses_function_literal_without_return_annotation() {
 }
 
 #[test]
+fn parses_untyped_const_declaration() {
+    let source = r#"
+        function entry(): i32
+            const x = 5
+            return x
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let function = &program.functions[0];
+    assert!(matches!(
+        &function.body[0],
+        waluau_ast::Stmt::Let {
+            name,
+            rebindability: Rebindability::Const,
+            ty: None,
+            ..
+        } if name == "x"
+    ));
+}
+
+#[test]
+fn parses_multi_binding_const_declaration() {
+    let source = r#"
+        function entry(): i32
+            const a, b = 1, 2
+            const c: i32, d = 3, 4
+            return a + b + c + d
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let function = &program.functions[0];
+    assert!(matches!(
+        &function.body[0],
+        waluau_ast::Stmt::LetMulti { bindings, values }
+            if bindings.len() == 2
+                && values.len() == 2
+                && bindings.iter().all(|b| b.rebindability == Rebindability::Const)
+                && bindings[0].name == "a"
+                && bindings[1].name == "b"
+    ));
+    assert!(matches!(
+        &function.body[1],
+        waluau_ast::Stmt::LetMulti { bindings, .. }
+            if bindings[0].ty == Some(Type::Numeric(NumericType::I32)) && bindings[1].ty.is_none()
+    ));
+}
+
+#[test]
+fn parses_const_function_declaration() {
+    let source = r#"
+        function entry(): i32
+            const function double(x: i32): i32
+                return x * 2
+            end
+            return double(21)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let function = &program.functions[0];
+    assert!(matches!(
+        &function.body[0],
+        waluau_ast::Stmt::Let {
+            name,
+            rebindability: Rebindability::Const,
+            ty: None,
+            value: waluau_ast::Expr::Function(_),
+            ..
+        } if name == "double"
+    ));
+}
+
+#[test]
+fn rejects_const_declaration_without_initializer() {
+    let source = r#"
+        function entry(): i32
+            const x
+            return 0
+        end
+    "#;
+    let error = parse(source).expect_err("parse should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("const bindings must be initialized"),
+        "unexpected message: {}",
+        error
+    );
+}
+
+#[test]
 fn const_is_contextual_not_reserved() {
     let source = r#"
         function entry(): i32

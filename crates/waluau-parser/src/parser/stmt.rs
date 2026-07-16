@@ -228,17 +228,19 @@ impl Parser {
         })
     }
 
+    /// `const` is contextual, not reserved. Only an identifier or `function`
+    /// after it can begin a declaration: two adjacent identifiers are never
+    /// valid Lua otherwise, so `const = 1`, `const, x = ...`, and `const(...)`
+    /// keep parsing as ordinary assignment/expression statements.
     fn is_const_decl_start(&self) -> bool {
         matches!(
             (
                 self.peek().map(|token| &token.kind),
                 self.peek_n(1).map(|token| &token.kind),
-                self.peek_n(2).map(|token| &token.kind),
             ),
             (
                 Some(TokenKind::Identifier(keyword)),
-                Some(TokenKind::Identifier(_)),
-                Some(TokenKind::Colon)
+                Some(TokenKind::Identifier(_) | TokenKind::Function)
             ) if keyword == "const"
         )
     }
@@ -248,29 +250,56 @@ impl Parser {
         if keyword != "const" {
             return Err(Diagnostic::new("expected 'const'"));
         }
-        let name = self.expect_identifier()?;
-        self.expect_simple(TokenKind::Colon, "expected ':' after const name")?;
-        let ty = self.parse_type()?;
-        self.expect_simple(TokenKind::Equal, "expected '=' in const declaration")?;
-        let values = self.parse_expr_list()?;
-        Ok(if values.len() == 1 {
-            Stmt::Let {
+        if self.check_simple(&TokenKind::Function) {
+            let start_pos = self.peek().map(|t| t.span.start).unwrap_or(0);
+            self.advance();
+            let name = self.expect_identifier()?;
+            let function = self.parse_function_expr_tail(Some(name.clone()), false, start_pos)?;
+            return Ok(Stmt::Let {
                 name,
                 symbol_id: None,
                 rebindability: Rebindability::Const,
-                ty: Some(ty),
+                ty: None,
+                value: Expr::Function(function),
+            });
+        }
+        let mut bindings = Vec::new();
+        loop {
+            let name = self.expect_identifier()?;
+            let ty = if self.check_simple(&TokenKind::Colon) {
+                self.advance();
+                Some(self.parse_type()?)
+            } else {
+                None
+            };
+            bindings.push(Binding {
+                name,
+                symbol_id: None,
+                rebindability: Rebindability::Const,
+                ty,
+            });
+            if !self.check_simple(&TokenKind::Comma) {
+                break;
+            }
+            self.advance();
+        }
+        // Unlike `local`, a const binding must be initialized at declaration.
+        self.expect_simple(
+            TokenKind::Equal,
+            "expected '=' in const declaration (const bindings must be initialized)",
+        )?;
+        let values = self.parse_expr_list()?;
+        Ok(if bindings.len() == 1 && values.len() == 1 {
+            let binding = bindings.into_iter().next().expect("len checked");
+            Stmt::Let {
+                name: binding.name,
+                symbol_id: None,
+                rebindability: Rebindability::Const,
+                ty: binding.ty,
                 value: values.into_iter().next().expect("len checked"),
             }
         } else {
-            Stmt::LetMulti {
-                bindings: vec![Binding {
-                    name,
-                    symbol_id: None,
-                    rebindability: Rebindability::Const,
-                    ty: Some(ty),
-                }],
-                values,
-            }
+            Stmt::LetMulti { bindings, values }
         })
     }
 
