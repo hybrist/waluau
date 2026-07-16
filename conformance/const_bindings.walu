@@ -11,13 +11,12 @@ assert(untyped == 5)
 const typed: f64 = 2.5
 assert(typed * 2.0 == 5.0)
 
--- Multiple bindings, unannotated and per-name annotated. (Waluau requires
--- multi-binding declarations to annotate all names or none — a pre-existing
--- `local` restriction, not a const one — so the two styles are not mixed.)
+-- Multiple bindings; annotations are optional per name and may be mixed.
 const a, b = 1, 2
 assert(a + b == 3)
-const c: i32, d: i32 = 10, 20
-assert(c + d == 30)
+const c: i32, d = 10, 20
+assert(c == 10)
+assert(d == 20)
 
 -- A top-level untyped const literal is a module constant, visible inside
 -- function bodies just like `local NAME <const> = <literal>`.

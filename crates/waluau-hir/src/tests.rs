@@ -2153,6 +2153,54 @@ fn rejects_multi_binding_arity_mismatch() {
 }
 
 #[test]
+fn type_checks_mixed_annotation_multi_binding() {
+    let source = r#"
+        function entry(): i32
+            local a: i32, b = 10, 20.5
+            const c: i32, d = 3, 4.0
+            local e, f: i32 = 1.5, 2
+            return a + c + f
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_mixed_annotation_multi_binding_value_mismatch() {
+    let source = r#"
+        function entry(): i32
+            local a: i32, b = "nope", 2.0
+            return a
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot implicitly convert string to i32"),
+        "unexpected message: {error}"
+    );
+}
+
+#[test]
+fn rejects_mixed_annotation_multi_binding_arity_mismatch() {
+    let source = r#"
+        function entry(x: i32): i32
+            local a: i32, b = x
+            return a
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "multi-binding declaration expects 2 values, got 1"
+    );
+}
+
+#[test]
 fn rejects_multi_value_call_arity_mismatch() {
     let source = r#"
         function pair(x: i32): i32, i32

@@ -1,0 +1,38 @@
+-- A multi-binding declaration may annotate any subset of its names, as in
+-- upstream Luau: annotated names check against their annotation, while
+-- unannotated names infer from their initializer.
+
+function first_annotated(): i32
+    local a: i32, b = 10, 20.5
+    assert(b == 20.5)
+    return a
+end
+
+assert(first_annotated() == 10)
+
+function last_annotated(): i32
+    local a, b: i32 = 1.5, 20
+    assert(a == 1.5)
+    return b
+end
+
+assert(last_annotated() == 20)
+
+-- The annotation drives literal typing exactly as in the fully annotated
+-- form: an i32 annotation makes integer arithmetic truncate.
+function annotated_slot_types_literal(): i32
+    local q: i32, r = 7, 0.5
+    assert(r == 0.5)
+    return q // 2
+end
+
+assert(annotated_slot_types_literal() == 3)
+
+-- Mixed annotations work on const declarations too.
+function mixed_const(): i32
+    const x: i32, y = 3, 4.0
+    assert(y == 4.0)
+    return x
+end
+
+assert(mixed_const() == 3)

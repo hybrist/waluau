@@ -2215,18 +2215,41 @@ impl Builder<'_> {
                 self.current_block = DEAD_BLOCK;
             }
             Stmt::LetMulti { bindings, values } => {
-                let all_typed = bindings.iter().all(|binding| binding.ty.is_some());
                 let any_typed = bindings.iter().any(|binding| binding.ty.is_some());
-                if any_typed && !all_typed {
-                    return Err(Diagnostic::new(
-                        "multi-binding declaration must either annotate all bindings or none",
-                    ));
-                }
-                if all_typed {
-                    let expected: Vec<Type> = bindings
-                        .iter()
-                        .map(|binding| binding.ty.clone().expect("checked above"))
-                        .collect();
+                if any_typed {
+                    // Annotated names use their annotation; unannotated names
+                    // in a mixed declaration fall back to the unconstrained
+                    // type of their initializer slot.
+                    let expected: Vec<Type> = if bindings.iter().all(|binding| binding.ty.is_some())
+                    {
+                        bindings
+                            .iter()
+                            .map(|binding| binding.ty.clone().expect("checked above"))
+                            .collect()
+                    } else {
+                        let mut inferred_types = Vec::new();
+                        for expr in values {
+                            let ty = self.infer_expr_type(expr, types, None)?;
+                            match ty {
+                                Type::Multi(types_for_expr) => {
+                                    inferred_types.extend(types_for_expr);
+                                }
+                                other => inferred_types.push(other),
+                            }
+                        }
+                        if inferred_types.len() < bindings.len() {
+                            return Err(Diagnostic::new(format!(
+                                "multi-binding declaration expects {} values, got {}",
+                                bindings.len(),
+                                inferred_types.len()
+                            )));
+                        }
+                        bindings
+                            .iter()
+                            .zip(inferred_types)
+                            .map(|(binding, inferred)| binding.ty.clone().unwrap_or(inferred))
+                            .collect()
+                    };
                     let lowered = self.lower_expr_list(values, env, types, Some(&expected))?;
                     if lowered.len() < expected.len() {
                         return Err(Diagnostic::new(format!(

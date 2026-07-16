@@ -1,0 +1,8 @@
+-- An annotated name in a mixed multi-binding declaration still checks its
+-- initializer against the annotation.
+-- conformance: error=cannot implicitly convert string to i32
+
+function entry(): i32
+    local a: i32, b = "nope", 2.0
+    return a
+end
