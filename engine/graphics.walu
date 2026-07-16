@@ -390,6 +390,18 @@ function glyph_run(slot: i32, row: i32, column: i32): i32
     return run
 end
 
+-- Width of text in logical pixels for the font selected by set_font. This is
+-- the same pen advance print uses, including the inter-glyph spacing after the
+-- final character, so callers never need to know the bitmap font dimensions.
+function Graphics:text_width(text: string): f64
+    local width: f64 = 0.0
+    local advance: f64 = self.font_pixel * ((font.width() + 1)::f64)
+    for _ = 1::i32, #text do
+        width += advance
+    end
+    return width
+end
+
 -- Text renders as one quad per horizontal run of set font pixels. The y
 -- coordinate is the baseline, matching the Canvas 2D fillText convention
 -- the previous backend exposed.
@@ -424,6 +436,21 @@ function Graphics:print(text: string, x: f64, y: f64): unit
         end
         pen += pixel * ((font.width() + 1)::f64)
     end
+end
+
+-- Prints relative to a logical-pixel anchor using the current font state.
+-- "left" starts at x, "center" centers the text on x, and "right" ends its
+-- advance at x. The y coordinate remains the same baseline used by print.
+function Graphics:print_aligned(text: string, x: f64, y: f64, alignment: string): unit
+    local origin: f64 = x
+    if alignment == "center" then
+        origin -= self:text_width(text) * 0.5
+    elseif alignment == "right" then
+        origin -= self:text_width(text)
+    elseif alignment ~= "left" then
+        error("text alignment must be left, center, or right")
+    end
+    self:print(text, origin, y)
 end
 
 function Graphics:push(): unit

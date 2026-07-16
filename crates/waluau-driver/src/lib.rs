@@ -672,6 +672,12 @@ mod tests {
     }
 
     #[test]
+    fn compiles_game_engine_text_alignment_fixture() {
+        super::compile_file(&fixture_path("game-engine/text-alignment.walu"))
+            .expect("text alignment fixture should compile");
+    }
+
+    #[test]
     fn compiles_2d_game_engine_headless_simulation() {
         super::compile_file(&fixture_path("game-engine/sim.walu"))
             .expect("headless game engine simulation should compile");
