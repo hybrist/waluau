@@ -1,12 +1,10 @@
 -- Engine-rendered presentation for Arcane Heist. Everything visible to the
 -- player lives on this one logical canvas, including secondary modal screens.
 
--- TODO(waluau-tpil): Import Graphics through the stable aggregate engine
--- package once cross-module type re-exports preserve alias identity.
-local graphics_module = require("../../engine/graphics")
+local engine = require("waluau:engine")
 local game = require("./game")
 
-type Graphics = graphics_module.Graphics
+type Graphics = engine.Graphics
 
 const WIDTH: f64 = 960.0
 const HEIGHT: f64 = 600.0

@@ -352,6 +352,19 @@ mod tests {
     }
 
     #[test]
+    fn compile_multi_embeds_stable_engine_package() {
+        let files = HashMap::from([(
+            "/main.walu".to_string(),
+            include_str!("../../../examples/game-project/main.walu").to_string(),
+        )]);
+
+        let result = compile_sources(&files, "/main.walu")
+            .expect("browser compiler should resolve the embedded engine package");
+        assert!(result.wat.contains("dom_window"));
+        assert!(result.wat.contains("requestAnimationFrame"));
+    }
+
+    #[test]
     fn compile_success_ir_contains_function_name() {
         let source = "function greet(x: i32): i32\n    return x\nend";
         let result = compile_source(source).expect("compile should succeed");
