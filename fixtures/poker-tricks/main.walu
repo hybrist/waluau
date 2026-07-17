@@ -39,8 +39,10 @@ const MODAL_NONE: i32 = 0
 const MODAL_HISTORY: i32 = 1
 const MODAL_HELP: i32 = 2
 const MODAL_FINAL: i32 = 4
--- Both staggered flips finish before the first continue press advances play.
-const BOARD_REVEAL_SECONDS: f64 = 1.6
+-- Covers the staggered flips, the winner's pair flying into the ward row
+-- (render.walu's FLY_START + FLY_STAGGER + FLY_SECONDS = 1.87), and the
+-- halo's fade to full, before the first continue press advances play.
+const BOARD_REVEAL_SECONDS: f64 = 2.3
 
 const ANIM_NONE: i32 = 0
 const ANIM_DEAL: i32 = 1
