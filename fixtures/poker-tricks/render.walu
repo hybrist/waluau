@@ -7,8 +7,9 @@ local game = require("./game")
 
 type Graphics = engine.Graphics
 type EffectShaders = {
-    shared: graphics_module.Shader?,
+    energy: graphics_module.Shader?,
     red_fire: graphics_module.Shader?,
+    blue_caustics: graphics_module.Shader?,
     black_hole: graphics_module.Shader?,
     green_growth: graphics_module.Shader?
 }
@@ -26,9 +27,7 @@ const SELECTION_HIGHLIGHT: string = "#fbbf24"
 
 -- Arcane Heist owns its visual effects. The engine supplies the shared 2D
 -- vertex contract and standard u_time/u_pixel_scale/u_texture uniforms, while
--- this game supplies both GLSL stages and its effect parameter.
-const EFFECT_WATER: f64 = 2.0
-const EFFECT_ENERGY: f64 = 9.0
+-- this game supplies both GLSL stages and its school-specific parameters.
 
 local EFFECT_VERTEX_SOURCE <const>: string = [[
 attribute vec2 a_position;
@@ -46,7 +45,7 @@ void main() {
 }
 ]]
 
-local EFFECT_PIXEL_SOURCE <const>: string = [[
+local ENERGY_PIXEL_SOURCE <const>: string = [[
 precision mediump float;
 varying vec4 v_color;
 varying vec2 v_uv;
@@ -54,27 +53,16 @@ varying float v_textured;
 uniform float u_time;
 uniform vec2 u_pixel_scale;
 uniform sampler2D u_texture;
-uniform float u_effect;
 void main() {
     vec3 color = v_color.rgb;
     float alpha = v_color.a;
     vec2 p = gl_FragCoord.xy / u_pixel_scale;
-    float effect = u_effect;
-    bool energy = effect > 8.5;
-    bool grayscale = !energy && effect > 4.5;
-    if (grayscale) effect -= 4.0;
-    if (energy) {
-        float crackle = sin(p.x * 0.21 + u_time * 6.5 + sin(p.y * 0.27 - u_time * 4.7) * 2.6);
-        float surge = sin((p.x + p.y) * 0.09 - u_time * 8.0);
-        float charge = 0.5 + 0.5 * crackle * surge;
-        charge *= charge;
-        color = color * (0.55 + 1.1 * charge) + vec3(0.45, 0.38, 0.12) * charge * charge;
-        alpha *= 0.5 + 0.8 * charge;
-    } else if (effect > 1.5) {
-        float ripple = sin(p.y * 0.08 + sin(p.x * 0.05 + u_time * 1.3) * 2.0 + u_time * 1.8);
-        vec3 tint = grayscale ? vec3(0.04) : vec3(0.0, 0.035, 0.08);
-        color += tint * (0.5 + 0.5 * ripple);
-    }
+    float crackle = sin(p.x * 0.21 + u_time * 6.5 + sin(p.y * 0.27 - u_time * 4.7) * 2.6);
+    float surge = sin((p.x + p.y) * 0.09 - u_time * 8.0);
+    float charge = 0.5 + 0.5 * crackle * surge;
+    charge *= charge;
+    color = color * (0.55 + 1.1 * charge) + vec3(0.45, 0.38, 0.12) * charge * charge;
+    alpha *= 0.5 + 0.8 * charge;
     vec4 output_color = vec4(color, alpha);
     if (v_textured > 0.5) output_color *= texture2D(u_texture, v_uv);
     gl_FragColor = output_color;
@@ -134,6 +122,71 @@ void main() {
 
     vec3 school_red = vec3(0.937255, 0.266667, 0.266667);
     vec4 output_color = vec4(school_red * brightness, v_color.a);
+    if (v_textured > 0.5) output_color *= texture2D(u_texture, v_uv);
+    gl_FragColor = output_color;
+}
+]]
+
+-- Blue is light refracting through deep water: several independently warped
+-- ridges cross into a drifting caustic mesh, while sparse rings expand softly
+-- through it. The whole field remains one blue hue at different brightnesses.
+local BLUE_CAUSTICS_PIXEL_SOURCE <const>: string = [[
+precision mediump float;
+varying vec4 v_color;
+varying vec2 v_uv;
+varying float v_textured;
+uniform float u_time;
+uniform sampler2D u_texture;
+uniform float u_aspect;
+uniform float u_selected;
+
+float caustic_ridge(float wave) {
+    float distance_to_light = 1.0 - abs(sin(wave));
+    return distance_to_light * distance_to_light * distance_to_light
+        * distance_to_light * distance_to_light;
+}
+
+float expanding_ripple(vec2 p, vec2 origin, float phase) {
+    float cycle = fract(u_time * 0.115 + phase);
+    float radius = cycle * 1.22;
+    float ring_distance = abs(length(p - origin) - radius);
+    float ring = 1.0 - smoothstep(0.020, 0.070, ring_distance);
+    return ring * sin(cycle * 3.141593) * (1.0 - cycle);
+}
+
+void main() {
+    vec2 p = vec2((v_uv.x - 0.5) * 2.0 * u_aspect, (v_uv.y - 0.5) * 2.0);
+
+    // Two slow refraction currents distort the coordinate field before any
+    // light ridges are measured, producing curved cells instead of stripes.
+    vec2 q = p;
+    q.x += sin(p.y * 3.1 + u_time * 0.47) * 0.105;
+    q.x += sin(p.y * 6.7 - u_time * 0.31) * 0.040;
+    q.y += sin(p.x * 2.8 - u_time * 0.39) * 0.090;
+    q.y += sin(p.x * 5.9 + u_time * 0.28) * 0.035;
+
+    float ridge1 = caustic_ridge(q.x * 7.2 + q.y * 2.8 + u_time * 0.82
+        + sin(q.y * 5.0 - u_time * 0.43) * 1.15);
+    float ridge2 = caustic_ridge(-q.x * 4.9 + q.y * 8.1 - u_time * 0.66
+        + sin(q.x * 5.7 + u_time * 0.37) * 1.05);
+    float ridge3 = caustic_ridge(q.x * 5.4 + q.y * 6.3 + u_time * 0.51
+        + sin((q.x - q.y) * 4.2 - u_time * 0.29) * 0.82);
+    float network = max(ridge1, max(ridge2, ridge3));
+    float intersections = max(ridge1 * ridge2, max(ridge2 * ridge3, ridge1 * ridge3));
+
+    float ripple1 = expanding_ripple(p, vec2(-0.38, 0.18), 0.08);
+    float ripple2 = expanding_ripple(p, vec2(0.46, -0.32), 0.59);
+    float depth = 0.5 + 0.5 * sin(p.y * 2.2 + u_time * 0.24);
+    float shimmer = 0.90 + 0.10 * sin(u_time * 2.0 + p.x * 3.4 - p.y * 2.1);
+    float brightness = 0.065 + depth * 0.035;
+    brightness += network * 0.34 * shimmer;
+    brightness += intersections * 0.22;
+    brightness += (ripple1 + ripple2) * 0.15;
+    brightness += u_selected * 0.08 * network;
+    brightness = clamp(brightness, 0.055, 0.82);
+
+    vec3 school_blue = vec3(0.219608, 0.741176, 0.972549);
+    vec4 output_color = vec4(school_blue * brightness, v_color.a);
     if (v_textured > 0.5) output_color *= texture2D(u_texture, v_uv);
     gl_FragColor = output_color;
 }
@@ -277,12 +330,16 @@ void main() {
 }
 ]]
 
-function create_shared_effect_shader(graphics: Graphics): graphics_module.ShaderResult
-    return graphics:create_shader(EFFECT_VERTEX_SOURCE, EFFECT_PIXEL_SOURCE)
+function create_energy_shader(graphics: Graphics): graphics_module.ShaderResult
+    return graphics:create_shader(EFFECT_VERTEX_SOURCE, ENERGY_PIXEL_SOURCE)
 end
 
 function create_red_fire_shader(graphics: Graphics): graphics_module.ShaderResult
     return graphics:create_shader(EFFECT_VERTEX_SOURCE, RED_FIRE_PIXEL_SOURCE)
+end
+
+function create_blue_caustics_shader(graphics: Graphics): graphics_module.ShaderResult
+    return graphics:create_shader(EFFECT_VERTEX_SOURCE, BLUE_CAUSTICS_PIXEL_SOURCE)
 end
 
 function create_green_growth_shader(graphics: Graphics): graphics_module.ShaderResult
@@ -293,16 +350,27 @@ function create_black_hole_shader(graphics: Graphics): graphics_module.ShaderRes
     return graphics:create_shader(EFFECT_VERTEX_SOURCE, BLACK_HOLE_PIXEL_SOURCE)
 end
 
-function use_effect(graphics: Graphics, effects: EffectShaders, effect: f64): bool
-    local maybe_shader: graphics_module.Shader? = effects.shared
+function use_energy(graphics: Graphics, effects: EffectShaders): bool
+    local maybe_shader: graphics_module.Shader? = effects.energy
     if maybe_shader == nil then return false end
     local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    if not graphics:use_shader(shader) then return false end
-    return graphics:set_uniform_float("u_effect", effect)
+    return graphics:use_shader(shader)
 end
 
 function use_red_fire(graphics: Graphics, effects: EffectShaders, selected: bool, aspect: f64): bool
     local maybe_shader: graphics_module.Shader? = effects.red_fire
+    if maybe_shader == nil then return false end
+    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
+    if not graphics:use_shader(shader) then return false end
+    local selected_value: f64 = 0.0
+    if selected then selected_value = 1.0 end
+    local aspect_ok: bool = graphics:set_uniform_float("u_aspect", aspect)
+    local selected_ok: bool = graphics:set_uniform_float("u_selected", selected_value)
+    return aspect_ok and selected_ok
+end
+
+function use_blue_caustics(graphics: Graphics, effects: EffectShaders, selected: bool, aspect: f64): bool
+    local maybe_shader: graphics_module.Shader? = effects.blue_caustics
     if maybe_shader == nil then return false end
     local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
     if not graphics:use_shader(shader) then return false end
@@ -558,6 +626,11 @@ function is_picked(picks: {i32}, value: i32): bool
 end
 
 function draw_sigil(graphics: Graphics, suit: i32, x: f64, y: f64): unit
+    -- Every school mark sits on the same compact ink seal. Active shaders can
+    -- become bright directly beneath a line, so relying on contrast from the
+    -- card field alone would let the colored symbol disappear frame-to-frame.
+    graphics:set_color("#09090b")
+    graphics:fill_circle(x + 11.0, y + 3.0, 18.0)
     graphics:set_color(school_color(suit))
     graphics:set_line_width(3.0)
     if suit == 0 then
@@ -613,7 +686,7 @@ end
 -- without changing its shape.
 function draw_glow_box(graphics: Graphics, effects: EffectShaders, x: f64, y: f64, width: f64, height: f64, strength: f64): unit
     if strength <= 0.0 then return end
-    use_effect(graphics, effects, EFFECT_ENERGY)
+    use_energy(graphics, effects)
     for ring = 0::i32, GLOW_RINGS - 1 do
         local inner: f64 = (ring::f64) * GLOW_RING_STEP
         local t: f64 = ((ring::f64) + 0.5) / (GLOW_RINGS::f64)
@@ -645,24 +718,18 @@ function draw_card_back(graphics: Graphics, card_back: graphics_module.Texture?,
     panel(graphics, x, y, CARD_W, CARD_H, fill, "#3f3f46")
 end
 
-function school_effect(suit: i32, selected: bool): f64
-    local effect: f64 = EFFECT_WATER
-    if suit == 2 then effect = 0.0 end
-    if selected then effect += 4.0 end
-    return effect
-end
-
 function draw_card_face(graphics: Graphics, effects: EffectShaders, card: game.Card, x: f64, y: f64, selected: bool, colored: bool): unit
     -- Suit marks always keep their school color. Selection activates the
     -- school's grayscale pattern; contributing cards use its colored variant.
     if card.suit == 0 and (colored or selected) then
         use_red_fire(graphics, effects, selected, (CARD_W - 4.0) / (CARD_H - 4.0))
+    elseif card.suit == 1 and (colored or selected) then
+        use_blue_caustics(graphics, effects, selected, (CARD_W - 4.0) / (CARD_H - 4.0))
     elseif card.suit == 2 and (colored or selected) then
         use_black_hole(graphics, effects, selected, (CARD_W - 4.0) / (CARD_H - 4.0))
     elseif card.suit == 3 and (colored or selected) then
         use_green_growth(graphics, effects, selected, (CARD_W - 4.0) / (CARD_H - 4.0))
-    elseif colored then use_effect(graphics, effects, school_effect(card.suit, false))
-    elseif selected then use_effect(graphics, effects, school_effect(card.suit, true)) end
+    end
     graphics:set_color("#17171c")
     graphics:fill_rectangle(x + 2.0, y + 2.0, CARD_W - 4.0, CARD_H - 4.0)
     if colored or selected then stop_effect(graphics) end
@@ -1124,12 +1191,12 @@ function draw_help(graphics: Graphics, effects: EffectShaders): unit
         local center: f64 = tile_x + tile_width * 0.5
         if suit == 0 then
             use_red_fire(graphics, effects, false, tile_width / 76.0)
+        elseif suit == 1 then
+            use_blue_caustics(graphics, effects, false, tile_width / 76.0)
         elseif suit == 2 then
             use_black_hole(graphics, effects, false, tile_width / 76.0)
         elseif suit == 3 then
             use_green_growth(graphics, effects, false, tile_width / 76.0)
-        else
-            use_effect(graphics, effects, school_effect(suit, false))
         end
         graphics:set_color("#17171c")
         graphics:fill_rectangle(tile_x, 164.0, tile_width, 76.0)
@@ -1206,8 +1273,9 @@ end
 
 return {
     draw = draw,
-    create_shared_effect_shader = create_shared_effect_shader,
+    create_energy_shader = create_energy_shader,
     create_red_fire_shader = create_red_fire_shader,
+    create_blue_caustics_shader = create_blue_caustics_shader,
     create_black_hole_shader = create_black_hole_shader,
     create_green_growth_shader = create_green_growth_shader,
     slot_x = slot_x,

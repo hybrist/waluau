@@ -492,8 +492,9 @@ function install_arcane_heist(): unit
         texture = nil,
         font = nil,
         effects = {
-            shared = nil,
+            energy = nil,
             red_fire = nil,
+            blue_caustics = nil,
             black_hole = nil,
             green_growth = nil,
         },
@@ -570,17 +571,23 @@ function install_arcane_heist(): unit
     local function draw(graphics: engine.Graphics, alpha: f64): unit
         if not assets.shader_finished then
             assets.shader_finished = true
-            local shared_result: graphics_module.ShaderResult = render.create_shared_effect_shader(graphics)
-            if shared_result.ok then assets.effects.shared = shared_result.shader
+            local energy_result: graphics_module.ShaderResult = render.create_energy_shader(graphics)
+            if energy_result.ok then assets.effects.energy = energy_result.shader
             else
                 if #assets.error > 0 then assets.error ..= "; " end
-                assets.error ..= "shared " .. shared_result.error.code .. ": " .. shared_result.error.message
+                assets.error ..= "energy " .. energy_result.error.code .. ": " .. energy_result.error.message
             end
             local red_result: graphics_module.ShaderResult = render.create_red_fire_shader(graphics)
             if red_result.ok then assets.effects.red_fire = red_result.shader
             else
                 if #assets.error > 0 then assets.error ..= "; " end
                 assets.error ..= "red " .. red_result.error.code .. ": " .. red_result.error.message
+            end
+            local blue_result: graphics_module.ShaderResult = render.create_blue_caustics_shader(graphics)
+            if blue_result.ok then assets.effects.blue_caustics = blue_result.shader
+            else
+                if #assets.error > 0 then assets.error ..= "; " end
+                assets.error ..= "blue " .. blue_result.error.code .. ": " .. blue_result.error.message
             end
             local black_result: graphics_module.ShaderResult = render.create_black_hole_shader(graphics)
             if black_result.ok then assets.effects.black_hole = black_result.shader
