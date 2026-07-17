@@ -19,9 +19,11 @@ host calls. The game, help, history, and final outcome all render inside one
 board, where color identifies the winning formation and any decisive kickers.
 After the reveal flips, the winner's two cards fly out of their row and flank
 the three wards, completing the five-card formation in the middle of the
-board; a single golden halo then ignites around the whole set, drawn with the
-engine's `energy` material, whose shader-driven crackle keeps vibrating off
-the live frame clock even while the settled reveal itself holds still.
+board; a single golden halo then ignites around the whole set. The game's own
+vertex/pixel shader supplies its crackle, which keeps vibrating off the live
+frame clock even while the settled reveal itself holds still. Black-school
+cards use a separate local-space shader: a rotating violet accretion nexus
+collapsing into a black event horizon.
 
 Cards never simply appear or vanish: every relic and ward is dealt off a
 visible face-down pile beside the board — the opening hands, each round's
@@ -67,7 +69,7 @@ flat.
 | File | Purpose |
 | --- | --- |
 | `main.walu` | Engine entry point and keyboard-driven game flow. |
-| `render.walu` | Platform-independent playfield and modal rendering. |
+| `render.walu` | Playfield/modal rendering and the game's vertex/pixel effect shader. |
 | `game.walu` | Host-independent deck, ranking, AI, and scoring rules. |
 | `sim.walu` | Deterministic assertions for rankings and full-game completion. |
 | `waluau.assets.json` | Typed package manifest for the card back and vault font. |
@@ -75,11 +77,12 @@ flat.
 The sealed-card artwork is the committed vector
 [`assets/card-back.svg`](assets/card-back.svg). Until its asynchronous image
 load and GPU copy complete—or if either reports a structured failure—the
-renderer keeps the equivalent procedural ward as a visual fallback. Text uses
-the packaged Press Start 2P font after its FontFace resource has been copied to
-a GPU glyph atlas, with the built-in bitmap font as the not-ready/failure
-fallback. Source image/font resources are released immediately after the GPU
-copies succeed; GPU resources retain their own explicit lifetime.
+renderer shows only a neutral sealed silhouette; it does not maintain a second
+procedural copy of the artwork. Text uses the packaged Press Start 2P font
+after its FontFace resource has been copied to a GPU glyph atlas, with the
+built-in bitmap font as the not-ready/failure fallback. Source image/font
+resources are released immediately after the GPU copies succeed; GPU resources
+retain their own explicit lifetime.
 
 Press Start 2P is distributed under the SIL Open Font License 1.1; the bundled
 license is [`assets/OFL-PressStart2P.txt`](assets/OFL-PressStart2P.txt).

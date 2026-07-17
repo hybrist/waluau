@@ -16,7 +16,7 @@ import gameEngineMain from '../../../fixtures/game-engine/main.walu?raw';
 import gameEngineTextAlignment from '../../../fixtures/game-engine/text-alignment.walu?raw';
 import gameEngineGraphicsPaths from '../../../fixtures/game-engine/graphics-paths.walu?raw';
 import stableEngineProject from '../../../examples/game-project/main.walu?raw';
-import gameEngineGpuMaterials from '../../../fixtures/game-engine/gpu-materials.walu?raw';
+import gameEngineGpuShaders from '../../../fixtures/game-engine/gpu-shaders.walu?raw';
 import gameEngineGpuResources from '../../../fixtures/game-engine/gpu-resources.walu?raw';
 import gameEngineGpuFontResources from '../../../fixtures/game-engine/gpu-font-resources.walu?raw';
 import pokerCardBack from '../../../fixtures/poker-tricks/assets/card-back.svg?raw';
@@ -1054,10 +1054,10 @@ describe('browser conformance', () => {
     }
   });
 
-  it('reports GPU capabilities and uses named material resources safely', async () => {
+  it('compiles, binds, configures, and releases game-provided shaders', async () => {
     const { root, cleanup } = await compileAndInstantiateWithDom(
       {
-        '/fixtures/game-engine/gpu-materials.walu': gameEngineGpuMaterials,
+        '/fixtures/game-engine/gpu-shaders.walu': gameEngineGpuShaders,
         '/engine/browser.walu': gameEngineBrowser,
         '/engine/graphics.walu': gameEngineGraphics,
         '/engine/resources.walu': gameEngineResources,
@@ -1065,17 +1065,26 @@ describe('browser conformance', () => {
         '/engine/input.walu': gameEngineInput,
         '/engine/time.walu': gameEngineTime,
       },
-      '/fixtures/game-engine/gpu-materials.walu'
+      '/fixtures/game-engine/gpu-shaders.walu'
     );
     try {
       const canvas = root.querySelector('#walua-game-canvas');
       expect(canvas).not.toBeNull();
       const gl = canvas.getContext('webgl2');
-      const pixel = new Uint8Array(4);
+      const leftPixel = new Uint8Array(4);
+      const rightPixel = new Uint8Array(4);
+      const secondPixel = new Uint8Array(4);
       await expect.poll(() => {
-        gl.readPixels(32, 100 - 1 - 32, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
-        return pixel[1];
-      }, { timeout: 10_000 }).toBeGreaterThan(200);
+        gl.readPixels(32, 100 - 1 - 32, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, leftPixel);
+        gl.readPixels(96, 100 - 1 - 32, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, rightPixel);
+        return leftPixel[1];
+      }, { timeout: 10_000 }).toBeGreaterThan(160);
+      // Untextured rectangles expose normalized local UVs to procedural shaders.
+      expect(rightPixel[1]).toBeGreaterThan(leftPixel[1] + 25);
+      gl.readPixels(136, 100 - 1 - 32, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, secondPixel);
+      expect(secondPixel[0]).toBeGreaterThan(200);
+      expect(secondPixel[1]).toBeLessThan(10);
+      expect(secondPixel[2]).toBeGreaterThan(200);
     } finally {
       cleanup();
     }

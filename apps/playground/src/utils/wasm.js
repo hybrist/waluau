@@ -829,6 +829,11 @@ export function createGameServicesHost(options = {}) {
   const document = options.document ?? globalThis.document;
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const createBitmap = options.createImageBitmap ?? globalThis.createImageBitmap;
+  const ImageCtor = options.Image ?? document?.defaultView?.Image ?? globalThis.Image;
+  const createObjectUrl =
+    options.createObjectURL ?? globalThis.URL?.createObjectURL?.bind(globalThis.URL);
+  const revokeObjectUrl =
+    options.revokeObjectURL ?? globalThis.URL?.revokeObjectURL?.bind(globalThis.URL);
   const FontFaceCtor = options.FontFace ?? globalThis.FontFace;
   const fontSet = options.fontSet ?? document?.fonts;
   const createFontAtlas = options.createFontAtlas ?? ((face) => {
@@ -973,6 +978,45 @@ export function createGameServicesHost(options = {}) {
       return success(kind, await decode(response));
     } catch (error) {
       return failure(String(path), error, 'decode_failed');
+    }
+  };
+  const decodeImage = async (response) => {
+    const blob = await response.blob();
+    let bitmapError = null;
+    if (typeof createBitmap === 'function') {
+      try {
+        return await createBitmap(blob);
+      } catch (error) {
+        bitmapError = error;
+      }
+    }
+    // Chromium cannot createImageBitmap() directly from every SVG blob even
+    // though its image decoder can load the same source. Keep the decoded
+    // HTMLImageElement as the TexImageSource fallback; texImage2D accepts both.
+    if (
+      typeof ImageCtor !== 'function' ||
+      typeof createObjectUrl !== 'function' ||
+      typeof revokeObjectUrl !== 'function'
+    ) {
+      if (bitmapError) throw bitmapError;
+      throw new GameServiceError('unavailable', 'no browser image decoder is available');
+    }
+    const url = createObjectUrl(blob);
+    try {
+      const image = new ImageCtor();
+      if (typeof image.decode === 'function') {
+        image.src = url;
+        await image.decode();
+      } else {
+        await new Promise((resolve, reject) => {
+          image.onload = resolve;
+          image.onerror = () => reject(new Error('the source image could not be decoded'));
+          image.src = url;
+        });
+      }
+      return image;
+    } finally {
+      revokeObjectUrl(url);
     }
   };
   const context = () => {
@@ -1134,12 +1178,7 @@ export function createGameServicesHost(options = {}) {
     game_resource_load_text: (path) => load('text', path, (response) => response.text()),
     game_resource_load_bytes: (path) =>
       load('bytes', path, async (response) => new Uint8Array(await response.arrayBuffer())),
-    game_resource_load_image: (path) => load('image', path, async (response) => {
-      if (typeof createBitmap !== 'function') {
-        throw new GameServiceError('unavailable', 'createImageBitmap is unavailable in this host');
-      }
-      return createBitmap(await response.blob());
-    }),
+    game_resource_load_image: (path) => load('image', path, decodeImage),
     game_resource_load_font: (path, family) => load('font', path, async (response) => {
       if (typeof FontFaceCtor !== 'function' || !fontSet?.add) {
         throw new GameServiceError('unavailable', 'FontFace loading is unavailable in this host');

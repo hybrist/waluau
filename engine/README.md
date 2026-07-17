@@ -76,15 +76,41 @@ of those calls renders on the GPU: lines are thin quads, circles are
 triangle fans, and `print` renders uppercased bitmap-font glyphs as quads,
 so a frame batches into very few draw calls.
 
-The WebGL backend also exposes `supports(name)`, portable named `Material`
-resources, and `alpha`, `add`, and `multiply` blend modes. Material creation
-returns a structured result; releasing a material is explicit and later use is
-rejected predictably. The same backend uploads decoded image resources as
-textures, batches atlas sprites by texture, and can render into and composite
-offscreen targets. Loaded font resources become batched glyph atlases and keep
-the bitmap font as a safe fallback. Custom shaders remain unsupported and are
-tracked by `waluau-ukso`; compatibility backends must likewise return `false`
-instead of silently changing semantics.
+The WebGL backend also exposes `supports(name)`, game-provided `Shader`
+resources, and `alpha`, `add`, and `multiply` blend modes. Shader creation
+accepts vertex and pixel GLSL, returns structured compile/link diagnostics,
+and has explicit lifetime; binding a released shader is rejected predictably.
+The same backend uploads decoded image resources as textures, batches atlas
+sprites by texture, and can render into and composite offscreen targets.
+Loaded font resources become batched glyph atlases and keep the bitmap font as
+a safe fallback.
+
+Custom shaders consume any subset of the renderer's standard vertex attributes:
+`a_position`, `a_color`, `a_uv`, and `a_textured`. The engine supplies
+`u_texture`, live frame time in `u_time`, and logical-pixel scaling in
+`u_pixel_scale` when those uniforms are declared. `use_shader` and
+`use_default_shader` switch programs; float/vector and integer uniform setters
+target the active program. Program and uniform changes flush pending geometry,
+so one batch never observes two shader states.
+
+For filled rectangles, `a_uv` spans `(0, 0)` at the top-left to `(1, 1)` at
+the bottom-right even though `a_textured` is zero. This gives procedural
+shaders stable shape-local coordinates that follow CPU-side transforms.
+Sprites use their atlas UVs with `a_textured` set to one; other untextured
+primitives currently receive zero UVs.
+
+```walu
+local result = graphics:create_shader(vertex_source, pixel_source)
+if result.ok then
+    graphics:use_shader(result.shader)
+    graphics:set_uniform_float("u_strength", 0.8)
+    graphics:fill_rectangle(24.0, 24.0, 96.0, 48.0)
+    graphics:use_default_shader()
+    graphics:release_shader(result.shader)
+else
+    print(result.error.code .. ": " .. result.error.message)
+end
+```
 
 `keyreleased` may be `nil`; the other lifecycle callbacks are currently
 required. Updates use a fixed timestep. Drawing happens once per animation
@@ -218,7 +244,7 @@ Reaching LÖVE-like usability requires these architectural capabilities:
 | --- | --- | --- |
 | Distribution | Stable package/virtual-module imports, API versioning and a standard project layout are available | Generated sibling JavaScript glue and typed fingerprinted asset manifests are available |
 | Resources | Backend-neutral opaque handles, nullable callbacks and host byte transfer are available | Browser async text/bytes/image/font/audio handles, decoded-image GPU upload, explicit lifetime, structured failures, and production packaging are available; caching and native adapters remain |
-| GPU graphics | Typed buffers, numeric/vector data, shader and uniform-friendly APIs | WebGL2 geometry, texture/sprite/glyph batching and render targets are available; custom shader compilation, WebGPU/native adapters and broader capability discovery remain |
+| GPU graphics | Typed buffers, numeric/vector data, shader and uniform-friendly APIs | WebGL2 geometry, texture/sprite/glyph batching, render targets, game-provided vertex/pixel shader compilation, structured diagnostics, uniforms, and explicit shader lifetime are available |
 | Input | Extensible event/value representation without a closed hard-coded record | Keyboard normalization, pointer/touch/gamepad polling, focus and fullscreen handling |
 | Audio | Optional readiness callbacks and richer source state | Browser decoded effects and streamed music; native mixer, buses, effects and device lifecycle remain |
 | Files | Stable project/package layout | Browser packaged fetch plus namespaced text/byte saves; desktop paths and atomic native save adapter remain |
@@ -235,6 +261,5 @@ source for priorities and completion status.
 
 The renderer draws colored geometry, loaded textures, bitmap or custom-font
 glyphs, atlas sprite batches, and render targets through WebGL2 today, using
-the extern surface from `waluau-9tvw`. Custom shader resources remain an
-explicit follow-up of `waluau-vt3k`; a Canvas 2D compatibility backend can
-return once backend polymorphism is expressible in the language.
+the extern surface from `waluau-9tvw`. Games can compile and bind their own
+vertex/pixel programs on that same batched stream.

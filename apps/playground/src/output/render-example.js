@@ -26,7 +26,7 @@ function reportError(error) {
   document.body.appendChild(box);
 }
 
-export async function renderExample({ files, entryFile, label }) {
+export async function renderExample({ files, entryFile, label, assetManifest = null }) {
   document.title = label;
   try {
     const compiler = await import('../waluau-wasm/waluau_wasm.js');
@@ -47,6 +47,7 @@ export async function renderExample({ files, entryFile, label }) {
       domOutputRoot: document,
       getWasmExports: () => instance.exports,
       onAsyncError: reportError,
+      gameServices: { assetManifest },
     });
     instance = await WebAssembly.instantiate(wasmModule, imports);
     instance.exports[WALUAU_MAIN_EXPORT]?.();

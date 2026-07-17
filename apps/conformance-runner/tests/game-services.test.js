@@ -127,6 +127,40 @@ function serviceHarness() {
 }
 
 describe('browser game resource services', () => {
+  it('falls back to an HTML image when createImageBitmap cannot decode SVG', async () => {
+    let decoded = false;
+    let revoked = '';
+    class FakeImage {
+      constructor() {
+        this.width = 104;
+        this.height = 128;
+        this.src = '';
+      }
+
+      async decode() {
+        decoded = true;
+      }
+    }
+    const host = createGameServicesHost({
+      assetBaseUrl: 'https://game.test/',
+      fetch: async () => new Response('<svg xmlns="http://www.w3.org/2000/svg"/>', {
+        status: 200,
+        headers: { 'Content-Type': 'image/svg+xml' },
+      }),
+      createImageBitmap: async () => {
+        throw new DOMException('The source image could not be decoded.', 'InvalidStateError');
+      },
+      Image: FakeImage,
+      createObjectURL: () => 'blob:card-back',
+      revokeObjectURL: (url) => { revoked = url; },
+    });
+
+    const image = await host.game_resource_load_image('/assets/card-back.svg');
+    expect(host.game_resource_ok(image)).toBe(true);
+    expect(decoded).toBe(true);
+    expect(revoked).toBe('blob:card-back');
+  });
+
   it('copies decoded images into opaque GPU handles with structured lifetime errors', async () => {
     const { host, bitmap, fontAtlas, fontSet } = serviceHarness();
     const calls = [];
