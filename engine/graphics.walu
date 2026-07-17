@@ -29,6 +29,7 @@ declare function game_gpu_font_cell_width(handle: i32): i32
 declare function game_gpu_font_cell_height(handle: i32): i32
 declare function game_gpu_font_base_size(handle: i32): i32
 declare function game_gpu_font_advance(handle: i32): i32
+declare function game_gpu_font_glyph_advance(handle: i32, index: i32): i32
 declare function game_gpu_texture_bind(gl: WebGL2RenderingContext, handle: i32): bool
 declare function game_gpu_target_bind(gl: WebGL2RenderingContext, handle: i32): bool
 declare function game_gpu_screen_bind(gl: WebGL2RenderingContext): unit
@@ -108,6 +109,7 @@ type Graphics = {
     custom_font_cell_height: i32,
     custom_font_base_size: i32,
     custom_font_advance: i32,
+    custom_font_advances: {i32},
     default_shader: Shader,
     active_shader: Shader,
     next_shader_id: i32,
@@ -136,6 +138,7 @@ type Font = {
     cell_height: i32,
     base_size: i32,
     advance: i32,
+    advances: {i32},
     released: bool
 }
 type FontResult = { ok: bool, font: Font, error: GraphicsError }
@@ -369,6 +372,7 @@ void main() {
         custom_font_cell_height = 0,
         custom_font_base_size = 0,
         custom_font_advance = 0,
+        custom_font_advances = {},
         default_shader = default_shader,
         active_shader = default_shader,
         next_shader_id = 1,
@@ -684,10 +688,17 @@ function Graphics:font_from_resource(resource: resources.Resource): FontResult
             font = {
                 handle = handle, width = 0, height = 0, first_code = 0,
                 glyph_count = 0, columns = 0, cell_width = 0, cell_height = 0,
-                base_size = 0, advance = 0, released = true,
+                base_size = 0, advance = 0, advances = {}, released = true,
             },
             error = gpu_error(handle),
         }
+    end
+    local glyph_count: i32 = game_gpu_font_glyph_count(handle)
+    local advances: {i32} = {}
+    local last_glyph: i32 = glyph_count - 1
+    for index = 0::i32, last_glyph do
+        local glyph_advance: i32 = game_gpu_font_glyph_advance(handle, index)
+        table.insert(advances, glyph_advance)
     end
     return {
         ok = true,
@@ -696,12 +707,13 @@ function Graphics:font_from_resource(resource: resources.Resource): FontResult
             width = game_gpu_resource_width(handle),
             height = game_gpu_resource_height(handle),
             first_code = game_gpu_font_first_code(handle),
-            glyph_count = game_gpu_font_glyph_count(handle),
+            glyph_count = glyph_count,
             columns = game_gpu_font_columns(handle),
             cell_width = game_gpu_font_cell_width(handle),
             cell_height = game_gpu_font_cell_height(handle),
             base_size = game_gpu_font_base_size(handle),
             advance = game_gpu_font_advance(handle),
+            advances = advances,
             released = false,
         },
         error = { code = "", message = "" },
@@ -1056,7 +1068,31 @@ function Graphics:set_font_resource(value: Font, size: f64): bool
     self.custom_font_cell_height = value.cell_height
     self.custom_font_base_size = value.base_size
     self.custom_font_advance = value.advance
+    self.custom_font_advances = value.advances
     return true
+end
+
+-- Advance in base-size pixels for one glyph of the selected custom font.
+-- Glyphs outside the atlas range, and hosts that report no per-glyph
+-- metrics, fall back to the font's uniform advance.
+function Graphics:custom_glyph_advance(code: i32): i32
+    local index: i32 = code - self.custom_font_first_code
+    if index >= 0 and index < #self.custom_font_advances then
+        return self.custom_font_advances[index]
+    end
+    return self.custom_font_advance
+end
+
+-- Pen travel of a whole string in logical pixels for the selected custom
+-- font.
+function Graphics:custom_text_width(text: string): f64
+    local scale: f64 = self.custom_font_size / (self.custom_font_base_size::f64)
+    local total: f64 = 0.0
+    for index = 1::i32, #text do
+        local glyph_advance: i32 = self:custom_glyph_advance(string.byte(text, index))
+        total += (glyph_advance::f64) * scale
+    end
+    return total
 end
 
 -- Length of the horizontal run of set font pixels starting at column.
@@ -1077,7 +1113,7 @@ end
 function Graphics:text_width(text: string): f64
     if self.current_font ~= 0 then
         if game_gpu_resource_ok(self.current_font) and self.custom_font_base_size > 0 then
-            return (#text::f64) * (self.custom_font_advance::f64) * self.custom_font_size / (self.custom_font_base_size::f64)
+            return self:custom_text_width(text)
         end
         self.current_font = 0
     end
@@ -1121,7 +1157,8 @@ function Graphics:print_custom(text: string, x: f64, y: f64): bool
                 false
             ) then return false end
         end
-        pen += (self.custom_font_advance::f64) * scale
+        local glyph_advance: i32 = self:custom_glyph_advance(code)
+        pen += (glyph_advance::f64) * scale
     end
     return true
 end

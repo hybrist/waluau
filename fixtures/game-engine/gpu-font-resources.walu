@@ -17,14 +17,14 @@ type FixtureState = {
 function install_gpu_font_fixture(): unit
     local state: FixtureState = {
         image = { handle = 0, kind = "image", path = "assets/card-back.svg" },
-        font = { handle = 0, kind = "font", path = "assets/PressStart2P-Regular.ttf" },
+        font = { handle = 0, kind = "font", path = "assets/Cinzel-Bold.ttf" },
         loaded = false,
         rendered = false,
     }
 
     local function load_async(): i32
         local image_result: resources.LoadResult = resources.await_image("assets/card-back.svg")
-        local font_result: resources.LoadResult = resources.await_font("assets/PressStart2P-Regular.ttf", "Arcane Vault Test")
+        local font_result: resources.LoadResult = resources.await_font("assets/Cinzel-Bold.ttf", "Arcane Vault Test")
         local missing: resources.LoadResult = resources.await_image("assets/missing.svg")
         assert(image_result.ok and font_result.ok)
         assert(not missing.ok and missing.error.code == "not_found")

@@ -178,6 +178,28 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             }
             coerce_type(parts.remove(0), Some(expected))
         }
+        // Symmetrically, a single value fills a one-slot multi-value
+        // expectation. Argument inference expands the trailing slots of a call
+        // into Multi for builtins like string.byte, so a single-value result
+        // must still satisfy the last remaining parameter.
+        Some(Type::Multi(expected_parts))
+            if !matches!(actual, Type::Multi(_)) && expected_parts.len() == 1 =>
+        {
+            let first = expected_parts
+                .into_iter()
+                .next()
+                .expect("len() == 1 guarantees a first element");
+            coerce_type(actual, Some(first))
+        }
+        // Multi's Display joins its parts bare ("i32, i32"), which read as a
+        // nonsense conversion in this message; spell out the shape instead.
+        Some(Type::Multi(expected_parts)) if !matches!(actual, Type::Multi(_)) => {
+            Err(Diagnostic::new(format!(
+                "cannot implicitly convert a single {actual} to {} values ({})",
+                expected_parts.len(),
+                Type::Multi(expected_parts)
+            )))
+        }
         // Nullable values are truthy exactly when non-nil, so they coerce to
         // bool in condition positions.
         Some(Type::Bool) if matches!(actual, Type::Nullable(_)) => Ok(Type::Bool),
