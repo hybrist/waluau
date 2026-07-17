@@ -857,12 +857,19 @@ export function createGameServicesHost(options = {}) {
     context.font = `${baseSize}px ${JSON.stringify(String(face.family))}`;
     context.textBaseline = 'top';
     context.textAlign = 'left';
+    // A thin outline pass fattens every stroke by a fixed fraction of the em.
+    // Hairlines in high-contrast faces otherwise dilute to near-invisible
+    // alpha once the atlas is minified to small text sizes.
+    context.strokeStyle = '#ffffff';
+    context.lineJoin = 'round';
+    context.lineWidth = baseSize / 40;
     const advances = [];
     for (let offset = 0; offset < glyphCount; offset += 1) {
       const column = offset % columns;
       const row = Math.floor(offset / columns);
       const glyph = String.fromCharCode(firstCode + offset);
       context.fillText(glyph, column * cellWidth + 8, row * cellHeight + 8);
+      context.strokeText(glyph, column * cellWidth + 8, row * cellHeight + 8);
       advances.push(Math.max(1, Math.round(context.measureText(glyph).width)));
     }
     return {

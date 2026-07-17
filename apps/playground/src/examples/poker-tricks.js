@@ -3,7 +3,7 @@
 // editor, the preset list, or the rest of the fixtures.
 
 import cardBackUrl from '../../../../fixtures/poker-tricks/assets/card-back.svg?url';
-import vaultFontUrl from '../../../../fixtures/poker-tricks/assets/Cinzel-SemiBold.ttf?url';
+import vaultFontUrl from '../../../../fixtures/poker-tricks/assets/Cinzel-Bold.ttf?url';
 
 const engineModules = import.meta.glob('../../../../engine/*.walu', {
   eager: true,
@@ -34,6 +34,6 @@ export const POKER_TRICKS_EXAMPLE = {
   entryFile: '/fixtures/poker-tricks/main.walu',
   assetManifest: {
     'assets/card-back.svg': { url: cardBackUrl, type: 'image' },
-    'assets/Cinzel-SemiBold.ttf': { url: vaultFontUrl, type: 'font' },
+    'assets/Cinzel-Bold.ttf': { url: vaultFontUrl, type: 'font' },
   },
 };

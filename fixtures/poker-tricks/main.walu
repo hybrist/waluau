@@ -488,7 +488,7 @@ function install_arcane_heist(): unit
     local state: game.State = game.new()
     local assets: AssetState = {
         image_source = { handle = 0, kind = "image", path = "assets/card-back.svg" },
-        font_source = { handle = 0, kind = "font", path = "assets/Cinzel-SemiBold.ttf" },
+        font_source = { handle = 0, kind = "font", path = "assets/Cinzel-Bold.ttf" },
         texture = nil,
         font = nil,
         effects = {
@@ -530,7 +530,7 @@ function install_arcane_heist(): unit
             assets.error = image_result.error.code .. ": " .. image_result.error.message
         end
 
-        local font_path: string = "assets/Cinzel-SemiBold.ttf"
+        local font_path: string = "assets/Cinzel-Bold.ttf"
         local font_result: resources.LoadResult = resources.await_font(font_path, "Arcane Vault")
         if font_result.ok then assets.font_source = font_result.resource
         else
