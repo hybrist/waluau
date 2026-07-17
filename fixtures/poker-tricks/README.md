@@ -36,7 +36,9 @@ drawn off the pile are secret again, and a ward on the board is public anyway,
 so neither is ever marked.
 
 The player's relics are held as an overlapping, tilted fan. Relics keep the
-order they were dealt in; the fan slides open around whichever one the cursor
+order they were dealt in until C or V regroups them by school or by rank —
+the eye marks, cursor, and any pending binds follow their relics to the new
+slots; the fan slides open around whichever one the cursor
 holds, giving it room rather than lifting it in front of its neighbours. Parting
 moves a relic along the fan's arc, so it tilts and dips as it goes instead of
 skidding sideways out of the curve, and relics turn into and out of that tilt as
@@ -49,6 +51,7 @@ flat.
 - Space binds or unbinds the focused relic or ward.
 - Enter commits a feint or breach.
 - P passes during the feint phase.
+- C sorts the relic fan by school (color); V sorts it by rank.
 - H opens the breach ledger, ? opens help, and R restarts.
 - Enter, Space, or Esc skips a running deal or feint animation.
 

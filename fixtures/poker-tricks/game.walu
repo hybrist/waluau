@@ -274,6 +274,51 @@ function State:reveal_middle(): unit
     self.middle = { draw(self.deck), draw(self.deck), draw(self.deck) }
 end
 
+-- Reorder the player's relics without touching what they are: sorting is a
+-- presentation courtesy, so the watched marks travel with their cards and the
+-- deck, wards, and history never notice. by_school groups the fan by school
+-- in deck order with strong ranks first; otherwise the whole fan runs
+-- strongest rank to weakest, with schools breaking ties. Returns the applied
+-- permutation as order[new_slot] = old_slot so the caller can carry its
+-- cursor and pending picks across to the relics they were naming.
+function State:sort_player_hand(by_school: bool): {i32}
+    local order: {i32} = {}
+    local keys: {i32} = {}
+    for index, card in self.player_hand do
+        table.insert(order, index)
+        if by_school then
+            table.insert(keys, card.suit * 15 + (MAX_RANK - card.rank))
+        else
+            table.insert(keys, (MAX_RANK - card.rank) * 4 + card.suit)
+        end
+    end
+    -- A tiny selection sort over the parallel slot/key lists: five relics
+    -- never justify comparator closures, matching rank_five's fixed network.
+    for i = ZERO, #order - TWO do
+        local smallest: i32 = i
+        for j = i + ONE, #order - ONE do
+            if keys[j] < keys[smallest] then smallest = j end
+        end
+        if smallest ~= i then
+            local key: i32 = keys[i]
+            keys[i] = keys[smallest]
+            keys[smallest] = key
+            local slot: i32 = order[i]
+            order[i] = order[smallest]
+            order[smallest] = slot
+        end
+    end
+    local sorted_hand: {Card} = {}
+    local sorted_known: {bool} = {}
+    for slot in order do
+        table.insert(sorted_hand, self.player_hand[slot])
+        table.insert(sorted_known, self.player_known[slot])
+    end
+    self.player_hand = sorted_hand
+    self.player_known = sorted_known
+    return order
+end
+
 function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): unit
     if self.finished or not self.swap_open then return end
     local player_wager: i32 = #hand_indices
