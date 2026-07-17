@@ -1106,9 +1106,9 @@ mod tests {
     }
 
     #[test]
-    fn compiles_game_engine_gpu_materials_fixture() {
-        super::compile_file(&fixture_path("game-engine/gpu-materials.walu"))
-            .expect("GPU materials fixture should compile");
+    fn compiles_game_engine_gpu_shaders_fixture() {
+        super::compile_file(&fixture_path("game-engine/gpu-shaders.walu"))
+            .expect("GPU shaders fixture should compile");
     }
 
     #[test]

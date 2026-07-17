@@ -1,0 +1,113 @@
+-- Conformance fixture for game-provided WebGL vertex/pixel shaders.
+local engine = require("../../engine/browser")
+local graphics_module = require("../../engine/graphics")
+local input_module = require("../../engine/input")
+
+local VERTEX_SOURCE <const>: string = [[
+attribute vec2 a_position;
+attribute vec4 a_color;
+attribute vec2 a_uv;
+varying vec4 v_color;
+varying vec2 v_uv;
+void main() {
+    gl_Position = vec4(a_position, 0.0, 1.0);
+    v_color = a_color;
+    v_uv = a_uv;
+}
+]]
+
+local PIXEL_SOURCE <const>: string = [[
+precision mediump float;
+varying vec4 v_color;
+varying vec2 v_uv;
+uniform float u_gain;
+uniform vec4 u_tint;
+uniform int u_enabled;
+void main() {
+    if (u_enabled == 1) {
+        float local_gain = 0.8 + 0.2 * v_uv.x;
+        gl_FragColor = v_color * u_tint * u_gain * local_gain;
+    } else {
+        gl_FragColor = v_color;
+    }
+}
+]]
+
+local LINK_FAILURE_PIXEL_SOURCE <const>: string = [[
+precision mediump float;
+varying vec2 v_color;
+void main() {
+    gl_FragColor = vec4(v_color, 0.0, 1.0);
+}
+]]
+
+local SECOND_PIXEL_SOURCE <const>: string = [[
+precision mediump float;
+varying vec4 v_color;
+void main() {
+    gl_FragColor = vec4(v_color.r, 0.0, v_color.b, v_color.a);
+}
+]]
+
+function install_gpu_shader_fixture(): unit
+    local drew: bool = false
+    local function load(): unit
+    end
+    local function update(dt: f64, input: input_module.Input): unit
+    end
+    local function draw(graphics: graphics_module.Graphics, alpha: f64): unit
+        if drew then return end
+        drew = true
+        assert(graphics:supports("gpu"))
+        assert(graphics:supports("shaders"))
+        assert(graphics:supports("blend-modes"))
+        assert(graphics:supports("textures"))
+        assert(graphics:supports("sprite-batches"))
+        assert(graphics:supports("render-targets"))
+
+        local invalid_vertex: graphics_module.ShaderResult = graphics:create_shader("not valid GLSL", PIXEL_SOURCE)
+        assert(not invalid_vertex.ok and invalid_vertex.error.code == "vertex_compile")
+        local invalid_pixel: graphics_module.ShaderResult = graphics:create_shader(VERTEX_SOURCE, "not valid GLSL")
+        assert(not invalid_pixel.ok and invalid_pixel.error.code == "pixel_compile")
+        local invalid_link: graphics_module.ShaderResult = graphics:create_shader(VERTEX_SOURCE, LINK_FAILURE_PIXEL_SOURCE)
+        assert(not invalid_link.ok and invalid_link.error.code == "link")
+
+        local created: graphics_module.ShaderResult = graphics:create_shader(VERTEX_SOURCE, PIXEL_SOURCE)
+        assert(created.ok)
+        assert(graphics:use_shader(created.shader))
+        assert(graphics:set_uniform_float("u_gain", 1.0))
+        assert(graphics:set_uniform_vec4("u_tint", 0.25, 1.0, 0.25, 1.0))
+        assert(graphics:set_uniform_int("u_enabled", 1))
+        assert(not graphics:set_uniform_float("missing", 1.0))
+
+        graphics:clear("#000000")
+        graphics:set_color("#ffffff")
+        graphics:fill_rectangle(24.0, 24.0, 80.0, 48.0)
+        local second: graphics_module.ShaderResult = graphics:create_shader(VERTEX_SOURCE, SECOND_PIXEL_SOURCE)
+        assert(second.ok)
+        assert(graphics:use_shader(second.shader))
+        graphics:set_color("#ffffff")
+        graphics:fill_rectangle(120.0, 24.0, 32.0, 48.0)
+        graphics:use_default_shader()
+        assert(graphics:set_blend_mode("add"))
+        graphics:set_color("#40004080")
+        graphics:fill_rectangle(48.0, 40.0, 80.0, 48.0)
+        assert(graphics:set_blend_mode("alpha"))
+
+        graphics:release_shader(created.shader)
+        assert(not graphics:use_shader(created.shader))
+        graphics:release_shader(second.shader)
+    end
+    local function keypressed(key: string): unit end
+    local function keyreleased(key: string): unit end
+
+    engine.start({
+        title = "GPU shader conformance", width = 160, height = 100,
+        update_hz = 60.0, max_frame_seconds = 0.25, background = "#000000",
+    }, {
+        load = load, update = update, draw = draw,
+        keypressed = keypressed, keyreleased = keyreleased,
+    })
+end
+
+install_gpu_shader_fixture()

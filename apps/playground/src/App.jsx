@@ -25,6 +25,7 @@ export default function App() {
     activeFile,
     setActiveFile,
     entryFile,
+    assetManifest,
     editingFile,
     setEditingFile,
     editingValue,
@@ -60,7 +61,8 @@ export default function App() {
     getResult
   } = useWaluauCompiler({
     files,
-    entryFile
+    entryFile,
+    assetManifest,
   });
 
   // Hook 2b: Standalone REPL session (accumulate-and-recompile), optionally

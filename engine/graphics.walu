@@ -1,10 +1,11 @@
 -- GPU-backed drawing facade behind the same Graphics API games already use.
 -- Everything renders through WebGL2: shapes and text become colored
--- triangles in one interleaved vertex stream (clip-space x, y plus r, g, b,
--- a and an effect id per vertex) that is uploaded and drawn in a single draw
--- call per flush. The effect id selects an animated fragment-shader overlay
--- (0 renders the plain vertex color); the platform adapter advances the
--- shader clock once per frame via set_time. Text uses either the built-in
+-- triangles in one interleaved vertex stream (clip-space x/y, color, UV, and
+-- a textured flag) that is uploaded and drawn in a single draw call per
+-- flush. Games may compile and bind their own vertex/pixel shader programs;
+-- program and uniform changes flush so every queued batch keeps the state it
+-- was emitted under. The platform adapter advances the standard u_time
+-- uniform once per frame via set_time. Text uses either the built-in
 -- bitmap font from font.walu or a custom font resource uploaded as a GPU
 -- atlas, and the push/pop transform stack is applied CPU-side while vertices
 -- are emitted.
@@ -32,6 +33,11 @@ declare function game_gpu_texture_bind(gl: WebGL2RenderingContext, handle: i32):
 declare function game_gpu_target_bind(gl: WebGL2RenderingContext, handle: i32): bool
 declare function game_gpu_screen_bind(gl: WebGL2RenderingContext): unit
 declare function game_gpu_resource_release(handle: i32): unit
+-- Web IDL types these return as `any`, but these two parameter names always
+-- produce booleans. Keeping the narrowed declarations here makes shader
+-- diagnostics reliable without exposing untyped host values to games.
+declare function WebGL2RenderingContext:getShaderParameter(shader: WebGLShader, pname: u32): bool
+declare function WebGL2RenderingContext:getProgramParameter(program: WebGLProgram, pname: u32): bool
 
 -- WebGL constants used by the renderer. The extern generator does not emit
 -- Web IDL constants, so the spec-fixed GLenum values live here.
@@ -42,14 +48,16 @@ local GL_DYNAMIC_DRAW <const>: u32 = 0x88E8
 local GL_FLOAT <const>: u32 = 0x1406
 local GL_FRAGMENT_SHADER <const>: u32 = 0x8B30
 local GL_VERTEX_SHADER <const>: u32 = 0x8B31
+local GL_COMPILE_STATUS <const>: u32 = 0x8B81
+local GL_LINK_STATUS <const>: u32 = 0x8B82
 local GL_BLEND <const>: u32 = 0x0BE2
 local GL_ONE <const>: u32 = 1
 local GL_SRC_ALPHA <const>: u32 = 0x0302
 local GL_ONE_MINUS_SRC_ALPHA <const>: u32 = 0x0303
 local GL_DST_COLOR <const>: u32 = 0x0306
 
--- Interleaved floats per vertex: clip x/y, color, effect, UV, textured flag.
-local VERTEX_FLOATS <const>: i32 = 10
+-- Interleaved floats per vertex: clip x/y, color, UV, textured flag.
+local VERTEX_FLOATS <const>: i32 = 9
 -- Vertices per batch before an implicit flush inserts an extra draw call.
 local MAX_VERTICES <const>: i32 = 4096
 local CIRCLE_SEGMENTS <const>: i32 = 32
@@ -58,6 +66,22 @@ local CIRCLE_SEGMENTS <const>: i32 = 32
 -- coordinates far outside the canvas cannot make path cost unbounded.
 local CURVE_STEP_LENGTH <const>: f64 = 4.0
 local CURVE_MAX_STEPS <const>: i32 = 64
+
+type GraphicsError = { code: string, message: string }
+type Shader = {
+    program: WebGLProgram?,
+    id: i32,
+    position_location: i32,
+    color_location: i32,
+    uv_location: i32,
+    textured_location: i32,
+    time_location: WebGLUniformLocation?,
+    pixel_scale_location: WebGLUniformLocation?,
+    texture_location: WebGLUniformLocation?,
+    released: bool
+}
+type ShaderResult = { ok: bool, shader: Shader, error: GraphicsError }
+type CompiledShader = { ok: bool, shader: WebGLShader?, error: GraphicsError }
 
 type Graphics = {
     gl: WebGL2RenderingContext,
@@ -71,7 +95,6 @@ type Graphics = {
     green: f64,
     blue: f64,
     alpha: f64,
-    effect: f64,
     line_width: f64,
     font_pixel: f64,
     current_font: i32,
@@ -85,8 +108,10 @@ type Graphics = {
     custom_font_cell_height: i32,
     custom_font_base_size: i32,
     custom_font_advance: i32,
-    time_location: WebGLUniformLocation?,
-    pixel_scale_location: WebGLUniformLocation?,
+    default_shader: Shader,
+    active_shader: Shader,
+    next_shader_id: i32,
+    time: f64,
     transforms: {f64},
     path_x: {f64},
     path_y: {f64},
@@ -98,9 +123,6 @@ type Graphics = {
     current_target: i32
 }
 
-type GraphicsError = { code: string, message: string }
-type Material = { name: string, effect: i32, released: bool }
-type MaterialResult = { ok: bool, material: Material, error: GraphicsError }
 type Texture = { handle: i32, width: i32, height: i32, released: bool }
 type TextureResult = { ok: bool, texture: Texture, error: GraphicsError }
 type Font = {
@@ -120,20 +142,130 @@ type FontResult = { ok: bool, font: Font, error: GraphicsError }
 type RenderTarget = { handle: i32, width: i32, height: i32, released: bool }
 type RenderTargetResult = { ok: bool, target: RenderTarget, error: GraphicsError }
 
-function compile_shader(gl: WebGL2RenderingContext, kind: u32, source: string): WebGLShader
+function empty_shader(): Shader
+    return {
+        program = nil,
+        id = -1,
+        position_location = -1,
+        color_location = -1,
+        uv_location = -1,
+        textured_location = -1,
+        time_location = nil,
+        pixel_scale_location = nil,
+        texture_location = nil,
+        released = true,
+    }
+end
+
+function compile_shader(gl: WebGL2RenderingContext, kind: u32, source: string, stage: string): CompiledShader
     local maybe_shader: WebGLShader? = gl:createShader(kind)
-    assert(maybe_shader ~= nil)
+    if maybe_shader == nil then
+        return {
+            ok = false,
+            shader = nil,
+            error = { code = stage .. "_create", message = "WebGL could not create the " .. stage .. " shader" },
+        }
+    end
     local shader: WebGLShader = maybe_shader::WebGLShader
     gl:shaderSource(shader, source)
     gl:compileShader(shader)
-    local log: string? = gl:getShaderInfoLog(shader)
-    if log ~= nil then
-        local text: string = log::string
-        if #text > 0 then
-            error("game engine shader compilation failed: " .. text)
+    if not gl:getShaderParameter(shader, GL_COMPILE_STATUS) then
+        local message: string = "unknown WebGL shader compilation failure"
+        local log: string? = gl:getShaderInfoLog(shader)
+        if log ~= nil then
+            local text: string = log::string
+            if #text > 0 then message = text end
         end
+        gl:deleteShader(shader)
+        return {
+            ok = false,
+            shader = nil,
+            error = { code = stage .. "_compile", message = message },
+        }
     end
-    return shader
+    return { ok = true, shader = shader, error = { code = "", message = "" } }
+end
+
+function build_shader(gl: WebGL2RenderingContext, vertex_source: string, pixel_source: string, id: i32): ShaderResult
+    local vertex_result: CompiledShader = compile_shader(gl, GL_VERTEX_SHADER, vertex_source, "vertex")
+    if not vertex_result.ok then
+        return { ok = false, shader = empty_shader(), error = vertex_result.error }
+    end
+    local pixel_result: CompiledShader = compile_shader(gl, GL_FRAGMENT_SHADER, pixel_source, "pixel")
+    if not pixel_result.ok then
+        gl:deleteShader(vertex_result.shader)
+        return { ok = false, shader = empty_shader(), error = pixel_result.error }
+    end
+
+    local maybe_vertex_shader: WebGLShader? = vertex_result.shader
+    local maybe_pixel_shader: WebGLShader? = pixel_result.shader
+    assert(maybe_vertex_shader ~= nil)
+    assert(maybe_pixel_shader ~= nil)
+    local vertex_shader: WebGLShader = maybe_vertex_shader::WebGLShader
+    local pixel_shader: WebGLShader = maybe_pixel_shader::WebGLShader
+    local program: WebGLProgram = gl:createProgram()
+    gl:attachShader(program, vertex_shader)
+    gl:attachShader(program, pixel_shader)
+    gl:linkProgram(program)
+    gl:deleteShader(vertex_shader)
+    gl:deleteShader(pixel_shader)
+    if not gl:getProgramParameter(program, GL_LINK_STATUS) then
+        local message: string = "unknown WebGL shader link failure"
+        local log: string? = gl:getProgramInfoLog(program)
+        if log ~= nil then
+            local text: string = log::string
+            if #text > 0 then message = text end
+        end
+        gl:deleteProgram(program)
+        return {
+            ok = false,
+            shader = empty_shader(),
+            error = { code = "link", message = message },
+        }
+    end
+
+    return {
+        ok = true,
+        shader = {
+            program = program,
+            id = id,
+            position_location = gl:getAttribLocation(program, "a_position"),
+            color_location = gl:getAttribLocation(program, "a_color"),
+            uv_location = gl:getAttribLocation(program, "a_uv"),
+            textured_location = gl:getAttribLocation(program, "a_textured"),
+            time_location = gl:getUniformLocation(program, "u_time"),
+            pixel_scale_location = gl:getUniformLocation(program, "u_pixel_scale"),
+            texture_location = gl:getUniformLocation(program, "u_texture"),
+            released = false,
+        },
+        error = { code = "", message = "" },
+    }
+end
+
+-- Binds the shared 2D stream to whatever subset of the standard attribute
+-- contract the program actually consumes. Unused attributes are commonly
+-- optimized out by WebGL and therefore have location -1.
+function bind_shader(gl: WebGL2RenderingContext, shader: Shader, pixel_scale_x: f64, pixel_scale_y: f64, time: f64): unit
+    gl:useProgram(shader.program)
+    if shader.position_location >= 0 then
+        gl:enableVertexAttribArray(shader.position_location::u32)
+        gl:vertexAttribPointer(shader.position_location::u32, 2, GL_FLOAT, false, 36, 0)
+    end
+    if shader.color_location >= 0 then
+        gl:enableVertexAttribArray(shader.color_location::u32)
+        gl:vertexAttribPointer(shader.color_location::u32, 4, GL_FLOAT, false, 36, 8)
+    end
+    if shader.uv_location >= 0 then
+        gl:enableVertexAttribArray(shader.uv_location::u32)
+        gl:vertexAttribPointer(shader.uv_location::u32, 2, GL_FLOAT, false, 36, 24)
+    end
+    if shader.textured_location >= 0 then
+        gl:enableVertexAttribArray(shader.textured_location::u32)
+        gl:vertexAttribPointer(shader.textured_location::u32, 1, GL_FLOAT, false, 36, 32)
+    end
+    gl:uniform1i(shader.texture_location, 0)
+    gl:uniform1f(shader.time_location, time::f32)
+    gl:uniform2f(shader.pixel_scale_location, pixel_scale_x::f32, pixel_scale_y::f32)
 end
 
 function hex_digit(code: i32): i32
@@ -159,85 +291,36 @@ function Graphics.new(gl: WebGL2RenderingContext, width: f64, height: f64): Grap
     local vertex_source: string = [[
 attribute vec2 a_position;
 attribute vec4 a_color;
-attribute float a_effect;
 attribute vec2 a_uv;
 attribute float a_textured;
 varying vec4 v_color;
-varying float v_effect;
 varying vec2 v_uv;
 varying float v_textured;
 void main() {
     gl_Position = vec4(a_position, 0.0, 1.0);
     v_color = a_color;
-    v_effect = a_effect;
     v_uv = a_uv;
     v_textured = a_textured;
 }
 ]]
-    -- Effect ids layer a subtle animated pattern over the vertex color:
-    -- 1-4 are colored fire, water, shadow, and nature; 5-8 preserve those
-    -- same patterns with neutral highlights; 9 is an energy crackle whose
-    -- interference bands drive brightness and alpha together, for auras that
-    -- must read as live current rather than a static highlight. Anything
-    -- else passes through.
     local fragment_source: string = [[
 precision mediump float;
 varying vec4 v_color;
-varying float v_effect;
 varying vec2 v_uv;
 varying float v_textured;
-uniform float u_time;
-uniform vec2 u_pixel_scale;
 uniform sampler2D u_texture;
 void main() {
-    vec3 color = v_color.rgb;
-    float alpha = v_color.a;
-    vec2 p = gl_FragCoord.xy / u_pixel_scale;
-    float effect = v_effect;
-    bool energy = effect > 8.5;
-    bool grayscale = !energy && effect > 4.5;
-    if (grayscale) effect -= 4.0;
-    if (energy) {
-        float crackle = sin(p.x * 0.21 + u_time * 6.5 + sin(p.y * 0.27 - u_time * 4.7) * 2.6);
-        float surge = sin((p.x + p.y) * 0.09 - u_time * 8.0);
-        float charge = 0.5 + 0.5 * crackle * surge;
-        charge *= charge;
-        color = color * (0.55 + 1.1 * charge) + vec3(0.45, 0.38, 0.12) * charge * charge;
-        alpha *= 0.5 + 0.8 * charge;
-    } else if (effect > 3.5) {
-        float vein = sin(p.x * 0.07 + sin(p.y * 0.09 + u_time * 0.8) * 2.2 + u_time * 1.1);
-        vec3 tint = grayscale ? vec3(0.04) : vec3(0.0, 0.07, 0.025);
-        color += tint * (0.5 + 0.5 * vein);
-    } else if (effect > 2.5) {
-        float smoke = sin(p.x * 0.045 + u_time * 0.9) * sin(p.y * 0.06 - u_time * 0.6);
-        color = color * (0.92 + 0.08 * smoke) + vec3(0.05, 0.05, 0.055) * (0.5 + 0.5 * smoke);
-    } else if (effect > 1.5) {
-        float ripple = sin(p.y * 0.08 + sin(p.x * 0.05 + u_time * 1.3) * 2.0 + u_time * 1.8);
-        vec3 tint = grayscale ? vec3(0.04) : vec3(0.0, 0.035, 0.08);
-        color += tint * (0.5 + 0.5 * ripple);
-    } else if (effect > 0.5) {
-        float flicker = sin(p.y * 0.11 + u_time * 2.6 + sin(p.x * 0.16 + u_time * 3.4) * 1.7);
-        vec3 tint = grayscale ? vec3(0.045) : vec3(0.09, 0.03, 0.0);
-        color += tint * (0.5 + 0.5 * flicker);
-    }
-    vec4 outputColor = vec4(color, alpha);
+    vec4 outputColor = v_color;
     if (v_textured > 0.5) outputColor *= texture2D(u_texture, v_uv);
     gl_FragColor = outputColor;
 }
 ]]
 
-    local program: WebGLProgram = gl:createProgram()
-    gl:attachShader(program, compile_shader(gl, GL_VERTEX_SHADER, vertex_source))
-    gl:attachShader(program, compile_shader(gl, GL_FRAGMENT_SHADER, fragment_source))
-    gl:linkProgram(program)
-    local log: string? = gl:getProgramInfoLog(program)
-    if log ~= nil then
-        local text: string = log::string
-        if #text > 0 then
-            error("game engine shader program link failed: " .. text)
-        end
+    local default_result: ShaderResult = build_shader(gl, vertex_source, fragment_source, 0)
+    if not default_result.ok then
+        error("game engine default shader failed (" .. default_result.error.code .. "): " .. default_result.error.message)
     end
-    gl:useProgram(program)
+    local default_shader: Shader = default_result.shader
 
     -- Colors carry an alpha channel, so a translucent shape has to mix with
     -- what is already there rather than replace it. The alpha channel blends
@@ -246,35 +329,19 @@ void main() {
     gl:enable(GL_BLEND)
     gl:blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
 
-    -- The renderer owns one program and one vertex buffer, so attribute
-    -- layout is configured once: stride 40 bytes, with UV/use fields last.
+    -- Every shader program consumes the same vertex buffer contract. Attribute
+    -- locations are program-specific, so bind_shader configures them whenever
+    -- the active program changes.
     local buffer: WebGLBuffer = gl:createBuffer()
     gl:bindBuffer(GL_ARRAY_BUFFER, buffer)
-    local position_location: i32 = gl:getAttribLocation(program, "a_position")
-    local color_location: i32 = gl:getAttribLocation(program, "a_color")
-    local effect_location: i32 = gl:getAttribLocation(program, "a_effect")
-    local uv_location: i32 = gl:getAttribLocation(program, "a_uv")
-    local textured_location: i32 = gl:getAttribLocation(program, "a_textured")
-    assert(position_location >= 0 and color_location >= 0 and effect_location >= 0 and uv_location >= 0 and textured_location >= 0)
-    gl:enableVertexAttribArray(position_location::u32)
-    gl:vertexAttribPointer(position_location::u32, 2, GL_FLOAT, false, 40, 0)
-    gl:enableVertexAttribArray(color_location::u32)
-    gl:vertexAttribPointer(color_location::u32, 4, GL_FLOAT, false, 40, 8)
-    gl:enableVertexAttribArray(effect_location::u32)
-    gl:vertexAttribPointer(effect_location::u32, 1, GL_FLOAT, false, 40, 24)
-    gl:enableVertexAttribArray(uv_location::u32)
-    gl:vertexAttribPointer(uv_location::u32, 2, GL_FLOAT, false, 40, 28)
-    gl:enableVertexAttribArray(textured_location::u32)
-    gl:vertexAttribPointer(textured_location::u32, 1, GL_FLOAT, false, 40, 36)
-    gl:uniform1i(gl:getUniformLocation(program, "u_texture"), 0)
 
     gl:viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight)
-
-    local pixel_scale_location: WebGLUniformLocation? = gl:getUniformLocation(program, "u_pixel_scale")
-    gl:uniform2f(
-        pixel_scale_location,
-        ((gl.drawingBufferWidth::f64) / width)::f32,
-        ((gl.drawingBufferHeight::f64) / height)::f32
+    bind_shader(
+        gl,
+        default_shader,
+        (gl.drawingBufferWidth::f64) / width,
+        (gl.drawingBufferHeight::f64) / height,
+        0.0
     )
 
     return {
@@ -289,7 +356,6 @@ void main() {
         green = 1.0,
         blue = 1.0,
         alpha = 1.0,
-        effect = 0.0,
         line_width = 1.0,
         font_pixel = 2.0,
         current_font = 0,
@@ -303,8 +369,10 @@ void main() {
         custom_font_cell_height = 0,
         custom_font_base_size = 0,
         custom_font_advance = 0,
-        time_location = gl:getUniformLocation(program, "u_time"),
-        pixel_scale_location = pixel_scale_location,
+        default_shader = default_shader,
+        active_shader = default_shader,
+        next_shader_id = 1,
+        time = 0.0,
         transforms = { 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 },
         path_x = {},
         path_y = {},
@@ -321,10 +389,11 @@ end
 -- engine's logical coordinate system. Refresh both the viewport and the scale
 -- used to express fragment effects in logical pixels.
 function Graphics:resize(): unit
+    self:flush()
     local gl: WebGL2RenderingContext = self.gl
     gl:viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight)
     gl:uniform2f(
-        self.pixel_scale_location,
+        self.active_shader.pixel_scale_location,
         ((gl.drawingBufferWidth::f64) / self.width)::f32,
         ((gl.drawingBufferHeight::f64) / self.height)::f32
     )
@@ -359,7 +428,7 @@ function Graphics:push_float(value: f64): unit
     self.used += 1
 end
 
-function Graphics:emit_vertex(x: f64, y: f64): unit
+function Graphics:emit_vertex_data(x: f64, y: f64, u: f64, v: f64, textured: f64): unit
     local base: i32 = #self.transforms - 6
     local world_x: f64 = self.transforms[base] * x + self.transforms[base + 2] * y + self.transforms[base + 4]
     local world_y: f64 = self.transforms[base + 1] * x + self.transforms[base + 3] * y + self.transforms[base + 5]
@@ -369,26 +438,17 @@ function Graphics:emit_vertex(x: f64, y: f64): unit
     self:push_float(self.green)
     self:push_float(self.blue)
     self:push_float(self.alpha)
-    self:push_float(self.effect)
-    self:push_float(0.0)
-    self:push_float(0.0)
-    self:push_float(0.0)
+    self:push_float(u)
+    self:push_float(v)
+    self:push_float(textured)
+end
+
+function Graphics:emit_vertex(x: f64, y: f64): unit
+    self:emit_vertex_data(x, y, 0.0, 0.0, 0.0)
 end
 
 function Graphics:emit_sprite_vertex(x: f64, y: f64, u: f64, v: f64): unit
-    local base: i32 = #self.transforms - 6
-    local world_x: f64 = self.transforms[base] * x + self.transforms[base + 2] * y + self.transforms[base + 4]
-    local world_y: f64 = self.transforms[base + 1] * x + self.transforms[base + 3] * y + self.transforms[base + 5]
-    self:push_float(world_x / self.draw_width * 2.0 - 1.0)
-    self:push_float(1.0 - world_y / self.draw_height * 2.0)
-    self:push_float(self.red)
-    self:push_float(self.green)
-    self:push_float(self.blue)
-    self:push_float(self.alpha)
-    self:push_float(self.effect)
-    self:push_float(u)
-    self:push_float(v)
-    self:push_float(1.0)
+    self:emit_vertex_data(x, y, u, v, 1.0)
 end
 
 function Graphics:emit_triangle(x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64): unit
@@ -410,7 +470,13 @@ function Graphics:emit_quad(x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64
 end
 
 function Graphics:emit_rectangle(x: f64, y: f64, width: f64, height: f64): unit
-    self:emit_quad(x, y, x + width, y, x + width, y + height, x, y + height)
+    self:ensure_capacity(6)
+    self:emit_vertex_data(x, y, 0.0, 0.0, 0.0)
+    self:emit_vertex_data(x + width, y, 1.0, 0.0, 0.0)
+    self:emit_vertex_data(x + width, y + height, 1.0, 1.0, 0.0)
+    self:emit_vertex_data(x, y, 0.0, 0.0, 0.0)
+    self:emit_vertex_data(x + width, y + height, 1.0, 1.0, 0.0)
+    self:emit_vertex_data(x, y + height, 0.0, 1.0, 0.0)
 end
 
 function Graphics:clear(color: string): unit
@@ -445,72 +511,127 @@ function Graphics:set_line_width(width: f64): unit
     self.line_width = width
 end
 
-function material_effect(name: string): i32
-    if name == "plain" then return 0
-    elseif name == "fire" then return 1
-    elseif name == "water" then return 2
-    elseif name == "shadow" then return 3
-    elseif name == "nature" then return 4
-    elseif name == "fire-selected" then return 5
-    elseif name == "water-selected" then return 6
-    elseif name == "shadow-selected" then return 7
-    elseif name == "nature-selected" then return 8
-    elseif name == "energy" then return 9
-    end
-    return -1
+-- Compiles game-provided GLSL against the renderer's shared 2D vertex stream.
+-- Creation never changes the active program and reports WebGL diagnostics as
+-- stable data rather than throwing host exceptions.
+function Graphics:create_shader(vertex_source: string, pixel_source: string): ShaderResult
+    local result: ShaderResult = build_shader(self.gl, vertex_source, pixel_source, self.next_shader_id)
+    if result.ok then self.next_shader_id += 1 end
+    return result
 end
 
--- Portable named materials are resources even though the WebGL backend packs
--- their selector into each vertex. Creation and use never expose shader ids.
-function Graphics:create_material(name: string): MaterialResult
-    local effect: i32 = material_effect(name)
-    if effect < 0 then
-        return {
-            ok = false,
-            material = { name = "plain", effect = 0, released = true },
-            error = { code = "unknown_material", message = "unknown built-in material: " .. name },
-        }
-    end
-    return {
-        ok = true,
-        material = { name = name, effect = effect, released = false },
-        error = { code = "", message = "" },
-    }
-end
-
--- Custom source is a queryable structured failure until waluau-ukso adds the
--- backend program resource and compile/link diagnostics.
-function Graphics:create_custom_material(source: string): MaterialResult
-    return {
-        ok = false,
-        material = { name = "plain", effect = 0, released = true },
-        error = { code = "unsupported", message = "custom shaders are not supported by this backend build" },
-    }
-end
-
-function Graphics:release_material(material: Material): unit
-    material.released = true
-end
-
-function Graphics:use_material(material: Material): bool
-    if material.released then return false end
-    self.effect = material.effect::f64
+function Graphics:use_shader(shader: Shader): bool
+    if shader.released or shader.program == nil then return false end
+    if self.active_shader.id == shader.id then return true end
+    self:flush()
+    self.active_shader = shader
+    bind_shader(
+        self.gl,
+        shader,
+        (self.gl.drawingBufferWidth::f64) / self.width,
+        (self.gl.drawingBufferHeight::f64) / self.height,
+        self.time
+    )
     return true
 end
 
--- Convenience for durable built-ins; returns false for an unknown name.
-function Graphics:set_material(name: string): bool
-    local effect: i32 = material_effect(name)
-    if effect < 0 then return false end
-    self.effect = effect::f64
+function Graphics:use_default_shader(): unit
+    if self.active_shader.id == self.default_shader.id then return end
+    self:flush()
+    self.active_shader = self.default_shader
+    bind_shader(
+        self.gl,
+        self.default_shader,
+        (self.gl.drawingBufferWidth::f64) / self.width,
+        (self.gl.drawingBufferHeight::f64) / self.height,
+        self.time
+    )
+end
+
+function Graphics:release_shader(shader: Shader): unit
+    if shader.released then return end
+    if self.active_shader.id == shader.id then self:use_default_shader() end
+    self.gl:deleteProgram(shader.program)
+    shader.program = nil
+    shader.released = true
+end
+
+function active_uniform_location(graphics: Graphics, name: string): WebGLUniformLocation?
+    local maybe_program: WebGLProgram? = graphics.active_shader.program
+    assert(maybe_program ~= nil)
+    local program: WebGLProgram = maybe_program::WebGLProgram
+    return graphics.gl:getUniformLocation(program, name)
+end
+
+-- Uniform setters target the active program. A missing/optimized-out uniform
+-- returns false; changing a live uniform flushes queued vertices first.
+function Graphics:set_uniform_float(name: string, x: f64): bool
+    local location: WebGLUniformLocation? = active_uniform_location(self, name)
+    if location == nil then return false end
+    self:flush()
+    self.gl:uniform1f(location, x::f32)
     return true
 end
 
--- Capability names are backend-neutral. Compatibility backends must return
--- false rather than accepting a command they cannot preserve.
+function Graphics:set_uniform_vec2(name: string, x: f64, y: f64): bool
+    local location: WebGLUniformLocation? = active_uniform_location(self, name)
+    if location == nil then return false end
+    self:flush()
+    self.gl:uniform2f(location, x::f32, y::f32)
+    return true
+end
+
+function Graphics:set_uniform_vec3(name: string, x: f64, y: f64, z: f64): bool
+    local location: WebGLUniformLocation? = active_uniform_location(self, name)
+    if location == nil then return false end
+    self:flush()
+    self.gl:uniform3f(location, x::f32, y::f32, z::f32)
+    return true
+end
+
+function Graphics:set_uniform_vec4(name: string, x: f64, y: f64, z: f64, w: f64): bool
+    local location: WebGLUniformLocation? = active_uniform_location(self, name)
+    if location == nil then return false end
+    self:flush()
+    self.gl:uniform4f(location, x::f32, y::f32, z::f32, w::f32)
+    return true
+end
+
+function Graphics:set_uniform_int(name: string, x: i32): bool
+    local location: WebGLUniformLocation? = active_uniform_location(self, name)
+    if location == nil then return false end
+    self:flush()
+    self.gl:uniform1i(location, x)
+    return true
+end
+
+function Graphics:set_uniform_ivec2(name: string, x: i32, y: i32): bool
+    local location: WebGLUniformLocation? = active_uniform_location(self, name)
+    if location == nil then return false end
+    self:flush()
+    self.gl:uniform2i(location, x, y)
+    return true
+end
+
+function Graphics:set_uniform_ivec3(name: string, x: i32, y: i32, z: i32): bool
+    local location: WebGLUniformLocation? = active_uniform_location(self, name)
+    if location == nil then return false end
+    self:flush()
+    self.gl:uniform3i(location, x, y, z)
+    return true
+end
+
+function Graphics:set_uniform_ivec4(name: string, x: i32, y: i32, z: i32, w: i32): bool
+    local location: WebGLUniformLocation? = active_uniform_location(self, name)
+    if location == nil then return false end
+    self:flush()
+    self.gl:uniform4i(location, x, y, z, w)
+    return true
+end
+
 function Graphics:supports(capability: string): bool
     return capability == "gpu"
-        or capability == "named-materials"
+        or capability == "shaders"
         or capability == "blend-modes"
         or capability == "textures"
         or capability == "sprite-batches"
@@ -722,18 +843,12 @@ function Graphics:set_blend_mode(mode: string): bool
     return true
 end
 
--- Selects the animated fragment-shader overlay applied to subsequently
--- emitted vertices; 0 disables it. Effects ride the vertex stream, so mixed
--- batches still draw in one call.
-function Graphics:set_effect(effect: i32): unit
-    self.effect = effect::f64
-end
-
--- Advances the shader clock driving the effects. Uniforms apply per draw
--- call, so pending vertices are flushed against the previous time first.
+-- Advances the standard shader clock. Custom shaders may declare u_time to
+-- receive it automatically; programs that omit it simply have no location.
 function Graphics:set_time(seconds: f64): unit
     self:flush()
-    self.gl:uniform1f(self.time_location, seconds::f32)
+    self.time = seconds
+    self.gl:uniform1f(self.active_shader.time_location, seconds::f32)
 end
 
 function Graphics:fill_rectangle(x: f64, y: f64, width: f64, height: f64): unit

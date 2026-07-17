@@ -24,6 +24,24 @@ test.describe('/output/poker-tricks', () => {
     const canvas = page.locator('canvas#walua-game-canvas');
     await expect(canvas).toHaveJSProperty('width', 960);
     await expect(canvas).toHaveJSProperty('height', 600);
+
+    // The committed SVG—not a procedural substitute—must reach GPU storage.
+    const countCardBackInk = () =>
+      canvas.evaluate((node) => {
+        const gl = node.getContext('webgl2');
+        const pixels = new Uint8Array(104 * 128 * 4);
+        gl.readPixels(56, 600 - 292 - 128, 104, 128, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        let count = 0;
+        for (let index = 0; index < pixels.length; index += 4) {
+          if (
+            Math.abs(pixels[index] - 232) <= 12 &&
+            Math.abs(pixels[index + 1] - 223) <= 12 &&
+            Math.abs(pixels[index + 2] - 189) <= 12
+          ) count += 1;
+        }
+        return count;
+      });
+    await expect.poll(countCardBackInk).toBeGreaterThan(40);
     expect(pageErrors).toEqual([]);
   });
 

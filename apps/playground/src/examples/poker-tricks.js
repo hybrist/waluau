@@ -2,6 +2,9 @@
 // standalone /output/poker-tricks page can render it without pulling in the
 // editor, the preset list, or the rest of the fixtures.
 
+import cardBackUrl from '../../../../fixtures/poker-tricks/assets/card-back.svg?url';
+import vaultFontUrl from '../../../../fixtures/poker-tricks/assets/PressStart2P-Regular.ttf?url';
+
 const engineModules = import.meta.glob('../../../../engine/*.walu', {
   eager: true,
   query: '?raw',
@@ -28,5 +31,9 @@ export const POKER_TRICKS_EXAMPLE = {
     ...filesUnder(engineModules, '/engine'),
     ...filesUnder(pokerTricksModules, '/fixtures/poker-tricks')
   },
-  entryFile: '/fixtures/poker-tricks/main.walu'
+  entryFile: '/fixtures/poker-tricks/main.walu',
+  assetManifest: {
+    'assets/card-back.svg': { url: cardBackUrl, type: 'image' },
+    'assets/PressStart2P-Regular.ttf': { url: vaultFontUrl, type: 'font' },
+  },
 };

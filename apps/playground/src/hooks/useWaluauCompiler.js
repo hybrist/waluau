@@ -12,7 +12,7 @@ import {
   cancelPendingAnimationFrames,
 } from '../utils/wasm.js';
 
-export default function useWaluauCompiler({ files, entryFile }) {
+export default function useWaluauCompiler({ files, entryFile, assetManifest = null }) {
   const [status, setStatus] = useState('loading'); // 'loading', 'ready', 'success', 'error'
   const [loadErrorMsg, setLoadErrorMsg] = useState('');
   const [compilerReady, setCompilerReady] = useState(false);
@@ -193,6 +193,7 @@ export default function useWaluauCompiler({ files, entryFile }) {
           bytesConstants: output?.bytesConstants,
           domOutputRoot: moduleUsesDomOutput ? domOutputRootRef.current : null,
           getWasmExports: () => instance.exports,
+          gameServices: { assetManifest },
         });
         phase = 'instantiate';
         instance = await WebAssembly.instantiate(wasmModule, imports);
@@ -223,7 +224,7 @@ export default function useWaluauCompiler({ files, entryFile }) {
     return () => {
       active = false;
     };
-  }, [outputWasmBytes, requiresWasmGc, output, domMountVersion]);
+  }, [outputWasmBytes, requiresWasmGc, output, domMountVersion, assetManifest]);
 
   const handleInputChange = (funcName, paramIndex, value) => {
     setFuncInputs(prev => {

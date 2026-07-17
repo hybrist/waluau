@@ -12,8 +12,10 @@ type AssetState = {
     font_source: resources.Resource,
     texture: graphics_module.Texture?,
     font: graphics_module.Font?,
+    effects: render.EffectShaders,
     image_finished: bool,
     font_finished: bool,
+    shader_finished: bool,
     error: string
 }
 
@@ -489,8 +491,16 @@ function install_arcane_heist(): unit
         font_source = { handle = 0, kind = "font", path = "assets/PressStart2P-Regular.ttf" },
         texture = nil,
         font = nil,
+        effects = {
+            energy = nil,
+            red_fire = nil,
+            blue_caustics = nil,
+            black_hole = nil,
+            green_growth = nil,
+        },
         image_finished = false,
         font_finished = false,
+        shader_finished = false,
         error = "",
     }
     local ui: Ui = {
@@ -559,6 +569,39 @@ function install_arcane_heist(): unit
     end
 
     local function draw(graphics: engine.Graphics, alpha: f64): unit
+        if not assets.shader_finished then
+            assets.shader_finished = true
+            local energy_result: graphics_module.ShaderResult = render.create_energy_shader(graphics)
+            if energy_result.ok then assets.effects.energy = energy_result.shader
+            else
+                if #assets.error > 0 then assets.error ..= "; " end
+                assets.error ..= "energy " .. energy_result.error.code .. ": " .. energy_result.error.message
+            end
+            local red_result: graphics_module.ShaderResult = render.create_red_fire_shader(graphics)
+            if red_result.ok then assets.effects.red_fire = red_result.shader
+            else
+                if #assets.error > 0 then assets.error ..= "; " end
+                assets.error ..= "red " .. red_result.error.code .. ": " .. red_result.error.message
+            end
+            local blue_result: graphics_module.ShaderResult = render.create_blue_caustics_shader(graphics)
+            if blue_result.ok then assets.effects.blue_caustics = blue_result.shader
+            else
+                if #assets.error > 0 then assets.error ..= "; " end
+                assets.error ..= "blue " .. blue_result.error.code .. ": " .. blue_result.error.message
+            end
+            local black_result: graphics_module.ShaderResult = render.create_black_hole_shader(graphics)
+            if black_result.ok then assets.effects.black_hole = black_result.shader
+            else
+                if #assets.error > 0 then assets.error ..= "; " end
+                assets.error ..= "black " .. black_result.error.code .. ": " .. black_result.error.message
+            end
+            local green_result: graphics_module.ShaderResult = render.create_green_growth_shader(graphics)
+            if green_result.ok then assets.effects.green_growth = green_result.shader
+            else
+                if #assets.error > 0 then assets.error ..= "; " end
+                assets.error ..= "green " .. green_result.error.code .. ": " .. green_result.error.message
+            end
+        end
         if not assets.image_finished and assets.image_source.handle ~= 0 then
             local source: resources.Resource = assets.image_source
             local result: graphics_module.TextureResult = graphics:texture_from_resource(source)
@@ -586,7 +629,7 @@ function install_arcane_heist(): unit
             custom_font_ready = graphics:set_font_resource(maybe_gpu_font::graphics_module.Font, 14.0)
         end
         if not custom_font_ready then graphics:use_builtin_font() end
-        render.draw(graphics, state, fan_focus(ui), ui.fan_parts, ui.ward_cursor, ui.cursor_area,
+        render.draw(graphics, assets.effects, state, fan_focus(ui), ui.fan_parts, ui.ward_cursor, ui.cursor_area,
             ui.play_picks, ui.swap_hand, ui.swap_wards, ui.modal, ui.revealing, ui.reveal_clock,
             ui.anims, ui.anim_clock, assets.texture, ui.discards)
     end

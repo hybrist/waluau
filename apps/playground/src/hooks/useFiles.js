@@ -35,6 +35,7 @@ export default function useFiles() {
   const [files, setFiles] = useState(initialPreset.files);
   const [activeFile, setActiveFile] = useState(initialPreset.entryFile);
   const [entryFile, setEntryFile] = useState(initialPreset.entryFile);
+  const [assetManifest, setAssetManifest] = useState(initialPreset.assetManifest ?? null);
   const [editingFile, setEditingFile] = useState(null);
   const [editingValue, setEditingValue] = useState('');
 
@@ -42,6 +43,7 @@ export default function useFiles() {
     setFiles(preset.files);
     setActiveFile(preset.entryFile);
     setEntryFile(preset.entryFile);
+    setAssetManifest(preset.assetManifest ?? null);
     setExampleQueryParam(preset.key);
   }, []);
 
@@ -253,6 +255,7 @@ export default function useFiles() {
     setActiveFile,
     entryFile,
     setEntryFile,
+    assetManifest,
     editingFile,
     setEditingFile,
     editingValue,
