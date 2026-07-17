@@ -23,12 +23,16 @@ board; a single golden halo then ignites around the whole set, drawn with the
 engine's `energy` material, whose shader-driven crackle keeps vibrating off
 the live frame clock even while the settled reveal itself holds still.
 
-Cards never simply appear: every relic and ward is dealt off a visible
-face-down pile beside the board — the opening hands, each round's wards, and
-the two replacements both sides draw after a breach. A won feint plays out in
-three beats: the winner's relics rise out of the hand, the displaced wards are
-set aside at the board's edge, and both groups then travel to their final
-slots, flipping face up or face down to match where they land.
+Cards never simply appear or vanish: every relic and ward is dealt off a
+visible face-down pile beside the board — the opening hands, each round's
+wards, and the two replacements both sides draw after a breach — and when a
+breach's continue press ends the round, the resolved formation is scooped up:
+its cards slide together into one pile, which then carries to a face-up
+spent pile at the board's right edge, mirroring the draw pile on the left. A
+won feint plays out in three beats: the winner's relics rise out of the hand,
+the displaced wards are set aside at the board's edge, and both groups then
+travel to their final slots, flipping face up or face down to match where
+they land.
 
 A feint is the only way a relic's identity crosses the table: both sides are
 looking at the wards, so whichever hand takes one has gained a card the other
