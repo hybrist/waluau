@@ -56,6 +56,30 @@ function run(): i32
 end
 `;
 
+// string.byte expands into multiple values in argument position, so passing
+// its result straight into another call exercises the single-value-into-
+// one-slot-Multi coercion (waluau-b8e8).
+const nestedByteSource = `
+type Counter = { total: i32 }
+
+function Counter:add(value: i32): i32
+    self.total += value
+    return self.total
+end
+
+function double(value: i32): i32
+    return value * 2
+end
+
+function run(text: string): i32
+    local counter: Counter = { total = 0 }
+    for index = 1::i32, #text do
+        counter:add(string.byte(text, index))
+    end
+    return counter.total + double(string.byte(text, 1))
+end
+`;
+
 describe('{i32} arrays carried through records', () => {
   it('builds from host calls, copies via a method, and reads 0-based with fallback', async () => {
     const exports = await compileAndInstantiateWithExports({ '/main.walu': probeSource }, '/main.walu', {
@@ -65,5 +89,16 @@ describe('{i32} arrays carried through records', () => {
     });
     // length=5 -> 5000000, first=100 -> 100000, last=104, fallback=64
     expect(exports.run()).toBe(5000000 + 100 * 1000 + 104 + 64);
+  });
+});
+
+describe('string.byte as a call argument (waluau-b8e8)', () => {
+  it('feeds function and method calls directly', async () => {
+    const exports = await compileAndInstantiateWithExports(
+      { '/main.walu': nestedByteSource },
+      '/main.walu',
+    );
+    // "AB": sum 65+66=131, plus double(65)=130
+    expect(exports.run('AB')).toBe(131 + 130);
   });
 });

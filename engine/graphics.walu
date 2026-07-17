@@ -1084,15 +1084,12 @@ function Graphics:custom_glyph_advance(code: i32): i32
 end
 
 -- Pen travel of a whole string in logical pixels for the selected custom
--- font. The byte goes through a local because string.byte's result cannot
--- be passed straight into a method call today (spanless i32-to-i32
--- conversion error; see waluau-b8e8).
+-- font.
 function Graphics:custom_text_width(text: string): f64
     local scale: f64 = self.custom_font_size / (self.custom_font_base_size::f64)
     local total: f64 = 0.0
     for index = 1::i32, #text do
-        local code: i32 = string.byte(text, index)
-        local glyph_advance: i32 = self:custom_glyph_advance(code)
+        local glyph_advance: i32 = self:custom_glyph_advance(string.byte(text, index))
         total += (glyph_advance::f64) * scale
     end
     return total
