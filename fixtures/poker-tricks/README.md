@@ -16,7 +16,10 @@ leaving room to maximize the final spark score.
 The browser entry imports only the engine facade and contains no DOM or canvas
 host calls. The game, help, history, and final outcome all render inside one
 960×600 logical canvas that scales to the viewport. Trick results remain on the
-board, where color identifies the winning formation and any decisive kickers.
+board, where color identifies the winning formation and any decisive kickers,
+and the winner's two cards sit inside a golden halo drawn with the engine's
+`energy` material, whose shader-driven crackle keeps vibrating off the live
+frame clock even while the settled reveal itself holds still.
 
 Cards never simply appear: every relic and ward is dealt off a visible
 face-down pile beside the board — the opening hands, each round's wards, and

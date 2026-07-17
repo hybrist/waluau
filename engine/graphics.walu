@@ -176,7 +176,10 @@ void main() {
 ]]
     -- Effect ids layer a subtle animated pattern over the vertex color:
     -- 1-4 are colored fire, water, shadow, and nature; 5-8 preserve those
-    -- same patterns with neutral highlights. Anything else passes through.
+    -- same patterns with neutral highlights; 9 is an energy crackle whose
+    -- interference bands drive brightness and alpha together, for auras that
+    -- must read as live current rather than a static highlight. Anything
+    -- else passes through.
     local fragment_source: string = [[
 precision mediump float;
 varying vec4 v_color;
@@ -188,11 +191,20 @@ uniform vec2 u_pixel_scale;
 uniform sampler2D u_texture;
 void main() {
     vec3 color = v_color.rgb;
+    float alpha = v_color.a;
     vec2 p = gl_FragCoord.xy / u_pixel_scale;
     float effect = v_effect;
-    bool grayscale = effect > 4.5;
+    bool energy = effect > 8.5;
+    bool grayscale = !energy && effect > 4.5;
     if (grayscale) effect -= 4.0;
-    if (effect > 3.5) {
+    if (energy) {
+        float crackle = sin(p.x * 0.21 + u_time * 6.5 + sin(p.y * 0.27 - u_time * 4.7) * 2.6);
+        float surge = sin((p.x + p.y) * 0.09 - u_time * 8.0);
+        float charge = 0.5 + 0.5 * crackle * surge;
+        charge *= charge;
+        color = color * (0.55 + 1.1 * charge) + vec3(0.45, 0.38, 0.12) * charge * charge;
+        alpha *= 0.5 + 0.8 * charge;
+    } else if (effect > 3.5) {
         float vein = sin(p.x * 0.07 + sin(p.y * 0.09 + u_time * 0.8) * 2.2 + u_time * 1.1);
         vec3 tint = grayscale ? vec3(0.04) : vec3(0.0, 0.07, 0.025);
         color += tint * (0.5 + 0.5 * vein);
@@ -208,7 +220,7 @@ void main() {
         vec3 tint = grayscale ? vec3(0.045) : vec3(0.09, 0.03, 0.0);
         color += tint * (0.5 + 0.5 * flicker);
     }
-    vec4 outputColor = vec4(color, v_color.a);
+    vec4 outputColor = vec4(color, alpha);
     if (v_textured > 0.5) outputColor *= texture2D(u_texture, v_uv);
     gl_FragColor = outputColor;
 }
@@ -443,6 +455,7 @@ function material_effect(name: string): i32
     elseif name == "water-selected" then return 6
     elseif name == "shadow-selected" then return 7
     elseif name == "nature-selected" then return 8
+    elseif name == "energy" then return 9
     end
     return -1
 end

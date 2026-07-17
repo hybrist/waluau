@@ -21,9 +21,12 @@ const SELECTION_HIGHLIGHT: string = "#fbbf24"
 -- The breach winner's two cards catch a golden light once the reveal has
 -- finished: a halo of widening, fading strokes around the card box rather
 -- than a filled aura, so the glow reads as light spilling off the card edge
--- instead of a fifth outcome colour. It ignites only after the second flip
--- has landed and brightens over WIN_GLOW_FADE, so the cards themselves
--- announce the result before anything starts shining.
+-- instead of a fifth outcome colour. The strokes ride the engine's "energy"
+-- material, whose crackle bands vibrate brightness and alpha off the live
+-- shader clock — the halo keeps buzzing even though reveal_clock freezes at
+-- its cap, and it cannot be mistaken for a plain focus highlight. It ignites
+-- only after the second flip has landed and brightens over WIN_GLOW_FADE, so
+-- the cards themselves announce the result before anything starts shining.
 const WIN_GLOW: string = "#fcd34d"
 const WIN_GLOW_FADE: f64 = 0.35
 
@@ -271,16 +274,20 @@ end
 -- The golden halo behind a winning card: concentric strokes stepping outward
 -- from the card box while their alpha falls away, overlapping enough that the
 -- rings read as one soft light. strength scales every ring together, which is
--- how the halo fades in without changing shape.
+-- how the halo fades in without changing shape. The energy material makes the
+-- rings crackle rather than sit flat; its base alphas run a little hot because
+-- the shader's charge troughs pull them back down.
 function draw_card_glow(graphics: Graphics, x: f64, y: f64, strength: f64): unit
     if strength <= 0.0 then return end
+    graphics:set_material("energy")
     graphics:set_line_width(4.5)
     for layer = 0::i32, 3::i32 do
         local reach: f64 = 3.0 + (layer::f64) * 3.5
-        local alpha: i32 = math.floor(strength * (140.0 - (layer::f64) * 38.0))::i32
+        local alpha: i32 = math.floor(strength * (170.0 - (layer::f64) * 44.0))::i32
         graphics:set_color(WIN_GLOW .. string.format("%02x", alpha))
         graphics:stroke_rectangle(x - reach, y - reach, CARD_W + reach * 2.0, CARD_H + reach * 2.0)
     end
+    graphics:set_material("plain")
 end
 
 -- The halo under a winning relic in the fan: the same tilted frame as
