@@ -20,7 +20,7 @@ import gameEngineGpuShaders from '../../../fixtures/game-engine/gpu-shaders.walu
 import gameEngineGpuResources from '../../../fixtures/game-engine/gpu-resources.walu?raw';
 import gameEngineGpuFontResources from '../../../fixtures/game-engine/gpu-font-resources.walu?raw';
 import pokerCardBack from '../../../fixtures/poker-tricks/assets/card-back.svg?raw';
-import pokerFontUrl from '../../../fixtures/poker-tricks/assets/PressStart2P-Regular.ttf?url';
+import pokerFontUrl from '../../../fixtures/poker-tricks/assets/Cinzel-SemiBold.ttf?url';
 import gameEngineBrowser from '../../../engine/browser.walu?raw';
 import gameEngineGraphics from '../../../engine/graphics.walu?raw';
 import gameEngineFont from '../../../engine/font.walu?raw';
@@ -1172,7 +1172,7 @@ describe('browser conformance', () => {
           assetBaseUrl: 'https://game.test/dist/',
           assetManifest: {
             'assets/card-back.svg': { url: './assets/card-back.hash.svg', type: 'image' },
-            'assets/PressStart2P-Regular.ttf': { url: './assets/vault.hash.ttf', type: 'font' },
+            'assets/Cinzel-SemiBold.ttf': { url: './assets/vault.hash.ttf', type: 'font' },
             'assets/missing.svg': { url: './assets/missing.hash.svg', type: 'image' },
           },
           fetch: async (url) => {
@@ -1234,7 +1234,7 @@ describe('browser conformance', () => {
           assetBaseUrl: 'https://game.test/dist/',
           assetManifest: {
             'assets/card-back.svg': { url: './assets/card-back.hash.svg', type: 'image' },
-            'assets/PressStart2P-Regular.ttf': { url: './assets/vault.hash.ttf', type: 'font' },
+            'assets/Cinzel-SemiBold.ttf': { url: './assets/vault.hash.ttf', type: 'font' },
           },
           fetch: async (url) => {
             requested.push(url);

@@ -840,10 +840,10 @@ export function createGameServicesHost(options = {}) {
     const firstCode = 32;
     const glyphCount = 95;
     const columns = 16;
-    const cellWidth = 40;
-    const cellHeight = 44;
-    const baseSize = 32;
-    const advance = 32;
+    const cellWidth = 80;
+    const cellHeight = 88;
+    const baseSize = 64;
+    const advance = 64;
     const rows = Math.ceil(glyphCount / columns);
     const canvas = document?.createElement?.('canvas');
     const context = canvas?.getContext?.('2d');
@@ -860,7 +860,7 @@ export function createGameServicesHost(options = {}) {
     for (let offset = 0; offset < glyphCount; offset += 1) {
       const column = offset % columns;
       const row = Math.floor(offset / columns);
-      context.fillText(String.fromCharCode(firstCode + offset), column * cellWidth + 4, row * cellHeight + 4);
+      context.fillText(String.fromCharCode(firstCode + offset), column * cellWidth + 8, row * cellHeight + 8);
     }
     return {
       source: canvas,
@@ -1098,12 +1098,16 @@ export function createGameServicesHost(options = {}) {
       texture = gl?.createTexture?.();
       if (!texture) return gpuFailure('unavailable', 'WebGL font texture creation is unavailable');
       gl.bindTexture(gl.TEXTURE_2D, texture);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      // Glyphs rasterize once at the atlas base size but draw at arbitrary
+      // logical sizes and device scales, so sample with mipmapped linear
+      // filtering instead of nearest to keep strokes intact when minified.
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, atlas.source);
+      gl.generateMipmap(gl.TEXTURE_2D);
       return rememberGpu({
         ok: true,
         kind: 'font',

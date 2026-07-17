@@ -78,14 +78,16 @@ The sealed-card artwork is the committed vector
 [`assets/card-back.svg`](assets/card-back.svg). Until its asynchronous image
 load and GPU copy complete—or if either reports a structured failure—the
 renderer shows only a neutral sealed silhouette; it does not maintain a second
-procedural copy of the artwork. Text uses the packaged Press Start 2P font
-after its FontFace resource has been copied to a GPU glyph atlas, with the
-built-in bitmap font as the not-ready/failure fallback. Source image/font
-resources are released immediately after the GPU copies succeed; GPU resources
-retain their own explicit lifetime.
+procedural copy of the artwork. Text uses the packaged Cinzel SemiBold font
+(a static wght=600 instance of the Cinzel variable font, whose engraved
+Trajan-style capitals match the tarot card artwork) after its FontFace
+resource has been copied to a GPU glyph atlas, with the built-in bitmap font
+as the not-ready/failure fallback. Source image/font resources are released
+immediately after the GPU copies succeed; GPU resources retain their own
+explicit lifetime.
 
-Press Start 2P is distributed under the SIL Open Font License 1.1; the bundled
-license is [`assets/OFL-PressStart2P.txt`](assets/OFL-PressStart2P.txt).
+Cinzel is distributed under the SIL Open Font License 1.1; the bundled
+license is [`assets/OFL-Cinzel.txt`](assets/OFL-Cinzel.txt).
 
 ## Building
 
@@ -98,5 +100,5 @@ cargo run -p waluau-cli -- fixtures/poker-tricks/sim.walu -o sim.wasm
 
 The distributable build copies both declared assets under `dist/assets/` with
 content fingerprints. Generated sibling JavaScript maps the logical Waluau
-paths (`assets/card-back.svg` and `assets/PressStart2P-Regular.ttf`) to those
+paths (`assets/card-back.svg` and `assets/Cinzel-SemiBold.ttf`) to those
 emitted URLs and carries their image/font types into the browser host.
