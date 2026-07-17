@@ -772,8 +772,9 @@ function draw_help(graphics: Graphics): unit
     draw_orb(graphics, 450.0, 448.0, ORB_STALEMATE_EDGE, ORB_STALEMATE_FILL, true)
     text(graphics, "STALEMATE", 465.0, 452.0, 11, "#d4d4d8")
     text(graphics, "STALEMATES COUNT FOR NEITHER SIDE.", 570.0, 452.0, 11, "#8a8a92")
-    text(graphics, "ARROWS MOVE   SPACE BIND   ENTER COMMIT   H HISTORY", 126.0, 480.0, 11, "#fbbf24")
-    text(graphics, "PRESS ENTER TO ENTER THE VAULT", 126.0, 515.0, 12, "#f8fafc")
+    text(graphics, "ARROWS MOVE   SPACE BIND   ENTER COMMIT   H HISTORY", 126.0, 476.0, 11, "#fbbf24")
+    text(graphics, "C SORTS RELICS BY SCHOOL   V SORTS THEM BY RANK", 126.0, 498.0, 11, "#fbbf24")
+    text(graphics, "PRESS ENTER TO ENTER THE VAULT", 126.0, 522.0, 12, "#f8fafc")
 end
 
 function draw_history(graphics: Graphics, state: game.State): unit

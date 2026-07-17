@@ -93,6 +93,22 @@ function toggle(picks: {i32}, value: i32, limit: i32): unit
     if #picks < limit then table.insert(picks, value) end
 end
 
+-- Carries the UI across a sorted hand. order[new_slot] = old_slot is the
+-- permutation game's sort reports; focus and pending picks name specific
+-- relics, so they follow their cards to the new slots, and each card keeps
+-- its parting offset so an opened fan re-eases from the shape the player was
+-- just looking at instead of snapping shut and reopening.
+function apply_hand_order(ui: Ui, order: {i32}): unit
+    local old_to_new: {i32} = { 0, 0, 0, 0, 0 }
+    for new_slot, old_slot in order do old_to_new[old_slot] = new_slot end
+    ui.hand_cursor = old_to_new[ui.hand_cursor]
+    for index, pick in ui.play_picks do ui.play_picks[index] = old_to_new[pick] end
+    for index, pick in ui.swap_hand do ui.swap_hand[index] = old_to_new[pick] end
+    local parts: {f64} = { 0.0, 0.0, 0.0, 0.0, 0.0 }
+    for new_slot, old_slot in order do parts[new_slot] = ui.fan_parts[old_slot] end
+    ui.fan_parts = parts
+end
+
 function clear_picks(ui: Ui): unit
     ui.play_picks = {}
     ui.swap_hand = {}
@@ -586,6 +602,10 @@ function install_arcane_heist(): unit
             else
                 toggle(ui.play_picks, ui.hand_cursor, 2)
             end
+        elseif key == "c" or key == "C" then
+            apply_hand_order(ui, state:sort_player_hand(true))
+        elseif key == "v" or key == "V" then
+            apply_hand_order(ui, state:sort_player_hand(false))
         elseif key == "p" or key == "P" then
             if state.swap_open then
                 ui.swap_hand = {}
