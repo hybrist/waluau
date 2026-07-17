@@ -32,15 +32,23 @@ type Ui = {
     anims: {render.Anim},
     anim_clock: f64,
     anim_total: f64,
-    anim_kind: i32
+    anim_kind: i32,
+    -- Every card scooped onto the spent pile so far, in landing order: the
+    -- pile is face up, so render shows the last entry as its top card.
+    -- Appended when the scoop is queued; render subtracts the legs still in
+    -- the air, so the pile only thickens — and its face only changes — as
+    -- cards land on it.
+    discards: {game.Card}
 }
 
 const MODAL_NONE: i32 = 0
 const MODAL_HISTORY: i32 = 1
 const MODAL_HELP: i32 = 2
 const MODAL_FINAL: i32 = 4
--- Both staggered flips finish before the first continue press advances play.
-const BOARD_REVEAL_SECONDS: f64 = 1.6
+-- Covers the staggered flips, the winner's pair flying into the ward row
+-- (render.walu's FLY_START + FLY_STAGGER + FLY_SECONDS = 1.87), and the
+-- halo's fade to full, before the first continue press advances play.
+const BOARD_REVEAL_SECONDS: f64 = 2.3
 
 const ANIM_NONE: i32 = 0
 const ANIM_DEAL: i32 = 1
@@ -75,6 +83,12 @@ const SWAP_STEP: f64 = 0.12
 const SWAP_LEAVE_SECONDS: f64 = 0.4
 const SWAP_ASIDE_SECONDS: f64 = 0.4
 const SWAP_PLACE_SECONDS: f64 = 0.5
+-- Scooping the resolved formation off the table: the row's cards slide
+-- together into one pile, hold a beat, and the pile then carries face up to
+-- the spent stack, where it stays readable as the pile's new top.
+const SCOOP_GATHER_SECONDS: f64 = 0.3
+const SCOOP_HOLD_SECONDS: f64 = 0.12
+const SCOOP_CARRY_SECONDS: f64 = 0.4
 
 function contains(picks: {i32}, value: i32): bool
     for pick in picks do
@@ -235,11 +249,79 @@ function queue_initial_deal(state: game.State, ui: Ui): unit
     begin_anims(ui, anims, finish, ANIM_DEAL)
 end
 
--- After a breach: both hands draw their two replacements (they land in the
--- rightmost slots, matching how the hand re-packs), then the next wards deal.
+-- One resolved card's exit, in two legs: it slides from where the reveal
+-- left it into a pile at the row's centre, holds while the rest gather, and
+-- the pile then carries face up to the spent stack. The carry legs all share
+-- one path, so the five cards read as a single scooped-up pile; only the
+-- carry leg is aimed at SLOT_ASIDE, which is what render counts when it
+-- decides how thick the spent stack draws.
+function push_scoop(anims: {render.Anim}, card: game.Card, from_x: f64, from_y: f64): unit
+    local gather_x: f64 = (render.row_left_x + render.row_right_x) * 0.5
+    local carry_start: f64 = SCOOP_GATHER_SECONDS + SCOOP_HOLD_SECONDS
+    table.insert(anims, {
+        card = card,
+        faces = FACES_UP,
+        known = false,
+        x0 = from_x,
+        y0 = from_y,
+        x1 = gather_x,
+        y1 = render.row_y,
+        angle0 = 0.0,
+        angle1 = 0.0,
+        start = 0.0,
+        duration = SCOOP_GATHER_SECONDS,
+        appear = 0.0,
+        vanish = carry_start,
+        dest_kind = -1,
+        dest_index = 0,
+    })
+    table.insert(anims, {
+        card = card,
+        faces = FACES_UP,
+        known = false,
+        x0 = gather_x,
+        y0 = render.row_y,
+        x1 = render.slot_x(SLOT_ASIDE, 0),
+        y1 = render.slot_y(SLOT_ASIDE, 0),
+        angle0 = 0.0,
+        angle1 = 0.0,
+        start = carry_start,
+        duration = SCOOP_CARRY_SECONDS,
+        appear = carry_start,
+        vanish = carry_start + SCOOP_CARRY_SECONDS,
+        dest_kind = SLOT_ASIDE,
+        dest_index = 0,
+    })
+end
+
+-- After a breach: the resolved formation is scooped off the table onto the
+-- spent pile, then both hands draw their two replacements (they land in the
+-- rightmost slots, matching how the hand re-packs) and the next wards deal.
 function queue_refill_deal(state: game.State, ui: Ui): unit
     local anims: {render.Anim} = {}
-    local start: f64 = 0.0
+    -- The formation the reveal just showed: the three wards in their slots,
+    -- plus the winner's pair on the row's flanks. A stalemate never formed a
+    -- row, so only the wards are gathered and both spent pairs simply leave.
+    -- The ledger appends in the same order the scoop legs are pushed, so the
+    -- last card queued is both the last one drawn in flight and the face the
+    -- settled pile shows.
+    local trick: game.Trick = state.history[#state.history - 1]
+    for i = 0::i32, 2::i32 do
+        push_scoop(anims, trick.middle[i], render.slot_x(SLOT_MIDDLE, i), render.slot_y(SLOT_MIDDLE, i))
+        table.insert(ui.discards, trick.middle[i])
+    end
+    if trick.winner > 0 then
+        push_scoop(anims, trick.player_cards[0], render.row_left_x, render.row_y)
+        push_scoop(anims, trick.player_cards[1], render.row_right_x, render.row_y)
+        table.insert(ui.discards, trick.player_cards[0])
+        table.insert(ui.discards, trick.player_cards[1])
+    elseif trick.winner < 0 then
+        push_scoop(anims, trick.computer_cards[0], render.row_left_x, render.row_y)
+        push_scoop(anims, trick.computer_cards[1], render.row_right_x, render.row_y)
+        table.insert(ui.discards, trick.computer_cards[0])
+        table.insert(ui.discards, trick.computer_cards[1])
+    end
+    local start: f64 = SCOOP_GATHER_SECONDS + SCOOP_HOLD_SECONDS + SCOOP_CARRY_SECONDS + 0.1
     local finish: f64 = 0.0
     for i = 3::i32, 4::i32 do
         finish = push_deal(anims, state.computer_hand[i], SLOT_COMPUTER, i, FACES_DOWN, start)
@@ -395,6 +477,7 @@ function reset_run(state: game.State, ui: Ui): unit
     -- A restart deals onto a settled board, so the fan starts shut rather than
     -- easing out of whatever the abandoned run left it parted around.
     ui.fan_parts = { 0.0, 0.0, 0.0, 0.0, 0.0 }
+    ui.discards = {}
     -- The deal waits behind the help modal; its clock starts once play does.
     queue_initial_deal(state, ui)
 end
@@ -425,6 +508,7 @@ function install_arcane_heist(): unit
         anim_clock = 0.0,
         anim_total = 0.0,
         anim_kind = ANIM_NONE,
+        discards = {},
     }
 
     local function load_assets_async(): i32
@@ -504,7 +588,7 @@ function install_arcane_heist(): unit
         if not custom_font_ready then graphics:use_builtin_font() end
         render.draw(graphics, state, fan_focus(ui), ui.fan_parts, ui.ward_cursor, ui.cursor_area,
             ui.play_picks, ui.swap_hand, ui.swap_wards, ui.modal, ui.revealing, ui.reveal_clock,
-            ui.anims, ui.anim_clock, assets.texture)
+            ui.anims, ui.anim_clock, assets.texture, ui.discards)
     end
 
     local function close_modal(): unit
