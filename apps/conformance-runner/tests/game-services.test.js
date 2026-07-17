@@ -119,6 +119,7 @@ function serviceHarness() {
         cellHeight: 44,
         baseSize: 32,
         advance: 32,
+        advances: Array.from({ length: 95 }, (_, index) => 20 + (index % 5)),
       }),
       AudioContext: FakeAudioContext,
       Audio: FakeAudio,
@@ -206,6 +207,9 @@ describe('browser game resource services', () => {
     expect(host.game_gpu_font_first_code(gpuFont)).toBe(32);
     expect(host.game_gpu_font_glyph_count(gpuFont)).toBe(95);
     expect(host.game_gpu_font_advance(gpuFont)).toBe(32);
+    expect(host.game_gpu_font_glyph_advance(gpuFont, 0)).toBe(20);
+    expect(host.game_gpu_font_glyph_advance(gpuFont, 7)).toBe(22);
+    expect(host.game_gpu_font_glyph_advance(gpuFont, 200)).toBe(32);
     expect(calls.find((call) => call.at(-1) === fontAtlas)).toBeDefined();
     host.game_resource_release(loadedFont);
     expect(fontSet.size).toBe(0);

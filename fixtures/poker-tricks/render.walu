@@ -629,6 +629,18 @@ function text(graphics: Graphics, value: string, x: f64, y: f64, size: f64, colo
     graphics:print(value, x, y)
 end
 
+function text_centered(graphics: Graphics, value: string, center_x: f64, y: f64, size: f64, color: string): unit
+    graphics:set_color(color)
+    graphics:set_font(tostring(size) .. "px monospace")
+    graphics:print_aligned(value, center_x, y, "center")
+end
+
+function text_right(graphics: Graphics, value: string, right_x: f64, y: f64, size: f64, color: string): unit
+    graphics:set_color(color)
+    graphics:set_font(tostring(size) .. "px monospace")
+    graphics:print_aligned(value, right_x, y, "right")
+end
+
 function panel(graphics: Graphics, x: f64, y: f64, width: f64, height: f64, fill: string, edge: string): unit
     graphics:set_color(fill)
     graphics:fill_rectangle(x, y, width, height)
@@ -772,7 +784,7 @@ function draw_card_face(graphics: Graphics, effects: EffectShaders, card: game.C
     -- The school never appears in words on a card: the accent stripe and the
     -- sigil carry it, the same pairing the help legend teaches.
     draw_sigil(graphics, card.suit, x + 42.0, y + 82.0)
-    if selected then text(graphics, "BOUND", x + 27.0, y + 119.0, 9, SELECTION_HIGHLIGHT) end
+    if selected then text_centered(graphics, "BOUND", x + CARD_W * 0.5, y + 119.0, 9, SELECTION_HIGHLIGHT) end
 end
 
 -- `known` says the opponent has seen this card, which the eye announces on
@@ -845,7 +857,7 @@ function draw_deck(graphics: Graphics, effects: EffectShaders, card_back: graphi
     if count > 6 then panel(graphics, x + 3.0, y + 3.0, CARD_W, CARD_H, "#17171c", "#3f3f46") end
     panel(graphics, x, y, CARD_W, CARD_H, "#17171c", "#52525b")
     draw_card_back(graphics, card_back, x, y, false)
-    text(graphics, tostring(count) .. " SEALED", x + 10.0, y + CARD_H + 26.0, 10, "#8a8a92")
+    text_centered(graphics, tostring(count) .. " SEALED", x + CARD_W * 0.5, y + CARD_H + 26.0, 10, "#8a8a92")
 end
 
 -- The spent pile opposite the draw pile, at the same anchor the feint already
@@ -979,7 +991,7 @@ function draw_hud(graphics: Graphics, state: game.State): unit
 end
 
 function draw_footer(graphics: Graphics): unit
-    text(graphics, "? HELP", 883.0, 582.0, 10, "#8a8a92")
+    text_right(graphics, "? HELP", WIDTH - 17.0, 582.0, 10, "#8a8a92")
 end
 
 -- Smoothstepped progress of one winner card's flight into the row, zero
@@ -1044,10 +1056,10 @@ function draw_resolution_board(graphics: Graphics, effects: EffectShaders, card_
         if glow < 0.0 then glow = 0.0 end
         if glow > 1.0 then glow = 1.0 end
     end
-    if trick.winner > 0 then text(graphics, "DEFENSE BREACHED +" .. tostring(trick.points), 350.0, 103.0, 14, "#67e8f9")
-    elseif trick.winner < 0 then text(graphics, "THE WARDS HOLD", 402.0, 103.0, 14, "#fca5a5")
-    else text(graphics, "MAGICS CANCEL", 410.0, 103.0, 14, "#fbbf24") end
-    text(graphics, game.category_name(trick.player_value) .. "  VS  " .. game.category_name(trick.computer_value), 330.0, 252.0, 11, "#d4d4d8")
+    if trick.winner > 0 then text_centered(graphics, "DEFENSE BREACHED +" .. tostring(trick.points), WIDTH * 0.5, 103.0, 14, "#67e8f9")
+    elseif trick.winner < 0 then text_centered(graphics, "THE WARDS HOLD", WIDTH * 0.5, 103.0, 14, "#fca5a5")
+    else text_centered(graphics, "MAGICS CANCEL", WIDTH * 0.5, 103.0, 14, "#fbbf24") end
+    text_centered(graphics, game.category_name(trick.player_value) .. "  VS  " .. game.category_name(trick.computer_value), WIDTH * 0.5, 252.0, 11, "#d4d4d8")
 
     -- The played Arch Mage cards flip in their original slots, then fly to
     -- the ward row if the wards held; a slot goes empty the moment its card
@@ -1077,7 +1089,7 @@ function draw_resolution_board(graphics: Graphics, effects: EffectShaders, card_
         draw_card(graphics, effects, card_back, trick.middle[i], 302.0 + (i::f64) * 116.0, 292.0, false, false, false, trick.winner ~= 0 and scoring[i], false)
     end
 
-    text(graphics, "ENTER CONTINUE", 414.0, 442.0, 12, "#fbbf24")
+    text_centered(graphics, "ENTER CONTINUE", WIDTH * 0.5, 442.0, 12, "#fbbf24")
     -- The cursor is not live while a breach resolves, so the fan is already
     -- easing shut; it settles closed behind the flips. The committed relics
     -- stay bound and lifted until their flight begins, so it stays clear
@@ -1152,7 +1164,7 @@ function draw_playfield(graphics: Graphics, effects: EffectShaders, card_back: g
     end
     if not state.swap_open and #play_picks == 2 then
         local preview_value: i32 = game.value_for_pair(state.player_hand, state.middle, play_picks[0], play_picks[1])
-        text(graphics, "OFFER: " .. game.category_name(preview_value), 390.0, 252.0, 11, "#d4d4d8")
+        text_centered(graphics, "OFFER: " .. game.category_name(preview_value), WIDTH * 0.5, 252.0, 11, "#d4d4d8")
     end
     panel(graphics, 278.0, 258.0, 404.0, 148.0, "#101013", "#3f3f46")
     for i = 0::i32, #state.middle - 1 do
@@ -1166,8 +1178,8 @@ function draw_playfield(graphics: Graphics, effects: EffectShaders, card_back: g
             draw_card(graphics, effects, card_back, state.middle[i], slot_x(SLOT_MIDDLE, i), slot_y(SLOT_MIDDLE, i), selected, focused, false, false, false)
         end
     end
-    if state.swap_open then text(graphics, "FEINT: BIND MATCHING RELICS + WARDS (UP/DOWN)", 242.0, 430.0, 12, "#fbbf24")
-    else text(graphics, "BREACH: BIND TWO RELICS", 361.0, 430.0, 12, "#fbbf24") end
+    if state.swap_open then text_centered(graphics, "FEINT: BIND MATCHING RELICS + WARDS (UP/DOWN)", WIDTH * 0.5, 430.0, 12, "#fbbf24")
+    else text_centered(graphics, "BREACH: BIND TWO RELICS", WIDTH * 0.5, 430.0, 12, "#fbbf24") end
     -- Relics keep the order they were dealt in, focused or not: pulling the
     -- focused one to the front would slide it through its neighbours instead of
     -- opening a gap for it. The parting alone gives it room.
@@ -1266,10 +1278,10 @@ function draw_final(graphics: Graphics, state: game.State): unit
         subtitle = "THREE WARDS HELD. THE HEIST IS OVER"
     end
     modal_shell(graphics, title, subtitle)
-    text(graphics, "SPARKS STOLEN", 399.0, 250.0, 18, "#67e8f9")
-    text(graphics, tostring(state.player_points), 452.0, 325.0, 44, "#f8fafc")
-    text(graphics, "BREACHES WON " .. tostring(state.player_tricks) .. " / 5", 390.0, 376.0, 13, "#d4d4d8")
-    text(graphics, "R RESTARTS THE HEIST   H OPENS THE LEDGER", 262.0, 482.0, 12, "#fbbf24")
+    text_centered(graphics, "SPARKS STOLEN", WIDTH * 0.5, 250.0, 18, "#67e8f9")
+    text_centered(graphics, tostring(state.player_points), WIDTH * 0.5, 325.0, 44, "#f8fafc")
+    text_centered(graphics, "BREACHES WON " .. tostring(state.player_tricks) .. " / 5", WIDTH * 0.5, 376.0, 13, "#d4d4d8")
+    text_centered(graphics, "R RESTARTS THE HEIST   H OPENS THE LEDGER", WIDTH * 0.5, 482.0, 12, "#fbbf24")
 end
 
 function draw(graphics: Graphics, effects: EffectShaders, state: game.State, hand_focus: i32, fan_parts: {f64}, ward_cursor: i32, cursor_area: i32, play_picks: {i32}, swap_hand: {i32}, swap_wards: {i32}, modal: i32, revealing: bool, reveal_clock: f64, anims: {Anim}, anim_clock: f64, card_back: graphics_module.Texture?, discards: {game.Card}): unit

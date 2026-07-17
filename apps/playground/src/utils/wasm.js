@@ -857,10 +857,13 @@ export function createGameServicesHost(options = {}) {
     context.font = `${baseSize}px ${JSON.stringify(String(face.family))}`;
     context.textBaseline = 'top';
     context.textAlign = 'left';
+    const advances = [];
     for (let offset = 0; offset < glyphCount; offset += 1) {
       const column = offset % columns;
       const row = Math.floor(offset / columns);
-      context.fillText(String.fromCharCode(firstCode + offset), column * cellWidth + 8, row * cellHeight + 8);
+      const glyph = String.fromCharCode(firstCode + offset);
+      context.fillText(glyph, column * cellWidth + 8, row * cellHeight + 8);
+      advances.push(Math.max(1, Math.round(context.measureText(glyph).width)));
     }
     return {
       source: canvas,
@@ -873,6 +876,7 @@ export function createGameServicesHost(options = {}) {
       cellHeight,
       baseSize,
       advance,
+      advances,
     };
   });
   const AudioContextCtor =
@@ -1122,6 +1126,7 @@ export function createGameServicesHost(options = {}) {
         cellHeight: atlas.cellHeight,
         baseSize: atlas.baseSize,
         advance: atlas.advance,
+        advances: Array.isArray(atlas.advances) ? atlas.advances.map(Number) : null,
       });
     } catch (error) {
       gl?.deleteTexture?.(texture);
@@ -1233,6 +1238,11 @@ export function createGameServicesHost(options = {}) {
     game_gpu_font_cell_height: (handle) => Number(gpuEntryFor(handle)?.cellHeight ?? 0),
     game_gpu_font_base_size: (handle) => Number(gpuEntryFor(handle)?.baseSize ?? 0),
     game_gpu_font_advance: (handle) => Number(gpuEntryFor(handle)?.advance ?? 0),
+    game_gpu_font_glyph_advance: (handle, index) => {
+      const entry = gpuEntryFor(handle);
+      const glyph = entry?.advances?.[Number(index)];
+      return Number.isFinite(glyph) ? Number(glyph) : Number(entry?.advance ?? 0);
+    },
     game_gpu_texture_bind: (gl, handle) => {
       const entry = gpuEntryFor(handle);
       if (!entry?.ok || entry.gl !== gl) return false;
