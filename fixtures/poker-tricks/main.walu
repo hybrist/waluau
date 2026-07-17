@@ -65,19 +65,23 @@ const SLOT_ASIDE: i32 = 4
 
 -- Mirrors render's "no relic holds focus" sentinel.
 const FAN_CLOSED: i32 = -1
--- How fast a relic slides to its parted position, in fan steps per second: one
--- cursor move parts a relic by FAN_PART, so this is about a seventh of a second
--- of travel. The ceiling is the shortest card flight: a card in the air aims at
--- its closed-fan slot (see slot_x_now), so the fan has to finish shutting before
--- the first one lands. Queuing an animation closes the fan from at most FAN_PART
--- away, which at this speed takes well under DEAL_SECONDS.
-const FAN_EASE_SPEED: f64 = 1.6
+-- Exponential target-chasing response for the hand fan. It moves decisively
+-- off the cursor change, then settles softly into its exact endpoint.
+const FAN_EASE_RESPONSE: f64 = 14.0
+const FAN_EASE_SNAP: f64 = 0.001
 
 -- Mirrors the faces modes of render's animated cards.
 const FACES_DOWN: i32 = 0
 const FACES_UP: i32 = 1
 const FACES_FLIP_UP: i32 = 2
 const FACES_FLIP_DOWN: i32 = 3
+
+-- Each journey gets a curve suited to its dramatic beat. These ids mirror
+-- render.walu's easing modes carried by render.Anim.
+const EASE_OUT_QUINT: i32 = 0
+const EASE_IN_CUBIC: i32 = 1
+const EASE_IN_OUT_CUBIC: i32 = 2
+const EASE_OUT_BACK: i32 = 3
 
 const DEAL_STEP: f64 = 0.1
 const DEAL_SECONDS: f64 = 0.38
@@ -143,18 +147,16 @@ function fan_focus(ui: Ui): i32
     return ui.hand_cursor
 end
 
--- Walks each relic toward its parted position at a fixed speed, so the fan
--- opens and closes over a few frames instead of teleporting. Linear rather than
--- proportional easing so a relic actually arrives, and within a bounded time:
--- the animation endpoints in render.slot_x assume a settled fan.
+-- Chases each relic's target with a quick ease-out. A small snap threshold
+-- guarantees the fan reaches the exact coordinates card flights target.
 function update_fan(ui: Ui, dt: f64): unit
     local focus: i32 = fan_focus(ui)
-    local step: f64 = FAN_EASE_SPEED * dt
+    local blend: f64 = FAN_EASE_RESPONSE * dt
+    if blend > 1.0 then blend = 1.0 end
     for i = 0::i32, 4::i32 do
         local delta: f64 = render.hand_part_target(i, focus) - ui.fan_parts[i]
-        if delta > step then delta = step end
-        if delta < -step then delta = -step end
-        ui.fan_parts[i] += delta
+        if math.abs(delta) <= FAN_EASE_SNAP then ui.fan_parts[i] += delta
+        else ui.fan_parts[i] += delta * blend end
     end
 end
 
@@ -221,6 +223,7 @@ function push_deal(anims: {render.Anim}, card: game.Card, kind: i32, index: i32,
         y1 = render.slot_y(kind, index),
         angle0 = 0.0,
         angle1 = slot_tilt(kind, index),
+        easing = EASE_OUT_QUINT,
         start = start,
         duration = DEAL_SECONDS,
         appear = start,
@@ -270,6 +273,7 @@ function push_scoop(anims: {render.Anim}, card: game.Card, from_x: f64, from_y: 
         y1 = render.row_y,
         angle0 = 0.0,
         angle1 = 0.0,
+        easing = EASE_IN_CUBIC,
         start = 0.0,
         duration = SCOOP_GATHER_SECONDS,
         appear = 0.0,
@@ -287,6 +291,7 @@ function push_scoop(anims: {render.Anim}, card: game.Card, from_x: f64, from_y: 
         y1 = render.slot_y(SLOT_ASIDE, 0),
         angle0 = 0.0,
         angle1 = 0.0,
+        easing = EASE_IN_OUT_CUBIC,
         start = carry_start,
         duration = SCOOP_CARRY_SECONDS,
         appear = carry_start,
@@ -401,6 +406,7 @@ function queue_swap_animation(state: game.State, ui: Ui): unit
             y1 = hover_y,
             angle0 = leave_angle,
             angle1 = 0.0,
+            easing = EASE_OUT_BACK,
             start = stagger,
             duration = SWAP_LEAVE_SECONDS,
             appear = 0.0,
@@ -419,6 +425,7 @@ function queue_swap_animation(state: game.State, ui: Ui): unit
             y1 = mid_y,
             angle0 = 0.0,
             angle1 = 0.0,
+            easing = EASE_OUT_BACK,
             start = place,
             duration = SWAP_PLACE_SECONDS,
             appear = place,
@@ -439,6 +446,7 @@ function queue_swap_animation(state: game.State, ui: Ui): unit
             y1 = render.slot_y(SLOT_ASIDE, k),
             angle0 = 0.0,
             angle1 = 0.0,
+            easing = EASE_IN_OUT_CUBIC,
             start = aside_start + stagger,
             duration = SWAP_ASIDE_SECONDS,
             appear = 0.0,
@@ -459,6 +467,7 @@ function queue_swap_animation(state: game.State, ui: Ui): unit
             y1 = land_y,
             angle0 = 0.0,
             angle1 = land_angle,
+            easing = EASE_OUT_BACK,
             start = place,
             duration = SWAP_PLACE_SECONDS,
             appear = place,
@@ -492,7 +501,7 @@ function install_arcane_heist(): unit
         texture = nil,
         font = nil,
         effects = {
-            energy = nil,
+            gold_shimmer = nil,
             red_fire = nil,
             blue_caustics = nil,
             black_hole = nil,
@@ -571,11 +580,11 @@ function install_arcane_heist(): unit
     local function draw(graphics: engine.Graphics, alpha: f64): unit
         if not assets.shader_finished then
             assets.shader_finished = true
-            local energy_result: graphics_module.ShaderResult = render.create_energy_shader(graphics)
-            if energy_result.ok then assets.effects.energy = energy_result.shader
+            local shimmer_result: graphics_module.ShaderResult = render.create_gold_shimmer_shader(graphics)
+            if shimmer_result.ok then assets.effects.gold_shimmer = shimmer_result.shader
             else
                 if #assets.error > 0 then assets.error ..= "; " end
-                assets.error ..= "energy " .. energy_result.error.code .. ": " .. energy_result.error.message
+                assets.error ..= "gold shimmer " .. shimmer_result.error.code .. ": " .. shimmer_result.error.message
             end
             local red_result: graphics_module.ShaderResult = render.create_red_fire_shader(graphics)
             if red_result.ok then assets.effects.red_fire = red_result.shader
