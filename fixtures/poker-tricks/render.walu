@@ -7,7 +7,7 @@ local game = require("./game")
 
 type Graphics = engine.Graphics
 type EffectShaders = {
-    energy: graphics_module.Shader?,
+    gold_shimmer: graphics_module.Shader?,
     red_fire: graphics_module.Shader?,
     blue_caustics: graphics_module.Shader?,
     black_hole: graphics_module.Shader?,
@@ -45,24 +45,110 @@ void main() {
 }
 ]]
 
-local ENERGY_PIXEL_SOURCE <const>: string = [[
+-- The winning formation sits over one continuous field of golden light.
+-- Narrow luminous filaments, hard-edged specular sweeps and sparse star
+-- glints keep the halo crisp without turning its underlay into a solid plate.
+local GOLD_SHIMMER_PIXEL_SOURCE <const>: string = [[
 precision mediump float;
 varying vec4 v_color;
 varying vec2 v_uv;
 varying float v_textured;
 uniform float u_time;
-uniform vec2 u_pixel_scale;
 uniform sampler2D u_texture;
+uniform float u_aspect;
+uniform float u_strength;
+
+float line_band(float phase, float inner, float outer) {
+    float distance_to_line = abs(fract(phase) - 0.5);
+    return 1.0 - smoothstep(inner, outer, distance_to_line);
+}
+
+float hash21(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
 void main() {
-    vec3 color = v_color.rgb;
-    float alpha = v_color.a;
-    vec2 p = gl_FragCoord.xy / u_pixel_scale;
-    float crackle = sin(p.x * 0.21 + u_time * 6.5 + sin(p.y * 0.27 - u_time * 4.7) * 2.6);
-    float surge = sin((p.x + p.y) * 0.09 - u_time * 8.0);
-    float charge = 0.5 + 0.5 * crackle * surge;
-    charge *= charge;
-    color = color * (0.55 + 1.1 * charge) + vec3(0.45, 0.38, 0.12) * charge * charge;
-    alpha *= 0.5 + 0.8 * charge;
+    vec2 p = vec2(v_uv.x * u_aspect, v_uv.y);
+    vec2 centred = (v_uv - 0.5) * 2.0;
+    centred.x *= u_aspect;
+    float radius = length(centred);
+    float angle = atan(centred.y, centred.x);
+
+    // Fine opposing filaments move at different speeds. Their narrow,
+    // well-defined intersections give the light a lively woven shimmer.
+    float etch_a = line_band(p.x * 1.65 + p.y * 2.4 - u_time * 0.34, 0.014, 0.035);
+    float etch_b = line_band(p.x * 1.05 - p.y * 3.1 + u_time * 0.23, 0.009, 0.026);
+    float filaments = max(etch_a * 0.72, etch_b * 0.48);
+    float crossing = etch_a * etch_b;
+
+    // A travelling reflection has a bright knife-edge followed by a broader
+    // gold face, like one beam sweeping across the completed formation.
+    float sweep_phase = fract(v_uv.x * 0.88 + v_uv.y * 0.28 - u_time * 0.105);
+    float sweep_distance = abs(sweep_phase - 0.5);
+    float sweep_face = 1.0 - smoothstep(0.055, 0.105, sweep_distance);
+    float sweep_edge = 1.0 - smoothstep(0.006, 0.019, sweep_distance);
+
+    // Sparse four-point glints belong to the same coordinate field, so they
+    // travel cleanly through the gaps instead of restarting on every card.
+    vec2 glint_grid = vec2(p.x * 1.15 - u_time * 0.12, p.y * 4.0);
+    vec2 glint_cell = fract(glint_grid) - 0.5;
+    vec2 glint_id = floor(glint_grid);
+    float glint_gate = step(0.76, hash21(glint_id));
+    float glint_core = 1.0 - smoothstep(0.015, 0.050, length(glint_cell));
+    float glint_h = (1.0 - smoothstep(0.018, 0.050, abs(glint_cell.y)))
+        * (1.0 - smoothstep(0.05, 0.25, abs(glint_cell.x)));
+    float glint_v = (1.0 - smoothstep(0.018, 0.050, abs(glint_cell.x)))
+        * (1.0 - smoothstep(0.05, 0.22, abs(glint_cell.y)));
+    float glint = glint_gate * max(glint_core, max(glint_h, glint_v));
+
+    // The completed hand throws a crisp sunburst beyond its silhouette.
+    // Alternating spoke widths keep the rays irregular and celebratory, while
+    // two travelling rings make the whole formation pulse outward.
+    float spoke_phase = angle * 15.0
+        + sin(angle * 5.0 - u_time * 0.42) * 0.58
+        + u_time * 0.18;
+    float narrow_spokes = 1.0 - smoothstep(0.935, 0.985, abs(sin(spoke_phase)));
+    float fine_spokes = 1.0 - smoothstep(
+        0.965,
+        0.994,
+        abs(sin(spoke_phase * 1.73 + 1.4))
+    );
+    float radial_fade = 1.0 - smoothstep(1.45, u_aspect, radius);
+    float burst = max(narrow_spokes * 0.72, fine_spokes * 0.50) * radial_fade;
+
+    float ring_radius_a = 0.72 + fract(u_time * 0.19) * 1.55;
+    float ring_radius_b = 0.72 + fract(u_time * 0.19 + 0.50) * 1.55;
+    float ring_a = (1.0 - smoothstep(0.020, 0.058, abs(radius - ring_radius_a)))
+        * (1.0 - fract(u_time * 0.19));
+    float ring_b = (1.0 - smoothstep(0.020, 0.058, abs(radius - ring_radius_b)))
+        * (1.0 - fract(u_time * 0.19 + 0.50));
+    float rings = max(ring_a, ring_b);
+
+    // The drawing primitive is rectangular, but the light is a long capsule
+    // around the hand. Rounded ends and a generous vertical falloff erase the
+    // quad's footprint while keeping one coordinate field through every gap.
+    float capsule_x = max(abs(centred.x) - (u_aspect - 0.78), 0.0);
+    float capsule_distance = length(vec2(capsule_x, centred.y));
+    float envelope = 1.0 - smoothstep(0.43, 1.0, capsule_distance);
+
+    vec3 warm_gold = vec3(1.0, 0.60, 0.055);
+    vec3 bright_gold = vec3(1.0, 0.82, 0.25);
+    vec3 pale_gold = vec3(1.0, 0.97, 0.72);
+    float brilliance = clamp(
+        filaments * 0.45 + sweep_face * 0.30 + sweep_edge * 0.72
+            + crossing * 0.38 + glint + burst * 0.38 + rings * 0.70,
+        0.0,
+        1.0
+    );
+    vec3 color = mix(warm_gold, bright_gold, 0.32 + brilliance * 0.48);
+    color = mix(color, pale_gold, sweep_edge * 0.56 + glint * 0.82);
+
+    // Only the moving light has substantial opacity. The faint base ties the
+    // gaps together without laying an amber slab beneath the cards.
+    float light = 0.012 + filaments * 0.28 + sweep_face * 0.15
+        + sweep_edge * 0.52 + crossing * 0.22 + glint * 0.78
+        + burst * 0.42 + rings * 0.68;
+    float alpha = v_color.a * u_strength * envelope * min(light, 0.95);
     vec4 output_color = vec4(color, alpha);
     if (v_textured > 0.5) output_color *= texture2D(u_texture, v_uv);
     gl_FragColor = output_color;
@@ -350,8 +436,8 @@ void main() {
 }
 ]]
 
-function create_energy_shader(graphics: Graphics): graphics_module.ShaderResult
-    return graphics:create_shader(EFFECT_VERTEX_SOURCE, ENERGY_PIXEL_SOURCE)
+function create_gold_shimmer_shader(graphics: Graphics): graphics_module.ShaderResult
+    return graphics:create_shader(EFFECT_VERTEX_SOURCE, GOLD_SHIMMER_PIXEL_SOURCE)
 end
 
 function create_red_fire_shader(graphics: Graphics): graphics_module.ShaderResult
@@ -370,11 +456,14 @@ function create_black_hole_shader(graphics: Graphics): graphics_module.ShaderRes
     return graphics:create_shader(EFFECT_VERTEX_SOURCE, BLACK_HOLE_PIXEL_SOURCE)
 end
 
-function use_energy(graphics: Graphics, effects: EffectShaders): bool
-    local maybe_shader: graphics_module.Shader? = effects.energy
+function use_gold_shimmer(graphics: Graphics, effects: EffectShaders, strength: f64, aspect: f64): bool
+    local maybe_shader: graphics_module.Shader? = effects.gold_shimmer
     if maybe_shader == nil then return false end
     local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    return graphics:use_shader(shader)
+    if not graphics:use_shader(shader) then return false end
+    local strength_ok: bool = graphics:set_uniform_float("u_strength", strength)
+    local aspect_ok: bool = graphics:set_uniform_float("u_aspect", aspect)
+    return strength_ok and aspect_ok
 end
 
 function use_red_fire(graphics: Graphics, effects: EffectShaders, selected: bool, colored: bool, aspect: f64): bool
@@ -455,19 +544,17 @@ const FLY_STAGGER: f64 = 0.12
 const ROW_LEFT_X: f64 = 186.0
 const ROW_RIGHT_X: f64 = 650.0
 const ROW_Y: f64 = 292.0
+const ROW_CENTER_X: f64 = 470.0
+const ROW_CENTER_Y: f64 = 356.0
+const WIN_LIFT_SCALE: f64 = 1.14
+const WIN_LIFT_Y: f64 = 10.0
 
--- Once the second card has landed, a single golden halo ignites around the
--- completed five-card row and brightens over WIN_GLOW_FADE. The halo is a
--- stack of nested filled frames whose alpha falls off quadratically — one
--- cohesive light rather than countable rings — and each frame's strips meet
--- edge-to-edge at the corners, so no translucent overlap ever doubles into
--- bright dots. The frames ride the game's energy shader, whose crackle bands
--- vibrate brightness and alpha off the live shader clock, so the
--- settled halo keeps buzzing even though reveal_clock freezes at its cap.
-const WIN_GLOW: string = "#fcd34d"
+-- Once the second card has landed, a single animated gold halo ignites
+-- beneath the completed row and brightens over WIN_GLOW_FADE. It extends a
+-- little beyond the cards, while its uninterrupted centre remains visible in
+-- the four gaps. The cards themselves are drawn later over the light field.
 const WIN_GLOW_FADE: f64 = 0.35
-const GLOW_RINGS: i32 = 12
-const GLOW_RING_STEP: f64 = 1.8
+const SHIMMER_MARGIN: f64 = 64.0
 
 -- The three outcomes a resolved breach can have. The help legend draws the
 -- same orbs from these, so a colour only ever means one thing on screen.
@@ -535,6 +622,10 @@ const FACES_DOWN: i32 = 0
 const FACES_UP: i32 = 1
 const FACES_FLIP_UP: i32 = 2
 const FACES_FLIP_DOWN: i32 = 3
+const EASE_OUT_QUINT: i32 = 0
+const EASE_IN_CUBIC: i32 = 1
+const EASE_IN_OUT_CUBIC: i32 = 2
+const EASE_OUT_BACK: i32 = 3
 
 -- One leg of a card's journey across the board. The card renders at x0/y0
 -- until start, travels to x1/y1 over duration, and only exists on screen
@@ -556,6 +647,7 @@ type Anim = {
     y1: f64,
     angle0: f64,
     angle1: f64,
+    easing: i32,
     start: f64,
     duration: f64,
     appear: f64,
@@ -563,6 +655,32 @@ type Anim = {
     dest_kind: i32,
     dest_index: i32
 }
+
+function ease_in_out_cubic(t: f64): f64
+    if t < 0.5 then return 4.0 * t * t * t end
+    local back: f64 = -2.0 * t + 2.0
+    return 1.0 - back * back * back * 0.5
+end
+
+function ease_out_quint(t: f64): f64
+    local back: f64 = 1.0 - t
+    local squared: f64 = back * back
+    return 1.0 - squared * squared * back
+end
+
+function ease_out_back(t: f64): f64
+    local c1: f64 = 1.70158
+    local c3: f64 = c1 + 1.0
+    local back: f64 = t - 1.0
+    return 1.0 + c3 * back * back * back + c1 * back * back
+end
+
+function ease_progress(t: f64, easing: i32): f64
+    if easing == EASE_IN_CUBIC then return t * t * t end
+    if easing == EASE_IN_OUT_CUBIC then return ease_in_out_cubic(t) end
+    if easing == EASE_OUT_BACK then return ease_out_back(t) end
+    return ease_out_quint(t)
+end
 
 -- Where a relic sits along the fan: steps from the middle relic, negative to
 -- its left, plus however far the parting has pushed it. This one number is the
@@ -708,29 +826,16 @@ function draw_eye(graphics: Graphics, x: f64, y: f64): unit
     graphics:fill_circle(x, y, 2.4)
 end
 
--- The golden halo around the winning formation. Each ring is a filled frame
--- occupying the band [inner, inner + GLOW_RING_STEP] beyond the box: the top
--- and bottom strips carry the corner squares and the side strips butt against
--- them, so nothing is drawn twice, and consecutive rings share their edge
--- coordinates exactly, so nothing shows through between them. Alpha follows a
--- quadratic falloff sampled at each ring's centre, which is what melts the
--- rings into one light; strength scales them all together, fading the halo in
--- without changing its shape.
-function draw_glow_box(graphics: Graphics, effects: EffectShaders, x: f64, y: f64, width: f64, height: f64, strength: f64): unit
+-- One quad backs the entire winning formation. Because it is drawn before all
+-- five cards, the cards mask its centre while the same continuous shimmer
+-- remains visible around the perimeter and through every inter-card gap.
+function draw_winning_shimmer(graphics: Graphics, effects: EffectShaders, x: f64, y: f64, width: f64, height: f64, strength: f64): unit
     if strength <= 0.0 then return end
-    use_energy(graphics, effects)
-    for ring = 0::i32, GLOW_RINGS - 1 do
-        local inner: f64 = (ring::f64) * GLOW_RING_STEP
-        local t: f64 = ((ring::f64) + 0.5) / (GLOW_RINGS::f64)
-        local fade: f64 = (1.0 - t) * (1.0 - t)
-        local alpha: i32 = math.floor(strength * 200.0 * fade)::i32
-        graphics:set_color(WIN_GLOW .. string.format("%02x", alpha))
-        local reach: f64 = inner + GLOW_RING_STEP
-        graphics:fill_rectangle(x - reach, y - reach, width + reach * 2.0, GLOW_RING_STEP)
-        graphics:fill_rectangle(x - reach, y + height + inner, width + reach * 2.0, GLOW_RING_STEP)
-        graphics:fill_rectangle(x - reach, y - inner, GLOW_RING_STEP, height + inner * 2.0)
-        graphics:fill_rectangle(x + width + inner, y - inner, GLOW_RING_STEP, height + inner * 2.0)
-    end
+    local quad_width: f64 = width + SHIMMER_MARGIN * 2.0
+    local quad_height: f64 = height + SHIMMER_MARGIN * 2.0
+    if not use_gold_shimmer(graphics, effects, strength, quad_width / quad_height) then return end
+    graphics:set_color("#ffffffff")
+    graphics:fill_rectangle(x - SHIMMER_MARGIN, y - SHIMMER_MARGIN, quad_width, quad_height)
     stop_effect(graphics)
 end
 
@@ -818,7 +923,8 @@ function draw_flipping_card(graphics: Graphics, effects: EffectShaders, card_bac
     local progress: f64 = (clock - delay) / FLIP_SECONDS
     if progress < 0.0 then progress = 0.0 end
     if progress > 1.0 then progress = 1.0 end
-    local angle: f64 = progress * math.pi
+    local turn: f64 = ease_in_out_cubic(progress)
+    local angle: f64 = turn * math.pi
     local flat: f64 = math.cos(angle)
     local depth: f64 = math.sin(angle)
     local hidden: bool = flat >= 0.0
@@ -892,18 +998,19 @@ function draw_anim_card(graphics: Graphics, effects: EffectShaders, card_back: g
     if anim.duration > 0.0 then t = (clock - anim.start) / anim.duration end
     if t < 0.0 then t = 0.0 end
     if t > 1.0 then t = 1.0 end
-    local ease: f64 = t * t * (3.0 - 2.0 * t)
+    local ease: f64 = ease_progress(t, anim.easing)
     local x: f64 = anim.x0 + (anim.x1 - anim.x0) * ease
     local y: f64 = anim.y0 + (anim.y1 - anim.y0) * ease
     local hidden: bool = anim.faces == FACES_DOWN
     local width_scale: f64 = 1.0
+    local turn: f64 = ease_in_out_cubic(t)
     if anim.faces == FACES_FLIP_UP or anim.faces == FACES_FLIP_DOWN then
-        local flat: f64 = math.cos(t * math.pi)
+        local flat: f64 = math.cos(turn * math.pi)
         if anim.faces == FACES_FLIP_UP then hidden = flat >= 0.0 else hidden = flat < 0.0 end
         width_scale = flat
         if width_scale < 0.0 then width_scale = -width_scale end
     end
-    local depth: f64 = math.sin(t * math.pi)
+    local depth: f64 = math.sin(turn * math.pi)
     local lift: f64 = 1.0 + 0.08 * depth
     graphics:push()
     graphics:translate(x + CARD_W * 0.5, y + CARD_H * 0.5 - 8.0 * depth)
@@ -982,13 +1089,13 @@ function draw_footer(graphics: Graphics): unit
     text(graphics, "? HELP", 883.0, 582.0, 10, "#8a8a92")
 end
 
--- Smoothstepped progress of one winner card's flight into the row, zero
--- before its delay so callers can also read "has this card left its slot".
+-- A stronger cubic acceleration/deceleration gives the winner's flight a
+-- deliberate launch and a decisive landing, while remaining exactly bounded.
 function fly_ease(clock: f64, delay: f64): f64
     local t: f64 = (clock - delay) / FLY_SECONDS
     if t < 0.0 then return 0.0 end
     if t > 1.0 then t = 1.0 end
-    return t * t * (3.0 - 2.0 * t)
+    return ease_in_out_cubic(t)
 end
 
 -- One winner card travelling from its revealed pose to a flank of the ward
@@ -1034,15 +1141,18 @@ function draw_resolution_board(graphics: Graphics, effects: EffectShaders, card_
         fly0 = fly_ease(reveal_clock, FLY_START)
         fly1 = fly_ease(reveal_clock, FLY_START + FLY_STAGGER)
     end
-    -- The halo waits for the second card to land, then ramps to full.
+    -- The shimmer waits for the second card to land, then ramps to full.
     -- reveal_clock holds at its cap once the reveal is over, so the settled
-    -- halo burns steady instead of resetting. A stalemate completes no
+    -- shimmer stays live instead of resetting. A stalemate completes no
     -- formation, so nothing ignites.
     local glow: f64 = 0.0
+    local lift_progress: f64 = 0.0
     if trick.winner ~= 0 then
-        glow = (reveal_clock - (FLY_START + FLY_STAGGER + FLY_SECONDS)) / WIN_GLOW_FADE
-        if glow < 0.0 then glow = 0.0 end
-        if glow > 1.0 then glow = 1.0 end
+        local glow_time: f64 = (reveal_clock - (FLY_START + FLY_STAGGER + FLY_SECONDS)) / WIN_GLOW_FADE
+        if glow_time < 0.0 then glow_time = 0.0 end
+        if glow_time > 1.0 then glow_time = 1.0 end
+        glow = ease_out_quint(glow_time)
+        lift_progress = ease_out_back(glow_time)
     end
     if trick.winner > 0 then text(graphics, "DEFENSE BREACHED +" .. tostring(trick.points), 350.0, 103.0, 14, "#67e8f9")
     elseif trick.winner < 0 then text(graphics, "THE WARDS HOLD", 402.0, 103.0, 14, "#fca5a5")
@@ -1068,13 +1178,14 @@ function draw_resolution_board(graphics: Graphics, effects: EffectShaders, card_
         end
     end
 
-    -- The panel spans the full five-card row during a resolution, centred on
-    -- it with enough margin that the halo stays inside the border, so the
-    -- arriving pair lands on the table instead of hanging off its edge.
+    -- The panel marks the landing zone. Before the halo ignites, the three
+    -- wards remain part of this ordinary table layer; once the formation is
+    -- complete, they move into the foreground layer with the winning pair.
     panel(graphics, 160.0, 258.0, 620.0, 148.0, "#101013", "#3f3f46")
-    draw_glow_box(graphics, effects, ROW_LEFT_X, ROW_Y, ROW_RIGHT_X + CARD_W - ROW_LEFT_X, CARD_H, glow)
-    for i = 0::i32, 2::i32 do
-        draw_card(graphics, effects, card_back, trick.middle[i], 302.0 + (i::f64) * 116.0, 292.0, false, false, false, trick.winner ~= 0 and scoring[i], false)
+    if glow <= 0.0 then
+        for i = 0::i32, 2::i32 do
+            draw_card(graphics, effects, card_back, trick.middle[i], 302.0 + (i::f64) * 116.0, 292.0, false, false, false, trick.winner ~= 0 and scoring[i], false)
+        end
     end
 
     text(graphics, "ENTER CONTINUE", 414.0, 442.0, 12, "#fbbf24")
@@ -1096,10 +1207,30 @@ function draw_resolution_board(graphics: Graphics, effects: EffectShaders, card_
             draw_hand_card(graphics, effects, card_back, trick.player_hand[i], i, fan_parts[i], false, false, false, trick.player_known[i])
         end
     end
-    -- The winner's pair, drawn last so it sails over whatever it passes. The
-    -- fan pose folds the bind lift into the start centre — rotate (0, -10)
-    -- by the relic's tilt — so takeoff continues the lift instead of
-    -- snapping back down to the slot.
+    draw_footer(graphics)
+
+    -- Once complete, the entire winning formation becomes a foreground layer:
+    -- it eases toward the viewer around its shared centre, rises slightly, and
+    -- draws after every remaining UI element. The larger halo shares this
+    -- transform, so its beams and rings can wash over the table while the five
+    -- cards remain crisp on top of it.
+    local foreground: bool = glow > 0.0
+    if foreground then
+        local scale: f64 = 1.0 + (WIN_LIFT_SCALE - 1.0) * lift_progress
+        graphics:push()
+        graphics:translate(ROW_CENTER_X, ROW_CENTER_Y - WIN_LIFT_Y * lift_progress)
+        graphics:apply_transform(scale, 0.0, 0.0, scale, 0.0, 0.0)
+        graphics:translate(-ROW_CENTER_X, -ROW_CENTER_Y)
+        draw_winning_shimmer(graphics, effects, ROW_LEFT_X, ROW_Y, ROW_RIGHT_X + CARD_W - ROW_LEFT_X, CARD_H, glow)
+        for i = 0::i32, 2::i32 do
+            draw_card(graphics, effects, card_back, trick.middle[i], 302.0 + (i::f64) * 116.0, 292.0, false, false, false, scoring[i], false)
+        end
+    end
+
+    -- The winner's pair sails over whatever it passes, then joins the same
+    -- transformed foreground layer as the wards. The fan pose folds the bind
+    -- lift into the start centre — rotate (0, -10) by the relic's tilt — so
+    -- takeoff continues the lift instead of snapping back down to the slot.
     if trick.winner < 0 then
         draw_winner_flight(graphics, effects, card_back, trick.computer_cards[0],
             190.0 + (trick.computer_first::f64) * 116.0 + CARD_W * 0.5, 116.0 + CARD_H * 0.5, 0.0,
@@ -1119,7 +1250,7 @@ function draw_resolution_board(graphics: Graphics, effects: EffectShaders, card_
             hand_y(trick.player_second, fan_parts[trick.player_second]) + CARD_H * 0.5 - math.cos(angle1) * 10.0,
             angle1, ROW_RIGHT_X, fly1, scoring[4])
     end
-    draw_footer(graphics)
+    if foreground then graphics:pop() end
 end
 
 -- One relic of the fan, unless a card bound for that slot is still in flight.
@@ -1288,7 +1419,7 @@ end
 
 return {
     draw = draw,
-    create_energy_shader = create_energy_shader,
+    create_gold_shimmer_shader = create_gold_shimmer_shader,
     create_red_fire_shader = create_red_fire_shader,
     create_blue_caustics_shader = create_blue_caustics_shader,
     create_black_hole_shader = create_black_hole_shader,
