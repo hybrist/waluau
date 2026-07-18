@@ -4,19 +4,25 @@
 local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
 local resources = require("waluau:engine/resources")
+local audio = require("waluau:engine/audio")
 local game = require("./game")
 local render = require("./render")
 
 type AssetState = {
     image_source: resources.Resource,
     font_source: resources.Resource,
+    flip_sound: resources.Resource,
     texture: graphics_module.Texture?,
     font: graphics_module.Font?,
     effects: render.EffectShaders,
     image_finished: bool,
     font_finished: bool,
+    sound_finished: bool,
+    audio_unlocked: bool,
     shader_finished: bool,
     fatal_shader_error: string,
+    fatal_audio_code: string,
+    fatal_audio_message: string,
     error: string
 }
 
@@ -76,6 +82,16 @@ const FACES_DOWN: i32 = 0
 const FACES_UP: i32 = 1
 const FACES_FLIP_UP: i32 = 2
 const FACES_FLIP_DOWN: i32 = 3
+-- Mirrors render.walu's reveal flip timing so sound lands at the exact
+-- edge-on instant where the visible face changes.
+const REVEAL_FLIP_SECONDS: f64 = 0.55
+const REVEAL_FIRST_DELAY: f64 = 0.2
+const REVEAL_SECOND_DELAY: f64 = 0.585
+-- Start the scratch before the card reaches edge-on. Browser/device output
+-- latency otherwise makes a mathematically exact midpoint trigger feel late.
+const FLIP_SOUND_LEAD_SECONDS: f64 = 0.14
+const FLIP_SOUND_VOLUME: f64 = 0.62
+const FLIP_SOUND_PATH: string = "assets/card-flip.wav"
 
 -- Each journey gets a curve suited to its dramatic beat. These ids mirror
 -- render.walu's easing modes carried by render.Anim.
@@ -178,6 +194,51 @@ function finish_anims(ui: Ui): unit
     ui.anim_clock = 0.0
     ui.anim_total = 0.0
     ui.anim_kind = ANIM_NONE
+end
+
+function fatal_audio(assets: AssetState, code: string, message: string): unit
+    if #assets.fatal_audio_code > 0 then return end
+    assets.fatal_audio_code = code
+    assets.fatal_audio_message = message
+end
+
+function play_flip_sound(assets: AssetState): unit
+    if #assets.fatal_audio_code > 0 then return end
+    if assets.flip_sound.handle == 0 then
+        fatal_audio(assets, "invalid_handle", "decoded card flip sound has no resource handle")
+        return
+    end
+    if not audio.play(assets.flip_sound, false, FLIP_SOUND_VOLUME) then
+        fatal_audio(assets, "playback_failed", "the audio host refused to start decoded sound playback")
+    end
+end
+
+function crossed(previous: f64, current: f64, event_time: f64): bool
+    return previous < event_time and current >= event_time
+end
+
+function flip_sound_time(start: f64, duration: f64): f64
+    local event_time: f64 = start + duration * 0.5 - FLIP_SOUND_LEAD_SECONDS
+    if event_time < start then return start end
+    return event_time
+end
+
+-- Rendering stays side-effect free: update owns sound playback and compares
+-- the old/new clocks so every face transition produces exactly one effect.
+function play_anim_flip_sounds(assets: AssetState, anims: {render.Anim}, previous: f64, current: f64): unit
+    for anim in anims do
+        if anim.faces == FACES_FLIP_UP or anim.faces == FACES_FLIP_DOWN then
+            local event_time: f64 = flip_sound_time(anim.start, anim.duration)
+            if crossed(previous, current, event_time) then play_flip_sound(assets) end
+        end
+    end
+end
+
+function play_reveal_flip_sounds(assets: AssetState, previous: f64, current: f64): unit
+    local first: f64 = flip_sound_time(REVEAL_FIRST_DELAY, REVEAL_FLIP_SECONDS)
+    local second: f64 = flip_sound_time(REVEAL_SECOND_DELAY, REVEAL_FLIP_SECONDS)
+    if crossed(previous, current, first) then play_flip_sound(assets) end
+    if crossed(previous, current, second) then play_flip_sound(assets) end
 end
 
 -- How far a card sits from upright once it rests in a slot. Only the player's
@@ -565,6 +626,7 @@ function install_arcane_heist(): unit
     local assets: AssetState = {
         image_source = { handle = 0, kind = "image", path = "assets/card-back.svg" },
         font_source = { handle = 0, kind = "font", path = "assets/Cinzel-Bold.ttf" },
+        flip_sound = { handle = 0, kind = "sound", path = FLIP_SOUND_PATH },
         texture = nil,
         font = nil,
         effects = {
@@ -577,8 +639,12 @@ function install_arcane_heist(): unit
         },
         image_finished = false,
         font_finished = false,
+        sound_finished = false,
+        audio_unlocked = false,
         shader_finished = false,
         fatal_shader_error = "",
+        fatal_audio_code = "",
+        fatal_audio_message = "",
         error = "",
     }
     local ui: Ui = {
@@ -616,6 +682,11 @@ function install_arcane_heist(): unit
             if #assets.error > 0 then assets.error ..= "; " end
             assets.error ..= font_result.error.code .. ": " .. font_result.error.message
         end
+
+        local sound_result: resources.LoadResult = audio.await_sound(FLIP_SOUND_PATH)
+        assets.sound_finished = true
+        if sound_result.ok then assets.flip_sound = sound_result.resource
+        else fatal_audio(assets, sound_result.error.code, sound_result.error.message) end
         return 0
     end
 
@@ -628,18 +699,23 @@ function install_arcane_heist(): unit
     end
 
     local function update(dt: f64, input: engine.Input): unit
+        if #assets.fatal_audio_code > 0 or not assets.sound_finished or not assets.audio_unlocked then return end
         -- The fan chases the cursor whatever else is happening: a modal hides
         -- it, but it should have settled by the time the modal lifts.
         update_fan(ui, dt)
         -- Turns are discrete; the clocks only drive the board reveal flip
         -- and the card-motion animations (which pause under any modal).
         if ui.revealing then
+            local previous: f64 = ui.reveal_clock
             ui.reveal_clock += dt
             if ui.reveal_clock >= BOARD_REVEAL_SECONDS then
                 ui.reveal_clock = BOARD_REVEAL_SECONDS
             end
+            play_reveal_flip_sounds(assets, previous, ui.reveal_clock)
         elseif ui.anim_kind ~= ANIM_NONE and ui.modal == MODAL_NONE then
+            local previous: f64 = ui.anim_clock
             ui.anim_clock += dt
+            play_anim_flip_sounds(assets, ui.anims, previous, ui.anim_clock)
             if ui.anim_clock >= ui.anim_total then
                 finish_anims(ui)
             end
@@ -716,9 +792,17 @@ function install_arcane_heist(): unit
             render.draw_shader_error(graphics, assets.fatal_shader_error)
             return
         end
+        if #assets.fatal_audio_code > 0 then
+            render.draw_audio_error(
+                graphics, FLIP_SOUND_PATH, assets.fatal_audio_code, assets.fatal_audio_message)
+            return
+        end
         render.draw(graphics, assets.effects, state, fan_focus(ui), ui.fan_parts, ui.ward_cursor, ui.cursor_area,
             ui.play_picks, ui.swap_hand, ui.swap_wards, ui.modal, ui.revealing, ui.reveal_clock,
             ui.anims, ui.anim_clock, assets.texture, ui.discards)
+        if not assets.audio_unlocked then
+            render.draw_audio_prompt(graphics, assets.sound_finished)
+        end
     end
 
     local function close_modal(): unit
@@ -752,6 +836,14 @@ function install_arcane_heist(): unit
     end
 
     local function keypressed(key: string): unit
+        if #assets.fatal_audio_code > 0 then return end
+        if not assets.audio_unlocked then
+            if not audio.unlock() then
+                fatal_audio(assets, "unavailable", "the audio host could not unlock its playback device")
+                return
+            end
+            assets.audio_unlocked = true
+        end
         if ui.revealing then
             -- The first press completes the animation; a later press advances.
             if key == "Enter" or key == " " or key == "Escape" then

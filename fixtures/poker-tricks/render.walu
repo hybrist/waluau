@@ -1700,9 +1700,32 @@ function draw_shader_error(graphics: Graphics, detail: string): unit
     text(graphics, detail, 125.0, 340.0, 11, "#fecdd3")
 end
 
+function draw_audio_error(graphics: Graphics, path: string, code: string, detail: string): unit
+    draw_backdrop(graphics)
+    panel(graphics, 70.0, 135.0, WIDTH - 140.0, 330.0, "#260b08", "#fb7185")
+    text_centered(graphics, "REQUIRED SOUND EFFECT FAILED", WIDTH * 0.5, 205.0, 21, "#fb7185")
+    text_centered(graphics, "ARCANE HEIST HAS STOPPED", WIDTH * 0.5, 248.0, 13, "#f8fafc")
+    text(graphics, "ASSET: " .. path, 105.0, 310.0, 11, "#fecdd3")
+    text(graphics, "CODE: " .. code, 105.0, 342.0, 11, "#fecdd3")
+    text(graphics, "HOST: " .. detail, 105.0, 374.0, 11, "#fecdd3")
+    text(graphics, "CHECK THE TYPED ASSET MANIFEST AND BROWSER AUDIO HOST.", 105.0, 421.0, 10, "#fda4af")
+end
+
+function draw_audio_prompt(graphics: Graphics, ready: bool): unit
+    panel(graphics, 280.0, 252.0, 400.0, 96.0, "#17171c", "#fbbf24")
+    if ready then
+        text_centered(graphics, "PRESS ANY KEY TO BEGIN", WIDTH * 0.5, 293.0, 15, "#fbbf24")
+        text_centered(graphics, "THE VAULT AWAITS YOUR SIGNAL", WIDTH * 0.5, 323.0, 10, "#d4d4d8")
+    else
+        text_centered(graphics, "PREPARING THE VAULT", WIDTH * 0.5, 304.0, 14, "#fbbf24")
+    end
+end
+
 return {
     draw = draw,
     draw_shader_error = draw_shader_error,
+    draw_audio_error = draw_audio_error,
+    draw_audio_prompt = draw_audio_prompt,
     create_gold_shimmer_shader = create_gold_shimmer_shader,
     create_defeat_shroud_shader = create_defeat_shroud_shader,
     create_red_fire_shader = create_red_fire_shader,

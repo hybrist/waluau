@@ -1308,12 +1308,30 @@ export function createGameServicesHost(options = {}) {
         return failure(String(path), error, 'decode_failed');
       }
     },
+    game_audio_unlock: () => {
+      try {
+        const ctx = context();
+        if (ctx.state === 'closed') return false;
+        ctx.resume?.().catch?.(() => {});
+        return true;
+      } catch {
+        return false;
+      }
+    },
     game_audio_play: (handle, looped, volume) => {
       const entry = entryFor(handle);
       if (!entry?.ok) return false;
       const normalizedVolume = Math.max(0, Math.min(1, Number(volume)));
       try {
         if (entry.kind === 'sound') {
+          // BufferSource.start() is legal while a Web Audio context is
+          // suspended, but it queues the source at the frozen audio clock.
+          // Starting it here would make stale effects burst out on the next
+          // user gesture, so callers must unlock the context first.
+          if (
+            typeof entry.context.state === 'string' &&
+            entry.context.state !== 'running'
+          ) return false;
           const source = entry.context.createBufferSource();
           const gain = entry.context.createGain();
           source.buffer = entry.value;
@@ -1323,7 +1341,6 @@ export function createGameServicesHost(options = {}) {
           gain.connect(entry.context.destination);
           source.onended = () => entry.sources.delete(source);
           entry.sources.add(source);
-          entry.context.resume?.().catch?.(() => {});
           source.start();
           return true;
         }

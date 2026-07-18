@@ -21,6 +21,7 @@ import gameEngineGpuResources from '../../../fixtures/game-engine/gpu-resources.
 import gameEngineGpuFontResources from '../../../fixtures/game-engine/gpu-font-resources.walu?raw';
 import pokerCardBack from '../../../fixtures/poker-tricks/assets/card-back.svg?raw';
 import pokerFontUrl from '../../../fixtures/poker-tricks/assets/Cinzel-Bold.ttf?url';
+import pokerFlipUrl from '../../../fixtures/poker-tricks/assets/card-flip.wav?url';
 import gameEngineBrowser from '../../../engine/browser.walu?raw';
 import gameEngineGraphics from '../../../engine/graphics.walu?raw';
 import gameEngineFont from '../../../engine/font.walu?raw';
@@ -1218,10 +1219,40 @@ describe('browser conformance', () => {
     }
   });
 
-  it('renders poker-tricks through its typed packaged image and font manifest', async () => {
+  it('renders poker-tricks and plays flips through its typed packaged asset manifest', async () => {
     const requested = [];
     const asyncErrors = [];
     let imageDecodeCount = 0;
+    let soundDecodeCount = 0;
+    let soundStartCount = 0;
+    class PokerAudioContext {
+      constructor() {
+        this.destination = {};
+        this.state = 'suspended';
+      }
+
+      async decodeAudioData(bytes) {
+        soundDecodeCount += 1;
+        return { byteLength: bytes.byteLength };
+      }
+
+      createBufferSource() {
+        return {
+          connect() {},
+          disconnect() {},
+          start() { soundStartCount += 1; },
+          stop() { this.onended?.(); },
+        };
+      }
+
+      createGain() {
+        return { gain: { value: 1 }, connect() {} };
+      }
+
+      async resume() {
+        this.state = 'running';
+      }
+    }
     const { root, cleanup } = await compileAndInstantiateWithDom(
       {
         '/fixtures/poker-tricks/main.walu': arcaneHeistMain,
@@ -1235,6 +1266,7 @@ describe('browser conformance', () => {
           assetManifest: {
             'assets/card-back.svg': { url: './assets/card-back.hash.svg', type: 'image' },
             'assets/Cinzel-Bold.ttf': { url: './assets/vault.hash.ttf', type: 'font' },
+            'assets/card-flip.wav': { url: './assets/card-flip.hash.wav', type: 'audio' },
           },
           fetch: async (url) => {
             requested.push(url);
@@ -1245,6 +1277,7 @@ describe('browser conformance', () => {
               });
             }
             if (url.endsWith('vault.hash.ttf')) return fetch(pokerFontUrl);
+            if (url.endsWith('card-flip.hash.wav')) return fetch(pokerFlipUrl);
             return new Response('', { status: 404 });
           },
           createImageBitmap: async (blob) => {
@@ -1259,6 +1292,7 @@ describe('browser conformance', () => {
               URL.revokeObjectURL(url);
             }
           },
+          AudioContext: PokerAudioContext,
         },
         onAsyncError: (error) => asyncErrors.push(error),
       },
@@ -1279,13 +1313,54 @@ describe('browser conformance', () => {
         }
         return count;
       };
-      await expect.poll(() => requested.length, { timeout: 10_000 }).toBe(2);
+      await expect.poll(() => requested.length, { timeout: 10_000 }).toBe(3);
       await expect.poll(countCardInk, { timeout: 10_000 }).toBeGreaterThan(40);
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      expect(soundStartCount).toBe(0);
+      const view = root.ownerDocument.defaultView;
+      root.ownerDocument.dispatchEvent(new view.KeyboardEvent('keydown', {
+        key: 'ArrowLeft',
+      }));
+      await expect.poll(() => soundStartCount, { timeout: 10_000 }).toBeGreaterThan(0);
       expect(imageDecodeCount).toBe(1);
+      expect(soundDecodeCount).toBe(1);
       expect(requested).toEqual([
         'https://game.test/dist/assets/card-back.hash.svg',
         'https://game.test/dist/assets/vault.hash.ttf',
+        'https://game.test/dist/assets/card-flip.hash.wav',
       ]);
+      expect(asyncErrors).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('stops poker-tricks on its fatal diagnostic screen when flip audio is undeclared', async () => {
+    const asyncErrors = [];
+    const { root, cleanup } = await compileAndInstantiateWithDom(
+      {
+        '/fixtures/poker-tricks/main.walu': arcaneHeistMain,
+        '/fixtures/poker-tricks/game.walu': arcaneHeistGame,
+        '/fixtures/poker-tricks/render.walu': arcaneHeistRender,
+      },
+      '/fixtures/poker-tricks/main.walu',
+      {
+        gameServices: {
+          assetBaseUrl: 'https://game.test/dist/',
+          assetManifest: {},
+        },
+        onAsyncError: (error) => asyncErrors.push(error),
+      },
+    );
+    try {
+      const canvas = root.querySelector('#walua-game-canvas');
+      const fatalPanelPixel = () => {
+        const gl = canvas.getContext('webgl2');
+        const pixel = new Uint8Array(4);
+        gl.readPixels(80, 600 - 1 - 145, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+        return Array.from(pixel);
+      };
+      await expect.poll(fatalPanelPixel, { timeout: 10_000 }).toEqual([38, 11, 8, 255]);
       expect(asyncErrors).toEqual([]);
     } finally {
       cleanup();

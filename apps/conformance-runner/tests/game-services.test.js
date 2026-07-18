@@ -14,6 +14,9 @@ class FakeFontFace {
 class FakeAudioContext {
   constructor() {
     this.destination = {};
+    this.state = 'suspended';
+    this.sourceCreateCount = 0;
+    this.sourceStartCount = 0;
   }
 
   async decodeAudioData(bytes) {
@@ -21,10 +24,12 @@ class FakeAudioContext {
   }
 
   createBufferSource() {
+    this.sourceCreateCount += 1;
+    const context = this;
     return {
       connect() {},
       disconnect() {},
-      start() {},
+      start() { context.sourceStartCount += 1; },
       stop() { this.onended?.(); },
     };
   }
@@ -33,7 +38,9 @@ class FakeAudioContext {
     return { gain: { value: 1 }, connect() {} };
   }
 
-  async resume() {}
+  async resume() {
+    this.state = 'running';
+  }
 }
 
 class FakeAudio {
@@ -95,11 +102,19 @@ function serviceHarness() {
     if (!bodies.has(path)) return new Response('', { status: 404 });
     return new Response(bodies.get(path), { status: 200 });
   };
+  const audioContexts = [];
+  class HarnessAudioContext extends FakeAudioContext {
+    constructor() {
+      super();
+      audioContexts.push(this);
+    }
+  }
 
   return {
     bitmap,
     fontAtlas,
     fontSet,
+    audioContexts,
     host: createGameServicesHost({
       assetBaseUrl: 'https://game.test/',
       saveNamespace: 'sample-game',
@@ -121,7 +136,7 @@ function serviceHarness() {
         advance: 32,
         advances: Array.from({ length: 95 }, (_, index) => 20 + (index % 5)),
       }),
-      AudioContext: FakeAudioContext,
+      AudioContext: HarnessAudioContext,
       Audio: FakeAudio,
     }),
   };
@@ -286,13 +301,21 @@ describe('browser game resource services', () => {
   });
 
   it('decodes effects, readies streams and controls playback safely', async () => {
-    const { host } = serviceHarness();
+    const { host, audioContexts } = serviceHarness();
     const sound = await host.game_audio_load_sound('/assets/click.wav');
     const stream = await host.game_audio_load_stream('/assets/music.ogg');
+    const context = audioContexts[0];
 
     expect(host.game_resource_ok(sound)).toBe(true);
     expect(host.game_resource_ok(stream)).toBe(true);
+    expect(host.game_audio_play(sound, false, 0.5)).toBe(false);
+    expect(context.sourceCreateCount).toBe(0);
+    expect(context.sourceStartCount).toBe(0);
+    expect(host.game_audio_is_playing(sound)).toBe(false);
+    expect(host.game_audio_unlock()).toBe(true);
     expect(host.game_audio_play(sound, false, 0.5)).toBe(true);
+    expect(context.sourceCreateCount).toBe(1);
+    expect(context.sourceStartCount).toBe(1);
     expect(host.game_audio_is_playing(sound)).toBe(true);
     host.game_audio_stop(sound);
     expect(host.game_audio_is_playing(sound)).toBe(false);
