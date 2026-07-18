@@ -6,6 +6,7 @@ local resources = require("./resources")
 
 declare function game_audio_load_sound(path: string): extern
 declare function game_audio_load_stream(path: string): extern
+declare function game_audio_unlock(): bool
 declare function game_audio_play(handle: i32, looped: bool, volume: f64): bool
 declare function game_audio_pause(handle: i32): unit
 declare function game_audio_stop(handle: i32): unit
@@ -37,6 +38,12 @@ function await_stream(path: string): resources.LoadResult
     return finish_stream(handle, path)
 end
 
+-- Ask the host to resume its audio device from a user-input callback. Browser
+-- autoplay policies require this gesture even when decoding completed earlier.
+function unlock(): bool
+    return game_audio_unlock()
+end
+
 function play(resource: resources.Resource, looped: bool, volume: f64): bool
     assert(resource.kind == "sound" or resource.kind == "stream")
     return game_audio_play(resource.handle, looped, volume)
@@ -64,6 +71,7 @@ return {
     load_stream = load_stream,
     finish_stream = finish_stream,
     await_stream = await_stream,
+    unlock = unlock,
     play = play,
     pause = pause,
     stop = stop,

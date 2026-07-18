@@ -4,6 +4,7 @@
 
 import cardBackUrl from '../../../../fixtures/poker-tricks/assets/card-back.svg?url';
 import vaultFontUrl from '../../../../fixtures/poker-tricks/assets/Cinzel-Bold.ttf?url';
+import cardFlipUrl from '../../../../fixtures/poker-tricks/assets/card-flip.wav?url';
 
 const engineModules = import.meta.glob('../../../../engine/*.walu', {
   eager: true,
@@ -35,5 +36,6 @@ export const POKER_TRICKS_EXAMPLE = {
   assetManifest: {
     'assets/card-back.svg': { url: cardBackUrl, type: 'image' },
     'assets/Cinzel-Bold.ttf': { url: vaultFontUrl, type: 'font' },
+    'assets/card-flip.wav': { url: cardFlipUrl, type: 'audio' },
   },
 };

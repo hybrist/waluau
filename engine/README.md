@@ -62,6 +62,7 @@ Subsystem modules remain supported for focused and host-independent programs:
 | `waluau:engine/input` | `waluau:engine/v1/input` | keyboard state and `Input` |
 | `waluau:engine/graphics` | `waluau:engine/v1/graphics` | GPU drawing and `Graphics` |
 | `waluau:engine/resources` | `waluau:engine/v1/resources` | packaged resource loading and handles |
+| `waluau:engine/audio` | `waluau:engine/v1/audio` | decoded effects, streamed music, and playback control |
 | `waluau:engine/time` | `waluau:engine/v1/time` | deterministic fixed-step clock |
 | `waluau:engine/browser` | `waluau:engine/v1/browser` | browser lifecycle adapter |
 
@@ -171,8 +172,12 @@ Packaged assets and save data are deliberately separate:
   `finish_*` calls expose the two-phase form. Browser loads use `fetch`; image
   and font handles do not become ready until decoding succeeds.
 - `audio.load_sound` fully downloads and decodes an effect. `load_stream`
-  readies a streaming media source. `play` returns `false` when playback cannot
-  start, so browsers may retry from a user-input callback.
+  readies a streaming media source. Call `audio.unlock()` from a user-input
+  callback to satisfy browser autoplay policy, and hold time-driven effects
+  until that unlock attempt succeeds. Decoded effects are never queued while
+  the browser audio context is suspended. `play` returns `false` when playback
+  cannot start, so games can surface or otherwise handle a playback failure
+  explicitly.
 - `save.read_*/write_*/delete` use logical slot names in a versioned,
   per-game namespace. They are asynchronous even though the browser adapter
   uses local storage, preserving the API for future native atomic file I/O.

@@ -2,6 +2,7 @@
   "version": 1,
   "assets": [
     { "path": "assets/card-back.svg", "type": "image" },
-    { "path": "assets/Cinzel-Bold.ttf", "type": "font" }
+    { "path": "assets/Cinzel-Bold.ttf", "type": "font" },
+    { "path": "assets/card-flip.wav", "type": "audio" }
   ]
 }

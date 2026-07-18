@@ -1190,6 +1190,25 @@ mod tests {
     }
 
     #[test]
+    fn compiles_pinned_engine_audio_subsystem_package() {
+        let project = tempdir().expect("temp project should exist");
+        let entry = project.path().join("main.walu");
+        fs::write(
+            &entry,
+            r#"
+                local audio = require("waluau:engine/v1/audio")
+
+                function unlock_audio(): bool
+                    return audio.unlock()
+                end
+            "#,
+        )
+        .expect("external audio subsystem project should write");
+
+        super::compile_file(&entry).expect("versioned audio subsystem import should compile");
+    }
+
+    #[test]
     fn compiles_namespace_table_exports() {
         super::compile_file(&fixture_path("modules/namespace_main.walu"))
             .expect("compile should succeed");

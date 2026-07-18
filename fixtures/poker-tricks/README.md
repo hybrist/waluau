@@ -76,7 +76,7 @@ flat.
 | `render.walu` | Playfield/modal rendering and the game's vertex/pixel effect shader. |
 | `game.walu` | Host-independent deck, ranking, AI, and scoring rules. |
 | `sim.walu` | Deterministic assertions for rankings and full-game completion. |
-| `waluau.assets.json` | Typed package manifest for the card back and vault font. |
+| `waluau.assets.json` | Typed package manifest for the card back, vault font, and flip sound. |
 
 The sealed-card artwork is the committed vector
 [`assets/card-back.svg`](assets/card-back.svg). Until its asynchronous image
@@ -90,6 +90,16 @@ as the not-ready/failure fallback. Source image/font resources are released
 immediately after the GPU copies succeed; GPU resources retain their own
 explicit lifetime.
 
+Card turns use the packaged [`assets/card-flip.wav`](assets/card-flip.wav),
+decoded through the engine's backend-neutral sound-effect service. Playback is
+triggered shortly before each animated card crosses edge-on, compensating for
+browser and device output latency. Because the effect is part of the intended
+presentation, an undeclared, missing, undecodable, or
+unplayable sound stops the fixture on a diagnostic canvas showing the asset
+path, stable error code, and host message.
+The opening deal waits at its first frame until a key gesture unlocks browser
+audio, so no pre-gesture effect can be queued and released late.
+
 Cinzel is distributed under the SIL Open Font License 1.1; the bundled
 license is [`assets/OFL-Cinzel.txt`](assets/OFL-Cinzel.txt).
 
@@ -102,7 +112,8 @@ cargo run -p waluau-cli -- fixtures/poker-tricks/main.walu \
 cargo run -p waluau-cli -- fixtures/poker-tricks/sim.walu -o sim.wasm
 ```
 
-The distributable build copies both declared assets under `dist/assets/` with
+The distributable build copies all declared assets under `dist/assets/` with
 content fingerprints. Generated sibling JavaScript maps the logical Waluau
-paths (`assets/card-back.svg` and `assets/Cinzel-Bold.ttf`) to those
-emitted URLs and carries their image/font types into the browser host.
+paths (`assets/card-back.svg`, `assets/Cinzel-Bold.ttf`, and
+`assets/card-flip.wav`) to those emitted URLs and carries their typed asset
+kinds into the browser host.
