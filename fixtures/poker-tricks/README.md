@@ -34,7 +34,10 @@ visible face-down pile beside the board — the opening hands, each round's
 wards, and the two replacements both sides draw after a breach — and when a
 breach's continue press ends the round, the resolved formation is scooped up:
 its cards slide together into one pile, which then carries to a face-up
-spent pile at the board's right edge, mirroring the draw pile on the left. A
+spent pile at the board's right edge, mirroring the draw pile on the left.
+While the pile carries off, the three surviving cards in each hand slide down
+into the slots the spent pair vacated, so the hands are settled before the
+replacements are dealt beside them. A
 won feint plays out in three beats: the winner's relics rise out of the hand,
 the displaced wards are set aside at the board's edge, and both groups then
 travel to their final slots, flipping face up or face down to match where
