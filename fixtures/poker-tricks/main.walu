@@ -16,6 +16,7 @@ type AssetState = {
     image_finished: bool,
     font_finished: bool,
     shader_finished: bool,
+    fatal_shader_error: string,
     error: string
 }
 
@@ -502,6 +503,7 @@ function install_arcane_heist(): unit
         font = nil,
         effects = {
             gold_shimmer = nil,
+            defeat_shroud = nil,
             red_fire = nil,
             blue_caustics = nil,
             black_hole = nil,
@@ -510,6 +512,7 @@ function install_arcane_heist(): unit
         image_finished = false,
         font_finished = false,
         shader_finished = false,
+        fatal_shader_error = "",
         error = "",
     }
     local ui: Ui = {
@@ -586,6 +589,11 @@ function install_arcane_heist(): unit
                 if #assets.error > 0 then assets.error ..= "; " end
                 assets.error ..= "gold shimmer " .. shimmer_result.error.code .. ": " .. shimmer_result.error.message
             end
+            local defeat_result: graphics_module.ShaderResult = render.create_defeat_shroud_shader(graphics)
+            if defeat_result.ok then assets.effects.defeat_shroud = defeat_result.shader
+            else
+                assets.fatal_shader_error = "defeat shroud " .. defeat_result.error.code .. ": " .. defeat_result.error.message
+            end
             local red_result: graphics_module.ShaderResult = render.create_red_fire_shader(graphics)
             if red_result.ok then assets.effects.red_fire = red_result.shader
             else
@@ -638,6 +646,10 @@ function install_arcane_heist(): unit
             custom_font_ready = graphics:set_font_resource(maybe_gpu_font::graphics_module.Font, 14.0)
         end
         if not custom_font_ready then graphics:use_builtin_font() end
+        if #assets.fatal_shader_error > 0 then
+            render.draw_shader_error(graphics, assets.fatal_shader_error)
+            return
+        end
         render.draw(graphics, assets.effects, state, fan_focus(ui), ui.fan_parts, ui.ward_cursor, ui.cursor_area,
             ui.play_picks, ui.swap_hand, ui.swap_wards, ui.modal, ui.revealing, ui.reveal_clock,
             ui.anims, ui.anim_clock, assets.texture, ui.discards)
