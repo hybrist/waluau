@@ -19,9 +19,10 @@ host calls. The game, help, history, and final outcome all render inside one
 board, where color identifies the winning formation and any decisive kickers.
 After the reveal flips, the winner's two cards fly out of their row and flank
 the three wards, completing the five-card formation in the middle of the
-board; a single golden halo then ignites around the whole set. The game's own
-vertex/pixel shader supplies its crackle, which keeps vibrating off the live
-frame clock even while the settled reveal itself holds still. Black-school
+board; a single golden halo then ignites around the whole set while the losing
+pair fractures into suit-lit shards and disintegrates. The game's own
+vertex/pixel shader supplies the halo's crackle, which keeps vibrating off the
+live frame clock even while the settled reveal itself holds still. Black-school
 cards use a separate local-space shader: a rotating violet accretion nexus
 collapsing into a black event horizon.
 

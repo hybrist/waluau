@@ -553,8 +553,17 @@ const WIN_LIFT_Y: f64 = 10.0
 -- beneath the completed row and brightens over WIN_GLOW_FADE. It extends a
 -- little beyond the cards, while its uninterrupted centre remains visible in
 -- the four gaps. The cards themselves are drawn later over the light field.
+-- Kept equal to FLY_START + FLY_STAGGER + FLY_SECONDS; top-level constants
+-- require literal initializers.
+const WIN_GLOW_START: f64 = 1.87
 const WIN_GLOW_FADE: f64 = 0.35
 const SHIMMER_MARGIN: f64 = 64.0
+-- The losing pair breaks apart on the same beat as the halo ignition. Its
+-- fragments finish dispersing just before the board reveal reaches its 2.3s
+-- cap, leaving the completed formation alone in the settled result.
+const LOSS_DISINTEGRATE_SECONDS: f64 = 0.38
+const LOSS_FRAGMENT_COLUMNS: i32 = 6
+const LOSS_FRAGMENT_ROWS: i32 = 8
 
 -- The three outcomes a resolved breach can have. The help legend draws the
 -- same orbs from these, so a colour only ever means one thing on screen.
@@ -1129,6 +1138,127 @@ function draw_winner_flight(graphics: Graphics, effects: EffectShaders, card_bac
     graphics:pop()
 end
 
+-- A stable little hash keeps every fragment's path lively without consuming
+-- gameplay randomness or changing from frame to frame.
+function fragment_hash(id: i32, channel: f64): f64
+    local wave: f64 = math.sin((id::f64) * 12.9898 + channel * 78.233) * 43758.5453
+    return wave - math.floor(wave)
+end
+
+function fragment_alpha(progress: f64): string
+    if progress < 0.42 then return "ff" end
+    if progress < 0.68 then return "c0" end
+    if progress < 0.84 then return "78" end
+    return "30"
+end
+
+function draw_disintegration_ring(graphics: Graphics, x: f64, y: f64, radius: f64): unit
+    graphics:begin_path()
+    for step = 0::i32, 32::i32 do
+        local angle: f64 = (step::f64) * math.pi * 2.0 / 32.0
+        local px: f64 = x + math.cos(angle) * radius
+        local py: f64 = y + math.sin(angle) * radius
+        if step == 0 then graphics:move_to(px, py) else graphics:line_to(px, py) end
+    end
+    graphics:close_path()
+    graphics:stroke()
+end
+
+-- The intact face holds for the first instant while cracks and the shock ring
+-- announce the break. A tiled copy then bursts away from the card centre;
+-- irregular launch delays stop the grid from reading as a checkerboard, and
+-- the rapidly shrinking fragments leave only sparks and ash at the end.
+function draw_disintegrating_card(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, x: f64, y: f64, selected: bool, progress: f64, seed: i32): unit
+    if progress <= 0.0 then
+        draw_card(graphics, effects, card_back, card, x, y, selected, false, false, false, false)
+        return
+    end
+    if progress >= 1.0 then return end
+
+    local selected_offset: f64 = 0.0
+    if selected then selected_offset = -10.0 end
+    local top: f64 = y + selected_offset
+    local center_x: f64 = x + CARD_W * 0.5
+    local center_y: f64 = top + CARD_H * 0.5
+
+    -- Keep the real face behind the opening fracture so the transition begins
+    -- with the exact card the player was looking at, not an abstract tile.
+    if progress < 0.30 then
+        draw_card(graphics, effects, card_back, card, x, y, selected, false, false, false, false)
+    end
+
+    local ring_progress: f64 = progress / 0.46
+    if ring_progress < 1.0 then
+        graphics:set_color("#f8fafc" .. fragment_alpha(ring_progress))
+        graphics:set_line_width(3.0 * (1.0 - ring_progress) + 0.8)
+        draw_disintegration_ring(graphics, center_x, center_y, 12.0 + ring_progress * 82.0)
+    end
+
+    -- Bright fault lines flash across the intact face before it comes apart.
+    if progress < 0.38 then
+        local crack: f64 = progress / 0.38
+        graphics:set_color(school_color(card.suit) .. fragment_alpha(crack))
+        graphics:set_line_width(1.6)
+        for ray = 0::i32, 7::i32 do
+            local angle: f64 = (ray::f64) * math.pi * 0.25 + fragment_hash(seed + ray, 1.0) * 0.35
+            local length: f64 = (28.0 + fragment_hash(seed + ray, 2.0) * 50.0) * ease_out_quint(crack)
+            graphics:line(center_x, center_y,
+                center_x + math.cos(angle) * length,
+                center_y + math.sin(angle) * length)
+        end
+    end
+
+    local cell_w: f64 = CARD_W / (LOSS_FRAGMENT_COLUMNS::f64)
+    local cell_h: f64 = CARD_H / (LOSS_FRAGMENT_ROWS::f64)
+    for row = 0::i32, LOSS_FRAGMENT_ROWS - 1 do
+        for column = 0::i32, LOSS_FRAGMENT_COLUMNS - 1 do
+            local id: i32 = seed * 53 + row * LOSS_FRAGMENT_COLUMNS + column
+            local delay: f64 = 0.03 + fragment_hash(id, 3.0) * 0.15
+            local shard_progress: f64 = (progress - delay) / (1.0 - delay)
+            if shard_progress > 0.0 then
+                if shard_progress > 1.0 then shard_progress = 1.0 end
+                local travel: f64 = ease_out_quint(shard_progress)
+                local local_x: f64 = ((column::f64) + 0.5) * cell_w - CARD_W * 0.5
+                local local_y: f64 = ((row::f64) + 0.5) * cell_h - CARD_H * 0.5
+                local burst_x: f64 = local_x * 0.72 + (fragment_hash(id, 4.0) - 0.5) * 92.0
+                local burst_y: f64 = local_y * 0.50 + (fragment_hash(id, 5.0) - 0.5) * 74.0 - 26.0
+                local shard_x: f64 = center_x + local_x + burst_x * travel
+                local shard_y: f64 = center_y + local_y + burst_y * travel + shard_progress * shard_progress * 42.0
+                local spin: f64 = (fragment_hash(id, 6.0) - 0.5) * 5.2 * travel
+                local scale: f64 = 1.0 - shard_progress * 0.78
+                local color: string = "#17171c"
+                if column == 0 then color = school_color(card.suit)
+                elseif row == 0 or row == LOSS_FRAGMENT_ROWS - 1 or column == LOSS_FRAGMENT_COLUMNS - 1 then color = "#71717a" end
+
+                graphics:push()
+                graphics:translate(shard_x, shard_y)
+                graphics:rotate(spin)
+                graphics:scale(scale, scale)
+                graphics:set_color(color .. fragment_alpha(shard_progress))
+                graphics:fill_rectangle(-cell_w * 0.46, -cell_h * 0.45, cell_w * 0.92, cell_h * 0.90)
+                graphics:pop()
+
+                -- A small hot mote leads each third fragment, making the
+                -- breakup read as magical combustion rather than a card drop.
+                if id % 3 == 0 and shard_progress < 0.88 then
+                    local mote_x: f64 = shard_x + burst_x * 0.12
+                    local mote_y: f64 = shard_y + burst_y * 0.12
+                    graphics:set_color(school_color(card.suit) .. fragment_alpha(shard_progress))
+                    graphics:fill_circle(mote_x, mote_y, 2.8 * (1.0 - shard_progress) + 0.7)
+                end
+            end
+        end
+    end
+end
+
+function draw_hand_disintegration(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, index: i32, part: f64, progress: f64, seed: i32): unit
+    graphics:push()
+    graphics:translate(hand_x(index, part) + CARD_W * 0.5, hand_y(index, part) + CARD_H * 0.5)
+    graphics:rotate(hand_angle(index, part))
+    draw_disintegrating_card(graphics, effects, card_back, card, -(CARD_W * 0.5), -(CARD_H * 0.5), true, progress, seed)
+    graphics:pop()
+end
+
 function trick_scoring(trick: game.Trick): {bool}
     if trick.winner > 0 then
         return game.scoring_cards({ trick.middle[0], trick.middle[1], trick.middle[2], trick.player_cards[0], trick.player_cards[1] }, trick.player_value, trick.computer_value)
@@ -1159,12 +1289,16 @@ function draw_resolution_board(graphics: Graphics, effects: EffectShaders, card_
     -- formation, so nothing ignites.
     local glow: f64 = 0.0
     local lift_progress: f64 = 0.0
+    local loss_progress: f64 = 0.0
     if trick.winner ~= 0 then
-        local glow_time: f64 = (reveal_clock - (FLY_START + FLY_STAGGER + FLY_SECONDS)) / WIN_GLOW_FADE
+        local glow_time: f64 = (reveal_clock - WIN_GLOW_START) / WIN_GLOW_FADE
         if glow_time < 0.0 then glow_time = 0.0 end
         if glow_time > 1.0 then glow_time = 1.0 end
         glow = ease_out_quint(glow_time)
         lift_progress = ease_out_back(glow_time)
+        loss_progress = (reveal_clock - WIN_GLOW_START) / LOSS_DISINTEGRATE_SECONDS
+        if loss_progress < 0.0 then loss_progress = 0.0 end
+        if loss_progress > 1.0 then loss_progress = 1.0 end
     end
     if trick.winner > 0 then text_centered(graphics, "DEFENSE BREACHED +" .. tostring(trick.points), WIDTH * 0.5, 103.0, 14, "#67e8f9")
     elseif trick.winner < 0 then text_centered(graphics, "THE WARDS HOLD", WIDTH * 0.5, 103.0, 14, "#fca5a5")
@@ -1179,11 +1313,19 @@ function draw_resolution_board(graphics: Graphics, effects: EffectShaders, card_
         local x: f64 = 190.0 + (i::f64) * 116.0
         if i == trick.computer_first then
             if trick.winner >= 0 or fly0 <= 0.0 then
-                draw_flipping_card(graphics, effects, card_back, trick.computer_cards[0], x, 116.0, reveal_clock, 0.2, trick.winner < 0 and scoring[3])
+                if trick.winner > 0 and loss_progress > 0.0 then
+                    draw_disintegrating_card(graphics, effects, card_back, trick.computer_cards[0], x, 116.0, false, loss_progress, 11)
+                else
+                    draw_flipping_card(graphics, effects, card_back, trick.computer_cards[0], x, 116.0, reveal_clock, 0.2, trick.winner < 0 and scoring[3])
+                end
             end
         elseif i == trick.computer_second then
             if trick.winner >= 0 or fly1 <= 0.0 then
-                draw_flipping_card(graphics, effects, card_back, trick.computer_cards[1], x, 116.0, reveal_clock, 0.2 + FLIP_SECONDS * 0.7, trick.winner < 0 and scoring[4])
+                if trick.winner > 0 and loss_progress > 0.0 then
+                    draw_disintegrating_card(graphics, effects, card_back, trick.computer_cards[1], x, 116.0, false, loss_progress, 29)
+                else
+                    draw_flipping_card(graphics, effects, card_back, trick.computer_cards[1], x, 116.0, reveal_clock, 0.2 + FLIP_SECONDS * 0.7, trick.winner < 0 and scoring[4])
+                end
             end
         else
             draw_card(graphics, effects, card_back, trick.computer_hand[i], x, 116.0, false, false, true, false, trick.computer_known[i])
@@ -1209,11 +1351,19 @@ function draw_resolution_board(graphics: Graphics, effects: EffectShaders, card_
     for i = 0::i32, 4::i32 do
         if i == trick.player_first then
             if trick.winner <= 0 or fly0 <= 0.0 then
-                draw_hand_card(graphics, effects, card_back, trick.player_cards[0], i, fan_parts[i], true, false, trick.winner > 0 and scoring[3], false)
+                if trick.winner < 0 and loss_progress > 0.0 then
+                    draw_hand_disintegration(graphics, effects, card_back, trick.player_cards[0], i, fan_parts[i], loss_progress, 47)
+                else
+                    draw_hand_card(graphics, effects, card_back, trick.player_cards[0], i, fan_parts[i], true, false, trick.winner > 0 and scoring[3], false)
+                end
             end
         elseif i == trick.player_second then
             if trick.winner <= 0 or fly1 <= 0.0 then
-                draw_hand_card(graphics, effects, card_back, trick.player_cards[1], i, fan_parts[i], true, false, trick.winner > 0 and scoring[4], false)
+                if trick.winner < 0 and loss_progress > 0.0 then
+                    draw_hand_disintegration(graphics, effects, card_back, trick.player_cards[1], i, fan_parts[i], loss_progress, 71)
+                else
+                    draw_hand_card(graphics, effects, card_back, trick.player_cards[1], i, fan_parts[i], true, false, trick.winner > 0 and scoring[4], false)
+                end
             end
         else
             draw_hand_card(graphics, effects, card_back, trick.player_hand[i], i, fan_parts[i], false, false, false, trick.player_known[i])
