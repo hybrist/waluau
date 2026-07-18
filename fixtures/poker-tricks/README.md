@@ -20,11 +20,14 @@ board, where color identifies the winning formation and any decisive kickers.
 After the reveal flips, the winner's two cards fly out of their row and flank
 the three wards, completing the five-card formation in the middle of the
 board; a single golden halo then ignites around the whole set while the losing
-pair fractures into suit-lit shards and disintegrates. The game's own
-vertex/pixel shader supplies the halo's crackle, which keeps vibrating off the
-live frame clock even while the settled reveal itself holds still. Black-school
-cards use a separate local-space shader: a rotating violet accretion nexus
-collapsing into a black event horizon.
+pair fractures into suit-lit shards and disintegrates. That halo remains gold
+when the player wins; when the Arch Mage holds the wards, contracting crimson
+seals, sinking ash, and encroaching shadow smother the formation instead. The
+game's own vertex/pixel shaders keep both result fields moving off the live
+frame clock even while the settled reveal itself holds still. A missing or
+invalid defeat shader is treated as a visible fixture error rather than falling
+back to an unshaded result. Black-school cards use a separate local-space
+shader: a rotating violet accretion nexus collapsing into a black event horizon.
 
 Cards never simply appear or vanish: every relic and ward is dealt off a
 visible face-down pile beside the board — the opening hands, each round's
