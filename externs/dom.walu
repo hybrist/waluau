@@ -6,6 +6,7 @@ type EventTarget = extern
 type Event = extern
 type UIEvent = extern extends Event
 type KeyboardEvent = extern extends UIEvent
+type MouseEvent = extern extends UIEvent
 type Node = extern extends EventTarget
 type Document = extern extends Node
 type DocumentFragment = extern extends Node
@@ -593,6 +594,43 @@ declare function Range:comparePoint(node: Node, offset: u32): i32
 declare function Range:intersectsNode(node: Node): bool
 declare function Range:getClientRects(): DOMRectList
 declare function Range:getBoundingClientRect(): DOMRect
+declare property MouseEvent:screenX: i32
+declare property MouseEvent:screenY: i32
+declare property MouseEvent:clientX: i32
+declare property MouseEvent:clientY: i32
+declare property MouseEvent:layerX: i32
+declare property MouseEvent:layerY: i32
+declare property MouseEvent:ctrlKey: bool
+declare property MouseEvent:shiftKey: bool
+declare property MouseEvent:altKey: bool
+declare property MouseEvent:metaKey: bool
+declare property MouseEvent:button: i32
+declare property MouseEvent:buttons: u32
+declare property MouseEvent:relatedTarget: EventTarget?
+declare function MouseEvent:getModifierState(key_arg: string): bool
+declare property MouseEvent:pageX: f64
+declare property MouseEvent:pageY: f64
+declare property MouseEvent:x: f64
+declare property MouseEvent:y: f64
+declare property MouseEvent:offsetX: f64
+declare property MouseEvent:offsetY: f64
+declare function MouseEvent:initMouseEvent(type_arg: string): unit
+declare function MouseEvent:initMouseEvent(type_arg: string, bubbles_arg: bool): unit
+declare function MouseEvent:initMouseEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool): unit
+declare function MouseEvent:initMouseEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool, view_arg: Window?): unit
+declare function MouseEvent:initMouseEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool, view_arg: Window?, detail_arg: i32): unit
+declare function MouseEvent:initMouseEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool, view_arg: Window?, detail_arg: i32, screen_x_arg: i32): unit
+declare function MouseEvent:initMouseEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool, view_arg: Window?, detail_arg: i32, screen_x_arg: i32, screen_y_arg: i32): unit
+declare function MouseEvent:initMouseEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool, view_arg: Window?, detail_arg: i32, screen_x_arg: i32, screen_y_arg: i32, client_x_arg: i32): unit
+declare function MouseEvent:initMouseEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool, view_arg: Window?, detail_arg: i32, screen_x_arg: i32, screen_y_arg: i32, client_x_arg: i32, client_y_arg: i32): unit
+declare function MouseEvent:initMouseEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool, view_arg: Window?, detail_arg: i32, screen_x_arg: i32, screen_y_arg: i32, client_x_arg: i32, client_y_arg: i32, ctrl_key_arg: bool): unit
+declare function MouseEvent:initMouseEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool, view_arg: Window?, detail_arg: i32, screen_x_arg: i32, screen_y_arg: i32, client_x_arg: i32, client_y_arg: i32, ctrl_key_arg: bool, alt_key_arg: bool): unit
+declare function MouseEvent:initMouseEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool, view_arg: Window?, detail_arg: i32, screen_x_arg: i32, screen_y_arg: i32, client_x_arg: i32, client_y_arg: i32, ctrl_key_arg: bool, alt_key_arg: bool, shift_key_arg: bool): unit
+declare function MouseEvent:initMouseEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool, view_arg: Window?, detail_arg: i32, screen_x_arg: i32, screen_y_arg: i32, client_x_arg: i32, client_y_arg: i32, ctrl_key_arg: bool, alt_key_arg: bool, shift_key_arg: bool, meta_key_arg: bool): unit
+declare function MouseEvent:initMouseEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool, view_arg: Window?, detail_arg: i32, screen_x_arg: i32, screen_y_arg: i32, client_x_arg: i32, client_y_arg: i32, ctrl_key_arg: bool, alt_key_arg: bool, shift_key_arg: bool, meta_key_arg: bool, button_arg: i32): unit
+declare function MouseEvent:initMouseEvent(type_arg: string, bubbles_arg: bool, cancelable_arg: bool, view_arg: Window?, detail_arg: i32, screen_x_arg: i32, screen_y_arg: i32, client_x_arg: i32, client_y_arg: i32, ctrl_key_arg: bool, alt_key_arg: bool, shift_key_arg: bool, meta_key_arg: bool, button_arg: i32, related_target_arg: EventTarget?): unit
+declare property MouseEvent:movementX: f64
+declare property MouseEvent:movementY: f64
 declare property MediaList:mediaText: string
 declare function MediaList:appendMedium(medium: string): unit
 declare function MediaList:deleteMedium(medium: string): unit
