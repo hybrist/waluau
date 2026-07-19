@@ -5108,6 +5108,35 @@ fn dyn_element_boxable(storage: &StorageType) -> bool {
     )
 }
 
+/// True when a nullable primitive element's payload has a canonical `unknown`
+/// boxed form, so `emit_dyn_index` can rebox it. `i64`/`u64`/`f32` payloads do
+/// not (the same design 0010 boxing gap that makes plain `i64`/`f32` elements
+/// unboxable), so those element types fall through to the trap.
+fn dyn_nullable_payload_boxable(kind: NullableBoxKind) -> bool {
+    matches!(kind, NullableBoxKind::I32 | NullableBoxKind::F64)
+}
+
+/// Push `array[index]` for one growable wrapper onto the stack, in the raw
+/// storage representation of the element type.
+fn emit_dyn_element_read(
+    out: &mut Function,
+    operand_local: u32,
+    index_local: u32,
+    wrapper_idx: u32,
+    storage_type_index: u32,
+) {
+    out.instruction(&Instruction::LocalGet(operand_local));
+    out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
+        wrapper_idx,
+    )));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: wrapper_idx,
+        field_index: GROWABLE_STORAGE_FIELD,
+    });
+    out.instruction(&Instruction::LocalGet(index_local));
+    out.instruction(&Instruction::ArrayGet(storage_type_index));
+}
+
 /// Emit `value[index]` where `value` is an `unknown` (anyref) local, leaving
 /// the element boxed into `unknown` (anyref) on the stack. Dispatches over
 /// the module's growable array wrapper types with a per-type bounds check;
@@ -5126,10 +5155,11 @@ fn emit_dyn_index(
         if !dyn_element_boxable(&storage) {
             continue;
         }
-        // Nullable primitive elements are typed box refs; boxing them into a
-        // canonical `unknown` needs a null branch this dispatch does not have,
-        // so they fall through to the trap (like i64/f32 elements).
-        if NullableBoxKind::of(element_ty).is_some() {
+        // Nullable primitive elements are typed box refs, reboxed below with a
+        // null branch. Payload classes without a canonical `unknown` boxed form
+        // (`i64?`/`u64?`/`f32?`) fall through to the trap, like i64/f32.
+        let nullable_kind = NullableBoxKind::of(element_ty);
+        if nullable_kind.is_some_and(|kind| !dyn_nullable_payload_boxable(kind)) {
             continue;
         }
         let storage_array_ty = Type::Array(Box::new(element_ty.clone()));
@@ -5156,42 +5186,75 @@ fn emit_dyn_index(
         out.instruction(&Instruction::Unreachable);
         out.instruction(&Instruction::End);
 
-        out.instruction(&Instruction::LocalGet(operand_local));
-        out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
-            *wrapper_idx,
-        )));
-        out.instruction(&Instruction::StructGet {
-            struct_type_index: *wrapper_idx,
-            field_index: GROWABLE_STORAGE_FIELD,
-        });
-        out.instruction(&Instruction::LocalGet(index_local));
-        out.instruction(&Instruction::ArrayGet(storage_type_index));
+        if nullable_kind.is_some() {
+            // A nullable primitive element is a `(ref null $nullable_box_K)`.
+            // Nil (a null box ref) becomes the `unknown` nil — a null anyref —
+            // and a present element is unwrapped from its box and reboxed into
+            // the canonical `unknown` representation, exactly like the
+            // non-nullable arm for the same payload type. The typed box itself
+            // must never leak into an `unknown`.
+            let box_idx = ctx.array_registry.nullable_box_index(element_ty)?;
+            let inner = element_ty
+                .nullable_inner()
+                .expect("boxed nullable has an inner type");
 
-        // Box the raw element into anyref based on its storage representation.
-        match storage {
-            StorageType::Val(ValType::I32) => {
-                let base_ty = match element_ty {
-                    Type::Nullable(inner) => inner.as_ref(),
-                    other => other,
-                };
-                if *base_ty == Type::Bool {
-                    out.instruction(&Instruction::StructNew(
-                        ctx.array_registry.boxed_bool_struct_type,
-                    ));
-                } else {
-                    out.instruction(&Instruction::RefI31);
+            // block $present (result anyref) {
+            //   block $nil { <elem>; br_on_null $nil; <unbox+rebox>; br $present }
+            //   ref.null any
+            // }
+            out.instruction(&Instruction::Block(BlockType::Result(anyref)));
+            out.instruction(&Instruction::Block(BlockType::Empty));
+            emit_dyn_element_read(
+                out,
+                operand_local,
+                index_local,
+                *wrapper_idx,
+                storage_type_index,
+            );
+            out.instruction(&Instruction::BrOnNull(0));
+            out.instruction(&Instruction::StructGet {
+                struct_type_index: box_idx,
+                field_index: 0,
+            });
+            emit_box(out, &inner, ctx.array_registry)?;
+            out.instruction(&Instruction::Br(1));
+            out.instruction(&Instruction::End);
+            out.instruction(&Instruction::RefNull(HeapType::Abstract {
+                shared: false,
+                ty: AbstractHeapType::Any,
+            }));
+            out.instruction(&Instruction::End);
+        } else {
+            emit_dyn_element_read(
+                out,
+                operand_local,
+                index_local,
+                *wrapper_idx,
+                storage_type_index,
+            );
+
+            // Box the raw element into anyref based on its storage representation.
+            match storage {
+                StorageType::Val(ValType::I32) => {
+                    if *element_ty == Type::Bool {
+                        out.instruction(&Instruction::StructNew(
+                            ctx.array_registry.boxed_bool_struct_type,
+                        ));
+                    } else {
+                        out.instruction(&Instruction::RefI31);
+                    }
                 }
+                StorageType::Val(ValType::F64) => {
+                    out.instruction(&Instruction::StructNew(
+                        ctx.array_registry.boxed_f64_struct_type,
+                    ));
+                }
+                StorageType::Val(val) if val == externref_val_type() => {
+                    out.instruction(&Instruction::AnyConvertExtern);
+                }
+                // anyref and concrete GC refs are already (subtypes of) anyref.
+                _ => {}
             }
-            StorageType::Val(ValType::F64) => {
-                out.instruction(&Instruction::StructNew(
-                    ctx.array_registry.boxed_f64_struct_type,
-                ));
-            }
-            StorageType::Val(val) if val == externref_val_type() => {
-                out.instruction(&Instruction::AnyConvertExtern);
-            }
-            // anyref and concrete GC refs are already (subtypes of) anyref.
-            _ => {}
         }
         out.instruction(&Instruction::Else);
         arms += 1;

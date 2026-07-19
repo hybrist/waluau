@@ -1945,6 +1945,106 @@ fn nullable_primitive_module_exports_box_helpers() {
 }
 
 #[test]
+fn dyn_index_over_nullable_primitive_array_branches_on_null() {
+    // Dynamically indexing an `unknown` that holds a `{i32?}` must not trap:
+    // the element is a typed nullable box, so the dispatch branches on null
+    // (nil becomes the `unknown` nil) and reboxes a present payload into the
+    // canonical `unknown` representation.
+    let source = r#"
+        function get(v, i)
+            return v[i]
+        end
+
+        function first(values: {i32?}): unknown
+            return get(values, 0)
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        wat.contains("br_on_null"),
+        "dyn index over a nullable primitive array should branch on the null box in:\n{wat}"
+    );
+    assert!(
+        wat.contains("ref.i31"),
+        "a present i32? element should rebox into the canonical i31 unknown form in:\n{wat}"
+    );
+}
+
+#[test]
+fn dyn_index_over_nullable_f64_array_reboxes_payload() {
+    let source = r#"
+        function get(v, i)
+            return v[i]
+        end
+
+        function first(values: {f64?}): unknown
+            return get(values, 0)
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        wat.contains("br_on_null"),
+        "dyn index over {{f64?}} should branch on the null box in:\n{wat}"
+    );
+    // The immutable `(struct (field f64))` is the canonical unknown box; the
+    // mutable one is the typed nullable box the payload is read out of.
+    assert!(
+        wat.contains("(struct (field f64))"),
+        "a present f64? element should rebox into $boxed_f64 in:\n{wat}"
+    );
+}
+
+#[test]
+fn dyn_index_over_nullable_i64_array_still_traps() {
+    // `i64?`/`u64?`/`f32?` payloads have no canonical `unknown` boxed form
+    // (waluau-agmp / design 0010), so those element kinds stay out of the
+    // dispatch and fall through to the trap, exactly like plain i64/f32
+    // elements. The module must still compile and validate.
+    let source = r#"
+        function get(v, i)
+            return v[i]
+        end
+
+        function first(values: {i64?}): unknown
+            return get(values, 0)
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        !wat.contains("br_on_null"),
+        "an i64? element kind must not enter the dyn index dispatch in:\n{wat}"
+    );
+    assert!(
+        wat.contains("unreachable"),
+        "dyn index over an unsupported element kind should trap in:\n{wat}"
+    );
+}
+
+#[test]
 fn arrays_and_records_with_nullable_primitives_compile() {
     let source = r#"
         type Slot = { count: u32?, label: string }
