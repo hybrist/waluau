@@ -88,7 +88,19 @@ function DomOutputFrame({
       if (status === 'success' || (status === 'ready' && !runError)) {
         requestAnimationFrame(() => {
           if (popupRef.current && !popupRef.current.closed) {
-            popupRef.current.focus();
+            // Do not steal focus if the user is actively focusing an editor or input on the main page
+            const active = document.activeElement;
+            const isTyping = active && (
+              active.tagName === 'INPUT' ||
+              active.tagName === 'TEXTAREA' ||
+              (typeof active.closest === 'function' && (
+                active.closest('.monaco-editor') ||
+                active.closest('.repl-input')
+              ))
+            );
+            if (!isTyping) {
+              popupRef.current.focus();
+            }
           }
         });
       }

@@ -681,10 +681,13 @@ test.describe('DOM Output in Run tab', () => {
     }).toBe(true);
 
     // Focus somewhere else to lose focus
-    await page.locator('.code-textarea').focus();
+    await page.getByRole('button', { name: 'REPL' }).focus();
 
     // Fill the textarea with new source code to trigger re-compilation/run
     await page.locator('.code-textarea').fill(DOM_SAMPLE + '\n-- rerun focus test');
+    // Shift focus immediately to a button so the compiler run sees that we are not typing
+    await page.getByRole('button', { name: 'REPL' }).focus();
+
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
       timeout: COMPILER_READY_TIMEOUT,
     });
