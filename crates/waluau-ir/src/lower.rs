@@ -8860,9 +8860,16 @@ impl Builder<'_> {
         let left_nullable = side_is_nullable(self, left);
         let right_nullable = side_is_nullable(self, right);
         if left_nullable && right_nullable {
-            return Err(Diagnostic::new(
-                "comparing two nullable numeric values is not supported yet",
-            ));
+            return self.lower_boxed_nullable_pair_equality(
+                op,
+                left,
+                right,
+                nullable_ty,
+                inner,
+                env,
+                types,
+                expected,
+            );
         }
         let left_expected = if left_nullable {
             nullable_ty.clone()
@@ -8922,6 +8929,135 @@ impl Builder<'_> {
 
         self.current_block = merge_block;
         let mut incoming = vec![(null_exit, null_result), (value_exit, value_result)];
+        incoming.sort_by_key(|(pred, _)| *pred);
+        let value = self.emit(Instruction::Phi(incoming));
+        self.coerce_value(value, Type::Bool, expected)
+    }
+
+    /// Equality between two boxed nullables of the same inner type (`i32? ==
+    /// i32?`). Lua semantics: `nil == nil` is true, `nil == value` is false,
+    /// and two present values compare by their unboxed contents. Lowered as
+    /// nested diamonds so the unboxing casts only run where both sides are
+    /// known to be non-nil.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_boxed_nullable_pair_equality(
+        &mut self,
+        op: BinaryOp,
+        left: &Expr,
+        right: &Expr,
+        nullable_ty: Type,
+        inner: Type,
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        // i64/u64/f32 have no `unknown` boxing yet (see waluau-agmp), so their
+        // nullables cannot be unboxed for the value-vs-value arm.
+        if !matches!(
+            inner,
+            Type::Bool | Type::Numeric(NumericType::I32 | NumericType::U32 | NumericType::F64)
+        ) {
+            return Err(Diagnostic::new(format!(
+                "comparing two nullable {inner} values is not supported yet",
+            )));
+        }
+        let is_eq = matches!(op, BinaryOp::Eq);
+
+        let left_value = self.lower_expr(left, env, types, Some(nullable_ty.clone()))?;
+        let right_value = self.lower_expr(right, env, types, Some(nullable_ty.clone()))?;
+        let left_is_null = self.emit(Instruction::IsNull {
+            value: left_value,
+            ty: inner.clone(),
+        });
+        let right_is_null = self.emit(Instruction::IsNull {
+            value: right_value,
+            ty: inner.clone(),
+        });
+
+        let left_null_block = self.new_block();
+        let left_value_block = self.new_block();
+        let merge_block = self.new_block();
+        self.set_terminator(
+            self.current_block,
+            Terminator::Branch {
+                condition: left_is_null,
+                then_block: left_null_block,
+                else_block: left_value_block,
+            },
+        );
+
+        // left is nil: equal exactly when right is nil too.
+        self.current_block = left_null_block;
+        let left_null_result = if is_eq {
+            right_is_null
+        } else {
+            let false_value = self.emit(Instruction::Bool(false));
+            self.emit(Instruction::Binary {
+                op: BinaryOp::Eq,
+                left: right_is_null,
+                right: false_value,
+                operand_ty: Type::Bool,
+                result_ty: Type::Bool,
+            })
+        };
+        let left_null_exit = self.current_block;
+        self.set_terminator(left_null_exit, Terminator::Jump(merge_block));
+
+        // left is present: nil on the right is never equal, otherwise unbox both.
+        self.current_block = left_value_block;
+        let right_null_block = self.new_block();
+        let both_present_block = self.new_block();
+        let inner_merge_block = self.new_block();
+        self.set_terminator(
+            self.current_block,
+            Terminator::Branch {
+                condition: right_is_null,
+                then_block: right_null_block,
+                else_block: both_present_block,
+            },
+        );
+
+        self.current_block = right_null_block;
+        let right_null_result = self.emit(Instruction::Bool(!is_eq));
+        let right_null_exit = self.current_block;
+        self.set_terminator(right_null_exit, Terminator::Jump(inner_merge_block));
+
+        self.current_block = both_present_block;
+        let left_unboxed = self.emit(Instruction::Cast {
+            value: left_value,
+            from: nullable_ty.clone(),
+            to: inner.clone(),
+        });
+        let right_unboxed = self.emit(Instruction::Cast {
+            value: right_value,
+            from: nullable_ty,
+            to: inner.clone(),
+        });
+        let both_present_result = self.emit(Instruction::Binary {
+            op,
+            left: left_unboxed,
+            right: right_unboxed,
+            operand_ty: inner,
+            result_ty: Type::Bool,
+        });
+        let both_present_exit = self.current_block;
+        self.set_terminator(both_present_exit, Terminator::Jump(inner_merge_block));
+
+        self.current_block = inner_merge_block;
+        let mut inner_incoming = vec![
+            (right_null_exit, right_null_result),
+            (both_present_exit, both_present_result),
+        ];
+        inner_incoming.sort_by_key(|(pred, _)| *pred);
+        let inner_result = self.emit(Instruction::Phi(inner_incoming));
+        let inner_merge_exit = self.current_block;
+        self.set_terminator(inner_merge_exit, Terminator::Jump(merge_block));
+
+        self.current_block = merge_block;
+        let mut incoming = vec![
+            (left_null_exit, left_null_result),
+            (inner_merge_exit, inner_result),
+        ];
         incoming.sort_by_key(|(pred, _)| *pred);
         let value = self.emit(Instruction::Phi(incoming));
         self.coerce_value(value, Type::Bool, expected)
