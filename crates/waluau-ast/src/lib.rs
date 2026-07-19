@@ -53,9 +53,11 @@ pub struct Program {
     pub top_level: Vec<Stmt>,
     /// The value a module exports through a trailing top-level `return`.
     ///
-    /// The value a module exports: a function name or a table of functions.
-    /// Consumed by the module linker in `waluau-driver` and ignored when a
-    /// program is compiled as a standalone entry point.
+    /// The value is a function name or a table of functions. Module linkers
+    /// consume dependency exports while resolving `require`. A trailing return
+    /// in the linked entry file does not define the Wasm export surface:
+    /// entry-file top-level functions do, so linkers discard this metadata
+    /// after hoisting any inline exported functions.
     pub export: Option<Expr>,
     pub sources: BTreeMap<String, String>,
     pub entry_file_path: String,

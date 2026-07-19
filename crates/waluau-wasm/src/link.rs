@@ -164,7 +164,7 @@ impl<'a> Loader<'a> {
             .get(path)
             .ok_or_else(|| format!("cannot find module \"{}\"", path))?;
         let program = waluau_parser::parse_with_path(source, path)
-            .map_err(|e| format!("in module \"{}\": {}", path, e))?;
+            .map_err(|error| error.render_for_playground())?;
 
         let mut raw_paths = Vec::new();
         collect_require_paths(&program, &mut raw_paths);
@@ -243,7 +243,7 @@ impl<'a> Loader<'a> {
         let source = engine_module_source(module).expect("validated engine module name");
         let display_path = format!("package:waluau-engine/v1/{module}.walu");
         let program = waluau_parser::parse_with_path(source, &display_path)
-            .map_err(|error| format!("in module \"{display_path}\": {error}"))?;
+            .map_err(|error| error.render_for_playground())?;
         let mut raw_paths = Vec::new();
         collect_require_paths(&program, &mut raw_paths);
 
@@ -552,6 +552,10 @@ fn merge_with_ambient_declarations(
         declared_constants,
         type_declarations,
         top_level,
+        // A trailing return is dependency-facing module metadata, not the
+        // entry module's Wasm export declaration. Inline functions from every
+        // module export were hoisted above; discard the entry expression so
+        // later stages cannot mistake it for executable entry-point work.
         export: None,
         sources,
         entry_file_path,
