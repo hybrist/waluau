@@ -3548,6 +3548,56 @@ fn rejects_overloads_with_identical_parameters_and_conflicting_returns() {
 }
 
 #[test]
+fn numeric_for_untyped_literal_bounds_adopt_the_typed_bound_type() {
+    // `0` carries no numeric type of its own, so the loop variable adopts the
+    // i32 type of `#a - 1` (mirroring untyped literals in binary expressions)
+    // instead of defaulting to f64.
+    let source = r#"
+        local a: {i32} = {1, 2, 3}
+        local sum: i32 = 0
+        for i = 0, #a - 1 do
+            local index: i32 = i
+            sum += a[index]
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program).expect("type check should succeed");
+}
+
+#[test]
+fn countdown_numeric_for_adopts_typed_bound_type_for_negative_literal_step() {
+    // The `-1` step is an untyped literal behind unary minus; it adopts the
+    // i32 loop type instead of dragging the loop to f64.
+    let source = r#"
+        local a: {i32} = {1, 2, 3}
+        local sum: i32 = 0
+        for i = #a - 1, 0, -1 do
+            local index: i32 = i
+            sum += a[index]
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_fractional_literal_bound_in_an_integer_loop() {
+    let source = r#"
+        local a: {i32} = {1, 2, 3}
+        local sum: i32 = 0
+        for i = 0.5, #a - 1 do
+            sum += 1
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "numeric literal must be an integer for i32"
+    );
+}
+
+#[test]
 fn infers_trailing_vararg_returns_as_variadic_packs() {
     let source = r#"
         function only(...)
