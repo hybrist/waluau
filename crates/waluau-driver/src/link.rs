@@ -1312,9 +1312,26 @@ impl Rewriter<'_> {
         }
     }
 
-    fn rewrite_block(&mut self, stmts: &mut [Stmt], bound: &mut HashSet<String>) {
-        for stmt in stmts {
-            self.rewrite_stmt(stmt, bound);
+    fn rewrite_block(&mut self, stmts: &mut Vec<Stmt>, bound: &mut HashSet<String>) {
+        let mut index = 0;
+        while index < stmts.len() {
+            // A bare require of the DOM virtual module is an extern-only
+            // dependency declaration. Loading the module above already made
+            // its ambient types and host declarations available, so do not
+            // synthesize the value-returning `dom_window()` call unless the
+            // require expression is actually used as a value.
+            let is_bare_dom_dependency = matches!(
+                &stmts[index],
+                Stmt::Expr(Expr::Require(path, _))
+                    if matches!(self.imports.get(path), Some(ResolvedImport::DomWindow))
+            );
+            if is_bare_dom_dependency {
+                stmts.remove(index);
+                continue;
+            }
+
+            self.rewrite_stmt(&mut stmts[index], bound);
+            index += 1;
         }
     }
 

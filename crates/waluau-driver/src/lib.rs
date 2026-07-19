@@ -537,6 +537,36 @@ mod tests {
             wasm.starts_with(b"\0asm"),
             "compiled wasm should start with the wasm magic bytes"
         );
+        let wat = wasmprinter::print_bytes(&wasm).expect("wasm should print");
+        assert!(
+            wat.contains(r#"(import "waluau" "dom_window""#),
+            "value-returning require should call the dom_window host import:\n{wat}"
+        );
+    }
+
+    #[test]
+    fn compile_file_accepts_bare_dom_window_as_extern_dependency() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("app.walu");
+        fs::write(
+            &input_path,
+            r#"
+                require("dom:window")
+
+                function create_div(document: Document): Element
+                    return document:create_element("div")
+                end
+            "#,
+        )
+        .expect("app should write");
+
+        let wasm =
+            super::compile_file(&input_path).expect("bare DOM dependency require should compile");
+        let wat = wasmprinter::print_bytes(&wasm).expect("wasm should print");
+        assert!(
+            !wat.contains(r#"(import "waluau" "dom_window""#),
+            "extern-only dependency should not load the window value:\n{wat}"
+        );
     }
 
     #[test]
