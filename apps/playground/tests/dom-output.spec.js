@@ -466,6 +466,16 @@ test.describe('DOM Output in Run tab', () => {
   });
 
   test('runs Waluau fetch and Response.text awaits in DOM Output', async ({ page }) => {
+    let fetchRequests = 0;
+    await page.route('**/test.json', async (route) => {
+      fetchRequests += 1;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await route.fulfill({
+        contentType: 'application/json',
+        body: '{"message":"fetch body from playground"}',
+      });
+    });
+
     await page.locator('.code-textarea').fill(DOM_FETCH_RESPONSE_TEXT_SAMPLE);
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
       timeout: COMPILER_READY_TIMEOUT,
@@ -473,9 +483,19 @@ test.describe('DOM Output in Run tab', () => {
 
     const domOutput = page.getByLabel('DOM Output');
     await expect(domOutput).toBeVisible();
+    await expect.poll(() => fetchRequests).toBe(1);
+
+    // Fullscreen state changes rerender RunTab while the fetch coroutine is
+    // suspended. Rendering the result must not execute the export again.
+    await domOutput.locator('.dom-output-fullscreen-btn').click();
+    await expect(domOutput).toHaveClass(/fullscreen/);
+    await domOutput.locator('.dom-output-exit-btn').click();
+    await expect(domOutput).not.toHaveClass(/fullscreen/);
 
     const outputFrame = page.frameLocator('.dom-output-frame');
+    await expect(outputFrame.locator('#fetch-body')).toHaveCount(1);
     await expect(outputFrame.locator('#fetch-body')).toHaveText(/^\{"message":"fetch body from playground"\}\s*$/);
+    expect(fetchRequests).toBe(1);
   });
 
   test('supports top-level fetch and await without a manual coroutine wrapper', async ({ page }) => {

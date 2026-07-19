@@ -1,0 +1,36 @@
+-- Extern references compare with JavaScript identity semantics (`===`):
+-- two values are equal exactly when they are the same host object. Both
+-- `==` and `~=` are supported, including across nominal subtypes and for
+-- nullable extern operands (nil compares equal only to nil).
+
+local window = require("dom:window")
+local document: Document = window.document
+
+local first: Element = document:create_element("div")
+local second: Element = document:create_element("div")
+local alias: Element = first
+
+assert(first == first)
+assert(first == alias)
+assert(not (first == second))
+assert(first ~= second)
+assert(not (first ~= alias))
+
+-- Comparisons across related nominal types (Element extends Node).
+local as_node: Node = first
+assert(as_node == first)
+assert(first == as_node)
+assert(as_node ~= second)
+
+-- Nullable extern operands share the externref representation; a nil side
+-- is never identical to a non-nil object.
+local maybe: Element? = first
+local none: Element? = nil
+
+assert(maybe == first)
+assert(first == maybe)
+assert(maybe ~= second)
+assert(none ~= first)
+assert(not (none == first))
+assert(none == nil)
+assert(maybe ~= nil)

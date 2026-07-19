@@ -34,14 +34,15 @@ use buffers::{
 };
 use coroutines::{
     AWAIT_STATUS_FULFILLED, AWAIT_STATUS_NONE, AWAIT_STATUS_REJECTED, CoroutinePlan,
-    STATE_AWAIT_STATUS_FIELD, STATE_CONT_FIELD, STATE_TAG_FIELD, STATE_YIELDED_FIELD,
+    FRAME_PC_FIELD, STATE_AWAIT_STATUS_FIELD, STATE_CONT_FIELD, STATE_DEPTH_FIELD,
+    STATE_FRAMES_FIELD, STATE_REPLAYING_FIELD, STATE_TAG_FIELD, STATE_YIELDED_FIELD,
     TAG_AWAITING_PROMISE, TAG_ERROR, TAG_FINISHED, TAG_SUSPENDED, coroutine_state_ref_type,
 };
 use locals::{
     LocalPlan, array_scratch_local, build_local_plan, build_value_definition_map,
     emit_value_operand, emit_value_store, infer_value_types, local,
 };
-use signatures::{SignatureRegistry, collect_user_signatures};
+use signatures::{SignatureRegistry, TrampolineNeeds, collect_user_signatures};
 use wasm_types::{
     anyref_val_type, compress_locals, externref_nonnull_val_type, externref_val_type, wasm_type,
 };
@@ -49,7 +50,14 @@ use wasm_types::{
 const CALLBACK_EVENT_UNIT_TRAMPOLINE_EXPORT: &str = "__waluau_call_callback_event_unit";
 const CALLBACK_F64_UNIT_TRAMPOLINE_EXPORT: &str = "__waluau_call_callback_f64_unit";
 const CALLBACK_UNIT_EXTERN_TRAMPOLINE_EXPORT: &str = "__waluau_call_callback_unit_extern";
+const CALLBACK_UNIT_TRAMPOLINE_EXPORT: &str = "__waluau_call_callback_unit";
+/// Export name of the Lua error exception tag. Hosts can throw
+/// `new WebAssembly.Exception(tag, [payload])` from an import to raise an
+/// error that `pcall` catches like a Waluau `error(...)`.
+const LUA_ERROR_TAG_EXPORT: &str = "__waluau_error_tag";
 const PROMISE_RESUME_TRAMPOLINE_EXPORT: &str = "__waluau_resume_promise_await";
+/// The Lua error exception tag is always the module's first (and only) tag.
+pub(crate) const ERROR_TAG_INDEX: u32 = 0;
 const PROMISE_RESET_ACTIVE_EXPORT: &str = "__waluau_reset_active_coroutine";
 
 /// Field indices of the growable-array wrapper struct
@@ -135,6 +143,22 @@ fn is_unit_extern_callback_type(ty: &Type) -> bool {
     params.is_empty() && is_promise_like_extern_type(return_type)
 }
 
+fn is_unit_unit_callback_type(ty: &Type) -> bool {
+    let ty = match ty {
+        Type::Nullable(inner) => inner.as_ref(),
+        _ => ty,
+    };
+    let Type::Function {
+        params,
+        return_type,
+    } = ty
+    else {
+        return false;
+    };
+
+    params.is_empty() && matches!(return_type.as_ref(), Type::Unit)
+}
+
 fn is_promise_like_extern_type(ty: &Type) -> bool {
     match ty {
         Type::Extern | Type::ExternSubtype(_) => true,
@@ -161,6 +185,12 @@ fn needs_callback_unit_extern_trampoline(imports: &[&DeclaredImport]) -> bool {
         .any(|declared| declared.params.iter().any(is_unit_extern_callback_type))
 }
 
+fn needs_callback_unit_trampoline(imports: &[&DeclaredImport]) -> bool {
+    imports
+        .iter()
+        .any(|declared| declared.params.iter().any(is_unit_unit_callback_type))
+}
+
 fn needs_promise_resume_trampoline(module: &Module) -> bool {
     module.functions.iter().any(|function| {
         function
@@ -177,7 +207,7 @@ fn needs_lua_error_tag(module: &Module) -> bool {
                 matches!(
                     instruction,
                     IrInstruction::Throw { .. } | IrInstruction::ProtectedCall { .. }
-                )
+                ) || !host::runtime_error_messages(instruction).is_empty()
             })
         })
     })
@@ -606,6 +636,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     let callback_event_unit_trampoline = needs_callback_event_unit_trampoline(&declared_imports);
     let callback_f64_unit_trampoline = needs_callback_f64_unit_trampoline(&declared_imports);
     let callback_unit_extern_trampoline = needs_callback_unit_extern_trampoline(&declared_imports);
+    let callback_unit_trampoline = needs_callback_unit_trampoline(&declared_imports);
     let promise_resume_trampoline = needs_promise_resume_trampoline(module);
     let lua_error_tag = needs_lua_error_tag(module);
     // Coroutine state stores a continuation closure and its body uses the
@@ -632,10 +663,17 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             (0, 0, 0, 0)
         };
     let closure_gc_count = if closure_gc_needed { 4 } else { 0 };
-    // Coroutine GC types sit after the closure GC types.
+    // Coroutine GC types sit after the closure GC types: the shared state
+    // struct followed by one activation-frame struct per suspension-capable
+    // function.
     let coroutine_types_base = closure_gc_base + closure_gc_count;
     let coroutine_state_type = coroutine_plan.has_state().then_some(coroutine_types_base);
-    let coroutine_type_count = if coroutine_plan.has_state() { 1 } else { 0 };
+    let coroutine_type_count = if coroutine_plan.has_state() {
+        coroutine_plan.set_frame_type_base(coroutine_types_base + 1);
+        1 + coroutine_plan.frame_count()
+    } else {
+        0
+    };
     let record_types_base = coroutine_types_base + coroutine_type_count;
     let user_type_base = record_types_base + record_types.len() as u32;
     // Array types come first in the type section (indices 0..N-1).
@@ -658,10 +696,13 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         module,
         &declared_imports,
         start_thunk.is_some(),
-        callback_event_unit_trampoline,
-        callback_f64_unit_trampoline,
-        callback_unit_extern_trampoline,
-        promise_resume_trampoline,
+        TrampolineNeeds {
+            callback_event_unit: callback_event_unit_trampoline,
+            callback_f64_unit: callback_f64_unit_trampoline,
+            callback_unit_extern: callback_unit_extern_trampoline,
+            callback_unit: callback_unit_trampoline,
+            promise_resume: promise_resume_trampoline,
+        },
     );
     if coroutine_plan.has_state() {
         signature_registry.add_wrapper(Vec::new(), Type::Numeric(NumericType::I32));
@@ -810,10 +851,10 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     // Coroutine GC types (before user function types so `thread` params can reference them).
     if let Some(state_type) = coroutine_state_type {
         // State struct: { tag:i32, yielded:anyref, continuation:func_val,
-        // await_status:i32, pc_*:i32, spill_* }. Concrete GC references are
-        // stored as anyref because record types are declared after this state
-        // type; function re-entry casts them back to their precise local type.
-        let mut fields = vec![
+        // await_status:i32, frames:anyref_array, depth:i32, replaying:i32 }.
+        // `frames` is a shadow stack of per-activation frame structs indexed
+        // by call depth.
+        let fields = vec![
             FieldType {
                 element_type: StorageType::Val(ValType::I32),
                 mutable: true,
@@ -833,21 +874,45 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
                 element_type: StorageType::Val(ValType::I32),
                 mutable: true,
             },
-        ];
-        for _ in 0..coroutine_plan.pc_field_count() {
-            fields.push(FieldType {
+            FieldType {
+                element_type: StorageType::Val(ValType::Ref(RefType {
+                    nullable: true,
+                    heap_type: HeapType::Concrete(anyref_array_type),
+                })),
+                mutable: true,
+            },
+            FieldType {
                 element_type: StorageType::Val(ValType::I32),
                 mutable: true,
-            });
-        }
-        for ty in coroutine_plan.spill_field_types() {
-            fields.push(FieldType {
-                element_type: StorageType::Val(coroutine_spill_storage_type(ty, &array_registry)?),
+            },
+            FieldType {
+                element_type: StorageType::Val(ValType::I32),
                 mutable: true,
-            });
-        }
+            },
+        ];
         let _ = state_type;
         types.ty().struct_(fields);
+        // One activation-frame struct per suspension-capable function:
+        // { pc:i32, spill_* }. Concrete GC references are stored as anyref
+        // because record types are declared after these frame types; function
+        // re-entry casts them back to their precise local type. All fields are
+        // defaultable so fresh frames can use `struct.new_default`.
+        for name in coroutine_plan.frame_functions() {
+            let mut frame_fields = vec![FieldType {
+                element_type: StorageType::Val(ValType::I32),
+                mutable: true,
+            }];
+            for spill in coroutine_plan.spill_slots(name) {
+                frame_fields.push(FieldType {
+                    element_type: StorageType::Val(coroutine_spill_storage_type(
+                        &spill.ty,
+                        &array_registry,
+                    )?),
+                    mutable: true,
+                });
+            }
+            types.ty().struct_(frame_fields);
+        }
     }
     // Record struct types used by sealed tables/records.
     for record_ty in &record_types {
@@ -952,6 +1017,21 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     } else {
         None
     };
+    let callback_unit_trampoline_type_idx = if callback_unit_trampoline {
+        let callback_type = Type::Function {
+            params: Vec::new(),
+            return_type: Box::new(Type::Unit),
+        };
+        types.ty().function(
+            vec![wasm_type(&callback_type, &array_registry)?],
+            Vec::<ValType>::new(),
+        );
+        let type_idx = type_idx_counter;
+        type_idx_counter += 1;
+        Some(type_idx)
+    } else {
+        None
+    };
     let promise_resume_trampoline_type_idx = if promise_resume_trampoline {
         Some(
             signature_registry
@@ -997,6 +1077,18 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         types
             .ty()
             .function(vec![anyref_val_type()], Vec::<ValType>::new());
+        type_idx_counter += 1;
+        Some(type_idx)
+    } else {
+        None
+    };
+    // Frame-push helper for the active coroutine: (depth, frame) -> (),
+    // growing the shadow-stack array as needed.
+    let coroutine_push_frame_type_idx = if coroutine_plan.has_state() {
+        let type_idx = type_idx_counter;
+        types
+            .ty()
+            .function(vec![ValType::I32, anyref_val_type()], Vec::<ValType>::new());
         type_idx_counter += 1;
         Some(type_idx)
     } else {
@@ -1296,12 +1388,25 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         callback_event_unit_trampoline,
         callback_f64_unit_trampoline,
         callback_unit_extern_trampoline,
+        callback_unit_trampoline,
         promise_resume_trampoline,
         promise_resume_trampoline, // reset-active helper accompanies resume
+        coroutine_plan.has_state(), // frame-push helper for activation frames
     ]
     .iter()
     .filter(|&&needed| needed)
     .count() as u32;
+    // The frame-push helper is the last trampoline-group function; its index
+    // must be known while user function bodies are emitted (asserted below
+    // when the helper is actually appended).
+    let coroutine_push_frame_func = coroutine_plan.has_state().then(|| {
+        import_func_count
+            + module.functions.len() as u32
+            + u32::from(start_thunk.is_some())
+            + closure_targets.len() as u32
+            + trampoline_func_count
+            - 1
+    });
     let record_helper_func_count = record_helpers
         .iter()
         .map(|info| 1 + info.getter_type_indices.len() as u32)
@@ -1363,6 +1468,14 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         });
     }
     let mut exports = ExportSection::new();
+    if lua_error_tag_type_idx.is_some() {
+        // Exporting the Lua error tag lets JS hosts (e.g. the walu-test
+        // vitest bridge) recognize uncaught `error`/`assert` exceptions via
+        // `exception.is(tag)` and read the message payload with `getArg`.
+        // Hosts can also throw it from an import to raise an error that
+        // `pcall` catches exactly like `error(message)`.
+        exports.export(LUA_ERROR_TAG_EXPORT, ExportKind::Tag, ERROR_TAG_INDEX);
+    }
     let mut codes = CodeSection::new();
     for (index, function) in module.functions.iter().enumerate() {
         // User function type indices come after array, host, and coroutine types.
@@ -1394,6 +1507,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             user_type_base,
             &coroutine_plan,
             coroutine_body_wrapper_type,
+            coroutine_push_frame_func,
             &closure_wrapper_slots,
             &import_map,
             &declared_import_indices,
@@ -1506,6 +1620,20 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             user_type_base,
         )?);
     }
+    if let Some(type_idx) = callback_unit_trampoline_type_idx {
+        functions.function(type_idx);
+        exports.export(
+            CALLBACK_UNIT_TRAMPOLINE_EXPORT,
+            ExportKind::Func,
+            import_func_count + helper_func_idx_counter,
+        );
+        helper_func_idx_counter += 1;
+        codes.function(&emit_callback_unit_trampoline(
+            &signature_registry,
+            &array_registry,
+            user_type_base,
+        )?);
+    }
     if let Some(type_idx) = promise_resume_trampoline_type_idx {
         functions.function(type_idx);
         exports.export(
@@ -1538,6 +1666,21 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             coroutine_state_type.ok_or_else(|| {
                 Diagnostic::new("missing coroutine state type for promise reset helper")
             })?,
+        )?);
+    }
+    if let Some(type_idx) = coroutine_push_frame_type_idx {
+        functions.function(type_idx);
+        debug_assert_eq!(
+            coroutine_push_frame_func,
+            Some(import_func_count + helper_func_idx_counter)
+        );
+        helper_func_idx_counter += 1;
+        codes.function(&emit_coroutine_push_frame(
+            &coroutine_plan,
+            coroutine_state_type.ok_or_else(|| {
+                Diagnostic::new("missing coroutine state type for frame-push helper")
+            })?,
+            anyref_array_type,
         )?);
     }
 
@@ -1699,6 +1842,8 @@ struct EmissionContext<'a> {
     buffer_plan: &'a BufferPlan,
     /// Function index of the typed-array bump-allocation helper.
     buffer_alloc_func: Option<u32>,
+    /// Function index of the coroutine frame-push helper.
+    coroutine_push_frame_func: Option<u32>,
 }
 
 impl EmissionContext<'_> {
@@ -1737,6 +1882,46 @@ impl EmissionContext<'_> {
         self.buffer_alloc_func
             .ok_or_else(|| Diagnostic::new("missing typed-array allocation helper"))
     }
+
+    fn coroutine_push_frame_func(&self) -> Result<u32, Diagnostic> {
+        self.coroutine_push_frame_func
+            .ok_or_else(|| Diagnostic::new("missing coroutine frame-push helper"))
+    }
+
+    fn coroutine_frame_type(&self, name: &str) -> Result<u32, Diagnostic> {
+        self.coroutine_plan
+            .frame_type(name)
+            .ok_or_else(|| Diagnostic::new(format!("missing coroutine frame type for '{name}'")))
+    }
+}
+
+/// Per-activation coroutine bookkeeping for one suspending function body.
+struct CoroutineFrameContext {
+    /// Concrete frame struct type for this function's activations.
+    frame_type: u32,
+    /// Local caching this activation's call depth.
+    depth_local: u32,
+    /// Local caching this activation's frame reference (null until pushed).
+    frame_local: u32,
+}
+
+fn coroutine_frame_context(
+    function: &IrFunction,
+    ctx: &EmissionContext<'_>,
+    local_plan: &LocalPlan,
+) -> Result<Option<CoroutineFrameContext>, Diagnostic> {
+    if !ctx.coroutine_plan.function_yields(&function.name) {
+        return Ok(None);
+    }
+    Ok(Some(CoroutineFrameContext {
+        frame_type: ctx.coroutine_frame_type(&function.name)?,
+        depth_local: local_plan
+            .coroutine_depth_local
+            .ok_or_else(|| Diagnostic::new("missing coroutine depth local"))?,
+        frame_local: local_plan
+            .coroutine_frame_local
+            .ok_or_else(|| Diagnostic::new("missing coroutine frame local"))?,
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1750,6 +1935,7 @@ fn emit_function(
     user_type_base: u32,
     coroutine_plan: &CoroutinePlan,
     coroutine_body_wrapper_type: Option<u32>,
+    coroutine_push_frame_func: Option<u32>,
     closure_wrapper_slots: &HashMap<String, u32>,
     import_map: &host::HostImportMap,
     declared_import_indices: &HashMap<SymbolId, u32>,
@@ -1772,10 +1958,16 @@ fn emit_function(
         import_func_count,
         buffer_plan,
         buffer_alloc_func,
+        coroutine_push_frame_func,
     };
     let value_types = infer_value_types(function, signatures)?;
     let suspending = ctx.coroutine_plan.function_yields(&function.name);
-    let local_plan = build_local_plan(function, &value_types, array_registry, suspending)?;
+    let suspend_frame_type = if suspending {
+        Some(ctx.coroutine_frame_type(&function.name)?)
+    } else {
+        None
+    };
+    let local_plan = build_local_plan(function, &value_types, array_registry, suspend_frame_type)?;
     let value_defs = build_value_definition_map(function);
     let locals = compress_locals(local_plan.extra_locals.clone());
     let mut out = Function::new(locals);
@@ -1794,29 +1986,72 @@ fn emit_function(
     }
 
     let pc_local = local_plan.pc_local;
-    if let Some(pc_field) = ctx.coroutine_plan.pc_field(&function.name) {
-        // Every directly or transitively suspending function has its own
-        // continuation PC. Fresh calls outside an active coroutine still start
-        // at entry; re-entry restores locals before dispatching to the saved
-        // direct-await block or synthetic yielding-call site.
+    if let Some(frame_ctx) = coroutine_frame_context(function, &ctx, &local_plan)? {
+        // Every directly or transitively suspending activation has its own
+        // frame (continuation PC + spilled locals) on the active coroutine's
+        // shadow stack, keyed by call depth. Fresh calls outside an active
+        // coroutine still start at entry; a replay entry (resume walking back
+        // down the suspended call chain) restores this activation's locals
+        // from its frame before dispatching to the saved direct-await block
+        // or synthetic yielding-call site.
+        let entry_pc = function.entry.0 as i32;
         emit_active_state_ref(&mut out, &ctx)?;
         out.instruction(&Instruction::RefIsNull);
-        out.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
-        out.instruction(&Instruction::I32Const(function.entry.0 as i32));
+        out.instruction(&Instruction::If(BlockType::Empty));
+        out.instruction(&Instruction::I32Const(entry_pc));
+        out.instruction(&Instruction::LocalSet(pc_local));
         out.instruction(&Instruction::Else);
-        emit_active_state_field_get(&mut out, &ctx, pc_field)?;
+        // depth_local = state.depth
+        emit_active_state_field_get(&mut out, &ctx, STATE_DEPTH_FIELD)?;
+        out.instruction(&Instruction::LocalSet(frame_ctx.depth_local));
+        // Consume the one-shot replay flag (stashed in the not-yet-live
+        // pc_local because block boundaries cannot carry operand-stack values).
+        emit_active_state_field_get(&mut out, &ctx, STATE_REPLAYING_FIELD)?;
+        out.instruction(&Instruction::LocalSet(pc_local));
+        emit_active_state_field_set_const(&mut out, &ctx, STATE_REPLAYING_FIELD, 0)?;
+        out.instruction(&Instruction::Block(BlockType::Empty)); // $done
+        out.instruction(&Instruction::Block(BlockType::Empty)); // $fresh
+        // Not replaying → fresh activation.
+        out.instruction(&Instruction::LocalGet(pc_local));
+        out.instruction(&Instruction::I32Eqz);
+        out.instruction(&Instruction::BrIf(0));
+        // No shadow stack yet → fresh.
+        emit_active_state_field_get(&mut out, &ctx, STATE_FRAMES_FIELD)?;
+        out.instruction(&Instruction::RefIsNull);
+        out.instruction(&Instruction::BrIf(0));
+        // Depth beyond the stack → fresh.
+        out.instruction(&Instruction::LocalGet(frame_ctx.depth_local));
+        emit_active_state_field_get(&mut out, &ctx, STATE_FRAMES_FIELD)?;
+        out.instruction(&Instruction::ArrayLen);
+        out.instruction(&Instruction::I32GeU);
+        out.instruction(&Instruction::BrIf(0));
+        // No frame at this depth → fresh.
+        emit_active_state_field_get(&mut out, &ctx, STATE_FRAMES_FIELD)?;
+        out.instruction(&Instruction::LocalGet(frame_ctx.depth_local));
+        out.instruction(&Instruction::ArrayGet(ctx.array_registry.anyref_array_type));
+        out.instruction(&Instruction::BrOnNull(0));
+        out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
+            frame_ctx.frame_type,
+        )));
+        out.instruction(&Instruction::LocalSet(frame_ctx.frame_local));
+        // Replay: dispatch to the saved PC with this activation's locals.
+        out.instruction(&Instruction::LocalGet(frame_ctx.frame_local));
+        out.instruction(&Instruction::StructGet {
+            struct_type_index: frame_ctx.frame_type,
+            field_index: FRAME_PC_FIELD,
+        });
+        out.instruction(&Instruction::LocalSet(pc_local));
+        emit_coroutine_restore_locals(&mut out, function, &ctx, &frame_ctx)?;
+        out.instruction(&Instruction::Br(1)); // $done
+        out.instruction(&Instruction::End); // $fresh
+        // Fresh activation: no frame until the first suspension point.
+        out.instruction(&Instruction::I32Const(entry_pc));
+        out.instruction(&Instruction::LocalSet(pc_local));
+        out.instruction(&Instruction::End); // $done
         out.instruction(&Instruction::End);
     } else {
         out.instruction(&Instruction::I32Const(function.entry.0 as i32));
-    }
-    out.instruction(&Instruction::LocalSet(pc_local));
-    if suspending {
-        out.instruction(&Instruction::LocalGet(pc_local));
-        out.instruction(&Instruction::I32Const(function.entry.0 as i32));
-        out.instruction(&Instruction::I32Ne);
-        out.instruction(&Instruction::If(BlockType::Empty));
-        emit_coroutine_restore_locals(&mut out, function, &ctx)?;
-        out.instruction(&Instruction::End);
+        out.instruction(&Instruction::LocalSet(pc_local));
     }
     out.instruction(&Instruction::Loop(BlockType::Empty));
 
@@ -1848,6 +2083,9 @@ fn emit_function(
         out.instruction(&Instruction::I32Const(point.pc));
         out.instruction(&Instruction::I32Eq);
         out.instruction(&Instruction::If(BlockType::Empty));
+        // The re-executed suspended call below walks the resume one level
+        // deeper: mark the next suspending entry as a replay.
+        emit_active_state_field_set_const(&mut out, &ctx, STATE_REPLAYING_FIELD, 1)?;
         emit_block_from_instruction(
             &mut out,
             function,
@@ -2108,6 +2346,38 @@ fn emit_callback_unit_extern_trampoline(
     Ok(out)
 }
 
+/// Exported browser-host ABI helper for argumentless `() -> unit` host
+/// callbacks such as test-runner suite and test bodies.
+///
+/// Signature: `(callback: () -> unit) -> unit`.
+fn emit_callback_unit_trampoline(
+    signature_registry: &SignatureRegistry,
+    array_registry: &ArrayTypeRegistry,
+    user_type_base: u32,
+) -> Result<Function, Diagnostic> {
+    let wrapper_type_idx = signature_registry
+        .get_wrapper_type_index(user_type_base, &[], &Type::Unit)
+        .ok_or_else(|| Diagnostic::new("missing () -> unit callback wrapper type"))?;
+
+    let mut out = Function::new(Vec::new());
+    out.instruction(&Instruction::LocalGet(0));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: array_registry.func_val_struct_type,
+        field_index: 1,
+    });
+    out.instruction(&Instruction::LocalGet(0));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: array_registry.func_val_struct_type,
+        field_index: 2,
+    });
+    out.instruction(&Instruction::CallIndirect {
+        type_index: wrapper_type_idx,
+        table_index: 0,
+    });
+    out.instruction(&Instruction::End);
+    Ok(out)
+}
+
 /// Exported JS-settlement ABI helper for `coroutine.await_promise`.
 ///
 /// Signature: `(thread_handle: thread, payload: extern, rejected: i32) -> unit`.
@@ -2140,6 +2410,131 @@ fn emit_call_coroutine_continuation(
         type_index: wrapper_type_idx,
         table_index: 0,
     });
+}
+
+/// Reset the resumed coroutine's replay cursor: the next suspending entry is
+/// the top of its suspended activation chain (depth 0) replaying its frame.
+fn emit_coroutine_begin_replay(
+    out: &mut Function,
+    local_plan: &LocalPlan,
+    coroutine: ValueId,
+    state_ty: u32,
+) -> Result<(), Diagnostic> {
+    emit_value_operand(out, local_plan, coroutine)?;
+    out.instruction(&Instruction::I32Const(0));
+    out.instruction(&Instruction::StructSet {
+        struct_type_index: state_ty,
+        field_index: STATE_DEPTH_FIELD,
+    });
+    emit_value_operand(out, local_plan, coroutine)?;
+    out.instruction(&Instruction::I32Const(1));
+    out.instruction(&Instruction::StructSet {
+        struct_type_index: state_ty,
+        field_index: STATE_REPLAYING_FIELD,
+    });
+    Ok(())
+}
+
+/// Emit the frame-push helper `(depth: i32, frame: anyref) -> ()`.
+///
+/// Stores `frame` at `active.frames[depth]`, growing (or first allocating)
+/// the shadow-stack array when `depth` is out of bounds.
+fn emit_coroutine_push_frame(
+    coroutine_plan: &CoroutinePlan,
+    state_ty: u32,
+    anyref_array_type: u32,
+) -> Result<Function, Diagnostic> {
+    let frames_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(anyref_array_type),
+    });
+    let mut out = Function::new(vec![(2, frames_ref), (1, ValType::I32)]);
+    let depth_param = 0u32;
+    let frame_param = 1u32;
+    let frames_local = 2u32;
+    let grown_local = 3u32;
+    let size_local = 4u32;
+    let active = coroutine_plan.active_global()?;
+
+    // frames = active.frames
+    out.instruction(&Instruction::GlobalGet(active));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: state_ty,
+        field_index: STATE_FRAMES_FIELD,
+    });
+    out.instruction(&Instruction::LocalSet(frames_local));
+    // size = frames == null ? 0 : array.len(frames)
+    out.instruction(&Instruction::LocalGet(frames_local));
+    out.instruction(&Instruction::RefIsNull);
+    out.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+    out.instruction(&Instruction::I32Const(0));
+    out.instruction(&Instruction::Else);
+    out.instruction(&Instruction::LocalGet(frames_local));
+    out.instruction(&Instruction::ArrayLen);
+    out.instruction(&Instruction::End);
+    out.instruction(&Instruction::LocalSet(size_local));
+    // Grow when depth is out of bounds: new size max(2*size, depth+1, 4).
+    out.instruction(&Instruction::LocalGet(depth_param));
+    out.instruction(&Instruction::LocalGet(size_local));
+    out.instruction(&Instruction::I32GeU);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    out.instruction(&Instruction::LocalGet(size_local));
+    out.instruction(&Instruction::I32Const(1));
+    out.instruction(&Instruction::I32Shl);
+    out.instruction(&Instruction::LocalSet(size_local));
+    out.instruction(&Instruction::LocalGet(depth_param));
+    out.instruction(&Instruction::I32Const(1));
+    out.instruction(&Instruction::I32Add);
+    out.instruction(&Instruction::LocalGet(size_local));
+    out.instruction(&Instruction::I32GtU);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    out.instruction(&Instruction::LocalGet(depth_param));
+    out.instruction(&Instruction::I32Const(1));
+    out.instruction(&Instruction::I32Add);
+    out.instruction(&Instruction::LocalSet(size_local));
+    out.instruction(&Instruction::End);
+    out.instruction(&Instruction::LocalGet(size_local));
+    out.instruction(&Instruction::I32Const(4));
+    out.instruction(&Instruction::I32LtU);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    out.instruction(&Instruction::I32Const(4));
+    out.instruction(&Instruction::LocalSet(size_local));
+    out.instruction(&Instruction::End);
+    out.instruction(&Instruction::LocalGet(size_local));
+    out.instruction(&Instruction::ArrayNewDefault(anyref_array_type));
+    out.instruction(&Instruction::LocalSet(grown_local));
+    // Copy the surviving frames into the grown stack.
+    out.instruction(&Instruction::LocalGet(frames_local));
+    out.instruction(&Instruction::RefIsNull);
+    out.instruction(&Instruction::If(BlockType::Empty));
+    out.instruction(&Instruction::Else);
+    out.instruction(&Instruction::LocalGet(grown_local));
+    out.instruction(&Instruction::I32Const(0));
+    out.instruction(&Instruction::LocalGet(frames_local));
+    out.instruction(&Instruction::I32Const(0));
+    out.instruction(&Instruction::LocalGet(frames_local));
+    out.instruction(&Instruction::ArrayLen);
+    out.instruction(&Instruction::ArrayCopy {
+        array_type_index_dst: anyref_array_type,
+        array_type_index_src: anyref_array_type,
+    });
+    out.instruction(&Instruction::End);
+    out.instruction(&Instruction::GlobalGet(active));
+    out.instruction(&Instruction::LocalGet(grown_local));
+    out.instruction(&Instruction::StructSet {
+        struct_type_index: state_ty,
+        field_index: STATE_FRAMES_FIELD,
+    });
+    out.instruction(&Instruction::LocalGet(grown_local));
+    out.instruction(&Instruction::LocalSet(frames_local));
+    out.instruction(&Instruction::End);
+    // frames[depth] = frame
+    out.instruction(&Instruction::LocalGet(frames_local));
+    out.instruction(&Instruction::LocalGet(depth_param));
+    out.instruction(&Instruction::LocalGet(frame_param));
+    out.instruction(&Instruction::ArraySet(anyref_array_type));
+    out.instruction(&Instruction::End);
+    Ok(out)
 }
 
 fn emit_promise_resume_trampoline(
@@ -2199,6 +2594,20 @@ fn emit_promise_resume_trampoline(
     out.instruction(&Instruction::LocalSet(active_save_local));
     out.instruction(&Instruction::LocalGet(state_local));
     out.instruction(&Instruction::GlobalSet(coroutine_plan.active_global()?));
+
+    // Replay the suspended activation chain from the top.
+    out.instruction(&Instruction::LocalGet(state_local));
+    out.instruction(&Instruction::I32Const(0));
+    out.instruction(&Instruction::StructSet {
+        struct_type_index: state_ty,
+        field_index: STATE_DEPTH_FIELD,
+    });
+    out.instruction(&Instruction::LocalGet(state_local));
+    out.instruction(&Instruction::I32Const(1));
+    out.instruction(&Instruction::StructSet {
+        struct_type_index: state_ty,
+        field_index: STATE_REPLAYING_FIELD,
+    });
 
     emit_call_coroutine_continuation(
         &mut out,
@@ -2677,12 +3086,13 @@ fn emit_block_from_instruction(
                     value_ty
                 )));
             }
-            let pc_field = ctx.coroutine_plan.pc_field(&function.name).ok_or_else(|| {
-                Diagnostic::new(format!(
-                    "missing coroutine pc field for yielding function '{}'",
-                    function.name
-                ))
-            })?;
+            let frame_ctx =
+                coroutine_frame_context(function, ctx, local_plan)?.ok_or_else(|| {
+                    Diagnostic::new(format!(
+                        "missing coroutine frame for yielding function '{}'",
+                        function.name
+                    ))
+                })?;
             let state_ty = ctx.coroutine_state_type()?;
             let yield_tmp = local_plan
                 .coroutine_yield_tmp
@@ -2700,14 +3110,9 @@ fn emit_block_from_instruction(
             out.instruction(&Instruction::Unreachable);
             out.instruction(&Instruction::End);
 
-            emit_coroutine_spill_locals(out, function, ctx)?;
-            // Save the resume point so re-entry dispatches to the right block.
-            emit_active_state_ref(out, ctx)?;
-            out.instruction(&Instruction::I32Const(resume_block.0 as i32));
-            out.instruction(&Instruction::StructSet {
-                struct_type_index: state_ty,
-                field_index: pc_field,
-            });
+            // Save the resume point and locals so re-entry replays into this
+            // activation at the right block.
+            emit_coroutine_suspend_frame(out, function, ctx, &frame_ctx, resume_block.0 as i32)?;
             // Deliver the yielded value and mark the instance suspended.
             emit_active_state_ref(out, ctx)?;
             out.instruction(&Instruction::LocalGet(yield_tmp));
@@ -2740,13 +3145,13 @@ fn emit_block_from_instruction(
                     promise_ty
                 )));
             }
-            let pc_field = ctx.coroutine_plan.pc_field(&function.name).ok_or_else(|| {
-                Diagnostic::new(format!(
-                    "missing coroutine pc field for suspending function '{}'",
-                    function.name
-                ))
-            })?;
-            let state_ty = ctx.coroutine_state_type()?;
+            let frame_ctx =
+                coroutine_frame_context(function, ctx, local_plan)?.ok_or_else(|| {
+                    Diagnostic::new(format!(
+                        "missing coroutine frame for suspending function '{}'",
+                        function.name
+                    ))
+                })?;
             let promise_tmp = local_plan
                 .coroutine_await_promise_tmp
                 .ok_or_else(|| Diagnostic::new("missing coroutine await promise scratch local"))?;
@@ -2763,13 +3168,7 @@ fn emit_block_from_instruction(
             out.instruction(&Instruction::Unreachable);
             out.instruction(&Instruction::End);
 
-            emit_coroutine_spill_locals(out, function, ctx)?;
-            emit_active_state_ref(out, ctx)?;
-            out.instruction(&Instruction::I32Const(resume_block.0 as i32));
-            out.instruction(&Instruction::StructSet {
-                struct_type_index: state_ty,
-                field_index: pc_field,
-            });
+            emit_coroutine_suspend_frame(out, function, ctx, &frame_ctx, resume_block.0 as i32)?;
             emit_active_state_field_set_const(
                 out,
                 ctx,
@@ -2791,11 +3190,12 @@ fn emit_block_from_instruction(
             let return_ty = value_types.get(value).ok_or_else(|| {
                 Diagnostic::new(format!("missing type for return value {:?}", value))
             })?;
-            // A normal return needs no coroutine bookkeeping: `coroutine.resume` marks the
+            // A normal return needs no tag bookkeeping: `coroutine.resume` marks the
             // instance finished tentatively before the call, and only `coroutine.yield`
             // flips it back to suspended. So a return that is *not* a yield leaves the
-            // finished tag in place, and `coroutine.resume` reads the body's result directly.
-            emit_coroutine_pc_set_if_active(out, function, ctx, function.entry.0 as i32)?;
+            // finished tag in place, and `coroutine.resume` reads the body's result
+            // directly. A suspending activation only pops its shadow-stack frame.
+            emit_coroutine_return_cleanup(out, function, ctx, local_plan)?;
             if !matches!(return_ty, Type::Unit) {
                 emit_value_operand(out, local_plan, *value)?;
             }
@@ -2884,10 +3284,12 @@ fn emit_block_instructions(
                     if matches!(op, BinaryOp::NotEq) {
                         out.instruction(&Instruction::I32Eqz);
                     }
-                } else if matches!(op, BinaryOp::FloorDiv | BinaryOp::Mod) {
+                } else if matches!(op, BinaryOp::FloorDiv | BinaryOp::Mod)
+                    || (matches!(op, BinaryOp::Div) && host::is_integer_numeric(operand_ty))
+                {
                     let left_local = local(local_plan, *left)?;
                     let right_local = local(local_plan, *right)?;
-                    emit_floor_or_mod(out, *op, operand_ty.clone(), left_local, right_local)?;
+                    emit_floor_or_mod(out, ctx, *op, operand_ty.clone(), left_local, right_local)?;
                 } else if matches!(op, BinaryOp::Pow) {
                     let left_local = local(local_plan, *left)?;
                     let right_local = local(local_plan, *right)?;
@@ -3225,7 +3627,7 @@ fn emit_block_instructions(
             IrInstruction::Throw { error } => {
                 emit_value_operand(out, local_plan, *error)?;
                 out.instruction(&Instruction::AnyConvertExtern);
-                out.instruction(&Instruction::Throw(0));
+                out.instruction(&Instruction::Throw(ERROR_TAG_INDEX));
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::Call { name, args, .. } => {
@@ -3240,8 +3642,31 @@ fn emit_block_instructions(
                                 value, function.name
                             ))
                         })?;
-                    emit_coroutine_pc_set_if_active(out, function, ctx, resume_pc)?;
-                    emit_coroutine_spill_locals(out, function, ctx)?;
+                    let frame_ctx = coroutine_frame_context(function, ctx, local_plan)?
+                        .ok_or_else(|| {
+                            Diagnostic::new(format!(
+                                "missing coroutine frame for suspending caller '{}'",
+                                function.name
+                            ))
+                        })?;
+                    // Inside an active coroutine, prepare this activation for a
+                    // possible suspension of the callee: record the synthetic
+                    // resume PC and locals in this activation's frame and hand
+                    // the callee the next call depth.
+                    emit_active_state_ref(out, ctx)?;
+                    out.instruction(&Instruction::RefIsNull);
+                    out.instruction(&Instruction::If(BlockType::Empty));
+                    out.instruction(&Instruction::Else);
+                    emit_coroutine_suspend_frame(out, function, ctx, &frame_ctx, resume_pc)?;
+                    emit_active_state_ref(out, ctx)?;
+                    out.instruction(&Instruction::LocalGet(frame_ctx.depth_local));
+                    out.instruction(&Instruction::I32Const(1));
+                    out.instruction(&Instruction::I32Add);
+                    out.instruction(&Instruction::StructSet {
+                        struct_type_index: ctx.coroutine_state_type()?,
+                        field_index: STATE_DEPTH_FIELD,
+                    });
+                    out.instruction(&Instruction::End);
                 }
                 for arg in args {
                     emit_value_operand(out, local_plan, *arg)?;
@@ -3253,7 +3678,6 @@ fn emit_block_instructions(
                 emit_value_store(out, local_plan, *value)?;
                 if yielding_call {
                     emit_return_if_coroutine_yielded(out, function, ctx)?;
-                    emit_coroutine_pc_set_if_active(out, function, ctx, function.entry.0 as i32)?;
                 }
             }
             IrInstruction::HostCall {
@@ -3376,12 +3800,34 @@ fn emit_block_instructions(
                     .protected_call_value_tmp
                     .ok_or_else(|| Diagnostic::new("missing protected-call value scratch local"))?;
 
+                // block $done (result anyref)
+                //   block $foreign
+                //     try_table (result anyref)
+                //         (catch $lua_error $done) (catch_all $foreign)
+                //       <call>; <box>; ok := 1
+                //     end
+                //     br $done            ;; success payload
+                //   end $foreign          ;; non-Waluau exception (e.g. a JS
+                //                         ;; error thrown by a host import)
+                //   <fallback message>
+                // end $done
+                //
+                // Wasm traps are not exceptions and still unwind past
+                // `catch_all`; checked runtime operations throw the Lua error
+                // tag instead of trapping so `pcall` observes them here.
                 out.instruction(&Instruction::I32Const(0));
                 out.instruction(&Instruction::LocalSet(ok_slot));
                 out.instruction(&Instruction::Block(BlockType::Result(anyref_val_type())));
+                out.instruction(&Instruction::Block(BlockType::Empty));
                 out.instruction(&Instruction::TryTable(
                     BlockType::Result(anyref_val_type()),
-                    Cow::Owned(vec![Catch::One { tag: 0, label: 0 }]),
+                    Cow::Owned(vec![
+                        Catch::One {
+                            tag: ERROR_TAG_INDEX,
+                            label: 1,
+                        },
+                        Catch::All { label: 0 },
+                    ]),
                 ));
                 emit_call_value_stack(
                     out,
@@ -3401,6 +3847,12 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::LocalSet(ok_slot));
                 out.instruction(&Instruction::LocalGet(value_tmp));
                 out.instruction(&Instruction::End);
+                out.instruction(&Instruction::Br(1));
+                out.instruction(&Instruction::End);
+                let foreign_message =
+                    host::string_constant_index(ctx.string_constants, host::ERR_FOREIGN_EXCEPTION)?;
+                out.instruction(&Instruction::GlobalGet(foreign_message));
+                out.instruction(&Instruction::AnyConvertExtern);
                 out.instruction(&Instruction::End);
                 out.instruction(&Instruction::LocalSet(value_slot));
             }
@@ -3408,7 +3860,7 @@ fn emit_block_instructions(
                 let state_ty = ctx.coroutine_state_type()?;
                 // struct.new $coroutine_state {
                 //   tag=suspended, yielded=null, continuation, await_status=none,
-                //   pc*=entry, spill*=default
+                //   frames=null, depth=0, replaying=0
                 // }
                 out.instruction(&Instruction::I32Const(TAG_SUSPENDED));
                 out.instruction(&Instruction::RefNull(HeapType::Abstract {
@@ -3419,12 +3871,11 @@ fn emit_block_instructions(
                 // non-capturing coroutine bodies through the zero-arg wrapper uniformly.
                 emit_value_operand(out, local_plan, *callee)?;
                 out.instruction(&Instruction::I32Const(AWAIT_STATUS_NONE));
-                for entry in ctx.coroutine_plan.pc_initial_values() {
-                    out.instruction(&Instruction::I32Const(*entry));
-                }
-                for ty in ctx.coroutine_plan.spill_field_types() {
-                    emit_coroutine_spill_default(out, ty, ctx.array_registry)?;
-                }
+                out.instruction(&Instruction::RefNull(HeapType::Concrete(
+                    ctx.array_registry.anyref_array_type,
+                )));
+                out.instruction(&Instruction::I32Const(0));
+                out.instruction(&Instruction::I32Const(0));
                 out.instruction(&Instruction::StructNew(state_ty));
                 emit_value_store(out, local_plan, *value)?;
             }
@@ -3467,6 +3918,8 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::LocalSet(save_local));
                 emit_value_operand(out, local_plan, *coroutine)?;
                 out.instruction(&Instruction::GlobalSet(active));
+                // Replay the suspended activation chain from the top.
+                emit_coroutine_begin_replay(out, local_plan, *coroutine, state_ty)?;
                 // Run the continuation; its i32 result is the yielded or returned value.
                 emit_call_coroutine_continuation(
                     out,
@@ -3581,6 +4034,8 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::LocalSet(save_local));
                 emit_value_operand(out, local_plan, *coroutine)?;
                 out.instruction(&Instruction::GlobalSet(active));
+                // Replay the suspended activation chain from the top.
+                emit_coroutine_begin_replay(out, local_plan, *coroutine, state_ty)?;
                 // Run the continuation; i32 result is the yielded or returned value.
                 emit_call_coroutine_continuation(
                     out,
@@ -3831,7 +4286,7 @@ fn emit_block_instructions(
                 });
                 out.instruction(&Instruction::I32GeU);
                 out.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-                out.instruction(&Instruction::Unreachable);
+                emit_throw_message(out, ctx, host::ERR_ARRAY_OOB)?;
                 out.instruction(&Instruction::End);
 
                 out.instruction(&Instruction::LocalGet(array_local));
@@ -3879,8 +4334,8 @@ fn emit_block_instructions(
 
                 // Writes are allowed at 0..=len: in-bounds writes replace, a
                 // write at exactly `len` appends (the `t[#t+1] = x` idiom).
-                // Anything farther traps — there is no hash part. The unsigned
-                // compare also rejects negative indices.
+                // Anything farther errors — there is no hash part. The
+                // unsigned compare also rejects negative indices.
                 out.instruction(&Instruction::LocalGet(index_local));
                 out.instruction(&Instruction::LocalGet(array_local));
                 out.instruction(&Instruction::StructGet {
@@ -3889,7 +4344,7 @@ fn emit_block_instructions(
                 });
                 out.instruction(&Instruction::I32GtU);
                 out.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-                out.instruction(&Instruction::Unreachable);
+                emit_throw_message(out, ctx, host::ERR_ARRAY_OOB)?;
                 out.instruction(&Instruction::End);
 
                 // Appending at full capacity: replace storage with a copy of
@@ -3978,11 +4433,14 @@ fn emit_block_instructions(
                 while let Type::Nullable(inner) = array_ty {
                     array_ty = inner;
                 }
-                let Type::Array(element_ty) = array_ty else {
-                    return Err(Diagnostic::new(format!(
-                        "array len operand must be an array type, got {}",
-                        array_ty
-                    )));
+                let element_ty = match array_ty {
+                    Type::Array(element_ty) | Type::Variadic(element_ty) => element_ty,
+                    _ => {
+                        return Err(Diagnostic::new(format!(
+                            "array len operand must be an array type, got {}",
+                            array_ty
+                        )));
+                    }
                 };
                 let growable_struct_index = ctx.array_registry.growable_array_index(element_ty)?;
 
@@ -4011,9 +4469,9 @@ fn emit_block_instructions(
                 let array_local = local(local_plan, *array)?;
                 let growable_struct_index = ctx.array_registry.growable_array_index(element_ty)?;
 
-                // Trap on empty arrays, then decrement the logical length. The
-                // storage slot is left as-is (capacity is unchanged, and the
-                // stale element is overwritten by the next append).
+                // Error on empty arrays, then decrement the logical length.
+                // The storage slot is left as-is (capacity is unchanged, and
+                // the stale element is overwritten by the next append).
                 out.instruction(&Instruction::LocalGet(array_local));
                 out.instruction(&Instruction::StructGet {
                     struct_type_index: growable_struct_index,
@@ -4021,7 +4479,7 @@ fn emit_block_instructions(
                 });
                 out.instruction(&Instruction::I32Eqz);
                 out.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-                out.instruction(&Instruction::Unreachable);
+                emit_throw_message(out, ctx, host::ERR_ARRAY_POP_EMPTY)?;
                 out.instruction(&Instruction::End);
 
                 out.instruction(&Instruction::LocalGet(array_local));
@@ -4157,6 +4615,7 @@ fn emit_block_instructions(
                     *kind,
                     local(local_plan, *buffer)?,
                     local(local_plan, *index)?,
+                    host::string_constant_index(ctx.string_constants, host::ERR_BUFFER_OOB)?,
                 );
                 emit_buffer_load(out, *kind, 0);
                 emit_value_store(out, local_plan, *value)?;
@@ -4172,6 +4631,7 @@ fn emit_block_instructions(
                     *kind,
                     local(local_plan, *buffer)?,
                     local(local_plan, *index)?,
+                    host::string_constant_index(ctx.string_constants, host::ERR_BUFFER_OOB)?,
                 );
                 emit_value_operand(out, local_plan, *stored)?;
                 emit_buffer_store(out, *kind, 0);
@@ -4378,41 +4838,44 @@ fn coroutine_spill_storage_type(
     }
 }
 
-fn emit_coroutine_spill_default(
-    out: &mut Function,
-    ty: &Type,
-    array_registry: &ArrayTypeRegistry,
-) -> Result<(), Diagnostic> {
-    match coroutine_spill_storage_type(ty, array_registry)? {
-        ValType::I32 => out.instruction(&Instruction::I32Const(0)),
-        ValType::I64 => out.instruction(&Instruction::I64Const(0)),
-        ValType::F32 => out.instruction(&Instruction::F32Const(0.0)),
-        ValType::F64 => out.instruction(&Instruction::F64Const(0.0)),
-        ValType::V128 => out.instruction(&Instruction::V128Const(0)),
-        ValType::Ref(reference) => out.instruction(&Instruction::RefNull(reference.heap_type)),
-    };
-    Ok(())
-}
-
-fn emit_coroutine_spill_locals(
+/// Ensure this activation has a frame on the active coroutine's shadow stack
+/// (lazily allocated at the first suspension point), then record the given
+/// resume PC and spill the activation's locals into it.
+///
+/// Callers must guarantee a coroutine is active (`active != null`).
+fn emit_coroutine_suspend_frame(
     out: &mut Function,
     function: &IrFunction,
     ctx: &EmissionContext<'_>,
+    frame_ctx: &CoroutineFrameContext,
+    resume_pc: i32,
 ) -> Result<(), Diagnostic> {
-    let state_ty = ctx.coroutine_state_type()?;
-    emit_active_state_ref(out, ctx)?;
+    // if frame_local == null { frame_local = struct.new_default; push(depth, frame) }
+    out.instruction(&Instruction::LocalGet(frame_ctx.frame_local));
     out.instruction(&Instruction::RefIsNull);
     out.instruction(&Instruction::If(BlockType::Empty));
-    out.instruction(&Instruction::Else);
+    out.instruction(&Instruction::StructNewDefault(frame_ctx.frame_type));
+    out.instruction(&Instruction::LocalSet(frame_ctx.frame_local));
+    out.instruction(&Instruction::LocalGet(frame_ctx.depth_local));
+    out.instruction(&Instruction::LocalGet(frame_ctx.frame_local));
+    out.instruction(&Instruction::Call(ctx.coroutine_push_frame_func()?));
+    out.instruction(&Instruction::End);
+    // frame.pc = resume_pc
+    out.instruction(&Instruction::LocalGet(frame_ctx.frame_local));
+    out.instruction(&Instruction::I32Const(resume_pc));
+    out.instruction(&Instruction::StructSet {
+        struct_type_index: frame_ctx.frame_type,
+        field_index: FRAME_PC_FIELD,
+    });
+    // Spill locals into the frame.
     for spill in ctx.coroutine_plan.spill_slots(&function.name) {
-        emit_active_state_ref(out, ctx)?;
+        out.instruction(&Instruction::LocalGet(frame_ctx.frame_local));
         out.instruction(&Instruction::LocalGet(spill.local));
         out.instruction(&Instruction::StructSet {
-            struct_type_index: state_ty,
+            struct_type_index: frame_ctx.frame_type,
             field_index: spill.field,
         });
     }
-    out.instruction(&Instruction::End);
     Ok(())
 }
 
@@ -4420,12 +4883,12 @@ fn emit_coroutine_restore_locals(
     out: &mut Function,
     function: &IrFunction,
     ctx: &EmissionContext<'_>,
+    frame_ctx: &CoroutineFrameContext,
 ) -> Result<(), Diagnostic> {
-    let state_ty = ctx.coroutine_state_type()?;
     for spill in ctx.coroutine_plan.spill_slots(&function.name) {
-        emit_active_state_ref(out, ctx)?;
+        out.instruction(&Instruction::LocalGet(frame_ctx.frame_local));
         out.instruction(&Instruction::StructGet {
-            struct_type_index: state_ty,
+            struct_type_index: frame_ctx.frame_type,
             field_index: spill.field,
         });
         let storage_type = coroutine_spill_storage_type(&spill.ty, ctx.array_registry)?;
@@ -4444,26 +4907,31 @@ fn emit_coroutine_restore_locals(
     Ok(())
 }
 
-fn emit_coroutine_pc_set_if_active(
+/// On a normal return of a suspending activation that pushed a frame, clear
+/// its shadow-stack slot so a later fresh activation at the same depth cannot
+/// observe the stale frame (and its GC references are released).
+fn emit_coroutine_return_cleanup(
     out: &mut Function,
     function: &IrFunction,
     ctx: &EmissionContext<'_>,
-    pc: i32,
+    local_plan: &LocalPlan,
 ) -> Result<(), Diagnostic> {
-    let Some(pc_field) = ctx.coroutine_plan.pc_field(&function.name) else {
+    let Some(frame_ctx) = coroutine_frame_context(function, ctx, local_plan)? else {
         return Ok(());
     };
-    let state_ty = ctx.coroutine_state_type()?;
-    emit_active_state_ref(out, ctx)?;
+    out.instruction(&Instruction::LocalGet(frame_ctx.frame_local));
     out.instruction(&Instruction::RefIsNull);
     out.instruction(&Instruction::If(BlockType::Empty));
     out.instruction(&Instruction::Else);
-    emit_active_state_ref(out, ctx)?;
-    out.instruction(&Instruction::I32Const(pc));
-    out.instruction(&Instruction::StructSet {
-        struct_type_index: state_ty,
-        field_index: pc_field,
-    });
+    // The frame was pushed at frames[depth], so the array is present and the
+    // index is in bounds.
+    emit_active_state_field_get(out, ctx, STATE_FRAMES_FIELD)?;
+    out.instruction(&Instruction::LocalGet(frame_ctx.depth_local));
+    out.instruction(&Instruction::RefNull(HeapType::Abstract {
+        shared: false,
+        ty: AbstractHeapType::Any,
+    }));
+    out.instruction(&Instruction::ArraySet(ctx.array_registry.anyref_array_type));
     out.instruction(&Instruction::End);
     Ok(())
 }
@@ -4955,6 +5423,25 @@ fn emit_tonumber_result_box(
 /// Emit `#` on an `unknown` (anyref) local, leaving the logical length (i32)
 /// on the stack. Dispatches over every growable array wrapper type in the
 /// module and traps when the value is none of them.
+/// Throw the Lua error tag carrying `message` (a collected string constant).
+///
+/// Checked runtime operations use this instead of `unreachable` so protected
+/// calls observe a catchable Lua error rather than an uncatchable Wasm trap.
+/// The message must be registered in `host::runtime_error_messages` for the
+/// emitting instruction so it exists in the string constants and the module
+/// defines the error tag.
+fn emit_throw_message(
+    out: &mut Function,
+    ctx: &EmissionContext<'_>,
+    message: &str,
+) -> Result<(), Diagnostic> {
+    let index = host::string_constant_index(ctx.string_constants, message)?;
+    out.instruction(&Instruction::GlobalGet(index));
+    out.instruction(&Instruction::AnyConvertExtern);
+    out.instruction(&Instruction::Throw(ERROR_TAG_INDEX));
+    Ok(())
+}
+
 fn emit_dyn_len(
     out: &mut Function,
     ctx: &EmissionContext<'_>,
@@ -4977,7 +5464,7 @@ fn emit_dyn_len(
         });
         out.instruction(&Instruction::Else);
     }
-    out.instruction(&Instruction::Unreachable);
+    emit_throw_message(out, ctx, host::ERR_LEN_NON_ARRAY)?;
     for _ in wrappers {
         out.instruction(&Instruction::End);
     }
@@ -5033,7 +5520,7 @@ fn emit_dyn_index(
         });
         out.instruction(&Instruction::I32GeU);
         out.instruction(&Instruction::If(BlockType::Empty));
-        out.instruction(&Instruction::Unreachable);
+        emit_throw_message(out, ctx, host::ERR_ARRAY_OOB)?;
         out.instruction(&Instruction::End);
 
         out.instruction(&Instruction::LocalGet(operand_local));
@@ -5076,7 +5563,7 @@ fn emit_dyn_index(
         out.instruction(&Instruction::Else);
         arms += 1;
     }
-    out.instruction(&Instruction::Unreachable);
+    emit_throw_message(out, ctx, host::ERR_INDEX_NON_ARRAY)?;
     for _ in 0..arms {
         out.instruction(&Instruction::End);
     }
@@ -5229,6 +5716,8 @@ fn emit_box(
             Ok(())
         }
         Type::Array(_) | Type::Function { .. } | Type::Record(_) | Type::Thread => Ok(()),
+        // Already anyref: boxing into `unknown` is the identity.
+        Type::Unknown => Ok(()),
         // Boxed nullables (`f64?` etc.) already share the anyref
         // representation; reference-typed nullables box like their inner type
         // (with wasm null representing nil in both cases).
@@ -5405,7 +5894,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value add is not supported during wasm emission",
@@ -5473,7 +5962,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value sub is not supported during wasm emission",
@@ -5524,7 +6013,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value mul is not supported during wasm emission",
@@ -5581,7 +6070,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value div is not supported during wasm emission",
@@ -5631,10 +6120,20 @@ fn emit_binary(
                     ctx.host_func_index(host::IMPORT_BYTES_EQ_FUNC)?,
                 ));
             }
-            Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
-                unreachable!()
+            // Extern references are opaque `externref` values, which wasm
+            // cannot compare (externref is not an eqref); identity lives on
+            // the host, so equality delegates to JavaScript `===`.
+            Type::Extern | Type::ExternSubtype(_) => {
+                out.instruction(&Instruction::Call(
+                    ctx.host_func_index(host::IMPORT_JS_EQ_UNKNOWN_FUNC)?,
+                ));
             }
-            Type::Array(_) => unreachable!(),
+            Type::Named { .. } | Type::Opaque { .. } => {
+                return Err(Diagnostic::new(
+                    "named-type equality is not supported during wasm emission",
+                ));
+            }
+            Type::Array(_) | Type::Variadic(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value equality is not supported during wasm emission",
@@ -5699,7 +6198,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value comparison is not supported during wasm emission",
@@ -5760,7 +6259,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value comparison is not supported during wasm emission",
@@ -5821,7 +6320,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value comparison is not supported during wasm emission",
@@ -5882,7 +6381,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value comparison is not supported during wasm emission",
@@ -5965,25 +6464,62 @@ fn emit_narrow_from_f64(out: &mut Function, ty: NumericType) {
     };
 }
 
+/// Emit integer/float floor-division, modulo, and (for integer operands)
+/// plain division from operand locals.
+///
+/// Integer divisions and modulos are checked: a zero divisor throws the Lua
+/// error tag (catchable by `pcall`) instead of hitting the Wasm trap, and
+/// signed division by -1 negates with wraparound (`INT_MIN / -1 == INT_MIN`,
+/// matching Lua's integer wraparound) instead of trapping on overflow. Float
+/// operands keep Lua semantics: division by zero yields inf/nan, no error.
 fn emit_floor_or_mod(
     out: &mut Function,
+    ctx: &EmissionContext<'_>,
     op: BinaryOp,
     operand_ty: Type,
     left_local: u32,
     right_local: u32,
 ) -> Result<(), Diagnostic> {
     match (op, operand_ty) {
+        (BinaryOp::Div, Type::Numeric(NumericType::U32)) => {
+            emit_zero_divisor_guard(out, ctx, right_local, 32, host::ERR_DIV_ZERO)?;
+            emit_integer_div(out, left_local, right_local, false, 32)
+        }
+        (BinaryOp::Div, Type::Numeric(NumericType::U64)) => {
+            emit_zero_divisor_guard(out, ctx, right_local, 64, host::ERR_DIV_ZERO)?;
+            emit_integer_div(out, left_local, right_local, false, 64)
+        }
+        (BinaryOp::Div, Type::Numeric(NumericType::I32)) => {
+            emit_zero_divisor_guard(out, ctx, right_local, 32, host::ERR_DIV_ZERO)?;
+            emit_negative_one_divisor_dispatch(out, left_local, right_local, 32, |out| {
+                emit_integer_div(out, left_local, right_local, true, 32);
+            });
+        }
+        (BinaryOp::Div, Type::Numeric(NumericType::I64)) => {
+            emit_zero_divisor_guard(out, ctx, right_local, 64, host::ERR_DIV_ZERO)?;
+            emit_negative_one_divisor_dispatch(out, left_local, right_local, 64, |out| {
+                emit_integer_div(out, left_local, right_local, true, 64);
+            });
+        }
         (BinaryOp::FloorDiv, Type::Numeric(NumericType::U32)) => {
+            emit_zero_divisor_guard(out, ctx, right_local, 32, host::ERR_DIV_ZERO)?;
             emit_integer_div(out, left_local, right_local, false, 32)
         }
         (BinaryOp::FloorDiv, Type::Numeric(NumericType::U64)) => {
+            emit_zero_divisor_guard(out, ctx, right_local, 64, host::ERR_DIV_ZERO)?;
             emit_integer_div(out, left_local, right_local, false, 64)
         }
         (BinaryOp::FloorDiv, Type::Numeric(NumericType::I32)) => {
-            emit_float_floor_div(out, left_local, right_local, NumericType::I32)
+            emit_zero_divisor_guard(out, ctx, right_local, 32, host::ERR_DIV_ZERO)?;
+            emit_negative_one_divisor_dispatch(out, left_local, right_local, 32, |out| {
+                emit_float_floor_div(out, left_local, right_local, NumericType::I32);
+            });
         }
         (BinaryOp::FloorDiv, Type::Numeric(NumericType::I64)) => {
-            emit_float_floor_div(out, left_local, right_local, NumericType::I64)
+            emit_zero_divisor_guard(out, ctx, right_local, 64, host::ERR_DIV_ZERO)?;
+            emit_negative_one_divisor_dispatch(out, left_local, right_local, 64, |out| {
+                emit_float_floor_div(out, left_local, right_local, NumericType::I64);
+            });
         }
         (BinaryOp::FloorDiv, Type::Numeric(NumericType::F32)) => {
             emit_float_floor_div(out, left_local, right_local, NumericType::F32)
@@ -5992,15 +6528,19 @@ fn emit_floor_or_mod(
             emit_float_floor_div(out, left_local, right_local, NumericType::F64)
         }
         (BinaryOp::Mod, Type::Numeric(NumericType::U32)) => {
+            emit_zero_divisor_guard(out, ctx, right_local, 32, host::ERR_MOD_ZERO)?;
             emit_integer_rem(out, left_local, right_local, false, 32)
         }
         (BinaryOp::Mod, Type::Numeric(NumericType::I32)) => {
+            emit_zero_divisor_guard(out, ctx, right_local, 32, host::ERR_MOD_ZERO)?;
             emit_float_mod(out, left_local, right_local, NumericType::I32)
         }
         (BinaryOp::Mod, Type::Numeric(NumericType::U64)) => {
+            emit_zero_divisor_guard(out, ctx, right_local, 64, host::ERR_MOD_ZERO)?;
             emit_integer_rem(out, left_local, right_local, false, 64)
         }
         (BinaryOp::Mod, Type::Numeric(NumericType::I64)) => {
+            emit_zero_divisor_guard(out, ctx, right_local, 64, host::ERR_MOD_ZERO)?;
             emit_float_mod(out, left_local, right_local, NumericType::I64)
         }
         (BinaryOp::Mod, Type::Numeric(NumericType::F32)) => {
@@ -6018,6 +6558,63 @@ fn emit_floor_or_mod(
         _ => unreachable!(),
     }
     Ok(())
+}
+
+/// Throw the Lua error tag with `message` when the divisor local is zero.
+fn emit_zero_divisor_guard(
+    out: &mut Function,
+    ctx: &EmissionContext<'_>,
+    right_local: u32,
+    bits: u8,
+    message: &str,
+) -> Result<(), Diagnostic> {
+    out.instruction(&Instruction::LocalGet(right_local));
+    match bits {
+        32 => out.instruction(&Instruction::I32Eqz),
+        64 => out.instruction(&Instruction::I64Eqz),
+        _ => unreachable!(),
+    };
+    out.instruction(&Instruction::If(BlockType::Empty));
+    emit_throw_message(out, ctx, message)?;
+    out.instruction(&Instruction::End);
+    Ok(())
+}
+
+/// Dispatch a signed division on whether the divisor is -1: dividing by -1
+/// negates with wraparound (so `INT_MIN / -1 == INT_MIN`, matching Lua's
+/// integer wraparound, where Wasm `div_s` would trap on overflow and the
+/// float floor-div path would trap converting 2^(bits-1) back to an integer).
+/// Otherwise `emit_divide` runs with the operands untouched.
+fn emit_negative_one_divisor_dispatch(
+    out: &mut Function,
+    left_local: u32,
+    right_local: u32,
+    bits: u8,
+    emit_divide: impl FnOnce(&mut Function),
+) {
+    out.instruction(&Instruction::LocalGet(right_local));
+    match bits {
+        32 => {
+            out.instruction(&Instruction::I32Const(-1));
+            out.instruction(&Instruction::I32Eq);
+            out.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+            out.instruction(&Instruction::I32Const(0));
+            out.instruction(&Instruction::LocalGet(left_local));
+            out.instruction(&Instruction::I32Sub);
+        }
+        64 => {
+            out.instruction(&Instruction::I64Const(-1));
+            out.instruction(&Instruction::I64Eq);
+            out.instruction(&Instruction::If(BlockType::Result(ValType::I64)));
+            out.instruction(&Instruction::I64Const(0));
+            out.instruction(&Instruction::LocalGet(left_local));
+            out.instruction(&Instruction::I64Sub);
+        }
+        _ => unreachable!(),
+    }
+    out.instruction(&Instruction::Else);
+    emit_divide(out);
+    out.instruction(&Instruction::End);
 }
 
 fn emit_math_intrinsic(

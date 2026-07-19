@@ -23,6 +23,12 @@ pub(crate) struct LocalPlan {
     /// Scratch `(ref null $coroutine_state)` local for saving/restoring the active
     /// instance across a `coroutine.resume` (nested-coroutine support).
     pub(crate) coroutine_save_local: Option<u32>,
+    /// This activation's call depth inside the active coroutine (suspending
+    /// functions only).
+    pub(crate) coroutine_depth_local: Option<u32>,
+    /// This activation's frame `(ref null $frame_F)`; null until the first
+    /// suspension point pushes a frame (suspending functions only).
+    pub(crate) coroutine_frame_local: Option<u32>,
     /// Scratch anyref local for spilling a yielded value before mutating the state struct.
     pub(crate) coroutine_yield_tmp: Option<u32>,
     /// Scratch externref local for spilling a Promise operand before await bookkeeping
@@ -61,8 +67,9 @@ pub(crate) fn build_local_plan(
     function: &IrFunction,
     value_types: &BTreeMap<ValueId, Type>,
     array_registry: &ArrayTypeRegistry,
-    force_all_locals: bool,
+    suspend_frame_type: Option<u32>,
 ) -> Result<LocalPlan, Diagnostic> {
+    let force_all_locals = suspend_frame_type.is_some();
     let mut slots = BTreeMap::new();
     let unit_values = value_types
         .iter()
@@ -174,6 +181,20 @@ pub(crate) fn build_local_plan(
     } else {
         None
     };
+
+    let (coroutine_depth_local, coroutine_frame_local) =
+        if let Some(frame_type) = suspend_frame_type {
+            let depth_slot = function.params.len() as u32 + extra_locals.len() as u32;
+            extra_locals.push(ValType::I32);
+            let frame_slot = function.params.len() as u32 + extra_locals.len() as u32;
+            extra_locals.push(ValType::Ref(wasm_encoder::RefType {
+                nullable: true,
+                heap_type: wasm_encoder::HeapType::Concrete(frame_type),
+            }));
+            (Some(depth_slot), Some(frame_slot))
+        } else {
+            (None, None)
+        };
 
     let has_yield = function.blocks.values().any(|block| {
         matches!(
@@ -298,6 +319,8 @@ pub(crate) fn build_local_plan(
         unit_values,
         pc_local,
         coroutine_save_local,
+        coroutine_depth_local,
+        coroutine_frame_local,
         coroutine_yield_tmp,
         coroutine_await_promise_tmp,
         coroutine_resume_value_tmp,

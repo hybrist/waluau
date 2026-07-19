@@ -6,11 +6,11 @@ use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 use super::Binding;
 use super::builtins::{
     STRING_BYTE, STRING_FIND, STRING_FORMAT, STRING_GMATCH, STRING_GSUB, STRING_LEN, STRING_LOWER,
-    STRING_MATCH, STRING_REP, STRING_REVERSE, STRING_SUB, STRING_UPPER, infer_bit32_builtin_call,
-    infer_coroutine_builtin_call, infer_error_builtin_call, infer_pcall_builtin_call,
-    infer_promise_await_method_call, infer_promise_builtin_call, infer_select_builtin_call,
-    infer_string_builtin_call, infer_table_builtin_call, infer_tonumber_builtin_call,
-    infer_tostring_builtin_call, infer_type_builtin_call,
+    STRING_MATCH, STRING_REP, STRING_REVERSE, STRING_SUB, STRING_UPPER, TABLE_UNPACK,
+    infer_bit32_builtin_call, infer_coroutine_builtin_call, infer_error_builtin_call,
+    infer_pcall_builtin_call, infer_promise_await_method_call, infer_promise_builtin_call,
+    infer_select_builtin_call, infer_string_builtin_call, infer_table_builtin_call,
+    infer_tonumber_builtin_call, infer_tostring_builtin_call, infer_type_builtin_call,
 };
 use super::numeric::{
     coerce_type, common_element_type, infer_numeric_common_type, is_extern_subtype_of,
@@ -482,7 +482,7 @@ fn infer_expr_inner(
         }
         Expr::String(..) => coerce_type(Type::String, expected),
         Expr::Bytes(..) => coerce_type(Type::Bytes, expected),
-        Expr::Vararg(..) => coerce_type(Type::Array(Box::new(Type::Unknown)), expected),
+        Expr::Vararg(..) => coerce_type(Type::Variadic(Box::new(Type::Unknown)), expected),
         Expr::Require(path, _) => Err(Diagnostic::new(format!(
             "require(\"{path}\") can only be resolved when compiling from a file; \
              relative imports are unavailable when compiling a single source string"
@@ -577,7 +577,7 @@ fn infer_expr_inner(
                     Type::Opaque { .. } => {
                         Err(Diagnostic::new("unary '-' requires a numeric operand"))
                     }
-                    Type::Array(_) | Type::TypedArray(_) => {
+                    Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => {
                         Err(Diagnostic::new("unary '-' requires a numeric operand"))
                     }
                     Type::Multi(_) => Err(Diagnostic::new("unary '-' requires a numeric operand")),
@@ -903,15 +903,26 @@ fn infer_expr_inner(
                             }
                         }
                     }
-                    // A trailing `...` forwards the caller's varargs, which can
-                    // cover any number of missing fixed parameters at runtime.
-                    let trailing_vararg = matches!(args.last(), Some(Expr::Vararg(_)));
-                    let explicit = if trailing_vararg {
+                    // A trailing variadic expression (`...` or a call whose
+                    // final return is a pack) can cover any number of missing
+                    // fixed parameters at runtime.
+                    let trailing_ty = args
+                        .last()
+                        .map(|arg| infer_expr(arg, vars, fn_signatures, active_type_params, None))
+                        .transpose()?;
+                    let trailing_pack = trailing_ty.as_ref().is_some_and(|ty| match ty {
+                        Type::Variadic(_) => true,
+                        Type::Multi(parts) => {
+                            matches!(parts.last(), Some(Type::Variadic(_)))
+                        }
+                        _ => false,
+                    });
+                    let explicit = if trailing_pack {
                         &args[..args.len() - 1]
                     } else {
                         &args[..]
                     };
-                    if !trailing_vararg && explicit.len() < required_param_count(params) {
+                    if !trailing_pack && explicit.len() < required_param_count(params) {
                         return Err(Diagnostic::new(format!(
                             "function expects at least {} arguments, got {}",
                             required_param_count(params),
@@ -941,6 +952,23 @@ fn infer_expr_inner(
                             active_type_params,
                             Some(Type::Unknown),
                         )?;
+                    }
+                    if let Some(Type::Multi(parts)) = trailing_ty {
+                        for (offset, actual) in parts
+                            .into_iter()
+                            .take_while(|part| !matches!(part, Type::Variadic(_)))
+                            .enumerate()
+                        {
+                            let index = explicit.len() + offset;
+                            let expected_arg = params.get(index).cloned().unwrap_or(Type::Unknown);
+                            coerce_type(actual.clone(), Some(expected_arg.clone())).map_err(
+                                |_| {
+                                    Diagnostic::new(format!(
+                                        "call expected {expected_arg}, got {actual}"
+                                    ))
+                                },
+                            )?;
+                        }
                     }
                     return coerce_type(return_type.clone(), expected);
                 }
@@ -1565,6 +1593,12 @@ fn infer_expr_inner(
                     if matches!(value_ty, Type::Nullable(_)) {
                         return Ok(Type::Bool);
                     }
+                    // An empty multi-value result (e.g. `string.byte` with a
+                    // statically empty range) adjusts to nil in scalar
+                    // context, so the comparison is well-typed.
+                    if matches!(&value_ty, Type::Multi(parts) if parts.is_empty()) {
+                        return Ok(Type::Bool);
+                    }
                     return Err(Diagnostic::new(
                         "nil comparison requires a nullable operand",
                     ));
@@ -1682,6 +1716,24 @@ fn infer_expr_inner(
                     if right_ty != left_ty {
                         return Err(Diagnostic::new("== requires both sides to have same type"));
                     }
+                } else if is_extern_ref_operand(&left_ty) {
+                    // Extern references compare by host (JavaScript) identity.
+                    // Both sides must be nominally related extern types.
+                    let right_ty = first_of_multi(infer_expr(
+                        right,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        None,
+                    )?);
+                    if !is_extern_ref_operand(&right_ty)
+                        || !(is_extern_subtype_of(&right_ty, &left_ty)
+                            || is_extern_subtype_of(&left_ty, &right_ty))
+                    {
+                        return Err(Diagnostic::new(
+                            "== requires compatible extern operand types",
+                        ));
+                    }
                 } else {
                     return Err(Diagnostic::new(
                         "== supports only numeric, bool, string, and bytes operands in MVP",
@@ -1705,6 +1757,12 @@ fn is_nil_comparison(left: &Expr, right: &Expr) -> bool {
     matches!(left, Expr::Nil(..)) || matches!(right, Expr::Nil(..))
 }
 
+/// Types whose runtime value is a host `externref`: raw externs and
+/// user/host-declared opaque aliases backed by extern types.
+fn is_extern_ref_operand(ty: &Type) -> bool {
+    matches!(ty, Type::Extern | Type::ExternSubtype(_)) || super::is_extern_opaque_type(ty)
+}
+
 pub(super) fn infer_expr_list(
     exprs: &[Expr],
     vars: &HashMap<String, Binding>,
@@ -1716,7 +1774,8 @@ pub(super) fn infer_expr_list(
     let mut out_exprs = Vec::new();
     for expr in exprs {
         let remaining_expected = expected
-            .and_then(|types| (!types[out.len()..].is_empty()).then(|| &types[out.len()..]));
+            .and_then(|types| types.get(out.len()..))
+            .filter(|types| !types.is_empty());
         let next_expected = remaining_expected.and_then(|types| types.first().cloned());
         let ty = if let Expr::Call { callee, .. } = expr {
             let expands_multi = builtin_name(callee.as_ref()).is_some_and(|name| {
@@ -1726,6 +1785,7 @@ pub(super) fn infer_expr_list(
                     || name == STRING_MATCH
                     || name == STRING_GSUB
                     || name == STRING_BYTE
+                    || name == TABLE_UNPACK
             });
             // A Name not found in fn_signatures or vars may be a tagged-union constructor
             // (e.g. `Num(42)`). Pass next_expected so the constructor intercept in
@@ -1749,9 +1809,48 @@ pub(super) fn infer_expr_list(
             infer_expr(expr, vars, fn_signatures, active_type_params, next_expected)?
         };
         match ty {
+            Type::Variadic(element) => {
+                if matches!(
+                    remaining_expected.and_then(|types| types.first()),
+                    Some(Type::Variadic(_))
+                ) || remaining_expected.is_none()
+                {
+                    out_exprs.push(expr);
+                    out.push(Type::Variadic(element));
+                } else if let Some(expected_types) = remaining_expected {
+                    for expected_ty in expected_types {
+                        out_exprs.push(expr);
+                        out.push(coerce_type((*element).clone(), Some(expected_ty.clone()))?);
+                    }
+                }
+            }
             Type::Multi(types) => {
-                out_exprs.extend(std::iter::repeat_n(expr, types.len()));
-                out.extend(types);
+                for ty in types {
+                    if let Type::Variadic(element) = ty {
+                        let remaining = expected
+                            .and_then(|types| types.get(out.len()..))
+                            .filter(|types| !types.is_empty());
+                        if matches!(
+                            remaining.and_then(|types| types.first()),
+                            Some(Type::Variadic(_))
+                        ) || remaining.is_none()
+                        {
+                            out_exprs.push(expr);
+                            out.push(Type::Variadic(element));
+                        } else if let Some(expected_types) = remaining {
+                            for expected_ty in expected_types {
+                                out_exprs.push(expr);
+                                out.push(coerce_type(
+                                    (*element).clone(),
+                                    Some(expected_ty.clone()),
+                                )?);
+                            }
+                        }
+                    } else {
+                        out_exprs.push(expr);
+                        out.push(ty);
+                    }
+                }
             }
             other => {
                 out_exprs.push(expr);
@@ -1828,12 +1927,21 @@ fn infer_array_literal(
         }
     }
     let expected_element = expected.as_ref().and_then(Type::element_type);
-    // A trailing `...` splats the caller's varargs (unknown values) into the
-    // array, and an expected `{unknown}` boxes every element, so both force
-    // the element type to unknown.
-    if matches!(elements.last(), Some(Expr::Vararg(_))) || expected_element == Some(Type::Unknown) {
-        for element in elements {
-            if matches!(element, Expr::Vararg(_)) {
+    let trailing_ty = elements
+        .last()
+        .map(|element| infer_expr(element, vars, fn_signatures, active_type_params, None))
+        .transpose()?;
+    let trailing_pack = trailing_ty.as_ref().is_some_and(|ty| match ty {
+        Type::Variadic(_) => true,
+        Type::Multi(parts) => matches!(parts.last(), Some(Type::Variadic(_))),
+        _ => false,
+    });
+    // A trailing variadic expression splats unknown values into the array,
+    // and an expected `{unknown}` boxes every element, so both force the
+    // element type to unknown.
+    if trailing_pack || expected_element == Some(Type::Unknown) {
+        for (index, element) in elements.iter().enumerate() {
+            if trailing_pack && index + 1 == elements.len() {
                 continue;
             }
             let _ = infer_expr(

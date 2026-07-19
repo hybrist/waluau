@@ -30,7 +30,7 @@ impl Parser {
         }
     }
 
-    pub(super) fn parse_program(&mut self) -> Result<Program, Diagnostic> {
+    pub(super) fn parse_program(&mut self, source: &str) -> Result<Program, Diagnostic> {
         let mut functions = Vec::new();
         let mut declared_imports = Vec::new();
         let mut declared_constants = Vec::new();
@@ -122,7 +122,10 @@ impl Parser {
                 type_declarations,
                 top_level,
                 export,
-                sources: std::collections::BTreeMap::new(),
+                sources: std::collections::BTreeMap::from([(
+                    self.file_path.clone(),
+                    source.to_string(),
+                )]),
                 entry_file_path: self.file_path.clone(),
             })
         } else if self.diagnostics.len() == 1 {
