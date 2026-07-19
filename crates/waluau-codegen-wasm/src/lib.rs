@@ -51,8 +51,13 @@ const CALLBACK_EVENT_UNIT_TRAMPOLINE_EXPORT: &str = "__waluau_call_callback_even
 const CALLBACK_F64_UNIT_TRAMPOLINE_EXPORT: &str = "__waluau_call_callback_f64_unit";
 const CALLBACK_UNIT_EXTERN_TRAMPOLINE_EXPORT: &str = "__waluau_call_callback_unit_extern";
 const CALLBACK_UNIT_TRAMPOLINE_EXPORT: &str = "__waluau_call_callback_unit";
+/// Export name of the Lua error exception tag. Hosts can throw
+/// `new WebAssembly.Exception(tag, [payload])` from an import to raise an
+/// error that `pcall` catches like a Waluau `error(...)`.
 const LUA_ERROR_TAG_EXPORT: &str = "__waluau_error_tag";
 const PROMISE_RESUME_TRAMPOLINE_EXPORT: &str = "__waluau_resume_promise_await";
+/// The Lua error exception tag is always the module's first (and only) tag.
+pub(crate) const ERROR_TAG_INDEX: u32 = 0;
 const PROMISE_RESET_ACTIVE_EXPORT: &str = "__waluau_reset_active_coroutine";
 
 /// Field indices of the growable-array wrapper struct
@@ -202,7 +207,7 @@ fn needs_lua_error_tag(module: &Module) -> bool {
                 matches!(
                     instruction,
                     IrInstruction::Throw { .. } | IrInstruction::ProtectedCall { .. }
-                )
+                ) || !host::runtime_error_messages(instruction).is_empty()
             })
         })
     })
@@ -1430,7 +1435,9 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         // Exporting the Lua error tag lets JS hosts (e.g. the walu-test
         // vitest bridge) recognize uncaught `error`/`assert` exceptions via
         // `exception.is(tag)` and read the message payload with `getArg`.
-        exports.export(LUA_ERROR_TAG_EXPORT, ExportKind::Tag, 0);
+        // Hosts can also throw it from an import to raise an error that
+        // `pcall` catches exactly like `error(message)`.
+        exports.export(LUA_ERROR_TAG_EXPORT, ExportKind::Tag, ERROR_TAG_INDEX);
     }
     let mut codes = CodeSection::new();
     for (index, function) in module.functions.iter().enumerate() {
@@ -3240,10 +3247,12 @@ fn emit_block_instructions(
                     if matches!(op, BinaryOp::NotEq) {
                         out.instruction(&Instruction::I32Eqz);
                     }
-                } else if matches!(op, BinaryOp::FloorDiv | BinaryOp::Mod) {
+                } else if matches!(op, BinaryOp::FloorDiv | BinaryOp::Mod)
+                    || (matches!(op, BinaryOp::Div) && host::is_integer_numeric(operand_ty))
+                {
                     let left_local = local(local_plan, *left)?;
                     let right_local = local(local_plan, *right)?;
-                    emit_floor_or_mod(out, *op, operand_ty.clone(), left_local, right_local)?;
+                    emit_floor_or_mod(out, ctx, *op, operand_ty.clone(), left_local, right_local)?;
                 } else if matches!(op, BinaryOp::Pow) {
                     let left_local = local(local_plan, *left)?;
                     let right_local = local(local_plan, *right)?;
@@ -3537,7 +3546,7 @@ fn emit_block_instructions(
             IrInstruction::Throw { error } => {
                 emit_value_operand(out, local_plan, *error)?;
                 out.instruction(&Instruction::AnyConvertExtern);
-                out.instruction(&Instruction::Throw(0));
+                out.instruction(&Instruction::Throw(ERROR_TAG_INDEX));
                 emit_value_store(out, local_plan, *value)?;
             }
             IrInstruction::Call { name, args, .. } => {
@@ -3710,12 +3719,34 @@ fn emit_block_instructions(
                     .protected_call_value_tmp
                     .ok_or_else(|| Diagnostic::new("missing protected-call value scratch local"))?;
 
+                // block $done (result anyref)
+                //   block $foreign
+                //     try_table (result anyref)
+                //         (catch $lua_error $done) (catch_all $foreign)
+                //       <call>; <box>; ok := 1
+                //     end
+                //     br $done            ;; success payload
+                //   end $foreign          ;; non-Waluau exception (e.g. a JS
+                //                         ;; error thrown by a host import)
+                //   <fallback message>
+                // end $done
+                //
+                // Wasm traps are not exceptions and still unwind past
+                // `catch_all`; checked runtime operations throw the Lua error
+                // tag instead of trapping so `pcall` observes them here.
                 out.instruction(&Instruction::I32Const(0));
                 out.instruction(&Instruction::LocalSet(ok_slot));
                 out.instruction(&Instruction::Block(BlockType::Result(anyref_val_type())));
+                out.instruction(&Instruction::Block(BlockType::Empty));
                 out.instruction(&Instruction::TryTable(
                     BlockType::Result(anyref_val_type()),
-                    Cow::Owned(vec![Catch::One { tag: 0, label: 0 }]),
+                    Cow::Owned(vec![
+                        Catch::One {
+                            tag: ERROR_TAG_INDEX,
+                            label: 1,
+                        },
+                        Catch::All { label: 0 },
+                    ]),
                 ));
                 emit_call_value_stack(
                     out,
@@ -3735,6 +3766,12 @@ fn emit_block_instructions(
                 out.instruction(&Instruction::LocalSet(ok_slot));
                 out.instruction(&Instruction::LocalGet(value_tmp));
                 out.instruction(&Instruction::End);
+                out.instruction(&Instruction::Br(1));
+                out.instruction(&Instruction::End);
+                let foreign_message =
+                    host::string_constant_index(ctx.string_constants, host::ERR_FOREIGN_EXCEPTION)?;
+                out.instruction(&Instruction::GlobalGet(foreign_message));
+                out.instruction(&Instruction::AnyConvertExtern);
                 out.instruction(&Instruction::End);
                 out.instruction(&Instruction::LocalSet(value_slot));
             }
@@ -4168,7 +4205,7 @@ fn emit_block_instructions(
                 });
                 out.instruction(&Instruction::I32GeU);
                 out.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-                out.instruction(&Instruction::Unreachable);
+                emit_throw_message(out, ctx, host::ERR_ARRAY_OOB)?;
                 out.instruction(&Instruction::End);
 
                 out.instruction(&Instruction::LocalGet(array_local));
@@ -4216,8 +4253,8 @@ fn emit_block_instructions(
 
                 // Writes are allowed at 0..=len: in-bounds writes replace, a
                 // write at exactly `len` appends (the `t[#t+1] = x` idiom).
-                // Anything farther traps — there is no hash part. The unsigned
-                // compare also rejects negative indices.
+                // Anything farther errors — there is no hash part. The
+                // unsigned compare also rejects negative indices.
                 out.instruction(&Instruction::LocalGet(index_local));
                 out.instruction(&Instruction::LocalGet(array_local));
                 out.instruction(&Instruction::StructGet {
@@ -4226,7 +4263,7 @@ fn emit_block_instructions(
                 });
                 out.instruction(&Instruction::I32GtU);
                 out.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-                out.instruction(&Instruction::Unreachable);
+                emit_throw_message(out, ctx, host::ERR_ARRAY_OOB)?;
                 out.instruction(&Instruction::End);
 
                 // Appending at full capacity: replace storage with a copy of
@@ -4351,9 +4388,9 @@ fn emit_block_instructions(
                 let array_local = local(local_plan, *array)?;
                 let growable_struct_index = ctx.array_registry.growable_array_index(element_ty)?;
 
-                // Trap on empty arrays, then decrement the logical length. The
-                // storage slot is left as-is (capacity is unchanged, and the
-                // stale element is overwritten by the next append).
+                // Error on empty arrays, then decrement the logical length.
+                // The storage slot is left as-is (capacity is unchanged, and
+                // the stale element is overwritten by the next append).
                 out.instruction(&Instruction::LocalGet(array_local));
                 out.instruction(&Instruction::StructGet {
                     struct_type_index: growable_struct_index,
@@ -4361,7 +4398,7 @@ fn emit_block_instructions(
                 });
                 out.instruction(&Instruction::I32Eqz);
                 out.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-                out.instruction(&Instruction::Unreachable);
+                emit_throw_message(out, ctx, host::ERR_ARRAY_POP_EMPTY)?;
                 out.instruction(&Instruction::End);
 
                 out.instruction(&Instruction::LocalGet(array_local));
@@ -4497,6 +4534,7 @@ fn emit_block_instructions(
                     *kind,
                     local(local_plan, *buffer)?,
                     local(local_plan, *index)?,
+                    host::string_constant_index(ctx.string_constants, host::ERR_BUFFER_OOB)?,
                 );
                 emit_buffer_load(out, *kind, 0);
                 emit_value_store(out, local_plan, *value)?;
@@ -4512,6 +4550,7 @@ fn emit_block_instructions(
                     *kind,
                     local(local_plan, *buffer)?,
                     local(local_plan, *index)?,
+                    host::string_constant_index(ctx.string_constants, host::ERR_BUFFER_OOB)?,
                 );
                 emit_value_operand(out, local_plan, *stored)?;
                 emit_buffer_store(out, *kind, 0);
@@ -5202,6 +5241,25 @@ fn emit_number_unbox_dispatch(
 /// Emit `#` on an `unknown` (anyref) local, leaving the logical length (i32)
 /// on the stack. Dispatches over every growable array wrapper type in the
 /// module and traps when the value is none of them.
+/// Throw the Lua error tag carrying `message` (a collected string constant).
+///
+/// Checked runtime operations use this instead of `unreachable` so protected
+/// calls observe a catchable Lua error rather than an uncatchable Wasm trap.
+/// The message must be registered in `host::runtime_error_messages` for the
+/// emitting instruction so it exists in the string constants and the module
+/// defines the error tag.
+fn emit_throw_message(
+    out: &mut Function,
+    ctx: &EmissionContext<'_>,
+    message: &str,
+) -> Result<(), Diagnostic> {
+    let index = host::string_constant_index(ctx.string_constants, message)?;
+    out.instruction(&Instruction::GlobalGet(index));
+    out.instruction(&Instruction::AnyConvertExtern);
+    out.instruction(&Instruction::Throw(ERROR_TAG_INDEX));
+    Ok(())
+}
+
 fn emit_dyn_len(
     out: &mut Function,
     ctx: &EmissionContext<'_>,
@@ -5224,7 +5282,7 @@ fn emit_dyn_len(
         });
         out.instruction(&Instruction::Else);
     }
-    out.instruction(&Instruction::Unreachable);
+    emit_throw_message(out, ctx, host::ERR_LEN_NON_ARRAY)?;
     for _ in wrappers {
         out.instruction(&Instruction::End);
     }
@@ -5280,7 +5338,7 @@ fn emit_dyn_index(
         });
         out.instruction(&Instruction::I32GeU);
         out.instruction(&Instruction::If(BlockType::Empty));
-        out.instruction(&Instruction::Unreachable);
+        emit_throw_message(out, ctx, host::ERR_ARRAY_OOB)?;
         out.instruction(&Instruction::End);
 
         out.instruction(&Instruction::LocalGet(operand_local));
@@ -5323,7 +5381,7 @@ fn emit_dyn_index(
         out.instruction(&Instruction::Else);
         arms += 1;
     }
-    out.instruction(&Instruction::Unreachable);
+    emit_throw_message(out, ctx, host::ERR_INDEX_NON_ARRAY)?;
     for _ in 0..arms {
         out.instruction(&Instruction::End);
     }
@@ -5476,6 +5534,8 @@ fn emit_box(
             Ok(())
         }
         Type::Array(_) | Type::Function { .. } | Type::Record(_) | Type::Thread => Ok(()),
+        // Already anyref: boxing into `unknown` is the identity.
+        Type::Unknown => Ok(()),
         Type::Unit => {
             out.instruction(&Instruction::RefNull(HeapType::Abstract {
                 shared: false,
@@ -6214,25 +6274,62 @@ fn emit_narrow_from_f64(out: &mut Function, ty: NumericType) {
     };
 }
 
+/// Emit integer/float floor-division, modulo, and (for integer operands)
+/// plain division from operand locals.
+///
+/// Integer divisions and modulos are checked: a zero divisor throws the Lua
+/// error tag (catchable by `pcall`) instead of hitting the Wasm trap, and
+/// signed division by -1 negates with wraparound (`INT_MIN / -1 == INT_MIN`,
+/// matching Lua's integer wraparound) instead of trapping on overflow. Float
+/// operands keep Lua semantics: division by zero yields inf/nan, no error.
 fn emit_floor_or_mod(
     out: &mut Function,
+    ctx: &EmissionContext<'_>,
     op: BinaryOp,
     operand_ty: Type,
     left_local: u32,
     right_local: u32,
 ) -> Result<(), Diagnostic> {
     match (op, operand_ty) {
+        (BinaryOp::Div, Type::Numeric(NumericType::U32)) => {
+            emit_zero_divisor_guard(out, ctx, right_local, 32, host::ERR_DIV_ZERO)?;
+            emit_integer_div(out, left_local, right_local, false, 32)
+        }
+        (BinaryOp::Div, Type::Numeric(NumericType::U64)) => {
+            emit_zero_divisor_guard(out, ctx, right_local, 64, host::ERR_DIV_ZERO)?;
+            emit_integer_div(out, left_local, right_local, false, 64)
+        }
+        (BinaryOp::Div, Type::Numeric(NumericType::I32)) => {
+            emit_zero_divisor_guard(out, ctx, right_local, 32, host::ERR_DIV_ZERO)?;
+            emit_negative_one_divisor_dispatch(out, left_local, right_local, 32, |out| {
+                emit_integer_div(out, left_local, right_local, true, 32);
+            });
+        }
+        (BinaryOp::Div, Type::Numeric(NumericType::I64)) => {
+            emit_zero_divisor_guard(out, ctx, right_local, 64, host::ERR_DIV_ZERO)?;
+            emit_negative_one_divisor_dispatch(out, left_local, right_local, 64, |out| {
+                emit_integer_div(out, left_local, right_local, true, 64);
+            });
+        }
         (BinaryOp::FloorDiv, Type::Numeric(NumericType::U32)) => {
+            emit_zero_divisor_guard(out, ctx, right_local, 32, host::ERR_DIV_ZERO)?;
             emit_integer_div(out, left_local, right_local, false, 32)
         }
         (BinaryOp::FloorDiv, Type::Numeric(NumericType::U64)) => {
+            emit_zero_divisor_guard(out, ctx, right_local, 64, host::ERR_DIV_ZERO)?;
             emit_integer_div(out, left_local, right_local, false, 64)
         }
         (BinaryOp::FloorDiv, Type::Numeric(NumericType::I32)) => {
-            emit_float_floor_div(out, left_local, right_local, NumericType::I32)
+            emit_zero_divisor_guard(out, ctx, right_local, 32, host::ERR_DIV_ZERO)?;
+            emit_negative_one_divisor_dispatch(out, left_local, right_local, 32, |out| {
+                emit_float_floor_div(out, left_local, right_local, NumericType::I32);
+            });
         }
         (BinaryOp::FloorDiv, Type::Numeric(NumericType::I64)) => {
-            emit_float_floor_div(out, left_local, right_local, NumericType::I64)
+            emit_zero_divisor_guard(out, ctx, right_local, 64, host::ERR_DIV_ZERO)?;
+            emit_negative_one_divisor_dispatch(out, left_local, right_local, 64, |out| {
+                emit_float_floor_div(out, left_local, right_local, NumericType::I64);
+            });
         }
         (BinaryOp::FloorDiv, Type::Numeric(NumericType::F32)) => {
             emit_float_floor_div(out, left_local, right_local, NumericType::F32)
@@ -6241,15 +6338,19 @@ fn emit_floor_or_mod(
             emit_float_floor_div(out, left_local, right_local, NumericType::F64)
         }
         (BinaryOp::Mod, Type::Numeric(NumericType::U32)) => {
+            emit_zero_divisor_guard(out, ctx, right_local, 32, host::ERR_MOD_ZERO)?;
             emit_integer_rem(out, left_local, right_local, false, 32)
         }
         (BinaryOp::Mod, Type::Numeric(NumericType::I32)) => {
+            emit_zero_divisor_guard(out, ctx, right_local, 32, host::ERR_MOD_ZERO)?;
             emit_float_mod(out, left_local, right_local, NumericType::I32)
         }
         (BinaryOp::Mod, Type::Numeric(NumericType::U64)) => {
+            emit_zero_divisor_guard(out, ctx, right_local, 64, host::ERR_MOD_ZERO)?;
             emit_integer_rem(out, left_local, right_local, false, 64)
         }
         (BinaryOp::Mod, Type::Numeric(NumericType::I64)) => {
+            emit_zero_divisor_guard(out, ctx, right_local, 64, host::ERR_MOD_ZERO)?;
             emit_float_mod(out, left_local, right_local, NumericType::I64)
         }
         (BinaryOp::Mod, Type::Numeric(NumericType::F32)) => {
@@ -6267,6 +6368,63 @@ fn emit_floor_or_mod(
         _ => unreachable!(),
     }
     Ok(())
+}
+
+/// Throw the Lua error tag with `message` when the divisor local is zero.
+fn emit_zero_divisor_guard(
+    out: &mut Function,
+    ctx: &EmissionContext<'_>,
+    right_local: u32,
+    bits: u8,
+    message: &str,
+) -> Result<(), Diagnostic> {
+    out.instruction(&Instruction::LocalGet(right_local));
+    match bits {
+        32 => out.instruction(&Instruction::I32Eqz),
+        64 => out.instruction(&Instruction::I64Eqz),
+        _ => unreachable!(),
+    };
+    out.instruction(&Instruction::If(BlockType::Empty));
+    emit_throw_message(out, ctx, message)?;
+    out.instruction(&Instruction::End);
+    Ok(())
+}
+
+/// Dispatch a signed division on whether the divisor is -1: dividing by -1
+/// negates with wraparound (so `INT_MIN / -1 == INT_MIN`, matching Lua's
+/// integer wraparound, where Wasm `div_s` would trap on overflow and the
+/// float floor-div path would trap converting 2^(bits-1) back to an integer).
+/// Otherwise `emit_divide` runs with the operands untouched.
+fn emit_negative_one_divisor_dispatch(
+    out: &mut Function,
+    left_local: u32,
+    right_local: u32,
+    bits: u8,
+    emit_divide: impl FnOnce(&mut Function),
+) {
+    out.instruction(&Instruction::LocalGet(right_local));
+    match bits {
+        32 => {
+            out.instruction(&Instruction::I32Const(-1));
+            out.instruction(&Instruction::I32Eq);
+            out.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+            out.instruction(&Instruction::I32Const(0));
+            out.instruction(&Instruction::LocalGet(left_local));
+            out.instruction(&Instruction::I32Sub);
+        }
+        64 => {
+            out.instruction(&Instruction::I64Const(-1));
+            out.instruction(&Instruction::I64Eq);
+            out.instruction(&Instruction::If(BlockType::Result(ValType::I64)));
+            out.instruction(&Instruction::I64Const(0));
+            out.instruction(&Instruction::LocalGet(left_local));
+            out.instruction(&Instruction::I64Sub);
+        }
+        _ => unreachable!(),
+    }
+    out.instruction(&Instruction::Else);
+    emit_divide(out);
+    out.instruction(&Instruction::End);
 }
 
 fn emit_math_intrinsic(
