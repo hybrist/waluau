@@ -1098,7 +1098,7 @@ fn boxed_nullable_pair_equality_validates() {
         "nullable numeric equality should branch on nil in:\n{wat}"
     );
     assert!(
-        wat.contains("i31.get_s"),
+        wat.contains("struct.get"),
         "present operands should be unboxed before comparing in:\n{wat}"
     );
 }
@@ -2349,4 +2349,278 @@ fn binary_expression_result_coerces_to_a_wider_expected_type() {
     Validator::new()
         .validate_all(&wasm)
         .expect("emitted module should validate");
+}
+
+#[test]
+fn nullable_primitive_nil_check_lowers_to_ref_is_null() {
+    let source = r#"
+        function unwrap_or_zero(value: i32?): i32
+            if value ~= nil then
+                return value + 1
+            end
+            return 0
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        wat.contains("ref.is_null"),
+        "nullable primitive nil checks should lower to ref.is_null in:\n{wat}"
+    );
+    assert!(
+        wat.contains("struct.get"),
+        "narrowed nullable primitive reads should unwrap the box via struct.get in:\n{wat}"
+    );
+}
+
+#[test]
+fn nullable_primitive_wrap_lowers_to_struct_new() {
+    let source = r#"
+        function wrap(flag: bool, value: f64): f64?
+            if flag then
+                return value
+            end
+            return nil
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        wat.contains("struct.new"),
+        "wrapping f64 into f64? should lower to struct.new in:\n{wat}"
+    );
+    assert!(
+        wat.contains("ref.null"),
+        "the nil arm of f64? should lower to a typed null reference in:\n{wat}"
+    );
+}
+
+#[test]
+fn nullable_primitive_module_exports_box_helpers() {
+    let source = r#"
+        function passthrough(value: u32?): u32?
+            return value
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    assert!(
+        wasm_export_func_index(&wasm, "__waluau_box_nullable_i32").is_some(),
+        "modules using u32? should export the i32 nullable box constructor"
+    );
+    assert!(
+        wasm_export_func_index(&wasm, "__waluau_unbox_nullable_i32").is_some(),
+        "modules using u32? should export the i32 nullable box reader"
+    );
+}
+
+#[test]
+fn dyn_index_over_nullable_primitive_array_branches_on_null() {
+    // Dynamically indexing an `unknown` that holds a `{i32?}` must not trap:
+    // the element is a typed nullable box, so the dispatch branches on null
+    // (nil becomes the `unknown` nil) and reboxes a present payload into the
+    // canonical `unknown` representation.
+    let source = r#"
+        function get(v, i)
+            return v[i]
+        end
+
+        function first(values: {i32?}): unknown
+            return get(values, 0)
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        wat.contains("br_on_null"),
+        "dyn index over a nullable primitive array should branch on the null box in:\n{wat}"
+    );
+    assert!(
+        wat.contains("ref.i31"),
+        "a present i32? element should rebox into the canonical i31 unknown form in:\n{wat}"
+    );
+}
+
+#[test]
+fn dyn_index_over_nullable_f64_array_reboxes_payload() {
+    let source = r#"
+        function get(v, i)
+            return v[i]
+        end
+
+        function first(values: {f64?}): unknown
+            return get(values, 0)
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        wat.contains("br_on_null"),
+        "dyn index over {{f64?}} should branch on the null box in:\n{wat}"
+    );
+    // The immutable `(struct (field f64))` is the canonical unknown box; the
+    // mutable one is the typed nullable box the payload is read out of.
+    assert!(
+        wat.contains("(struct (field f64))"),
+        "a present f64? element should rebox into $boxed_f64 in:\n{wat}"
+    );
+}
+
+#[test]
+fn dyn_index_over_nullable_i64_array_still_fails() {
+    // `i64?`/`u64?`/`f32?` payloads have no canonical `unknown` boxed form
+    // (waluau-agmp / design 0010), so those element kinds stay out of the
+    // dispatch and fall through to the failure path, exactly like plain
+    // i64/f32 elements. Since #408 that path throws the catchable Lua error
+    // tag rather than emitting `unreachable`. The module must still validate.
+    let source = r#"
+        function get(v, i)
+            return v[i]
+        end
+
+        function first(values: {i64?}): unknown
+            return get(values, 0)
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        !wat.contains("br_on_null"),
+        "an i64? element kind must not enter the dyn index dispatch in:\n{wat}"
+    );
+    assert!(
+        wat.contains("throw"),
+        "dyn index over an unsupported element kind should raise a Lua error in:\n{wat}"
+    );
+}
+
+#[test]
+fn arrays_and_records_with_nullable_primitives_compile() {
+    let source = r#"
+        type Slot = { count: u32?, label: string }
+
+        function sum_present(values: {i32?}): i32
+            local total: i32 = 0
+            for _, value in values do
+                if value ~= nil then
+                    total += value
+                end
+            end
+            return total
+        end
+
+        function slot_count(slot: Slot): u32
+            local count: u32? = slot.count
+            if count ~= nil then
+                return count
+            end
+            return 0
+        end
+
+        function make(): {i32?}
+            local values: {i32?} = { 1, nil, 3 }
+            return values
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module with nullable-primitive storage should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    // The array and record storage must hold the nullable box ref, not the
+    // raw scalar: the nullable box struct type appears in the type section
+    // and the array element type references it.
+    assert!(
+        wat.contains("(struct (field (mut i32)))"),
+        "expected the nullable i32 box struct type in:\n{wat}"
+    );
+}
+
+#[test]
+fn declared_import_metadata_carries_nullable_primitive_types() {
+    let source = r#"
+        type HTMLInputElement = extern
+
+        declare property HTMLInputElement:selectionStart: u32?
+
+        function probe(input: HTMLInputElement): u32
+            local start: u32? = input.selectionStart
+            if start ~= nil then
+                return start
+            end
+            return 0
+        end
+
+        function reset(input: HTMLInputElement): unit
+            input.selectionStart = nil
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let emitted = super::emit(&ir).expect("emit should succeed");
+
+    let getter = emitted
+        .required_imports
+        .iter()
+        .find(|import| import.name == "HTMLInputElement.get/selectionStart")
+        .expect("getter import should be required");
+    assert_eq!(getter.return_type.as_deref(), Some("u32?"));
+
+    let setter = emitted
+        .required_imports
+        .iter()
+        .find(|import| import.name == "HTMLInputElement.set/selectionStart")
+        .expect("setter import should be required");
+    // Opaque extern names are erased before codegen; the receiver reads as
+    // `extern`, but the nullable primitive keeps its surface syntax.
+    assert_eq!(
+        setter.param_types.as_deref(),
+        Some(&["extern".to_string(), "u32?".to_string()][..])
+    );
 }

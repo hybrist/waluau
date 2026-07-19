@@ -501,6 +501,74 @@ export function parseBytesInput(valStr) {
   throw new Error('bytes input must use JSON array syntax like [0, 255, 10]');
 }
 
+// Nullable primitives (`u32?` etc.) cross the JS boundary as typed nullable
+// box refs: JS null stands for nil, and non-nil payloads must be wrapped or
+// unwrapped through the module's exported `__waluau_box_nullable_<k>` /
+// `__waluau_unbox_nullable_<k>` helpers. Maps surface type syntax (from
+// declared-import metadata) to the helper suffix.
+const NULLABLE_PRIMITIVE_HELPER_SUFFIXES = {
+  i32: 'i32',
+  u32: 'i32',
+  bool: 'i32',
+  i64: 'i64',
+  u64: 'i64',
+  f32: 'f32',
+  f64: 'f64',
+};
+
+// Same mapping keyed by structured signature metadata kinds (TypeJson), used
+// by the Run UI when constructing/inspecting nullable primitive values.
+const NULLABLE_BOX_METADATA_SUFFIXES = {
+  I32: 'i32',
+  Bool: 'i32',
+  I64: 'i64',
+  F32: 'f32',
+  F64: 'f64',
+};
+
+function nullablePrimitiveHelperSuffix(typeString) {
+  if (typeof typeString !== 'string' || !typeString.endsWith('?')) return null;
+  return NULLABLE_PRIMITIVE_HELPER_SUFFIXES[typeString.slice(0, -1)] ?? null;
+}
+
+function requireNullableBoxHelper(getExports, helperName) {
+  const helper = getExports?.()?.[helperName];
+  if (typeof helper !== 'function') {
+    throw new Error(`Missing ${helperName} export for a nullable primitive host import`);
+  }
+  return helper;
+}
+
+// Wraps a host import whose declared signature involves nullable primitives:
+// box-ref arguments are unwrapped to JS numbers/booleans/BigInts (null stays
+// null) before the host function runs, and a non-null host return value is
+// boxed back into the wasm-side nullable box.
+function adaptNullablePrimitiveImport(fn, paramTypes, returnType, getExports) {
+  const paramSuffixes = (paramTypes ?? []).map(nullablePrimitiveHelperSuffix);
+  const returnSuffix = nullablePrimitiveHelperSuffix(returnType);
+  if (!returnSuffix && !paramSuffixes.some(Boolean)) return fn;
+  return (...args) => {
+    const adapted = args.map((arg, index) => {
+      const suffix = paramSuffixes[index];
+      if (!suffix) return arg;
+      if (arg === null || arg === undefined) return null;
+      const raw = requireNullableBoxHelper(getExports, `__waluau_unbox_nullable_${suffix}`)(arg);
+      return paramTypes[index] === 'bool?' ? Boolean(raw) : raw;
+    });
+    const result = fn(...adapted);
+    if (!returnSuffix) return result;
+    if (result === null || result === undefined) return null;
+    const box = requireNullableBoxHelper(getExports, `__waluau_box_nullable_${returnSuffix}`);
+    if (returnSuffix === 'i64') {
+      return box(typeof result === 'bigint' ? result : BigInt(Math.trunc(Number(result))));
+    }
+    if (returnType === 'bool?') {
+      return box(result ? 1 : 0);
+    }
+    return box(Number(result));
+  };
+}
+
 export function isDomImportName(name) {
   return name.startsWith('dom_') || /^[A-Z][A-Za-z0-9]*\.[a-z][A-Za-z0-9_]*(?:\/[A-Za-z0-9_]+)?$/.test(name);
 }
@@ -2199,6 +2267,26 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
       };
     }
   }
+  // Adapt imports whose declared signature involves nullable primitives
+  // (metadata-provided paramTypes/returnType); they cross the boundary as
+  // typed nullable box refs rather than plain JS values.
+  for (const wasmImport of wasmImports) {
+    if (
+      wasmImport.module !== WALUAU_IMPORT_MODULE ||
+      wasmImport.kind !== 'function' ||
+      (!wasmImport.paramTypes && !wasmImport.returnType)
+    ) {
+      continue;
+    }
+    const current = waluauImports[wasmImport.name];
+    if (typeof current !== 'function') continue;
+    waluauImports[wasmImport.name] = adaptNullablePrimitiveImport(
+      current,
+      wasmImport.paramTypes,
+      wasmImport.returnType,
+      options.getWasmExports
+    );
+  }
   if (wasmMemory) {
     waluauImports.memory = wasmMemory;
   }
@@ -2514,7 +2602,18 @@ export function constructArg(val, type, instance, tagIds) {
     }
     case 'Nullable': {
       if (val === null || val === undefined || val === 'nil') return null;
-      return constructArg(val, type.value.innerType, instance, plainTagIds);
+      const innerType = type.value.innerType;
+      const constructed = constructArg(val, innerType, instance, plainTagIds);
+      // Nullable primitives are typed nullable box refs on the wasm side;
+      // wrap the payload through the module's exported box constructor.
+      const suffix = NULLABLE_BOX_METADATA_SUFFIXES[innerType?.kind];
+      if (!suffix) return constructed;
+      const boxName = `__waluau_box_nullable_${suffix}`;
+      const box = instance.exports[boxName];
+      if (typeof box !== 'function') {
+        throw new Error(`Missing ${boxName} export for a nullable primitive argument`);
+      }
+      return box(constructed);
     }
     case 'Record': {
       const typeIdx = type.value.typeIndex;
@@ -2571,7 +2670,21 @@ export function inspectVal(val, type, instance, tagIds) {
     case 'String': return String(val);
     case 'Bytes': return { _isBytes: true, bytes: Array.from(val instanceof Uint8Array ? val : []) };
     case 'Unit': return null;
-    case 'Nullable': return inspectVal(val, type.value.innerType, instance, plainTagIds);
+    case 'Nullable': {
+      const innerType = type.value.innerType;
+      // Non-null nullable primitives arrive as typed nullable box refs;
+      // unwrap the payload through the module's exported box reader.
+      const suffix = NULLABLE_BOX_METADATA_SUFFIXES[innerType?.kind];
+      if (suffix) {
+        const unboxName = `__waluau_unbox_nullable_${suffix}`;
+        const unbox = instance.exports[unboxName];
+        if (typeof unbox !== 'function') {
+          throw new Error(`Missing ${unboxName} export for a nullable primitive result`);
+        }
+        return inspectVal(unbox(val), innerType, instance, plainTagIds);
+      }
+      return inspectVal(val, innerType, instance, plainTagIds);
+    }
     case 'Record': {
       const typeIdx = type.value.typeIndex;
       const obj = {};

@@ -407,8 +407,11 @@ fn require_nullable_host_ref_type(ty: &Type) -> Result<(), Diagnostic> {
     }
 }
 
-fn is_nullable_reference_type(ty: &Type) -> bool {
+fn is_nullable_inner_type(ty: &Type) -> bool {
     match ty {
+        // Primitive value types are supported through typed nullable boxes
+        // (a per-primitive GC struct whose null reference stands for nil).
+        Type::Numeric(_) | Type::Bool => true,
         Type::String
         | Type::Bytes
         | Type::Array(_)
@@ -419,18 +422,18 @@ fn is_nullable_reference_type(ty: &Type) -> bool {
         | Type::TaggedUnion(_) => true,
         Type::Opaque { ty, .. } => {
             matches!(ty.as_ref(), Type::Extern | Type::ExternSubtype(_))
-                || is_nullable_reference_type(ty)
+                || is_nullable_inner_type(ty)
         }
         _ => false,
     }
 }
 
-fn require_nullable_reference_type(ty: &Type) -> Result<(), Diagnostic> {
-    if is_nullable_reference_type(ty) {
+fn require_nullable_inner_type(ty: &Type) -> Result<(), Diagnostic> {
+    if is_nullable_inner_type(ty) {
         Ok(())
     } else {
         Err(Diagnostic::new(format!(
-            "nullable modifier '?' is only supported on reference types, got {ty}"
+            "nullable modifier '?' is not supported on {ty}"
         )))
     }
 }
@@ -699,7 +702,7 @@ fn resolve_type_refs_allowing_forward_refs(
                 opaque_cache,
                 stack,
             )?;
-            require_nullable_reference_type(&inner)?;
+            require_nullable_inner_type(&inner)?;
             Ok(Type::Nullable(Box::new(inner)))
         }
         Type::Array(inner) => Ok(Type::Array(Box::new(
@@ -1051,7 +1054,7 @@ fn resolve_type_refs_fixpoint(
                 stack,
                 fixpoint_mode,
             )?;
-            require_nullable_reference_type(&inner)?;
+            require_nullable_inner_type(&inner)?;
             Ok(Type::Nullable(Box::new(inner)))
         }
         Type::Array(inner) => Ok(Type::Array(Box::new(resolve_type_refs_fixpoint(

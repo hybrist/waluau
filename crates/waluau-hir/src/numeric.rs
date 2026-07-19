@@ -618,9 +618,9 @@ pub(super) fn resolve_number_literal(
         Some(Type::Nil) => Err(Diagnostic::new("numeric literal is not assignable to nil")),
         Some(Type::Nullable(inner)) => match *inner {
             Type::Numeric(numeric) => Ok(Type::Nullable(Box::new(Type::Numeric(numeric)))),
-            _ => Err(Diagnostic::new(
-                "numeric literal is not assignable to nullable extern",
-            )),
+            other => Err(Diagnostic::new(format!(
+                "numeric literal is not assignable to {other}?",
+            ))),
         },
         Some(Type::Named { name, .. }) => Err(Diagnostic::new(format!(
             "numeric literal is not assignable to {name}",

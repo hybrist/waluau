@@ -347,8 +347,10 @@ impl Type {
     }
 
     /// Nullable types whose inner value type has no null representation in
-    /// wasm (numerics and bools). These are boxed into `anyref`, with null
-    /// standing for nil, so conversions to/from the inner type must box/unbox.
+    /// wasm (numerics and bools). These lower to typed nullable box refs
+    /// (`ref null $nullable_box_K`): null stands for nil and a one-field GC
+    /// struct holds the payload, so conversions to/from the inner type must
+    /// wrap/unwrap the box.
     pub fn is_boxed_nullable(&self) -> bool {
         matches!(self, Self::Nullable(inner) if matches!(**inner, Self::Numeric(_) | Self::Bool))
     }

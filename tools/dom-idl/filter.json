@@ -2104,7 +2104,6 @@
     "unsupported-generic:Promise": "waluau-2c6n",
     "unsupported-union": "waluau-o4xs",
     "nullable-callback-type": "waluau-lqjs",
-    "nullable-primitive-type": "waluau-pq7p",
     "reserved-keyword-param": "waluau-9szs",
     "untyped-dynamic-type": "waluau-lxdd"
   },

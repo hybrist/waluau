@@ -24,8 +24,8 @@ mod signatures;
 mod wasm_types;
 
 use arrays::{
-    ArrayTypeRegistry, RuntimeGcTypes, array_storage_type, collect_array_types,
-    collect_record_types, record_storage_type,
+    ArrayTypeRegistry, NullableBoxKind, RuntimeGcTypes, array_storage_type, collect_array_types,
+    collect_nullable_box_kinds, collect_record_types, record_storage_type,
 };
 use buffers::{
     BUFFER_HEAP_BASE, BufferPlan, MEMORY_EXPORT_NAME, element_size_log2,
@@ -265,16 +265,12 @@ fn needs_closure_gc_types(module: &Module, declared_imports: &[&DeclaredImport])
                         ) {
                             return true;
                         }
-                        let boxed_f64_or_bool_nullable = |ty: &Type| {
-                            matches!(
-                                ty,
-                                Type::Nullable(inner) if matches!(
-                                    **inner,
-                                    Type::Numeric(waluau_ast::NumericType::F64) | Type::Bool
-                                )
-                            )
-                        };
-                        if boxed_f64_or_bool_nullable(from) || boxed_f64_or_bool_nullable(to) {
+                        // Nullable primitives rebox their payload through the
+                        // canonical unknown boxes ($boxed_f64/$boxed_bool), so
+                        // either side of the cast being one requires them. This
+                        // predicate is deliberately conservative: an unused box
+                        // type is harmless, a missing one fails the emit.
+                        if from.is_boxed_nullable() || to.is_boxed_nullable() {
                             return true;
                         }
                     }
@@ -319,6 +315,14 @@ pub struct RequiredImport {
     pub module: String,
     pub name: String,
     pub kind: ImportKind,
+    /// Declared parameter types (surface syntax, e.g. `"u32?"`), present for
+    /// declared host-function imports. Host shims use these to adapt values
+    /// whose wasm representation is not a plain JS value — currently nullable
+    /// primitives, which cross the boundary as typed nullable box refs.
+    pub param_types: Option<Vec<String>>,
+    /// Declared return type (surface syntax), present for declared
+    /// host-function imports.
+    pub return_type: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -338,6 +342,8 @@ fn required_import(
         module: module.into(),
         name: name.into(),
         kind,
+        param_types: None,
+        return_type: None,
     }
 }
 
@@ -416,11 +422,13 @@ fn collect_required_imports(
         push_required_function_import(&mut imports, needed, host::IMPORT_MODULE, name);
     }
     for import in declared {
-        imports.push(required_import(
-            import.module.clone(),
-            import.host_name.clone(),
-            ImportKind::Function,
-        ));
+        imports.push(RequiredImport {
+            module: import.module.clone(),
+            name: import.host_name.clone(),
+            kind: ImportKind::Function,
+            param_types: Some(import.params.iter().map(|ty| ty.to_string()).collect()),
+            return_type: Some(import.return_type.to_string()),
+        });
     }
     if uses_memory {
         imports.push(required_import(
@@ -478,6 +486,20 @@ export const requiredImports = Object.freeze([\n",
         js.push_str(&js_string_literal(&import.name));
         js.push_str(", kind: ");
         js.push_str(&js_string_literal(import.kind.as_str()));
+        if let Some(param_types) = &import.param_types {
+            js.push_str(", paramTypes: Object.freeze([");
+            for (index, ty) in param_types.iter().enumerate() {
+                if index > 0 {
+                    js.push_str(", ");
+                }
+                js.push_str(&js_string_literal(ty));
+            }
+            js.push_str("])");
+        }
+        if let Some(return_type) = &import.return_type {
+            js.push_str(", returnType: ");
+            js.push_str(&js_string_literal(return_type));
+        }
         js.push_str(" }),\n");
     }
     js.push_str("]);\nexport const bytesConstants = Object.freeze([\n");
@@ -604,9 +626,14 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     let mut coroutine_plan = CoroutinePlan::new(module, string_constants.len() as u32);
     let start_thunk = module.start;
 
+    // Typed nullable box structs (`$nullable_box_K`, backing `i32?` etc.) come
+    // first in the type section so array/record storage types can reference
+    // them as backward references.
+    let nullable_box_kinds = collect_nullable_box_kinds(module, &declared_imports);
+    let array_type_base = nullable_box_kinds.len() as u32;
     // Each array type occupies two type-section slots: the raw storage array
     // followed by its growable wrapper struct (see ArrayTypeRegistry).
-    let host_type_base = 2 * array_types.len() as u32;
+    let host_type_base = array_type_base + 2 * array_types.len() as u32;
 
     // Determine which host imports the module actually uses, and build the
     // index remapping so callers can use canonical slot numbers.
@@ -676,11 +703,11 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     };
     let record_types_base = coroutine_types_base + coroutine_type_count;
     let user_type_base = record_types_base + record_types.len() as u32;
-    // Array types come first in the type section (indices 0..N-1).
+    // Array types follow the nullable box types in the type section.
     let mut array_registry = ArrayTypeRegistry::with_function_type_offset(
         &array_types,
         &record_types,
-        0,
+        array_type_base,
         record_types_base,
         RuntimeGcTypes {
             anyref_array_type,
@@ -691,6 +718,11 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
     );
     array_registry.coroutine_state_type = coroutine_state_type;
     array_registry.closure_gc_present = closure_gc_needed;
+    array_registry.nullable_box_indices = nullable_box_kinds
+        .iter()
+        .enumerate()
+        .map(|(offset, kind)| (*kind, offset as u32))
+        .collect();
 
     let mut signature_registry = collect_user_signatures(
         module,
@@ -736,7 +768,17 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
 
     let mut wasm = WasmModule::new();
     let mut types = TypeSection::new();
-    // Emit array types first so function types can reference them. Each array
+    // Nullable box structs first: `$nullable_box_K = (struct (field mut K))`,
+    // the typed boxes backing nullable primitives (`i32?` etc.). The mutable
+    // field keeps them structurally distinct from the immutable
+    // `$boxed_f64`/`$boxed_bool` unknown-value boxes.
+    for kind in &nullable_box_kinds {
+        types.ty().struct_(vec![FieldType {
+            element_type: StorageType::Val(kind.payload_val_type()),
+            mutable: true,
+        }]);
+    }
+    // Emit array types next so function types can reference them. Each array
     // type is an interleaved pair: the raw storage array immediately followed
     // by the growable wrapper struct `(struct (field mut storage) (field mut len:i32))`.
     // `array_types` is depth-sorted, so a nested array's storage can reference
@@ -1154,6 +1196,41 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         });
     }
 
+    // JS interop helpers for typed nullable boxes: an exported constructor
+    // (`payload -> ref null $nullable_box_K`) and payload reader
+    // (`ref null $nullable_box_K -> payload`, trapping on null) per box kind.
+    struct NullableBoxHelperInfo {
+        kind: NullableBoxKind,
+        box_type_idx: u32,
+        box_fn_type_idx: u32,
+        unbox_fn_type_idx: u32,
+    }
+
+    let mut nullable_box_helpers = Vec::new();
+    for (offset, kind) in nullable_box_kinds.iter().enumerate() {
+        let box_type_idx = offset as u32;
+        let box_ref = ValType::Ref(RefType {
+            nullable: true,
+            heap_type: HeapType::Concrete(box_type_idx),
+        });
+        types
+            .ty()
+            .function(vec![kind.payload_val_type()], vec![box_ref]);
+        let box_fn_type_idx = type_idx_counter;
+        type_idx_counter += 1;
+        types
+            .ty()
+            .function(vec![box_ref], vec![kind.payload_val_type()]);
+        let unbox_fn_type_idx = type_idx_counter;
+        type_idx_counter += 1;
+        nullable_box_helpers.push(NullableBoxHelperInfo {
+            kind: *kind,
+            box_type_idx,
+            box_fn_type_idx,
+            unbox_fn_type_idx,
+        });
+    }
+
     let mut imports = ImportSection::new();
     // Emit only the host function imports that the module actually uses.
     if used_imports.js_string_eq {
@@ -1411,6 +1488,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         .iter()
         .map(|info| 1 + info.getter_type_indices.len() as u32)
         .sum::<u32>();
+    let nullable_box_helper_func_count = 2 * nullable_box_helpers.len() as u32;
     let buffer_alloc_func = buffer_plan.uses_memory.then(|| {
         import_func_count
             + module.functions.len() as u32
@@ -1418,6 +1496,7 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             + closure_targets.len() as u32
             + trampoline_func_count
             + record_helper_func_count
+            + nullable_box_helper_func_count
     });
     // Defined globals follow the imported string-constant globals; the heap
     // pointer sits after the coroutine active-instance global when present.
@@ -1729,6 +1808,39 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             getter_fn.instruction(&Instruction::End);
             codes.function(&getter_fn);
         }
+    }
+
+    // Emit nullable box JS interop helpers (constructor + payload reader).
+    for helper in &nullable_box_helpers {
+        functions.function(helper.box_fn_type_idx);
+        exports.export(
+            &format!("__waluau_box_nullable_{}", helper.kind.export_suffix()),
+            ExportKind::Func,
+            import_func_count + helper_func_idx_counter,
+        );
+        helper_func_idx_counter += 1;
+        let mut box_fn = Function::new(Vec::new());
+        box_fn.instruction(&Instruction::LocalGet(0));
+        box_fn.instruction(&Instruction::StructNew(helper.box_type_idx));
+        box_fn.instruction(&Instruction::End);
+        codes.function(&box_fn);
+
+        functions.function(helper.unbox_fn_type_idx);
+        exports.export(
+            &format!("__waluau_unbox_nullable_{}", helper.kind.export_suffix()),
+            ExportKind::Func,
+            import_func_count + helper_func_idx_counter,
+        );
+        helper_func_idx_counter += 1;
+        let mut unbox_fn = Function::new(Vec::new());
+        unbox_fn.instruction(&Instruction::LocalGet(0));
+        unbox_fn.instruction(&Instruction::RefAsNonNull);
+        unbox_fn.instruction(&Instruction::StructGet {
+            struct_type_index: helper.box_type_idx,
+            field_index: 0,
+        });
+        unbox_fn.instruction(&Instruction::End);
+        codes.function(&unbox_fn);
     }
 
     if let Some(type_idx) = buffer_alloc_type_idx {
@@ -3255,11 +3367,21 @@ fn emit_block_instructions(
                 from,
                 to,
             } => {
-                // When the f64 box exists, a number leaving `unknown` may be
-                // an i31 or a `$boxed_f64` (e.g. an integer literal typed f64
-                // boxed at a call site); dispatch on the representation.
-                if ctx.array_registry.closure_gc_present && number_unbox_target(from, to).is_some()
+                // Nullable primitives (`i32?` etc.) are typed nullable box
+                // refs; conversions in and out of them branch on null and
+                // (un)wrap the payload box, so they get their own emission
+                // path with access to the source's local.
+                if from != to && (from.is_boxed_nullable() || to.is_boxed_nullable()) {
+                    let source_local = local(local_plan, *source)?;
+                    emit_nullable_box_cast(out, ctx, source_local, from, to)?;
+                    emit_value_store(out, local_plan, *value)?;
+                } else if ctx.array_registry.closure_gc_present
+                    && number_unbox_target(from, to).is_some()
                 {
+                    // When the f64 box exists, a number leaving `unknown` may
+                    // be an i31 or a `$boxed_f64` (e.g. an integer literal
+                    // typed f64 boxed at a call site); dispatch on the
+                    // representation.
                     let target = number_unbox_target(from, to).expect("checked above");
                     let source_local = local(local_plan, *source)?;
                     emit_number_unbox_dispatch(out, ctx, source_local, target);
@@ -3562,9 +3684,15 @@ fn emit_block_instructions(
                 base,
             } => {
                 // The runtime `tonumber` result is a nullable f64 (`f64?`):
-                // an anyref holding a `$boxed_f64` on success and null (nil)
-                // on parse failure. The host imports return an `(i32 ok,
-                // f64 value)` pair that is boxed here.
+                // a `$nullable_box_f64` holding the parsed value, or a typed
+                // null (nil) on parse failure. Both host imports return an
+                // `(i32 ok, f64 value)` pair that is boxed here.
+                //
+                // An `unknown` already holding a number is classified in
+                // wasm rather than handed to the host: a `$boxed_f64` is an
+                // opaque GC struct on the JS side, so the host could not read
+                // its payload. The payload is unboxed here and rewrapped as a
+                // `$nullable_box_f64`.
                 match from {
                     Type::String => {
                         emit_value_operand(out, local_plan, *source)?;
@@ -3579,21 +3707,41 @@ fn emit_block_instructions(
                         emit_tonumber_result_box(out, ctx, local_plan)?;
                     }
                     Type::Unknown if base.is_none() && ctx.array_registry.closure_gc_present => {
-                        // A boxed f64 or i31 number is already a valid `f64?`
-                        // representation; pass it through without a host call.
+                        let f64_ty = Type::Numeric(waluau_ast::NumericType::F64);
+                        let nullable_box =
+                            ctx.array_registry.nullable_box_index_for_inner(&f64_ty)?;
+                        let box_result = BlockType::Result(ValType::Ref(RefType {
+                            nullable: true,
+                            heap_type: HeapType::Concrete(nullable_box),
+                        }));
                         let boxed_f64 = ctx.array_registry.boxed_f64_struct_type;
+                        // A `$boxed_f64` payload: unbox and rewrap.
                         emit_value_operand(out, local_plan, *source)?;
                         out.instruction(&Instruction::RefTestNullable(HeapType::Concrete(
                             boxed_f64,
                         )));
-                        out.instruction(&Instruction::If(BlockType::Result(anyref_val_type())));
+                        out.instruction(&Instruction::If(box_result));
                         emit_value_operand(out, local_plan, *source)?;
+                        out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
+                            boxed_f64,
+                        )));
+                        out.instruction(&Instruction::StructGet {
+                            struct_type_index: boxed_f64,
+                            field_index: 0,
+                        });
+                        out.instruction(&Instruction::StructNew(nullable_box));
                         out.instruction(&Instruction::Else);
+                        // An i31 integer: widen to f64 and wrap.
                         emit_value_operand(out, local_plan, *source)?;
                         out.instruction(&Instruction::RefTestNullable(i31_heap_type()));
-                        out.instruction(&Instruction::If(BlockType::Result(anyref_val_type())));
+                        out.instruction(&Instruction::If(box_result));
                         emit_value_operand(out, local_plan, *source)?;
+                        out.instruction(&Instruction::RefCastNonNull(i31_heap_type()));
+                        out.instruction(&Instruction::I31GetS);
+                        out.instruction(&Instruction::F64ConvertI32S);
+                        out.instruction(&Instruction::StructNew(nullable_box));
                         out.instruction(&Instruction::Else);
+                        // Anything else (strings, host values) parses in JS.
                         emit_value_operand(out, local_plan, *source)?;
                         out.instruction(&Instruction::I32Const(0));
                         out.instruction(&Instruction::Call(
@@ -3841,7 +3989,34 @@ fn emit_block_instructions(
                         return_type,
                     },
                 )?;
-                emit_box(out, return_type, ctx.array_registry)?;
+                if return_type.is_boxed_nullable() {
+                    // Canonicalize the nullable box into the `unknown` payload
+                    // slot (null / i31 / $boxed_f64 / $boxed_bool) so later
+                    // dynamic consumers see a well-formed unknown value.
+                    let box_idx = ctx.array_registry.nullable_box_index(return_type)?;
+                    let inner = return_type
+                        .nullable_inner()
+                        .expect("boxed nullable has inner");
+                    out.instruction(&Instruction::LocalSet(value_tmp));
+                    out.instruction(&Instruction::LocalGet(value_tmp));
+                    out.instruction(&Instruction::RefIsNull);
+                    out.instruction(&Instruction::If(BlockType::Result(anyref_val_type())));
+                    out.instruction(&Instruction::RefNull(HeapType::Abstract {
+                        shared: false,
+                        ty: AbstractHeapType::Any,
+                    }));
+                    out.instruction(&Instruction::Else);
+                    out.instruction(&Instruction::LocalGet(value_tmp));
+                    out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(box_idx)));
+                    out.instruction(&Instruction::StructGet {
+                        struct_type_index: box_idx,
+                        field_index: 0,
+                    });
+                    emit_box(out, &inner, ctx.array_registry)?;
+                    out.instruction(&Instruction::End);
+                } else {
+                    emit_box(out, return_type, ctx.array_registry)?;
+                }
                 out.instruction(&Instruction::LocalSet(value_tmp));
                 out.instruction(&Instruction::I32Const(1));
                 out.instruction(&Instruction::LocalSet(ok_slot));
@@ -4738,12 +4913,10 @@ fn emit_ref_null(
             }));
             Ok(())
         }
-        Type::Nullable(inner) if ty.is_boxed_nullable() => {
-            let _ = inner;
-            out.instruction(&Instruction::RefNull(HeapType::Abstract {
-                shared: false,
-                ty: AbstractHeapType::Any,
-            }));
+        Type::Nullable(_) if ty.is_boxed_nullable() => {
+            out.instruction(&Instruction::RefNull(HeapType::Concrete(
+                array_registry.nullable_box_index(ty)?,
+            )));
             Ok(())
         }
         Type::Nullable(inner) => emit_ref_null(out, inner, array_registry),
@@ -5130,19 +5303,13 @@ fn emit_cast(
     if from == to {
         return Ok(());
     }
-    // Boxed nullables (`i32?` etc.) live in anyref, so entering/leaving them
-    // is a box/unbox, exactly like `unknown` (which shares the representation).
-    if to.is_boxed_nullable() {
-        if from == Type::Unknown || from.is_boxed_nullable() {
-            return Ok(());
-        }
-        return emit_box(out, &from, array_registry);
-    }
-    if from.is_boxed_nullable() {
-        if to == Type::Unknown {
-            return Ok(());
-        }
-        return emit_unbox(out, &to, array_registry);
+    // Boxed nullables (`i32?` etc.) are typed nullable box refs whose
+    // conversions branch on null; they are lowered in
+    // `emit_nullable_box_cast`, which needs the source value's local.
+    if to.is_boxed_nullable() || from.is_boxed_nullable() {
+        return Err(Diagnostic::new(
+            "internal error: nullable primitive casts must be lowered via emit_nullable_box_cast",
+        ));
     }
     // Reference-typed nullables share the inner type's (already nullable)
     // wasm representation, so widening and narrowing are both no-ops.
@@ -5256,15 +5423,11 @@ fn i31_heap_type() -> HeapType {
     }
 }
 
-/// For casts out of `unknown` (or a boxed nullable, which shares the anyref
-/// representation) into a numeric type, returns the target when the runtime
-/// value may be either an i31 or a `$boxed_f64` and needs a
+/// For casts out of `unknown` into a numeric type, returns the target when
+/// the runtime value may be either an i31 or a `$boxed_f64` and needs a
 /// two-representation dispatch.
 pub(crate) fn number_unbox_target(from: &Type, to: &Type) -> Option<NumericType> {
-    if *from != Type::Unknown && !from.is_boxed_nullable() {
-        return None;
-    }
-    if to.is_boxed_nullable() {
+    if *from != Type::Unknown {
         return None;
     }
     match to {
@@ -5272,6 +5435,153 @@ pub(crate) fn number_unbox_target(from: &Type, to: &Type) -> Option<NumericType>
             Some(*numeric)
         }
         _ => None,
+    }
+}
+
+/// Emit a conversion into or out of a typed nullable box (`i32?` etc.).
+///
+/// `source_local` holds the already-stored source value. The nil case is a
+/// null `(ref null $nullable_box_K)`; the non-nil case wraps/unwraps the
+/// single payload field. Conversions to/from `unknown` translate between the
+/// box and the canonical unknown representation (null / i31 / `$boxed_f64` /
+/// `$boxed_bool`), so nullable boxes never leak into `unknown` values.
+fn emit_nullable_box_cast(
+    out: &mut Function,
+    ctx: &EmissionContext<'_>,
+    source_local: u32,
+    from: &Type,
+    to: &Type,
+) -> Result<(), Diagnostic> {
+    let registry = ctx.array_registry;
+    match (NullableBoxKind::of(from), NullableBoxKind::of(to)) {
+        // T? -> T'?: propagate nil, otherwise convert the payload.
+        (Some(_), Some(_)) => {
+            let from_box = registry.nullable_box_index(from)?;
+            let to_box = registry.nullable_box_index(to)?;
+            let from_inner = from.nullable_inner().expect("boxed nullable has inner");
+            let to_inner = to.nullable_inner().expect("boxed nullable has inner");
+            out.instruction(&Instruction::LocalGet(source_local));
+            out.instruction(&Instruction::RefIsNull);
+            out.instruction(&Instruction::If(BlockType::Result(
+                registry.nullable_box_val_type(to)?,
+            )));
+            out.instruction(&Instruction::RefNull(HeapType::Concrete(to_box)));
+            out.instruction(&Instruction::Else);
+            out.instruction(&Instruction::LocalGet(source_local));
+            out.instruction(&Instruction::RefAsNonNull);
+            out.instruction(&Instruction::StructGet {
+                struct_type_index: from_box,
+                field_index: 0,
+            });
+            emit_cast(out, from_inner, to_inner, registry)?;
+            out.instruction(&Instruction::StructNew(to_box));
+            out.instruction(&Instruction::End);
+            Ok(())
+        }
+        // T? -> unknown / T? -> scalar.
+        (Some(_), None) => {
+            let from_box = registry.nullable_box_index(from)?;
+            let from_inner = from.nullable_inner().expect("boxed nullable has inner");
+            if *to == Type::Unknown {
+                out.instruction(&Instruction::LocalGet(source_local));
+                out.instruction(&Instruction::RefIsNull);
+                out.instruction(&Instruction::If(BlockType::Result(anyref_val_type())));
+                out.instruction(&Instruction::RefNull(HeapType::Abstract {
+                    shared: false,
+                    ty: AbstractHeapType::Any,
+                }));
+                out.instruction(&Instruction::Else);
+                out.instruction(&Instruction::LocalGet(source_local));
+                out.instruction(&Instruction::RefAsNonNull);
+                out.instruction(&Instruction::StructGet {
+                    struct_type_index: from_box,
+                    field_index: 0,
+                });
+                emit_box(out, &from_inner, registry)?;
+                out.instruction(&Instruction::End);
+                return Ok(());
+            }
+            if !matches!(to, Type::Numeric(_) | Type::Bool) {
+                return Err(Diagnostic::new(format!(
+                    "cannot cast nullable {from} to {to} during wasm emission"
+                )));
+            }
+            // Narrowing `T? -> T` traps on nil (mirrors unbox-of-null).
+            out.instruction(&Instruction::LocalGet(source_local));
+            out.instruction(&Instruction::RefAsNonNull);
+            out.instruction(&Instruction::StructGet {
+                struct_type_index: from_box,
+                field_index: 0,
+            });
+            emit_cast(out, from_inner, to.clone(), registry)
+        }
+        // unknown / nil / scalar -> T?.
+        (None, Some(_)) => {
+            let to_box = registry.nullable_box_index(to)?;
+            let to_inner = to.nullable_inner().expect("boxed nullable has inner");
+            match from {
+                Type::Nil => {
+                    // The source is a null reference by construction.
+                    out.instruction(&Instruction::RefNull(HeapType::Concrete(to_box)));
+                    Ok(())
+                }
+                Type::Numeric(_) | Type::Bool => {
+                    out.instruction(&Instruction::LocalGet(source_local));
+                    emit_cast(out, from.clone(), to_inner, registry)?;
+                    out.instruction(&Instruction::StructNew(to_box));
+                    Ok(())
+                }
+                Type::Unknown => {
+                    let box_val_type = registry.nullable_box_val_type(to)?;
+                    out.instruction(&Instruction::LocalGet(source_local));
+                    out.instruction(&Instruction::RefIsNull);
+                    out.instruction(&Instruction::If(BlockType::Result(box_val_type)));
+                    out.instruction(&Instruction::RefNull(HeapType::Concrete(to_box)));
+                    out.instruction(&Instruction::Else);
+                    // A protected-call payload may hold the nullable box
+                    // itself (boxed nullables round-trip through `unknown`
+                    // payload slots); pass it through unchanged.
+                    out.instruction(&Instruction::LocalGet(source_local));
+                    out.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(to_box)));
+                    out.instruction(&Instruction::If(BlockType::Result(box_val_type)));
+                    out.instruction(&Instruction::LocalGet(source_local));
+                    out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(to_box)));
+                    out.instruction(&Instruction::Else);
+                    match &to_inner {
+                        Type::Bool => {
+                            out.instruction(&Instruction::LocalGet(source_local));
+                            emit_unbox(out, &Type::Bool, registry)?;
+                            out.instruction(&Instruction::StructNew(to_box));
+                        }
+                        Type::Numeric(
+                            numeric @ (NumericType::I32 | NumericType::U32 | NumericType::F64),
+                        ) if ctx.array_registry.closure_gc_present => {
+                            emit_number_unbox_dispatch(out, ctx, source_local, *numeric);
+                            out.instruction(&Instruction::StructNew(to_box));
+                        }
+                        Type::Numeric(NumericType::I32 | NumericType::U32) => {
+                            out.instruction(&Instruction::LocalGet(source_local));
+                            emit_unbox(out, &to_inner, registry)?;
+                            out.instruction(&Instruction::StructNew(to_box));
+                        }
+                        // i64/u64/f32 have no canonical `unknown` boxed form,
+                        // so a genuine dynamic value can never hold one.
+                        _ => {
+                            out.instruction(&Instruction::Unreachable);
+                        }
+                    }
+                    out.instruction(&Instruction::End);
+                    out.instruction(&Instruction::End);
+                    Ok(())
+                }
+                other => Err(Diagnostic::new(format!(
+                    "cannot cast {other} to nullable {to} during wasm emission"
+                ))),
+            }
+        }
+        (None, None) => Err(Diagnostic::new(
+            "internal error: nullable box cast requires a nullable primitive endpoint",
+        )),
     }
 }
 
@@ -5404,18 +5714,21 @@ fn emit_tonumber_result_box(
     ctx: &EmissionContext<'_>,
     local_plan: &LocalPlan,
 ) -> Result<(), Diagnostic> {
+    // `tonumber` yields `f64?`, which is a typed nullable box ref: a
+    // `$nullable_box_f64` holding the parsed value, or a typed null for a
+    // parse failure (Lua nil).
+    let f64_ty = Type::Numeric(waluau_ast::NumericType::F64);
+    let box_index = ctx.array_registry.nullable_box_index_for_inner(&f64_ty)?;
     let scratch = locals::tonumber_scratch_local(local_plan)?;
     out.instruction(&Instruction::LocalSet(scratch));
-    out.instruction(&Instruction::If(BlockType::Result(anyref_val_type())));
+    out.instruction(&Instruction::If(BlockType::Result(ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(box_index),
+    }))));
     out.instruction(&Instruction::LocalGet(scratch));
-    out.instruction(&Instruction::StructNew(
-        ctx.array_registry.boxed_f64_struct_type,
-    ));
+    out.instruction(&Instruction::StructNew(box_index));
     out.instruction(&Instruction::Else);
-    out.instruction(&Instruction::RefNull(HeapType::Abstract {
-        shared: false,
-        ty: AbstractHeapType::Any,
-    }));
+    out.instruction(&Instruction::RefNull(HeapType::Concrete(box_index)));
     out.instruction(&Instruction::End);
     Ok(())
 }
@@ -5481,6 +5794,35 @@ fn dyn_element_boxable(storage: &StorageType) -> bool {
     )
 }
 
+/// True when a nullable primitive element's payload has a canonical `unknown`
+/// boxed form, so `emit_dyn_index` can rebox it. `i64`/`u64`/`f32` payloads do
+/// not (the same design 0010 boxing gap that makes plain `i64`/`f32` elements
+/// unboxable), so those element types fall through to the trap.
+fn dyn_nullable_payload_boxable(kind: NullableBoxKind) -> bool {
+    matches!(kind, NullableBoxKind::I32 | NullableBoxKind::F64)
+}
+
+/// Push `array[index]` for one growable wrapper onto the stack, in the raw
+/// storage representation of the element type.
+fn emit_dyn_element_read(
+    out: &mut Function,
+    operand_local: u32,
+    index_local: u32,
+    wrapper_idx: u32,
+    storage_type_index: u32,
+) {
+    out.instruction(&Instruction::LocalGet(operand_local));
+    out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
+        wrapper_idx,
+    )));
+    out.instruction(&Instruction::StructGet {
+        struct_type_index: wrapper_idx,
+        field_index: GROWABLE_STORAGE_FIELD,
+    });
+    out.instruction(&Instruction::LocalGet(index_local));
+    out.instruction(&Instruction::ArrayGet(storage_type_index));
+}
+
 /// Emit `value[index]` where `value` is an `unknown` (anyref) local, leaving
 /// the element boxed into `unknown` (anyref) on the stack. Dispatches over
 /// the module's growable array wrapper types with a per-type bounds check;
@@ -5497,6 +5839,13 @@ fn emit_dyn_index(
     for (element_ty, wrapper_idx) in wrappers {
         let storage = array_storage_type(element_ty, ctx.array_registry)?;
         if !dyn_element_boxable(&storage) {
+            continue;
+        }
+        // Nullable primitive elements are typed box refs, reboxed below with a
+        // null branch. Payload classes without a canonical `unknown` boxed form
+        // (`i64?`/`u64?`/`f32?`) fall through to the trap, like i64/f32.
+        let nullable_kind = NullableBoxKind::of(element_ty);
+        if nullable_kind.is_some_and(|kind| !dyn_nullable_payload_boxable(kind)) {
             continue;
         }
         let storage_array_ty = Type::Array(Box::new(element_ty.clone()));
@@ -5523,42 +5872,75 @@ fn emit_dyn_index(
         emit_throw_message(out, ctx, host::ERR_ARRAY_OOB)?;
         out.instruction(&Instruction::End);
 
-        out.instruction(&Instruction::LocalGet(operand_local));
-        out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
-            *wrapper_idx,
-        )));
-        out.instruction(&Instruction::StructGet {
-            struct_type_index: *wrapper_idx,
-            field_index: GROWABLE_STORAGE_FIELD,
-        });
-        out.instruction(&Instruction::LocalGet(index_local));
-        out.instruction(&Instruction::ArrayGet(storage_type_index));
+        if nullable_kind.is_some() {
+            // A nullable primitive element is a `(ref null $nullable_box_K)`.
+            // Nil (a null box ref) becomes the `unknown` nil — a null anyref —
+            // and a present element is unwrapped from its box and reboxed into
+            // the canonical `unknown` representation, exactly like the
+            // non-nullable arm for the same payload type. The typed box itself
+            // must never leak into an `unknown`.
+            let box_idx = ctx.array_registry.nullable_box_index(element_ty)?;
+            let inner = element_ty
+                .nullable_inner()
+                .expect("boxed nullable has an inner type");
 
-        // Box the raw element into anyref based on its storage representation.
-        match storage {
-            StorageType::Val(ValType::I32) => {
-                let base_ty = match element_ty {
-                    Type::Nullable(inner) => inner.as_ref(),
-                    other => other,
-                };
-                if *base_ty == Type::Bool {
-                    out.instruction(&Instruction::StructNew(
-                        ctx.array_registry.boxed_bool_struct_type,
-                    ));
-                } else {
-                    out.instruction(&Instruction::RefI31);
+            // block $present (result anyref) {
+            //   block $nil { <elem>; br_on_null $nil; <unbox+rebox>; br $present }
+            //   ref.null any
+            // }
+            out.instruction(&Instruction::Block(BlockType::Result(anyref)));
+            out.instruction(&Instruction::Block(BlockType::Empty));
+            emit_dyn_element_read(
+                out,
+                operand_local,
+                index_local,
+                *wrapper_idx,
+                storage_type_index,
+            );
+            out.instruction(&Instruction::BrOnNull(0));
+            out.instruction(&Instruction::StructGet {
+                struct_type_index: box_idx,
+                field_index: 0,
+            });
+            emit_box(out, &inner, ctx.array_registry)?;
+            out.instruction(&Instruction::Br(1));
+            out.instruction(&Instruction::End);
+            out.instruction(&Instruction::RefNull(HeapType::Abstract {
+                shared: false,
+                ty: AbstractHeapType::Any,
+            }));
+            out.instruction(&Instruction::End);
+        } else {
+            emit_dyn_element_read(
+                out,
+                operand_local,
+                index_local,
+                *wrapper_idx,
+                storage_type_index,
+            );
+
+            // Box the raw element into anyref based on its storage representation.
+            match storage {
+                StorageType::Val(ValType::I32) => {
+                    if *element_ty == Type::Bool {
+                        out.instruction(&Instruction::StructNew(
+                            ctx.array_registry.boxed_bool_struct_type,
+                        ));
+                    } else {
+                        out.instruction(&Instruction::RefI31);
+                    }
                 }
+                StorageType::Val(ValType::F64) => {
+                    out.instruction(&Instruction::StructNew(
+                        ctx.array_registry.boxed_f64_struct_type,
+                    ));
+                }
+                StorageType::Val(val) if val == externref_val_type() => {
+                    out.instruction(&Instruction::AnyConvertExtern);
+                }
+                // anyref and concrete GC refs are already (subtypes of) anyref.
+                _ => {}
             }
-            StorageType::Val(ValType::F64) => {
-                out.instruction(&Instruction::StructNew(
-                    ctx.array_registry.boxed_f64_struct_type,
-                ));
-            }
-            StorageType::Val(val) if val == externref_val_type() => {
-                out.instruction(&Instruction::AnyConvertExtern);
-            }
-            // anyref and concrete GC refs are already (subtypes of) anyref.
-            _ => {}
         }
         out.instruction(&Instruction::Else);
         arms += 1;
@@ -5776,11 +6158,15 @@ fn emit_unbox(
             out.instruction(&Instruction::ExternConvertAny);
             Ok(())
         }
-        // A reference-typed nullable unboxes like its inner type; boxed
-        // nullables (i32? etc.) already share anyref's representation.
+        // A reference-typed nullable unboxes like its inner type. Boxed
+        // nullables (i32? etc.) are typed box refs whose conversions from
+        // `unknown` need a null branch; those are lowered in
+        // `emit_nullable_box_cast`.
         Type::Nullable(inner) => {
             if matches!(**inner, Type::Numeric(_) | Type::Bool) {
-                Ok(())
+                Err(Diagnostic::new(
+                    "internal error: unboxing a nullable primitive requires emit_nullable_box_cast",
+                ))
             } else {
                 emit_unbox(out, inner, array_registry)
             }
