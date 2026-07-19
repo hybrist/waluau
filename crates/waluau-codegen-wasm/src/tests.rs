@@ -1880,6 +1880,87 @@ fn unknown_equality_imports_js_eq_unknown() {
 }
 
 #[test]
+fn extern_reference_equality_imports_js_eq_unknown() {
+    let source = r#"
+        type Node = extern
+        type Element = extern extends Node
+        declare function make_element(): Element
+
+        local a: Element = make_element()
+        local b: Element = make_element()
+        local c: Element? = a
+        assert(a == a)
+        assert(a ~= b)
+        assert(c == a)
+        assert(c ~= b)
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    let mut found = false;
+    for payload in Parser::new(0).parse_all(&wasm) {
+        if let Payload::ImportSection(imports) = payload.expect("wasm should parse") {
+            for import in imports {
+                let import = import.expect("import should parse");
+                if import.module == "waluau" && import.name == "js_eq_unknown" {
+                    found = true;
+                }
+            }
+        }
+    }
+    assert!(found, "extern equality should import waluau.js_eq_unknown");
+}
+
+#[test]
+fn string_and_bytes_inequality_import_host_eq_helpers() {
+    let source = r#"
+        local a: string = "a"
+        local b: string = "b"
+        assert(a ~= b)
+        local c = b"ab"
+        local d = b"cd"
+        assert(c ~= d)
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    let mut found_string_eq = false;
+    let mut found_bytes_eq = false;
+    for payload in Parser::new(0).parse_all(&wasm) {
+        if let Payload::ImportSection(imports) = payload.expect("wasm should parse") {
+            for import in imports {
+                let import = import.expect("import should parse");
+                if import.module == "wasm:js-string" && import.name == "equals" {
+                    found_string_eq = true;
+                }
+                if import.module == "waluau" && import.name == "bytes_eq" {
+                    found_bytes_eq = true;
+                }
+            }
+        }
+    }
+    assert!(
+        found_string_eq,
+        "string inequality should import the js-string equals builtin"
+    );
+    assert!(
+        found_bytes_eq,
+        "bytes inequality should import waluau.bytes_eq"
+    );
+}
+
+#[test]
 fn declared_import_overloads_emit_one_host_import_per_overload() {
     let source = r#"
         type Ctx = extern

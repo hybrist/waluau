@@ -6143,6 +6143,21 @@ impl Builder<'_> {
                             "could not resolve operand type during IR lowering",
                         ))
                     }
+                } else if left_ty == Type::Extern {
+                    // Extern references compare by host identity. Opaque extern
+                    // aliases are already erased to `extern` at this stage.
+                    let right_ty = first_of_multi(self.infer_expr_type(
+                        right,
+                        types,
+                        Some(Type::Extern),
+                    )?);
+                    if right_ty == Type::Extern {
+                        Ok(Type::Extern)
+                    } else {
+                        Err(Diagnostic::new(
+                            "could not resolve operand type during IR lowering",
+                        ))
+                    }
                 } else {
                     infer_numeric_common_type(
                         left,
