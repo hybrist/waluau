@@ -11,6 +11,7 @@ members = [
     "crates/waluau-ir",
     "crates/waluau-codegen-wasm",
     "crates/waluau-wasm",
+    "crates/waluau-lsp",
 ]
 default-members = ["crates/waluau-cli"]
 resolver = "3"
@@ -30,5 +31,6 @@ waluau-driver = { path = "crates/waluau-driver" }
 waluau-hir = { path = "crates/waluau-hir" }
 waluau-ir = { path = "crates/waluau-ir" }
 waluau-lexer = { path = "crates/waluau-lexer" }
+waluau-lsp = { path = "crates/waluau-lsp" }
 waluau-parser = { path = "crates/waluau-parser" }
 waluau-span = { path = "crates/waluau-span" }

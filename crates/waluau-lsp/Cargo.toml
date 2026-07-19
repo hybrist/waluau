@@ -1,0 +1,15 @@
+[package]
+name = "waluau-lsp"
+description = "Transport-agnostic LSP core for the Waluau compiler, plus a stdio server binary"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde_json = "1.0"
+waluau-diagnostics = { workspace = true }
+waluau-driver = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
