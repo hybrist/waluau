@@ -56,8 +56,13 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
           return;
         }
         setCompileSource(() => module.compile_multi);
-        if (typeof module.WaluauLanguageServer === 'function') {
-          languageServerRef.current = new module.WaluauLanguageServer();
+        try {
+          if (typeof module.WaluauLanguageServer === 'function') {
+            languageServerRef.current = new module.WaluauLanguageServer();
+          }
+        } catch (error) {
+          console.warn('Waluau language server unavailable:', error);
+          languageServerRef.current = null;
         }
         setCompilerReady(true);
         setStatus('ready');
@@ -109,54 +114,65 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
   useEffect(() => {
     const server = languageServerRef.current;
     if (!server || !compilerReady) return;
-    const collected = new Map();
-    let sentAny = false;
-    const send = (message) => {
-      sentAny = true;
-      for (const outgoing of server.handleMessage(JSON.stringify(message))) {
-        const parsed = JSON.parse(outgoing);
-        if (parsed.method === 'textDocument/publishDiagnostics') {
-          collected.set(parsed.params.uri, parsed.params.diagnostics);
+    // Diagnostics are an enhancement: if the language server throws (e.g. a
+    // trapped wasm instance), disable it and fall back to the errorMsg
+    // marker path rather than letting the effect crash the app.
+    try {
+      const collected = new Map();
+      let sentAny = false;
+      const send = (message) => {
+        sentAny = true;
+        for (const outgoing of server.handleMessage(JSON.stringify(message))) {
+          const parsed = JSON.parse(outgoing);
+          if (parsed.method === 'textDocument/publishDiagnostics') {
+            collected.set(parsed.params.uri, parsed.params.diagnostics);
+          }
+        }
+      };
+      const synced = syncedDocumentsRef.current;
+      for (const path of [...synced.keys()]) {
+        if (!(path in files)) {
+          synced.delete(path);
+          send({
+            jsonrpc: '2.0',
+            method: 'textDocument/didClose',
+            params: { textDocument: { uri: `file://${path}` } },
+          });
         }
       }
-    };
-    const synced = syncedDocumentsRef.current;
-    for (const path of [...synced.keys()]) {
-      if (!(path in files)) {
-        synced.delete(path);
-        send({
-          jsonrpc: '2.0',
-          method: 'textDocument/didClose',
-          params: { textDocument: { uri: `file://${path}` } },
-        });
+      for (const [path, text] of Object.entries(files)) {
+        const uri = `file://${path}`;
+        const known = synced.get(path);
+        if (known == null) {
+          synced.set(path, { version: 1, text });
+          send({
+            jsonrpc: '2.0',
+            method: 'textDocument/didOpen',
+            params: { textDocument: { uri, languageId: 'waluau', version: 1, text } },
+          });
+        } else if (known.text !== text) {
+          const version = known.version + 1;
+          synced.set(path, { version, text });
+          send({
+            jsonrpc: '2.0',
+            method: 'textDocument/didChange',
+            params: {
+              textDocument: { uri, version },
+              contentChanges: [{ text }],
+            },
+          });
+        }
       }
+      // Each server response batch reflects the complete diagnostic state;
+      // when nothing changed (effect re-ran for another reason), keep the
+      // last state.
+      if (sentAny) setDiagnostics(collected);
+    } catch (error) {
+      console.warn('Waluau language server disabled after error:', error);
+      languageServerRef.current = null;
+      syncedDocumentsRef.current.clear();
+      setDiagnostics(null);
     }
-    for (const [path, text] of Object.entries(files)) {
-      const uri = `file://${path}`;
-      const known = synced.get(path);
-      if (known == null) {
-        synced.set(path, { version: 1, text });
-        send({
-          jsonrpc: '2.0',
-          method: 'textDocument/didOpen',
-          params: { textDocument: { uri, languageId: 'waluau', version: 1, text } },
-        });
-      } else if (known.text !== text) {
-        const version = known.version + 1;
-        synced.set(path, { version, text });
-        send({
-          jsonrpc: '2.0',
-          method: 'textDocument/didChange',
-          params: {
-            textDocument: { uri, version },
-            contentChanges: [{ text }],
-          },
-        });
-      }
-    }
-    // Each server response batch reflects the complete diagnostic state; when
-    // nothing changed (effect re-ran for another reason), keep the last state.
-    if (sentAny) setDiagnostics(collected);
   }, [files, compilerReady]);
 
   const output = compilation.output;
