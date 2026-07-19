@@ -1068,6 +1068,58 @@ fn nullable_extern_nil_check_lowers_to_ref_is_null() {
 }
 
 #[test]
+fn boxed_nullable_pair_equality_validates() {
+    // `string.byte` out of range yields nil, so comparing two of its results
+    // exercises nullable-vs-nullable equality on a boxed numeric type.
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../../builtins/core.walu"),
+        r#"
+        function same(text: string, a: i32, b: i32): bool
+            return string.byte(text, a) == string.byte(text, b)
+        end
+
+        function differs(text: string, a: i32, b: i32): bool
+            return string.byte(text, a) ~= string.byte(text, b)
+        end
+    "#
+    );
+    let program = waluau_parser::parse(&source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        wat.contains("ref.is_null"),
+        "nullable numeric equality should branch on nil in:\n{wat}"
+    );
+    assert!(
+        wat.contains("i31.get_s"),
+        "present operands should be unboxed before comparing in:\n{wat}"
+    );
+}
+
+#[test]
+fn boxed_nullable_pair_equality_conformance_compiles() {
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../../builtins/core.walu"),
+        include_str!("../../../conformance/nullable_numeric_equality.walu"),
+    );
+    let program = waluau_parser::parse(&source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+}
+
+#[test]
 fn declared_host_event_callback_import_exports_trampoline() {
     let source = r#"
         type Event = extern
