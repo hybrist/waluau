@@ -8,13 +8,10 @@ pub fn parse(source: &str) -> Result<Program, Diagnostic> {
 }
 
 pub fn parse_with_path(source: &str, file_path: &str) -> Result<Program, Diagnostic> {
-    let tokens = waluau_lexer::lex(source)?;
-    let mut program = parser::Parser::new(tokens, file_path.to_string()).parse_program()?;
-    program
-        .sources
-        .insert(file_path.to_string(), source.to_string());
-    program.entry_file_path = file_path.to_string();
-    Ok(program)
+    let tokens = waluau_lexer::lex(source).map_err(|error| error.with_source(file_path, source))?;
+    parser::Parser::new(tokens, file_path.to_string())
+        .parse_program(source)
+        .map_err(|error| error.with_source(file_path, source))
 }
 
 #[cfg(test)]

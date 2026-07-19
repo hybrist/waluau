@@ -58,7 +58,8 @@ fn compile_program(
     wasm_file_name: &str,
     assets: &BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>,
 ) -> Result<CompileArtifacts, Diagnostic> {
-    let mut typed_program = waluau_hir::type_check_and_infer(&program)?;
+    let mut typed_program = waluau_hir::type_check_and_infer(&program)
+        .map_err(|error| resolve_diagnostic_source(error, &program))?;
     waluau_ast::resolve_symbols(&mut typed_program)?;
     let ir = waluau_ir::build(&typed_program)?;
     let emitted = waluau_codegen_wasm::emit(&ir)?;
@@ -69,6 +70,17 @@ fn compile_program(
         required_imports: emitted.required_imports,
         bytes_constants: emitted.bytes_constants,
     })
+}
+
+fn resolve_diagnostic_source(error: Diagnostic, program: &waluau_ast::Program) -> Diagnostic {
+    let file_path = error
+        .file_path()
+        .unwrap_or(&program.entry_file_path)
+        .to_string();
+    match program.sources.get(&file_path) {
+        Some(source) => error.with_source(file_path, source),
+        None => error.with_file_path_if_missing(file_path),
+    }
 }
 
 pub fn run() -> Result<(), Diagnostic> {
@@ -537,6 +549,36 @@ mod tests {
             wasm.starts_with(b"\0asm"),
             "compiled wasm should start with the wasm magic bytes"
         );
+        let wat = wasmprinter::print_bytes(&wasm).expect("wasm should print");
+        assert!(
+            wat.contains(r#"(import "waluau" "dom_window""#),
+            "value-returning require should call the dom_window host import:\n{wat}"
+        );
+    }
+
+    #[test]
+    fn compile_file_accepts_bare_dom_window_as_extern_dependency() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("app.walu");
+        fs::write(
+            &input_path,
+            r#"
+                require("dom:window")
+
+                function create_div(document: Document): Element
+                    return document:create_element("div")
+                end
+            "#,
+        )
+        .expect("app should write");
+
+        let wasm =
+            super::compile_file(&input_path).expect("bare DOM dependency require should compile");
+        let wat = wasmprinter::print_bytes(&wasm).expect("wasm should print");
+        assert!(
+            !wat.contains(r#"(import "waluau" "dom_window""#),
+            "extern-only dependency should not load the window value:\n{wat}"
+        );
     }
 
     #[test]
@@ -563,6 +605,71 @@ mod tests {
         assert!(
             wasm.starts_with(b"\0asm"),
             "compiled wasm should start with the wasm magic bytes"
+        );
+    }
+
+    #[test]
+    fn compile_file_resolves_vitest_virtual_module_as_bare_globals() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("math.test.walu");
+        fs::write(
+            &input_path,
+            r#"
+                require("waluau:vitest")
+
+                function add(a: i32, b: i32): i32
+                    return a + b
+                end
+
+                describe("add", function(): unit
+                    it("adds", function(): unit
+                        expect(add(2, 2)):toBe(4)
+                        expect(add(1, 1) == 2):toBeTruthy()
+                        expect("walu"):toContain("alu")
+                    end)
+                end)
+            "#,
+        )
+        .expect("test file should write");
+
+        let wasm = super::compile_file(&input_path).expect("vitest require should compile");
+        let wat = wasmprinter::print_bytes(&wasm).expect("wasm should print");
+        assert!(
+            wat.contains(r#"(import "waluau" "describe""#),
+            "describe should import as a host function:\n{wat}"
+        );
+        assert!(
+            wat.contains(r#"(import "waluau" "NumberExpectation.toBe""#),
+            "matcher methods should import under their extern type names:\n{wat}"
+        );
+        assert!(
+            wat.contains(&format!("(export \"{}\"", "__waluau_call_callback_unit")),
+            "test bodies need the () -> unit callback trampoline:\n{wat}"
+        );
+    }
+
+    #[test]
+    fn compile_file_resolves_vitest_namespace_binding() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("suite.test.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local t = require("waluau:vitest")
+
+                t.it("works through the namespace", function(): unit
+                    t.expect(21 * 2):toBe(42)
+                end)
+            "#,
+        )
+        .expect("test file should write");
+
+        let wasm =
+            super::compile_file(&input_path).expect("vitest namespace require should compile");
+        let wat = wasmprinter::print_bytes(&wasm).expect("wasm should print");
+        assert!(
+            wat.contains(r#"(import "waluau" "it""#),
+            "namespace members should resolve to the declared host imports:\n{wat}"
         );
     }
 
@@ -1031,6 +1138,43 @@ mod tests {
     }
 
     #[test]
+    fn cli_renders_inference_diagnostic_file_line_and_column() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("span-mismatch.walu");
+        let output_path = tempdir.path().join("span-mismatch.wasm");
+        let source = concat!(
+            "declare function accept(value: i32): unit\n",
+            "\n",
+            "function bad(): unit\n",
+            "    accept(\"wrong\")\n",
+            "end\n",
+        );
+        fs::write(&input_path, source).expect("fixture should write");
+
+        let error = super::run_with_args([
+            os(&input_path),
+            OsString::from("--output"),
+            os(&output_path),
+        ])
+        .expect_err("cli run should fail");
+
+        assert_eq!(
+            error.render(),
+            format!(
+                "{}:4:12: cannot implicitly convert string to i32",
+                input_path
+                    .canonicalize()
+                    .expect("fixture path should canonicalize")
+                    .display()
+            )
+        );
+        assert!(
+            !output_path.exists(),
+            "failed compilation must not write output"
+        );
+    }
+
+    #[test]
     fn detects_circular_imports() {
         let tempdir = tempdir().expect("tempdir should exist");
         fs::write(
@@ -1049,6 +1193,29 @@ mod tests {
         assert!(
             error.to_string().contains("circular module import"),
             "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn reports_non_string_require_argument_at_its_source_location() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("main.walu");
+        let source = "local lib = require(module_name)\n";
+        fs::write(&input_path, source).expect("main should write");
+        let canonical_path = input_path
+            .canonicalize()
+            .expect("main path should canonicalize");
+        let column = source.find("module_name").expect("argument should exist") + 1;
+
+        let error = super::compile_file(&input_path).expect_err("non-string require should fail");
+        assert_eq!(error.code(), Some("module/require-literal-path"));
+        assert_eq!(
+            error.render(),
+            format!(
+                "{}:1:{column}: require expects a string literal path, e.g. \
+                 require(\"./module\")",
+                canonical_path.display()
+            )
         );
     }
 

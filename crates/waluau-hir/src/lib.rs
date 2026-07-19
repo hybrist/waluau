@@ -3104,7 +3104,8 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
                 .iter()
                 .map(|param| param.ty.clone())
                 .collect();
-            match infer_top_level_function_return_type(function, &fn_signatures, &unresolved_names)?
+            match infer_top_level_function_return_type(function, &fn_signatures, &unresolved_names)
+                .map_err(|error| error.with_file_path_if_missing(function.file_path.clone()))?
             {
                 Some(ret) => {
                     typed.functions[idx].return_type = Some(ret.clone());
@@ -3138,11 +3139,14 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
         .iter_mut()
         .find(|function| function.name.to_string() == "__waluau_top_level_init")
     {
-        resolve_implicit_self_functions(&mut top_level_init.body, &mut fn_signatures)?;
+        let file_path = top_level_init.file_path.clone();
+        resolve_implicit_self_functions(&mut top_level_init.body, &mut fn_signatures)
+            .map_err(|error| error.with_file_path_if_missing(file_path))?;
     }
 
     for function in &typed.functions {
-        check_function(function, &fn_signatures, &HashSet::new())?;
+        check_function(function, &fn_signatures, &HashSet::new())
+            .map_err(|error| error.with_file_path_if_missing(function.file_path.clone()))?;
     }
 
     for function in &mut typed.functions {
@@ -3157,7 +3161,8 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
             })
             .collect::<HashMap<_, _>>();
         let active = active_type_param_set(&function.type_params);
-        annotate_inferred_stmt_locals(&mut function.body, &mut scope, &fn_signatures, &active)?;
+        annotate_inferred_stmt_locals(&mut function.body, &mut scope, &fn_signatures, &active)
+            .map_err(|error| error.with_file_path_if_missing(function.file_path.clone()))?;
     }
 
     annotate_resolved_extern_members(&mut typed, &fn_signatures)?;

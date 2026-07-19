@@ -22,15 +22,24 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
   const [exportsList, setExportsList] = useState([]);
   const [initLogs, setInitLogs] = useState([]);
   const [funcInputs, setFuncInputs] = useState({});
-  const [autoRun, setAutoRun] = useState(true);
+  const [autoRun, setAutoRunEnabled] = useState(true);
+  const [autoResults, setAutoResults] = useState({});
   const [manualResults, setManualResults] = useState({});
   const [usesDomOutput, setUsesDomOutput] = useState(false);
   const [domMountVersion, setDomMountVersion] = useState(0);
   const domOutputRootRef = useRef(null);
+  const autoExecutionRef = useRef(new Map());
 
   const setDomOutputRoot = useCallback((node) => {
+    if (domOutputRootRef.current === node) return;
     domOutputRootRef.current = node;
     setDomMountVersion((version) => version + 1);
+  }, []);
+
+  const setAutoRun = useCallback((enabled) => {
+    autoExecutionRef.current.clear();
+    setAutoResults({});
+    setAutoRunEnabled(enabled);
   }, []);
 
   // Load compiler module
@@ -110,6 +119,8 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
           setRunInstance(null);
           setRunError(null);
           setExportsList([]);
+          autoExecutionRef.current.clear();
+          setAutoResults({});
           setManualResults({});
           setInitLogs([]);
           setUsesDomOutput(false);
@@ -120,6 +131,8 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
         setRunInstance(null);
         setRunError(null);
         setExportsList([]);
+        autoExecutionRef.current.clear();
+        setAutoResults({});
         setManualResults({});
         setInitLogs([]);
       }
@@ -203,6 +216,8 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
         if (active) {
           setRunInstance(instance);
           setRunError(null);
+          autoExecutionRef.current.clear();
+          setAutoResults({});
           setManualResults({});
           setInitLogs([...capturedInitLogs]);
         }
@@ -212,6 +227,8 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
           setRunInstance(null);
           setRunError(classifyWasmModuleError(err, phase, requiresWasmGc));
           setExportsList([]);
+          autoExecutionRef.current.clear();
+          setAutoResults({});
           setManualResults({});
           setInitLogs(capturedInitLogs);
           setUsesDomOutput(moduleUsesDomOutput);
@@ -225,6 +242,49 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
       active = false;
     };
   }, [outputWasmBytes, requiresWasmGc, output, domMountVersion, assetManifest]);
+
+  // Consumers request auto-run only for functions they render. The keyed cache
+  // makes overlapping RunTab/InlineRunner requests and StrictMode effect replay
+  // idempotent without executing unrelated or invisible exports.
+  const requestAutoRun = useCallback((funcName, params, richParams, richReturns) => {
+    if (!autoRun || !runInstance) return;
+
+    const inputState = funcInputs[funcName];
+    const previous = autoExecutionRef.current.get(funcName);
+    if (
+      previous?.instance === runInstance &&
+      previous.inputState === inputState &&
+      previous.params === params &&
+      previous.richParams === richParams &&
+      previous.richReturns === richReturns
+    ) {
+      return;
+    }
+
+    const inputs =
+      inputState || (richParams || params).map(getDefaultParamValue);
+    const record = {
+      instance: runInstance,
+      inputState,
+      params,
+      richParams,
+      richReturns,
+      result: executeCall(
+        runInstance,
+        funcName,
+        params,
+        richParams,
+        richReturns,
+        inputs,
+        output?.tagIds
+      ),
+    };
+    autoExecutionRef.current.set(funcName, record);
+    queueMicrotask(() => {
+      if (autoExecutionRef.current.get(funcName) !== record) return;
+      setAutoResults((current) => ({ ...current, [funcName]: record }));
+    });
+  }, [autoRun, runInstance, funcInputs, output?.tagIds]);
 
   const handleInputChange = (funcName, paramIndex, value) => {
     setFuncInputs(prev => {
@@ -259,8 +319,17 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
 
   const getResult = (funcName, params, richParams, richReturns) => {
     if (autoRun) {
-      const inputs = funcInputs[funcName] || (richParams || params).map(getDefaultParamValue);
-      return executeCall(runInstance, funcName, params, richParams, richReturns, inputs, output?.tagIds);
+      const record = autoResults[funcName];
+      if (
+        record?.instance === runInstance &&
+        record.inputState === funcInputs[funcName] &&
+        record.params === params &&
+        record.richParams === richParams &&
+        record.richReturns === richReturns
+      ) {
+        return record.result;
+      }
+      return { isIdle: true };
     } else {
       return manualResults[funcName] || { isIdle: true };
     }
@@ -285,6 +354,7 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
     handleInputChange,
     handleRecordFieldChange,
     handleManualRun,
+    requestAutoRun,
     getResult
   };
 }

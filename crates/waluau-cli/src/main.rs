@@ -4,7 +4,7 @@ fn main() -> ExitCode {
     match waluau_driver::run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("{error}");
+            eprintln!("{}", error.render());
             ExitCode::FAILURE
         }
     }

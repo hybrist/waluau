@@ -206,6 +206,156 @@ fn lowers_nullable_options_records_and_missing_fields() {
 }
 
 #[test]
+fn lowers_scalar_string_byte_as_nullable_without_changing_host_abi() {
+    let source = r#"
+        declare function string_byte(value: string, index: i32): i32
+
+        function missing(): bool
+            return string.byte("", 1) == nil
+        end
+
+        function present(): bool
+            return string.byte("A", 1) == 65
+        end
+
+        function numeric(value: string): i32
+            local byte: i32 = string.byte(value, 1)
+            return byte
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+
+    let mut string_byte_calls = 0;
+    let mut nullable_nulls = 0;
+    let mut boxes = 0;
+    let mut unboxes = 0;
+    for function in &module.functions {
+        for block in function.blocks.values() {
+            for (_, instruction) in &block.instructions {
+                match instruction {
+                    Instruction::HostCall {
+                        name, return_type, ..
+                    } if name == "string_byte" => {
+                        string_byte_calls += 1;
+                        assert_eq!(
+                            return_type,
+                            &Type::Numeric(NumericType::I32),
+                            "string_byte host ABI must remain i32"
+                        );
+                    }
+                    Instruction::Null {
+                        ty: Type::Nullable(inner),
+                    } if **inner == Type::Numeric(NumericType::I32) => nullable_nulls += 1,
+                    Instruction::Cast {
+                        from: Type::Numeric(NumericType::I32),
+                        to: Type::Nullable(inner),
+                        ..
+                    } if **inner == Type::Numeric(NumericType::I32) => boxes += 1,
+                    Instruction::Cast {
+                        from: Type::Nullable(inner),
+                        to: Type::Numeric(NumericType::I32),
+                        ..
+                    } if **inner == Type::Numeric(NumericType::I32) => unboxes += 1,
+                    _ => {}
+                }
+            }
+        }
+    }
+    assert_eq!(string_byte_calls, 3);
+    assert_eq!(nullable_nulls, 3);
+    assert_eq!(boxes, 3);
+    assert_eq!(
+        unboxes, 2,
+        "numeric comparison and annotated numeric use should both unbox"
+    );
+}
+
+#[test]
+fn clips_string_byte_ranges_and_adjusts_empty_ranges_to_nil() {
+    let source = r#"
+        declare function string_byte(value: string, index: i32): i32
+        declare function string_char2(first: i32, second: i32): string
+
+        function empty_high(): bool
+            return string.byte("hi", 9, 10) == nil
+        end
+
+        function empty_inverted(): bool
+            return string.byte("hi", 2, 1) ~= nil
+        end
+
+        function clipped(): string
+            return string.char(string.byte("hi", 1, 5))
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+
+    for function in &module.functions {
+        let mut constants: BTreeMap<ValueId, i32> = BTreeMap::new();
+        let mut byte_indices = Vec::new();
+        let mut bool_consts = Vec::new();
+        for block in function.blocks.values() {
+            for (value, instruction) in &block.instructions {
+                match instruction {
+                    Instruction::Number {
+                        ty: NumericType::I32,
+                        literal,
+                    } => {
+                        if let Ok(parsed) = literal.raw.parse::<i32>() {
+                            constants.insert(*value, parsed);
+                        }
+                    }
+                    Instruction::HostCall { name, args, .. } if name == "string_byte" => {
+                        byte_indices.push(constants.get(&args[1]).copied());
+                    }
+                    Instruction::Bool(flag) => bool_consts.push(*flag),
+                    _ => {}
+                }
+            }
+        }
+        match function.name.as_str() {
+            "empty_high" => {
+                assert!(
+                    byte_indices.is_empty(),
+                    "statically empty range must emit no host calls:\n{}",
+                    function.dump()
+                );
+                assert!(
+                    bool_consts.contains(&true),
+                    "empty range == nil should be statically true:\n{}",
+                    function.dump()
+                );
+            }
+            "empty_inverted" => {
+                assert!(
+                    byte_indices.is_empty(),
+                    "statically empty range must emit no host calls:\n{}",
+                    function.dump()
+                );
+                assert!(
+                    bool_consts.contains(&false),
+                    "empty range ~= nil should be statically false:\n{}",
+                    function.dump()
+                );
+            }
+            "clipped" => {
+                assert_eq!(
+                    byte_indices,
+                    vec![Some(1), Some(2)],
+                    "range must clip to the string bounds:\n{}",
+                    function.dump()
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+#[test]
 fn lowers_if_expression_with_phi_result() {
     let source = r#"
         function entry(flag: bool, x: i32, y: i32): i32
@@ -2640,4 +2790,30 @@ fn lowers_length_of_record_field_array_in_numeric_context() {
             .iter()
             .any(|(_, instruction)| matches!(instruction, Instruction::ArrayLen { .. }))
     }));
+}
+
+#[test]
+fn preserves_trailing_vararg_packs_in_function_returns() {
+    let source = r#"
+        function only(...)
+            return ...
+        end
+
+        function prefixed(a, ...)
+            return a, ...
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+
+    assert_eq!(
+        module.functions[0].return_type,
+        Type::Variadic(Box::new(Type::Unknown))
+    );
+    assert_eq!(
+        module.functions[1].return_type,
+        Type::Multi(vec![Type::Unknown, Type::Variadic(Box::new(Type::Unknown)),])
+    );
 }

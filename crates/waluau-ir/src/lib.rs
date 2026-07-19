@@ -27,6 +27,8 @@ const TABLE_REMOVE: &str = "table.remove";
 const TABLE_SORT: &str = "table.sort";
 const TABLE_GETN: &str = "table.getn";
 const TABLE_PACK: &str = "table.pack";
+const TABLE_CREATE: &str = "table.create";
+const TABLE_UNPACK: &str = "table.unpack";
 const TYPE: &str = "type";
 const TYPEOF: &str = "typeof";
 const TO_STRING: &str = "tostring";
@@ -95,6 +97,97 @@ fn inference_diagnostic(
         .with_code(code)
         .with_category(category)
         .with_action(action)
+}
+
+fn expr_i32_literal(expr: &Expr) -> Option<i32> {
+    match expr {
+        Expr::Number(number, _) => number.raw.replace('_', "").parse::<i32>().ok(),
+        Expr::Unary {
+            op: UnaryOp::Neg,
+            expr,
+            ..
+        } => expr_i32_literal(expr).and_then(i32::checked_neg),
+        _ => None,
+    }
+}
+
+/// Static 0-based element indices produced by a `table.unpack` call, from
+/// (in priority order) literal bounds, a statically sized array argument, or
+/// the expected multi-value arity. Waluau arrays are 0-based, so the bounds
+/// are too: the defaults are `first = 0` and `last = #a - 1`. Mirrors the
+/// HIR-side helper of the same name.
+fn table_unpack_static_indices(
+    args: &[Expr],
+    expected: Option<&Type>,
+) -> Result<Vec<i32>, Diagnostic> {
+    let start = match args.get(1) {
+        None => 0,
+        Some(arg) => expr_i32_literal(arg).ok_or_else(|| {
+            Diagnostic::new(
+                "table.unpack requires literal bounds (runtime-variable table.unpack is not supported yet)",
+            )
+        })?,
+    };
+    if start < 0 {
+        return Err(Diagnostic::new(
+            "table.unpack bounds are 0-based and must be non-negative",
+        ));
+    }
+    if let Some(last) = args.get(2) {
+        let end = expr_i32_literal(last).ok_or_else(|| {
+            Diagnostic::new(
+                "table.unpack requires literal bounds (runtime-variable table.unpack is not supported yet)",
+            )
+        })?;
+        return Ok(if end < start {
+            Vec::new()
+        } else {
+            (start..=end).collect()
+        });
+    }
+    if let Some(len) = expr_static_array_len(&args[0]) {
+        return Ok((start..len).collect());
+    }
+    if let Some(Type::Multi(types)) = expected {
+        let count = i32::try_from(types.len())
+            .map_err(|_| Diagnostic::new("table.unpack expected multi-value arity is too large"))?;
+        return Ok((start..start + count).collect());
+    }
+    Err(Diagnostic::new(
+        "table.unpack requires literal bounds, a statically sized array argument, or an \
+         expected multi-value arity (runtime-variable table.unpack is not supported yet)",
+    ))
+}
+
+/// Statically-known length of an array expression: an array literal without
+/// multi-value elements, or a direct `table.create(count, ...)` call with a
+/// literal count.
+fn expr_static_array_len(expr: &Expr) -> Option<i32> {
+    match expr {
+        Expr::ArrayLiteral { elements, .. } => {
+            // A trailing `...` or call could expand to multiple values, so
+            // only literals made of single-value elements have a static length.
+            if elements.iter().any(|element| {
+                matches!(
+                    element,
+                    Expr::Vararg(_) | Expr::Call { .. } | Expr::MethodCall { .. }
+                )
+            }) {
+                return None;
+            }
+            i32::try_from(elements.len()).ok()
+        }
+        Expr::Call { callee, args, .. } => match callee.as_ref() {
+            Expr::Field { base, name, .. }
+                if name == "create"
+                    && matches!(base.as_ref(), Expr::Name(namespace, _, _) if namespace == "table") =>
+            {
+                expr_i32_literal(args.first()?)
+            }
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 mod captures {

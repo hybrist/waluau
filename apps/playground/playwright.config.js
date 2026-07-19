@@ -12,9 +12,11 @@ if (!process.env.PLAYWRIGHT_BROWSERS_PATH && existsSync('/opt/pw-browsers')) {
 }
 
 const reuseExistingServer = !!process.env.REUSE_EXISTING_SERVER;
+const skipBuild = !!process.env.PLAYWRIGHT_SKIP_BUILD;
 const serverPort = reuseExistingServer
   ? 4173
   : process.env.PLAYGROUND_PORT || (await getPort());
+const previewCommand = `pnpm preview --host=127.0.0.1 --strictPort --port=${serverPort}`;
 
 export default defineConfig({
   testDir: './tests',
@@ -28,10 +30,11 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
-  // Assumes `pnpm build` has already been run.  Preview serves the built dist
-  // without rebuilding Rust/WASM, so startup is fast.
+  // Build by default so a local test run cannot preview an ignored, stale dist
+  // from another checkout state. CI sets PLAYWRIGHT_SKIP_BUILD after its
+  // explicit production build to avoid doing the same work twice.
   webServer: {
-    command: `pnpm preview --host=127.0.0.1 --strictPort --port=${serverPort}`,
+    command: skipBuild ? previewCommand : `pnpm build && ${previewCommand}`,
     env: {
       ...process.env,
       PLAYWRIGHT_TEST: '1',
@@ -41,7 +44,7 @@ export default defineConfig({
     },
     stdout: 'pipe',
     reuseExistingServer,
-    timeout: 10_000,
+    timeout: skipBuild ? 10_000 : 120_000,
     wait: {
       stdout: /Local:\s+http:\/\/127.0.0.1:(?<PLAYGROUND_PORT>\d+)\//,
     },

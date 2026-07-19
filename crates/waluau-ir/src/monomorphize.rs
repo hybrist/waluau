@@ -11,6 +11,7 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
         Type::Nullable(inner) => Type::Nullable(Box::new(substitute_type(inner, subst))),
         Type::ExternSubtype(parent) => Type::ExternSubtype(Box::new(substitute_type(parent, subst))),
         Type::Array(inner) => Type::Array(Box::new(substitute_type(inner, subst))),
+        Type::Variadic(inner) => Type::Variadic(Box::new(substitute_type(inner, subst))),
         Type::Multi(types) => {
             Type::Multi(types.iter().map(|ty| substitute_type(ty, subst)).collect())
         }
@@ -43,6 +44,7 @@ fn contains_type_param(ty: &Type) -> bool {
         Type::ExternSubtype(parent) => contains_type_param(parent.as_ref()),
         Type::Nullable(inner) => contains_type_param(inner.as_ref()),
         Type::Array(inner) => contains_type_param(inner.as_ref()),
+        Type::Variadic(inner) => contains_type_param(inner.as_ref()),
         Type::Record(fields) => fields.values().any(contains_type_param),
         Type::Function {
             params,
@@ -1426,7 +1428,7 @@ impl<'a> Monomorphizer<'a> {
                 ..
             } => {
                 if let Some(name) = builtin_name(callee) {
-                    if let Some(ty) = self.infer_builtin_call_type(&name, args)? {
+                    if let Some(ty) = self.infer_builtin_call_type(&name, args, subst, types)? {
                         return Ok(ty);
                     }
                 }
@@ -1634,7 +1636,7 @@ impl<'a> Monomorphizer<'a> {
                     Diagnostic::new(format!("indexing non-array type '{base_ty}'"))
                 })
             }
-            Expr::Vararg(..) => Ok(Type::Array(Box::new(Type::Unknown))),
+            Expr::Vararg(..) => Ok(Type::Variadic(Box::new(Type::Unknown))),
         }
     }
 
@@ -1750,7 +1752,37 @@ impl<'a> Monomorphizer<'a> {
         &self,
         name: &str,
         args: &[Expr],
+        subst: &HashMap<String, Type>,
+        types: &HashMap<SymbolId, Type>,
     ) -> Result<Option<Type>, Diagnostic> {
+        match name {
+            crate::TABLE_CREATE => {
+                let element_ty = match args.get(1) {
+                    Some(value) => self.infer_expr_type(value, subst, types)?,
+                    None => Type::Unknown,
+                };
+                return Ok(Some(Type::Array(Box::new(element_ty))));
+            }
+            crate::TABLE_UNPACK => {
+                let element_ty = match args.first() {
+                    Some(array) => match self.infer_expr_type(array, subst, types)? {
+                        Type::Array(element) => *element,
+                        _ => Type::Unknown,
+                    },
+                    None => Type::Unknown,
+                };
+                // Without an expected type, the arity is only known for
+                // literal bounds or a statically sized array; the lowering
+                // reconstructs the expected-arity form from binding
+                // annotations, so an unknown count here reports zero values
+                // (which only annotated bindings can consume anyway).
+                let count = crate::table_unpack_static_indices(args, None)
+                    .map(|indices| indices.len())
+                    .unwrap_or(0);
+                return Ok(Some(Type::Multi(vec![element_ty; count])));
+            }
+            _ => {}
+        }
         match name {
             "print" | "assert" | "error" => Ok(Some(Type::Unit)),
             "pcall" => Ok(Some(Type::Multi(vec![Type::Bool, Type::Unknown]))),
@@ -1759,7 +1791,11 @@ impl<'a> Monomorphizer<'a> {
             "coroutine.resume" => Ok(Some(Type::Multi(vec![Type::Bool, Type::Unknown]))),
             "coroutine.close" => Ok(Some(Type::Bool)),
             "coroutine.await_promise" | crate::PROMISE_AWAIT => Ok(Some(Type::Unknown)),
-            "string.len" | "string.byte" => Ok(Some(Type::Numeric(waluau_ast::NumericType::I32))),
+            "string.len" => Ok(Some(Type::Numeric(waluau_ast::NumericType::I32))),
+            "string.byte" if args.len() < 3 => Ok(Some(Type::Nullable(Box::new(Type::Numeric(
+                waluau_ast::NumericType::I32,
+            ))))),
+            "string.byte" => Ok(Some(Type::Numeric(waluau_ast::NumericType::I32))),
             "string.find" => Ok(Some(Type::Multi(waluau_ast::string_find_result_types(
                 &args
                     .get(1)
@@ -1790,6 +1826,7 @@ fn mangle_type(ty: &Type) -> String {
         Type::Bool => "$bbool".to_string(),
         Type::String => "$sstring".to_string(),
         Type::Array(inner) => format!("$a{}", mangle_type(inner)),
+        Type::Variadic(inner) => format!("$v{}", mangle_type(inner)),
         Type::Multi(types) => format!(
             "$m{}",
             types.iter().map(mangle_type).collect::<Vec<_>>().join("")
