@@ -1465,6 +1465,119 @@ fn emits_valid_wasm_for_pcall_discriminated_union() {
 }
 
 #[test]
+fn emits_valid_wasm_for_pcall_catches_faults_fixture() {
+    let source = include_str!("../../../conformance/pcall_catches_faults.walu");
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+}
+
+#[test]
+fn checked_array_access_throws_lua_error_instead_of_trapping() {
+    let source = r#"
+        function read(xs: {i32}, index: i32): i32
+            return xs[index]
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        wat.contains("array index out of bounds"),
+        "bounds failure should throw a Lua-style error message:\n{wat}"
+    );
+    assert!(
+        wat.contains("throw"),
+        "bounds failure should throw the Lua error tag:\n{wat}"
+    );
+    assert!(
+        !wat.contains("unreachable"),
+        "checked array access should not trap:\n{wat}"
+    );
+}
+
+#[test]
+fn checked_integer_division_throws_lua_error_instead_of_trapping() {
+    let source = r#"
+        function ratio(a: i32, b: i32): i32
+            return a // b
+        end
+
+        function remainder(a: i32, b: i32): i32
+            return a % b
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        wat.contains("attempt to perform 'n//0'"),
+        "integer floor division should carry the Lua 5.4 zero-divisor message:\n{wat}"
+    );
+    assert!(
+        wat.contains("attempt to perform 'n%0'"),
+        "integer modulo should carry the Lua 5.4 zero-divisor message:\n{wat}"
+    );
+    assert!(
+        wat.contains("throw"),
+        "zero divisors should throw the Lua error tag:\n{wat}"
+    );
+}
+
+#[test]
+fn pcall_catches_foreign_exceptions_and_exports_the_error_tag() {
+    let source = r#"
+        local ok: bool, value: unknown = pcall(function(): f64
+            return 1.0
+        end)
+        assert(ok)
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        wat.contains("catch_all"),
+        "pcall should also catch foreign (host) exceptions:\n{wat}"
+    );
+    assert!(
+        wat.contains("uncaught host exception"),
+        "foreign exceptions should map to a fallback error payload:\n{wat}"
+    );
+    assert!(
+        wat.contains("(export \"__waluau_error\" (tag"),
+        "the Lua error tag should be exported for host-thrown errors:\n{wat}"
+    );
+}
+
+#[test]
 fn assert_failure_message_throws_lua_error_tag() {
     let source = r#"
         function run(): unit

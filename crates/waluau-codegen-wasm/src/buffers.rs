@@ -194,14 +194,18 @@ pub(crate) fn emit_buffer_len_from_stack(out: &mut Function) {
     }));
 }
 
-/// Emit the bounds check `index u>= len → trap` followed by the element
+/// Emit the bounds check `index u>= len → throw` followed by the element
 /// address computation, leaving `ptr + (index << log2)` on the stack.
 /// `buffer_local`/`index_local` are the operands' local slots.
+/// `oob_message_global` is the string-constant global holding the
+/// out-of-bounds error message thrown with the Lua error tag (catchable by
+/// `pcall`, unlike the trap this used to be).
 pub(crate) fn emit_buffer_element_address(
     out: &mut Function,
     kind: TypedArrayKind,
     buffer_local: u32,
     index_local: u32,
+    oob_message_global: u32,
 ) {
     // Unsigned compare rejects negative indices as huge values.
     out.instruction(&Instruction::LocalGet(index_local));
@@ -209,7 +213,9 @@ pub(crate) fn emit_buffer_element_address(
     emit_buffer_len_from_stack(out);
     out.instruction(&Instruction::I32GeU);
     out.instruction(&Instruction::If(BlockType::Empty));
-    out.instruction(&Instruction::Unreachable);
+    out.instruction(&Instruction::GlobalGet(oob_message_global));
+    out.instruction(&Instruction::AnyConvertExtern);
+    out.instruction(&Instruction::Throw(crate::ERROR_TAG_INDEX));
     out.instruction(&Instruction::End);
 
     out.instruction(&Instruction::LocalGet(buffer_local));
