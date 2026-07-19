@@ -2388,3 +2388,57 @@ mod definitions {
         assert!(inner.scope_end < outer_pos);
     }
 }
+
+#[test]
+fn definitions_record_initializer_hints_and_function_signature_types() {
+    use crate::{DefinitionKind, InitializerHint, parse_with_recovery};
+    let source = "function new(): i32\n    return 1\nend\nlocal a = new()\nlocal b = game.new()\nlocal c = state.middle[0]\nlocal d = deck[0]\nlocal e = s:upper()\n";
+    let outcome = parse_with_recovery(source, "hints.walu");
+    let find = |name: &str| {
+        outcome
+            .definitions
+            .iter()
+            .find(|definition| definition.name == name)
+            .unwrap_or_else(|| panic!("definition '{name}' should be recorded"))
+    };
+    let new_def = find("new");
+    assert_eq!(new_def.kind, DefinitionKind::Function);
+    assert!(
+        matches!(&new_def.ty, Some(waluau_ast::Type::Function { .. })),
+        "{:?}",
+        new_def.ty
+    );
+    assert_eq!(
+        find("a").initializer,
+        Some(InitializerHint::Call {
+            callee: "new".to_string()
+        })
+    );
+    assert_eq!(
+        find("b").initializer,
+        Some(InitializerHint::Call {
+            callee: "game.new".to_string()
+        })
+    );
+    assert_eq!(
+        find("c").initializer,
+        Some(InitializerHint::Field {
+            base: "state".to_string(),
+            field: "middle".to_string(),
+            indexed: true
+        })
+    );
+    assert_eq!(
+        find("d").initializer,
+        Some(InitializerHint::Index {
+            base: "deck".to_string()
+        })
+    );
+    assert_eq!(
+        find("e").initializer,
+        Some(InitializerHint::MethodCall {
+            receiver: "s".to_string(),
+            method: "upper".to_string()
+        })
+    );
+}

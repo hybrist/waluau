@@ -325,22 +325,284 @@ enum Resolved {
     Module { file: PathBuf, def: DefinitionSite },
     /// Hover-only information with no definition site.
     Info(String),
+    /// A record field of a named type: hover text plus the declaring type
+    /// declaration as the navigation target.
+    MemberOfType {
+        summary: String,
+        declared_by: Box<Resolved>,
+    },
 }
 
 /// Exported members of a required module: its file-visible functions.
 fn module_exports(file: &Path, load: Loader) -> Vec<DefinitionSite> {
-    let Some(text) = load(file) else {
+    let Some(scope) = module_scope(file, load) else {
         return Vec::new();
     };
-    waluau_parser::parse_with_recovery(&text, &file.to_string_lossy())
+    scope
         .definitions
-        .into_iter()
+        .iter()
         .filter(|definition| {
             definition.kind == DefinitionKind::Function
                 && !definition.name.contains('.')
                 && !definition.name.contains(':')
         })
+        .cloned()
         .collect()
+}
+
+/// How deep the static-type engine chases initializer/type-name chains
+/// before giving up (guards against pathological or cyclic definitions).
+const TYPE_CHASE_DEPTH: u8 = 12;
+
+/// The document whose definition table a name resolves in.
+#[derive(Clone)]
+struct TypeScope {
+    file: PathBuf,
+    /// True for the builtins prelude: definitions with no navigable file.
+    prelude: bool,
+    definitions: std::rc::Rc<Vec<DefinitionSite>>,
+}
+
+impl TypeScope {
+    fn current(index: &DocumentIndex, path: &Path) -> Self {
+        Self {
+            file: path.to_path_buf(),
+            prelude: false,
+            definitions: std::rc::Rc::new(index.definitions.clone()),
+        }
+    }
+
+    fn prelude() -> Self {
+        Self {
+            file: PathBuf::from("builtin:prelude"),
+            prelude: true,
+            definitions: std::rc::Rc::new(prelude_definitions().to_vec()),
+        }
+    }
+}
+
+fn module_scope(file: &Path, load: Loader) -> Option<TypeScope> {
+    let text = load(file)?;
+    let definitions =
+        waluau_parser::parse_with_recovery(&text, &file.to_string_lossy()).definitions;
+    Some(TypeScope {
+        file: file.to_path_buf(),
+        prelude: false,
+        definitions: std::rc::Rc::new(definitions),
+    })
+}
+
+/// A definition found in some scope, mapped to a [`Resolved`] target against
+/// the queried document.
+fn resolved_in_scope(def: &DefinitionSite, scope: &TypeScope, current: &Path) -> Resolved {
+    if scope.prelude {
+        Resolved::Prelude(def.clone())
+    } else if scope.file == current {
+        Resolved::File(def.clone())
+    } else {
+        Resolved::Module {
+            file: scope.file.clone(),
+            def: def.clone(),
+        }
+    }
+}
+
+/// Resolve a value member path (`new` or `game.new`) to its definition:
+/// bare names in the scope (then the prelude), dotted names through a
+/// require alias's module or a namespace definition.
+fn resolve_value_path(
+    path_str: &str,
+    offset: u32,
+    scope: &TypeScope,
+    load: Loader,
+) -> Option<(DefinitionSite, TypeScope)> {
+    if let Some((alias, member)) = path_str.split_once('.') {
+        if let Some(alias_def) = resolve_name(&scope.definitions, alias, offset)
+            && let Some(raw) = &alias_def.require_path
+            && let Some(file) = resolve_require_path(&scope.file, raw)
+            && let Some(module) = module_scope(&file, load)
+        {
+            let def = module
+                .definitions
+                .iter()
+                .find(|definition| definition.name == member)?
+                .clone();
+            return Some((def, module));
+        }
+        // A namespace member (`math.abs`, dot-named `State.new`).
+        if let Some(def) = scope
+            .definitions
+            .iter()
+            .find(|definition| definition.name == path_str)
+        {
+            return Some((def.clone(), scope.clone()));
+        }
+        let prelude = TypeScope::prelude();
+        let def = prelude
+            .definitions
+            .iter()
+            .find(|definition| definition.name == path_str)?
+            .clone();
+        return Some((def, prelude));
+    }
+    if let Some(def) = resolve_name(&scope.definitions, path_str, offset) {
+        return Some((def.clone(), scope.clone()));
+    }
+    let prelude = TypeScope::prelude();
+    let def = prelude
+        .definitions
+        .iter()
+        .find(|definition| definition.name == path_str)?
+        .clone();
+    Some((def, prelude))
+}
+
+/// A record type's fields plus the type declaration that provided them (for
+/// go-to-definition on field names).
+struct RecordInfo {
+    fields: std::collections::BTreeMap<String, Type>,
+    declared_by: Option<(DefinitionSite, TypeScope)>,
+}
+
+/// Split a possibly module-qualified type name (`game.State`) into the local
+/// type name and the scope it resolves in.
+fn type_name_scope(name: &str, scope: &TypeScope, load: Loader) -> Option<(String, TypeScope)> {
+    if let Some((alias, member)) = name.split_once('.') {
+        let alias_def = scope
+            .definitions
+            .iter()
+            .find(|definition| definition.name == alias && definition.require_path.is_some())?;
+        let raw = alias_def.require_path.as_ref()?;
+        let file = resolve_require_path(&scope.file, raw)?;
+        let module = module_scope(&file, load)?;
+        Some((member.to_string(), module))
+    } else {
+        Some((name.to_string(), scope.clone()))
+    }
+}
+
+/// Follow a type to its record shape, resolving `Named` types through type
+/// declarations (possibly in a required module).
+fn resolve_type_to_record(
+    ty: &Type,
+    scope: &TypeScope,
+    load: Loader,
+    depth: u8,
+) -> Option<RecordInfo> {
+    if depth == 0 {
+        return None;
+    }
+    match ty {
+        Type::Record(fields) => Some(RecordInfo {
+            fields: fields.clone(),
+            declared_by: None,
+        }),
+        Type::Opaque { ty: inner, .. } | Type::Nullable(inner) => {
+            resolve_type_to_record(inner, scope, load, depth - 1)
+        }
+        Type::Named { name, .. } => {
+            let (type_name, type_scope) = type_name_scope(name, scope, load)?;
+            let type_def = type_scope
+                .definitions
+                .iter()
+                .find(|definition| {
+                    definition.kind == DefinitionKind::TypeName && definition.name == type_name
+                })?
+                .clone();
+            let inner = type_def.ty.clone()?;
+            let mut info = resolve_type_to_record(&inner, &type_scope, load, depth - 1)?;
+            if info.declared_by.is_none() {
+                info.declared_by = Some((type_def, type_scope));
+            }
+            Some(info)
+        }
+        _ => None,
+    }
+}
+
+/// A method-style member (`T:m` / `T.m`) of a named type, looked up in the
+/// scope the type is declared in.
+fn named_type_member(
+    ty: &Type,
+    member: &str,
+    scope: &TypeScope,
+    load: Loader,
+) -> Option<(DefinitionSite, TypeScope)> {
+    let Type::Named { name, .. } = ty else {
+        return None;
+    };
+    let (type_name, type_scope) = type_name_scope(name, scope, load)?;
+    let method = format!("{type_name}:{member}");
+    let dotted = format!("{type_name}.{member}");
+    let def = type_scope
+        .definitions
+        .iter()
+        .find(|definition| definition.name == method || definition.name == dotted)?
+        .clone();
+    Some((def, type_scope))
+}
+
+/// The static type of a definition's value: its annotation when present,
+/// otherwise the chased shape of its initializer (`local state = game.new()`
+/// gets `new`'s declared return type). Returns the type plus the scope its
+/// type names resolve in.
+fn definition_static_type(
+    def: &DefinitionSite,
+    scope: &TypeScope,
+    load: Loader,
+    depth: u8,
+) -> Option<(Type, TypeScope)> {
+    if depth == 0 {
+        return None;
+    }
+    if let Some(ty) = &def.ty {
+        return Some((ty.clone(), scope.clone()));
+    }
+    let at = def.visible_from;
+    match def.initializer.as_ref()? {
+        waluau_parser::InitializerHint::Call { callee } => {
+            let (function_def, function_scope) = resolve_value_path(callee, at, scope, load)?;
+            let Some(Type::Function { return_type, .. }) = function_def.ty else {
+                return None;
+            };
+            Some((*return_type, function_scope))
+        }
+        waluau_parser::InitializerHint::MethodCall { receiver, method } => {
+            let receiver_def = resolve_name(&scope.definitions, receiver, at)?.clone();
+            let (receiver_ty, receiver_scope) =
+                definition_static_type(&receiver_def, scope, load, depth - 1)?;
+            let (method_def, method_scope) =
+                named_type_member(&receiver_ty, method, &receiver_scope, load)?;
+            let Some(Type::Function { return_type, .. }) = method_def.ty else {
+                return None;
+            };
+            Some((*return_type, method_scope))
+        }
+        waluau_parser::InitializerHint::Field {
+            base,
+            field,
+            indexed,
+        } => {
+            let base_def = resolve_name(&scope.definitions, base, at)?.clone();
+            let (base_ty, base_scope) = definition_static_type(&base_def, scope, load, depth - 1)?;
+            let record = resolve_type_to_record(&base_ty, &base_scope, load, depth - 1)?;
+            let field_scope = record
+                .declared_by
+                .as_ref()
+                .map(|(_, scope)| scope.clone())
+                .unwrap_or(base_scope);
+            let mut ty = record.fields.get(field)?.clone();
+            if *indexed {
+                ty = ty.element_type()?;
+            }
+            Some((ty, field_scope))
+        }
+        waluau_parser::InitializerHint::Index { base } => {
+            let base_def = resolve_name(&scope.definitions, base, at)?.clone();
+            let (base_ty, base_scope) = definition_static_type(&base_def, scope, load, depth - 1)?;
+            Some((base_ty.element_type()?, base_scope))
+        }
+    }
 }
 
 fn resolve_target(
@@ -387,22 +649,43 @@ fn resolve_target(
                     .find(|definition| &definition.name == name)?;
                 return Some(Resolved::Module { file, def });
             }
-            // A method receiver with a declared named type: `r:text()` where
-            // `r: Response` resolves through `Response.text`.
-            if let Some(base_def) = resolve_name(&index.definitions, base, offset)
-                && let Some(Type::Named {
-                    name: type_name, ..
-                }) = &base_def.ty
-                && let Some(definition) = resolve_member(&index.definitions, type_name, name)
-            {
-                return Some(Resolved::File(definition.clone()));
-            }
-            // A record-typed base with an annotated field.
-            if let Some(base_def) = resolve_name(&index.definitions, base, offset)
-                && let Some(ty) = &base_def.ty
-                && let Some(field_ty) = ty.record_field(name)
-            {
-                return Some(Resolved::Info(format!("{base}.{name}: {field_ty}")));
+            // A base with a statically known type — annotated, or chased
+            // through its initializer (`local state = game.new()`). Methods
+            // resolve as `T:name`/`T.name` in the type's declaring module;
+            // fields resolve through the type declaration's record shape.
+            if let Some(base_def) = resolve_name(&index.definitions, base, offset) {
+                let scope = TypeScope::current(index, path);
+                if let Some((base_ty, base_scope)) =
+                    definition_static_type(base_def, &scope, load, TYPE_CHASE_DEPTH)
+                {
+                    if let Some((method_def, method_scope)) =
+                        named_type_member(&base_ty, name, &base_scope, load)
+                    {
+                        return Some(resolved_in_scope(&method_def, &method_scope, path));
+                    }
+                    if let Some(record) =
+                        resolve_type_to_record(&base_ty, &base_scope, load, TYPE_CHASE_DEPTH)
+                        && let Some(field_ty) = record.fields.get(name)
+                    {
+                        return Some(match record.declared_by {
+                            Some((type_def, type_scope)) => Resolved::MemberOfType {
+                                summary: format!("{name}: {field_ty}"),
+                                declared_by: Box::new(resolved_in_scope(
+                                    &type_def,
+                                    &type_scope,
+                                    path,
+                                )),
+                            },
+                            None => Resolved::Info(format!("{base}.{name}: {field_ty}")),
+                        });
+                    }
+                    // A method on a string value (`s:upper()`).
+                    if matches!(base_ty, Type::String)
+                        && INTRINSIC_MEMBERS.contains(&format!("string.{name}").as_str())
+                    {
+                        return Some(Resolved::Info(format!("(builtin) string.{name}")));
+                    }
+                }
             }
             // A builtin/user namespace member (`math.abs`, `State.new`).
             if let Some(definition) = resolve_member(&index.definitions, base, name) {
@@ -421,14 +704,6 @@ fn resolve_target(
             let dotted = format!("{base}.{name}");
             if INTRINSIC_MEMBERS.contains(&dotted.as_str()) {
                 return Some(Resolved::Info(format!("(builtin) {dotted}")));
-            }
-            // A method on a string value (`s:upper()`).
-            if resolve_name(&index.definitions, base, offset)
-                .and_then(|definition| definition.ty.as_ref())
-                .is_some_and(|ty| matches!(ty, Type::String))
-                && INTRINSIC_MEMBERS.contains(&format!("string.{name}").as_str())
-            {
-                return Some(Resolved::Info(format!("(builtin) string.{name}")));
             }
             // Last resort: a unique method/member name anywhere in scope
             // (covers `obj:method()` calls on values with inferred types).
@@ -470,6 +745,7 @@ fn resolve_target(
                     visible_from: 0,
                     scope_end: u32::MAX,
                     require_path: None,
+                    initializer: None,
                 },
             })
         }
@@ -510,7 +786,18 @@ pub fn hover(text: &str, path: &Path, offset: u32, load: Loader) -> Option<Hover
     let resolved = resolve_target(&index, &target, path, offset, load)?;
     let contents = match &resolved {
         Resolved::File(definition) | Resolved::Prelude(definition) => {
-            markdown_code_block(&definition_summary(definition))
+            // Unannotated locals still often have a statically chaseable
+            // type (`local state = game.new()`): show it as if annotated.
+            let mut summary = definition_summary(definition);
+            if definition.kind == DefinitionKind::Local && definition.ty.is_none() {
+                let scope = TypeScope::current(&index, path);
+                if let Some((ty, _)) =
+                    definition_static_type(definition, &scope, load, TYPE_CHASE_DEPTH)
+                {
+                    summary = format!("local {}: {ty}", definition.name);
+                }
+            }
+            markdown_code_block(&summary)
         }
         Resolved::Module { file, def } => format!(
             "{}\n\n{}",
@@ -518,6 +805,7 @@ pub fn hover(text: &str, path: &Path, offset: u32, load: Loader) -> Option<Hover
             file.display()
         ),
         Resolved::Info(info) => markdown_code_block(info),
+        Resolved::MemberOfType { summary, .. } => markdown_code_block(summary),
     };
     Some(Hover { contents, span })
 }
@@ -527,10 +815,15 @@ pub fn hover(text: &str, path: &Path, offset: u32, load: Loader) -> Option<Hover
 pub fn definition(text: &str, path: &Path, offset: u32, load: Loader) -> Option<(PathBuf, Span)> {
     let index = index_document(text, path);
     let target = find_target(&index, offset)?;
-    match resolve_target(&index, &target, path, offset, load)? {
+    let mut resolved = resolve_target(&index, &target, path, offset, load)?;
+    // A record field navigates to the type declaration that declares it.
+    if let Resolved::MemberOfType { declared_by, .. } = resolved {
+        resolved = *declared_by;
+    }
+    match resolved {
         Resolved::File(definition) => Some((path.to_path_buf(), definition.name_span)),
         Resolved::Module { file, def } => Some((file, def.name_span)),
-        Resolved::Prelude(_) | Resolved::Info(_) => None,
+        Resolved::Prelude(_) | Resolved::Info(_) | Resolved::MemberOfType { .. } => None,
     }
 }
 
@@ -642,6 +935,67 @@ fn namespace_member_items(index: &DocumentIndex, namespace: &str, items: &mut Ve
     }
 }
 
+/// Completion items derived from a base definition's static type: record
+/// fields (unless `methods_only`) plus `T:`/`T.` members of a named type,
+/// plus string builtins for string-typed bases. Returns whether anything was
+/// produced.
+fn typed_member_items(
+    base_def: &DefinitionSite,
+    index: &DocumentIndex,
+    path: &Path,
+    load: Loader,
+    methods_only: bool,
+    items: &mut Vec<CompletionItem>,
+) -> bool {
+    let scope = TypeScope::current(index, path);
+    let Some((ty, type_scope)) = definition_static_type(base_def, &scope, load, TYPE_CHASE_DEPTH)
+    else {
+        return false;
+    };
+    let before = items.len();
+    if !methods_only
+        && let Some(record) = resolve_type_to_record(&ty, &type_scope, load, TYPE_CHASE_DEPTH)
+    {
+        for (name, field_ty) in &record.fields {
+            push_item(
+                items,
+                name,
+                completion_kind::FIELD,
+                Some(format!("{name}: {field_ty}")),
+            );
+        }
+    }
+    if let Type::Named { name, .. } = &ty
+        && let Some((type_name, declaring_scope)) = type_name_scope(name, &type_scope, load)
+    {
+        let method_prefix = format!("{type_name}:");
+        let dotted_prefix = format!("{type_name}.");
+        for definition in declaring_scope.definitions.iter() {
+            if let Some(member) = definition
+                .name
+                .strip_prefix(&method_prefix)
+                .or_else(|| definition.name.strip_prefix(&dotted_prefix))
+                && !member.contains('.')
+            {
+                push_item(
+                    items,
+                    member,
+                    completion_kind_for(definition),
+                    Some(definition_summary(definition)),
+                );
+            }
+        }
+    }
+    if matches!(ty, Type::String) {
+        for intrinsic in INTRINSIC_MEMBERS {
+            if let Some(member) = intrinsic.strip_prefix("string.") {
+                push_item(items, member, completion_kind::FUNCTION, None);
+            }
+        }
+    }
+    items.len() > before
+}
+
 fn type_name_items(index: &DocumentIndex, items: &mut Vec<CompletionItem>) {
     for name in PRIMITIVE_TYPE_NAMES {
         push_item(items, name, completion_kind::KEYWORD, None);
@@ -674,32 +1028,24 @@ pub fn completion(text: &str, path: &Path, offset: u32, load: Loader) -> Vec<Com
                     }
                     return items;
                 }
-                // Annotated record fields.
-                if let Some(Type::Record(fields)) = &base_def.ty {
-                    for (name, ty) in fields {
-                        push_item(
-                            &mut items,
-                            name,
-                            completion_kind::FIELD,
-                            Some(format!("{name}: {ty}")),
-                        );
-                    }
+                // A statically typed base: record fields and type members.
+                if typed_member_items(base_def, &index, path, load, false, &mut items) {
+                    items.sort_by(|a, b| a.label.cmp(&b.label));
                     return items;
                 }
             }
             namespace_member_items(&index, &base, &mut items);
         }
         CompletionContext::Method { base } => {
-            let base_type = resolve_name(&index.definitions, &base, offset)
-                .and_then(|definition| definition.ty.clone());
-            match base_type {
-                Some(Type::Named { name, .. }) => {
-                    namespace_member_items(&index, &name, &mut items);
-                }
-                Some(Type::String) => namespace_member_items(&index, "string", &mut items),
-                // No known receiver type: this is most likely a type
-                // annotation position (`local x: ...`).
-                _ => type_name_items(&index, &mut items),
+            let produced = resolve_name(&index.definitions, &base, offset)
+                .cloned()
+                .is_some_and(|base_def| {
+                    typed_member_items(&base_def, &index, path, load, true, &mut items)
+                });
+            // No known receiver type: this is most likely a type annotation
+            // position (`local x: ...`).
+            if !produced {
+                type_name_items(&index, &mut items);
             }
         }
         CompletionContext::Plain => {

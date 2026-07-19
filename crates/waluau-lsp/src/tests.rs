@@ -477,3 +477,168 @@ fn completion_after_colon_offers_type_names_in_annotations() {
     assert!(labels.contains(&"i32"), "{labels:?}");
     assert!(labels.contains(&"Point"), "{labels:?}");
 }
+
+/// Fixture mirroring the ante game module shape: a record type, a
+/// constructor with a declared return type, and a method.
+const GAME_MODULE: &str = "type Card = { rank: i32, suit: i32 }\n\
+type State = { middle: {Card}, round: i32 }\n\
+function State:play(first: i32, second: i32): unit\n\
+end\n\
+function new(): State\n\
+    return { middle = {}, round = 1 }\n\
+end\n\
+return new\n";
+
+const GAME_TEST: &str = "local game = require(\"./game\")\n\
+local state = game.new()\n\
+local marked_card = state.middle[0]\n\
+state:play(0, marked_card.rank)\n\
+print(tostring(state.round))\n";
+
+fn game_workspace() -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("game.walu"), GAME_MODULE).expect("write fixture");
+    let main = dir.path().join("sim.test.walu");
+    std::fs::write(&main, GAME_TEST).expect("write fixture");
+    (dir, main)
+}
+
+#[test]
+fn member_hover_follows_inferred_local_types_across_modules() {
+    let (_dir, main) = game_workspace();
+    let mut server = LspServer::new();
+    open(&mut server, &main, GAME_TEST);
+
+    // `state.middle` — `state` is unannotated, inferred from game.new().
+    let (line, character) = position_of(GAME_TEST, "middle[0]");
+    let hover = request(&mut server, "textDocument/hover", &main, line, character);
+    let contents = hover["contents"]["value"].as_str().expect("hover text");
+    assert!(contents.contains("middle: {Card}"), "{contents}");
+
+    // The hovered base itself shows its inferred type.
+    let (line, character) = position_of(GAME_TEST, "state.middle");
+    let hover = request(&mut server, "textDocument/hover", &main, line, character);
+    let contents = hover["contents"]["value"].as_str().expect("hover text");
+    assert!(contents.contains("local state: State"), "{contents}");
+
+    // A local initialized from an indexed field read gets the element type.
+    let (line, character) = position_of(GAME_TEST, "marked_card.rank");
+    let hover = request(&mut server, "textDocument/hover", &main, line, character);
+    let contents = hover["contents"]["value"].as_str().expect("hover text");
+    assert!(contents.contains("local marked_card: Card"), "{contents}");
+
+    // And members of that element type resolve too.
+    let (line, character) = position_of(GAME_TEST, "rank)");
+    let hover = request(&mut server, "textDocument/hover", &main, line, character);
+    let contents = hover["contents"]["value"].as_str().expect("hover text");
+    assert!(contents.contains("rank: i32"), "{contents}");
+}
+
+#[test]
+fn member_definition_jumps_to_the_type_declaration() {
+    let (_dir, main) = game_workspace();
+    let mut server = LspServer::new();
+    open(&mut server, &main, GAME_TEST);
+
+    let (line, character) = position_of(GAME_TEST, "middle[0]");
+    let location = request(
+        &mut server,
+        "textDocument/definition",
+        &main,
+        line,
+        character,
+    );
+    assert!(
+        location["uri"]
+            .as_str()
+            .is_some_and(|uri| uri.ends_with("game.walu")),
+        "{location:?}"
+    );
+    // `type State = ...` is on line 2 (zero-based 1) of the module.
+    assert_eq!(location["range"]["start"]["line"], json!(1), "{location:?}");
+}
+
+#[test]
+fn method_hover_and_definition_resolve_through_the_receiver_type() {
+    let (_dir, main) = game_workspace();
+    let mut server = LspServer::new();
+    open(&mut server, &main, GAME_TEST);
+
+    let (line, character) = position_of(GAME_TEST, "play(0");
+    let hover = request(&mut server, "textDocument/hover", &main, line, character);
+    let contents = hover["contents"]["value"].as_str().expect("hover text");
+    assert!(
+        contents.contains("function State:play(first: i32, second: i32): unit"),
+        "{contents}"
+    );
+
+    let location = request(
+        &mut server,
+        "textDocument/definition",
+        &main,
+        line,
+        character,
+    );
+    assert!(
+        location["uri"]
+            .as_str()
+            .is_some_and(|uri| uri.ends_with("game.walu")),
+        "{location:?}"
+    );
+    assert_eq!(location["range"]["start"]["line"], json!(2), "{location:?}");
+}
+
+#[test]
+fn member_completion_offers_fields_and_methods_of_the_inferred_type() {
+    let (_dir, main) = game_workspace();
+    let mut server = LspServer::new();
+    open(&mut server, &main, GAME_TEST);
+
+    // Complete after `state.` on its own line.
+    let extended = format!("{GAME_TEST}state.");
+    change(&mut server, &main, &extended);
+    let last_line = extended.matches('\n').count() as u32;
+    let result = request(&mut server, "textDocument/completion", &main, last_line, 6);
+    let labels: Vec<&str> = result
+        .as_array()
+        .expect("completion items")
+        .iter()
+        .filter_map(|item| item["label"].as_str())
+        .collect();
+    assert!(labels.contains(&"middle"), "{labels:?}");
+    assert!(labels.contains(&"round"), "{labels:?}");
+    assert!(labels.contains(&"play"), "{labels:?}");
+
+    // After `state:` only methods remain.
+    let extended = format!("{GAME_TEST}state:");
+    change(&mut server, &main, &extended);
+    let result = request(&mut server, "textDocument/completion", &main, last_line, 6);
+    let labels: Vec<&str> = result
+        .as_array()
+        .expect("completion items")
+        .iter()
+        .filter_map(|item| item["label"].as_str())
+        .collect();
+    assert!(labels.contains(&"play"), "{labels:?}");
+    assert!(!labels.contains(&"middle"), "{labels:?}");
+}
+
+#[test]
+fn annotated_module_qualified_types_resolve_members() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("game.walu"), GAME_MODULE).expect("write fixture");
+    let text = "local game = require(\"./game\")\n\
+local function reset(state: game.State): unit\n\
+    print(tostring(state.round))\n\
+end\n";
+    let main = dir.path().join("main.walu");
+    std::fs::write(&main, text).expect("write fixture");
+
+    let mut server = LspServer::new();
+    open(&mut server, &main, text);
+
+    let (line, character) = position_of(text, "round))");
+    let hover = request(&mut server, "textDocument/hover", &main, line, character);
+    let contents = hover["contents"]["value"].as_str().expect("hover text");
+    assert!(contents.contains("round: i32"), "{contents}");
+}
