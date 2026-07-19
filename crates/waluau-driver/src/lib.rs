@@ -58,7 +58,8 @@ fn compile_program(
     wasm_file_name: &str,
     assets: &BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>,
 ) -> Result<CompileArtifacts, Diagnostic> {
-    let mut typed_program = waluau_hir::type_check_and_infer(&program)?;
+    let mut typed_program = waluau_hir::type_check_and_infer(&program)
+        .map_err(|error| resolve_diagnostic_source(error, &program))?;
     waluau_ast::resolve_symbols(&mut typed_program)?;
     let ir = waluau_ir::build(&typed_program)?;
     let emitted = waluau_codegen_wasm::emit(&ir)?;
@@ -69,6 +70,17 @@ fn compile_program(
         required_imports: emitted.required_imports,
         bytes_constants: emitted.bytes_constants,
     })
+}
+
+fn resolve_diagnostic_source(error: Diagnostic, program: &waluau_ast::Program) -> Diagnostic {
+    let file_path = error
+        .file_path()
+        .unwrap_or(&program.entry_file_path)
+        .to_string();
+    match program.sources.get(&file_path) {
+        Some(source) => error.with_source(file_path, source),
+        None => error.with_file_path_if_missing(file_path),
+    }
 }
 
 pub fn run() -> Result<(), Diagnostic> {
@@ -996,6 +1008,43 @@ mod tests {
         .expect_err("cli run should fail");
 
         assert_eq!(error.to_string(), "return expects f64, got bool");
+        assert!(
+            !output_path.exists(),
+            "failed compilation must not write output"
+        );
+    }
+
+    #[test]
+    fn cli_renders_inference_diagnostic_file_line_and_column() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("span-mismatch.walu");
+        let output_path = tempdir.path().join("span-mismatch.wasm");
+        let source = concat!(
+            "declare function accept(value: i32): unit\n",
+            "\n",
+            "function bad(): unit\n",
+            "    accept(\"wrong\")\n",
+            "end\n",
+        );
+        fs::write(&input_path, source).expect("fixture should write");
+
+        let error = super::run_with_args([
+            os(&input_path),
+            OsString::from("--output"),
+            os(&output_path),
+        ])
+        .expect_err("cli run should fail");
+
+        assert_eq!(
+            error.render(),
+            format!(
+                "{}:4:12: cannot implicitly convert string to i32",
+                input_path
+                    .canonicalize()
+                    .expect("fixture path should canonicalize")
+                    .display()
+            )
+        );
         assert!(
             !output_path.exists(),
             "failed compilation must not write output"

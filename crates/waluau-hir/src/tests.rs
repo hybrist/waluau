@@ -3420,6 +3420,7 @@ fn attaches_argument_span_to_call_coercion_diagnostic() {
             end: start + "\"wrong\"".len() as u32,
         })
     );
+    assert_eq!(error.file_path(), Some("source"));
 }
 
 #[test]
