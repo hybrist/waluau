@@ -4,6 +4,7 @@
     "Event",
     "UIEvent",
     "KeyboardEvent",
+    "MouseEvent",
     "Node",
     "Document",
     "DocumentFragment",

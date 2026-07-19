@@ -18,6 +18,10 @@
       "parent": "UIEvent"
     },
     {
+      "interface": "MouseEvent",
+      "parent": "UIEvent"
+    },
+    {
       "interface": "Node",
       "parent": "EventTarget"
     },
@@ -4638,6 +4642,439 @@
       "emittedName": "getBoundingClientRect",
       "params": [],
       "returnType": "DOMRect"
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "attribute",
+      "idlName": "screenX",
+      "emittedName": "screenX",
+      "type": "i32",
+      "readonly": true
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "attribute",
+      "idlName": "screenY",
+      "emittedName": "screenY",
+      "type": "i32",
+      "readonly": true
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "attribute",
+      "idlName": "clientX",
+      "emittedName": "clientX",
+      "type": "i32",
+      "readonly": true
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "attribute",
+      "idlName": "clientY",
+      "emittedName": "clientY",
+      "type": "i32",
+      "readonly": true
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "attribute",
+      "idlName": "layerX",
+      "emittedName": "layerX",
+      "type": "i32",
+      "readonly": true
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "attribute",
+      "idlName": "layerY",
+      "emittedName": "layerY",
+      "type": "i32",
+      "readonly": true
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "attribute",
+      "idlName": "ctrlKey",
+      "emittedName": "ctrlKey",
+      "type": "bool",
+      "readonly": true
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "attribute",
+      "idlName": "shiftKey",
+      "emittedName": "shiftKey",
+      "type": "bool",
+      "readonly": true
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "attribute",
+      "idlName": "altKey",
+      "emittedName": "altKey",
+      "type": "bool",
+      "readonly": true
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "attribute",
+      "idlName": "metaKey",
+      "emittedName": "metaKey",
+      "type": "bool",
+      "readonly": true
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "attribute",
+      "idlName": "button",
+      "emittedName": "button",
+      "type": "i32",
+      "readonly": true
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "attribute",
+      "idlName": "buttons",
+      "emittedName": "buttons",
+      "type": "u32",
+      "readonly": true
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "attribute",
+      "idlName": "relatedTarget",
+      "emittedName": "relatedTarget",
+      "type": "EventTarget?",
+      "readonly": true
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "operation",
+      "idlName": "getModifierState",
+      "emittedName": "getModifierState",
+      "params": [
+        "key_arg: string"
+      ],
+      "returnType": "bool"
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "attribute",
+      "idlName": "pageX",
+      "emittedName": "pageX",
+      "type": "f64",
+      "readonly": true
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "attribute",
+      "idlName": "pageY",
+      "emittedName": "pageY",
+      "type": "f64",
+      "readonly": true
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "attribute",
+      "idlName": "x",
+      "emittedName": "x",
+      "type": "f64",
+      "readonly": true
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "attribute",
+      "idlName": "y",
+      "emittedName": "y",
+      "type": "f64",
+      "readonly": true
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "attribute",
+      "idlName": "offsetX",
+      "emittedName": "offsetX",
+      "type": "f64",
+      "readonly": true
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "attribute",
+      "idlName": "offsetY",
+      "emittedName": "offsetY",
+      "type": "f64",
+      "readonly": true
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "operation",
+      "idlName": "initMouseEvent",
+      "emittedName": "initMouseEvent",
+      "params": [
+        "type_arg: string"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "operation",
+      "idlName": "initMouseEvent",
+      "emittedName": "initMouseEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "operation",
+      "idlName": "initMouseEvent",
+      "emittedName": "initMouseEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "operation",
+      "idlName": "initMouseEvent",
+      "emittedName": "initMouseEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool",
+        "view_arg: Window?"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "operation",
+      "idlName": "initMouseEvent",
+      "emittedName": "initMouseEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool",
+        "view_arg: Window?",
+        "detail_arg: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "operation",
+      "idlName": "initMouseEvent",
+      "emittedName": "initMouseEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool",
+        "view_arg: Window?",
+        "detail_arg: i32",
+        "screen_x_arg: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "operation",
+      "idlName": "initMouseEvent",
+      "emittedName": "initMouseEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool",
+        "view_arg: Window?",
+        "detail_arg: i32",
+        "screen_x_arg: i32",
+        "screen_y_arg: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "operation",
+      "idlName": "initMouseEvent",
+      "emittedName": "initMouseEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool",
+        "view_arg: Window?",
+        "detail_arg: i32",
+        "screen_x_arg: i32",
+        "screen_y_arg: i32",
+        "client_x_arg: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "operation",
+      "idlName": "initMouseEvent",
+      "emittedName": "initMouseEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool",
+        "view_arg: Window?",
+        "detail_arg: i32",
+        "screen_x_arg: i32",
+        "screen_y_arg: i32",
+        "client_x_arg: i32",
+        "client_y_arg: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "operation",
+      "idlName": "initMouseEvent",
+      "emittedName": "initMouseEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool",
+        "view_arg: Window?",
+        "detail_arg: i32",
+        "screen_x_arg: i32",
+        "screen_y_arg: i32",
+        "client_x_arg: i32",
+        "client_y_arg: i32",
+        "ctrl_key_arg: bool"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "operation",
+      "idlName": "initMouseEvent",
+      "emittedName": "initMouseEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool",
+        "view_arg: Window?",
+        "detail_arg: i32",
+        "screen_x_arg: i32",
+        "screen_y_arg: i32",
+        "client_x_arg: i32",
+        "client_y_arg: i32",
+        "ctrl_key_arg: bool",
+        "alt_key_arg: bool"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "operation",
+      "idlName": "initMouseEvent",
+      "emittedName": "initMouseEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool",
+        "view_arg: Window?",
+        "detail_arg: i32",
+        "screen_x_arg: i32",
+        "screen_y_arg: i32",
+        "client_x_arg: i32",
+        "client_y_arg: i32",
+        "ctrl_key_arg: bool",
+        "alt_key_arg: bool",
+        "shift_key_arg: bool"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "operation",
+      "idlName": "initMouseEvent",
+      "emittedName": "initMouseEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool",
+        "view_arg: Window?",
+        "detail_arg: i32",
+        "screen_x_arg: i32",
+        "screen_y_arg: i32",
+        "client_x_arg: i32",
+        "client_y_arg: i32",
+        "ctrl_key_arg: bool",
+        "alt_key_arg: bool",
+        "shift_key_arg: bool",
+        "meta_key_arg: bool"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "operation",
+      "idlName": "initMouseEvent",
+      "emittedName": "initMouseEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool",
+        "view_arg: Window?",
+        "detail_arg: i32",
+        "screen_x_arg: i32",
+        "screen_y_arg: i32",
+        "client_x_arg: i32",
+        "client_y_arg: i32",
+        "ctrl_key_arg: bool",
+        "alt_key_arg: bool",
+        "shift_key_arg: bool",
+        "meta_key_arg: bool",
+        "button_arg: i32"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "operation",
+      "idlName": "initMouseEvent",
+      "emittedName": "initMouseEvent",
+      "params": [
+        "type_arg: string",
+        "bubbles_arg: bool",
+        "cancelable_arg: bool",
+        "view_arg: Window?",
+        "detail_arg: i32",
+        "screen_x_arg: i32",
+        "screen_y_arg: i32",
+        "client_x_arg: i32",
+        "client_y_arg: i32",
+        "ctrl_key_arg: bool",
+        "alt_key_arg: bool",
+        "shift_key_arg: bool",
+        "meta_key_arg: bool",
+        "button_arg: i32",
+        "related_target_arg: EventTarget?"
+      ],
+      "returnType": "unit"
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "attribute",
+      "idlName": "movementX",
+      "emittedName": "movementX",
+      "type": "f64",
+      "readonly": true
+    },
+    {
+      "interface": "MouseEvent",
+      "kind": "attribute",
+      "idlName": "movementY",
+      "emittedName": "movementY",
+      "type": "f64",
+      "readonly": true
     },
     {
       "interface": "MediaList",

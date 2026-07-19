@@ -62,6 +62,9 @@ function install_snake(): unit
         draw = draw,
         keypressed = keypressed,
         keyreleased = keyreleased,
+        mousepressed = nil,
+        mousereleased = nil,
+        mousemoved = nil,
     })
 end
 

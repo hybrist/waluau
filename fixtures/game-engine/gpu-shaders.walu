@@ -107,6 +107,9 @@ function install_gpu_shader_fixture(): unit
     }, {
         load = load, update = update, draw = draw,
         keypressed = keypressed, keyreleased = keyreleased,
+        mousepressed = nil,
+        mousereleased = nil,
+        mousemoved = nil,
     })
 end
 

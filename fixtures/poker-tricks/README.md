@@ -65,6 +65,8 @@ flat.
 
 ## Controls
 
+Keyboard:
+
 - Arrow keys or WASD move focus; up/down switches between relics and wards.
 - Space binds or unbinds the focused relic or ward.
 - Enter commits a feint or breach.
@@ -73,9 +75,22 @@ flat.
 - H opens the breach ledger, ? opens help, and R restarts.
 - Enter, Space, or Esc skips a running deal or feint animation.
 
+Mouse (Love2D-style engine callbacks in logical canvas coordinates):
+
+- Hovering a relic or ward steers the same focus cursor the arrow keys move,
+  so the fan parts around the card under the pointer; hovering dead space
+  leaves the cursor where it was.
+- Left-clicking a relic or ward binds or unbinds it. Hit tests respect the
+  fan's tilt and parting, and prefer the topmost overlapping relic.
+- On-screen capsules commit a breach or feint or pass the feint; the commit
+  capsule only lights up while the pending binds would be accepted.
+- A click advances or skips reveals and animations, closes the ledger and
+  help, restarts from the final screen, and the footer's "? HELP" opens help.
+- The first click (like the first key) also unlocks browser audio.
+
 | File | Purpose |
 | --- | --- |
-| `main.walu` | Engine entry point and keyboard-driven game flow. |
+| `main.walu` | Engine entry point and keyboard/mouse-driven game flow. |
 | `render.walu` | Playfield/modal rendering and the game's vertex/pixel effect shader. |
 | `game.walu` | Host-independent deck, ranking, AI, and scoring rules. |
 | `sim.walu` | Deterministic assertions for rankings and full-game completion. |

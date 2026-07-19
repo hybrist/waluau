@@ -1,5 +1,6 @@
 -- Arcane Heist: Poker Tricks hosted by the 2D game engine. The rules remain
--- host-independent; this module translates keyboard input into game actions.
+-- host-independent; this module translates keyboard and mouse input into
+-- game actions.
 
 local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
@@ -923,6 +924,99 @@ function install_arcane_heist(): unit
         end
     end
 
+    -- Hovering steers the same cursor the arrow keys move, so the fan parts
+    -- around the relic under the pointer and clicks always act on the card
+    -- the highlight already shows. Hovering dead space leaves the cursor
+    -- where it was, exactly like the keyboard between presses.
+    local function mousemoved(x: f64, y: f64, dx: f64, dy: f64): unit
+        if #assets.fatal_audio_code > 0 or not assets.audio_unlocked then return end
+        if ui.modal ~= MODAL_NONE or ui.revealing or ui.anim_kind ~= ANIM_NONE then return end
+        local hand: i32 = render.hit_hand(x, y, ui.fan_parts)
+        if hand >= 0 then
+            ui.cursor_area = 0
+            ui.hand_cursor = hand
+            return
+        end
+        if state.swap_open then
+            local ward: i32 = render.hit_ward(x, y)
+            if ward >= 0 then
+                ui.cursor_area = 1
+                ui.ward_cursor = ward
+            end
+        end
+    end
+
+    -- The left button walks the same gates as keypressed: unlock audio,
+    -- advance a reveal, close a modal, skip a running animation, and only
+    -- then read the board. On the live board a relic or ward click binds it
+    -- (Space), and the capsules commit or pass (Enter / P).
+    local function mousepressed(x: f64, y: f64, button: i32): unit
+        if button ~= 1 then return end
+        if #assets.fatal_audio_code > 0 then return end
+        if not assets.audio_unlocked then
+            if not audio.unlock() then
+                fatal_audio(assets, "unavailable", "the audio host could not unlock its playback device")
+                return
+            end
+            assets.audio_unlocked = true
+        end
+        if ui.revealing then
+            if ui.reveal_clock < BOARD_REVEAL_SECONDS then
+                ui.reveal_clock = BOARD_REVEAL_SECONDS
+            else
+                ui.revealing = false
+                if state.finished then
+                    ui.modal = MODAL_FINAL
+                else
+                    queue_refill_deal(state, ui)
+                end
+            end
+            return
+        end
+        if ui.modal == MODAL_FINAL then
+            reset_run(state, ui)
+            return
+        end
+        if ui.modal ~= MODAL_NONE then
+            close_modal()
+            return
+        end
+        if ui.anim_kind ~= ANIM_NONE then
+            finish_anims(ui)
+            return
+        end
+        if render.hit_help(x, y) then
+            ui.modal = MODAL_HELP
+            return
+        end
+        local hand: i32 = render.hit_hand(x, y, ui.fan_parts)
+        if hand >= 0 then
+            ui.cursor_area = 0
+            ui.hand_cursor = hand
+            if state.swap_open then toggle(ui.swap_hand, hand, 3)
+            else toggle(ui.play_picks, hand, 2) end
+            return
+        end
+        if state.swap_open then
+            local ward: i32 = render.hit_ward(x, y)
+            if ward >= 0 then
+                ui.cursor_area = 1
+                ui.ward_cursor = ward
+                toggle(ui.swap_wards, ward, 3)
+                return
+            end
+            if render.hit_pass(x, y) then
+                ui.swap_hand = {}
+                ui.swap_wards = {}
+                submit_swap()
+                return
+            end
+        end
+        if render.hit_commit(x, y, state.swap_open) then
+            if state.swap_open then submit_swap() else submit_breach() end
+        end
+    end
+
     engine.start({
         title = "Arcane Heist",
         width = 960,
@@ -936,6 +1030,9 @@ function install_arcane_heist(): unit
         draw = draw,
         keypressed = keypressed,
         keyreleased = nil,
+        mousepressed = mousepressed,
+        mousereleased = nil,
+        mousemoved = mousemoved,
     })
 end
 

@@ -78,6 +78,9 @@ function install_graphics_paths_fixture(): unit
         draw = draw,
         keypressed = keypressed,
         keyreleased = keyreleased,
+        mousepressed = nil,
+        mousereleased = nil,
+        mousemoved = nil,
     })
 end
 
