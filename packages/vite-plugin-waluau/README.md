@@ -26,6 +26,22 @@ The same file can be imported from JavaScript with
 without the viewport styles. Outside the Waluau repository, install the
 `waluau` compiler binary or pass a custom `compiler` command.
 
+## Packaged assets
+
+Pass a version-1 `waluau.assets.json` file through the `manifest` option to
+compile and serve typed packaged assets during development and production
+builds. The path is resolved from the Vite app root and watched for changes.
+
+```js
+export default defineConfig({
+  plugins: [waluau({ manifest: 'waluau.assets.json' })],
+});
+```
+
+The manifest's asset paths are relative to the manifest itself and remain the
+logical paths requested by Waluau source. See the compiler's asset-manifest
+documentation for the supported asset types.
+
 ## Testing with vitest
 
 Files named `*.test.walu` become vitest test modules instead of games: the

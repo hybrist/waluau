@@ -32,7 +32,10 @@ const gameEngineModules = import.meta.glob('../../../../engine/*.walu', {
   import: 'default'
 });
 
-const pokerTricksFixtures = import.meta.glob('../../../../fixtures/poker-tricks/*.walu', {
+const pokerTricksFixtures = import.meta.glob([
+  '../../../ante/src/*.walu',
+  '!../../../ante/src/*.test.walu',
+], {
   eager: true,
   query: '?raw',
   import: 'default'

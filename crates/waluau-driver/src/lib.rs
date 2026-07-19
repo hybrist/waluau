@@ -429,6 +429,12 @@ mod tests {
             .join(relative)
     }
 
+    fn app_path(relative: &str) -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../apps")
+            .join(relative)
+    }
+
     #[test]
     fn compiles_local_function_with_recursion() {
         super::compile_source(
@@ -1344,7 +1350,7 @@ mod tests {
 
     #[test]
     fn compiles_arcane_heist_game_engine_fixture() {
-        super::compile_file(&fixture_path("poker-tricks/main.walu"))
+        super::compile_file(&app_path("ante/src/main.walu"))
             .expect("Arcane Heist game engine fixture should compile");
     }
 

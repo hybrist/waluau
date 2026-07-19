@@ -1,13 +1,16 @@
--- Deterministic, DOM-free checks for Poker Tricks.
---
---     cargo run -p waluau-cli -- fixtures/poker-tricks/sim.walu -o sim.wasm
+-- Deterministic, DOM-free checks for Arcane Heist.
+
+require("waluau:vitest")
 
 local game = require("./game")
+
+describe("Arcane Heist rules", function()
+it("keeps rankings, swaps, and full-game outcomes deterministic", function()
 
 const FIRST_ROUND: i32 = 1
 const LAST_ROUND: i32 = 5
 
-function card(rank: i32, suit: i32): game.Card
+local function card(rank: i32, suit: i32): game.Card
     return { rank = rank, suit = suit }
 end
 
@@ -185,13 +188,13 @@ local hand: {game.Card} = { card(14, 0), card(14, 1), card(5, 2), card(13, 2), c
 local choice = game.best_pair(hand, middle)
 assert(choice.first == 2 and choice.second == 3)
 
-function force_player_win(state: game.State): unit
+local function force_player_win(state: game.State): unit
     state.middle = { card(10, 0), card(11, 0), card(12, 0) }
     state.player_hand = { card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3) }
     state.computer_hand = { card(2, 1), card(3, 2), card(4, 3), card(6, 1), card(8, 2) }
 end
 
-function force_computer_win(state: game.State): unit
+local function force_computer_win(state: game.State): unit
     state.middle = { card(10, 0), card(11, 0), card(12, 0) }
     state.player_hand = { card(2, 1), card(3, 2), card(4, 3), card(6, 1), card(8, 2) }
     state.computer_hand = { card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3) }
@@ -249,7 +252,7 @@ assert(loss_state.player_tricks == 0 and #loss_state.history == 3 and #loss_stat
 
 -- Identical formations cancel: the ward is not held and no relic is taken, so
 -- both sides keep their counters and the wager comes back.
-function force_stalemate(state: game.State): unit
+local function force_stalemate(state: game.State): unit
     state.middle = { card(7, 3), card(2, 3), card(8, 2) }
     state.player_hand = { card(13, 0), card(13, 1), card(4, 0), card(5, 1), card(6, 0) }
     state.computer_hand = { card(13, 2), card(13, 3), card(4, 2), card(5, 3), card(6, 2) }
@@ -282,3 +285,5 @@ mixed_state:play(0, 1)
 assert(#mixed_state.history == 3 and mixed_state.history[2].winner == 0)
 assert(mixed_state.computer_tricks == 2 and mixed_state.player_tricks == 0)
 assert(not mixed_state.finished and mixed_state.round == 4)
+end)
+end)

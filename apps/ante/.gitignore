@@ -2,3 +2,6 @@ dist
 .waluau
 .vitest-attachments
 src/__screenshots__
+
+# Playwright test results:
+/test-results/
