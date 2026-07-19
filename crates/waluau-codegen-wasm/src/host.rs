@@ -28,6 +28,10 @@ pub const IMPORT_JS_TOSTRING_F32: &str = "js_tostring_f32";
 pub const IMPORT_JS_TOSTRING_F64: &str = "js_tostring_f64";
 pub const IMPORT_JS_TOSTRING_BOOL: &str = "js_tostring_bool";
 pub const IMPORT_JS_TOSTRING_UNKNOWN: &str = "js_tostring_unknown";
+/// `(anyref value, externref type_name) → externref`: formats a reference
+/// value as `"<type_name>: 0x<id>"` with a stable per-object identity, for
+/// `tostring` on functions, tables, and threads.
+pub const IMPORT_JS_TOSTRING_NAMED: &str = "js_tostring_named";
 pub const IMPORT_JS_TYPEOF_UNKNOWN: &str = "js_typeof_unknown";
 pub const IMPORT_JS_TONUMBER_STRING: &str = "js_tonumber_string";
 pub const IMPORT_JS_TONUMBER_UNKNOWN: &str = "js_tonumber_unknown";
@@ -42,7 +46,7 @@ pub const IMPORT_MATH_POW: &str = "math_pow";
 pub const IMPORT_MEMORY: &str = "memory";
 
 /// Maximum number of host function imports (when all are used).
-pub const HOST_IMPORT_COUNT: u32 = 25;
+pub const HOST_IMPORT_COUNT: u32 = 26;
 
 /// Canonical function-index slot for each host import.
 /// These are stable identifiers used as keys into [`HostImportMap`].
@@ -71,10 +75,11 @@ pub const IMPORT_EXTERN_IS_FUNC: u32 = 21;
 pub const IMPORT_ATTACH_PROMISE_FUNC: u32 = 22;
 pub const IMPORT_MATH_POW_FUNC: u32 = 23;
 pub const IMPORT_JS_EQ_UNKNOWN_FUNC: u32 = 24;
+pub const IMPORT_JS_TOSTRING_NAMED_FUNC: u32 = 25;
 
 /// Number of host function types in the canonical type-slot table.
 /// The actual number emitted in a given module may be less if some slots are unused.
-pub const HOST_TYPE_COUNT: u32 = 13;
+pub const HOST_TYPE_COUNT: u32 = 14;
 
 /// Records which host functions are actually referenced by a module.
 #[derive(Clone, Debug, Default)]
@@ -97,6 +102,7 @@ pub struct UsedHostImports {
     pub js_tostring_f64: bool,
     pub js_tostring_bool: bool,
     pub js_tostring_unknown: bool,
+    pub js_tostring_named: bool,
     pub js_typeof_unknown: bool,
     pub js_tonumber_string: bool,
     pub js_tonumber_unknown: bool,
@@ -160,6 +166,7 @@ impl UsedHostImports {
             (IMPORT_ATTACH_PROMISE_FUNC, self.attach_promise),
             (IMPORT_MATH_POW_FUNC, self.math_pow),
             (IMPORT_JS_EQ_UNKNOWN_FUNC, self.js_eq_unknown),
+            (IMPORT_JS_TOSTRING_NAMED_FUNC, self.js_tostring_named),
         ];
         let mut indices = [None; HOST_IMPORT_COUNT as usize];
         let mut next = 0u32;
@@ -194,8 +201,9 @@ impl UsedHostImports {
 /// | 8    | (externref) → i32                     | bytes_len                                    |
 /// | 9    | (anyref) → externref                  | js_tostring_unknown, js_typeof_unknown     |
 /// | 10   | (f64, f64) → f64                      | math_pow                                     |
-/// | 11   | (externref, i32) → f64                | js_tonumber_string                          |
-/// | 12   | (anyref, i32) → f64                   | js_tonumber_unknown                         |
+/// | 11   | (externref, i32) → (i32, f64)         | js_tonumber_string                          |
+/// | 12   | (anyref, i32) → (i32, f64)            | js_tonumber_unknown                         |
+/// | 13   | (anyref, externref) → externref       | js_tostring_named                           |
 pub fn needed_host_type_slots(used: &UsedHostImports) -> [bool; HOST_TYPE_COUNT as usize] {
     let mut slots = [false; HOST_TYPE_COUNT as usize];
     if used.js_string_eq
@@ -243,7 +251,23 @@ pub fn needed_host_type_slots(used: &UsedHostImports) -> [bool; HOST_TYPE_COUNT 
     if used.js_tonumber_unknown {
         slots[12] = true;
     }
+    if used.js_tostring_named {
+        slots[13] = true;
+    }
     slots
+}
+
+/// The `tostring` prefix for reference values formatted as `"<name>: 0x<id>"`,
+/// or `None` for types that stringify some other way.
+pub fn tostring_named_prefix(ty: &Type) -> Option<&'static str> {
+    match ty {
+        Type::Function { .. } => Some("function"),
+        Type::Array(_) | Type::Record(_) | Type::TaggedVariant(_) | Type::TaggedUnion(_) => {
+            Some("table")
+        }
+        Type::Thread => Some("thread"),
+        _ => None,
+    }
 }
 
 /// Scan `module` and return the set of host functions it actually references.
@@ -288,10 +312,14 @@ fn mark_used_by_instruction(instruction: &IrInstruction, used: &mut UsedHostImpo
             Type::Unknown => {
                 used.js_tostring_unknown = true;
                 // The unknown path dispatches boxed f64/bool values to their
-                // concrete stringifiers when closure GC types are present.
+                // concrete stringifiers when closure GC types are present,
+                // and reference values (functions, tables, threads) to the
+                // identity-formatting host import.
                 used.js_tostring_f64 = true;
                 used.js_tostring_bool = true;
+                used.js_tostring_named = true;
             }
+            ty if tostring_named_prefix(ty).is_some() => used.js_tostring_named = true,
             _ => {}
         },
         IrInstruction::TypeName { from, .. } => {
@@ -478,9 +506,28 @@ fn collect_from_function<'a>(
                     from: Type::Unknown,
                     ..
                 } => {
-                    for literal in ["boolean", "nil", "number"] {
+                    for literal in ["boolean", "nil", "number", "function", "table", "thread"] {
                         if indices.insert(literal, strings.len() as u32).is_none() {
                             strings.push(literal.to_string());
+                        }
+                    }
+                }
+                IrInstruction::ToString {
+                    from: Type::Unknown,
+                    ..
+                } => {
+                    // The dynamic tostring chain reads the "nil" constant and
+                    // passes reference-type prefixes to js_tostring_named.
+                    for literal in ["nil", "function", "table", "thread"] {
+                        if indices.insert(literal, strings.len() as u32).is_none() {
+                            strings.push(literal.to_string());
+                        }
+                    }
+                }
+                IrInstruction::ToString { from, .. } => {
+                    if let Some(prefix) = tostring_named_prefix(from) {
+                        if indices.insert(prefix, strings.len() as u32).is_none() {
+                            strings.push(prefix.to_string());
                         }
                     }
                 }

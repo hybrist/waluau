@@ -2874,18 +2874,33 @@ fn type_checks_dynamic_type_and_number_builtins() {
 }
 
 #[test]
-fn rejects_tostring_for_non_primitive_inputs() {
+fn type_checks_tostring_for_reference_inputs() {
     let source = r#"
+        function id(x: i32): i32
+            return x
+        end
+
         function entry(xs: {i32}): string
-            return tostring(xs)
+            return tostring(xs) .. tostring(nil) .. tostring(id)
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_tostring_for_unit_inputs() {
+    let source = r#"
+        function nothing(): unit
+        end
+
+        function entry(): string
+            return tostring(nothing())
         end
     "#;
     let program = parse(source).expect("parse should succeed");
     let error = super::type_check(&program).expect_err("type check should fail");
-    assert_eq!(
-        error.to_string(),
-        "tostring expects a primitive argument (numeric, bool, or string), got {i32}"
-    );
+    assert_eq!(error.to_string(), "tostring cannot convert a unit value");
 }
 
 #[test]
