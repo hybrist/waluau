@@ -6590,6 +6590,22 @@
     {
       "interface": "HTMLInputElement",
       "kind": "attribute",
+      "idlName": "selectionStart",
+      "emittedName": "selectionStart",
+      "type": "u32?",
+      "readonly": false
+    },
+    {
+      "interface": "HTMLInputElement",
+      "kind": "attribute",
+      "idlName": "selectionEnd",
+      "emittedName": "selectionEnd",
+      "type": "u32?",
+      "readonly": false
+    },
+    {
+      "interface": "HTMLInputElement",
+      "kind": "attribute",
       "idlName": "selectionDirection",
       "emittedName": "selectionDirection",
       "type": "string?",
@@ -13879,18 +13895,6 @@
       "reason": "member 'operation:reportValidity' collides with the same-named member kept on HTMLFormElement (both interfaces independently expose it, e.g. via a shared Web IDL mixin); cross-interface duplicate extern member names resolve ambiguously and break property/method lookup on both",
       "issue": "waluau-1l02",
       "disabled": true
-    },
-    {
-      "interface": "HTMLInputElement",
-      "member": "selectionStart",
-      "reason": "nullable modifier rejects primitive Web IDL type unsigned long?",
-      "issue": "waluau-pq7p"
-    },
-    {
-      "interface": "HTMLInputElement",
-      "member": "selectionEnd",
-      "reason": "nullable modifier rejects primitive Web IDL type unsigned long?",
-      "issue": "waluau-pq7p"
     },
     {
       "interface": "HTMLInputElement",

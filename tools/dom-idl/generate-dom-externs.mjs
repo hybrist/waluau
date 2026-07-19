@@ -332,21 +332,17 @@ function mapType(idlType, filter, knownInterfaces, include, options = {}) {
 }
 
 function finishMapType(idlType, mapped, nullable) {
-  if (nullable) {
-    // waluau-pq7p: '?' is only supported on host reference types (string, extern); the type
-    // checker rejects nullable numerics/bool/unit (e.g. unsigned long?, double?, boolean?)
-    if (NULLABLE_REJECTED_TYPES.has(mapped)) {
-      return {
-        error: `nullable modifier rejects primitive Web IDL type ${idlType}`,
-        category: 'nullable-primitive-type',
-      };
-    }
+  if (nullable && mapped === 'unit') {
+    // `unit?` has no value representation; nullable undefined/void members
+    // cannot be expressed as an extern signature.
+    return {
+      error: `nullable modifier rejects Web IDL type ${idlType}`,
+      category: 'nullable-unit-type',
+    };
   }
   if (!nullable) return { type: mapped };
   return { type: mapped.includes('->') ? `(${mapped})?` : `${mapped}?` };
 }
-
-const NULLABLE_REJECTED_TYPES = new Set(['u32', 'u64', 'i32', 'i64', 'f32', 'f64', 'bool', 'unit']);
 
 // Mirrors crates/waluau-lexer/src/lib.rs keyword table. Generated extern parameter
 // names are snake_cased from the IDL name; if the result collides with a reserved

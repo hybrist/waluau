@@ -128,10 +128,18 @@ test('skip diagnostics reference tracked compiler/tooling limitations where appl
   assert.match(diagnostics, /unsupported generic Web IDL type Promise<[^>]*> \(waluau-2c6n\)/);
   assert.match(diagnostics, /unsupported union Web IDL type \([^)]*\) \(waluau-o4xs\)/);
   assert.doesNotMatch(diagnostics, /nullable callback Web IDL type/);
-  assert.match(diagnostics, /nullable modifier rejects primitive Web IDL type .+ \(waluau-pq7p\)/);
+  // Nullable primitives are supported (waluau-pq7p): members like
+  // HTMLInputElement.selectionStart must be emitted rather than skipped.
+  assert.doesNotMatch(diagnostics, /nullable modifier rejects primitive Web IDL type/);
   assert.match(diagnostics, /unsupported Web IDL type (any|object\??) \(waluau-lxdd\)/);
   assert.match(diagnostics, /skip Document\.onerror: unsupported Web IDL type OnErrorEventHandler/);
   assert.match(diagnostics, /collides with .* \(waluau-1l02\)/);
+});
+
+test('generated externs emit nullable primitive attributes', () => {
+  const externs = readRepoFile('externs/dom.walu');
+  assert.match(externs, /^declare property HTMLInputElement:selectionStart: u32\?$/m);
+  assert.match(externs, /^declare property HTMLInputElement:selectionEnd: u32\?$/m);
 });
 
 test('generated externs emit DOM inheritance syntax', () => {

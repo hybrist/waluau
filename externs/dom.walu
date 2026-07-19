@@ -803,6 +803,8 @@ declare property HTMLInputElement:validationMessage: string
 declare function HTMLInputElement:setCustomValidity(error: string): unit
 declare property HTMLInputElement:labels: NodeList?
 declare function HTMLInputElement:select(): unit
+declare property HTMLInputElement:selectionStart: u32?
+declare property HTMLInputElement:selectionEnd: u32?
 declare property HTMLInputElement:selectionDirection: string?
 declare function HTMLInputElement:setRangeText(replacement: string): unit
 declare function HTMLInputElement:setRangeText(replacement: string, start: u32, end_: u32): unit

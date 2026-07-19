@@ -1,0 +1,50 @@
+-- Nullable primitive DOM attributes (waluau-pq7p): HTMLInputElement's
+-- selectionStart/selectionEnd are `unsigned long?` in Web IDL. Text inputs
+-- report concrete offsets; input types without selection (e.g. checkboxes)
+-- report null, which surfaces as nil.
+
+local window = require("dom:window")
+local document: Document = window.document
+local body: HTMLElement = document.body
+
+function caret_start(input: HTMLInputElement): u32
+    local start: u32? = input.selectionStart
+    if start ~= nil then
+        return start + 1
+    end
+    return 0
+end
+
+local text_element: Element = document:create_element("input")
+body:append_child(text_element)
+
+if HTMLInputElement(text_input) = text_element then
+    text_input.value = "waluau"
+    text_input:setSelectionRange(2, 4)
+
+    local start: u32? = text_input.selectionStart
+    local finish: u32? = text_input.selectionEnd
+    assert(start ~= nil)
+    assert(finish ~= nil)
+    assert(start == 2)
+    assert(finish == 4)
+    assert(caret_start(text_input) == 3)
+
+    -- The setter accepts a non-nil nullable primitive.
+    text_input.selectionStart = 3
+    assert(caret_start(text_input) == 4)
+else
+    assert(false)
+end
+
+local checkbox_element: Element = document:create_element("input")
+checkbox_element:set_attribute("type", "checkbox")
+body:append_child(checkbox_element)
+
+if HTMLInputElement(checkbox) = checkbox_element then
+    local start: u32? = checkbox.selectionStart
+    assert(start == nil)
+    assert(caret_start(checkbox) == 0)
+else
+    assert(false)
+end
