@@ -5,14 +5,17 @@
 //!
 //! 1. Starting from an entry file, every `require("./path")` is resolved
 //!    relative to the requiring file and loaded recursively, with cycle
-//!    detection.
+//!    detection. Filesystem paths must start with `./` or `../`; bare
+//!    specifiers are reserved for supported virtual modules.
 //! 2. Each non-entry module's top-level functions are renamed with a unique,
 //!    per-module prefix so names from different files cannot collide. The entry
 //!    module keeps its original names so its Wasm exports stay stable.
 //! 3. Every `require(...)` node is replaced with either the imported function
 //!    (single export) or a table of mangled function references (namespace
 //!    export). `m.field` member access on namespace locals is rewritten to the
-//!    corresponding mangled function name.
+//!    corresponding mangled function name. Resolution is static regardless of
+//!    the require expression's lexical position, so requires inside functions
+//!    do not perform runtime loading.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -486,6 +489,10 @@ fn merge_with_builtins(
         declared_constants,
         type_declarations,
         top_level,
+        // A trailing return is dependency-facing module metadata, not the
+        // entry module's Wasm export declaration. Inline functions from every
+        // module export were hoisted above; discard the entry expression so
+        // later stages cannot mistake it for executable entry-point work.
         export: None,
         sources,
         entry_file_path,
@@ -2386,6 +2393,95 @@ mod tests {
             ),
             "expected top-level require namespace access to rewrite to imported function: {:?}",
             main.body
+        );
+    }
+
+    #[test]
+    fn require_inside_function_is_statically_linked() {
+        let dir = tempdir().expect("tempdir should exist");
+        fs::write(
+            dir.path().join("lib.walu"),
+            r#"
+                function add_one(x: i32): i32
+                    return x + 1
+                end
+
+                return add_one
+            "#,
+        )
+        .expect("lib should write");
+        fs::write(
+            dir.path().join("main.walu"),
+            r#"
+                function main(): i32
+                    local add_one = require("./lib")
+                    return add_one(1)
+                end
+            "#,
+        )
+        .expect("main should write");
+
+        let program = link_program(&dir.path().join("main.walu")).expect("link should succeed");
+        let main = program
+            .functions
+            .iter()
+            .find(|function| function.name.to_string() == "main")
+            .expect("main should be present");
+        assert!(
+            matches!(
+                &main.body[0],
+                Stmt::Let {
+                    value: Expr::Name(name, _, _),
+                    ..
+                } if name == "__waluau_m0_add_one"
+            ),
+            "expected nested require to resolve statically: {:?}",
+            main.body
+        );
+    }
+
+    #[test]
+    fn rejects_bare_filesystem_require_path() {
+        let dir = tempdir().expect("tempdir should exist");
+        fs::write(
+            dir.path().join("main.walu"),
+            "local lib = require(\"lib\")\n",
+        )
+        .expect("main should write");
+
+        let error = link_program(&dir.path().join("main.walu")).expect_err("bare path should fail");
+        assert_eq!(
+            error.to_string(),
+            "require path must be relative and start with './' or '../', got \"lib\""
+        );
+    }
+
+    #[test]
+    fn linked_entry_export_is_consumed_as_module_metadata() {
+        let dir = tempdir().expect("tempdir should exist");
+        fs::write(
+            dir.path().join("main.walu"),
+            r#"
+                function main(): i32
+                    return 1
+                end
+
+                return main
+            "#,
+        )
+        .expect("main should write");
+
+        let program = link_program(&dir.path().join("main.walu")).expect("link should succeed");
+        assert!(
+            program.export.is_none(),
+            "linked entry return must not survive as executable metadata"
+        );
+        assert!(
+            program
+                .functions
+                .iter()
+                .any(|function| function.name.to_string() == "main"),
+            "entry function should remain the Wasm-facing surface"
         );
     }
 }

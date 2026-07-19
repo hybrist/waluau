@@ -1104,6 +1104,29 @@ mod tests {
     }
 
     #[test]
+    fn reports_non_string_require_argument_at_its_source_location() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("main.walu");
+        let source = "local lib = require(module_name)\n";
+        fs::write(&input_path, source).expect("main should write");
+        let canonical_path = input_path
+            .canonicalize()
+            .expect("main path should canonicalize");
+        let column = source.find("module_name").expect("argument should exist") + 1;
+
+        let error = super::compile_file(&input_path).expect_err("non-string require should fail");
+        assert_eq!(error.code(), Some("module/require-literal-path"));
+        assert_eq!(
+            error.render(),
+            format!(
+                "{}:1:{column}: require expects a string literal path, e.g. \
+                 require(\"./module\")",
+                canonical_path.display()
+            )
+        );
+    }
+
+    #[test]
     fn reports_missing_module_export() {
         let tempdir = tempdir().expect("tempdir should exist");
         fs::write(
