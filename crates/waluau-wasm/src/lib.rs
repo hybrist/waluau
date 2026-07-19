@@ -488,6 +488,17 @@ mod tests {
     }
 
     #[test]
+    fn compile_extern_reference_identity_conformance() {
+        let files = std::collections::HashMap::from([(
+            "main.walu".to_string(),
+            include_str!("../../../conformance/extern_reference_identity.walu").to_string(),
+        )]);
+        let result = super::compile_sources(&files, "main.walu")
+            .expect("extern reference identity conformance should compile");
+        assert!(result.wat.contains("js_eq_unknown"));
+    }
+
+    #[test]
     fn compile_promise_await_conformance() {
         let source = include_str!("../../../conformance/promise_await.walu");
         let result = compile_source(source).expect("Promise await conformance should compile");

@@ -583,6 +583,50 @@ fn distinct_extern_type_aliases_do_not_implicitly_convert() {
 }
 
 #[test]
+fn type_checks_extern_reference_equality() {
+    let source = r#"
+        type Node = extern
+        type Element = extern extends Node
+
+        function same(a: Element, b: Element): bool
+            return a == b
+        end
+
+        function different(a: Element, b: Element): bool
+            return a ~= b
+        end
+
+        function across_subtypes(a: Node, b: Element): bool
+            return a == b
+        end
+
+        function nullable_side(a: Element?, b: Element): bool
+            return a == b
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_equality_between_unrelated_extern_types() {
+    let source = r#"
+        type Element = extern
+        type AudioContext = extern
+
+        function entry(a: Element, b: AudioContext): bool
+            return a == b
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "== requires compatible extern operand types"
+    );
+}
+
+#[test]
 fn extern_inheritance_allows_upcast() {
     let source = r#"
         type Node = extern

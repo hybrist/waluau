@@ -1657,6 +1657,24 @@ pub(super) fn infer_expr(
                     if right_ty != left_ty {
                         return Err(Diagnostic::new("== requires both sides to have same type"));
                     }
+                } else if is_extern_ref_operand(&left_ty) {
+                    // Extern references compare by host (JavaScript) identity.
+                    // Both sides must be nominally related extern types.
+                    let right_ty = first_of_multi(infer_expr(
+                        right,
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                        None,
+                    )?);
+                    if !is_extern_ref_operand(&right_ty)
+                        || !(is_extern_subtype_of(&right_ty, &left_ty)
+                            || is_extern_subtype_of(&left_ty, &right_ty))
+                    {
+                        return Err(Diagnostic::new(
+                            "== requires compatible extern operand types",
+                        ));
+                    }
                 } else {
                     return Err(Diagnostic::new(
                         "== supports only numeric, bool, string, and bytes operands in MVP",
@@ -1678,6 +1696,12 @@ pub(super) fn first_of_multi(ty: Type) -> Type {
 
 fn is_nil_comparison(left: &Expr, right: &Expr) -> bool {
     matches!(left, Expr::Nil(..)) || matches!(right, Expr::Nil(..))
+}
+
+/// Types whose runtime value is a host `externref`: raw externs and
+/// user/host-declared opaque aliases backed by extern types.
+fn is_extern_ref_operand(ty: &Type) -> bool {
+    matches!(ty, Type::Extern | Type::ExternSubtype(_)) || super::is_extern_opaque_type(ty)
 }
 
 pub(super) fn infer_expr_list(

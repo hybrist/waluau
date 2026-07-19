@@ -5441,8 +5441,18 @@ fn emit_binary(
                     ctx.host_func_index(host::IMPORT_BYTES_EQ_FUNC)?,
                 ));
             }
-            Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
-                unreachable!()
+            // Extern references are opaque `externref` values, which wasm
+            // cannot compare (externref is not an eqref); identity lives on
+            // the host, so equality delegates to JavaScript `===`.
+            Type::Extern | Type::ExternSubtype(_) => {
+                out.instruction(&Instruction::Call(
+                    ctx.host_func_index(host::IMPORT_JS_EQ_UNKNOWN_FUNC)?,
+                ));
+            }
+            Type::Named { .. } | Type::Opaque { .. } => {
+                return Err(Diagnostic::new(
+                    "named-type equality is not supported during wasm emission",
+                ));
             }
             Type::Array(_) => unreachable!(),
             Type::Multi(_) => {
