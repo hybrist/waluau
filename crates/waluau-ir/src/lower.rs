@@ -1241,13 +1241,8 @@ fn string_byte_static_indices(
     }
 }
 
-fn expr_i32_literal(expr: &Expr) -> Option<i32> {
-    match expr {
-        Expr::Number(number, _) => number.raw.replace('_', "").parse::<i32>().ok(),
-        Expr::Unary { op: UnaryOp::Neg, expr, .. } => expr_i32_literal(expr).and_then(i32::checked_neg),
-        _ => None,
-    }
-}
+// expr_i32_literal, table_unpack_static_indices, and expr_static_array_len
+// live at the crate root (lib.rs) because the monomorphizer needs them too.
 
 fn expr_string_len(expr: &Expr) -> Option<i32> {
     let Expr::String(value, _) = expr else {
@@ -5171,6 +5166,7 @@ impl Builder<'_> {
                         || name == STRING_MATCH
                         || name == STRING_GSUB
                         || name == STRING_BYTE
+                        || name == TABLE_UNPACK
                 });
                 if expands_multi {
                     self.infer_expr_type(
@@ -5188,7 +5184,18 @@ impl Builder<'_> {
             };
             match ty {
                 Type::Multi(multi_types) => {
-                    let tuple = self.lower_expr(expr, env, types, None)?;
+                    // table.unpack derives its static arity from the expected
+                    // multi-value type, so lowering must see the same expected
+                    // shape that inference used; other multi-value builtins
+                    // recover their arity from their arguments alone.
+                    let tuple_expected = if let Expr::Call { callee, .. } = expr {
+                        builtin_name(callee.as_ref())
+                            .is_some_and(|name| name == TABLE_UNPACK)
+                            .then(|| Type::Multi(multi_types.clone()))
+                    } else {
+                        None
+                    };
+                    let tuple = self.lower_expr(expr, env, types, tuple_expected)?;
                     for (index, part) in multi_types.into_iter().enumerate() {
                         let coerced =
                             if let Some(exp) = expected.and_then(|types| types.get(out.len())) {
@@ -5794,7 +5801,9 @@ impl Builder<'_> {
                     {
                         return result;
                     }
-                    if let Some(result) = self.infer_table_builtin_call_type(&name, expr, types) {
+                    if let Some(result) =
+                        self.infer_table_builtin_call_type(&name, expr, types, expected.clone())
+                    {
                         return result;
                     }
                     if let Some(result) =
@@ -7552,6 +7561,8 @@ impl Builder<'_> {
         match name {
             TABLE_CONCAT => {}
             TABLE_PACK => return Some(self.lower_table_pack(args, env, types, expected)),
+            TABLE_CREATE => return Some(self.lower_table_create(args, env, types, expected)),
+            TABLE_UNPACK => return Some(self.lower_table_unpack(args, env, types, expected)),
             TABLE_GETN => return Some(self.lower_table_getn(args, env, types, expected)),
             TABLE_INSERT => return Some(self.lower_table_insert(args, env, types, expected)),
             TABLE_REMOVE => return Some(self.lower_table_remove(args, env, types, expected)),
@@ -7773,6 +7784,156 @@ impl Builder<'_> {
             dest
         };
         self.coerce_value(value, array_ty, expected)
+    }
+
+    /// `table.create(count, value)` builds a growable array of `count` copies
+    /// of `value` via an inline counted append loop. The one-argument form is
+    /// an empty array: the capacity hint has no effect on growable arrays.
+    fn lower_table_create(
+        &mut self,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(Diagnostic::new(format!(
+                "{TABLE_CREATE} expects 1 or 2 arguments, got {}",
+                args.len()
+            )));
+        }
+        let expected_element = match &expected {
+            Some(Type::Array(element)) => Some((**element).clone()),
+            _ => None,
+        };
+        let element_ty = match args.get(1) {
+            Some(value) => first_of_multi(self.infer_expr_type(value, types, expected_element)?),
+            None => expected_element.unwrap_or(Type::Unknown),
+        };
+        let count = self.lower_index_to_i32(&args[0], env, types)?;
+        let array = self.emit(Instruction::ArrayNew {
+            element_ty: element_ty.clone(),
+            elements: Vec::new(),
+        });
+        if let Some(value_expr) = args.get(1) {
+            let value = self.lower_expr(value_expr, env, types, Some(element_ty.clone()))?;
+            let i32_ty = Type::Numeric(NumericType::I32);
+            let zero = self.emit_i32_const(0);
+            let one = self.emit_i32_const(1);
+
+            let preheader = self.current_block;
+            let header = self.new_block();
+            let body = self.new_block();
+            let exit = self.new_block();
+            self.set_terminator(preheader, Terminator::Jump(header));
+
+            self.current_block = header;
+            let index_phi = self.emit(Instruction::Phi(vec![(preheader, zero)]));
+            // `count` is loop-invariant, but it must still be threaded through
+            // a phi (with a trivial `+ 0` self-edge) so the local allocator's
+            // liveness analysis treats it as live across the back edge —
+            // mirrors the table.concat loop above.
+            let count_phi = self.emit(Instruction::Phi(vec![(preheader, count)]));
+            let cond = self.emit(Instruction::Binary {
+                op: BinaryOp::Less,
+                left: index_phi,
+                right: count_phi,
+                operand_ty: i32_ty.clone(),
+                result_ty: Type::Bool,
+            });
+            self.set_terminator(
+                header,
+                Terminator::Branch {
+                    condition: cond,
+                    then_block: body,
+                    else_block: exit,
+                },
+            );
+
+            self.current_block = body;
+            // Write-at-length appends grow the array by one element.
+            let len = self.emit(Instruction::ArrayLen { array });
+            self.emit(Instruction::ArraySet {
+                array,
+                index: len,
+                value,
+                element_ty: element_ty.clone(),
+            });
+            let next_index = self.emit(Instruction::Binary {
+                op: BinaryOp::Add,
+                left: index_phi,
+                right: one,
+                operand_ty: i32_ty.clone(),
+                result_ty: i32_ty.clone(),
+            });
+            let next_count = self.emit(Instruction::Binary {
+                op: BinaryOp::Add,
+                left: count_phi,
+                right: zero,
+                operand_ty: i32_ty.clone(),
+                result_ty: i32_ty,
+            });
+            let body_exit = self.current_block;
+            self.set_terminator(body_exit, Terminator::Jump(header));
+            add_phi_incoming(
+                &mut self.function,
+                header,
+                index_phi,
+                (body_exit, next_index),
+            );
+            add_phi_incoming(
+                &mut self.function,
+                header,
+                count_phi,
+                (body_exit, next_count),
+            );
+            self.current_block = exit;
+        }
+        self.coerce_value(array, Type::Array(Box::new(element_ty)), expected)
+    }
+
+    /// `table.unpack(a [, first [, last]])` with statically-knowable bounds
+    /// lowers to a fixed tuple of element loads. The bounds are 0-based like
+    /// all Waluau array indexing and default to the whole array; the
+    /// runtime-variable arity case is not supported yet.
+    fn lower_table_unpack(
+        &mut self,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        if args.is_empty() || args.len() > 3 {
+            return Err(Diagnostic::new(format!(
+                "{TABLE_UNPACK} expects 1 to 3 arguments, got {}",
+                args.len()
+            )));
+        }
+        let element_ty = self.table_array_element_type(TABLE_UNPACK, args, types)?;
+        let indices = table_unpack_static_indices(args, expected.as_ref())?;
+        let array = self.lower_expr(
+            &args[0],
+            env,
+            types,
+            Some(Type::Array(Box::new(element_ty.clone()))),
+        )?;
+        // The bound arguments are compile-time literals (checked above), so
+        // they need no lowering of their own.
+        let mut values = Vec::with_capacity(indices.len());
+        for index in indices {
+            let index = self.emit_i32_const(index);
+            values.push(self.emit(Instruction::ArrayGet {
+                array,
+                index,
+                element_ty: element_ty.clone(),
+            }));
+        }
+        let result_types = vec![element_ty; values.len()];
+        let packed = self.emit(Instruction::PackMulti {
+            values,
+            types: result_types.clone(),
+        });
+        self.coerce_value(packed, Type::Multi(result_types), expected)
     }
 
     fn lower_table_insert(
@@ -8422,10 +8583,18 @@ impl Builder<'_> {
         name: &str,
         call: &Expr,
         types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
     ) -> Option<Result<Type, Diagnostic>> {
         if !matches!(
             name,
-            TABLE_CONCAT | TABLE_INSERT | TABLE_REMOVE | TABLE_SORT | TABLE_GETN | TABLE_PACK
+            TABLE_CONCAT
+                | TABLE_INSERT
+                | TABLE_REMOVE
+                | TABLE_SORT
+                | TABLE_GETN
+                | TABLE_PACK
+                | TABLE_CREATE
+                | TABLE_UNPACK
         ) {
             return None;
         }
@@ -8434,6 +8603,31 @@ impl Builder<'_> {
         };
         match name {
             TABLE_PACK => return Some(Ok(Type::Array(Box::new(Type::Unknown)))),
+            TABLE_CREATE => {
+                let expected_element = match &expected {
+                    Some(Type::Array(element)) => Some((**element).clone()),
+                    _ => None,
+                };
+                let element_ty = match args.get(1) {
+                    Some(value) => match self.infer_expr_type(value, types, expected_element) {
+                        Ok(ty) => first_of_multi(ty),
+                        Err(error) => return Some(Err(error)),
+                    },
+                    None => expected_element.unwrap_or(Type::Unknown),
+                };
+                return Some(Ok(Type::Array(Box::new(element_ty))));
+            }
+            TABLE_UNPACK => {
+                let element_ty = match self.table_array_element_type(TABLE_UNPACK, args, types) {
+                    Ok(ty) => ty,
+                    Err(error) => return Some(Err(error)),
+                };
+                let indices = match table_unpack_static_indices(args, expected.as_ref()) {
+                    Ok(indices) => indices,
+                    Err(error) => return Some(Err(error)),
+                };
+                return Some(Ok(Type::Multi(vec![element_ty; indices.len()])));
+            }
             TABLE_GETN => return Some(Ok(Type::Numeric(NumericType::I32))),
             TABLE_INSERT | TABLE_SORT => return Some(Ok(Type::Unit)),
             TABLE_REMOVE => {

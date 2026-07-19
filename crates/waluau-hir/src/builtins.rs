@@ -38,6 +38,8 @@ pub(super) const TABLE_REMOVE: &str = "table.remove";
 pub(super) const TABLE_SORT: &str = "table.sort";
 pub(super) const TABLE_GETN: &str = "table.getn";
 pub(super) const TABLE_PACK: &str = "table.pack";
+pub(super) const TABLE_CREATE: &str = "table.create";
+pub(super) const TABLE_UNPACK: &str = "table.unpack";
 pub(super) const TYPE: &str = "type";
 pub(super) const TYPEOF: &str = "typeof";
 pub(super) const TO_STRING: &str = "tostring";
@@ -754,6 +756,102 @@ pub(super) fn infer_table_builtin_call(
                 }
             }
             return Some(coerce_type(Type::Array(Box::new(Type::Unknown)), expected));
+        }
+        TABLE_CREATE => {
+            if args.is_empty() || args.len() > 2 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{TABLE_CREATE} expects 1 or 2 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            // The count accepts any numeric type; lowering converts it to i32
+            // like an array index.
+            let count_ty = match super::expressions::infer_expr(
+                &args[0],
+                vars,
+                fn_signatures,
+                active_type_params,
+                Some(i32_ty.clone()),
+            )
+            .or_else(|_| {
+                super::expressions::infer_expr(
+                    &args[0],
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    None,
+                )
+            }) {
+                Ok(ty) => ty,
+                Err(error) => return Some(Err(error)),
+            };
+            if !count_ty.is_numeric() {
+                return Some(Err(Diagnostic::new(format!(
+                    "{TABLE_CREATE} expects a numeric count, got {count_ty}"
+                ))));
+            }
+            let expected_element = match &expected {
+                Some(Type::Array(element)) => Some((**element).clone()),
+                _ => None,
+            };
+            let element_ty = match args.get(1) {
+                Some(value) => match super::expressions::infer_expr(
+                    value,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                    expected_element,
+                ) {
+                    Ok(ty) => super::expressions::first_of_multi(ty),
+                    Err(error) => return Some(Err(error)),
+                },
+                // Without a fill value the result is an empty array (the
+                // capacity hint has no effect on growable arrays); the element
+                // type comes from the expected type when there is one.
+                None => expected_element.unwrap_or(Type::Unknown),
+            };
+            return Some(coerce_type(Type::Array(Box::new(element_ty)), expected));
+        }
+        TABLE_UNPACK => {
+            if args.is_empty() || args.len() > 3 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{TABLE_UNPACK} expects 1 to 3 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            let element_ty = match infer_table_array_element(
+                name,
+                &args[0],
+                vars,
+                fn_signatures,
+                active_type_params,
+            ) {
+                Ok(ty) => ty,
+                Err(error) => return Some(Err(error)),
+            };
+            for (index, label) in [(1, "first"), (2, "last")] {
+                if let Some(arg) = args.get(index) {
+                    if let Err(error) = require_arg_type(
+                        TABLE_UNPACK,
+                        label,
+                        arg,
+                        i32_ty.clone(),
+                        vars,
+                        fn_signatures,
+                        active_type_params,
+                    ) {
+                        return Some(Err(error));
+                    }
+                }
+            }
+            let indices = match table_unpack_static_indices(args, expected.as_ref()) {
+                Ok(indices) => indices,
+                Err(error) => return Some(Err(error)),
+            };
+            return Some(coerce_type(
+                Type::Multi(vec![element_ty; indices.len()]),
+                expected,
+            ));
         }
         TABLE_GETN => {
             if args.len() != 1 {
@@ -1474,6 +1572,84 @@ pub(super) fn string_byte_static_count(
     } else {
         (end - start + 1) as usize
     })
+}
+
+/// Static 0-based element indices produced by a `table.unpack` call, from
+/// (in priority order) literal bounds, a statically sized array argument, or
+/// the expected multi-value arity. Waluau arrays are 0-based, so the bounds
+/// are too: the defaults are `first = 0` and `last = #a - 1`.
+pub(super) fn table_unpack_static_indices(
+    args: &[Expr],
+    expected: Option<&Type>,
+) -> Result<Vec<i32>, Diagnostic> {
+    let start = match args.get(1) {
+        None => 0,
+        Some(arg) => expr_i32_literal(arg).ok_or_else(|| {
+            Diagnostic::new(
+                "table.unpack requires literal bounds (runtime-variable table.unpack is not supported yet)",
+            )
+        })?,
+    };
+    if start < 0 {
+        return Err(Diagnostic::new(
+            "table.unpack bounds are 0-based and must be non-negative",
+        ));
+    }
+    if let Some(last) = args.get(2) {
+        let end = expr_i32_literal(last).ok_or_else(|| {
+            Diagnostic::new(
+                "table.unpack requires literal bounds (runtime-variable table.unpack is not supported yet)",
+            )
+        })?;
+        return Ok(if end < start {
+            Vec::new()
+        } else {
+            (start..=end).collect()
+        });
+    }
+    if let Some(len) = expr_static_array_len(&args[0]) {
+        return Ok((start..len).collect());
+    }
+    if let Some(Type::Multi(types)) = expected {
+        let count = i32::try_from(types.len())
+            .map_err(|_| Diagnostic::new("table.unpack expected multi-value arity is too large"))?;
+        return Ok((start..start + count).collect());
+    }
+    Err(Diagnostic::new(
+        "table.unpack requires literal bounds, a statically sized array argument, or an \
+         expected multi-value arity (runtime-variable table.unpack is not supported yet)",
+    ))
+}
+
+/// Statically-known length of an array expression: an array literal without
+/// multi-value elements, or a direct `table.create(count, ...)` call with a
+/// literal count.
+fn expr_static_array_len(expr: &Expr) -> Option<i32> {
+    match expr {
+        Expr::ArrayLiteral { elements, .. } => {
+            // A trailing `...` or call could expand to multiple values, so
+            // only literals made of single-value elements have a static length.
+            if elements.iter().any(|element| {
+                matches!(
+                    element,
+                    Expr::Vararg(_) | Expr::Call { .. } | Expr::MethodCall { .. }
+                )
+            }) {
+                return None;
+            }
+            i32::try_from(elements.len()).ok()
+        }
+        Expr::Call { callee, args, .. } => match callee.as_ref() {
+            Expr::Field { base, name, .. }
+                if name == "create"
+                    && matches!(base.as_ref(), Expr::Name(namespace, _, _) if namespace == "table") =>
+            {
+                expr_i32_literal(args.first()?)
+            }
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn expr_i32_literal(expr: &Expr) -> Option<i32> {
