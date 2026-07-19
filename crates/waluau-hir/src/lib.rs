@@ -3002,10 +3002,19 @@ fn dedupe_declared_constants(program: &mut Program) -> Result<(), Diagnostic> {
 }
 
 pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
-    let mut typed = desugar_method_declarations(program)?;
+    type_check_and_infer_collect(program).map_err(|mut errors| errors.remove(0))
+}
+
+/// Type check, collecting a diagnostic per independently-failing function or
+/// statement instead of stopping at the first. Whole-program phases (type
+/// resolution, desugaring, signature construction) remain fail-fast; the
+/// per-function inference and checking passes collect and continue.
+pub fn type_check_and_infer_collect(program: &Program) -> Result<Program, Vec<Diagnostic>> {
+    let mut typed = desugar_method_declarations(program).map_err(|error| vec![error])?;
     desugar_implicit_top_level_declarations(&mut typed);
-    resolve_program_types(&mut typed)?;
-    let overload_sets = disambiguate_declared_import_overloads(&mut typed)?;
+    resolve_program_types(&mut typed).map_err(|error| vec![error])?;
+    let overload_sets =
+        disambiguate_declared_import_overloads(&mut typed).map_err(|error| vec![error])?;
     fill_gsub_replacement_annotations(&mut typed);
     if !typed.top_level.is_empty() {
         typed.functions.push(Function {
@@ -3047,13 +3056,13 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
     for (base_name, variants) in overload_sets {
         fn_signatures.insert(base_name, FnSignature::Overloaded(variants));
     }
-    dedupe_declared_constants(&mut typed)?;
+    dedupe_declared_constants(&mut typed).map_err(|error| vec![error])?;
     for constant in &typed.declared_constants {
         if fn_signatures.contains_key(&constant.name) {
-            return Err(Diagnostic::new(format!(
+            return Err(vec![Diagnostic::new(format!(
                 "declared constant '{}' conflicts with a declared host function of the same name",
                 constant.name
-            )));
+            ))]);
         }
         fn_signatures.insert(
             constant.name.clone(),
@@ -3103,6 +3112,12 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
         })
         .collect();
 
+    let mut errors: Vec<Diagnostic> = Vec::new();
+    // Functions whose return-type inference failed: they get a permissive
+    // `unknown` return signature so callers and siblings keep checking
+    // without cascades, and are skipped by the checking pass below.
+    let mut errored_functions: HashSet<String> = HashSet::new();
+
     while !unresolved.is_empty() {
         let mut progressed = false;
         let mut next_unresolved = Vec::new();
@@ -3114,15 +3129,15 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
             let function = &typed.functions[idx];
             let function_name = function.name.to_string();
             let function_vararg = function.vararg;
+            let function_file_path = function.file_path.clone();
             let function_params: Vec<Type> = function
                 .params
                 .iter()
                 .map(|param| param.ty.clone())
                 .collect();
             match infer_top_level_function_return_type(function, &fn_signatures, &unresolved_names)
-                .map_err(|error| error.with_file_path_if_missing(function.file_path.clone()))?
             {
-                Some(ret) => {
+                Ok(Some(ret)) => {
                     typed.functions[idx].return_type = Some(ret.clone());
                     fn_signatures.insert(
                         function_name,
@@ -3134,17 +3149,32 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
                     );
                     progressed = true;
                 }
-                None => next_unresolved.push(idx),
+                Ok(None) => next_unresolved.push(idx),
+                Err(error) => {
+                    errors.push(error.with_file_path_if_missing(function_file_path));
+                    errored_functions.insert(function_name.clone());
+                    typed.functions[idx].return_type = Some(Type::Unknown);
+                    fn_signatures.insert(
+                        function_name,
+                        FnSignature::Mono {
+                            params: function_params,
+                            vararg: function_vararg,
+                            return_type: Type::Unknown,
+                        },
+                    );
+                    progressed = true;
+                }
             }
         }
         if !progressed {
             let name = &typed.functions[next_unresolved[0]].name;
-            return Err(inference_diagnostic(
+            errors.push(inference_diagnostic(
                 "inference/unsupported",
                 DiagnosticCategory::Unsupported,
                 format!("cannot infer return type for recursive or cyclic function '{name}'"),
                 "add an explicit return type annotation to break the cycle",
             ));
+            return Err(errors);
         }
         unresolved = next_unresolved;
     }
@@ -3155,13 +3185,25 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
         .find(|function| function.name.to_string() == "__waluau_top_level_init")
     {
         let file_path = top_level_init.file_path.clone();
-        resolve_implicit_self_functions(&mut top_level_init.body, &mut fn_signatures)
-            .map_err(|error| error.with_file_path_if_missing(file_path))?;
+        if let Err(error) =
+            resolve_implicit_self_functions(&mut top_level_init.body, &mut fn_signatures)
+        {
+            errors.push(error.with_file_path_if_missing(file_path));
+        }
     }
 
     for function in &typed.functions {
-        check_function(function, &fn_signatures, &HashSet::new())
-            .map_err(|error| error.with_file_path_if_missing(function.file_path.clone()))?;
+        if errored_functions.contains(&function.name.to_string()) {
+            continue;
+        }
+        errors.extend(
+            statements::check_function_collect(function, &fn_signatures, &HashSet::new())
+                .into_iter()
+                .map(|error| error.with_file_path_if_missing(function.file_path.clone())),
+        );
+    }
+    if !errors.is_empty() {
+        return Err(errors);
     }
 
     for function in &mut typed.functions {
@@ -3177,10 +3219,10 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
             .collect::<HashMap<_, _>>();
         let active = active_type_param_set(&function.type_params);
         annotate_inferred_stmt_locals(&mut function.body, &mut scope, &fn_signatures, &active)
-            .map_err(|error| error.with_file_path_if_missing(function.file_path.clone()))?;
+            .map_err(|error| vec![error.with_file_path_if_missing(function.file_path.clone())])?;
     }
 
-    annotate_resolved_extern_members(&mut typed, &fn_signatures)?;
+    annotate_resolved_extern_members(&mut typed, &fn_signatures).map_err(|error| vec![error])?;
 
     Ok(typed)
 }

@@ -516,18 +516,43 @@ pub(super) fn check_function(
     fn_signatures: &HashMap<String, FnSignature>,
     outer_type_params: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
-    validate_type_param_list(&function.type_params, outer_type_params)?;
+    let mut diagnostics = check_function_collect(function, fn_signatures, outer_type_params);
+    if diagnostics.is_empty() {
+        Ok(())
+    } else {
+        Err(diagnostics.remove(0))
+    }
+}
+
+/// Check a function, collecting a diagnostic per failing top-level statement
+/// instead of stopping at the first. Bindings introduced by a failed
+/// statement fall back to `unknown` so later statements don't report
+/// cascading unknown-variable errors.
+pub(super) fn check_function_collect(
+    function: &Function,
+    fn_signatures: &HashMap<String, FnSignature>,
+    outer_type_params: &HashSet<String>,
+) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    if let Err(error) = validate_type_param_list(&function.type_params, outer_type_params) {
+        diagnostics.push(error);
+        return diagnostics;
+    }
     let active_type_params = active_type_param_set(&function.type_params);
     let mut allowed_type_params = outer_type_params.clone();
     allowed_type_params.extend(active_type_params.iter().cloned());
     for param in &function.params {
-        validate_type_in_scope(&param.ty, &allowed_type_params)?;
+        if let Err(error) = validate_type_in_scope(&param.ty, &allowed_type_params) {
+            diagnostics.push(error);
+        }
     }
     if let Some(ret) = &function.return_type {
-        validate_type_in_scope(ret, &allowed_type_params)?;
+        if let Err(error) = validate_type_in_scope(ret, &allowed_type_params) {
+            diagnostics.push(error);
+        }
     }
-    let expected_return = function.return_type.clone().ok_or_else(|| {
-        if function.type_params.is_empty() {
+    let Some(expected_return) = function.return_type.clone() else {
+        diagnostics.push(if function.type_params.is_empty() {
             Diagnostic::new(format!(
                 "cannot infer return type for recursive or cyclic function '{}'",
                 function.name
@@ -541,8 +566,9 @@ pub(super) fn check_function(
                 ),
                 "add a return type annotation to the generic function",
             )
-        }
-    })?;
+        });
+        return diagnostics;
+    };
     let mut vars: HashMap<String, Binding> = HashMap::new();
     for param in &function.params {
         vars.insert(
@@ -552,26 +578,64 @@ pub(super) fn check_function(
     }
 
     let mut saw_return = false;
+    let mut any_stmt_error = false;
     for stmt in &function.body {
-        if check_stmt(
+        match check_stmt(
             stmt,
             &mut vars,
             fn_signatures,
             &active_type_params,
             &expected_return,
             false,
-        )? {
-            saw_return = true;
+        ) {
+            Ok(returned) => saw_return |= returned,
+            Err(error) => {
+                any_stmt_error = true;
+                diagnostics.push(error);
+                bind_failed_stmt_names_as_unknown(stmt, &mut vars);
+            }
         }
     }
-    if !saw_return && expected_return != Type::Unit && !matches!(expected_return, Type::Nullable(_))
+    // A failed statement may have been the return, so only report a missing
+    // return when every statement checked cleanly.
+    if !any_stmt_error
+        && !saw_return
+        && expected_return != Type::Unit
+        && !matches!(expected_return, Type::Nullable(_))
     {
-        return Err(Diagnostic::new(format!(
+        diagnostics.push(Diagnostic::new(format!(
             "function '{}' is missing a return",
             function.name
         )));
     }
-    Ok(())
+    diagnostics
+}
+
+/// After a statement fails to check, bind any names it declares so later
+/// statements referencing them don't cascade: an explicit annotation is
+/// trusted (it's the user's stated intent), otherwise fall back to `unknown`.
+fn bind_failed_stmt_names_as_unknown(stmt: &Stmt, vars: &mut HashMap<String, Binding>) {
+    match stmt {
+        Stmt::Let {
+            name,
+            rebindability,
+            ty,
+            ..
+        } => {
+            let fallback = ty.clone().unwrap_or(Type::Unknown);
+            vars.insert(name.clone(), binding_for(fallback, *rebindability));
+        }
+        Stmt::LetMulti { bindings, .. } => {
+            for binding in bindings {
+                let fallback = binding.ty.clone().unwrap_or(Type::Unknown);
+                vars.insert(
+                    binding.name.clone(),
+                    binding_for(fallback, binding.rebindability),
+                );
+            }
+        }
+        _ => {}
+    }
 }
 
 pub(super) fn collect_return_types(
