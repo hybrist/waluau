@@ -14,8 +14,44 @@ use serde_json::{Value, json};
 use waluau_diagnostics::{Diagnostic, Severity};
 use waluau_driver::CompilerSession;
 
-pub struct LspServer {
-    session: CompilerSession,
+/// Diagnostics an [`AnalysisBackend`] produced for one analysis root.
+pub struct BackendAnalysis {
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// Analysis engine behind the protocol core. The native server uses a
+/// [`CompilerSession`] (filesystem + overlays); the wasm build plugs in an
+/// in-memory backend so the same core runs client-side in the playground.
+pub trait AnalysisBackend {
+    /// Register `content` as the live buffer for `path`. The backend owns
+    /// path normalization (e.g. canonicalization against the filesystem).
+    fn set_overlay(&mut self, path: &Path, content: &str);
+    fn remove_overlay(&mut self, path: &Path);
+    fn analyze_root(&mut self, root: &Path) -> BackendAnalysis;
+}
+
+impl AnalysisBackend for CompilerSession {
+    fn set_overlay(&mut self, path: &Path, content: &str) {
+        // The linker resolves modules through canonical paths; the overlay
+        // must be registered under the same key the resolver produces.
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        CompilerSession::set_overlay(self, canonical, content);
+    }
+
+    fn remove_overlay(&mut self, path: &Path) {
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        CompilerSession::remove_overlay(self, &canonical);
+    }
+
+    fn analyze_root(&mut self, root: &Path) -> BackendAnalysis {
+        BackendAnalysis {
+            diagnostics: CompilerSession::analyze_root(self, root).diagnostics,
+        }
+    }
+}
+
+pub struct LspServer<B: AnalysisBackend = CompilerSession> {
+    backend: B,
     /// Open documents by filesystem path, holding the latest buffer text.
     open_documents: HashMap<PathBuf, String>,
     /// URIs we last published diagnostics for, so stale ones can be cleared.
@@ -24,16 +60,22 @@ pub struct LspServer {
     exit_requested: bool,
 }
 
-impl Default for LspServer {
+impl Default for LspServer<CompilerSession> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl LspServer {
+impl LspServer<CompilerSession> {
     pub fn new() -> Self {
+        Self::with_backend(CompilerSession::new())
+    }
+}
+
+impl<B: AnalysisBackend> LspServer<B> {
+    pub fn with_backend(backend: B) -> Self {
         Self {
-            session: CompilerSession::new(),
+            backend,
             open_documents: HashMap::new(),
             published_uris: HashSet::new(),
             shutdown_requested: false,
@@ -124,7 +166,7 @@ impl LspServer {
                     return Vec::new();
                 };
                 self.open_documents.remove(&path);
-                self.session.remove_overlay(&path);
+                self.backend.remove_overlay(&path);
                 self.publish_all_diagnostics()
             }
             ("textDocument/didSave", _) => Vec::new(),
@@ -140,10 +182,7 @@ impl LspServer {
     }
 
     fn upsert_document(&mut self, path: PathBuf, text: String) {
-        // The linker resolves modules through canonical paths; the overlay
-        // must be registered under the same key the resolver produces.
-        let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
-        self.session.set_overlay(canonical, text.clone());
+        self.backend.set_overlay(&path, &text);
         self.open_documents.insert(path, text);
     }
 
@@ -155,7 +194,7 @@ impl LspServer {
         let mut per_file: BTreeMap<String, Vec<Diagnostic>> = BTreeMap::new();
         let roots: Vec<PathBuf> = self.open_documents.keys().cloned().collect();
         for root in &roots {
-            let analysis = self.session.analyze_root(root);
+            let analysis = self.backend.analyze_root(root);
             for diagnostic in analysis.diagnostics {
                 let file = diagnostic
                     .file_path()

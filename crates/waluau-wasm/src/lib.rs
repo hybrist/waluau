@@ -1,4 +1,5 @@
 mod link;
+mod lsp;
 
 use serde::Serialize;
 use wasm_bindgen::prelude::*;

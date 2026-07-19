@@ -428,11 +428,13 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde-wasm-bindgen",
+ "serde_json",
  "waluau-ast",
  "waluau-codegen-wasm",
  "waluau-diagnostics",
  "waluau-hir",
  "waluau-ir",
+ "waluau-lsp",
  "waluau-parser",
  "wasm-bindgen",
  "wasmprinter",

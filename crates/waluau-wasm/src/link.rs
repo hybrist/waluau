@@ -1,4 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+
+use waluau_diagnostics::Diagnostic;
 use waluau_ast::{
     DeclaredImport, Expr, Function, FunctionExpr, FunctionName, Program, Stmt, TableField, Type,
     TypeDeclaration,
@@ -51,6 +53,20 @@ pub fn resolve_path(base_file: &str, relative_path: &str) -> Result<String, Stri
 }
 
 pub fn link_programs(files: &HashMap<String, String>, entry_path: &str) -> Result<Program, String> {
+    let (program, diagnostics) = link_programs_collect(files, entry_path)?;
+    match diagnostics.first() {
+        None => Ok(program),
+        Some(first) => Err(first.render_for_playground()),
+    }
+}
+
+/// Like [`link_programs`], but recovers from module parse errors: every parse
+/// diagnostic across the module graph is collected while traversal continues,
+/// and the merged (possibly partial) program is returned alongside them.
+pub fn link_programs_collect(
+    files: &HashMap<String, String>,
+    entry_path: &str,
+) -> Result<(Program, Vec<Diagnostic>), String> {
     let mut normalized_files = HashMap::new();
     for (path, source) in files {
         let mut norm = clean_path(path);
@@ -72,6 +88,7 @@ pub fn link_programs(files: &HashMap<String, String>, entry_path: &str) -> Resul
         modules: Vec::new(),
         by_path: HashMap::new(),
         stack: Vec::new(),
+        diagnostics: Vec::new(),
         requires_dom_externs: false,
         requires_tfjs_externs: false,
         requires_vitest_externs: false,
@@ -96,7 +113,7 @@ pub fn link_programs(files: &HashMap<String, String>, entry_path: &str) -> Resul
     } else {
         None
     };
-    merge_with_ambient_declarations(
+    match merge_with_ambient_declarations(
         &loader.modules,
         entry_id,
         builtin_imports,
@@ -107,7 +124,17 @@ pub fn link_programs(files: &HashMap<String, String>, entry_path: &str) -> Resul
             tfjs: tfjs_externs,
             vitest: vitest_externs,
         },
-    )
+    ) {
+        Ok(program) => Ok((program, loader.diagnostics)),
+        // A recovered (partial) AST can break merging in misleading ways —
+        // the parse errors are the real story, so surface them with the
+        // unmerged entry program instead.
+        Err(_) if !loader.diagnostics.is_empty() => Ok((
+            loader.modules[entry_id].program.clone(),
+            loader.diagnostics,
+        )),
+        Err(error) => Err(error),
+    }
 }
 
 fn is_ambient_extern_path(path: &str) -> bool {
@@ -149,6 +176,9 @@ struct Loader<'a> {
     modules: Vec<LoadedModule>,
     by_path: HashMap<String, usize>,
     stack: Vec<String>,
+    /// Parse diagnostics collected across the module graph; traversal
+    /// continues past modules with syntax errors using their recovered ASTs.
+    diagnostics: Vec<Diagnostic>,
     requires_dom_externs: bool,
     requires_tfjs_externs: bool,
     requires_vitest_externs: bool,
@@ -174,8 +204,11 @@ impl<'a> Loader<'a> {
             .files
             .get(path)
             .ok_or_else(|| format!("cannot find module \"{}\"", path))?;
-        let program = waluau_parser::parse_with_path(source, path)
-            .map_err(|error| error.render_for_playground())?;
+        let waluau_parser::ParseOutcome {
+            program,
+            diagnostics,
+        } = waluau_parser::parse_with_recovery(source, path);
+        self.diagnostics.extend(diagnostics);
 
         let mut raw_paths = Vec::new();
         collect_require_paths(&program, &mut raw_paths);

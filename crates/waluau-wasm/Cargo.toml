@@ -15,7 +15,11 @@ waluau-hir.workspace = true
 waluau-ir.workspace = true
 waluau-parser.workspace = true
 waluau-codegen-wasm.workspace = true
+waluau-lsp.workspace = true
 wasmprinter = "0.217.1"
 serde = { version = "1.0", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
 wasm-bindgen = "0.2.122"
+
+[dev-dependencies]
+serde_json = "1.0"
