@@ -65,3 +65,5 @@ jobs:
 
       - name: Run Playwright tests
         run: pnpm --filter playground test
+        env:
+          PLAYWRIGHT_SKIP_BUILD: '1'
