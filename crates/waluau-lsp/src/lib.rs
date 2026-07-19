@@ -14,6 +14,8 @@ use serde_json::{Value, json};
 use waluau_diagnostics::{Diagnostic, Severity};
 use waluau_driver::CompilerSession;
 
+mod features;
+
 /// Diagnostics an [`AnalysisBackend`] produced for one analysis root.
 pub struct BackendAnalysis {
     pub diagnostics: Vec<Diagnostic>,
@@ -123,6 +125,9 @@ impl<B: AnalysisBackend> LspServer<B> {
                         // 1 = full-document sync: every change carries the
                         // complete buffer, matching the session overlay model.
                         "textDocumentSync": 1,
+                        "hoverProvider": true,
+                        "definitionProvider": true,
+                        "completionProvider": {"triggerCharacters": [".", ":"]},
                     },
                     "serverInfo": {"name": "waluau-lsp", "version": env!("CARGO_PKG_VERSION")},
                 }),
@@ -172,6 +177,9 @@ impl<B: AnalysisBackend> LspServer<B> {
                 self.publish_all_diagnostics()
             }
             ("textDocument/didSave", _) => Vec::new(),
+            ("textDocument/hover", Some(id)) => vec![self.handle_hover(id, &params)],
+            ("textDocument/definition", Some(id)) => vec![self.handle_definition(id, &params)],
+            ("textDocument/completion", Some(id)) => vec![self.handle_completion(id, &params)],
             // Unknown request (has an id): report method-not-found.
             (_, Some(id)) => vec![error_response(
                 id,
@@ -264,6 +272,120 @@ impl<B: AnalysisBackend> LspServer<B> {
         }
         std::fs::read_to_string(path).ok()
     }
+
+    /// The document and byte offset a position-based request points at.
+    fn request_document(&self, params: &Value) -> Option<(PathBuf, String, u32)> {
+        let (path, _uri) = document_path(params)?;
+        let text = self.file_text(&path)?;
+        let line = params["position"]["line"].as_u64()? as u32;
+        let character = params["position"]["character"].as_u64()? as u32;
+        let offset = offset_at(&text, line, character);
+        Some((path, text, offset))
+    }
+
+    /// Loader for cross-file lookups: open buffers win over the filesystem.
+    /// Open documents are keyed by the URI-derived path, so a canonicalized
+    /// candidate is tried both ways before falling back to disk (which the
+    /// wasm build simply fails, limiting it to open documents).
+    fn workspace_loader(&self) -> impl Fn(&Path) -> Option<String> + '_ {
+        |path: &Path| {
+            if let Some(text) = self.open_documents.get(path) {
+                return Some(text.clone());
+            }
+            if let Ok(canonical) = path.canonicalize()
+                && let Some(text) = self.open_documents.get(&canonical)
+            {
+                return Some(text.clone());
+            }
+            std::fs::read_to_string(path).ok()
+        }
+    }
+
+    fn handle_hover(&self, id: Value, params: &Value) -> String {
+        let Some((path, text, offset)) = self.request_document(params) else {
+            return response(id, Value::Null);
+        };
+        let load = self.workspace_loader();
+        match features::hover(&text, &path, offset, &load) {
+            Some(hover) => response(
+                id,
+                json!({
+                    "contents": {"kind": "markdown", "value": hover.contents},
+                    "range": {
+                        "start": position(&text, hover.span.start as usize),
+                        "end": position(&text, hover.span.end as usize),
+                    },
+                }),
+            ),
+            None => response(id, Value::Null),
+        }
+    }
+
+    fn handle_definition(&self, id: Value, params: &Value) -> String {
+        let Some((path, text, offset)) = self.request_document(params) else {
+            return response(id, Value::Null);
+        };
+        let load = self.workspace_loader();
+        let Some((target_file, span)) = features::definition(&text, &path, offset, &load) else {
+            return response(id, Value::Null);
+        };
+        // The span is a byte range in the *target* file's current text.
+        let target_text = if target_file == path {
+            text
+        } else {
+            match load(&target_file) {
+                Some(text) => text,
+                None => return response(id, Value::Null),
+            }
+        };
+        response(
+            id,
+            json!({
+                "uri": path_to_uri(&target_file),
+                "range": {
+                    "start": position(&target_text, span.start as usize),
+                    "end": position(&target_text, span.end as usize),
+                },
+            }),
+        )
+    }
+
+    fn handle_completion(&self, id: Value, params: &Value) -> String {
+        let Some((path, text, offset)) = self.request_document(params) else {
+            return response(id, Value::Null);
+        };
+        let load = self.workspace_loader();
+        let items: Vec<Value> = features::completion(&text, &path, offset, &load)
+            .into_iter()
+            .map(|item| {
+                json!({
+                    "label": item.label,
+                    "kind": item.kind,
+                    "detail": item.detail,
+                })
+            })
+            .collect();
+        response(id, json!(items))
+    }
+}
+
+/// LSP position (zero-based line, UTF-16 column) to a byte offset in `text`;
+/// the inverse of [`position`]. Positions past a line's end clamp to the line
+/// break; positions past the last line clamp to the text's end.
+fn offset_at(text: &str, line: u32, character: u32) -> u32 {
+    let mut current_line = 0u32;
+    let mut utf16_column = 0u32;
+    for (index, ch) in text.char_indices() {
+        if current_line == line {
+            if utf16_column >= character || ch == '\n' {
+                return index as u32;
+            }
+            utf16_column += ch.len_utf16() as u32;
+        } else if ch == '\n' {
+            current_line += 1;
+        }
+    }
+    text.len() as u32
 }
 
 /// Byte offset in `text` to an LSP position (zero-based line, UTF-16 column).
