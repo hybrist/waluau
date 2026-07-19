@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { getDefaultParamValue, renderType } from '../utils/wasm.js';
 import { ParamField } from './ParamFields.jsx';
 
@@ -8,14 +9,27 @@ export default function InlineRunner({
   handleInputChange,
   handleRecordFieldChange,
   handleManualRun,
+  requestAutoRun,
   getResult,
   autoRun,
   onClose,
 }) {
   const func = exportsList.find((e) => e.name === funcName);
+  const inputState = funcInputs[funcName];
+
+  useEffect(() => {
+    if (!autoRun || !func) return;
+    requestAutoRun(
+      func.name,
+      func.params,
+      func.richParams,
+      func.richReturns
+    );
+  }, [autoRun, func, inputState, requestAutoRun]);
+
   if (!func) return null;
 
-  const inputs = funcInputs[funcName] || (func.richParams || func.params).map(getDefaultParamValue);
+  const inputs = inputState || (func.richParams || func.params).map(getDefaultParamValue);
   const res = getResult(funcName, func.params, func.richParams, func.richReturns);
 
   return (
