@@ -7025,6 +7025,9 @@ impl Builder<'_> {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
+        // `type(f())` inspects the single value `f()` adjusts to, so collapse a
+        // multi-value result before classifying it (an empty result is `nil`).
+        let arg_ty = adjust_to_single_value(arg_ty);
         let value = if arg_ty == Type::Unknown {
             let lowered = match self.lower_expr(&args[0], env, types, Some(Type::Unknown)) {
                 Ok(value) => value,
@@ -7035,7 +7038,14 @@ impl Builder<'_> {
                 from: Type::Unknown,
             })
         } else {
-            self.emit(Instruction::String(lua_type_name(&arg_ty).to_string()))
+            let Some(type_name) = lua_type_name(&arg_ty) else {
+                return Some(Err(Diagnostic::new(format!(
+                    "{name} cannot classify a {arg_ty} value at compile time; \
+                     annotate the argument with a concrete type or `unknown` \
+                     to classify it at runtime",
+                ))));
+            };
+            self.emit(Instruction::String(type_name.to_string()))
         };
         Some(self.coerce_value(value, Type::String, expected))
     }
@@ -9924,8 +9934,31 @@ fn common_numeric_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
     }
 }
 
-fn lua_type_name(ty: &Type) -> &'static str {
+/// Collapses a multi-value type to the single value Lua adjusts it to.
+///
+/// A call in single-value position yields its first result, or `nil` when it
+/// returns nothing.
+fn adjust_to_single_value(ty: Type) -> Type {
     match ty {
+        Type::Multi(mut parts) => {
+            if parts.is_empty() {
+                Type::Nil
+            } else {
+                adjust_to_single_value(parts.remove(0))
+            }
+        }
+        other => other,
+    }
+}
+
+/// The Lua type name `type()`/`typeof()` reports for a statically known type.
+///
+/// Returns `None` when the name cannot be determined statically. Callers must
+/// report a diagnostic rather than emit a placeholder: real Luau `type()` only
+/// ever returns one of the names below, so any other string would be a value no
+/// Luau program can produce.
+fn lua_type_name(ty: &Type) -> Option<&'static str> {
+    Some(match ty {
         Type::Nil => "nil",
         Type::Unit => "nil",
         Type::Bool => "boolean",
@@ -9941,11 +9974,17 @@ fn lua_type_name(ty: &Type) -> &'static str {
         Type::TypedArray(_) => "buffer",
         Type::Extern | Type::ExternSubtype(_) => "userdata",
         Type::Nullable(_) => "nil",
-        Type::Unknown => "unknown",
-        Type::Named { .. } | Type::Opaque { .. } | Type::TypeParam(_) | Type::Multi(_) => {
-            "unknown"
-        }
-    }
+        // A nominal alias (`type Point = { x: number }`) is transparent to
+        // `type()`, which reports the underlying representation's name.
+        Type::Opaque { ty, .. } => return lua_type_name(ty),
+        // Callers adjust multi-value results before classifying them.
+        Type::Multi(_) => return None,
+        // Dispatched at runtime by the caller, never named statically.
+        Type::Unknown => return None,
+        // An unresolved alias has no known representation, and a generic type
+        // parameter is only known once monomorphized; neither has a static name.
+        Type::Named { .. } | Type::TypeParam(_) => return None,
+    })
 }
 
 fn required_param_count(params: &[Type]) -> usize {
