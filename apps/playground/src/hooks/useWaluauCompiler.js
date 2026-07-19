@@ -11,6 +11,7 @@ import {
   cleanupDomEventListeners,
   cancelPendingAnimationFrames,
 } from '../utils/wasm.js';
+import { loadWaluauWasm } from '../utils/waluauWasmModule.js';
 
 export default function useWaluauCompiler({ files, entryFile, assetManifest = null }) {
   const [status, setStatus] = useState('loading'); // 'loading', 'ready', 'success', 'error'
@@ -49,9 +50,8 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
   useEffect(() => {
     let cancelled = false;
 
-    import('../waluau-wasm/waluau_wasm.js')
-      .then(async (module) => {
-        await module.default();
+    loadWaluauWasm()
+      .then((module) => {
         if (cancelled) {
           return;
         }
@@ -174,6 +174,65 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
       setDiagnostics(null);
     }
   }, [files, compilerReady]);
+
+  // Synchronous JSON-RPC request against the client-side language server
+  // (hover, definition, completion). Returns the parsed `result` or null.
+  //
+  // Position requests race ahead of the React-effect document sync: Monaco
+  // asks for completions on the very keystroke that inserted the trigger
+  // character, before the files state round-trips. Callers therefore pass
+  // the live buffer as `document` and it is synced (through the same
+  // version bookkeeping the effect uses) before the request is sent.
+  const lspRequestIdRef = useRef(1000);
+  const sendLspRequest = useCallback((method, params, document = null) => {
+    const server = languageServerRef.current;
+    if (!server) return null;
+    try {
+      if (document != null) {
+        const synced = syncedDocumentsRef.current;
+        const known = synced.get(document.path);
+        const uri = `file://${document.path}`;
+        let outgoing = null;
+        if (known == null) {
+          synced.set(document.path, { version: 1, text: document.text });
+          outgoing = server.handleMessage(JSON.stringify({
+            jsonrpc: '2.0',
+            method: 'textDocument/didOpen',
+            params: { textDocument: { uri, languageId: 'waluau', version: 1, text: document.text } },
+          }));
+        } else if (known.text !== document.text) {
+          const version = known.version + 1;
+          synced.set(document.path, { version, text: document.text });
+          outgoing = server.handleMessage(JSON.stringify({
+            jsonrpc: '2.0',
+            method: 'textDocument/didChange',
+            params: { textDocument: { uri, version }, contentChanges: [{ text: document.text }] },
+          }));
+        }
+        // The sync response carries the complete diagnostic state; keep the
+        // markers fresh instead of dropping it.
+        if (outgoing != null) {
+          const collected = new Map();
+          for (const message of outgoing) {
+            const parsed = JSON.parse(message);
+            if (parsed.method === 'textDocument/publishDiagnostics') {
+              collected.set(parsed.params.uri, parsed.params.diagnostics);
+            }
+          }
+          setDiagnostics(collected);
+        }
+      }
+      const id = ++lspRequestIdRef.current;
+      const outgoing = server.handleMessage(JSON.stringify({ jsonrpc: '2.0', id, method, params }));
+      for (const message of outgoing) {
+        const parsed = JSON.parse(message);
+        if (parsed.id === id) return parsed.result ?? null;
+      }
+    } catch (error) {
+      console.warn('Waluau language server request failed:', error);
+    }
+    return null;
+  }, []);
 
   const output = compilation.output;
   const errorMsg = compilation.errorMsg;
@@ -424,6 +483,7 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
     displayStatus,
     errorMsg,
     diagnostics,
+    sendLspRequest,
     runError,
     exportsList,
     initLogs,

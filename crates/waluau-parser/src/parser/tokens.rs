@@ -5,8 +5,17 @@ use super::Parser;
 
 impl Parser {
     pub(super) fn expect_identifier(&mut self) -> Result<String, Diagnostic> {
-        match self.advance().map(|token| token.kind) {
-            Some(TokenKind::Identifier(name)) => Ok(name),
+        self.expect_identifier_spanned().map(|(name, _)| name)
+    }
+
+    pub(super) fn expect_identifier_spanned(
+        &mut self,
+    ) -> Result<(String, waluau_ast::Span), Diagnostic> {
+        match self.advance() {
+            Some(Token {
+                kind: TokenKind::Identifier(name),
+                span,
+            }) => Ok((name, span)),
             Some(_) => {
                 // Leave the unexpected token unconsumed so statement-level
                 // recovery can resynchronize on it (it may close a block).

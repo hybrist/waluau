@@ -37,6 +37,7 @@ pub fn compile_source_collect(source: &str) -> Result<Vec<u8>, Vec<Diagnostic>> 
     let waluau_parser::ParseOutcome {
         mut program,
         diagnostics,
+        ..
     } = waluau_parser::parse_with_recovery(source, "source");
     if !diagnostics.is_empty() {
         return Err(diagnostics);

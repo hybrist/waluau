@@ -6,6 +6,7 @@ import {
   usesDomImports,
   classifyWasmModuleError,
 } from '../utils/wasm.js';
+import { loadWaluauWasm } from '../utils/waluauWasmModule.js';
 
 const REPL_PATH = '/repl.walu';
 
@@ -46,9 +47,8 @@ export default function useWaluauRepl() {
 
   useEffect(() => {
     let cancelled = false;
-    import('../waluau-wasm/waluau_wasm.js')
-      .then(async (module) => {
-        await module.default();
+    loadWaluauWasm()
+      .then((module) => {
         if (cancelled) return;
         compileMultiRef.current = module.compile_multi;
         setReady(true);

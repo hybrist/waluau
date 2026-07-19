@@ -2259,3 +2259,132 @@ fn recovery_returns_program_and_no_diagnostics_for_valid_source() {
     assert!(outcome.diagnostics.is_empty());
     assert_eq!(outcome.program.top_level.len(), 1);
 }
+
+mod definitions {
+    use crate::{DefinitionKind, parse_with_recovery};
+
+    fn defs(source: &str) -> Vec<crate::DefinitionSite> {
+        let outcome = parse_with_recovery(source, "defs.walu");
+        assert!(
+            outcome.diagnostics.is_empty(),
+            "unexpected diagnostics: {:?}",
+            outcome.diagnostics
+        );
+        outcome.definitions
+    }
+
+    fn find<'a>(definitions: &'a [crate::DefinitionSite], name: &str) -> &'a crate::DefinitionSite {
+        definitions
+            .iter()
+            .find(|definition| definition.name == name)
+            .unwrap_or_else(|| panic!("definition '{name}' should be recorded"))
+    }
+
+    #[test]
+    fn local_definition_records_exact_name_span_and_statement_end_visibility() {
+        let source = "local answer: i32 = 40 + 2\nprint(tostring(answer))\n";
+        let definitions = defs(source);
+        let answer = find(&definitions, "answer");
+        assert_eq!(answer.kind, DefinitionKind::Local);
+        let span = answer.name_span;
+        assert_eq!(&source[span.start as usize..span.end as usize], "answer");
+        // Visible only after the whole statement, not inside the initializer.
+        assert_eq!(answer.visible_from, source.find('\n').unwrap() as u32);
+        assert_eq!(answer.scope_end, u32::MAX);
+        assert_eq!(
+            answer.ty,
+            Some(waluau_ast::Type::Numeric(waluau_ast::NumericType::I32))
+        );
+    }
+
+    #[test]
+    fn initializer_shadow_does_not_see_new_binding() {
+        // `local x = x` — the initializer reference must resolve to an outer
+        // x, i.e. the new binding's visibility starts after the initializer.
+        let source = "local x = 1\nlocal x = x + 1\n";
+        let definitions = defs(source);
+        let both: Vec<_> = definitions.iter().filter(|d| d.name == "x").collect();
+        assert_eq!(both.len(), 2);
+        let initializer_ref = source.rfind("x + 1").unwrap() as u32;
+        assert!(both[0].visible_from <= initializer_ref);
+        assert!(both[1].visible_from > initializer_ref);
+    }
+
+    #[test]
+    fn function_definitions_are_file_visible_with_signature_detail() {
+        let source = "function add(a: i32, b: i32): i32\n    return a + b\nend\n";
+        let definitions = defs(source);
+        let add = find(&definitions, "add");
+        assert_eq!(add.kind, DefinitionKind::Function);
+        assert_eq!(add.visible_from, 0);
+        assert_eq!(add.scope_end, u32::MAX);
+        assert_eq!(
+            add.detail.as_deref(),
+            Some("function add(a: i32, b: i32): i32")
+        );
+
+        let a = find(&definitions, "a");
+        assert_eq!(a.kind, DefinitionKind::Param);
+        // Parameters go out of scope at the function's `end`.
+        assert!(a.scope_end < source.len() as u32 + 1);
+        assert!(a.scope_end >= source.rfind("end").unwrap() as u32);
+    }
+
+    #[test]
+    fn loop_variables_are_scoped_to_the_body_and_hidden_from_the_range() {
+        let source =
+            "local i = 100\nfor i = 1, 10 do\n    print(tostring(i))\nend\nprint(tostring(i))\n";
+        let definitions = defs(source);
+        let loop_var = definitions
+            .iter()
+            .find(|d| d.name == "i" && d.kind == DefinitionKind::LoopVar)
+            .expect("loop var should be recorded");
+        let range_pos = source.find("1, 10").unwrap() as u32;
+        assert!(loop_var.visible_from > range_pos);
+        let trailing_print = source.rfind("print").unwrap() as u32;
+        assert!(loop_var.scope_end < trailing_print);
+    }
+
+    #[test]
+    fn local_function_is_visible_inside_its_own_body() {
+        let source = "local function fact(n: i32): i32\n    if n <= 1 then\n        return 1\n    end\n    return n * fact(n - 1)\nend\n";
+        let definitions = defs(source);
+        let fact = find(&definitions, "fact");
+        assert_eq!(fact.kind, DefinitionKind::Function);
+        let recursive_call = source.rfind("fact(n - 1)").unwrap() as u32;
+        assert!(fact.visible_from < recursive_call);
+    }
+
+    #[test]
+    fn require_locals_carry_the_module_path() {
+        let source = "local m = require(\"./lib\")\n";
+        let definitions = defs(source);
+        let module = find(&definitions, "m");
+        assert_eq!(module.require_path.as_deref(), Some("./lib"));
+    }
+
+    #[test]
+    fn declares_and_type_declarations_are_recorded() {
+        let source = "declare function math.abs(x: f64): f64\ndeclare const math.pi: f64 = 3.141592653589793\ntype Pair = {i32}\n";
+        let definitions = defs(source);
+        let abs = find(&definitions, "math.abs");
+        assert_eq!(abs.kind, DefinitionKind::DeclaredFunction);
+        assert_eq!(
+            abs.detail.as_deref(),
+            Some("function math.abs(x: f64): f64")
+        );
+        let pi = find(&definitions, "math.pi");
+        assert_eq!(pi.kind, DefinitionKind::DeclaredConstant);
+        let pair = find(&definitions, "Pair");
+        assert_eq!(pair.kind, DefinitionKind::TypeName);
+    }
+
+    #[test]
+    fn sibling_scopes_do_not_leak() {
+        let source = "do\n    local inner = 1\nend\nlocal outer = 2\n";
+        let definitions = defs(source);
+        let inner = find(&definitions, "inner");
+        let outer_pos = source.find("local outer").unwrap() as u32;
+        assert!(inner.scope_end < outer_pos);
+    }
+}

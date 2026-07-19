@@ -48,6 +48,7 @@ export default function App() {
     displayStatus,
     errorMsg,
     diagnostics,
+    sendLspRequest,
     runError,
     exportsList,
     initLogs,
@@ -91,7 +92,8 @@ export default function App() {
     exportsList,
     outputWasmBytes,
     errorMsg,
-    diagnostics
+    diagnostics,
+    sendLspRequest
   });
 
   // Hotkey listener for Quick Open File Search modal

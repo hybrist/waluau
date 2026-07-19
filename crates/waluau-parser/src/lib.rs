@@ -1,4 +1,4 @@
-use waluau_ast::Program;
+use waluau_ast::{Program, Span, Type};
 use waluau_diagnostics::Diagnostic;
 
 mod parser;
@@ -10,6 +10,68 @@ mod parser;
 pub struct ParseOutcome {
     pub program: Program,
     pub diagnostics: Vec<Diagnostic>,
+    /// Every name-introducing site in the file, in source order, with exact
+    /// identifier-token spans and lexical visibility ranges. This side table
+    /// exists for editor tooling (hover, go-to-definition, completion): the
+    /// AST does not carry definition-site spans, and threading them through
+    /// every later compiler stage would be invasive for no compiler benefit.
+    pub definitions: Vec<DefinitionSite>,
+}
+
+/// What kind of binding a [`DefinitionSite`] introduces.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DefinitionKind {
+    /// `local x` / `const x` / a `local` multi-binding.
+    Local,
+    /// A function parameter (including the synthetic method `self`).
+    Param,
+    /// A top-level `function f`, `function T.f`, or `function T:m`, plus
+    /// `local function f` / `const function f` bindings.
+    Function,
+    /// A numeric-for or for-in loop variable.
+    LoopVar,
+    /// The narrowed binding of an if-cast clause (`if T(v) = x then`).
+    IfCastBinding,
+    /// A `declare function` host import (name may be dotted, e.g. `math.abs`).
+    DeclaredFunction,
+    /// A `declare const ns.name` compile-time constant.
+    DeclaredConstant,
+    /// A `declare property T:name` host property (recorded as `T.name`).
+    Property,
+    /// A `type Name = ...` declaration.
+    TypeName,
+}
+
+/// One name-introducing site recorded by the parser.
+///
+/// A reference at byte offset `o` can see this binding exactly when
+/// `visible_from <= o < scope_end`; among visible same-name candidates the
+/// one with the greatest `visible_from` shadows the rest. `visible_from` is
+/// the end of the introducing statement for plain locals (so `local x = x`
+/// keeps the initializer resolving to the outer `x`) and the start of the
+/// scoped body for loop variables, parameters, and function-name recursion
+/// bindings. File-scoped names use `0..u32::MAX`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DefinitionSite {
+    /// The name as referenced: a bare identifier for locals/params/loop vars,
+    /// the dotted or `T:m` display name for namespaced functions and declares.
+    pub name: String,
+    /// Exact span of the defining identifier token(s).
+    pub name_span: Span,
+    pub kind: DefinitionKind,
+    /// The annotated type (locals/params/declares), when syntactically
+    /// present. Functions carry their rendered signature in `detail` instead.
+    pub ty: Option<Type>,
+    /// Pre-rendered signature for function-like definitions, e.g.
+    /// `function add(a: i32, b: i32): i32`.
+    pub detail: Option<String>,
+    /// Byte offset from which references resolve to this binding.
+    pub visible_from: u32,
+    /// Byte offset at which the binding's scope closes (`u32::MAX` = file).
+    pub scope_end: u32,
+    /// For `local m = require("./mod")` bindings: the raw require path, so
+    /// tooling can resolve member accesses on `m` into the target module.
+    pub require_path: Option<String>,
 }
 
 pub fn parse(source: &str) -> Result<Program, Diagnostic> {
@@ -20,6 +82,7 @@ pub fn parse_with_path(source: &str, file_path: &str) -> Result<Program, Diagnos
     let ParseOutcome {
         program,
         mut diagnostics,
+        ..
     } = parse_with_recovery(source, file_path);
     match diagnostics.len() {
         0 => Ok(program),
@@ -46,10 +109,11 @@ pub fn parse_with_recovery(source: &str, file_path: &str) -> ParseOutcome {
             return ParseOutcome {
                 program: empty_program(source, file_path),
                 diagnostics: vec![error.with_source(file_path, source)],
+                definitions: Vec::new(),
             };
         }
     };
-    let (program, diagnostics) =
+    let (program, diagnostics, definitions) =
         parser::Parser::new(tokens, file_path.to_string()).parse_program(source);
     ParseOutcome {
         program,
@@ -57,6 +121,7 @@ pub fn parse_with_recovery(source: &str, file_path: &str) -> ParseOutcome {
             .into_iter()
             .map(|diagnostic| diagnostic.with_source(file_path, source))
             .collect(),
+        definitions,
     }
 }
 

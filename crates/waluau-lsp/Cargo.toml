@@ -8,8 +8,11 @@ rust-version.workspace = true
 
 [dependencies]
 serde_json = "1.0"
+waluau-ast = { workspace = true }
 waluau-diagnostics = { workspace = true }
 waluau-driver = { workspace = true }
+waluau-lexer = { workspace = true }
+waluau-parser = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
