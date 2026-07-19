@@ -12,6 +12,7 @@ import {
   buildWaluauImports,
 } from '../utils/wasm.js';
 import '../dom-output.css';
+import { loadWaluauWasm } from '../utils/waluauWasmModule.js';
 
 function reportError(error) {
   console.error('Example failed:', error);
@@ -29,8 +30,7 @@ function reportError(error) {
 export async function renderExample({ files, entryFile, label, assetManifest = null }) {
   document.title = label;
   try {
-    const compiler = await import('../waluau-wasm/waluau_wasm.js');
-    await compiler.default();
+    const compiler = await loadWaluauWasm();
 
     const compiled = compiler.compile_multi(files, entryFile);
     const wasmBytes = new Uint8Array(compiled.wasm);

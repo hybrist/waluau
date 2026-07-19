@@ -219,7 +219,18 @@ enum RefTarget {
     Require { raw: String, span: Span },
 }
 
+/// The reference at `offset`, also accepting a cursor sitting immediately
+/// after the word (editors report the caret position for definition
+/// requests, which is at the word's end after a click on its last letter).
 fn find_target(index: &DocumentIndex, offset: u32) -> Option<RefTarget> {
+    find_target_at(index, offset).or_else(|| {
+        offset
+            .checked_sub(1)
+            .and_then(|before| find_target_at(index, before))
+    })
+}
+
+fn find_target_at(index: &DocumentIndex, offset: u32) -> Option<RefTarget> {
     // Definition sites take precedence: their spans are identifier tokens
     // (or dotted token runs) and cannot overlap a distinct reference.
     if let Some(position) = index.definitions.iter().position(|definition| {
@@ -272,17 +283,36 @@ fn find_target(index: &DocumentIndex, offset: u32) -> Option<RefTarget> {
 /// Resolve a `require` path the way the module linker does: relative to the
 /// requiring file, defaulting the `.walu` extension. Virtual modules
 /// (`waluau:engine`, `@waluau/dom`, ...) have no source file and return
-/// `None`.
+/// `None`. The result is normalized lexically (not canonicalized) so it
+/// matches open-document keys in the wasm build, where the virtual
+/// filesystem has no `canonicalize`.
 fn resolve_require_path(current_file: &Path, raw: &str) -> Option<PathBuf> {
     if !(raw.starts_with("./") || raw.starts_with("../")) {
         return None;
     }
     let dir = current_file.parent()?;
-    let mut candidate = dir.join(raw);
+    let mut candidate = normalize_lexically(&dir.join(raw));
     if candidate.extension().is_none() {
         candidate.set_extension("walu");
     }
-    Some(candidate.canonicalize().unwrap_or(candidate))
+    Some(candidate)
+}
+
+/// Remove `.` components and fold `..` into their parent, without touching
+/// the filesystem.
+fn normalize_lexically(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut parts: Vec<Component> = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir if matches!(parts.last(), Some(Component::Normal(_))) => {
+                parts.pop();
+            }
+            other => parts.push(other),
+        }
+    }
+    parts.iter().collect()
 }
 
 /// A resolved hover/definition target.

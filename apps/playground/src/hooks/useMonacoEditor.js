@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 
-export default function useMonacoEditor({ files, entryFile, exportsList, outputWasmBytes, errorMsg, diagnostics = null }) {
+export default function useMonacoEditor({ files, entryFile, exportsList, outputWasmBytes, errorMsg, diagnostics = null, sendLspRequest = null }) {
   const [editorInstance, setEditorInstance] = useState(null);
   const [monacoInstance, setMonacoInstance] = useState(null);
   const [activeRunners, setActiveRunners] = useState([]);
@@ -8,10 +8,15 @@ export default function useMonacoEditor({ files, entryFile, exportsList, outputW
   const exportsListRef = useRef(exportsList);
   const activeRunnersRef = useRef(activeRunners);
   const toggleInlineRunnerRef = useRef(null);
+  const filesRef = useRef(files);
 
   useEffect(() => {
     exportsListRef.current = exportsList;
   }, [exportsList]);
+
+  useEffect(() => {
+    filesRef.current = files;
+  }, [files]);
 
   useEffect(() => {
     activeRunnersRef.current = activeRunners;
@@ -269,6 +274,108 @@ export default function useMonacoEditor({ files, entryFile, exportsList, outputW
       lensProvider.dispose();
     };
   }, [monacoInstance, editorInstance]);
+
+  // Language features (hover, go-to-definition, completion) served by the
+  // client-side language server through synchronous JSON-RPC requests. The
+  // LSP speaks the same virtual paths the document-sync effect opened, so a
+  // model's path is mapped back to its files-map key before each request.
+  useEffect(() => {
+    if (!monacoInstance || !sendLspRequest) return;
+
+    const lspPathForModel = (model) => {
+      const modelPath = model.uri.path;
+      const match = Object.keys(filesRef.current).find(
+        (path) => modelPath === path || modelPath === `/${path}` || model.uri.toString().endsWith(path)
+      );
+      return match ?? modelPath;
+    };
+    const modelForLspUri = (uri) => {
+      const path = uri.replace(/^file:\/\//, '');
+      return monacoInstance.editor
+        .getModels()
+        .find(
+          (model) =>
+            model.uri.path === path || model.uri.path === `/${path}` || model.uri.toString().endsWith(path)
+        );
+    };
+    const positionParams = (model, position) => ({
+      textDocument: { uri: `file://${lspPathForModel(model)}` },
+      position: { line: position.lineNumber - 1, character: position.column - 1 },
+    });
+    // The live buffer, synced before each request so position requests never
+    // trail the React state round-trip.
+    const liveDocument = (model) => ({ path: lspPathForModel(model), text: model.getValue() });
+    const toMonacoRange = (range) => ({
+      startLineNumber: range.start.line + 1,
+      startColumn: range.start.character + 1,
+      endLineNumber: range.end.line + 1,
+      endColumn: range.end.character + 1,
+    });
+
+    const hoverProvider = monacoInstance.languages.registerHoverProvider('waluau', {
+      provideHover(model, position) {
+        const result = sendLspRequest('textDocument/hover', positionParams(model, position), liveDocument(model));
+        if (!result?.contents?.value) return null;
+        return {
+          contents: [{ value: result.contents.value }],
+          range: result.range ? toMonacoRange(result.range) : undefined,
+        };
+      },
+    });
+
+    const definitionProvider = monacoInstance.languages.registerDefinitionProvider('waluau', {
+      provideDefinition(model, position) {
+        const result = sendLspRequest('textDocument/definition', positionParams(model, position), liveDocument(model));
+        if (!result?.uri || !result.range) return null;
+        const target = modelForLspUri(result.uri);
+        if (!target) return null;
+        return { uri: target.uri, range: toMonacoRange(result.range) };
+      },
+    });
+
+    // LSP CompletionItemKind -> Monaco CompletionItemKind (they use
+    // different numbering).
+    const kinds = monacoInstance.languages.CompletionItemKind;
+    const completionKinds = {
+      3: kinds.Function,
+      5: kinds.Field,
+      6: kinds.Variable,
+      7: kinds.Class,
+      9: kinds.Module,
+      10: kinds.Property,
+      14: kinds.Keyword,
+      21: kinds.Constant,
+    };
+    const completionProvider = monacoInstance.languages.registerCompletionItemProvider('waluau', {
+      triggerCharacters: ['.', ':'],
+      provideCompletionItems(model, position) {
+        const result = sendLspRequest('textDocument/completion', positionParams(model, position), liveDocument(model));
+        if (!Array.isArray(result)) return { suggestions: [] };
+        const word = model.getWordUntilPosition(position);
+        const range = {
+          startLineNumber: position.lineNumber,
+          startColumn: word.startColumn,
+          endLineNumber: position.lineNumber,
+          endColumn: word.endColumn,
+        };
+        return {
+          suggestions: result.map((item) => ({
+            label: item.label,
+            kind: completionKinds[item.kind] ?? kinds.Text,
+            detail: item.detail ?? undefined,
+            insertText: item.label,
+            range,
+          })),
+        };
+      },
+    });
+
+    return () => {
+      hoverProvider.dispose();
+      definitionProvider.dispose();
+      completionProvider.dispose();
+    };
+  }, [monacoInstance, sendLspRequest]);
 
   // Clean up all active runners when compilation or WASM outputs change
   useEffect(() => {
