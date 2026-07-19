@@ -3897,11 +3897,14 @@ fn emit_block_instructions(
                 while let Type::Nullable(inner) = array_ty {
                     array_ty = inner;
                 }
-                let Type::Array(element_ty) = array_ty else {
-                    return Err(Diagnostic::new(format!(
-                        "array len operand must be an array type, got {}",
-                        array_ty
-                    )));
+                let element_ty = match array_ty {
+                    Type::Array(element_ty) | Type::Variadic(element_ty) => element_ty,
+                    _ => {
+                        return Err(Diagnostic::new(format!(
+                            "array len operand must be an array type, got {}",
+                            array_ty
+                        )));
+                    }
                 };
                 let growable_struct_index = ctx.array_registry.growable_array_index(element_ty)?;
 
@@ -5215,7 +5218,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value add is not supported during wasm emission",
@@ -5283,7 +5286,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value sub is not supported during wasm emission",
@@ -5334,7 +5337,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value mul is not supported during wasm emission",
@@ -5391,7 +5394,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value div is not supported during wasm emission",
@@ -5444,7 +5447,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value equality is not supported during wasm emission",
@@ -5509,7 +5512,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value comparison is not supported during wasm emission",
@@ -5570,7 +5573,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value comparison is not supported during wasm emission",
@@ -5631,7 +5634,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value comparison is not supported during wasm emission",
@@ -5692,7 +5695,7 @@ fn emit_binary(
             Type::Extern | Type::ExternSubtype(_) | Type::Named { .. } | Type::Opaque { .. } => {
                 unreachable!()
             }
-            Type::Array(_) | Type::TypedArray(_) => unreachable!(),
+            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => unreachable!(),
             Type::Multi(_) => {
                 return Err(Diagnostic::new(
                     "multi-value comparison is not supported during wasm emission",

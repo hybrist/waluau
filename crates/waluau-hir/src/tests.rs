@@ -3502,3 +3502,30 @@ fn rejects_overloads_with_identical_parameters_and_conflicting_returns() {
          or host name"
     );
 }
+
+#[test]
+fn infers_trailing_vararg_returns_as_variadic_packs() {
+    let source = r#"
+        function only(...)
+            return ...
+        end
+
+        function prefixed(a, ...)
+            return a, ...
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+    assert_eq!(
+        typed.functions[0].return_type,
+        Some(Type::Variadic(Box::new(Type::Unknown)))
+    );
+    assert_eq!(
+        typed.functions[1].return_type,
+        Some(Type::Multi(vec![
+            Type::Unknown,
+            Type::Variadic(Box::new(Type::Unknown)),
+        ]))
+    );
+}

@@ -2708,3 +2708,29 @@ fn lowers_length_of_record_field_array_in_numeric_context() {
             .any(|(_, instruction)| matches!(instruction, Instruction::ArrayLen { .. }))
     }));
 }
+
+#[test]
+fn preserves_trailing_vararg_packs_in_function_returns() {
+    let source = r#"
+        function only(...)
+            return ...
+        end
+
+        function prefixed(a, ...)
+            return a, ...
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+
+    assert_eq!(
+        module.functions[0].return_type,
+        Type::Variadic(Box::new(Type::Unknown))
+    );
+    assert_eq!(
+        module.functions[1].return_type,
+        Type::Multi(vec![Type::Unknown, Type::Variadic(Box::new(Type::Unknown)),])
+    );
+}

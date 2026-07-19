@@ -11,6 +11,7 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
         Type::Nullable(inner) => Type::Nullable(Box::new(substitute_type(inner, subst))),
         Type::ExternSubtype(parent) => Type::ExternSubtype(Box::new(substitute_type(parent, subst))),
         Type::Array(inner) => Type::Array(Box::new(substitute_type(inner, subst))),
+        Type::Variadic(inner) => Type::Variadic(Box::new(substitute_type(inner, subst))),
         Type::Multi(types) => {
             Type::Multi(types.iter().map(|ty| substitute_type(ty, subst)).collect())
         }
@@ -43,6 +44,7 @@ fn contains_type_param(ty: &Type) -> bool {
         Type::ExternSubtype(parent) => contains_type_param(parent.as_ref()),
         Type::Nullable(inner) => contains_type_param(inner.as_ref()),
         Type::Array(inner) => contains_type_param(inner.as_ref()),
+        Type::Variadic(inner) => contains_type_param(inner.as_ref()),
         Type::Record(fields) => fields.values().any(contains_type_param),
         Type::Function {
             params,
@@ -1634,7 +1636,7 @@ impl<'a> Monomorphizer<'a> {
                     Diagnostic::new(format!("indexing non-array type '{base_ty}'"))
                 })
             }
-            Expr::Vararg(..) => Ok(Type::Array(Box::new(Type::Unknown))),
+            Expr::Vararg(..) => Ok(Type::Variadic(Box::new(Type::Unknown))),
         }
     }
 
@@ -1793,6 +1795,7 @@ fn mangle_type(ty: &Type) -> String {
         Type::Bool => "$bbool".to_string(),
         Type::String => "$sstring".to_string(),
         Type::Array(inner) => format!("$a{}", mangle_type(inner)),
+        Type::Variadic(inner) => format!("$v{}", mangle_type(inner)),
         Type::Multi(types) => format!(
             "$m{}",
             types.iter().map(mangle_type).collect::<Vec<_>>().join("")

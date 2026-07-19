@@ -1285,7 +1285,7 @@ impl Rewriter<'_> {
                     self.rewrite_type(variant.payload.as_mut());
                 }
             }
-            Type::Array(inner) => self.rewrite_type(inner),
+            Type::Array(inner) | Type::Variadic(inner) => self.rewrite_type(inner),
             Type::Multi(types) => {
                 for ty in types {
                     self.rewrite_type(ty);
