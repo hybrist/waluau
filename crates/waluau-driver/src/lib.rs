@@ -7,6 +7,10 @@ use serde::Deserialize;
 use waluau_diagnostics::Diagnostic;
 
 mod link;
+pub mod session;
+
+pub use link::{LinkOutcome, ModuleProvider};
+pub use session::{Analysis, BuildOutcome, CompilerSession};
 
 /// Compile a single source string with no module resolution.
 ///
