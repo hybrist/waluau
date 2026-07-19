@@ -56,6 +56,14 @@ declare function string_lower(value: string): string
 
 declare function string_reverse(value: string): string
 
+-- Primitives backing `string.split`: `string_split` performs the split on the
+-- host, stores the pieces, and returns the piece count; `string_split_get`
+-- reads piece `index` (0-based) of the most recent split. The compiler emits
+-- the get calls immediately after the split call, so a single pending-split
+-- slot on the host is sufficient.
+declare function string_split(source: string, separator: string): i32
+declare function string_split_get(index: i32): string
+
 declare function string_char0(): string
 declare function string_char1(a: i32): string
 declare function string_char2(a: i32, b: i32): string
