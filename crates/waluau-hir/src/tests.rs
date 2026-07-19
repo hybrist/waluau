@@ -3777,3 +3777,39 @@ fn single_error_wrapper_reports_first_collected_error() {
     let single = super::type_check_and_infer(&program).expect_err("wrapper should fail");
     assert_eq!(collected[0], single);
 }
+
+#[test]
+fn statement_level_errors_carry_spans() {
+    let source = concat!(
+        "function f(x: i32): i32\n",
+        "    if x then\n",
+        "        return x\n",
+        "    end\n",
+        "    while x do\n",
+        "        return x\n",
+        "    end\n",
+        "    return x\n",
+        "end\n",
+    );
+    let program = parse(source).expect("parse should succeed");
+    let errors = super::type_check_and_infer_collect(&program).expect_err("type check should fail");
+    assert_eq!(errors.len(), 2, "{errors:?}");
+    for error in &errors {
+        assert!(
+            error.span().is_some(),
+            "condition error should carry the condition's span: {error:?}"
+        );
+    }
+    // Distinct conditions -> distinct spans.
+    assert_ne!(errors[0].span(), errors[1].span());
+}
+
+#[test]
+fn missing_return_points_at_the_last_statement() {
+    let source = "function f(x: i32): i32\n    local y: i32 = x + 1\nend\n";
+    let program = parse(source).expect("parse should succeed");
+    let errors = super::type_check_and_infer_collect(&program).expect_err("type check should fail");
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].to_string().contains("missing a return"));
+    assert!(errors[0].span().is_some(), "{:?}", errors[0]);
+}

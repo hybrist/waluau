@@ -82,9 +82,8 @@ fn did_open_publishes_every_error_with_ranges() {
         assert_eq!(diagnostic["severity"], 1);
         assert_eq!(diagnostic["source"], "waluau");
     }
-    // The first function's return mismatch has a span and must map to its
-    // line (0-based line 1). The if-condition diagnostic currently carries no
-    // span in HIR and falls back to 0:0 — span coverage is tracked separately.
+    // The first function's return mismatch maps to its line (0-based line
+    // 1); the if-condition error maps to the condition on line 4.
     assert!(
         diagnostics.iter().any(|diagnostic| {
             diagnostic["message"] == "cannot implicitly convert i32 to bool"
@@ -93,10 +92,11 @@ fn did_open_publishes_every_error_with_ranges() {
         "expected a positioned return-mismatch diagnostic: {diagnostics:?}"
     );
     assert!(
-        diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic["message"] == "if condition must be bool"),
-        "{diagnostics:?}"
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic["message"] == "if condition must be bool"
+                && diagnostic["range"]["start"]["line"] == 4
+        }),
+        "expected the if-condition diagnostic on its own line: {diagnostics:?}"
     );
 }
 
