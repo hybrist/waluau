@@ -1,15 +1,18 @@
--- Small keyboard state machine. It is deliberately string-keyed so game code
--- sees the same names on every backend ("ArrowLeft", "a", "Space", ...).
+-- Small keyboard and mouse state machine. It is deliberately string-keyed so
+-- game code sees the same names on every backend ("ArrowLeft", "a", "Space",
+-- ...). Mouse buttons use the Love2D-style numbering the platform adapter
+-- feeds in: 1 = left, 2 = right, 3 = middle.
 
 type Button = { key: string, down: bool, pressed: bool, released: bool }
-type Input = { buttons: {Button} }
+type Input = {
+    buttons: {Button},
+    mouse_buttons: {Button},
+    mouse_x: f64,
+    mouse_y: f64
+}
 
-function Input.new(): Input
-    return { buttons = {} }
-end
-
-function Input:index_of(key: string): i32
-    for i, button in self.buttons do
+function find_button(list: {Button}, key: string): i32
+    for i, button in list do
         if button.key == key then
             return i
         end
@@ -17,18 +20,18 @@ function Input:index_of(key: string): i32
     return -1
 end
 
-function Input:ensure(key: string): i32
-    local index: i32 = self:index_of(key)
+function ensure_button(list: {Button}, key: string): i32
+    local index: i32 = find_button(list, key)
     if index >= 0 then
         return index
     end
-    table.insert(self.buttons, { key = key, down = false, pressed = false, released = false })
-    return #self.buttons - 1
+    table.insert(list, { key = key, down = false, pressed = false, released = false })
+    return #list - 1
 end
 
-function Input:set_key(key: string, down: bool): unit
-    local index: i32 = self:ensure(key)
-    local button = self.buttons[index]
+function set_button(list: {Button}, key: string, down: bool): unit
+    local index: i32 = ensure_button(list, key)
+    local button = list[index]
     if down and not button.down then
         button.pressed = true
     elseif not down and button.down then
@@ -37,24 +40,69 @@ function Input:set_key(key: string, down: bool): unit
     button.down = down
 end
 
+function Input.new(): Input
+    return { buttons = {}, mouse_buttons = {}, mouse_x = 0.0, mouse_y = 0.0 }
+end
+
+function Input:index_of(key: string): i32
+    return find_button(self.buttons, key)
+end
+
+function Input:ensure(key: string): i32
+    return ensure_button(self.buttons, key)
+end
+
+function Input:set_key(key: string, down: bool): unit
+    set_button(self.buttons, key, down)
+end
+
 function Input:is_down(key: string): bool
-    local index: i32 = self:index_of(key)
+    local index: i32 = find_button(self.buttons, key)
     return index >= 0 and self.buttons[index].down
 end
 
 function Input:was_pressed(key: string): bool
-    local index: i32 = self:index_of(key)
+    local index: i32 = find_button(self.buttons, key)
     return index >= 0 and self.buttons[index].pressed
 end
 
 function Input:was_released(key: string): bool
-    local index: i32 = self:index_of(key)
+    local index: i32 = find_button(self.buttons, key)
     return index >= 0 and self.buttons[index].released
+end
+
+-- The pointer's last known place, in logical canvas coordinates.
+function Input:set_mouse_position(x: f64, y: f64): unit
+    self.mouse_x = x
+    self.mouse_y = y
+end
+
+function Input:set_mouse_button(button: i32, down: bool): unit
+    set_button(self.mouse_buttons, tostring(button), down)
+end
+
+function Input:is_mouse_down(button: i32): bool
+    local index: i32 = find_button(self.mouse_buttons, tostring(button))
+    return index >= 0 and self.mouse_buttons[index].down
+end
+
+function Input:was_mouse_pressed(button: i32): bool
+    local index: i32 = find_button(self.mouse_buttons, tostring(button))
+    return index >= 0 and self.mouse_buttons[index].pressed
+end
+
+function Input:was_mouse_released(button: i32): bool
+    local index: i32 = find_button(self.mouse_buttons, tostring(button))
+    return index >= 0 and self.mouse_buttons[index].released
 end
 
 -- Edge transitions last until one simulation update consumes them.
 function Input:end_step(): unit
     for button in self.buttons do
+        button.pressed = false
+        button.released = false
+    end
+    for button in self.mouse_buttons do
         button.pressed = false
         button.released = false
     end

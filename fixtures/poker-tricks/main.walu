@@ -936,6 +936,9 @@ function install_arcane_heist(): unit
         draw = draw,
         keypressed = keypressed,
         keyreleased = nil,
+        mousepressed = nil,
+        mousereleased = nil,
+        mousemoved = nil,
     })
 end
 
