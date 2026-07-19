@@ -7,10 +7,11 @@ local graphics_module = require("waluau:engine/v1/graphics")
 
 type Config = browser.Config
 type Game = browser.Game
+type Session = browser.Session
 type Input = input_module.Input
 type Graphics = graphics_module.Graphics
 
-local VERSION <const>: string = "1.0.0"
+local VERSION <const>: string = "1.1.0"
 
 return {
     VERSION = VERSION,

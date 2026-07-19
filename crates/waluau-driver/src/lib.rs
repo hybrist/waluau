@@ -1577,8 +1577,17 @@ mod tests {
         )
         .expect("external project entry should write");
 
-        super::compile_file(&entry)
+        let wasm = super::compile_file(&entry)
             .expect("embedded engine package and its re-exported callback types should compile");
+        let wat = wasmprinter::print_bytes(&wasm).expect("game package Wasm should print");
+        assert!(
+            wat.contains(r#"(import "waluau" "__waluau_hmr_register""#),
+            "hot registration should use the development host bridge:\n{wat}"
+        );
+        assert!(
+            wat.contains(r#"(export "__waluau_call_callback_unit""#),
+            "hot registration closures should emit the unit callback trampoline:\n{wat}"
+        );
     }
 
     #[test]

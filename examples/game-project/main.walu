@@ -1,7 +1,9 @@
 -- Minimal standalone project using only the embedded stable engine package.
 local engine = require("waluau:engine")
+local hot = require("waluau:engine/hot")
 
 local x: f64 = 24.0
+local session: engine.Session? = nil
 
 local function load(): unit
 end
@@ -13,6 +15,8 @@ local function update(dt: f64, input: engine.Input): unit
 end
 
 local function draw(graphics: engine.Graphics, alpha: f64): unit
+    -- Clear old pixels so a restored position is immediately visible.
+    graphics:clear("#0f172a")
     graphics:set_color("#38bdf8")
     graphics:fill_rectangle(x, 24.0, 32.0, 32.0)
     graphics:set_color("#f8fafc")
@@ -20,9 +24,12 @@ local function draw(graphics: engine.Graphics, alpha: f64): unit
 end
 
 local function keypressed(key: string): unit
+    if key == "d" then
+        x = x + 24.0
+    end
 end
 
-engine.start({
+session = engine.start({
     title = "Waluau Engine Package",
     width = 320,
     height = 180,
@@ -35,4 +42,28 @@ engine.start({
     draw = draw,
     keypressed = keypressed,
     keyreleased = nil,
+})
+
+-- The snapshot is deliberately a self-contained string with an
+-- application-owned schema marker; returning false asks Vite to fall back to
+-- a full reload.
+hot.register({
+    snapshot = function(): string
+        return "moving-square:v1:" .. tostring(x)
+    end,
+    restore = function(snapshot: string): bool
+        const prefix: string = "moving-square:v1:"
+        if string.sub(snapshot, 1, #prefix) ~= prefix then return false end
+        local restored: f64? = tonumber(string.sub(snapshot, #prefix + 1))
+        if restored == nil then return false end
+        x = restored::f64
+        return true
+    end,
+    dispose = function(): unit
+        local running: engine.Session? = session
+        if running ~= nil then
+            running.stop()
+            session = nil
+        end
+    end,
 })

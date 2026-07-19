@@ -22,6 +22,16 @@ cargo run -p waluau-cli -- examples/game-project/main.walu \
   --manifest examples/game-project/waluau.assets.json
 ```
 
+Run the same project through the Vite plugin from this repository:
+
+```sh
+pnpm dev:game-project
+```
+
+Move the square with the right arrow, then edit `main.walu`. Its position is
+captured and restored automatically when the snapshot schema remains
+compatible.
+
 This writes `game.wasm`, its ES-module sibling `game.js`, and fingerprinted
 copies of every declared asset. The version-1 manifest accepts exactly
 `text`, `bytes`, `image`, `font`, and `audio` entries. Paths are normalized,
@@ -77,6 +87,12 @@ pnpm --filter conformance-runner test:browser
 need reproducible major-version selection may import `waluau:engine/v1`.
 Subsystems remain available as `waluau:engine/input`,
 `waluau:engine/graphics`, `waluau:engine/time`, and their `/v1/` forms.
+
+The sample also uses the Vite plugin's development-only `waluau:engine/hot`
+registration.
+Its snapshot prefix is an application-owned schema marker; changing or
+rejecting that marker intentionally causes a full reload. These transient
+snapshots are never stored and are separate from engine save slots.
 
 For in-memory consumers, the compiler result exposes the same JavaScript as
 `jsGlue` plus `requiredImports` and `bytesConstants`. Existing hosts may keep

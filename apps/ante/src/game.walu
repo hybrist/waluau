@@ -11,6 +11,7 @@ type Trick = { round: i32, middle: {Card}, player_hand: {Card}, computer_hand: {
 -- looking at, and so is no longer secret from the opponent. Cards drawn off the
 -- deck are secret; only an exchange leaks one.
 type State = { deck: {Card}, player_hand: {Card}, computer_hand: {Card}, player_known: {bool}, computer_known: {bool}, middle: {Card}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool }
+type SnapshotReader = { tokens: {string}, index: i32, ok: bool }
 
 const MIN_RANK: i32 = 2
 const MAX_RANK: i32 = 14
@@ -21,6 +22,8 @@ const ONE: i32 = 1
 const TWO: i32 = 2
 const MAX_ROUNDS: i32 = 5
 const ARCH_MAGE_WINS_TO_END: i32 = 3
+const SNAPSHOT_SCHEMA: string = "ante-state-v1"
+const SNAPSHOT_COLLECTION_LIMIT: i32 = 256
 
 function make_deck(): {Card}
     local deck: {Card} = {}
@@ -439,6 +442,264 @@ function State:play(first: i32, second: i32): unit
     end
 end
 
+-- Development snapshots intentionally use a small, explicit schema instead of
+-- reflecting arbitrary tables. That keeps incompatibility a normal false
+-- result when the rules state changes, rather than turning this into a
+-- long-lived save-game format.
+function append_i32(parts: {string}, value: i32): unit
+    table.insert(parts, tostring(value))
+end
+
+function append_bool(parts: {string}, value: bool): unit
+    if value then table.insert(parts, "1") else table.insert(parts, "0") end
+end
+
+function append_cards(parts: {string}, cards: {Card}): unit
+    append_i32(parts, #cards)
+    for card in cards do
+        append_i32(parts, card.rank)
+        append_i32(parts, card.suit)
+    end
+end
+
+function append_bools(parts: {string}, values: {bool}): unit
+    append_i32(parts, #values)
+    for value in values do append_bool(parts, value) end
+end
+
+function append_indices(parts: {string}, values: {i32}): unit
+    append_i32(parts, #values)
+    for value in values do append_i32(parts, value) end
+end
+
+function append_trick(parts: {string}, trick: Trick): unit
+    append_i32(parts, trick.round)
+    append_cards(parts, trick.middle)
+    append_cards(parts, trick.player_hand)
+    append_cards(parts, trick.computer_hand)
+    append_bools(parts, trick.player_known)
+    append_bools(parts, trick.computer_known)
+    append_cards(parts, trick.player_cards)
+    append_cards(parts, trick.computer_cards)
+    append_i32(parts, trick.player_first)
+    append_i32(parts, trick.player_second)
+    append_i32(parts, trick.computer_first)
+    append_i32(parts, trick.computer_second)
+    append_i32(parts, trick.player_value)
+    append_i32(parts, trick.computer_value)
+    append_i32(parts, trick.winner)
+    append_i32(parts, trick.points)
+    append_i32(parts, trick.pot)
+    append_i32(parts, trick.player_wager)
+    append_i32(parts, trick.computer_wager)
+    append_i32(parts, trick.swap_winner)
+    append_i32(parts, trick.swap_count)
+end
+
+function snapshot(state: State): string
+    local parts: {string} = { SNAPSHOT_SCHEMA }
+    append_cards(parts, state.deck)
+    append_cards(parts, state.player_hand)
+    append_cards(parts, state.computer_hand)
+    append_bools(parts, state.player_known)
+    append_bools(parts, state.computer_known)
+    append_cards(parts, state.middle)
+    append_i32(parts, #state.history)
+    for trick in state.history do append_trick(parts, trick) end
+    append_i32(parts, state.round)
+    append_i32(parts, state.player_points)
+    append_i32(parts, state.player_tricks)
+    append_i32(parts, state.computer_tricks)
+    append_i32(parts, state.last_player_value)
+    append_i32(parts, state.last_computer_value)
+    append_i32(parts, state.last_winner)
+    append_bool(parts, state.swap_open)
+    append_i32(parts, state.pot)
+    append_i32(parts, state.player_wager)
+    append_i32(parts, state.computer_wager)
+    append_i32(parts, state.swap_winner)
+    append_i32(parts, state.swap_count)
+    append_indices(parts, state.swap_hand_indices)
+    append_indices(parts, state.swap_middle_indices)
+    append_bool(parts, state.finished)
+    return table.concat(parts, ",")
+end
+
+function snapshot_reader(value: string): SnapshotReader
+    return { tokens = string.split(value, ","), index = 0, ok = true }
+end
+
+function SnapshotReader:next_string(): string
+    if not self.ok or self.index >= #self.tokens then
+        self.ok = false
+        return ""
+    end
+    local value: string = self.tokens[self.index]
+    self.index += 1
+    return value
+end
+
+function SnapshotReader:next_i32(): i32
+    local text: string = self:next_string()
+    if not self.ok then return 0 end
+    local parsed: f64? = tonumber(text)
+    if parsed == nil then
+        self.ok = false
+        return 0
+    end
+    local decimal: f64 = parsed::f64
+    local value: i32 = decimal::i32
+    if (value::f64) ~= decimal then
+        self.ok = false
+        return 0
+    end
+    return value
+end
+
+function SnapshotReader:next_bool(): bool
+    local value: i32 = self:next_i32()
+    if not self.ok then return false end
+    if value == 1 then return true end
+    if value ~= 0 then self.ok = false end
+    return false
+end
+
+function SnapshotReader:next_length(): i32
+    local length: i32 = self:next_i32()
+    if length < 0 or length > SNAPSHOT_COLLECTION_LIMIT then
+        self.ok = false
+        return 0
+    end
+    return length
+end
+
+function SnapshotReader:next_cards(): {Card}
+    local cards: {Card} = {}
+    local length: i32 = self:next_length()
+    for _ = 1, length do
+        table.insert(cards, { rank = self:next_i32(), suit = self:next_i32() })
+    end
+    return cards
+end
+
+function SnapshotReader:next_bools(): {bool}
+    local values: {bool} = {}
+    local length: i32 = self:next_length()
+    for _ = 1, length do table.insert(values, self:next_bool()) end
+    return values
+end
+
+function SnapshotReader:next_indices(): {i32}
+    local values: {i32} = {}
+    local length: i32 = self:next_length()
+    for _ = 1, length do table.insert(values, self:next_i32()) end
+    return values
+end
+
+function SnapshotReader:next_trick(): Trick
+    local round: i32 = self:next_i32()
+    local middle: {Card} = self:next_cards()
+    local player_hand: {Card} = self:next_cards()
+    local computer_hand: {Card} = self:next_cards()
+    local player_known: {bool} = self:next_bools()
+    local computer_known: {bool} = self:next_bools()
+    local player_cards: {Card} = self:next_cards()
+    local computer_cards: {Card} = self:next_cards()
+    local player_first: i32 = self:next_i32()
+    local player_second: i32 = self:next_i32()
+    local computer_first: i32 = self:next_i32()
+    local computer_second: i32 = self:next_i32()
+    local player_value: i32 = self:next_i32()
+    local computer_value: i32 = self:next_i32()
+    local winner: i32 = self:next_i32()
+    local points: i32 = self:next_i32()
+    local pot: i32 = self:next_i32()
+    local player_wager: i32 = self:next_i32()
+    local computer_wager: i32 = self:next_i32()
+    local swap_winner: i32 = self:next_i32()
+    local swap_count: i32 = self:next_i32()
+    return {
+        round = round,
+        middle = middle,
+        player_hand = player_hand,
+        computer_hand = computer_hand,
+        player_known = player_known,
+        computer_known = computer_known,
+        player_cards = player_cards,
+        computer_cards = computer_cards,
+        player_first = player_first,
+        player_second = player_second,
+        computer_first = computer_first,
+        computer_second = computer_second,
+        player_value = player_value,
+        computer_value = computer_value,
+        winner = winner,
+        points = points,
+        pot = pot,
+        player_wager = player_wager,
+        computer_wager = computer_wager,
+        swap_winner = swap_winner,
+        swap_count = swap_count,
+    }
+end
+
+function restore(snapshot_value: string): State?
+    local reader: SnapshotReader = snapshot_reader(snapshot_value)
+    if reader:next_string() ~= SNAPSHOT_SCHEMA then return nil end
+    local deck: {Card} = reader:next_cards()
+    local player_hand: {Card} = reader:next_cards()
+    local computer_hand: {Card} = reader:next_cards()
+    local player_known: {bool} = reader:next_bools()
+    local computer_known: {bool} = reader:next_bools()
+    local middle: {Card} = reader:next_cards()
+    local history: {Trick} = {}
+    local history_length: i32 = reader:next_length()
+    for _ = 1, history_length do table.insert(history, reader:next_trick()) end
+    local round: i32 = reader:next_i32()
+    local player_points: i32 = reader:next_i32()
+    local player_tricks: i32 = reader:next_i32()
+    local computer_tricks: i32 = reader:next_i32()
+    local last_player_value: i32 = reader:next_i32()
+    local last_computer_value: i32 = reader:next_i32()
+    local last_winner: i32 = reader:next_i32()
+    local swap_open: bool = reader:next_bool()
+    local pot: i32 = reader:next_i32()
+    local player_wager: i32 = reader:next_i32()
+    local computer_wager: i32 = reader:next_i32()
+    local swap_winner: i32 = reader:next_i32()
+    local swap_count: i32 = reader:next_i32()
+    local swap_hand_indices: {i32} = reader:next_indices()
+    local swap_middle_indices: {i32} = reader:next_indices()
+    local finished: bool = reader:next_bool()
+    if not reader.ok or reader.index ~= #reader.tokens then return nil end
+    local restored: State = {
+        deck = deck,
+        player_hand = player_hand,
+        computer_hand = computer_hand,
+        player_known = player_known,
+        computer_known = computer_known,
+        middle = middle,
+        history = history,
+        round = round,
+        player_points = player_points,
+        player_tricks = player_tricks,
+        computer_tricks = computer_tricks,
+        last_player_value = last_player_value,
+        last_computer_value = last_computer_value,
+        last_winner = last_winner,
+        swap_open = swap_open,
+        pot = pot,
+        player_wager = player_wager,
+        computer_wager = computer_wager,
+        swap_winner = swap_winner,
+        swap_count = swap_count,
+        swap_hand_indices = swap_hand_indices,
+        swap_middle_indices = swap_middle_indices,
+        finished = finished,
+    }
+    return restored
+end
+
 function new(): State
     local deck: {Card} = make_deck()
     shuffle(deck)
@@ -630,4 +891,6 @@ return {
     category_name = category_name,
     formation_cards = formation_cards,
     scoring_cards = scoring_cards,
+    snapshot = snapshot,
+    restore = restore,
 }

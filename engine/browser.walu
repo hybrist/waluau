@@ -29,6 +29,13 @@ type Game = {
     mousemoved: ((f64, f64, f64, f64) -> unit)?
 }
 
+-- A running browser game owns animation-frame and DOM listener registrations.
+-- Development hot replacement calls stop after capturing state so the old
+-- Wasm instance no longer receives input or schedules frames.
+type Session = {
+    stop: () -> unit
+}
+
 -- Browsers number mouse buttons 0/1/2 = left/middle/right; game code sees
 -- the Love2D-style 1/2/3 = left/right/middle numbering instead.
 function mouse_button_number(dom_button: i32): i32
@@ -80,7 +87,7 @@ function sync_canvas_size(canvas: HTMLCanvasElement, fallback_width: u32, fallba
     return changed
 end
 
-function start(config: Config, game: Game): unit
+function start(config: Config, game: Game): Session
     local document: Document = window.document
     local body: HTMLElement = document.body
     body:set_attribute("style", "margin:0;min-height:100vh;overflow:hidden;background:" .. config.background .. ";")
@@ -128,7 +135,7 @@ function start(config: Config, game: Game): unit
         local input: input_module.Input = input_module.new()
         local clock: time_module.Clock = time_module.new(config.update_hz, config.max_frame_seconds)
 
-        document:add_event_listener("keydown", function(event: Event): unit
+        local function on_keydown(event: Event): unit
             if KeyboardEvent(key_event) = event then
                 local was_down: bool = input:is_down(key_event.key)
                 input:set_key(key_event.key, true)
@@ -136,8 +143,8 @@ function start(config: Config, game: Game): unit
                     game.keypressed(key_event.key)
                 end
             end
-        end)
-        document:add_event_listener("keyup", function(event: Event): unit
+        end
+        local function on_keyup(event: Event): unit
             if KeyboardEvent(key_event) = event then
                 local was_down: bool = input:is_down(key_event.key)
                 input:set_key(key_event.key, false)
@@ -148,7 +155,9 @@ function start(config: Config, game: Game): unit
                     end
                 end
             end
-        end)
+        end
+        document:add_event_listener("keydown", on_keydown)
+        document:add_event_listener("keyup", on_keyup)
 
         -- offsetX/offsetY are CSS pixels relative to the canvas, so scaling
         -- by the logical-to-CSS ratio lands in game coordinates no matter how
@@ -165,7 +174,7 @@ function start(config: Config, game: Game): unit
             return mouse_event.offsetY * (config.height::f64) / css_height
         end
 
-        game_canvas:add_event_listener("mousedown", function(event: Event): unit
+        local function on_mousedown(event: Event): unit
             if MouseEvent(mouse_event) = event then
                 local x: f64 = mouse_logical_x(mouse_event)
                 local y: f64 = mouse_logical_y(mouse_event)
@@ -177,8 +186,8 @@ function start(config: Config, game: Game): unit
                     mousepressed(x, y, button)
                 end
             end
-        end)
-        game_canvas:add_event_listener("mouseup", function(event: Event): unit
+        end
+        local function on_mouseup(event: Event): unit
             if MouseEvent(mouse_event) = event then
                 local x: f64 = mouse_logical_x(mouse_event)
                 local y: f64 = mouse_logical_y(mouse_event)
@@ -190,8 +199,8 @@ function start(config: Config, game: Game): unit
                     mousereleased(x, y, button)
                 end
             end
-        end)
-        game_canvas:add_event_listener("mousemove", function(event: Event): unit
+        end
+        local function on_mousemove(event: Event): unit
             if MouseEvent(mouse_event) = event then
                 local x: f64 = mouse_logical_x(mouse_event)
                 local y: f64 = mouse_logical_y(mouse_event)
@@ -205,10 +214,16 @@ function start(config: Config, game: Game): unit
                     mousemoved(x, y, dx, dy)
                 end
             end
-        end)
+        end
+        game_canvas:add_event_listener("mousedown", on_mousedown)
+        game_canvas:add_event_listener("mouseup", on_mouseup)
+        game_canvas:add_event_listener("mousemove", on_mousemove)
 
         game.load()
+        local stopped: bool = false
+        local frame_handle: u32 = 0
         local function frame(timestamp_ms: f64): unit
+            if stopped then return end
             if sync_canvas_size(game_canvas, config.width, config.height) then
                 graphics:resize()
             end
@@ -220,12 +235,32 @@ function start(config: Config, game: Game): unit
             graphics:set_time(timestamp_ms / 1000.0)
             game.draw(graphics, clock:alpha())
             graphics:present()
-            window:requestAnimationFrame(frame)
+            frame_handle = window:requestAnimationFrame(frame)
         end
-        window:requestAnimationFrame(frame)
+        frame_handle = window:requestAnimationFrame(frame)
+
+        local function stop(): unit
+            if stopped then return end
+            stopped = true
+            window:cancelAnimationFrame(frame_handle)
+            document:remove_event_listener("keydown", on_keydown)
+            document:remove_event_listener("keyup", on_keyup)
+            game_canvas:remove_event_listener("mousedown", on_mousedown)
+            game_canvas:remove_event_listener("mouseup", on_mouseup)
+            game_canvas:remove_event_listener("mousemove", on_mousemove)
+            local current_root: Element? = document:get_element_by_id("walua-game")
+            if current_root == root then
+                body:remove_child(root)
+            end
+        end
+        return { stop = stop }
     else
         error("game engine could not create a WebGL2 canvas")
     end
+    error("game engine could not start")
+    -- `error` never returns at runtime; this unreachable value keeps the
+    -- current static return checker aware that every path has a Session.
+    return { stop = function(): unit end }
 end
 
 return {

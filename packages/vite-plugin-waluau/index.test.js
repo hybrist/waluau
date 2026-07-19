@@ -22,7 +22,10 @@ test('transforms a .walu import into an ES module', async () => {
     );
 
     assert.deepEqual(watched, [entry]);
-    assert.match(transformed.code, /export const game = runWaluau/);
+    assert.match(transformed.code, /export const game = replaceWaluauGame/);
+    assert.match(transformed.code, /captureWaluauGame\(game\)/);
+    assert.match(transformed.code, /import\.meta\.hot\.accept\(\)/);
+    assert.match(transformed.code, /waluau-hmr=1/);
     assert.match(transformed.code, /export default game/);
     assert.doesNotMatch(transformed.code, /virtual:waluau-game/);
   } finally {
@@ -84,6 +87,20 @@ test('turns generated manifest URLs into Vite asset imports', async () => {
 
     assert.match(transformed, /import waluauAssetUrl0 from "\.\/assets\/card\.hash\.svg\?url";/);
     assert.match(transformed, /url: waluauAssetUrl0/);
+    assert.deepEqual(
+      await plugin.handleHotUpdate({ file: generated, modules: [], server: {} }),
+      [],
+      'generated module writes should not trigger a second HMR transaction',
+    );
+    assert.deepEqual(
+      await plugin.handleHotUpdate({
+        file: join(root, '.waluau', key, 'game.wasm'),
+        modules: [],
+        server: {},
+      }),
+      [],
+      'generated Wasm writes should not trigger a full reload',
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -131,6 +148,53 @@ test('quotes strings as Lua source literals', () => {
   assert.equal(format('%q', '\r'), '"\\r"');
 });
 
+test('removes the wrapped DOM listener associated with a guest callback', () => {
+  const callback = {};
+  let added;
+  let removed;
+  const target = {
+    addEventListener(type, listener) {
+      added = { type, listener };
+    },
+    removeEventListener(type, listener) {
+      removed = { type, listener };
+    },
+  };
+  const imports = buildWaluauImports(null, undefined, {
+    requiredImports: [
+      { module: WALUAU_IMPORT_MODULE, name: 'EventTarget.addEventListener', kind: 'function' },
+      { module: WALUAU_IMPORT_MODULE, name: 'EventTarget.removeEventListener', kind: 'function' },
+    ],
+    bytesConstants: [],
+    getWasmExports: () => ({
+      __waluau_call_callback_event_unit() {},
+    }),
+  })[WALUAU_IMPORT_MODULE];
+
+  imports['EventTarget.addEventListener'](target, 'keydown', callback);
+  imports['EventTarget.removeEventListener'](target, 'keydown', callback);
+
+  assert.equal(added.type, 'keydown');
+  assert.equal(removed.type, 'keydown');
+  assert.equal(removed.listener, added.listener);
+  assert.notEqual(removed.listener, callback);
+});
+
+test('accepts development snapshot registration as a production no-op', () => {
+  const imports = buildWaluauImports(null, undefined, {
+    requiredImports: [
+      { module: WALUAU_IMPORT_MODULE, name: '__waluau_hmr_register', kind: 'function' },
+      { module: WALUAU_IMPORT_MODULE, name: '__waluau_hmr_set_snapshot', kind: 'function' },
+      { module: WALUAU_IMPORT_MODULE, name: '__waluau_hmr_get_snapshot', kind: 'function' },
+      { module: WALUAU_IMPORT_MODULE, name: '__waluau_hmr_set_restore_result', kind: 'function' },
+    ],
+    bytesConstants: [],
+  })[WALUAU_IMPORT_MODULE];
+
+  assert.doesNotThrow(() => imports.__waluau_hmr_register({}, {}, {}));
+  assert.equal(imports.__waluau_hmr_get_snapshot(), '');
+});
+
 test('watches report-involved files and rebuilds only affected entries', async () => {
   const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
   try {
@@ -175,6 +239,57 @@ test('watches report-involved files and rebuilds only affected entries', async (
     await plugin.handleHotUpdate({ file: join(root, 'unrelated-not-required.walu'), server: { ws: { send() {} } } });
     const after = (await readFile(counter, 'utf8')).trim().split('\n');
     assert.equal(after.length, 3, `unrelated file should not rebuild: ${after}`);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('invalidates affected entry modules for self-accepted hot replacement', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
+  try {
+    const entry = join(root, 'main.walu');
+    const dependency = join(root, 'game.walu');
+    const script = `
+      const fs = require('node:fs');
+      const args = process.argv.slice(1);
+      fs.writeFileSync(args[args.indexOf('--report') + 1], JSON.stringify({
+        success: true,
+        involvedFiles: [args[0], ${JSON.stringify(dependency)}],
+        diagnostics: [],
+      }));
+    `;
+    const plugin = waluau({
+      compiler: { command: process.execPath, args: ['-e', script] },
+    });
+    plugin.configResolved({ root });
+    await plugin.transform.call({ addWatchFile() {} }, '', entry);
+
+    const entryModule = { id: entry };
+    const invalidated = [];
+    const messages = [];
+    const viteServer = {
+      watcher: { add() {} },
+      moduleGraph: {
+        getModulesByFile(file) {
+          return file === entry ? new Set([entryModule]) : undefined;
+        },
+        invalidateModule(module) {
+          invalidated.push(module);
+        },
+      },
+      ws: { send(message) { messages.push(message); } },
+    };
+    plugin.configureServer(viteServer);
+
+    const modules = await plugin.handleHotUpdate({
+      file: dependency,
+      modules: [],
+      server: viteServer,
+    });
+
+    assert.deepEqual(modules, [entryModule]);
+    assert.deepEqual(invalidated, [entryModule]);
+    assert.deepEqual(messages, []);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

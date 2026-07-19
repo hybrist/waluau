@@ -269,6 +269,35 @@ describe("Arcane Heist swaps", function()
     end)
 end)
 
+describe("Arcane Heist development snapshots", function()
+    it("round-trips the complete rules state and rejects incompatible data", function()
+        math.randomseed(49)
+        local state: game.State = game.new()
+        state:resolve_swap({ 0 }, { 1 })
+        force_player_win(state)
+        state:play(0, 1)
+        state:resolve_swap({}, {})
+        state.swap_hand_indices = { 2 }
+        state.swap_middle_indices = { 0 }
+
+        local encoded: string = game.snapshot(state)
+        local restored: game.State? = game.restore(encoded)
+        expect(restored == nil):toBe(false)
+        if restored ~= nil then
+            expect(game.snapshot(restored)):toBe(encoded)
+            expect(#restored.history):toBe(1)
+            expect(restored.history[0].player_value):toBe(state.history[0].player_value)
+            expect(restored.player_known[0]):toBe(state.player_known[0])
+            expect(restored.computer_known[0]):toBe(state.computer_known[0])
+            expect(restored.swap_hand_indices[0]):toBe(2)
+            expect(restored.swap_middle_indices[0]):toBe(0)
+        end
+
+        expect(game.restore("ante-state-v0,0") == nil):toBe(true)
+        expect(game.restore(encoded .. ",unexpected") == nil):toBe(true)
+    end)
+end)
+
 describe("Arcane Heist game flow", function()
     it("plays all five rounds after three player wins", function()
         math.randomseed(42)

@@ -1,0 +1,34 @@
+-- Development-only hot-replacement registration. A game owns its snapshot
+-- schema; this module only bridges closures and one transient string to the
+-- Vite host. It does not persist state and is not a save-game API.
+
+type Hooks = {
+    snapshot: () -> string,
+    restore: (string) -> bool,
+    dispose: () -> unit
+}
+
+declare function __waluau_hmr_register(
+    capture: () -> unit,
+    restore: () -> unit,
+    dispose: () -> unit
+): unit
+declare function __waluau_hmr_set_snapshot(snapshot: string): unit
+declare function __waluau_hmr_get_snapshot(): string
+declare function __waluau_hmr_set_restore_result(accepted: bool): unit
+
+function register(hooks: Hooks): unit
+    __waluau_hmr_register(
+        function(): unit
+            __waluau_hmr_set_snapshot(hooks.snapshot())
+        end,
+        function(): unit
+            __waluau_hmr_set_restore_result(hooks.restore(__waluau_hmr_get_snapshot()))
+        end,
+        hooks.dispose
+    )
+end
+
+return {
+    register = register,
+}

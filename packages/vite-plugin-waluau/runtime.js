@@ -422,13 +422,24 @@ function createLuaPatternHost() {
   };
 }
 
-function rememberDomEventListener(target, type, listener) {
+function rememberDomEventListener(target, type, callback, listener) {
   let records = domEventListeners.get(target);
   if (!records) {
     records = new Set();
     domEventListeners.set(target, records);
   }
-  records.add({ type, listener });
+  records.add({ type, callback, listener });
+}
+
+function removeDomEventListener(target, type, callback) {
+  const records = domEventListeners.get(target);
+  if (!records) return;
+  for (const record of records) {
+    if (record.type !== type || record.callback !== callback) continue;
+    target.removeEventListener(type, record.listener);
+    records.delete(record);
+  }
+  if (records.size === 0) domEventListeners.delete(target);
 }
 
 function childrenOfDomNode(node) {
@@ -784,7 +795,7 @@ function createPlaygroundDomHost(wasmImports, domOutputRoot, getWasmExports = ()
       trampoline(callback, event);
     };
     target.addEventListener(type, listener);
-    rememberDomEventListener(target, type, listener);
+    rememberDomEventListener(target, type, callback, listener);
   };
 
   const requestAnimationFrame = (target, callback) => {
@@ -806,6 +817,11 @@ function createPlaygroundDomHost(wasmImports, domOutputRoot, getWasmExports = ()
     });
     handles.add(handle);
     return handle;
+  };
+
+  const cancelAnimationFrame = (target, handle) => {
+    target.cancelAnimationFrame(handle);
+    pendingAnimationFrames.get(target)?.delete(handle);
   };
 
   const fetchFromDomContext = (input) => {
@@ -861,7 +877,9 @@ function createPlaygroundDomHost(wasmImports, domOutputRoot, getWasmExports = ()
       return new Float32Array(memory.buffer, pointer, length);
     },
     'EventTarget.addEventListener': (target, type, callback) => registerEventListener(target, String(type), callback),
+    'EventTarget.removeEventListener': (target, type, callback) => removeDomEventListener(target, String(type), callback),
     'Window.requestAnimationFrame': requestAnimationFrame,
+    'Window.cancelAnimationFrame': cancelAnimationFrame,
     'Node.removeChild': removeChild,
     'Node.replaceChild': replaceChild,
     'Window.get/localStorage': () => playgroundStorage(),
@@ -1992,6 +2010,16 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
     document: options.domOutputRoot,
     ...(options.gameServices ?? {}),
   });
+  options.hotReplacement?.bindExports(options.getWasmExports);
+  // Snapshot registration is development-only. Production and non-HMR hosts
+  // accept the same artifact with inert imports so an opted-in game does not
+  // need a separate production build.
+  const hotReplacementHost = options.hotReplacement?.imports ?? {
+    __waluau_hmr_register() {},
+    __waluau_hmr_set_snapshot() {},
+    __waluau_hmr_get_snapshot() { return ''; },
+    __waluau_hmr_set_restore_result() {},
+  };
   const hostImports = options.hostImports ?? {};
   const reportAsyncError = (error) => {
     if (typeof options.onAsyncError === 'function') {
@@ -2032,6 +2060,7 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
     ...domHost,
     ...tfjsHost,
     ...gameServicesHost,
+    ...hotReplacementHost,
     ...hostImports,
     __waluau_attach_promise: (threadHandle, promise) => {
       if (promise == null || typeof promise.then !== 'function') {

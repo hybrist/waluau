@@ -44,28 +44,66 @@ function reportError(error) {
 `;
 }
 
-function runtimeSource(generatedModule) {
+function runtimeSource(generatedModule, version) {
+  const generatedSpecifier = `${generatedModule}?waluau-hmr=${version}`;
   return `
 import { buildWaluauImports } from '@waluau/vite-plugin/runtime';
-import { run as runWaluau } from ${JSON.stringify(generatedModule)};
+import {
+  captureWaluauGame,
+  createWaluauHotHost,
+  HotReplacementFallback,
+  replaceWaluauGame,
+} from '@waluau/vite-plugin/hot';
+import {
+  run as runWaluau,
+  wasmUrl as generatedWasmUrl,
+} from ${JSON.stringify(generatedSpecifier)};
 
 ${errorOverlaySource()}
 
-export const game = runWaluau({
-  createImports: (context) => buildWaluauImports(null, console.log, {
-    requiredImports: context.requiredImports,
-    bytesConstants: context.bytesConstants,
-    domOutputRoot: document,
-    getWasmExports: context.getWasmExports,
-    onAsyncError: reportError,
-    gameServices: {
-      assetBaseUrl: context.assetBaseUrl,
-      assetManifest: context.assetManifest,
-    },
-  }),
+function versionedWasmUrl() {
+  if (generatedWasmUrl == null) return null;
+  const url = new URL(generatedWasmUrl);
+  url.searchParams.set('waluau-hmr', ${JSON.stringify(String(version))});
+  return url;
+}
+
+const hotReplacement = createWaluauHotHost();
+
+function startGame() {
+  return runWaluau({
+    wasmUrl: versionedWasmUrl(),
+    createImports: (context) => buildWaluauImports(null, console.log, {
+      requiredImports: context.requiredImports,
+      bytesConstants: context.bytesConstants,
+      domOutputRoot: document,
+      getWasmExports: context.getWasmExports,
+      onAsyncError: reportError,
+      hotReplacement,
+      gameServices: {
+        assetBaseUrl: context.assetBaseUrl,
+        assetManifest: context.assetManifest,
+      },
+    }),
+  }).then((loaded) => ({ ...loaded, hotReplacement }));
+}
+
+export const game = replaceWaluauGame({
+  previous: import.meta.hot?.data.waluauGame,
+  start: startGame,
+  reload: (reason) => import.meta.hot?.invalidate(reason),
 });
 
-void game.catch(reportError);
+if (import.meta.hot) {
+  import.meta.hot.accept();
+  import.meta.hot.dispose((data) => {
+    data.waluauGame = captureWaluauGame(game);
+  });
+}
+
+void game.catch((error) => {
+  if (!(error instanceof HotReplacementFallback)) reportError(error);
+});
 export default game;
 `;
 }
@@ -220,7 +258,7 @@ export function waluau(options = {}) {
     const artifacts = artifactPaths(entryPath);
     let state = compileStates.get(entryPath);
     if (!state) {
-      state = { inFlight: null, queued: false, involvedFiles: null };
+      state = { inFlight: null, queued: false, involvedFiles: null, version: 0 };
       compileStates.set(entryPath, state);
     }
     if (state.inFlight) {
@@ -236,6 +274,7 @@ export function waluau(options = {}) {
         const invocation = compilerCommand(entryPath, artifacts.wasm, artifacts.report);
         try {
           await run(invocation.command, invocation.args, invocation.cwd);
+          state.version += 1;
         } finally {
           // The report is written even for failed builds, so watch mode can
           // still track every file in the entry's require graph.
@@ -286,6 +325,12 @@ export function waluau(options = {}) {
     );
   }
 
+  function isGeneratedArtifact(file) {
+    return Array.from(compiledEntries).some(
+      (entry) => isInside(artifactPaths(entry).outDir, file),
+    );
+  }
+
   resolvePaths(appRoot);
 
   return {
@@ -318,7 +363,9 @@ export function waluau(options = {}) {
       // *.test.walu files register with vitest instead of booting a game.
       const isTestModule = file.endsWith('.test.walu');
       return {
-        code: isTestModule ? testModuleSource(artifacts.module) : runtimeSource(artifacts.module),
+        code: isTestModule
+          ? testModuleSource(artifacts.module)
+          : runtimeSource(artifacts.module, compileStates.get(file).version),
         map: null,
       };
     },
@@ -336,6 +383,11 @@ export function waluau(options = {}) {
     },
     async handleHotUpdate(context) {
       const file = resolve(context.file);
+      // The compiler writes JS, Wasm, reports, and copied assets under the
+      // entry's cache directory. Suppress their separate watcher events;
+      // otherwise Vite can apply stale dependency updates or full reloads
+      // before the versioned source-entry update, then recompile in a loop.
+      if (isGeneratedArtifact(file)) return [];
       if (compiledEntries.size === 0) return;
       const isKnownInvolved = Array.from(compiledEntries).some(
         (entry) => compileStates.get(entry)?.involvedFiles?.has(file),
@@ -346,8 +398,27 @@ export function waluau(options = {}) {
       const entries = entriesInvolving(file);
       if (entries.length === 0) return;
       await Promise.all(entries.map((entry) => compileEntry(entry)));
-      (server ?? context.server).ws.send({ type: 'full-reload' });
-      return [];
+      const reloadServer = server ?? context.server;
+      const modules = [];
+      for (const entry of entries) {
+        const entryModules = reloadServer.moduleGraph?.getModulesByFile(entry);
+        if (entryModules) {
+          for (const module of entryModules) {
+            reloadServer.moduleGraph.invalidateModule(module);
+            modules.push(module);
+          }
+        } else if (entry === file) {
+          modules.push(...(context.modules ?? []));
+        }
+      }
+      if (modules.length === 0) {
+        // No browser module can accept this rebuild (for example, the entry
+        // was removed from Vite's graph). A full reload is the only safe way
+        // to make the newly compiled Wasm reachable.
+        reloadServer.ws.send({ type: 'full-reload' });
+        return [];
+      }
+      return modules;
     },
   };
 }
