@@ -1854,6 +1854,9 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
   // math.random state (mulberry32). Seeded randomly per instance so
   // unseeded runs differ; math.randomseed(x) resets it deterministically.
   let prngState = (Math.random() * 0x100000000) >>> 0;
+  // Pieces of the most recent string_split call, read back one at a time via
+  // string_split_get by the compiler-emitted fill loop.
+  let pendingSplit = [];
   const externIs = (value, typeName) => {
     const name = String(typeName);
     // Nodes carry their realm via ownerDocument; events (which have no
@@ -1952,6 +1955,15 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
       if (offset < 1 || offset > len) return -1;
       return str.codePointAt(offset - 1);
     },
+    string_split: (source, separator) => {
+      // Luau string.split semantics: plain (non-pattern) separator, empty
+      // pieces between adjacent separators and at the boundaries. An empty
+      // separator splits into individual characters (and "" produces no
+      // pieces), which JS String.prototype.split matches exactly.
+      pendingSplit = String(source).split(String(separator));
+      return pendingSplit.length;
+    },
+    string_split_get: (index) => pendingSplit[Number(index)] ?? '',
     string_upper: (value) => String(value).toUpperCase(),
     string_lower: (value) => String(value).toLowerCase(),
     string_reverse: (value) => Array.from(String(value)).reverse().join(''),

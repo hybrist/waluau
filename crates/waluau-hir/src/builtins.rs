@@ -59,6 +59,7 @@ pub(super) const STRING_UPPER: &str = "string.upper";
 pub(super) const STRING_LOWER: &str = "string.lower";
 pub(super) const STRING_FORMAT: &str = "string.format";
 pub(super) const STRING_REVERSE: &str = "string.reverse";
+pub(super) const STRING_SPLIT: &str = "string.split";
 // pub(super) const PRINT: &str = "print"; // now handled via extern declaration
 
 fn promise_resolved_type(ty: &Type) -> Option<Type> {
@@ -1362,6 +1363,39 @@ pub(super) fn infer_string_builtin_call(
                 return Some(Err(error));
             }
             Some(coerce_type(Type::String, expected))
+        }
+        STRING_SPLIT => {
+            if args.is_empty() || args.len() > 2 {
+                return Some(Err(Diagnostic::new(format!(
+                    "{STRING_SPLIT} expects 1 or 2 arguments, got {}",
+                    args.len()
+                ))));
+            }
+            if let Err(error) = require_arg_type(
+                STRING_SPLIT,
+                "source",
+                &args[0],
+                Type::String,
+                vars,
+                fn_signatures,
+                active_type_params,
+            ) {
+                return Some(Err(error));
+            }
+            if let Some(separator) = args.get(1) {
+                if let Err(error) = require_arg_type(
+                    STRING_SPLIT,
+                    "separator",
+                    separator,
+                    Type::String,
+                    vars,
+                    fn_signatures,
+                    active_type_params,
+                ) {
+                    return Some(Err(error));
+                }
+            }
+            Some(coerce_type(Type::Array(Box::new(Type::String)), expected))
         }
         STRING_FORMAT => {
             if args.is_empty() || args.len() > 101 {

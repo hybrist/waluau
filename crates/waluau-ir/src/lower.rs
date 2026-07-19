@@ -4176,6 +4176,7 @@ impl Builder<'_> {
                         "lower" => Some(STRING_LOWER),
                         "format" => Some(STRING_FORMAT),
                         "reverse" => Some(STRING_REVERSE),
+                        "split" => Some(STRING_SPLIT),
                         _ => None,
                     };
                     if let Some(builtin) = builtin {
@@ -5534,6 +5535,7 @@ impl Builder<'_> {
                         "lower" => Some(STRING_LOWER),
                         "format" => Some(STRING_FORMAT),
                         "reverse" => Some(STRING_REVERSE),
+                        "split" => Some(STRING_SPLIT),
                         _ => None,
                     };
                     if let Some(builtin) = builtin {
@@ -8750,6 +8752,27 @@ impl Builder<'_> {
                 let host_name = format!("{STRING_FORMAT_HOST_PREFIX}{}", lowered_args.len() - 1);
                 self.emit_string_host_call(&host_name, lowered_args, Type::String)
             }
+            STRING_SPLIT => {
+                if args.is_empty() || args.len() > 2 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_SPLIT} expects 1 or 2 arguments, got {}",
+                        args.len()
+                    ))));
+                }
+                let source = match self.lower_expr(&args[0], env, types, Some(Type::String)) {
+                    Ok(val) => val,
+                    Err(error) => return Some(Err(error)),
+                };
+                let separator = match args.get(1) {
+                    Some(arg) => match self.lower_expr(arg, env, types, Some(Type::String)) {
+                        Ok(val) => val,
+                        Err(error) => return Some(Err(error)),
+                    },
+                    // Luau's default separator is ",".
+                    None => self.emit(Instruction::String(",".to_string())),
+                };
+                self.lower_string_split(source, separator)
+            }
             _ => return None,
         };
 
@@ -8762,6 +8785,7 @@ impl Builder<'_> {
                         string_byte_static_count(args, expected.as_ref()).unwrap_or(0)
                     ]),
                     STRING_BYTE => i32_ty,
+                    STRING_SPLIT => Type::Array(Box::new(Type::String)),
                     _ => Type::String,
                 };
                 (value, result_ty)
@@ -8769,6 +8793,96 @@ impl Builder<'_> {
             Err(error) => return Some(Err(error)),
         };
         Some(self.coerce_value(value, result_ty, expected))
+    }
+
+    /// Lower `string.split(source, separator)`: the host computes the pieces
+    /// and returns their count; a compiler-emitted loop then reads each piece
+    /// back and appends it to a fresh growable `{string}` array. The fill
+    /// loop runs immediately after the split host call with no intervening
+    /// user code, so the host only needs one pending-split slot.
+    fn lower_string_split(
+        &mut self,
+        source: ValueId,
+        separator: ValueId,
+    ) -> Result<ValueId, Diagnostic> {
+        let i32_ty = Type::Numeric(NumericType::I32);
+        let count =
+            self.emit_string_host_call(STRING_SPLIT_HOST, vec![source, separator], i32_ty.clone())?;
+        let array = self.emit(Instruction::ArrayNew {
+            element_ty: Type::String,
+            elements: Vec::new(),
+        });
+        let zero = self.emit_i32_const(0);
+        let one = self.emit_i32_const(1);
+
+        let preheader = self.current_block;
+        let header = self.new_block();
+        let body = self.new_block();
+        let exit = self.new_block();
+        self.set_terminator(preheader, Terminator::Jump(header));
+
+        self.current_block = header;
+        let index_phi = self.emit(Instruction::Phi(vec![(preheader, zero)]));
+        // Loop-invariant, threaded through a phi with a `+ 0` self-edge so the
+        // local allocator treats it as live across the back edge (see
+        // emit_array_append_all).
+        let count_phi = self.emit(Instruction::Phi(vec![(preheader, count)]));
+        let cond = self.emit(Instruction::Binary {
+            op: BinaryOp::Less,
+            left: index_phi,
+            right: count_phi,
+            operand_ty: i32_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        self.set_terminator(
+            header,
+            Terminator::Branch {
+                condition: cond,
+                then_block: body,
+                else_block: exit,
+            },
+        );
+
+        self.current_block = body;
+        let piece =
+            self.emit_string_host_call(STRING_SPLIT_GET_HOST, vec![index_phi], Type::String)?;
+        let array_len = self.emit(Instruction::ArrayLen { array });
+        self.emit(Instruction::ArraySet {
+            array,
+            index: array_len,
+            value: piece,
+            element_ty: Type::String,
+        });
+        let next_index = self.emit(Instruction::Binary {
+            op: BinaryOp::Add,
+            left: index_phi,
+            right: one,
+            operand_ty: i32_ty.clone(),
+            result_ty: i32_ty.clone(),
+        });
+        let next_count = self.emit(Instruction::Binary {
+            op: BinaryOp::Add,
+            left: count_phi,
+            right: zero,
+            operand_ty: i32_ty.clone(),
+            result_ty: i32_ty,
+        });
+        let body_exit = self.current_block;
+        self.set_terminator(body_exit, Terminator::Jump(header));
+        add_phi_incoming(
+            &mut self.function,
+            header,
+            index_phi,
+            (body_exit, next_index),
+        );
+        add_phi_incoming(
+            &mut self.function,
+            header,
+            count_phi,
+            (body_exit, next_count),
+        );
+        self.current_block = exit;
+        Ok(array)
     }
 
     /// Equality between a nullable value and a value of its inner type (or
@@ -9539,6 +9653,35 @@ impl Builder<'_> {
                     }
                 }
                 Some(Ok(Type::String))
+            }
+            STRING_SPLIT => {
+                if args.is_empty() || args.len() > 2 {
+                    return Some(Err(Diagnostic::new(format!(
+                        "{STRING_SPLIT} expects 1 or 2 arguments, got {}",
+                        args.len()
+                    ))));
+                }
+                if let Err(error) = self.require_inferred_arg_type(
+                    STRING_SPLIT,
+                    "source",
+                    &args[0],
+                    Type::String,
+                    types,
+                ) {
+                    return Some(Err(error));
+                }
+                if let Some(separator) = args.get(1) {
+                    if let Err(error) = self.require_inferred_arg_type(
+                        STRING_SPLIT,
+                        "separator",
+                        separator,
+                        Type::String,
+                        types,
+                    ) {
+                        return Some(Err(error));
+                    }
+                }
+                Some(Ok(Type::Array(Box::new(Type::String))))
             }
             STRING_BYTE => {
                 if args.is_empty() || args.len() > 3 {

@@ -73,6 +73,9 @@ const STRING_FORMAT: &str = "string.format";
 const STRING_FORMAT_HOST_PREFIX: &str = "string_format";
 const STRING_REVERSE: &str = "string.reverse";
 const STRING_REVERSE_HOST: &str = "string_reverse";
+const STRING_SPLIT: &str = "string.split";
+const STRING_SPLIT_HOST: &str = "string_split";
+const STRING_SPLIT_GET_HOST: &str = "string_split_get";
 
 fn is_promise_like_extern(ty: &Type) -> bool {
     match ty {

@@ -1778,6 +1778,7 @@ impl<'a> Monomorphizer<'a> {
             ]))),
             "string.sub" | "string.rep" | "string.char" | "string.upper" | "string.lower"
             | "string.format" => Ok(Some(Type::String)),
+            "string.split" => Ok(Some(Type::Array(Box::new(Type::String)))),
             _ => Ok(None),
         }
     }

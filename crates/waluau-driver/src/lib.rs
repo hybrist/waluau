@@ -827,6 +827,34 @@ mod tests {
     }
 
     #[test]
+    fn compiles_string_split_function_and_method_forms() {
+        // string.split lowers to the string_split/string_split_get host
+        // imports plus a compiler-emitted loop that fills a growable
+        // {string} array; the separator defaults to ",".
+        let source = r#"
+            local parts: {string} = string.split("a,b,c", ",")
+            assert(#parts == 3)
+            assert(parts[0] == "a")
+
+            local defaulted = string.split("a,b")
+            assert(#defaulted == 2)
+
+            local chars = ("abc"):split("")
+            assert(#chars == 3)
+        "#;
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let wat = wasmprinter::print_bytes(&wasm).expect("wat should print");
+        assert!(
+            wat.contains("(import \"waluau\" \"string_split\" "),
+            "expected a string_split host import:\n{wat}"
+        );
+        assert!(
+            wat.contains("(import \"waluau\" \"string_split_get\" "),
+            "expected a string_split_get host import:\n{wat}"
+        );
+    }
+
+    #[test]
     fn rejects_invalid_fixture_file() {
         let source = fixture_source("mismatch");
         let err = super::compile_source(source).expect_err("compile should fail");
