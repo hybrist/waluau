@@ -205,8 +205,9 @@ fn compile_sources(
     entry_path: &str,
 ) -> Result<CompileResult, String> {
     let program = link::link_programs(files, entry_path)?;
-    let typed_program = waluau_hir::type_check_and_infer(&program).map_err(|e| e.to_string())?;
-    let module = waluau_ir::build(&typed_program).map_err(|e| e.to_string())?;
+    let typed_program =
+        waluau_hir::type_check_and_infer(&program).map_err(|e| e.render_for_playground())?;
+    let module = waluau_ir::build(&typed_program).map_err(|e| e.render_for_playground())?;
     let requires_wasm_gc = module_requires_wasm_gc(&module);
 
     let mut ir_dump = String::new();
@@ -255,8 +256,9 @@ fn compile_source(source: &str) -> Result<CompileResult, String> {
     // Add builtin declarations to standalone programs
     add_builtins_to_program(&mut program).map_err(|e| e.to_string())?;
 
-    let typed_program = waluau_hir::type_check_and_infer(&program).map_err(|e| e.to_string())?;
-    let module = waluau_ir::build(&typed_program).map_err(|e| e.to_string())?;
+    let typed_program =
+        waluau_hir::type_check_and_infer(&program).map_err(|e| e.render_for_playground())?;
+    let module = waluau_ir::build(&typed_program).map_err(|e| e.render_for_playground())?;
     let requires_wasm_gc = module_requires_wasm_gc(&module);
 
     let mut ir_dump = String::new();
@@ -884,6 +886,63 @@ mod tests {
         assert_eq!(
             error,
             "unsupported DOM virtual module \"dom:worker\"; supported specifiers: \"dom:window\""
+        );
+    }
+
+    #[test]
+    fn compile_error_renders_inference_span_for_playground_markers() {
+        let source = r#"
+            declare function accept(value: i32): unit
+
+            function bad(): unit
+                accept("wrong")
+            end
+        "#;
+        let start = source
+            .find("\"wrong\"")
+            .expect("argument should be present");
+
+        let error = super::compile_source(source).expect_err("compile should fail");
+
+        assert_eq!(
+            error,
+            format!(
+                "cannot implicitly convert string to i32 at {start}..{}",
+                start + "\"wrong\"".len()
+            )
+        );
+    }
+
+    #[test]
+    fn compile_multi_error_identifies_module_for_playground_markers() {
+        let mut files = std::collections::HashMap::new();
+        let dependency = r#"
+            declare function accept(value: i32): unit
+
+            function bad(): unit
+                accept("wrong")
+            end
+
+            return bad
+        "#;
+        files.insert(
+            "main.walu".to_string(),
+            "local bad = require(\"./dependency\")\n".to_string(),
+        );
+        files.insert("dependency.walu".to_string(), dependency.to_string());
+        let start = dependency
+            .find("\"wrong\"")
+            .expect("argument should be present");
+
+        let error = super::compile_sources(&files, "main.walu").expect_err("compile should fail");
+
+        assert_eq!(
+            error,
+            format!(
+                "in module \"/dependency.walu\": cannot implicitly convert string to i32 at \
+                 {start}..{}",
+                start + "\"wrong\"".len()
+            )
         );
     }
 

@@ -1298,7 +1298,14 @@ pub(super) fn infer_string_builtin_call(
                 };
                 return Some(coerce_type(Type::Multi(vec![i32_ty; count]), expected));
             }
-            Some(coerce_type(i32_ty, expected))
+            let nullable_i32 = Type::Nullable(Box::new(i32_ty.clone()));
+            if string_byte_scalar_known_in_range(args)
+                || string_byte_requires_numeric_value(expected.as_ref())
+            {
+                Some(coerce_type(i32_ty, expected))
+            } else {
+                Some(coerce_type(nullable_i32, expected))
+            }
         }
         STRING_CHAR => {
             let mut arg_types = Vec::new();
@@ -1412,6 +1419,29 @@ pub(super) fn infer_string_builtin_call(
         }
         _ => None,
     }
+}
+
+fn string_byte_requires_numeric_value(expected: Option<&Type>) -> bool {
+    match expected {
+        Some(Type::Numeric(_)) => true,
+        Some(Type::Multi(types)) if types.len() == 1 => {
+            matches!(types.first(), Some(Type::Numeric(_)))
+        }
+        _ => false,
+    }
+}
+
+fn string_byte_scalar_known_in_range(args: &[Expr]) -> bool {
+    let Some(len) = args.first().and_then(expr_string_len) else {
+        return false;
+    };
+    let index = args.get(1).and_then(expr_i32_literal).unwrap_or(1);
+    let index = if index < 0 {
+        len.saturating_add(index).saturating_add(1)
+    } else {
+        index
+    };
+    index >= 1 && index <= len
 }
 
 pub(super) fn string_byte_static_count(

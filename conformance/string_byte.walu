@@ -1,9 +1,9 @@
 -- string.byte / string:byte returns the code point at a 1-based index
--- (negative counts from the end), or -1 out of range.
+-- (negative counts from the end), or nil out of range.
 
 local message: string = "ABC"
 
 assert(string.byte(message) == 65)
 assert(message:byte(2) == 66)
 assert(string.byte(message, -1) == 67)
-assert(string.byte(message, 9) == -1)
+assert(string.byte(message, 9) == nil)
