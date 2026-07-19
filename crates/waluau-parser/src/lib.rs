@@ -72,6 +72,29 @@ pub struct DefinitionSite {
     /// For `local m = require("./mod")` bindings: the raw require path, so
     /// tooling can resolve member accesses on `m` into the target module.
     pub require_path: Option<String>,
+    /// The syntactic shape of a local binding's initializer, when it is one
+    /// tooling can chase statically (a call, a member read, an index). This
+    /// lets an editor derive the type of `local state = game.new()` from
+    /// `new`'s declared return type without running type inference.
+    pub initializer: Option<InitializerHint>,
+}
+
+/// The statically chaseable shape of a local's initializer expression.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InitializerHint {
+    /// `local x = f(...)` or `local x = ns.f(...)` — `callee` is `f` or
+    /// `ns.f`.
+    Call { callee: String },
+    /// `local x = recv:m(...)`.
+    MethodCall { receiver: String, method: String },
+    /// `local x = base.field` (`indexed` for `local x = base.field[i]`).
+    Field {
+        base: String,
+        field: String,
+        indexed: bool,
+    },
+    /// `local x = base[i]`.
+    Index { base: String },
 }
 
 pub fn parse(source: &str) -> Result<Program, Diagnostic> {

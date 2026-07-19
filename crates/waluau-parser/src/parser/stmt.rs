@@ -2,9 +2,73 @@ use waluau_ast::{AssignOp, BinaryOp, Binding, Expr, Rebindability, Span, Stmt, T
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::TokenKind;
 
-use crate::DefinitionKind;
+use crate::{DefinitionKind, InitializerHint};
 
 use super::Parser;
+
+/// The record shape of a table-literal initializer: field names plus the
+/// types statically visible in the literal (casts like `10::i32`, string and
+/// bool literals, nested tables). Anything else — bare number literals whose
+/// width the type checker decides, call results — stays `unknown`.
+fn table_literal_record(fields: &[waluau_ast::TableField]) -> Type {
+    let mut shape = std::collections::BTreeMap::new();
+    for field in fields {
+        shape.insert(field.name.clone(), literal_value_type(&field.value));
+    }
+    Type::Record(shape)
+}
+
+fn literal_value_type(value: &Expr) -> Type {
+    match value {
+        Expr::Cast { ty, .. } => ty.clone(),
+        Expr::String(..) => Type::String,
+        Expr::Bool(..) => Type::Bool,
+        Expr::TableLiteral { fields, .. } => table_literal_record(fields),
+        _ => Type::Unknown,
+    }
+}
+
+/// The statically chaseable shape of an initializer expression, if any.
+fn initializer_hint(value: &Expr) -> Option<InitializerHint> {
+    let simple_name = |expr: &Expr| match expr {
+        Expr::Name(name, _, _) => Some(name.clone()),
+        _ => None,
+    };
+    match value {
+        Expr::Call { callee, .. } => match callee.as_ref() {
+            Expr::Name(name, _, _) => Some(InitializerHint::Call {
+                callee: name.clone(),
+            }),
+            Expr::Field { base, name, .. } => simple_name(base).map(|base| InitializerHint::Call {
+                callee: format!("{base}.{name}"),
+            }),
+            _ => None,
+        },
+        Expr::MethodCall { receiver, name, .. } => {
+            simple_name(receiver).map(|receiver| InitializerHint::MethodCall {
+                receiver,
+                method: name.clone(),
+            })
+        }
+        Expr::Field { base, name, .. } => simple_name(base).map(|base| InitializerHint::Field {
+            base,
+            field: name.clone(),
+            indexed: false,
+        }),
+        Expr::Index { base, .. } => match base.as_ref() {
+            Expr::Name(name, _, _) => Some(InitializerHint::Index { base: name.clone() }),
+            Expr::Field {
+                base: inner, name, ..
+            } => simple_name(inner).map(|base| InitializerHint::Field {
+                base,
+                field: name.clone(),
+                indexed: true,
+            }),
+            _ => None,
+        },
+        _ => None,
+    }
+}
 
 impl Parser {
     /// Record a just-parsed `local`/`const` binding. Visibility starts at the
@@ -28,6 +92,16 @@ impl Parser {
         );
         if let Some(Expr::Require(path, _)) = value {
             self.definitions[index].require_path = Some(path.clone());
+        }
+        if let Some(value) = value {
+            self.definitions[index].initializer = initializer_hint(value);
+            // An unannotated table-literal binding still has a statically
+            // known field shape (`local point = { x = 10::i32 }`).
+            if self.definitions[index].ty.is_none()
+                && let Expr::TableLiteral { fields, .. } = value
+            {
+                self.definitions[index].ty = Some(table_literal_record(fields));
+            }
         }
     }
     pub(super) fn parse_block_until(&mut self, end_markers: &[TokenKind]) -> Vec<Stmt> {
@@ -300,7 +374,7 @@ impl Parser {
             name.clone(),
             name_span,
             DefinitionKind::Function,
-            None,
+            Self::function_signature_type(&function),
             name_span.end,
         );
         self.definitions[index].detail = Some(Self::function_signature_detail(&name, &function));
@@ -345,7 +419,7 @@ impl Parser {
                 name.clone(),
                 name_span,
                 DefinitionKind::Function,
-                None,
+                Self::function_signature_type(&function),
                 name_span.end,
             );
             self.definitions[index].detail =

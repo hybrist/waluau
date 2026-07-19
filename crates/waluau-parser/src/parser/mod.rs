@@ -56,8 +56,24 @@ impl Parser {
             visible_from,
             scope_end: u32::MAX,
             require_path: None,
+            initializer: None,
         });
         self.definitions.len() - 1
+    }
+
+    /// Structural signature type for a function definition with a declared
+    /// return type; `None` when the return type is inferred (tooling cannot
+    /// chase an unknown return).
+    fn function_signature_type(function: &FunctionExpr) -> Option<Type> {
+        let return_type = function.return_type.clone()?;
+        Some(Type::Function {
+            params: function
+                .params
+                .iter()
+                .map(|param| param.ty.clone())
+                .collect(),
+            return_type: Box::new(return_type),
+        })
     }
 
     /// Rendered hover/completion signature for a function-like definition.
@@ -243,7 +259,7 @@ impl Parser {
             name.to_string(),
             name_span,
             DefinitionKind::Function,
-            None,
+            Self::function_signature_type(&function_expr),
             0,
         );
         self.definitions[index].detail = Some(Self::function_signature_detail(
@@ -265,6 +281,7 @@ impl Parser {
                 visible_from: name_span.end,
                 scope_end: body_end,
                 require_path: None,
+                initializer: None,
             });
         }
         Ok(Function {
@@ -454,7 +471,7 @@ impl Parser {
             name.clone(),
             name_span,
             DefinitionKind::DeclaredFunction,
-            None,
+            Self::function_signature_type(&function_expr),
             0,
         );
         self.definitions[index].detail = Some(Self::function_signature_detail(
