@@ -41,6 +41,26 @@ function run_nested(): unit
     coroutine.resume(outer)
 end
 
+-- Recursive awaits: the same suspension-capable function awaits a promise at
+-- every nested call depth, so several activations of it are suspended at
+-- once; each must resume exactly once with its own locals (waluau-qsvy).
+function await_depth(n: i32): string
+    if n <= 0 then
+        return "base"
+    end
+    local value: string = coroutine.await_promise(make_string_promise())::string
+    local rest: string = await_depth(n - 1)
+    return rest .. ":" .. value .. tostring(n)
+end
+
+function run_recursive_await(): unit
+    local co: thread = coroutine.create(function(): i32
+        record_nested("rec:" .. await_depth(3))
+        return 0
+    end)
+    coroutine.resume(co)
+end
+
 function run_rejected(): unit
     local co: thread = coroutine.create(function(): i32
         coroutine.await_promise(make_rejected_promise())

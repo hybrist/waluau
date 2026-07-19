@@ -305,9 +305,14 @@ fn mark_used_by_instruction(instruction: &IrInstruction, used: &mut UsedHostImpo
             _ => {}
         },
         IrInstruction::Binary { op, operand_ty, .. } => match (op, operand_ty) {
-            (BinaryOp::Eq, Type::String) => used.js_string_eq = true,
-            (BinaryOp::Eq, Type::Bytes) => used.bytes_eq = true,
+            // `NotEq` lowers to the `Eq` helper plus a negation, so it needs
+            // the same host import as `Eq` for every host-compared type.
+            (BinaryOp::Eq | BinaryOp::NotEq, Type::String) => used.js_string_eq = true,
+            (BinaryOp::Eq | BinaryOp::NotEq, Type::Bytes) => used.bytes_eq = true,
             (BinaryOp::Eq | BinaryOp::NotEq, Type::Unknown) => used.js_eq_unknown = true,
+            (BinaryOp::Eq | BinaryOp::NotEq, Type::Extern | Type::ExternSubtype(_)) => {
+                used.js_eq_unknown = true
+            }
             (BinaryOp::Concat, Type::String) => used.js_string_concat = true,
             (BinaryOp::Concat, Type::Bytes) => used.bytes_concat = true,
             (

@@ -1,0 +1,30 @@
+-- Equality between two nullable numeric values follows Lua's nil semantics:
+-- nil == nil is true, nil == value is false, and two present values compare
+-- by their unboxed contents. `string.byte` out of range yields nil, so it
+-- produces both present and absent nullable numbers.
+
+local abc: string = "abc"
+local abd: string = "abd"
+local empty: string = ""
+
+-- Both present.
+assert(string.byte(abc, 1) == string.byte(abd, 1))
+assert(not (string.byte(abc, 1) ~= string.byte(abd, 1)))
+assert(string.byte(abc, 3) ~= string.byte(abd, 3))
+assert(not (string.byte(abc, 3) == string.byte(abd, 3)))
+
+-- Both nil.
+assert(string.byte(empty, 1) == string.byte(empty, 2))
+assert(not (string.byte(empty, 1) ~= string.byte(empty, 2)))
+
+-- Exactly one nil, in both operand positions.
+assert(string.byte(abc, 1) ~= string.byte(empty, 1))
+assert(not (string.byte(abc, 1) == string.byte(empty, 1)))
+assert(string.byte(empty, 1) ~= string.byte(abc, 1))
+assert(not (string.byte(empty, 1) == string.byte(abc, 1)))
+
+-- The comparison is usable as a value, not just as a condition.
+local same: bool = string.byte(abc, 2) == string.byte(abd, 2)
+assert(same)
+local differs: bool = string.byte(abc, 9) == string.byte(abc, 1)
+assert(not differs)

@@ -58,6 +58,7 @@ export default function App() {
     handleInputChange,
     handleRecordFieldChange,
     handleManualRun,
+    requestAutoRun,
     getResult
   } = useWaluauCompiler({
     files,
@@ -349,6 +350,7 @@ export default function App() {
                 handleInputChange={handleInputChange}
                 handleRecordFieldChange={handleRecordFieldChange}
                 handleManualRun={handleManualRun}
+                requestAutoRun={requestAutoRun}
                 getResult={getResult}
               />
             )}
@@ -367,6 +369,7 @@ export default function App() {
             handleInputChange={handleInputChange}
             handleRecordFieldChange={handleRecordFieldChange}
             handleManualRun={handleManualRun}
+            requestAutoRun={requestAutoRun}
             getResult={getResult}
             autoRun={autoRun}
             onClose={() => removeRunnerZone(runner)}
