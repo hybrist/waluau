@@ -4713,7 +4713,13 @@ impl Builder<'_> {
                     }
                     let left = self.lower_expr(left, env, types, Some(operand_ty.clone()))?;
                     let right = self.lower_expr(right, env, types, Some(operand_ty.clone()))?;
-                    let raw_result_ty = self.infer_expr_type(expr, types, expected.clone())?;
+                    // Type the instruction by its operands; the coercion into
+                    // a wider expected type (e.g. boxing into `unknown` for a
+                    // yield payload) must go through `coerce_value` so the
+                    // conversion is actually emitted rather than silently
+                    // stamped onto the raw arithmetic result.
+                    let raw_result_ty =
+                        self.infer_expr_type(expr, types, Some(operand_ty.clone()))?;
                     let value = self.emit(Instruction::Binary {
                         op: *op,
                         left,

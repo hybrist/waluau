@@ -520,7 +520,7 @@ fn reuses_i32_local_slots_for_disjoint_live_ranges() {
             boxed_bool_struct_type: 0,
         },
     );
-    let local_plan = super::build_local_plan(function, &value_types, &array_registry, false)
+    let local_plan = super::build_local_plan(function, &value_types, &array_registry, None)
         .expect("plan should build");
 
     let block = function
@@ -1477,6 +1477,66 @@ fn emits_valid_wasm_for_unknown_coroutine_payloads() {
     assert!(
         wat.contains("extern.convert_any"),
         "should emit anyref->externref unboxing for string payloads"
+    );
+}
+
+#[test]
+fn emits_valid_wasm_for_reentrant_recursive_coroutine_activations() {
+    // Regression for waluau-qsvy: the same suspension-capable function active
+    // at several nested call depths (directly and mutually recursive), with a
+    // suspension point both before and after the recursive call.
+    let source = r#"
+        function updown(n: i32): i32
+            if n <= 0 then
+                return 0
+            end
+            coroutine.yield(n)
+            local rest: i32 = updown(n - 1)
+            coroutine.yield(100 + n)
+            return rest * 10 + n
+        end
+
+        function ping(n: i32): i32
+            if n <= 0 then
+                return 0
+            end
+            coroutine.yield(1000 + n)
+            return pong(n - 1) + 1
+        end
+
+        function pong(n: i32): i32
+            if n <= 0 then
+                return 0
+            end
+            coroutine.yield(2000 + n)
+            return ping(n - 1) + 2
+        end
+
+        function run(): i32
+            return updown(3) + ping(4)
+        end
+
+        local co: thread = coroutine.create(run)
+        local ok: bool, value: unknown = coroutine.resume(co)
+        assert(ok)
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        wat.contains("struct.new_default"),
+        "suspension points should lazily allocate per-activation frames:\n{wat}"
+    );
+    assert!(
+        wat.contains("array.copy"),
+        "the frame-push helper should grow the shadow stack:\n{wat}"
     );
 }
 
