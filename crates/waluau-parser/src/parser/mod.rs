@@ -5,6 +5,8 @@ use waluau_ast::{
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::{Token, TokenKind};
 
+use crate::{DefinitionKind, DefinitionSite};
+
 mod expr;
 mod stmt;
 mod tokens;
@@ -16,6 +18,8 @@ pub(super) struct Parser {
     diagnostics: Vec<Diagnostic>,
     /// Type parameters visible while parsing a function signature or body.
     type_param_scope: Vec<String>,
+    /// Definition side table for editor tooling; see [`DefinitionSite`].
+    definitions: Vec<DefinitionSite>,
     file_path: String,
 }
 
@@ -26,11 +30,110 @@ impl Parser {
             index: 0,
             diagnostics: Vec::new(),
             type_param_scope: Vec::new(),
+            definitions: Vec::new(),
             file_path,
         }
     }
 
-    pub(super) fn parse_program(mut self, source: &str) -> (Program, Vec<Diagnostic>) {
+    /// Record a definition site, returning its index so callers can attach
+    /// extras (e.g. a require path). `visible_from` is the offset from which
+    /// references resolve to the binding; the scope initially extends to the
+    /// end of file and is trimmed by [`Parser::close_definition_scope`].
+    fn record_definition(
+        &mut self,
+        name: impl Into<String>,
+        name_span: Span,
+        kind: DefinitionKind,
+        ty: Option<Type>,
+        visible_from: u32,
+    ) -> usize {
+        self.definitions.push(DefinitionSite {
+            name: name.into(),
+            name_span,
+            kind,
+            ty,
+            detail: None,
+            visible_from,
+            scope_end: u32::MAX,
+            require_path: None,
+        });
+        self.definitions.len() - 1
+    }
+
+    /// Rendered hover/completion signature for a function-like definition.
+    fn function_signature_detail(display_name: &str, function: &FunctionExpr) -> String {
+        use std::fmt::Write;
+        let mut out = String::from("function ");
+        out.push_str(display_name);
+        if !function.type_params.is_empty() {
+            let _ = write!(out, "<{}>", function.type_params.join(", "));
+        }
+        out.push('(');
+        for (index, param) in function.params.iter().enumerate() {
+            if index > 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&param.name);
+            if param.ty != Type::Unknown {
+                let _ = write!(out, ": {}", param.ty);
+            }
+        }
+        if function.vararg {
+            if !function.params.is_empty() {
+                out.push_str(", ");
+            }
+            out.push_str("...");
+        }
+        out.push(')');
+        if let Some(return_type) = &function.return_type {
+            let _ = write!(out, ": {return_type}");
+        }
+        out
+    }
+
+    /// A checkpoint for [`Parser::close_definition_scope`]: definitions
+    /// recorded from here on belong to the scope about to be parsed.
+    fn definition_scope_mark(&self) -> usize {
+        self.definitions.len()
+    }
+
+    /// Close the lexical scope opened at `mark`: every definition recorded
+    /// since whose scope is still open ends at `scope_end`. Inner scopes
+    /// close first, so already-trimmed entries are left untouched; on parse
+    /// errors the close may be skipped entirely, leaving bindings visible to
+    /// the end of file (graceful degradation for tooling).
+    fn close_definition_scope(&mut self, mark: usize, scope_end: u32) {
+        let start = mark.min(self.definitions.len());
+        for definition in &mut self.definitions[start..] {
+            if definition.scope_end == u32::MAX {
+                definition.scope_end = scope_end;
+            }
+        }
+    }
+
+    /// The current token's start offset — used as a scope boundary right
+    /// before consuming a closing keyword. Falls back to "end of file" when
+    /// input is exhausted.
+    fn current_scope_boundary(&self) -> u32 {
+        self.peek()
+            .map(|token| token.span.start)
+            .unwrap_or(u32::MAX)
+    }
+
+    /// End offset of the most recently consumed token; the point right after
+    /// a just-parsed statement.
+    fn prev_token_end(&self) -> u32 {
+        self.index
+            .checked_sub(1)
+            .and_then(|i| self.tokens.get(i))
+            .map(|token| token.span.end)
+            .unwrap_or(0)
+    }
+
+    pub(super) fn parse_program(
+        mut self,
+        source: &str,
+    ) -> (Program, Vec<Diagnostic>, Vec<DefinitionSite>) {
         let mut functions = Vec::new();
         let mut declared_imports = Vec::new();
         let mut declared_constants = Vec::new();
@@ -127,14 +230,43 @@ impl Parser {
             )]),
             entry_file_path: self.file_path.clone(),
         };
-        (program, self.diagnostics)
+        (program, self.diagnostics, self.definitions)
     }
 
     fn parse_function(&mut self) -> Result<Function, Diagnostic> {
         let start_pos = self.peek().map(|t| t.span.start).unwrap_or(0);
         self.expect_simple(TokenKind::Function, "expected 'function'")?;
-        let name = self.parse_function_name()?;
+        let (name, name_span) = self.parse_function_name()?;
         let function_expr = self.parse_function_expr_tail(None, false, start_pos)?;
+        // Top-level functions are referenceable from the whole file.
+        let index = self.record_definition(
+            name.to_string(),
+            name_span,
+            DefinitionKind::Function,
+            None,
+            0,
+        );
+        self.definitions[index].detail = Some(Self::function_signature_detail(
+            &name.to_string(),
+            &function_expr,
+        ));
+        if let FunctionName::Method { table, .. } = &name {
+            // The implicit method receiver: visible across the body only.
+            let body_end = function_expr.span.map(|span| span.end).unwrap_or(u32::MAX);
+            self.definitions.push(DefinitionSite {
+                name: "self".to_string(),
+                name_span,
+                kind: DefinitionKind::Param,
+                ty: Some(Type::Named {
+                    name: table.clone(),
+                    type_args: Vec::new(),
+                }),
+                detail: None,
+                visible_from: name_span.end,
+                scope_end: body_end,
+                require_path: None,
+            });
+        }
         Ok(Function {
             name,
             symbol_id: None,
@@ -147,15 +279,21 @@ impl Parser {
         })
     }
 
-    fn parse_function_name(&mut self) -> Result<FunctionName, Diagnostic> {
-        let name = self.expect_identifier()?;
+    fn parse_function_name(&mut self) -> Result<(FunctionName, Span), Diagnostic> {
+        let (name, name_span) = self.expect_identifier_spanned()?;
         if self.check_simple(&TokenKind::Colon) {
             self.advance();
-            let method = self.expect_identifier()?;
-            Ok(FunctionName::Method {
-                table: name,
-                method,
-            })
+            let (method, method_span) = self.expect_identifier_spanned()?;
+            Ok((
+                FunctionName::Method {
+                    table: name,
+                    method,
+                },
+                Span {
+                    start: name_span.start,
+                    end: method_span.end,
+                },
+            ))
         } else if self.check_simple(&TokenKind::Dot) {
             // A dot-named function (`function State.new(...)`) is a plain
             // function under the dotted name — no implicit self parameter,
@@ -163,16 +301,22 @@ impl Parser {
             // the name never collides with user bindings; call sites resolve
             // `State.new(...)` through the qualified-name lookup.
             self.advance();
-            let member = self.expect_identifier()?;
+            let (member, member_span) = self.expect_identifier_spanned()?;
             let dotted = format!("{name}.{member}");
             if self.check_simple(&TokenKind::Colon) {
                 return Err(Diagnostic::new(format!(
                     "cannot declare a method on dot-named function '{dotted}'"
                 )));
             }
-            Ok(FunctionName::Simple(dotted))
+            Ok((
+                FunctionName::Simple(dotted),
+                Span {
+                    start: name_span.start,
+                    end: member_span.end,
+                },
+            ))
         } else {
-            Ok(FunctionName::Simple(name))
+            Ok((FunctionName::Simple(name), name_span))
         }
     }
 
@@ -227,10 +371,14 @@ impl Parser {
         if kind != "const" {
             return Err(Diagnostic::new("expected 'const' after 'declare'"));
         }
-        let namespace = self.expect_identifier()?;
+        let (namespace, namespace_span) = self.expect_identifier_spanned()?;
         self.expect_simple(TokenKind::Dot, "expected '.' after constant namespace")?;
-        let member = self.expect_identifier()?;
+        let (member, member_span) = self.expect_identifier_spanned()?;
         let name = format!("{namespace}.{member}");
+        let name_span = Span {
+            start: namespace_span.start,
+            end: member_span.end,
+        };
         self.expect_simple(TokenKind::Colon, "expected ':' before constant type")?;
         let ty = self.parse_type()?;
         if !matches!(ty, Type::Numeric(_)) {
@@ -250,6 +398,14 @@ impl Parser {
                 )));
             }
         };
+        let index = self.record_definition(
+            name.clone(),
+            name_span,
+            DefinitionKind::DeclaredConstant,
+            Some(ty.clone()),
+            0,
+        );
+        self.definitions[index].detail = Some(format!("const {name}: {ty} = {}", value.raw));
         Ok(DeclaredConstant { name, ty, value })
     }
 
@@ -259,10 +415,14 @@ impl Parser {
             return Err(Diagnostic::new("expected 'declare'"));
         }
         self.expect_simple(TokenKind::Function, "expected 'function' after 'declare'")?;
-        let receiver = self.expect_identifier()?;
+        let (receiver, receiver_span) = self.expect_identifier_spanned()?;
+        let mut name_span = receiver_span;
+        let mut method_form = false;
         let (name, receiver_param) = if self.check_simple(&TokenKind::Colon) {
             self.advance();
-            let method = self.expect_identifier()?;
+            let (method, method_span) = self.expect_identifier_spanned()?;
+            name_span.end = method_span.end;
+            method_form = true;
             let name = format!("{receiver}.{method}");
             let receiver_param = Param {
                 name: "self".to_string(),
@@ -278,12 +438,29 @@ impl Parser {
             // the dotted name is the function's identity; unlike `:` method
             // sugar there is no implicit receiver parameter.
             self.advance();
-            let member = self.expect_identifier()?;
+            let (member, member_span) = self.expect_identifier_spanned()?;
+            name_span.end = member_span.end;
             (format!("{receiver}.{member}"), None)
         } else {
             (receiver, None)
         };
         let function_expr = self.parse_function_signature_tail(None, true, name.clone())?;
+        let display_name = if method_form {
+            name.replacen('.', ":", 1)
+        } else {
+            name.clone()
+        };
+        let index = self.record_definition(
+            name.clone(),
+            name_span,
+            DefinitionKind::DeclaredFunction,
+            None,
+            0,
+        );
+        self.definitions[index].detail = Some(Self::function_signature_detail(
+            &display_name,
+            &function_expr,
+        ));
         if !function_expr.type_params.is_empty() {
             return Err(Diagnostic::new(format!(
                 "declared host function '{name}' cannot be generic"
@@ -316,11 +493,23 @@ impl Parser {
         if kind != "property" {
             return Err(Diagnostic::new("expected 'property' after 'declare'"));
         }
-        let receiver = self.expect_identifier()?;
+        let (receiver, receiver_span) = self.expect_identifier_spanned()?;
         self.expect_simple(TokenKind::Colon, "expected ':' after property receiver")?;
-        let property = self.expect_identifier()?;
+        let (property, property_span) = self.expect_identifier_spanned()?;
         self.expect_simple(TokenKind::Colon, "expected ':' before property type")?;
         let property_type = self.parse_type()?;
+        let index = self.record_definition(
+            format!("{receiver}.{property}"),
+            Span {
+                start: receiver_span.start,
+                end: property_span.end,
+            },
+            DefinitionKind::Property,
+            Some(property_type.clone()),
+            0,
+        );
+        self.definitions[index].detail =
+            Some(format!("property {receiver}:{property}: {property_type}"));
         let receiver_ty = Type::Named {
             name: receiver.clone(),
             type_args: Vec::new(),
@@ -378,7 +567,7 @@ impl Parser {
         if keyword != "type" {
             return Err(Diagnostic::new("expected 'type'"));
         }
-        let name = self.expect_identifier()?;
+        let (name, name_span) = self.expect_identifier_spanned()?;
         let type_params = self.parse_type_param_list()?;
         let scope_token = self.type_param_scope.len();
         self.type_param_scope.extend(type_params.iter().cloned());
@@ -389,6 +578,24 @@ impl Parser {
             ty,
         });
         self.type_param_scope.truncate(scope_token);
+        if let Ok(declaration) = &parsed {
+            let rendered_params = if declaration.type_params.is_empty() {
+                String::new()
+            } else {
+                format!("<{}>", declaration.type_params.join(", "))
+            };
+            let index = self.record_definition(
+                declaration.name.clone(),
+                name_span,
+                DefinitionKind::TypeName,
+                Some(declaration.ty.clone()),
+                0,
+            );
+            self.definitions[index].detail = Some(format!(
+                "type {}{rendered_params} = {}",
+                declaration.name, declaration.ty
+            ));
+        }
         parsed
     }
 
@@ -517,6 +724,7 @@ impl Parser {
         require_return_type: bool,
         start_pos: u32,
     ) -> Result<FunctionExpr, Diagnostic> {
+        let scope_mark = self.definition_scope_mark();
         self.expect_simple(TokenKind::LParen, "expected '('")?;
         let mut params = Vec::new();
         let mut vararg = false;
@@ -527,7 +735,7 @@ impl Parser {
                     vararg = true;
                     break;
                 }
-                let param_name = self.expect_identifier()?;
+                let (param_name, param_span) = self.expect_identifier_spanned()?;
                 let param_type = if self.check_simple(&TokenKind::Colon) {
                     self.advance();
                     match self.parse_type() {
@@ -540,6 +748,13 @@ impl Parser {
                 } else {
                     Type::Unknown
                 };
+                self.record_definition(
+                    param_name.clone(),
+                    param_span,
+                    DefinitionKind::Param,
+                    (param_type != Type::Unknown).then(|| param_type.clone()),
+                    param_span.end,
+                );
                 params.push(Param {
                     name: param_name,
                     symbol_id: None,
@@ -570,6 +785,8 @@ impl Parser {
         let body = self.parse_block_until(&[TokenKind::End]);
         let end_token = self.peek().cloned();
         let end_pos = end_token.map(|t| t.span.end).unwrap_or(start_pos);
+        let scope_end = self.peek().map(|t| t.span.end).unwrap_or(u32::MAX);
+        self.close_definition_scope(scope_mark, scope_end);
         self.expect_simple(TokenKind::End, "expected 'end' after function body")?;
         Ok(FunctionExpr {
             name,

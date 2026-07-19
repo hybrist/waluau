@@ -1,10 +1,35 @@
-use waluau_ast::{AssignOp, BinaryOp, Binding, Expr, Rebindability, Stmt, Type};
+use waluau_ast::{AssignOp, BinaryOp, Binding, Expr, Rebindability, Span, Stmt, Type};
 use waluau_diagnostics::Diagnostic;
 use waluau_lexer::TokenKind;
+
+use crate::DefinitionKind;
 
 use super::Parser;
 
 impl Parser {
+    /// Record a just-parsed `local`/`const` binding. Visibility starts at the
+    /// current parse position (the end of the declaring statement), so an
+    /// initializer mentioning the same name still resolves to the outer
+    /// binding (`local x = x`).
+    fn record_local_binding(
+        &mut self,
+        name: &str,
+        name_span: Span,
+        ty: Option<Type>,
+        value: Option<&Expr>,
+    ) {
+        let visible_from = self.prev_token_end();
+        let index = self.record_definition(
+            name.to_string(),
+            name_span,
+            DefinitionKind::Local,
+            ty,
+            visible_from,
+        );
+        if let Some(Expr::Require(path, _)) = value {
+            self.definitions[index].require_path = Some(path.clone());
+        }
+    }
     pub(super) fn parse_block_until(&mut self, end_markers: &[TokenKind]) -> Vec<Stmt> {
         let mut statements = Vec::new();
         while let Some(token) = self.peek() {
@@ -46,20 +71,27 @@ impl Parser {
             self.advance();
             let condition = self.parse_expr()?;
             self.expect_simple(TokenKind::Do, "expected 'do' after while condition")?;
+            let scope_mark = self.definition_scope_mark();
             let body = self.parse_block_until(&[TokenKind::End]);
+            let scope_end = self.current_scope_boundary();
+            self.close_definition_scope(scope_mark, scope_end);
             self.expect_simple(TokenKind::End, "expected 'end' after while")?;
             return Ok(Stmt::While { condition, body });
         }
         if self.check_simple(&TokenKind::Repeat) {
             self.advance();
+            let scope_mark = self.definition_scope_mark();
             let body = self.parse_block_until(&[TokenKind::Until]);
             self.expect_simple(TokenKind::Until, "expected 'until' after repeat body")?;
+            // The until condition can still see the body's bindings; the
+            // scope closes only after it.
             let condition = self.parse_expr()?;
+            self.close_definition_scope(scope_mark, self.prev_token_end());
             return Ok(Stmt::Repeat { body, condition });
         }
         if self.check_simple(&TokenKind::For) {
             self.advance();
-            let first_name = self.expect_identifier()?;
+            let (first_name, first_span) = self.expect_identifier_spanned()?;
             if self.check_simple(&TokenKind::Equal) {
                 self.advance();
                 let start = self.parse_expr()?;
@@ -72,7 +104,19 @@ impl Parser {
                     None
                 };
                 self.expect_simple(TokenKind::Do, "expected 'do' after for loop range")?;
+                // The loop variable becomes visible at the body: the range
+                // expressions still see any outer binding of the same name.
+                let scope_mark = self.definition_scope_mark();
+                self.record_definition(
+                    first_name.clone(),
+                    first_span,
+                    DefinitionKind::LoopVar,
+                    None,
+                    self.prev_token_end(),
+                );
                 let body = self.parse_block_until(&[TokenKind::End]);
+                let scope_end = self.current_scope_boundary();
+                self.close_definition_scope(scope_mark, scope_end);
                 self.expect_simple(TokenKind::End, "expected 'end' after for loop body")?;
                 return Ok(Stmt::NumericFor {
                     name: first_name,
@@ -85,14 +129,30 @@ impl Parser {
             }
 
             let mut names = vec![first_name];
+            let mut name_spans = vec![first_span];
             while self.check_simple(&TokenKind::Comma) {
                 self.advance();
-                names.push(self.expect_identifier()?);
+                let (name, name_span) = self.expect_identifier_spanned()?;
+                names.push(name);
+                name_spans.push(name_span);
             }
             self.expect_simple(TokenKind::In, "expected 'in' after for loop variables")?;
             let iterator = self.parse_expr()?;
             self.expect_simple(TokenKind::Do, "expected 'do' after for loop iterator")?;
+            let scope_mark = self.definition_scope_mark();
+            let visible_from = self.prev_token_end();
+            for (name, name_span) in names.iter().zip(&name_spans) {
+                self.record_definition(
+                    name.clone(),
+                    *name_span,
+                    DefinitionKind::LoopVar,
+                    None,
+                    visible_from,
+                );
+            }
             let body = self.parse_block_until(&[TokenKind::End]);
+            let scope_end = self.current_scope_boundary();
+            self.close_definition_scope(scope_mark, scope_end);
             self.expect_simple(TokenKind::End, "expected 'end' after for loop body")?;
             return Ok(Stmt::ForIn {
                 names,
@@ -103,7 +163,10 @@ impl Parser {
         }
         if self.check_simple(&TokenKind::Do) {
             self.advance();
+            let scope_mark = self.definition_scope_mark();
             let body = self.parse_block_until(&[TokenKind::End]);
+            let scope_end = self.current_scope_boundary();
+            self.close_definition_scope(scope_mark, scope_end);
             self.expect_simple(TokenKind::End, "expected 'end' after do block")?;
             // A standalone `do ... end` block only introduces a scope; reuse
             // the if-statement machinery (which scopes its branch bodies
@@ -152,7 +215,7 @@ impl Parser {
         if self.check_simple(&TokenKind::Function) {
             return self.parse_local_function_decl();
         }
-        let name = self.expect_identifier()?;
+        let (name, name_span) = self.expect_identifier_spanned()?;
         let rebindability = if self.check_simple(&TokenKind::Less) {
             self.advance();
             let attr_name = self.expect_identifier()?;
@@ -181,16 +244,28 @@ impl Parser {
                 rebindability,
                 ty,
             }];
+            let mut binding_spans = vec![name_span];
             self.advance();
-            bindings.extend(self.parse_binding_list()?);
+            for (binding, span) in self.parse_binding_list()? {
+                bindings.push(binding);
+                binding_spans.push(span);
+            }
             // An uninitialized local declaration omits the '=' initializer
             // entirely; every binding defaults to nil.
-            if !self.check_simple(&TokenKind::Equal) {
-                let values = bindings.iter().map(|_| Expr::Nil(None)).collect();
-                return Ok(Stmt::LetMulti { bindings, values });
+            let values: Vec<Expr> = if self.check_simple(&TokenKind::Equal) {
+                self.advance();
+                self.parse_expr_list()?
+            } else {
+                bindings.iter().map(|_| Expr::Nil(None)).collect()
+            };
+            for (index, binding) in bindings.iter().enumerate() {
+                self.record_local_binding(
+                    &binding.name,
+                    binding_spans[index],
+                    binding.ty.clone(),
+                    values.get(index),
+                );
             }
-            self.advance();
-            let values = self.parse_expr_list()?;
             return Ok(Stmt::LetMulti { bindings, values });
         }
         // Without an '=' the local is declared but uninitialized, defaulting to nil.
@@ -200,6 +275,7 @@ impl Parser {
         } else {
             Expr::Nil(None)
         };
+        self.record_local_binding(&name, name_span, ty.clone(), Some(&value));
         Ok(Stmt::Let {
             name,
             symbol_id: None,
@@ -217,8 +293,17 @@ impl Parser {
     fn parse_local_function_decl(&mut self) -> Result<Stmt, Diagnostic> {
         let start_pos = self.peek().map(|t| t.span.start).unwrap_or(0);
         self.expect_simple(TokenKind::Function, "expected 'function' after 'local'")?;
-        let name = self.expect_identifier()?;
+        let (name, name_span) = self.expect_identifier_spanned()?;
         let function = self.parse_function_expr_tail(Some(name.clone()), false, start_pos)?;
+        // Visible from the name itself so recursive calls in the body resolve.
+        let index = self.record_definition(
+            name.clone(),
+            name_span,
+            DefinitionKind::Function,
+            None,
+            name_span.end,
+        );
+        self.definitions[index].detail = Some(Self::function_signature_detail(&name, &function));
         Ok(Stmt::Let {
             name,
             symbol_id: None,
@@ -253,8 +338,18 @@ impl Parser {
         if self.check_simple(&TokenKind::Function) {
             let start_pos = self.peek().map(|t| t.span.start).unwrap_or(0);
             self.advance();
-            let name = self.expect_identifier()?;
+            let (name, name_span) = self.expect_identifier_spanned()?;
             let function = self.parse_function_expr_tail(Some(name.clone()), false, start_pos)?;
+            // Visible from the name itself so recursive calls resolve.
+            let index = self.record_definition(
+                name.clone(),
+                name_span,
+                DefinitionKind::Function,
+                None,
+                name_span.end,
+            );
+            self.definitions[index].detail =
+                Some(Self::function_signature_detail(&name, &function));
             return Ok(Stmt::Let {
                 name,
                 symbol_id: None,
@@ -264,8 +359,9 @@ impl Parser {
             });
         }
         let mut bindings = Vec::new();
+        let mut binding_spans = Vec::new();
         loop {
-            let name = self.expect_identifier()?;
+            let (name, name_span) = self.expect_identifier_spanned()?;
             let ty = if self.check_simple(&TokenKind::Colon) {
                 self.advance();
                 Some(self.parse_type()?)
@@ -278,6 +374,7 @@ impl Parser {
                 rebindability: Rebindability::Const,
                 ty,
             });
+            binding_spans.push(name_span);
             if !self.check_simple(&TokenKind::Comma) {
                 break;
             }
@@ -289,6 +386,14 @@ impl Parser {
             "expected '=' in const declaration (const bindings must be initialized)",
         )?;
         let values = self.parse_expr_list()?;
+        for (index, binding) in bindings.iter().enumerate() {
+            self.record_local_binding(
+                &binding.name,
+                binding_spans[index],
+                binding.ty.clone(),
+                values.get(index),
+            );
+        }
         Ok(if bindings.len() == 1 && values.len() == 1 {
             let binding = bindings.into_iter().next().expect("len checked");
             Stmt::Let {
@@ -387,10 +492,10 @@ impl Parser {
         }))
     }
 
-    fn parse_binding_list(&mut self) -> Result<Vec<Binding>, Diagnostic> {
+    fn parse_binding_list(&mut self) -> Result<Vec<(Binding, Span)>, Diagnostic> {
         let mut bindings = Vec::new();
         loop {
-            let name = self.expect_identifier()?;
+            let (name, name_span) = self.expect_identifier_spanned()?;
             let rebindability = if self.check_simple(&TokenKind::Less) {
                 self.advance();
                 let attr_name = self.expect_identifier()?;
@@ -411,12 +516,15 @@ impl Parser {
             } else {
                 None
             };
-            bindings.push(Binding {
-                name,
-                symbol_id: None,
-                rebindability,
-                ty,
-            });
+            bindings.push((
+                Binding {
+                    name,
+                    symbol_id: None,
+                    rebindability,
+                    ty,
+                },
+                name_span,
+            ));
             if !self.check_simple(&TokenKind::Comma) {
                 break;
             }
@@ -456,14 +564,19 @@ impl Parser {
         }
         let condition = self.parse_expr()?;
         self.expect_simple(TokenKind::Then, "expected 'then' after if condition")?;
+        let scope_mark = self.definition_scope_mark();
         let then_body =
             self.parse_block_until(&[TokenKind::ElseIf, TokenKind::Else, TokenKind::End]);
+        self.close_definition_scope(scope_mark, self.current_scope_boundary());
         let else_body = if self.check_simple(&TokenKind::ElseIf) {
             self.advance();
             vec![self.parse_if_clause()?]
         } else if self.check_simple(&TokenKind::Else) {
             self.advance();
-            self.parse_block_until(&[TokenKind::End])
+            let scope_mark = self.definition_scope_mark();
+            let body = self.parse_block_until(&[TokenKind::End]);
+            self.close_definition_scope(scope_mark, self.current_scope_boundary());
+            body
         } else {
             Vec::new()
         };
@@ -494,6 +607,7 @@ impl Parser {
 
         let target_name = target_name.clone();
         let binding = binding.clone();
+        let binding_span = self.peek_n(2).map(|token| token.span).unwrap_or_default();
         self.advance();
         self.advance();
         self.advance();
@@ -501,14 +615,30 @@ impl Parser {
         self.advance();
         let value = self.parse_expr()?;
         self.expect_simple(TokenKind::Then, "expected 'then' after if-cast")?;
+        // The narrowed binding exists in the then-branch only.
+        let scope_mark = self.definition_scope_mark();
+        self.record_definition(
+            binding.clone(),
+            binding_span,
+            DefinitionKind::IfCastBinding,
+            Some(Type::Named {
+                name: target_name.clone(),
+                type_args: Vec::new(),
+            }),
+            self.prev_token_end(),
+        );
         let then_body =
             self.parse_block_until(&[TokenKind::ElseIf, TokenKind::Else, TokenKind::End]);
+        self.close_definition_scope(scope_mark, self.current_scope_boundary());
         let else_body = if self.check_simple(&TokenKind::ElseIf) {
             self.advance();
             vec![self.parse_if_clause()?]
         } else if self.check_simple(&TokenKind::Else) {
             self.advance();
-            self.parse_block_until(&[TokenKind::End])
+            let scope_mark = self.definition_scope_mark();
+            let body = self.parse_block_until(&[TokenKind::End]);
+            self.close_definition_scope(scope_mark, self.current_scope_boundary());
+            body
         } else {
             Vec::new()
         };

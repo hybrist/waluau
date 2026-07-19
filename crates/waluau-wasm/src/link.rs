@@ -206,6 +206,7 @@ impl<'a> Loader<'a> {
         let waluau_parser::ParseOutcome {
             program,
             diagnostics,
+            ..
         } = waluau_parser::parse_with_recovery(source, path);
         self.diagnostics.extend(diagnostics);
 
