@@ -1,8 +1,9 @@
 # Ante
 
 A minimal Vite app whose application code is entirely Waluau. The
-`@waluau/vite-plugin` entry in `vite.config.js` compiles `src/main.walu`,
-injects the browser runtime, and makes the generated canvas fill the viewport.
+`index.html` file points its normal module script directly at `src/main.walu`.
+`@waluau/vite-plugin` compiles that import, supplies the browser runtime, and
+makes the generated canvas fill the viewport.
 
 ```sh
 pnpm dev:ante

@@ -1,12 +1,9 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-const VIRTUAL_GAME_ID = 'virtual:waluau-game';
-const RESOLVED_VIRTUAL_GAME_ID = `\0${VIRTUAL_GAME_ID}`;
-const DEFAULT_ENTRY = 'src/main.walu';
 
 const packageRoot = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(packageRoot, '../..');
@@ -50,11 +47,11 @@ function reportError(error) {
 function runtimeSource(generatedModule) {
   return `
 import { buildWaluauImports } from '@waluau/vite-plugin/runtime';
-import { run } from ${JSON.stringify(generatedModule)};
+import { run as runWaluau } from ${JSON.stringify(generatedModule)};
 
 ${errorOverlaySource()}
 
-void run({
+export const game = runWaluau({
   createImports: (context) => buildWaluauImports(null, console.log, {
     requiredImports: context.requiredImports,
     bytesConstants: context.bytesConstants,
@@ -66,7 +63,10 @@ void run({
       assetManifest: context.assetManifest,
     },
   }),
-}).catch(reportError);
+});
+
+void game.catch(reportError);
+export default game;
 `;
 }
 
@@ -96,10 +96,9 @@ html, body {
 }
 
 /**
- * Compile and host a Waluau game as the entry point of a Vite app.
+ * Compile imported `.walu` files into browser-hosted Waluau game modules.
  *
  * @param {{
- *   entry?: string,
  *   fullScreen?: boolean,
  *   workspaceRoot?: string,
  *   compiler?: { command: string, args?: string[] }
@@ -107,31 +106,35 @@ html, body {
  */
 export function waluau(options = {}) {
   let appRoot = process.cwd();
-  let entryPath;
-  let cacheDir;
-  let generatedWasm;
-  let generatedModule;
+  let cacheRoot = resolve(appRoot, '.waluau');
   let server;
-  let compiling = null;
-  let compileAgain = false;
-  let reloadAfterCompile = false;
 
   const workspaceRoot = resolve(options.workspaceRoot ?? repositoryRoot);
   const fullScreen = options.fullScreen ?? true;
+  const compileStates = new Map();
+  const compiledEntries = new Set();
+  const generatedModules = new Set();
 
   function resolvePaths(root) {
     appRoot = root;
-    entryPath = resolve(appRoot, options.entry ?? DEFAULT_ENTRY);
-    cacheDir = resolve(appRoot, '.waluau');
-    generatedWasm = resolve(cacheDir, 'game.wasm');
-    generatedModule = resolve(cacheDir, 'game.js');
+    cacheRoot = resolve(appRoot, '.waluau');
   }
 
-  function compilerCommand() {
+  function artifactPaths(entryPath) {
+    const key = createHash('sha256').update(entryPath).digest('hex').slice(0, 12);
+    const outDir = resolve(cacheRoot, key);
+    return {
+      outDir,
+      wasm: resolve(outDir, 'game.wasm'),
+      module: resolve(outDir, 'game.js'),
+    };
+  }
+
+  function compilerCommand(entryPath, wasmOutput) {
     if (options.compiler) {
       return {
         command: options.compiler.command,
-        args: [...(options.compiler.args ?? []), entryPath, '-o', generatedWasm, '--emit-js'],
+        args: [...(options.compiler.args ?? []), entryPath, '-o', wasmOutput, '--emit-js'],
         cwd: appRoot,
       };
     }
@@ -146,7 +149,7 @@ export function waluau(options = {}) {
           '--',
           entryPath,
           '-o',
-          generatedWasm,
+          wasmOutput,
           '--emit-js',
         ],
         cwd: workspaceRoot,
@@ -154,57 +157,48 @@ export function waluau(options = {}) {
     }
     return {
       command: 'waluau',
-      args: [entryPath, '-o', generatedWasm, '--emit-js'],
+      args: [entryPath, '-o', wasmOutput, '--emit-js'],
       cwd: appRoot,
     };
   }
 
-  async function compile() {
-    if (compiling) {
-      compileAgain = true;
-      return compiling;
+  async function compileEntry(entryPath) {
+    const artifacts = artifactPaths(entryPath);
+    let state = compileStates.get(entryPath);
+    if (!state) {
+      state = { inFlight: null, queued: false };
+      compileStates.set(entryPath, state);
     }
-    compiling = (async () => {
-      await mkdir(cacheDir, { recursive: true });
-      const invocation = compilerCommand();
-      await run(invocation.command, invocation.args, invocation.cwd);
-    })().finally(async () => {
-      compiling = null;
-      if (compileAgain) {
-        compileAgain = false;
-        await compile();
-      }
-      if (reloadAfterCompile && server) {
-        reloadAfterCompile = false;
-        server.ws.send({ type: 'full-reload' });
-      }
-    });
-    return compiling;
-  }
+    if (state.inFlight) {
+      state.queued = true;
+      await state.inFlight;
+      return artifacts;
+    }
 
-  function scheduleCompile() {
-    reloadAfterCompile = true;
-    void compile().catch((error) => {
-      reloadAfterCompile = false;
-      server?.config.logger.error(error.message);
-      server?.ws.send({
-        type: 'error',
-        err: { message: error.message, stack: error.stack ?? error.message },
-      });
+    state.inFlight = (async () => {
+      do {
+        state.queued = false;
+        await mkdir(artifacts.outDir, { recursive: true });
+        const invocation = compilerCommand(entryPath, artifacts.wasm);
+        await run(invocation.command, invocation.args, invocation.cwd);
+      } while (state.queued);
+    })().finally(() => {
+      state.inFlight = null;
     });
+
+    await state.inFlight;
+    compiledEntries.add(entryPath);
+    generatedModules.add(artifacts.module);
+    return artifacts;
   }
 
   function watchesGameSource(file) {
-    if (file === entryPath) return true;
-    if (file.endsWith('.walu') && (
+    return file.endsWith('.walu') && (
       isInside(appRoot, file) ||
       isInside(resolve(workspaceRoot, 'engine'), file) ||
       isInside(resolve(workspaceRoot, 'builtins'), file) ||
       isInside(resolve(workspaceRoot, 'externs'), file)
-    )) {
-      return true;
-    }
-    return false;
+    );
   }
 
   resolvePaths(appRoot);
@@ -215,59 +209,41 @@ export function waluau(options = {}) {
     configResolved(config) {
       resolvePaths(config.root);
     },
-    async buildStart() {
-      this.addWatchFile(entryPath);
-      await compile();
+    async transform(code, id) {
+      const file = id.split('?')[0];
+      if (generatedModules.has(file)) {
+        return code.replace(
+          "new URL('./', import.meta.url)",
+          "new URL(/* @vite-ignore */ './', import.meta.url)",
+        );
+      }
+      if (id.includes('?') || !file.endsWith('.walu')) return null;
+
+      this.addWatchFile(file);
+      const artifacts = await compileEntry(file);
+      return {
+        code: runtimeSource(artifacts.module),
+        map: null,
+      };
     },
-    resolveId(id) {
-      if (id === VIRTUAL_GAME_ID) return RESOLVED_VIRTUAL_GAME_ID;
-      return null;
-    },
-    async load(id) {
-      if (id !== RESOLVED_VIRTUAL_GAME_ID) return null;
-      await readFile(generatedModule, 'utf8');
-      return runtimeSource(generatedModule);
-    },
-    transform(code, id) {
-      if (id.split('?')[0] !== generatedModule) return null;
-      return code.replace(
-        "new URL('./', import.meta.url)",
-        "new URL(/* @vite-ignore */ './', import.meta.url)",
-      );
-    },
-    transformIndexHtml: {
-      order: 'pre',
-      handler() {
-        return [
-          ...(fullScreen
-            ? [{ tag: 'style', children: fullScreenStyle(), injectTo: 'head' }]
-            : []),
-          {
-            tag: 'script',
-            attrs: { type: 'module' },
-            children: `import ${JSON.stringify(VIRTUAL_GAME_ID)};`,
-            injectTo: 'body',
-          },
-        ];
-      },
+    transformIndexHtml() {
+      if (!fullScreen) return [];
+      return [{ tag: 'style', children: fullScreenStyle(), injectTo: 'head' }];
     },
     configureServer(viteServer) {
       server = viteServer;
-      viteServer.watcher.add(entryPath);
       if (existsSync(resolve(workspaceRoot, 'engine'))) {
         viteServer.watcher.add(resolve(workspaceRoot, 'engine'));
         viteServer.watcher.add(resolve(workspaceRoot, 'builtins'));
         viteServer.watcher.add(resolve(workspaceRoot, 'externs'));
       }
-      viteServer.watcher.on('add', (file) => {
-        if (watchesGameSource(resolve(file))) scheduleCompile();
-      });
-      viteServer.watcher.on('change', (file) => {
-        if (watchesGameSource(resolve(file))) scheduleCompile();
-      });
-      viteServer.watcher.on('unlink', (file) => {
-        if (watchesGameSource(resolve(file))) scheduleCompile();
-      });
+    },
+    async handleHotUpdate(context) {
+      const file = resolve(context.file);
+      if (!watchesGameSource(file) || compiledEntries.size === 0) return;
+      await Promise.all(Array.from(compiledEntries, (entry) => compileEntry(entry)));
+      (server ?? context.server).ws.send({ type: 'full-reload' });
+      return [];
     },
   };
 }
