@@ -152,17 +152,19 @@ export function waluau(options = {}) {
       outDir,
       wasm: resolve(outDir, 'game.wasm'),
       module: resolve(outDir, 'game.js'),
+      report: resolve(outDir, 'report.json'),
     };
   }
 
-  function compilerCommand(entryPath, wasmOutput) {
+  function compilerCommand(entryPath, wasmOutput, reportOutput) {
     const manifestArgs = options.manifest == null
       ? []
       : ['--manifest', resolve(appRoot, options.manifest)];
+    const reportArgs = ['--report', reportOutput];
     if (options.compiler) {
       return {
         command: options.compiler.command,
-        args: [...(options.compiler.args ?? []), entryPath, '-o', wasmOutput, '--emit-js', ...manifestArgs],
+        args: [...(options.compiler.args ?? []), entryPath, '-o', wasmOutput, '--emit-js', ...manifestArgs, ...reportArgs],
         cwd: appRoot,
       };
     }
@@ -180,15 +182,25 @@ export function waluau(options = {}) {
           wasmOutput,
           '--emit-js',
           ...manifestArgs,
+          ...reportArgs,
         ],
         cwd: workspaceRoot,
       };
     }
     return {
       command: 'waluau',
-      args: [entryPath, '-o', wasmOutput, '--emit-js', ...manifestArgs],
+      args: [entryPath, '-o', wasmOutput, '--emit-js', ...manifestArgs, ...reportArgs],
       cwd: appRoot,
     };
+  }
+
+  /** Read the compiler's build report; null when missing or unparsable. */
+  function readBuildReport(reportPath) {
+    try {
+      return JSON.parse(readFileSync(reportPath, 'utf8'));
+    } catch {
+      return null;
+    }
   }
 
   function manifestFiles() {
@@ -208,7 +220,7 @@ export function waluau(options = {}) {
     const artifacts = artifactPaths(entryPath);
     let state = compileStates.get(entryPath);
     if (!state) {
-      state = { inFlight: null, queued: false };
+      state = { inFlight: null, queued: false, involvedFiles: null };
       compileStates.set(entryPath, state);
     }
     if (state.inFlight) {
@@ -221,8 +233,17 @@ export function waluau(options = {}) {
       do {
         state.queued = false;
         await mkdir(artifacts.outDir, { recursive: true });
-        const invocation = compilerCommand(entryPath, artifacts.wasm);
-        await run(invocation.command, invocation.args, invocation.cwd);
+        const invocation = compilerCommand(entryPath, artifacts.wasm, artifacts.report);
+        try {
+          await run(invocation.command, invocation.args, invocation.cwd);
+        } finally {
+          // The report is written even for failed builds, so watch mode can
+          // still track every file in the entry's require graph.
+          const report = readBuildReport(artifacts.report);
+          if (Array.isArray(report?.involvedFiles)) {
+            state.involvedFiles = new Set(report.involvedFiles.map((file) => resolve(file)));
+          }
+        }
       } while (state.queued);
     })().finally(() => {
       state.inFlight = null;
@@ -232,6 +253,26 @@ export function waluau(options = {}) {
     compiledEntries.add(entryPath);
     generatedModules.add(artifacts.module);
     return artifacts;
+  }
+
+  /** Compiler-internal inputs (not in build reports) that affect every entry. */
+  function affectsAllEntries(file) {
+    if (options.manifest != null && file === resolve(appRoot, options.manifest)) return true;
+    if (manifestFiles().includes(file)) return true;
+    return (
+      isInside(resolve(workspaceRoot, 'engine'), file) ||
+      isInside(resolve(workspaceRoot, 'builtins'), file) ||
+      isInside(resolve(workspaceRoot, 'externs'), file)
+    );
+  }
+
+  /** Entries whose last build involved `file`; all entries when unknown. */
+  function entriesInvolving(file) {
+    if (affectsAllEntries(file)) return Array.from(compiledEntries);
+    return Array.from(compiledEntries).filter((entry) => {
+      const involved = compileStates.get(entry)?.involvedFiles;
+      return involved == null || involved.has(file) || entry === file;
+    });
   }
 
   function watchesGameSource(file) {
@@ -269,6 +310,11 @@ export function waluau(options = {}) {
         for (const asset of manifestFiles()) this.addWatchFile(asset);
       }
       const artifacts = await compileEntry(file);
+      // Watch every module the build reported as involved, so edits to
+      // transitively-required files rebuild even outside the default roots.
+      for (const involved of compileStates.get(file)?.involvedFiles ?? []) {
+        this.addWatchFile(involved);
+      }
       // *.test.walu files register with vitest instead of booting a game.
       const isTestModule = file.endsWith('.test.walu');
       return {
@@ -290,8 +336,16 @@ export function waluau(options = {}) {
     },
     async handleHotUpdate(context) {
       const file = resolve(context.file);
-      if (!watchesGameSource(file) || compiledEntries.size === 0) return;
-      await Promise.all(Array.from(compiledEntries, (entry) => compileEntry(entry)));
+      if (compiledEntries.size === 0) return;
+      const isKnownInvolved = Array.from(compiledEntries).some(
+        (entry) => compileStates.get(entry)?.involvedFiles?.has(file),
+      );
+      if (!isKnownInvolved && !watchesGameSource(file)) return;
+      // Rebuild only the entries whose require graph contains the changed
+      // file (all of them when a build never produced a report).
+      const entries = entriesInvolving(file);
+      if (entries.length === 0) return;
+      await Promise.all(entries.map((entry) => compileEntry(entry)));
       (server ?? context.server).ws.send({ type: 'full-reload' });
       return [];
     },

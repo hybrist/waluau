@@ -456,7 +456,7 @@ impl Parser {
     fn parse_primary(&mut self) -> Result<Expr, Diagnostic> {
         let token = self
             .advance()
-            .ok_or_else(|| Diagnostic::new("unexpected end of input"))?;
+            .ok_or_else(|| self.end_of_input_diagnostic())?;
         let span = Some(token.span);
         match token.kind {
             TokenKind::Number(value) => Ok(Expr::Number(NumberLiteral { raw: value }, span)),
@@ -512,7 +512,13 @@ impl Parser {
                 self.expect_simple(TokenKind::RParen, "expected ')' after expression")?;
                 Ok(inner)
             }
-            _ => Err(self.diagnostic_at_current("expected expression")),
+            _ => {
+                // Leave the unexpected token unconsumed so statement-level
+                // recovery can resynchronize on it (it may close a block).
+                let diagnostic = self.diagnostic_at_current("expected expression");
+                self.index -= 1;
+                Err(diagnostic)
+            }
         }
     }
 

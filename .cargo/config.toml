@@ -1,0 +1,7 @@
+# The compiler recurses over user expressions (parser, HIR inference); the
+# default 1 MiB Rust shadow stack on wasm32 overflows on deeply-nested or
+# long-chained expressions that the native 8 MiB stack absorbs — an overflow
+# corrupts linear memory ("memory access out of bounds") and poisons the
+# instance. Match the native stack size for the browser compiler build.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=-zstack-size=8388608"]

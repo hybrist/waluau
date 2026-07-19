@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 
-export default function useMonacoEditor({ files, entryFile, exportsList, outputWasmBytes, errorMsg }) {
+export default function useMonacoEditor({ files, entryFile, exportsList, outputWasmBytes, errorMsg, diagnostics = null }) {
   const [editorInstance, setEditorInstance] = useState(null);
   const [monacoInstance, setMonacoInstance] = useState(null);
   const [activeRunners, setActiveRunners] = useState([]);
@@ -294,6 +294,29 @@ export default function useMonacoEditor({ files, entryFile, exportsList, outputW
       monacoInstance.editor.setModelMarkers(m, 'waluau', []);
     }
 
+    // Language-server diagnostics (structured, multi-error, per-file) take
+    // precedence; the errorMsg regex path remains for compiler stages the
+    // LSP does not cover (IR lowering, codegen) and older wasm builds.
+    if (diagnostics != null && diagnostics.size > 0) {
+      for (const [uri, items] of diagnostics) {
+        const path = uri.replace(/^file:\/\//, '');
+        const targetModel = models.find(m => m.uri.path === path || m.uri.toString().endsWith(path));
+        if (!targetModel) continue;
+        const markers = items.map((item) => ({
+          startLineNumber: item.range.start.line + 1,
+          startColumn: item.range.start.character + 1,
+          endLineNumber: item.range.end.line + 1,
+          endColumn: item.range.end.character + 1,
+          message: item.message,
+          severity: item.severity === 2
+            ? monacoInstance.MarkerSeverity.Warning
+            : monacoInstance.MarkerSeverity.Error,
+        }));
+        monacoInstance.editor.setModelMarkers(targetModel, 'waluau', markers);
+      }
+      return;
+    }
+
     if (errorMsg) {
       const multiMatch = errorMsg.match(/^in module "([^"]+)": (.*) at (\d+)\.\.(\d+)$/);
       if (multiMatch) {
@@ -357,7 +380,7 @@ export default function useMonacoEditor({ files, entryFile, exportsList, outputW
         }
       }
     }
-  }, [errorMsg, monacoInstance, editorInstance, files, entryFile]);
+  }, [errorMsg, diagnostics, monacoInstance, editorInstance, files, entryFile]);
 
   // Automatically dispose Monaco models if they are deleted or renamed
   useEffect(() => {

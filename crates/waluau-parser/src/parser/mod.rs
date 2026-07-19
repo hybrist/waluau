@@ -30,7 +30,7 @@ impl Parser {
         }
     }
 
-    pub(super) fn parse_program(&mut self, source: &str) -> Result<Program, Diagnostic> {
+    pub(super) fn parse_program(mut self, source: &str) -> (Program, Vec<Diagnostic>) {
         let mut functions = Vec::new();
         let mut declared_imports = Vec::new();
         let mut declared_constants = Vec::new();
@@ -114,26 +114,20 @@ impl Parser {
             }
         }
 
-        if self.diagnostics.is_empty() {
-            Ok(Program {
-                functions,
-                declared_imports,
-                declared_constants,
-                type_declarations,
-                top_level,
-                export,
-                sources: std::collections::BTreeMap::from([(
-                    self.file_path.clone(),
-                    source.to_string(),
-                )]),
-                entry_file_path: self.file_path.clone(),
-            })
-        } else if self.diagnostics.len() == 1 {
-            Err(self.diagnostics.remove(0))
-        } else {
-            let messages: Vec<String> = self.diagnostics.iter().map(|d| d.to_string()).collect();
-            Err(Diagnostic::new(messages.join("\n")))
-        }
+        let program = Program {
+            functions,
+            declared_imports,
+            declared_constants,
+            type_declarations,
+            top_level,
+            export,
+            sources: std::collections::BTreeMap::from([(
+                self.file_path.clone(),
+                source.to_string(),
+            )]),
+            entry_file_path: self.file_path.clone(),
+        };
+        (program, self.diagnostics)
     }
 
     fn parse_function(&mut self) -> Result<Function, Diagnostic> {

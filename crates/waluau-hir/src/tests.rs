@@ -3695,3 +3695,85 @@ fn infers_trailing_vararg_returns_as_variadic_packs() {
         ]))
     );
 }
+
+#[test]
+fn collects_type_errors_across_independent_functions() {
+    let source = r#"
+        function first(x: i32): i32
+            if x then
+                return x
+            end
+            return x
+        end
+
+        function second(x: i32): bool
+            return x + 1
+        end
+
+        function healthy(x: i32): i32
+            return x + 1
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let errors = super::type_check_and_infer_collect(&program).expect_err("type check should fail");
+    assert_eq!(
+        errors.len(),
+        2,
+        "expected one error per broken function: {errors:?}"
+    );
+    assert_eq!(errors[0].to_string(), "if condition must be bool");
+    assert!(
+        errors[1].to_string().contains("bool"),
+        "second error should be the return mismatch: {}",
+        errors[1]
+    );
+}
+
+#[test]
+fn collects_multiple_statement_errors_within_one_function() {
+    let source = r#"
+        function broken(x: i32): i32
+            local a: bool = x
+            local b: bool = x
+            return x
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let errors = super::type_check_and_infer_collect(&program).expect_err("type check should fail");
+    assert_eq!(
+        errors.len(),
+        2,
+        "expected one error per failing statement: {errors:?}"
+    );
+}
+
+#[test]
+fn failed_binding_does_not_cascade_into_later_statements() {
+    let source = r#"
+        function broken(x: i32): i32
+            local flag: bool = x
+            if flag then
+                return 1
+            end
+            return x
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let errors = super::type_check_and_infer_collect(&program).expect_err("type check should fail");
+    // Only the bad initializer errors; `flag` falls back to unknown so the
+    // `if flag` use does not produce a second unknown-variable error.
+    assert_eq!(errors.len(), 1, "unexpected cascade: {errors:?}");
+}
+
+#[test]
+fn single_error_wrapper_reports_first_collected_error() {
+    let source = r#"
+        function broken(x: i32): bool
+            return x
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let collected = super::type_check_and_infer_collect(&program).expect_err("collect should fail");
+    let single = super::type_check_and_infer(&program).expect_err("wrapper should fail");
+    assert_eq!(collected[0], single);
+}

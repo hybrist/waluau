@@ -34,14 +34,77 @@ const ENGINE_REQUIRE: &str = "waluau:engine";
 const VITEST_REQUIRE: &str = "waluau:vitest";
 
 /// Resolve the module graph rooted at `entry` and merge it into one program.
+/// Single-first-error contract retained for linker tests; the compile
+/// pipeline goes through [`link_program_collect`].
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn link_program(entry: &Path) -> Result<Program, Diagnostic> {
+    let (program, mut diagnostics) = link_program_collect(entry)?;
+    match diagnostics.len() {
+        0 => Ok(program),
+        1 => Err(diagnostics.remove(0)),
+        _ => Err(Diagnostic::new(
+            diagnostics
+                .iter()
+                .map(Diagnostic::render_for_playground)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )),
+    }
+}
+
+/// Source of parsed modules for the linker. The default filesystem provider
+/// reads and parses on every call; a [`crate::session::CompilerSession`]
+/// serves in-memory overlays and content-hash-cached parses instead.
+pub trait ModuleProvider {
+    /// Return the (recovered) parsed program for `path` plus its parse
+    /// diagnostics. `Err` is reserved for hard failures such as unreadable
+    /// files.
+    fn parsed_module(&mut self, path: &Path) -> Result<(Program, Vec<Diagnostic>), Diagnostic>;
+}
+
+/// Stateless provider that reads from the filesystem and re-parses each call.
+pub struct FsModules;
+
+impl ModuleProvider for FsModules {
+    fn parsed_module(&mut self, path: &Path) -> Result<(Program, Vec<Diagnostic>), Diagnostic> {
+        let source = std::fs::read_to_string(path).map_err(|error| {
+            Diagnostic::new(format!("read module `{}`: {error}", path.display()))
+        })?;
+        let outcome = waluau_parser::parse_with_recovery(&source, &path.to_string_lossy());
+        Ok((outcome.program, outcome.diagnostics))
+    }
+}
+
+/// Everything the linker learned about a module graph: the merged program,
+/// collected parse diagnostics, and the set of source files involved (for
+/// watch-mode invalidation; builtins/externs/engine modules are excluded).
+pub struct LinkOutcome {
+    pub program: Program,
+    pub diagnostics: Vec<Diagnostic>,
+    pub involved_files: Vec<PathBuf>,
+}
+
+/// Like [`link_program`], but recovers from module parse errors: every parse
+/// diagnostic across the module graph is collected while traversal continues,
+/// and the merged (possibly partial) program is returned alongside them.
+/// Hard failures that prevent building a graph at all (unreadable entry,
+/// import cycles) remain `Err`.
+pub fn link_program_collect(entry: &Path) -> Result<(Program, Vec<Diagnostic>), Diagnostic> {
+    let outcome = link_program_collect_with(entry, &mut FsModules)?;
+    Ok((outcome.program, outcome.diagnostics))
+}
+
+pub fn link_program_collect_with(
+    entry: &Path,
+    provider: &mut dyn ModuleProvider,
+) -> Result<LinkOutcome, Diagnostic> {
     let entry = entry.canonicalize().map_err(|error| {
         Diagnostic::new(format!(
             "cannot open input file `{}`: {error}",
             entry.display()
         ))
     })?;
-    let mut loader = Loader::default();
+    let mut loader = Loader::new(provider);
 
     // Load builtin declarations first
     let (builtin_imports, builtin_constants) = loader.load_builtins()?;
@@ -62,7 +125,17 @@ pub fn link_program(entry: &Path) -> Result<Program, Diagnostic> {
     } else {
         None
     };
-    merge_with_builtins(
+    // Only real files belong in the involved set: engine modules register
+    // under `/@waluau/...` pseudo-paths (their sources are embedded in the
+    // compiler binary) and are useless to a file watcher.
+    let mut involved_files: Vec<PathBuf> = loader
+        .by_path
+        .keys()
+        .filter(|path| path.is_file())
+        .cloned()
+        .collect();
+    involved_files.sort();
+    match merge_with_builtins(
         &loader.modules,
         entry_id,
         builtin_imports,
@@ -70,7 +143,23 @@ pub fn link_program(entry: &Path) -> Result<Program, Diagnostic> {
         dom_externs,
         tfjs_externs,
         vitest_externs,
-    )
+    ) {
+        Ok(program) => Ok(LinkOutcome {
+            program,
+            diagnostics: loader.diagnostics,
+            involved_files,
+        }),
+        // A recovered (partial) AST can break merging in misleading ways —
+        // e.g. a module whose `return` export failed to parse reports
+        // "module has no export". The parse errors are the real story, so
+        // surface them with the unmerged entry program instead.
+        Err(_) if !loader.diagnostics.is_empty() => Ok(LinkOutcome {
+            program: loader.modules[entry_id].program.clone(),
+            diagnostics: loader.diagnostics,
+            involved_files,
+        }),
+        Err(error) => Err(error),
+    }
 }
 
 struct LoadedModule {
@@ -81,17 +170,33 @@ struct LoadedModule {
     virtual_requires: HashSet<String>,
 }
 
-#[derive(Default)]
-struct Loader {
+struct Loader<'a> {
+    provider: &'a mut dyn ModuleProvider,
     modules: Vec<LoadedModule>,
     by_path: HashMap<PathBuf, usize>,
     stack: Vec<PathBuf>,
     requires_dom_externs: bool,
     requires_tfjs_externs: bool,
     requires_vitest_externs: bool,
+    /// Parse diagnostics collected across the module graph; traversal
+    /// continues past modules with syntax errors using their recovered ASTs.
+    diagnostics: Vec<Diagnostic>,
 }
 
-impl Loader {
+impl<'a> Loader<'a> {
+    fn new(provider: &'a mut dyn ModuleProvider) -> Self {
+        Self {
+            provider,
+            modules: Vec::new(),
+            by_path: HashMap::new(),
+            stack: Vec::new(),
+            requires_dom_externs: false,
+            requires_tfjs_externs: false,
+            requires_vitest_externs: false,
+            diagnostics: Vec::new(),
+        }
+    }
+
     fn load(&mut self, path: &Path) -> Result<usize, Diagnostic> {
         if let Some(&id) = self.by_path.get(path) {
             return Ok(id);
@@ -107,10 +212,8 @@ impl Loader {
             return Err(Diagnostic::new(format!("circular module import: {chain}")));
         }
 
-        let source = std::fs::read_to_string(path).map_err(|error| {
-            Diagnostic::new(format!("read module `{}`: {error}", path.display()))
-        })?;
-        let program = waluau_parser::parse_with_path(&source, &path.to_string_lossy())?;
+        let (program, diagnostics) = self.provider.parsed_module(path)?;
+        self.diagnostics.extend(diagnostics);
         let dir = path
             .parent()
             .map(Path::to_path_buf)
