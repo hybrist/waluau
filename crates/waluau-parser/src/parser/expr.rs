@@ -544,10 +544,22 @@ impl Parser {
                 kind: TokenKind::Str(path),
                 ..
             }) => path,
-            _ => {
-                return Err(Diagnostic::new(
+            Some(token) => {
+                return Err(Diagnostic::new_with_code(
+                    "module/require-literal-path",
                     "require expects a string literal path, e.g. require(\"./module\")",
-                ));
+                )
+                .with_span(token.span));
+            }
+            None => {
+                return Err(Diagnostic::new_with_code(
+                    "module/require-literal-path",
+                    "require expects a string literal path, e.g. require(\"./module\")",
+                )
+                .with_span(Span {
+                    start: start_pos,
+                    end: start_pos + "require".len() as u32,
+                }));
             }
         };
         let end_token = self.peek().cloned();

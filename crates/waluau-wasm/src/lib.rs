@@ -490,6 +490,17 @@ mod tests {
     }
 
     #[test]
+    fn compile_extern_reference_identity_conformance() {
+        let files = std::collections::HashMap::from([(
+            "main.walu".to_string(),
+            include_str!("../../../conformance/extern_reference_identity.walu").to_string(),
+        )]);
+        let result = super::compile_sources(&files, "main.walu")
+            .expect("extern reference identity conformance should compile");
+        assert!(result.wat.contains("js_eq_unknown"));
+    }
+
+    #[test]
     fn compile_promise_await_conformance() {
         let source = include_str!("../../../conformance/promise_await.walu");
         let result = compile_source(source).expect("Promise await conformance should compile");
@@ -596,6 +607,59 @@ mod tests {
         let result = super::compile_sources(&files, "main.walu").expect("compile should succeed");
         assert!(result.wat.contains("(module"));
         assert!(result.ir.contains("compute"));
+    }
+
+    #[test]
+    fn compile_multi_rejects_bare_filesystem_require_path() {
+        let files = std::collections::HashMap::from([(
+            "main.walu".to_string(),
+            "local lib = require(\"lib\")\n".to_string(),
+        )]);
+
+        let error = super::compile_sources(&files, "main.walu")
+            .expect_err("bare filesystem require should fail");
+        assert_eq!(
+            error,
+            "require path must be relative and start with './' or '../', got \"lib\""
+        );
+    }
+
+    #[test]
+    fn compile_multi_reports_non_string_require_argument_span() {
+        let source = "local lib = require(module_name)\n";
+        let start = source.find("module_name").expect("argument should exist");
+        let files =
+            std::collections::HashMap::from([("main.walu".to_string(), source.to_string())]);
+
+        let error = super::compile_sources(&files, "main.walu")
+            .expect_err("non-string require should fail");
+        assert_eq!(
+            error,
+            format!(
+                "in module \"/main.walu\": require expects a string literal path, e.g. \
+                 require(\"./module\") at {start}..{}",
+                start + "module_name".len()
+            )
+        );
+    }
+
+    #[test]
+    fn compile_multi_entry_return_does_not_change_wasm_exports() {
+        let files = std::collections::HashMap::from([(
+            "main.walu".to_string(),
+            r#"
+                function main(): i32
+                    return 1
+                end
+
+                return main
+            "#
+            .to_string(),
+        )]);
+
+        let result = super::compile_sources(&files, "main.walu")
+            .expect("entry return should be accepted as ignored module metadata");
+        assert!(result.wat.contains("(export \"main\""));
     }
 
     #[test]

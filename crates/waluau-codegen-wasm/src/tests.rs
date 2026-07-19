@@ -520,7 +520,7 @@ fn reuses_i32_local_slots_for_disjoint_live_ranges() {
             boxed_bool_struct_type: 0,
         },
     );
-    let local_plan = super::build_local_plan(function, &value_types, &array_registry, false)
+    let local_plan = super::build_local_plan(function, &value_types, &array_registry, None)
         .expect("plan should build");
 
     let block = function
@@ -1068,6 +1068,58 @@ fn nullable_extern_nil_check_lowers_to_ref_is_null() {
 }
 
 #[test]
+fn boxed_nullable_pair_equality_validates() {
+    // `string.byte` out of range yields nil, so comparing two of its results
+    // exercises nullable-vs-nullable equality on a boxed numeric type.
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../../builtins/core.walu"),
+        r#"
+        function same(text: string, a: i32, b: i32): bool
+            return string.byte(text, a) == string.byte(text, b)
+        end
+
+        function differs(text: string, a: i32, b: i32): bool
+            return string.byte(text, a) ~= string.byte(text, b)
+        end
+    "#
+    );
+    let program = waluau_parser::parse(&source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        wat.contains("ref.is_null"),
+        "nullable numeric equality should branch on nil in:\n{wat}"
+    );
+    assert!(
+        wat.contains("i31.get_s"),
+        "present operands should be unboxed before comparing in:\n{wat}"
+    );
+}
+
+#[test]
+fn boxed_nullable_pair_equality_conformance_compiles() {
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../../builtins/core.walu"),
+        include_str!("../../../conformance/nullable_numeric_equality.walu"),
+    );
+    let program = waluau_parser::parse(&source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+}
+
+#[test]
 fn declared_host_event_callback_import_exports_trampoline() {
     let source = r#"
         type Event = extern
@@ -1137,6 +1189,69 @@ fn declared_nullable_host_callback_accepts_callback_and_nil() {
     assert!(
         wat.contains("ref.null"),
         "nil callback should emit a null reference:\n{wat}"
+    );
+}
+
+#[test]
+fn declared_host_unit_callback_import_exports_trampoline() {
+    let source = r#"
+        declare function run_test(body: () -> unit): unit
+        declare function record(value: i32): unit
+
+        function register(seed: i32): unit
+            local count: i32 = seed
+            run_test(function(): unit
+                count = count + 1
+                record(count)
+            end)
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        wat.contains(r#"(import "waluau" "run_test""#),
+        "expected declared host callback import in:\n{wat}"
+    );
+    let trampoline_idx = wasm_export_func_index(&wasm, super::CALLBACK_UNIT_TRAMPOLINE_EXPORT)
+        .expect("() -> unit callback trampoline should be exported");
+    assert!(
+        wasm_function_body_has_call_indirect(&wasm, trampoline_idx),
+        "callback trampoline should dispatch through the closure wrapper table"
+    );
+}
+
+#[test]
+fn unused_host_unit_callback_declaration_omits_import_and_trampoline() {
+    let source = r#"
+        declare function run_test(body: () -> unit): unit
+
+        function entry(): i32
+            return 1
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        !wat.contains(r#"(import "waluau" "run_test""#),
+        "unused callback declaration should not emit an import:\n{wat}"
+    );
+    assert!(
+        wasm_export_func_index(&wasm, super::CALLBACK_UNIT_TRAMPOLINE_EXPORT).is_none(),
+        "unused callback declaration should not emit a trampoline"
     );
 }
 
@@ -1418,6 +1533,66 @@ fn emits_valid_wasm_for_unknown_coroutine_payloads() {
 }
 
 #[test]
+fn emits_valid_wasm_for_reentrant_recursive_coroutine_activations() {
+    // Regression for waluau-qsvy: the same suspension-capable function active
+    // at several nested call depths (directly and mutually recursive), with a
+    // suspension point both before and after the recursive call.
+    let source = r#"
+        function updown(n: i32): i32
+            if n <= 0 then
+                return 0
+            end
+            coroutine.yield(n)
+            local rest: i32 = updown(n - 1)
+            coroutine.yield(100 + n)
+            return rest * 10 + n
+        end
+
+        function ping(n: i32): i32
+            if n <= 0 then
+                return 0
+            end
+            coroutine.yield(1000 + n)
+            return pong(n - 1) + 1
+        end
+
+        function pong(n: i32): i32
+            if n <= 0 then
+                return 0
+            end
+            coroutine.yield(2000 + n)
+            return ping(n - 1) + 2
+        end
+
+        function run(): i32
+            return updown(3) + ping(4)
+        end
+
+        local co: thread = coroutine.create(run)
+        local ok: bool, value: unknown = coroutine.resume(co)
+        assert(ok)
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let ir = waluau_ir::build(&program).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        wat.contains("struct.new_default"),
+        "suspension points should lazily allocate per-activation frames:\n{wat}"
+    );
+    assert!(
+        wat.contains("array.copy"),
+        "the frame-push helper should grow the shadow stack:\n{wat}"
+    );
+}
+
+#[test]
 fn pcall_emits_try_table_and_exception_tag() {
     let source = r#"
         function run(): i32
@@ -1447,6 +1622,10 @@ fn pcall_emits_try_table_and_exception_tag() {
     assert!(
         wat.contains("try_table"),
         "pcall should lower to try_table:\n{wat}"
+    );
+    assert!(
+        wat.contains(&format!("(export \"{}\"", super::LUA_ERROR_TAG_EXPORT)),
+        "the Lua error tag should be exported for JS hosts:\n{wat}"
     );
 }
 
@@ -1749,6 +1928,7 @@ fn emits_valid_wasm_for_tagged_union_pattern_match_binding() {
 fn emits_valid_wasm_for_varargs_and_table_pack_conformance_fixtures() {
     for source in [
         include_str!("../../../conformance/varargs_forwarding.walu"),
+        include_str!("../../../conformance/varargs_return_spread.walu"),
         include_str!("../../../conformance/varargs_table_literal.walu"),
         include_str!("../../../conformance/table_pack.walu"),
         include_str!("../../../conformance/select_n.walu"),
@@ -1764,6 +1944,48 @@ fn emits_valid_wasm_for_varargs_and_table_pack_conformance_fixtures() {
             .validate_all(&wasm)
             .expect("emitted module should validate");
     }
+}
+
+#[test]
+fn emits_valid_wasm_for_table_create_and_static_unpack() {
+    // Mirrors conformance/table_create_unpack.walu minus the string.format /
+    // string.char checks, which need host imports this harness does not
+    // declare. Covers the fill loop, count zero, the empty one-argument form,
+    // literal unpack bounds, and expected-arity unpack from an annotated
+    // multi-binding declaration.
+    let source = r#"
+local filled: {i32} = table.create(3, 7)
+assert(#filled == 3)
+assert(filled[0] == 7)
+assert(filled[2] == 7)
+
+local empty_filled: {f64} = table.create(0, 1.5)
+assert(#empty_filled == 0)
+
+local hinted: {string} = table.create(8)
+assert(#hinted == 0)
+
+local ys: {i32} = {10, 20, 30, 40, 50}
+local second: i32, third: i32 = table.unpack(ys, 1, 2)
+assert(second == 20)
+assert(third == 30)
+
+local fourth: i32, fifth: i32 = table.unpack(ys, 3)
+assert(fourth == 40)
+assert(fifth == 50)
+
+local first: f64 = table.unpack(table.create(4, 6.5))
+assert(first == 6.5)
+"#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
 }
 
 #[test]
@@ -1809,6 +2031,87 @@ fn unknown_equality_imports_js_eq_unknown() {
         }
     }
     assert!(found, "unknown equality should import waluau.js_eq_unknown");
+}
+
+#[test]
+fn extern_reference_equality_imports_js_eq_unknown() {
+    let source = r#"
+        type Node = extern
+        type Element = extern extends Node
+        declare function make_element(): Element
+
+        local a: Element = make_element()
+        local b: Element = make_element()
+        local c: Element? = a
+        assert(a == a)
+        assert(a ~= b)
+        assert(c == a)
+        assert(c ~= b)
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    let mut found = false;
+    for payload in Parser::new(0).parse_all(&wasm) {
+        if let Payload::ImportSection(imports) = payload.expect("wasm should parse") {
+            for import in imports {
+                let import = import.expect("import should parse");
+                if import.module == "waluau" && import.name == "js_eq_unknown" {
+                    found = true;
+                }
+            }
+        }
+    }
+    assert!(found, "extern equality should import waluau.js_eq_unknown");
+}
+
+#[test]
+fn string_and_bytes_inequality_import_host_eq_helpers() {
+    let source = r#"
+        local a: string = "a"
+        local b: string = "b"
+        assert(a ~= b)
+        local c = b"ab"
+        local d = b"cd"
+        assert(c ~= d)
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    let mut found_string_eq = false;
+    let mut found_bytes_eq = false;
+    for payload in Parser::new(0).parse_all(&wasm) {
+        if let Payload::ImportSection(imports) = payload.expect("wasm should parse") {
+            for import in imports {
+                let import = import.expect("import should parse");
+                if import.module == "wasm:js-string" && import.name == "equals" {
+                    found_string_eq = true;
+                }
+                if import.module == "waluau" && import.name == "bytes_eq" {
+                    found_bytes_eq = true;
+                }
+            }
+        }
+    }
+    assert!(
+        found_string_eq,
+        "string inequality should import the js-string equals builtin"
+    );
+    assert!(
+        found_bytes_eq,
+        "bytes inequality should import waluau.bytes_eq"
+    );
 }
 
 #[test]

@@ -474,9 +474,12 @@ fn verify_function(
                         *array,
                     )?;
                     let expected_array_ty = Type::Array(Box::new(element_ty.clone()));
+                    let expected_variadic_ty = Type::Variadic(Box::new(element_ty.clone()));
                     // Allow the array operand to be either an array of the element type
                     // or the raw element type itself (degenerate cell representation).
-                    let ok_array = array_ty == expected_array_ty || array_ty == *element_ty;
+                    let ok_array = array_ty == expected_array_ty
+                        || array_ty == expected_variadic_ty
+                        || array_ty == *element_ty;
                     if !ok_array {
                         return Err(Diagnostic::new(format!(
                             "array get in block {:?} expects {}, got {}",
@@ -511,7 +514,10 @@ fn verify_function(
                         *array,
                     )?;
                     let expected_array_ty = Type::Array(Box::new(element_ty.clone()));
-                    let ok_array = array_ty == expected_array_ty || array_ty == *element_ty;
+                    let expected_variadic_ty = Type::Variadic(Box::new(element_ty.clone()));
+                    let ok_array = array_ty == expected_array_ty
+                        || array_ty == expected_variadic_ty
+                        || array_ty == *element_ty;
                     if !ok_array {
                         return Err(Diagnostic::new(format!(
                             "array set in block {:?} expects {}, got {}",
@@ -569,7 +575,8 @@ fn verify_function(
                         *array,
                     )?;
                     let expected_array_ty = Type::Array(Box::new(element_ty.clone()));
-                    if array_ty != expected_array_ty {
+                    let expected_variadic_ty = Type::Variadic(Box::new(element_ty.clone()));
+                    if array_ty != expected_array_ty && array_ty != expected_variadic_ty {
                         return Err(Diagnostic::new(format!(
                             "array pop in block {:?} expects {}, got {}",
                             block.id, expected_array_ty, array_ty
@@ -635,7 +642,8 @@ fn verify_function(
                         *array,
                     )?;
                     let expected_array_ty = Type::Array(Box::new(element_ty.clone()));
-                    if array_ty != expected_array_ty {
+                    let expected_variadic_ty = Type::Variadic(Box::new(element_ty.clone()));
+                    if array_ty != expected_array_ty && array_ty != expected_variadic_ty {
                         return Err(Diagnostic::new(format!(
                             "array slice in block {:?} expects {}, got {}",
                             block.id, expected_array_ty, array_ty
@@ -1244,6 +1252,7 @@ fn types_match(a: &Type, b: &Type) -> bool {
         return true;
     }
     match (a, b) {
+        (Type::Array(a), Type::Variadic(b)) | (Type::Variadic(a), Type::Array(b)) => a == b,
         (Type::Nullable(inner), other) | (other, Type::Nullable(inner)) => inner.as_ref() == other,
         _ => false,
     }

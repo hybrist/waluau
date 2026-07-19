@@ -1,0 +1,110 @@
+-- Re-entrant coroutine activation frames: the same suspension-capable
+-- function active at several nested call depths must give every activation
+-- its own continuation PC and spilled locals (waluau-qsvy).
+
+-- Direct recursion that suspends on the way down and on the way back up.
+-- Every activation must resume exactly once with its own `n` and `rest`.
+function updown(n: i32): i32
+    if n <= 0 then
+        return 0
+    end
+    coroutine.yield(n)
+    local rest: i32 = updown(n - 1)
+    coroutine.yield(100 + n)
+    return rest * 10 + n
+end
+
+function run_updown(): i32
+    return updown(3)
+end
+
+local co: thread = coroutine.create(run_updown)
+local expected_yields: {i32} = {3, 2, 1, 101, 102, 103}
+for i = 0, 5 do
+    local ok: bool, value: unknown = coroutine.resume(co)
+    assert(ok)
+    assert(value::i32 == expected_yields[i])
+end
+local done_ok: bool, result: unknown = coroutine.resume(co)
+assert(done_ok)
+assert(result::i32 == 123)
+
+-- Mutual recursion between two named suspension-capable functions.
+function ping(n: i32): i32
+    if n <= 0 then
+        return 0
+    end
+    coroutine.yield(1000 + n)
+    return pong(n - 1) + 1
+end
+
+function pong(n: i32): i32
+    if n <= 0 then
+        return 0
+    end
+    coroutine.yield(2000 + n)
+    return ping(n - 1) + 2
+end
+
+function run_ping(): i32
+    return ping(4)
+end
+
+local mutual: thread = coroutine.create(run_ping)
+local mutual_yields: {i32} = {1004, 2003, 1002, 2001}
+for i = 0, 3 do
+    local ok: bool, value: unknown = coroutine.resume(mutual)
+    assert(ok)
+    assert(value::i32 == mutual_yields[i])
+end
+local mutual_ok: bool, mutual_result: unknown = coroutine.resume(mutual)
+assert(mutual_ok)
+assert(mutual_result::i32 == 6)
+
+-- Typed GC locals (records) live across nested suspensions must be restored
+-- per activation, not shared between the recursive frames.
+function record_depths(n: i32): i32
+    if n <= 0 then
+        return 0
+    end
+    local pair: { depth: i32, square: i32 } = { depth = n, square = n * n }
+    coroutine.yield(pair.depth)
+    local rest: i32 = record_depths(n - 1)
+    assert(pair.depth == n)
+    assert(pair.square == n * n)
+    return rest + pair.square
+end
+
+function run_records(): i32
+    return record_depths(3)
+end
+
+local records: thread = coroutine.create(run_records)
+local record_yields: {i32} = {3, 2, 1}
+for i = 0, 2 do
+    local ok: bool, value: unknown = coroutine.resume(records)
+    assert(ok)
+    assert(value::i32 == record_yields[i])
+end
+local records_ok: bool, records_result: unknown = coroutine.resume(records)
+assert(records_ok)
+assert(records_result::i32 == 14)
+
+-- Two coroutines over the same recursive function, resumed alternately while
+-- both hold suspended nested activations: their frame stacks must not mix.
+local left: thread = coroutine.create(run_updown)
+local right: thread = coroutine.create(run_updown)
+for i = 0, 5 do
+    local left_ok: bool, left_value: unknown = coroutine.resume(left)
+    assert(left_ok)
+    assert(left_value::i32 == expected_yields[i])
+    local right_ok: bool, right_value: unknown = coroutine.resume(right)
+    assert(right_ok)
+    assert(right_value::i32 == expected_yields[i])
+end
+local left_done: bool, left_result: unknown = coroutine.resume(left)
+assert(left_done)
+assert(left_result::i32 == 123)
+local right_done: bool, right_result: unknown = coroutine.resume(right)
+assert(right_done)
+assert(right_result::i32 == 123)
