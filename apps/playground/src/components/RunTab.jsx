@@ -15,64 +15,180 @@ const DOM_OUTPUT_SRC_DOC = `<!doctype html>
 
 function DomOutputFrame({
   setDomOutputRoot,
-  onEscape,
+  onClose,
   isFullscreen,
   exportsList,
   status,
   runError,
 }) {
-  const onEscapeRef = useRef(onEscape);
+  const onCloseRef = useRef(onClose);
   useEffect(() => {
-    onEscapeRef.current = onEscape;
-  }, [onEscape]);
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   const iframeRef = useRef(null);
-
-  const setFrame = useCallback((node) => {
-    iframeRef.current = node;
-    if (!node) {
-      setDomOutputRoot(null);
-      return;
-    }
-    let doc = null;
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape' && onEscapeRef.current) {
-        onEscapeRef.current();
-      }
-    };
-    const syncDocument = () => {
-      const nextDoc = node.contentDocument;
-      if (!nextDoc?.querySelector('meta[name="tailwind-compatible-polyfill"]')) {
-        setDomOutputRoot(null);
-        return;
-      }
-      if (doc) {
-        doc.removeEventListener('keydown', handleKeyDown);
-      }
-      doc = nextDoc;
-      doc.addEventListener('keydown', handleKeyDown);
-      setDomOutputRoot(doc);
-    };
-    syncDocument();
-    node.addEventListener('load', syncDocument);
-    return () => {
-      if (doc) {
-        doc.removeEventListener('keydown', handleKeyDown);
-      }
-      node.removeEventListener('load', syncDocument);
-      setDomOutputRoot(null);
-    };
-  }, [setDomOutputRoot]);
+  const popupRef = useRef(null);
+  const [popupBlocked, setPopupBlocked] = useState(false);
 
   useEffect(() => {
-    if (isFullscreen && iframeRef.current) {
+    if (!isFullscreen) {
+      return;
+    }
+
+    let popup = null;
+    try {
+      popup = window.open('', 'waluau-preview');
+    } catch (e) {
+      console.warn('Failed to open preview window:', e);
+    }
+
+    if (!popup) {
+      queueMicrotask(() => setPopupBlocked(true));
+      return;
+    }
+
+    queueMicrotask(() => setPopupBlocked(false));
+    popupRef.current = popup;
+
+    popup.document.open();
+    popup.document.write(DOM_OUTPUT_SRC_DOC);
+    popup.document.close();
+    popup.focus();
+
+    setDomOutputRoot(popup.document);
+
+    const handleClose = () => {
+      if (onCloseRef.current) {
+        onCloseRef.current();
+      }
+    };
+
+    popup.addEventListener('pagehide', handleClose);
+
+    const interval = setInterval(() => {
+      if (popup.closed) {
+        handleClose();
+      }
+    }, 300);
+
+    return () => {
+      clearInterval(interval);
+      if (popup) {
+        popup.removeEventListener('pagehide', handleClose);
+        if (!popup.closed) {
+          popup.close();
+        }
+      }
+      popupRef.current = null;
+    };
+  }, [isFullscreen, setDomOutputRoot]);
+
+  useEffect(() => {
+    if (isFullscreen && popupRef.current) {
       if (status === 'success' || (status === 'ready' && !runError)) {
         requestAnimationFrame(() => {
-          iframeRef.current?.contentWindow?.focus();
+          if (popupRef.current && !popupRef.current.closed) {
+            // Do not steal focus if the user is actively focusing an editor or input on the main page
+            const active = document.activeElement;
+            const isTyping = active && (
+              active.tagName === 'INPUT' ||
+              active.tagName === 'TEXTAREA' ||
+              (typeof active.closest === 'function' && (
+                active.closest('.monaco-editor') ||
+                active.closest('.repl-input')
+              ))
+            );
+            if (!isTyping) {
+              popupRef.current.focus();
+            }
+          }
         });
       }
     }
   }, [isFullscreen, exportsList, status, runError]);
+
+  const setFrame = useCallback((node) => {
+    iframeRef.current = node;
+    if (!node) {
+      if (!isFullscreen) {
+        setDomOutputRoot(null);
+      }
+      return;
+    }
+    let doc = null;
+    const syncDocument = () => {
+      const nextDoc = node.contentDocument;
+      if (!nextDoc?.querySelector('meta[name="tailwind-compatible-polyfill"]')) {
+        if (!isFullscreen) {
+          setDomOutputRoot(null);
+        }
+        return;
+      }
+      doc = nextDoc;
+      if (!isFullscreen) {
+        setDomOutputRoot(doc);
+      }
+    };
+    syncDocument();
+    node.addEventListener('load', syncDocument);
+    return () => {
+      node.removeEventListener('load', syncDocument);
+      if (!isFullscreen) {
+        setDomOutputRoot(null);
+      }
+    };
+  }, [setDomOutputRoot, isFullscreen]);
+
+  const openPopupManual = () => {
+    let popup = null;
+    try {
+      popup = window.open('', 'waluau-preview');
+    } catch (e) {
+      console.warn('Failed to open preview window manually:', e);
+    }
+    if (popup) {
+      setPopupBlocked(false);
+      popupRef.current = popup;
+      popup.document.open();
+      popup.document.write(DOM_OUTPUT_SRC_DOC);
+      popup.document.close();
+      popup.focus();
+      setDomOutputRoot(popup.document);
+
+      const handleClose = () => {
+        if (onCloseRef.current) {
+          onCloseRef.current();
+        }
+      };
+      popup.addEventListener('pagehide', handleClose);
+    } else {
+      alert('Could not open preview window. Please allow popups for this site.');
+    }
+  };
+
+  if (isFullscreen) {
+    if (popupBlocked) {
+      return (
+        <div className="dom-output-blocked">
+          <span className="dom-output-blocked-icon">⚠️</span>
+          <p className="dom-output-blocked-text">Popup window was blocked by the browser.</p>
+          <button
+            type="button"
+            className="dom-output-open-popup-btn"
+            onClick={openPopupManual}
+          >
+            Open Full Screen Window
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="dom-output-placeholder">
+        <span className="dom-output-placeholder-icon">🌐</span>
+        <p className="dom-output-placeholder-text">Preview active in a separate fullscreen window</p>
+      </div>
+    );
+  }
 
   return (
     <iframe
@@ -117,18 +233,7 @@ export default function RunTab({
   }, [isFullscreen]);
 
 
-  useEffect(() => {
-    if (!isFullscreen) return;
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape') {
-        setIsFullscreen(false);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [isFullscreen]);
+  // Escape key handling is skipped since proper window closure is handled by the browser/OS.
 
   useEffect(() => {
     if (!autoRun) return;
@@ -164,41 +269,36 @@ export default function RunTab({
       )}
 
       {usesDomOutput && (
-        <section className={`dom-output-section ${isFullscreen ? 'fullscreen' : ''}`} aria-label="DOM Output">
+        <section className="dom-output-section" aria-label="DOM Output">
           <div className="dom-output-header">
             <div className="dom-output-label">DOM Output</div>
             <button
               type="button"
               className="dom-output-fullscreen-btn"
-              onClick={() => setIsFullscreen(true)}
-              title="Full Screen"
+              onClick={() => setIsFullscreen(!isFullscreen)}
+              title={isFullscreen ? "Exit Full Screen" : "Full Screen"}
             >
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
-              </svg>
-              <span>Full Screen</span>
+              {isFullscreen ? (
+                <>
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                  <span>Exit Full Screen</span>
+                </>
+              ) : (
+                <>
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+                  </svg>
+                  <span>Full Screen</span>
+                </>
+              )}
             </button>
           </div>
-          {isFullscreen && (
-            <div className="dom-output-fullscreen-bar">
-              <span className="dom-output-fullscreen-title">DOM Output (Full Screen)</span>
-              <button
-                type="button"
-                className="dom-output-exit-btn"
-                onClick={() => setIsFullscreen(false)}
-                title="Exit Full Screen"
-              >
-                <span>Close Full Screen</span>
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </div>
-          )}
           <DomOutputFrame
             setDomOutputRoot={setDomOutputRoot}
-            onEscape={() => setIsFullscreen(false)}
+            onClose={() => setIsFullscreen(false)}
             isFullscreen={isFullscreen}
             exportsList={exportsList}
             status={status}

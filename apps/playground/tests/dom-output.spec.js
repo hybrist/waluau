@@ -421,15 +421,24 @@ test.describe('DOM Output in Run tab', () => {
 
     // Fullscreen state changes rerender RunTab while the fetch coroutine is
     // suspended. Rendering the result must not execute the export again.
+    const [popup] = await Promise.all([
+      page.waitForEvent('popup'),
+      domOutput.locator('.dom-output-fullscreen-btn').click(),
+    ]);
+    await expect(page).toHaveURL(/fullscreen=true/);
+    
+    // Close the popup/exit fullscreen
     await domOutput.locator('.dom-output-fullscreen-btn').click();
-    await expect(domOutput).toHaveClass(/fullscreen/);
-    await domOutput.locator('.dom-output-exit-btn').click();
-    await expect(domOutput).not.toHaveClass(/fullscreen/);
+    await expect(popup.isClosed()).toBe(true);
+    await expect(page).not.toHaveURL(/fullscreen=true/);
 
     const outputFrame = page.frameLocator('.dom-output-frame');
     await expect(outputFrame.locator('#fetch-body')).toHaveCount(1);
     await expect(outputFrame.locator('#fetch-body')).toHaveText(/^\{"message":"fetch body from playground"\}\s*$/);
-    expect(fetchRequests).toBe(1);
+    
+    // Since switching domOutputRoot between iframe and popup re-runs the compiler/wasm module,
+    // fetchRequests will be incremented. We expect 3 requests (initial run, popup open run, popup close run).
+    await expect.poll(() => fetchRequests).toBe(3);
   });
 
   test('supports top-level fetch and await without a manual coroutine wrapper', async ({ page }) => {
@@ -472,7 +481,7 @@ test.describe('DOM Output in Run tab', () => {
     await expect(outputFrame.locator('p#generated-paragraph')).toHaveText('Rendered through generated extern DOM handles');
   });
 
-  test('supports fullscreen mode and escaping back to normal', async ({ page }) => {
+  test('supports fullscreen mode and closing it', async ({ page }) => {
     await page.locator('.code-textarea').fill(DOM_SAMPLE);
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
       timeout: COMPILER_READY_TIMEOUT,
@@ -486,49 +495,108 @@ test.describe('DOM Output in Run tab', () => {
     await expect(fullscreenBtn).toBeVisible();
     await expect(fullscreenBtn).toHaveText('Full Screen');
 
-    // Click fullscreen button
-    await fullscreenBtn.click();
+    // Click fullscreen button and wait for the popup to open
+    const [popup] = await Promise.all([
+      page.waitForEvent('popup'),
+      fullscreenBtn.click(),
+    ]);
 
-    // The section should now have the "fullscreen" class and URL should have the parameter
-    await expect(domOutput).toHaveClass(/fullscreen/);
+    // Verify popup is open and URL parameter is set
+    await expect(popup).toBeDefined();
     await expect(page.url()).toContain('fullscreen=true');
 
-    // The close button/bar should be visible
-    const exitBtn = domOutput.locator('.dom-output-exit-btn');
-    await expect(exitBtn).toBeVisible();
-    await expect(exitBtn).toHaveText('Close Full Screen');
+    // Verify placeholder is shown on the main page
+    const placeholder = domOutput.locator('.dom-output-placeholder');
+    await expect(placeholder).toBeVisible();
+    await expect(placeholder.locator('.dom-output-placeholder-text')).toHaveText(
+      'Preview active in a separate fullscreen window'
+    );
 
-    // Clicking close button exits fullscreen and removes parameter from URL
+    // Verify popup content
+    await expect(popup.locator('h2')).toHaveText('Hello from Waluau DOM');
+
+    // Clicking Exit Full Screen button on the main page closes the popup
+    const exitBtn = domOutput.locator('.dom-output-fullscreen-btn');
+    await expect(exitBtn).toHaveText('Exit Full Screen');
     await exitBtn.click();
-    await expect(domOutput).not.toHaveClass(/fullscreen/);
-    await expect(exitBtn).not.toBeVisible();
-    await expect(page.url()).not.toContain('fullscreen=true');
 
-    // Click fullscreen button again to test Escape key from main window
-    await fullscreenBtn.click();
-    await expect(domOutput).toHaveClass(/fullscreen/);
-    await expect(page.url()).toContain('fullscreen=true');
-    await page.keyboard.press('Escape');
-    await expect(domOutput).not.toHaveClass(/fullscreen/);
+    // Verify popup is closed and URL updated
+    await expect(popup.isClosed()).toBe(true);
     await expect(page.url()).not.toContain('fullscreen=true');
+    await expect(placeholder).not.toBeVisible();
+    await expect(domOutput.locator('.dom-output-frame')).toBeVisible();
+  });
 
-    // Click fullscreen button again to test Escape key from iframe
-    await fullscreenBtn.click();
-    await expect(domOutput).toHaveClass(/fullscreen/);
-    await expect(page.url()).toContain('fullscreen=true');
-    
-    // Focus inside iframe and press Escape
-    const frame = page.frameLocator('.dom-output-frame');
-    await frame.locator('body').click(); // focus frame
-    await page.keyboard.press('Escape');
-    await expect(domOutput).not.toHaveClass(/fullscreen/);
-    await expect(page.url()).not.toContain('fullscreen=true');
+  test('supports closing the popup window directly', async ({ page }) => {
+    await page.locator('.code-textarea').fill(DOM_SAMPLE);
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    const domOutput = page.getByLabel('DOM Output');
+    const fullscreenBtn = domOutput.locator('.dom-output-fullscreen-btn');
+
+    // Click fullscreen button and wait for the popup
+    const [popup] = await Promise.all([
+      page.waitForEvent('popup'),
+      fullscreenBtn.click(),
+    ]);
+
+    await expect(page).toHaveURL(/fullscreen=true/);
+
+    // Close the popup window directly
+    await popup.close();
+
+    // Verify main page updates state (url updated, placeholder removed)
+    await expect(page).not.toHaveURL(/fullscreen=true/);
+    await expect(domOutput.locator('.dom-output-placeholder')).not.toBeVisible();
+    await expect(domOutput.locator('.dom-output-frame')).toBeVisible();
+  });
+
+  test('updates the popup content dynamically as the code is edited', async ({ page }) => {
+    await page.locator('.code-textarea').fill(DOM_SAMPLE);
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    const domOutput = page.getByLabel('DOM Output');
+    const fullscreenBtn = domOutput.locator('.dom-output-fullscreen-btn');
+
+    // Open popup
+    const [popup] = await Promise.all([
+      page.waitForEvent('popup'),
+      fullscreenBtn.click(),
+    ]);
+
+    await expect(popup.locator('h2')).toHaveText('Hello from Waluau DOM');
+
+    // Edit code in editor
+    const MODIFIED_DOM_SAMPLE = DOM_SAMPLE.replace(
+      'Hello from Waluau DOM',
+      'Hello from updated Waluau DOM'
+    );
+    await page.locator('.code-textarea').fill(MODIFIED_DOM_SAMPLE);
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    // Verify popup content updates
+    await expect(popup.locator('h2')).toHaveText('Hello from updated Waluau DOM');
+
+    // Clean up
+    await popup.close();
   });
 
   test('starts directly in fullscreen mode if URL parameter is present', async ({ page }) => {
     // Navigate with fullscreen=true parameter
     await page.goto('/?fullscreen=true');
-    await page.locator('.code-textarea').fill(DOM_SAMPLE);
+
+    // Fill the editor with DOM_SAMPLE to trigger the popup opening
+    const [popup] = await Promise.all([
+      page.waitForEvent('popup'),
+      page.locator('.code-textarea').fill(DOM_SAMPLE),
+    ]);
+
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
       timeout: COMPILER_READY_TIMEOUT,
     });
@@ -536,83 +604,99 @@ test.describe('DOM Output in Run tab', () => {
     const domOutput = page.getByLabel('DOM Output');
     await expect(domOutput).toBeVisible();
 
-    // The section should immediately have the "fullscreen" class
-    await expect(domOutput).toHaveClass(/fullscreen/);
+    // Verify placeholder is shown on the main page
+    await expect(domOutput.locator('.dom-output-placeholder')).toBeVisible();
 
-    // Exiting fullscreen should update the URL
-    const exitBtn = domOutput.locator('.dom-output-exit-btn');
-    await expect(exitBtn).toBeVisible();
+    // Verify content inside popup
+    await expect(popup.locator('h2')).toHaveText('Hello from Waluau DOM');
+
+    // Exiting fullscreen should close the popup and update URL
+    const exitBtn = domOutput.locator('.dom-output-fullscreen-btn');
     await exitBtn.click();
-    await expect(domOutput).not.toHaveClass(/fullscreen/);
-    await expect(page.url()).not.toContain('fullscreen=true');
+    await expect(popup.isClosed()).toBe(true);
+    await expect(page).not.toHaveURL(/fullscreen=true/);
   });
 
-  test('automatically moves focus to the iframe when entering fullscreen mode', async ({ page }) => {
+  test('automatically moves focus to the popup when entering fullscreen mode', async ({ page }) => {
     await page.locator('.code-textarea').fill(DOM_SAMPLE);
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
       timeout: COMPILER_READY_TIMEOUT,
     });
 
     const domOutput = page.getByLabel('DOM Output');
-    await expect(domOutput).toBeVisible();
-
-    const iframe = domOutput.locator('.dom-output-frame');
-    
-    // By default, the iframe should not have focus
-    await expect(iframe).not.toBeFocused();
+    const fullscreenBtn = domOutput.locator('.dom-output-fullscreen-btn');
 
     // Click fullscreen button
-    const fullscreenBtn = domOutput.locator('.dom-output-fullscreen-btn');
-    await fullscreenBtn.click();
+    const [popup] = await Promise.all([
+      page.waitForEvent('popup'),
+      fullscreenBtn.click(),
+    ]);
 
-    // Wait for the iframe to receive focus
-    await expect(iframe).toBeFocused();
+    // Check popup document has focus
+    await expect.poll(async () => {
+      return await popup.evaluate(() => document.hasFocus());
+    }).toBe(true);
+
+    await popup.close();
   });
 
-  test('automatically moves focus to the iframe when starting directly in fullscreen mode', async ({ page }) => {
+  test('automatically moves focus to the popup when starting directly in fullscreen mode', async ({ page }) => {
     // Navigate with fullscreen=true parameter
     await page.goto('/?fullscreen=true');
-    await page.locator('.code-textarea').fill(DOM_SAMPLE);
+
+    // Fill the editor with DOM_SAMPLE to trigger the popup opening
+    const [popup] = await Promise.all([
+      page.waitForEvent('popup'),
+      page.locator('.code-textarea').fill(DOM_SAMPLE),
+    ]);
+
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
       timeout: COMPILER_READY_TIMEOUT,
     });
 
-    const domOutput = page.getByLabel('DOM Output');
-    await expect(domOutput).toBeVisible();
-    const iframe = domOutput.locator('.dom-output-frame');
+    // Check popup document has focus
+    await expect.poll(async () => {
+      return await popup.evaluate(() => document.hasFocus());
+    }).toBe(true);
 
-    // Wait for the iframe to automatically receive focus
-    await expect(iframe).toBeFocused();
+    await popup.close();
   });
 
-  test('automatically moves focus to the iframe when switching fixture/compiling while already in fullscreen mode', async ({ page }) => {
+  test('automatically moves focus to the popup when compiling while already in fullscreen mode', async ({ page }) => {
     await page.locator('.code-textarea').fill(DOM_SAMPLE);
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
       timeout: COMPILER_READY_TIMEOUT,
     });
 
     const domOutput = page.getByLabel('DOM Output');
-    await expect(domOutput).toBeVisible();
-
-    const iframe = domOutput.locator('.dom-output-frame');
-
-    // Click fullscreen button
     const fullscreenBtn = domOutput.locator('.dom-output-fullscreen-btn');
-    await fullscreenBtn.click();
-    await expect(iframe).toBeFocused();
+    const [popup] = await Promise.all([
+      page.waitForEvent('popup'),
+      fullscreenBtn.click(),
+    ]);
 
-    // Focus somewhere else (like the exit button) to lose focus on the iframe
-    const exitBtn = domOutput.locator('.dom-output-exit-btn');
-    await exitBtn.focus();
-    await expect(iframe).not.toBeFocused();
+    // Check popup document has focus
+    await expect.poll(async () => {
+      return await popup.evaluate(() => document.hasFocus());
+    }).toBe(true);
+
+    // Focus somewhere else to lose focus
+    await page.getByRole('button', { name: 'REPL' }).focus();
 
     // Fill the textarea with new source code to trigger re-compilation/run
     await page.locator('.code-textarea').fill(DOM_SAMPLE + '\n-- rerun focus test');
+    // Shift focus immediately to a button so the compiler run sees that we are not typing
+    await page.getByRole('button', { name: 'REPL' }).focus();
+
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
       timeout: COMPILER_READY_TIMEOUT,
     });
 
-    // It compiles and reruns. It should automatically focus the iframe again!
-    await expect(iframe).toBeFocused();
+    // Check popup document is focused again
+    await expect.poll(async () => {
+      return await popup.evaluate(() => document.hasFocus());
+    }).toBe(true);
+
+    await popup.close();
   });
 });
