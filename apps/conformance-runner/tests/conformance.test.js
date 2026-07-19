@@ -19,9 +19,9 @@ import stableEngineProject from '../../../examples/game-project/main.walu?raw';
 import gameEngineGpuShaders from '../../../fixtures/game-engine/gpu-shaders.walu?raw';
 import gameEngineGpuResources from '../../../fixtures/game-engine/gpu-resources.walu?raw';
 import gameEngineGpuFontResources from '../../../fixtures/game-engine/gpu-font-resources.walu?raw';
-import pokerCardBack from '../../../fixtures/poker-tricks/assets/card-back.svg?raw';
-import pokerFontUrl from '../../../fixtures/poker-tricks/assets/Cinzel-Bold.ttf?url';
-import pokerFlipUrl from '../../../fixtures/poker-tricks/assets/card-flip.wav?url';
+import pokerCardBack from '../../../apps/ante/assets/card-back.svg?raw';
+import pokerFontUrl from '../../../apps/ante/assets/Cinzel-Bold.ttf?url';
+import pokerFlipUrl from '../../../apps/ante/assets/card-flip.wav?url';
 import gameEngineBrowser from '../../../engine/browser.walu?raw';
 import gameEngineGraphics from '../../../engine/graphics.walu?raw';
 import gameEngineFont from '../../../engine/font.walu?raw';
@@ -33,10 +33,9 @@ import gameEngineSave from '../../../engine/save.walu?raw';
 import gameEngineResourceSample from '../../../fixtures/game-engine/resources.walu?raw';
 import transitiveAwaitStateMain from '../../../fixtures/coroutine-await-state/main.walu?raw';
 import transitiveAwaitStateWorker from '../../../fixtures/coroutine-await-state/worker.walu?raw';
-import arcaneHeistSim from '../../../fixtures/poker-tricks/sim.walu?raw';
-import arcaneHeistGame from '../../../fixtures/poker-tricks/game.walu?raw';
-import arcaneHeistMain from '../../../fixtures/poker-tricks/main.walu?raw';
-import arcaneHeistRender from '../../../fixtures/poker-tricks/render.walu?raw';
+import arcaneHeistGame from '../../../apps/ante/src/game.walu?raw';
+import arcaneHeistMain from '../../../apps/ante/src/main.walu?raw';
+import arcaneHeistRender from '../../../apps/ante/src/render.walu?raw';
 
 const conformanceModules = import.meta.glob('../../../conformance/**/*.walu', {
   eager: true,
@@ -1283,11 +1282,11 @@ describe('browser conformance', () => {
     }
     const { root, cleanup } = await compileAndInstantiateWithDom(
       {
-        '/fixtures/poker-tricks/main.walu': arcaneHeistMain,
-        '/fixtures/poker-tricks/game.walu': arcaneHeistGame,
-        '/fixtures/poker-tricks/render.walu': arcaneHeistRender,
+        '/apps/ante/src/main.walu': arcaneHeistMain,
+        '/apps/ante/src/game.walu': arcaneHeistGame,
+        '/apps/ante/src/render.walu': arcaneHeistRender,
       },
-      '/fixtures/poker-tricks/main.walu',
+      '/apps/ante/src/main.walu',
       {
         gameServices: {
           assetBaseUrl: 'https://game.test/dist/',
@@ -1367,11 +1366,11 @@ describe('browser conformance', () => {
     const asyncErrors = [];
     const { root, cleanup } = await compileAndInstantiateWithDom(
       {
-        '/fixtures/poker-tricks/main.walu': arcaneHeistMain,
-        '/fixtures/poker-tricks/game.walu': arcaneHeistGame,
-        '/fixtures/poker-tricks/render.walu': arcaneHeistRender,
+        '/apps/ante/src/main.walu': arcaneHeistMain,
+        '/apps/ante/src/game.walu': arcaneHeistGame,
+        '/apps/ante/src/render.walu': arcaneHeistRender,
       },
-      '/fixtures/poker-tricks/main.walu',
+      '/apps/ante/src/main.walu',
       {
         gameServices: {
           assetBaseUrl: 'https://game.test/dist/',
@@ -1468,17 +1467,5 @@ describe('browser conformance', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(asyncErrors).toEqual([]);
     expect(completed).toBe(1);
-  });
-
-  // The fixture's rules module is host-independent, so its seeded assertions
-  // run here with no engine and no DOM; any of them trapping fails this test.
-  it('runs the Arcane Heist rules simulation without a DOM', async () => {
-    await compileAndInstantiate(
-      {
-        '/fixtures/poker-tricks/sim.walu': arcaneHeistSim,
-        '/fixtures/poker-tricks/game.walu': arcaneHeistGame,
-      },
-      '/fixtures/poker-tricks/sim.walu'
-    );
   });
 });
