@@ -9,7 +9,7 @@
   "engines": {
     "vscode": "^1.90.0"
   },
-  "main": "./extension.js",
+  "main": "./dist/extension.js",
   "activationEvents": [
     "workspaceContains:**/*.walu",
     "onLanguage:lua"
@@ -26,7 +26,11 @@
       }
     }
   },
-  "dependencies": {
-    "vscode-languageclient": "^9.0.1"
+  "scripts": {
+    "build": "esbuild extension.js --bundle --outfile=dist/extension.js --external:vscode --platform=node --format=cjs --minify-whitespace"
+  },
+  "devDependencies": {
+    "vscode-languageclient": "^9.0.1",
+    "esbuild": "^0.24.0"
   }
 }

@@ -8,6 +8,9 @@
 /target/
 node_modules/
 dist/
+# The VS Code workspace extension ships as a committed self-contained bundle
+# so installing it needs no build step.
+!.vscode/extensions/waluau/dist/
 .pnpm-debug.log
 .vercel
 apps/playground/public/*.wasm
