@@ -23,6 +23,19 @@ pnpm build:playground
 
 This runs a release-mode Wasm build through the same Vite plugin, then emits the site into `apps/playground/dist`. No separate `build:wasm` step is required.
 
+## Browser tests
+
+From the repository root:
+
+```bash
+pnpm test:playground
+```
+
+Playwright builds the playground before starting its preview server so tests
+always exercise the checked-out sources instead of a stale, ignored `dist`
+directory. Set `PLAYWRIGHT_SKIP_BUILD=1` only when the same workflow has already
+completed a successful production build, as the playground CI job does.
+
 ## Vercel
 
 The repository includes a root-level [`vercel.json`](../../vercel.json) so Vercel can deploy the playground directly from the monorepo root:
