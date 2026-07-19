@@ -609,6 +609,71 @@ mod tests {
     }
 
     #[test]
+    fn compile_file_resolves_vitest_virtual_module_as_bare_globals() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("math.test.walu");
+        fs::write(
+            &input_path,
+            r#"
+                require("waluau:vitest")
+
+                function add(a: i32, b: i32): i32
+                    return a + b
+                end
+
+                describe("add", function(): unit
+                    it("adds", function(): unit
+                        expect(add(2, 2)):toBe(4)
+                        expect(add(1, 1) == 2):toBeTruthy()
+                        expect("walu"):toContain("alu")
+                    end)
+                end)
+            "#,
+        )
+        .expect("test file should write");
+
+        let wasm = super::compile_file(&input_path).expect("vitest require should compile");
+        let wat = wasmprinter::print_bytes(&wasm).expect("wasm should print");
+        assert!(
+            wat.contains(r#"(import "waluau" "describe""#),
+            "describe should import as a host function:\n{wat}"
+        );
+        assert!(
+            wat.contains(r#"(import "waluau" "NumberExpectation.toBe""#),
+            "matcher methods should import under their extern type names:\n{wat}"
+        );
+        assert!(
+            wat.contains(&format!("(export \"{}\"", "__waluau_call_callback_unit")),
+            "test bodies need the () -> unit callback trampoline:\n{wat}"
+        );
+    }
+
+    #[test]
+    fn compile_file_resolves_vitest_namespace_binding() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("suite.test.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local t = require("waluau:vitest")
+
+                t.it("works through the namespace", function(): unit
+                    t.expect(21 * 2):toBe(42)
+                end)
+            "#,
+        )
+        .expect("test file should write");
+
+        let wasm =
+            super::compile_file(&input_path).expect("vitest namespace require should compile");
+        let wat = wasmprinter::print_bytes(&wasm).expect("wasm should print");
+        assert!(
+            wat.contains(r#"(import "waluau" "it""#),
+            "namespace members should resolve to the declared host imports:\n{wat}"
+        );
+    }
+
+    #[test]
     fn compile_file_resolves_tfjs_training_namespace() {
         let tempdir = tempdir().expect("tempdir should exist");
         let input_path = tempdir.path().join("app.walu");
