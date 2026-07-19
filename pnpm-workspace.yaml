@@ -1,5 +1,6 @@
 packages:
   - 'apps/*'
   - 'packages/*'
+  - 'tools/vscode-waluau'
 allowBuilds:
   core-js: false

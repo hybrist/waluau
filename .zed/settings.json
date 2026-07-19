@@ -1,0 +1,21 @@
+// Repo-local Zed configuration: treat .walu files as Lua for syntax
+// highlighting (install Zed's Lua extension when prompted) and attach the
+// repo's own language server for live diagnostics. The launcher script
+// builds crates/waluau-lsp on first use.
+{
+  "file_types": {
+    "Lua": ["walu"]
+  },
+  "languages": {
+    "Lua": {
+      "language_servers": ["waluau-lsp", "!lua-language-server", "..."]
+    }
+  },
+  "lsp": {
+    "waluau-lsp": {
+      "binary": {
+        "path": "tools/editors/waluau-lsp"
+      }
+    }
+  }
+}
