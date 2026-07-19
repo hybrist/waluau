@@ -1,0 +1,39 @@
+-- Dynamic indexing (`t[i]` where `t` is `unknown`) over arrays of nullable
+-- primitives. Elements are typed nullable boxes: a nil slot must come back as
+-- the `unknown` nil, and a present slot must be unwrapped from its box and
+-- reboxed into the canonical `unknown` representation (i31 / boxed f64) so it
+-- compares equal to the same value written literally.
+--
+-- Each nullable payload class needs its own file: array wrapper structs with
+-- structurally identical storage are canonicalized into one wasm type, so the
+-- `ref.test` dispatch cannot tell `{i32?}` from `{u32?}`/`{bool?}` (waluau-drtq).
+-- `{i32?}` and `{f64?}` use different box kinds, so they coexist here.
+
+function get(v, i)
+    return v[i]
+end
+
+function len_of(v)
+    return #v
+end
+
+local ints: {i32?} = { 1, nil, 3 }
+assert(len_of(ints) == 3)
+assert(get(ints, 0) == 1)
+assert(get(ints, 2) == 3)
+
+-- Reading a nil slot back through `unknown` yields nil, not a stray box.
+local missing_int: i32? = get(ints, 1)
+assert(missing_int == nil)
+local present_int: i32? = get(ints, 0)
+assert(present_int ~= nil)
+assert(present_int == 1)
+
+local reals: {f64?} = { 1.5, nil }
+assert(len_of(reals) == 2)
+assert(get(reals, 0) == 1.5)
+local missing_real: f64? = get(reals, 1)
+assert(missing_real == nil)
+local present_real: f64? = get(reals, 0)
+assert(present_real ~= nil)
+assert(present_real == 1.5)
