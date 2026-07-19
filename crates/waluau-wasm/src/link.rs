@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use waluau_diagnostics::Diagnostic;
 use waluau_ast::{
     DeclaredImport, Expr, Function, FunctionExpr, FunctionName, Program, Stmt, TableField, Type,
     TypeDeclaration,
 };
+use waluau_diagnostics::Diagnostic;
 
 const DOM_WINDOW_REQUIRE: &str = "dom:window";
 const DOM_WINDOW_FUNCTION: &str = "dom_window";
@@ -129,10 +129,9 @@ pub fn link_programs_collect(
         // A recovered (partial) AST can break merging in misleading ways —
         // the parse errors are the real story, so surface them with the
         // unmerged entry program instead.
-        Err(_) if !loader.diagnostics.is_empty() => Ok((
-            loader.modules[entry_id].program.clone(),
-            loader.diagnostics,
-        )),
+        Err(_) if !loader.diagnostics.is_empty() => {
+            Ok((loader.modules[entry_id].program.clone(), loader.diagnostics))
+        }
         Err(error) => Err(error),
     }
 }

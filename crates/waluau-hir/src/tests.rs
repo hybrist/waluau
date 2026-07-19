@@ -3715,8 +3715,7 @@ fn collects_type_errors_across_independent_functions() {
         end
     "#;
     let program = parse(source).expect("parse should succeed");
-    let errors = super::type_check_and_infer_collect(&program)
-        .expect_err("type check should fail");
+    let errors = super::type_check_and_infer_collect(&program).expect_err("type check should fail");
     assert_eq!(
         errors.len(),
         2,
@@ -3740,8 +3739,7 @@ fn collects_multiple_statement_errors_within_one_function() {
         end
     "#;
     let program = parse(source).expect("parse should succeed");
-    let errors = super::type_check_and_infer_collect(&program)
-        .expect_err("type check should fail");
+    let errors = super::type_check_and_infer_collect(&program).expect_err("type check should fail");
     assert_eq!(
         errors.len(),
         2,
@@ -3761,8 +3759,7 @@ fn failed_binding_does_not_cascade_into_later_statements() {
         end
     "#;
     let program = parse(source).expect("parse should succeed");
-    let errors = super::type_check_and_infer_collect(&program)
-        .expect_err("type check should fail");
+    let errors = super::type_check_and_infer_collect(&program).expect_err("type check should fail");
     // Only the bad initializer errors; `flag` falls back to unknown so the
     // `if flag` use does not produce a second unknown-variable error.
     assert_eq!(errors.len(), 1, "unexpected cascade: {errors:?}");
@@ -3776,8 +3773,7 @@ fn single_error_wrapper_reports_first_collected_error() {
         end
     "#;
     let program = parse(source).expect("parse should succeed");
-    let collected = super::type_check_and_infer_collect(&program)
-        .expect_err("collect should fail");
+    let collected = super::type_check_and_infer_collect(&program).expect_err("collect should fail");
     let single = super::type_check_and_infer(&program).expect_err("wrapper should fail");
     assert_eq!(collected[0], single);
 }

@@ -2,7 +2,7 @@
 //! JSON-RPC on stdin/stdout, delegating every message to the transport-
 //! agnostic [`waluau_lsp::LspServer`] core.
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::process::ExitCode;
 
 use waluau_lsp::LspServer;

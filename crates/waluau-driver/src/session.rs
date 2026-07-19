@@ -142,9 +142,8 @@ impl CompilerSession {
         if let Some(content) = self.overlays.get(path) {
             return Ok(content.clone());
         }
-        std::fs::read_to_string(path).map_err(|error| {
-            Diagnostic::new(format!("read module `{}`: {error}", path.display()))
-        })
+        std::fs::read_to_string(path)
+            .map_err(|error| Diagnostic::new(format!("read module `{}`: {error}", path.display())))
     }
 
     fn parsed_module_cached(
@@ -283,7 +282,11 @@ mod tests {
             "local double = require(\"./lib\")\nlocal a: i32 = double(3)\n",
         );
         let analysis = session.analyze_root(&main);
-        assert!(analysis.diagnostics.is_empty(), "{:?}", analysis.diagnostics);
+        assert!(
+            analysis.diagnostics.is_empty(),
+            "{:?}",
+            analysis.diagnostics
+        );
         assert_eq!(
             session.parses_performed(),
             baseline + 1,
@@ -305,7 +308,9 @@ mod tests {
         assert_eq!(analysis.diagnostics.len(), 2, "{:?}", analysis.diagnostics);
         for diagnostic in &analysis.diagnostics {
             assert!(
-                diagnostic.file_path().is_some_and(|p| p.contains("main.walu")),
+                diagnostic
+                    .file_path()
+                    .is_some_and(|p| p.contains("main.walu")),
                 "diagnostic should carry the module path: {diagnostic:?}"
             );
         }

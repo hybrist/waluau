@@ -100,9 +100,11 @@ impl<B: AnalysisBackend> LspServer<B> {
         let parsed: Value = match serde_json::from_str(message) {
             Ok(value) => value,
             Err(error) => {
-                return vec![
-                    error_response(Value::Null, -32700, &format!("parse error: {error}")),
-                ];
+                return vec![error_response(
+                    Value::Null,
+                    -32700,
+                    &format!("parse error: {error}"),
+                )];
             }
         };
         let id = parsed.get("id").cloned();

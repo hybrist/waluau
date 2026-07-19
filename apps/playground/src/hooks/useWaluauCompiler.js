@@ -32,7 +32,6 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
   const languageServerRef = useRef(null);
   // Documents synced to the language server: path -> { version, text }.
   const syncedDocumentsRef = useRef(new Map());
-  const lastDiagnosticsRef = useRef(null);
 
   const setDomOutputRoot = useCallback((node) => {
     if (domOutputRootRef.current === node) return;
@@ -103,11 +102,13 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
   }, [files, entryFile, compileSource, compilerReady, loadErrorMsg, status]);
 
   // Client-side language server: sync changed documents over the LSP
-  // lifecycle and collect per-file publishDiagnostics. Null when the wasm
-  // build predates the language server (markers then fall back to errorMsg).
-  const diagnostics = useMemo(() => {
+  // lifecycle and collect per-file publishDiagnostics. Null until the wasm
+  // module provides the language server (markers then fall back to errorMsg).
+  // Runs in an effect (not render) because it mutates the server and refs.
+  const [diagnostics, setDiagnostics] = useState(null);
+  useEffect(() => {
     const server = languageServerRef.current;
-    if (!server || !compilerReady) return null;
+    if (!server || !compilerReady) return;
     const collected = new Map();
     let sentAny = false;
     const send = (message) => {
@@ -153,11 +154,9 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
         });
       }
     }
-    // Each server response batch reflects the complete diagnostic state; if
-    // nothing changed (memo re-ran for another reason), keep the last state.
-    if (!sentAny) return lastDiagnosticsRef.current;
-    lastDiagnosticsRef.current = collected;
-    return collected;
+    // Each server response batch reflects the complete diagnostic state; when
+    // nothing changed (effect re-ran for another reason), keep the last state.
+    if (sentAny) setDiagnostics(collected);
   }, [files, compilerReady]);
 
   const output = compilation.output;

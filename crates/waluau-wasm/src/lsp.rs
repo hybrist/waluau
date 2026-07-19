@@ -9,9 +9,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use wasm_bindgen::prelude::*;
 use waluau_diagnostics::Diagnostic;
 use waluau_lsp::{AnalysisBackend, BackendAnalysis, LspServer};
+use wasm_bindgen::prelude::*;
 
 use crate::link;
 

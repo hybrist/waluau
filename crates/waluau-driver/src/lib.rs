@@ -23,9 +23,11 @@ pub fn compile_source(source: &str) -> Result<Vec<u8>, Diagnostic> {
     // Add builtin declarations to standalone programs
     add_builtins_to_program(&mut program)?;
 
-    Ok(compile_program(program, "program.wasm", empty_asset_manifest())
-        .map_err(|mut errors| errors.remove(0))?
-        .wasm)
+    Ok(
+        compile_program(program, "program.wasm", empty_asset_manifest())
+            .map_err(|mut errors| errors.remove(0))?
+            .wasm,
+    )
 }
 
 /// Like [`compile_source`], but reports every independently-attributable
@@ -107,12 +109,13 @@ fn compile_program(
     wasm_file_name: &str,
     assets: &BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>,
 ) -> Result<CompileArtifacts, Vec<Diagnostic>> {
-    let mut typed_program = waluau_hir::type_check_and_infer_collect(&program).map_err(|errors| {
-        errors
-            .into_iter()
-            .map(|error| resolve_diagnostic_source(error, &program))
-            .collect::<Vec<_>>()
-    })?;
+    let mut typed_program =
+        waluau_hir::type_check_and_infer_collect(&program).map_err(|errors| {
+            errors
+                .into_iter()
+                .map(|error| resolve_diagnostic_source(error, &program))
+                .collect::<Vec<_>>()
+        })?;
     waluau_ast::resolve_symbols(&mut typed_program).map_err(|error| vec![error])?;
     let ir = waluau_ir::build(&typed_program).map_err(|error| vec![error])?;
     let emitted = waluau_codegen_wasm::emit(&ir).map_err(|error| vec![error])?;
@@ -158,7 +161,11 @@ where
         .output
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| vec![Diagnostic::new("output Wasm path must have a UTF-8 file name")])?;
+        .ok_or_else(|| {
+            vec![Diagnostic::new(
+                "output Wasm path must have a UTF-8 file name",
+            )]
+        })?;
     let assets = asset_package
         .as_ref()
         .map(|package| &package.generated)

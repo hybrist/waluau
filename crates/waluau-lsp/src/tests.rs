@@ -61,7 +61,10 @@ fn initialize_reports_full_document_sync() {
         json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
     );
     assert_eq!(responses.len(), 1);
-    assert_eq!(responses[0]["result"]["capabilities"]["textDocumentSync"], 1);
+    assert_eq!(
+        responses[0]["result"]["capabilities"]["textDocumentSync"],
+        1
+    );
 }
 
 #[test]
