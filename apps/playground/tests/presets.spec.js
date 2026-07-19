@@ -53,7 +53,7 @@ test.describe('preset selector', () => {
 
   test('Require Flow Example preset loads and compiles multiple files successfully', async ({ page }) => {
     await page.getByRole('button', { name: 'Require Flow Example' }).click();
-    
+
     await expect(page.locator('.file-item').getByText('main.walu', { exact: true })).toBeVisible();
     await expect(page.locator('.file-item').getByText('double.walu', { exact: true })).toBeVisible();
     await expect(page.locator('.file-item').getByText('add.walu', { exact: true })).toBeVisible();
@@ -137,13 +137,13 @@ test.describe('preset selector', () => {
     });
     await expect(page.locator('.search-modal-container')).toBeVisible();
     await expect(page.locator('.search-input-field')).toBeFocused();
-    
+
     await page.locator('.search-input-field').fill('arith');
     const results = page.locator('.search-item');
     await expect(results).toHaveCount(1);
     await expect(results.first().locator('.search-item-name')).toHaveText('arithmetic.walu');
     await expect(results.first().locator('.search-category-tag')).toHaveText('Conformance');
-    
+
     await page.keyboard.press('Enter');
     await expect(page.locator('.search-modal-container')).not.toBeVisible();
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
@@ -155,12 +155,12 @@ test.describe('preset selector', () => {
     await page.getByRole('button', { name: 'Search (Cmd+P)' }).click();
     await expect(page.locator('.search-modal-container')).toBeVisible();
     await expect(page.locator('.search-input-field')).toBeFocused();
-    
+
     await page.locator('.search-input-field').fill('arith');
     const results = page.locator('.search-item');
     await expect(results).toHaveCount(1);
     await expect(results.first().locator('.search-item-name')).toHaveText('arithmetic.walu');
-    
+
     await page.keyboard.press('Enter');
     await expect(page.locator('.search-modal-container')).not.toBeVisible();
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
@@ -199,7 +199,6 @@ test.describe('preset selector', () => {
       'poker-tricks/game.walu',
       'poker-tricks/main.walu',
       'poker-tricks/render.walu',
-      'poker-tricks/sim.walu',
     ]);
 
     await results.filter({ hasText: 'poker-tricks/main.walu' }).click();

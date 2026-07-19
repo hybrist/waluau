@@ -93,7 +93,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `main.walu` | Engine entry point and keyboard/mouse-driven game flow. |
 | `render.walu` | Playfield/modal rendering and the game's vertex/pixel effect shader. |
 | `game.walu` | Host-independent deck, ranking, AI, and scoring rules. |
-| `sim.walu` | Deterministic assertions for rankings and full-game completion. |
+| `sim.test.walu` | Deterministic Vitest assertions for rankings and full-game completion. |
 | `waluau.assets.json` | Typed package manifest for the card back, vault font, and flip sound. |
 
 The sealed-card artwork is the committed vector
@@ -127,7 +127,6 @@ license is [`assets/OFL-Cinzel.txt`](assets/OFL-Cinzel.txt).
 cargo run -p waluau-cli -- fixtures/poker-tricks/main.walu \
   -o dist/arcane-heist.wasm --emit-js \
   --manifest fixtures/poker-tricks/waluau.assets.json
-cargo run -p waluau-cli -- fixtures/poker-tricks/sim.walu -o sim.wasm
 ```
 
 The distributable build copies all declared assets under `dist/assets/` with

@@ -693,7 +693,7 @@ function install_arcane_heist(): unit
 
     local function load(): unit
         -- No reseed: the host seeds math.random per instance, so each run
-        -- deals a different shuffle. sim.walu pins its own seeds for tests.
+        -- deals a different shuffle. sim.test.walu pins its own seeds for tests.
         reset_run(state, ui)
         local loader: thread = coroutine.create(load_assets_async)
         coroutine.resume(loader)
