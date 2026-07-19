@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "pnpm install --frozen-lockfile",
-  "buildCommand": "pnpm build:ante",
-  "outputDirectory": "apps/ante/dist"
+  "buildCommand": "pnpm build",
+  "outputDirectory": "dist"
 }
