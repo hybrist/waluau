@@ -206,6 +206,73 @@ fn lowers_nullable_options_records_and_missing_fields() {
 }
 
 #[test]
+fn lowers_scalar_string_byte_as_nullable_without_changing_host_abi() {
+    let source = r#"
+        declare function string_byte(value: string, index: i32): i32
+
+        function missing(): bool
+            return string.byte("", 1) == nil
+        end
+
+        function present(): bool
+            return string.byte("A", 1) == 65
+        end
+
+        function numeric(value: string): i32
+            local byte: i32 = string.byte(value, 1)
+            return byte
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+
+    let mut string_byte_calls = 0;
+    let mut nullable_nulls = 0;
+    let mut boxes = 0;
+    let mut unboxes = 0;
+    for function in &module.functions {
+        for block in function.blocks.values() {
+            for (_, instruction) in &block.instructions {
+                match instruction {
+                    Instruction::HostCall {
+                        name, return_type, ..
+                    } if name == "string_byte" => {
+                        string_byte_calls += 1;
+                        assert_eq!(
+                            return_type,
+                            &Type::Numeric(NumericType::I32),
+                            "string_byte host ABI must remain i32"
+                        );
+                    }
+                    Instruction::Null {
+                        ty: Type::Nullable(inner),
+                    } if **inner == Type::Numeric(NumericType::I32) => nullable_nulls += 1,
+                    Instruction::Cast {
+                        from: Type::Numeric(NumericType::I32),
+                        to: Type::Nullable(inner),
+                        ..
+                    } if **inner == Type::Numeric(NumericType::I32) => boxes += 1,
+                    Instruction::Cast {
+                        from: Type::Nullable(inner),
+                        to: Type::Numeric(NumericType::I32),
+                        ..
+                    } if **inner == Type::Numeric(NumericType::I32) => unboxes += 1,
+                    _ => {}
+                }
+            }
+        }
+    }
+    assert_eq!(string_byte_calls, 3);
+    assert_eq!(nullable_nulls, 3);
+    assert_eq!(boxes, 3);
+    assert_eq!(
+        unboxes, 2,
+        "numeric comparison and annotated numeric use should both unbox"
+    );
+}
+
+#[test]
 fn lowers_if_expression_with_phi_result() {
     let source = r#"
         function entry(flag: bool, x: i32, y: i32): i32

@@ -1186,6 +1186,29 @@ fn string_byte_static_count(args: &[Expr], expected: Option<&Type>) -> Result<us
     Ok(indices.len())
 }
 
+fn string_byte_requires_numeric_value(expected: Option<&Type>) -> bool {
+    match expected {
+        Some(Type::Numeric(_)) => true,
+        Some(Type::Multi(types)) if types.len() == 1 => {
+            matches!(types.first(), Some(Type::Numeric(_)))
+        }
+        _ => false,
+    }
+}
+
+fn string_byte_scalar_known_in_range(args: &[Expr]) -> bool {
+    let Some(len) = args.first().and_then(expr_string_len) else {
+        return false;
+    };
+    let index = args.get(1).and_then(expr_i32_literal).unwrap_or(1);
+    let index = if index < 0 {
+        len.saturating_add(index).saturating_add(1)
+    } else {
+        index
+    };
+    index >= 1 && index <= len
+}
+
 fn string_byte_static_indices(
     args: &[Expr],
     expected: Option<&Type>,
@@ -8602,7 +8625,26 @@ impl Builder<'_> {
                         },
                         None => self.emit_i32_const(1),
                     };
-                    self.emit_string_host_call(STRING_BYTE_HOST, vec![value, index], i32_ty.clone())
+                    let raw = match self.emit_string_host_call(
+                        STRING_BYTE_HOST,
+                        vec![value, index],
+                        i32_ty.clone(),
+                    ) {
+                        Ok(raw) => raw,
+                        Err(error) => return Some(Err(error)),
+                    };
+                    let nullable = self.lower_nullable_i32_sentinel(raw, -1);
+                    if string_byte_scalar_known_in_range(args)
+                        || string_byte_requires_numeric_value(expected.as_ref())
+                    {
+                        Ok(self.emit(Instruction::Cast {
+                            value: nullable,
+                            from: Type::Nullable(Box::new(i32_ty.clone())),
+                            to: i32_ty.clone(),
+                        }))
+                    } else {
+                        Ok(nullable)
+                    }
                 }
             }
             STRING_REVERSE => {
@@ -8761,7 +8803,13 @@ impl Builder<'_> {
                         i32_ty.clone();
                         string_byte_static_count(args, expected.as_ref()).unwrap_or(0)
                     ]),
-                    STRING_BYTE => i32_ty,
+                    STRING_BYTE
+                        if string_byte_scalar_known_in_range(args)
+                            || string_byte_requires_numeric_value(expected.as_ref()) =>
+                    {
+                        i32_ty
+                    }
+                    STRING_BYTE => Type::Nullable(Box::new(i32_ty)),
                     _ => Type::String,
                 };
                 (value, result_ty)
@@ -9583,7 +9631,13 @@ impl Builder<'_> {
                     };
                     return Some(Ok(Type::Multi(vec![i32_ty; count])));
                 }
-                Some(Ok(i32_ty))
+                if string_byte_scalar_known_in_range(args)
+                    || string_byte_requires_numeric_value(expected.as_ref())
+                {
+                    Some(Ok(i32_ty))
+                } else {
+                    Some(Ok(Type::Nullable(Box::new(i32_ty))))
+                }
             }
             STRING_CHAR => {
                 let mut arg_types = Vec::new();
@@ -9686,6 +9740,47 @@ impl Builder<'_> {
             args,
             return_type,
         }))
+    }
+
+    fn lower_nullable_i32_sentinel(&mut self, raw: ValueId, sentinel: i32) -> ValueId {
+        let i32_ty = Type::Numeric(NumericType::I32);
+        let nullable_i32 = Type::Nullable(Box::new(i32_ty.clone()));
+        let sentinel = self.emit_i32_const(sentinel);
+        let is_nil = self.emit(Instruction::Binary {
+            op: BinaryOp::Eq,
+            left: raw,
+            right: sentinel,
+            operand_ty: i32_ty.clone(),
+            result_ty: Type::Bool,
+        });
+        let nil_block = self.new_block();
+        let value_block = self.new_block();
+        let merge_block = self.new_block();
+        self.set_terminator(
+            self.current_block,
+            Terminator::Branch {
+                condition: is_nil,
+                then_block: nil_block,
+                else_block: value_block,
+            },
+        );
+
+        self.current_block = nil_block;
+        let nil = self.emit(Instruction::Null {
+            ty: nullable_i32.clone(),
+        });
+        self.set_terminator(nil_block, Terminator::Jump(merge_block));
+
+        self.current_block = value_block;
+        let value = self.emit(Instruction::Cast {
+            value: raw,
+            from: i32_ty,
+            to: nullable_i32,
+        });
+        self.set_terminator(value_block, Terminator::Jump(merge_block));
+
+        self.current_block = merge_block;
+        self.emit(Instruction::Phi(vec![(nil_block, nil), (value_block, value)]))
     }
 
     fn lower_expr_to_string(

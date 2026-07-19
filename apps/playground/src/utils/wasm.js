@@ -1943,8 +1943,8 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
     },
     string_byte: (value, index) => {
       // Lua string.byte semantics: 1-based index, negatives count from the
-      // end. Out-of-range returns -1 (Lua returns no values; a nilable
-      // multi-return string.byte is tracked separately).
+      // end. -1 is the scalar host ABI sentinel; compiler lowering converts
+      // it to nil before the value reaches guest code.
       const str = String(value);
       const len = str.length;
       let offset = Number(index) | 0;

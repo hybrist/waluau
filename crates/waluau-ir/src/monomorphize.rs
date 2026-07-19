@@ -1759,7 +1759,11 @@ impl<'a> Monomorphizer<'a> {
             "coroutine.resume" => Ok(Some(Type::Multi(vec![Type::Bool, Type::Unknown]))),
             "coroutine.close" => Ok(Some(Type::Bool)),
             "coroutine.await_promise" | crate::PROMISE_AWAIT => Ok(Some(Type::Unknown)),
-            "string.len" | "string.byte" => Ok(Some(Type::Numeric(waluau_ast::NumericType::I32))),
+            "string.len" => Ok(Some(Type::Numeric(waluau_ast::NumericType::I32))),
+            "string.byte" if args.len() < 3 => Ok(Some(Type::Nullable(Box::new(Type::Numeric(
+                waluau_ast::NumericType::I32,
+            ))))),
+            "string.byte" => Ok(Some(Type::Numeric(waluau_ast::NumericType::I32))),
             "string.find" => Ok(Some(Type::Multi(waluau_ast::string_find_result_types(
                 &args
                     .get(1)
