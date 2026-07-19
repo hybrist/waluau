@@ -1,0 +1,32 @@
+{
+  "name": "waluau-vscode",
+  "displayName": "Waluau Language Server (repo-local)",
+  "description": "Connects VS Code to the Waluau compiler's language server for .walu files",
+  "version": "0.1.0",
+  "publisher": "waluau-dev",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "main": "./extension.js",
+  "activationEvents": [
+    "workspaceContains:**/*.walu",
+    "onLanguage:lua"
+  ],
+  "contributes": {
+    "configuration": {
+      "title": "Waluau",
+      "properties": {
+        "waluau.languageServerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the waluau-lsp executable or launcher. Empty uses the repo's tools/editors/waluau-lsp script, which builds the server on demand."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}

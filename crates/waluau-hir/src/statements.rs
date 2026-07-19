@@ -603,10 +603,13 @@ pub(super) fn check_function_collect(
         && expected_return != Type::Unit
         && !matches!(expected_return, Type::Nullable(_))
     {
-        diagnostics.push(Diagnostic::new(format!(
-            "function '{}' is missing a return",
-            function.name
-        )));
+        let mut diagnostic =
+            Diagnostic::new(format!("function '{}' is missing a return", function.name));
+        // Point at the last statement — where the return should follow.
+        if let Some(span) = function.body.last().and_then(primary_stmt_span) {
+            diagnostic = diagnostic.with_span(span);
+        }
+        diagnostics.push(diagnostic);
     }
     diagnostics
 }
@@ -1267,7 +1270,59 @@ pub(super) fn common_return_type(left: Type, right: Type) -> Result<Type, Diagno
     }
 }
 
+/// The span most representative of a statement, for diagnostics minted at
+/// statement level (as opposed to inside expression inference, which
+/// attaches the offending expression's own span): the condition for
+/// conditionals and loops, the value/iterator otherwise.
+pub(super) fn primary_stmt_span(stmt: &Stmt) -> Option<waluau_ast::Span> {
+    match stmt {
+        Stmt::Let { value, .. }
+        | Stmt::Assign { value, .. }
+        | Stmt::IndexAssign { value, .. }
+        | Stmt::FieldAssign { value, .. } => value.span(),
+        Stmt::If { condition, .. }
+        | Stmt::While { condition, .. }
+        | Stmt::Repeat { condition, .. } => condition.span(),
+        Stmt::IfCast { value, .. } => value.span(),
+        Stmt::NumericFor { start, .. } => start.span(),
+        Stmt::ForIn { iterator, .. } => iterator.span(),
+        Stmt::Return(value) => value.span(),
+        Stmt::ReturnMulti(values) => values.first().and_then(|value| value.span()),
+        Stmt::LetMulti { values, .. } | Stmt::AssignMulti { values, .. } => {
+            values.first().and_then(|value| value.span())
+        }
+        Stmt::Expr(expr) => expr.span(),
+        Stmt::Break | Stmt::Continue => None,
+    }
+}
+
+fn attach_stmt_span(error: Diagnostic, stmt: &Stmt) -> Diagnostic {
+    match (error.span(), primary_stmt_span(stmt)) {
+        (None, Some(span)) => error.with_span(span),
+        _ => error,
+    }
+}
+
 pub(super) fn check_stmt(
+    stmt: &Stmt,
+    vars: &mut HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected_return: &Type,
+    in_loop: bool,
+) -> Result<bool, Diagnostic> {
+    check_stmt_inner(
+        stmt,
+        vars,
+        fn_signatures,
+        active_type_params,
+        expected_return,
+        in_loop,
+    )
+    .map_err(|error| attach_stmt_span(error, stmt))
+}
+
+fn check_stmt_inner(
     stmt: &Stmt,
     vars: &mut HashMap<String, Binding>,
     fn_signatures: &HashMap<String, FnSignature>,

@@ -1,0 +1,11 @@
+#!/bin/sh
+# Launch the repo-local Waluau language server over stdio, building it on
+# first use or when compiler sources changed. Build output goes to stderr;
+# stdout is reserved for the LSP protocol.
+set -e
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+bin="$root/target/debug/waluau-lsp"
+if [ ! -x "$bin" ] || [ -n "$(find "$root/crates" -name '*.rs' -newer "$bin" 2>/dev/null | head -1)" ]; then
+    cargo build --quiet -p waluau-lsp --manifest-path "$root/Cargo.toml" 1>&2
+fi
+exec "$bin"
