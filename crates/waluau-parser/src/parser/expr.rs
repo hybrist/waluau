@@ -456,7 +456,7 @@ impl Parser {
     fn parse_primary(&mut self) -> Result<Expr, Diagnostic> {
         let token = self
             .advance()
-            .ok_or_else(|| Diagnostic::new("unexpected end of input"))?;
+            .ok_or_else(|| self.end_of_input_diagnostic())?;
         let span = Some(token.span);
         match token.kind {
             TokenKind::Number(value) => Ok(Expr::Number(NumberLiteral { raw: value }, span)),

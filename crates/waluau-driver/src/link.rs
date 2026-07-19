@@ -34,7 +34,30 @@ const ENGINE_REQUIRE: &str = "waluau:engine";
 const VITEST_REQUIRE: &str = "waluau:vitest";
 
 /// Resolve the module graph rooted at `entry` and merge it into one program.
+/// Single-first-error contract retained for linker tests; the compile
+/// pipeline goes through [`link_program_collect`].
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn link_program(entry: &Path) -> Result<Program, Diagnostic> {
+    let (program, mut diagnostics) = link_program_collect(entry)?;
+    match diagnostics.len() {
+        0 => Ok(program),
+        1 => Err(diagnostics.remove(0)),
+        _ => Err(Diagnostic::new(
+            diagnostics
+                .iter()
+                .map(Diagnostic::render_for_playground)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )),
+    }
+}
+
+/// Like [`link_program`], but recovers from module parse errors: every parse
+/// diagnostic across the module graph is collected while traversal continues,
+/// and the merged (possibly partial) program is returned alongside them.
+/// Hard failures that prevent building a graph at all (unreadable entry,
+/// import cycles) remain `Err`.
+pub fn link_program_collect(entry: &Path) -> Result<(Program, Vec<Diagnostic>), Diagnostic> {
     let entry = entry.canonicalize().map_err(|error| {
         Diagnostic::new(format!(
             "cannot open input file `{}`: {error}",
@@ -62,7 +85,7 @@ pub fn link_program(entry: &Path) -> Result<Program, Diagnostic> {
     } else {
         None
     };
-    merge_with_builtins(
+    match merge_with_builtins(
         &loader.modules,
         entry_id,
         builtin_imports,
@@ -70,7 +93,18 @@ pub fn link_program(entry: &Path) -> Result<Program, Diagnostic> {
         dom_externs,
         tfjs_externs,
         vitest_externs,
-    )
+    ) {
+        Ok(program) => Ok((program, loader.diagnostics)),
+        // A recovered (partial) AST can break merging in misleading ways —
+        // e.g. a module whose `return` export failed to parse reports
+        // "module has no export". The parse errors are the real story, so
+        // surface them with the unmerged entry program instead.
+        Err(_) if !loader.diagnostics.is_empty() => Ok((
+            loader.modules[entry_id].program.clone(),
+            loader.diagnostics,
+        )),
+        Err(error) => Err(error),
+    }
 }
 
 struct LoadedModule {
@@ -89,6 +123,9 @@ struct Loader {
     requires_dom_externs: bool,
     requires_tfjs_externs: bool,
     requires_vitest_externs: bool,
+    /// Parse diagnostics collected across the module graph; traversal
+    /// continues past modules with syntax errors using their recovered ASTs.
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl Loader {
@@ -110,7 +147,11 @@ impl Loader {
         let source = std::fs::read_to_string(path).map_err(|error| {
             Diagnostic::new(format!("read module `{}`: {error}", path.display()))
         })?;
-        let program = waluau_parser::parse_with_path(&source, &path.to_string_lossy())?;
+        let waluau_parser::ParseOutcome {
+            program,
+            diagnostics,
+        } = waluau_parser::parse_with_recovery(&source, &path.to_string_lossy());
+        self.diagnostics.extend(diagnostics);
         let dir = path
             .parent()
             .map(Path::to_path_buf)

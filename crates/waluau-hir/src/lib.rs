@@ -20,7 +20,7 @@ use signatures::{
     FnSignature, GenericScheme, OverloadVariant, active_type_param_set,
     infer_function_expr_return_type, infer_top_level_function_return_type, inference_diagnostic,
 };
-use statements::{check_function, check_stmt};
+use statements::check_stmt;
 use statements::{checked_if_cast_scopes, narrowed_scopes, resolved_type_property_setter_name};
 
 #[derive(Clone)]

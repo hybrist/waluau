@@ -19,6 +19,26 @@ pub fn compile_source(source: &str) -> Result<Vec<u8>, Diagnostic> {
     // Add builtin declarations to standalone programs
     add_builtins_to_program(&mut program)?;
 
+    Ok(compile_program(program, "program.wasm", empty_asset_manifest())
+        .map_err(|mut errors| errors.remove(0))?
+        .wasm)
+}
+
+/// Like [`compile_source`], but reports every independently-attributable
+/// diagnostic: all parse errors, or (when parsing is clean) every failing
+/// function/statement from the type checker.
+pub fn compile_source_collect(source: &str) -> Result<Vec<u8>, Vec<Diagnostic>> {
+    let waluau_parser::ParseOutcome {
+        mut program,
+        diagnostics,
+    } = waluau_parser::parse_with_recovery(source, "source");
+    if !diagnostics.is_empty() {
+        return Err(diagnostics);
+    }
+
+    // Add builtin declarations to standalone programs
+    add_builtins_to_program(&mut program).map_err(|error| vec![error])?;
+
     Ok(compile_program(program, "program.wasm", empty_asset_manifest())?.wasm)
 }
 
@@ -49,7 +69,32 @@ fn compile_file_artifacts_with_assets(
     wasm_file_name: &str,
     assets: &BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>,
 ) -> Result<CompileArtifacts, Diagnostic> {
-    let program = link::link_program(path)?;
+    compile_file_artifacts_with_assets_collect(path, wasm_file_name, assets)
+        .map_err(|mut errors| errors.remove(0))
+}
+
+/// Like [`compile_file_artifacts`], but reports every diagnostic the pipeline
+/// can attribute independently: parse errors are collected across the whole
+/// module graph, and when parsing is clean the type checker reports each
+/// failing function/statement. Parse errors abort before type checking, since
+/// type errors derived from a partial AST would be misleading.
+pub fn compile_file_artifacts_collect(
+    path: &Path,
+    wasm_file_name: &str,
+) -> Result<CompileArtifacts, Vec<Diagnostic>> {
+    compile_file_artifacts_with_assets_collect(path, wasm_file_name, &BTreeMap::new())
+}
+
+fn compile_file_artifacts_with_assets_collect(
+    path: &Path,
+    wasm_file_name: &str,
+    assets: &BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>,
+) -> Result<CompileArtifacts, Vec<Diagnostic>> {
+    let (program, parse_diagnostics) =
+        link::link_program_collect(path).map_err(|error| vec![error])?;
+    if !parse_diagnostics.is_empty() {
+        return Err(parse_diagnostics);
+    }
     compile_program(program, wasm_file_name, assets)
 }
 
@@ -57,12 +102,16 @@ fn compile_program(
     program: waluau_ast::Program,
     wasm_file_name: &str,
     assets: &BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>,
-) -> Result<CompileArtifacts, Diagnostic> {
-    let mut typed_program = waluau_hir::type_check_and_infer(&program)
-        .map_err(|error| resolve_diagnostic_source(error, &program))?;
-    waluau_ast::resolve_symbols(&mut typed_program)?;
-    let ir = waluau_ir::build(&typed_program)?;
-    let emitted = waluau_codegen_wasm::emit(&ir)?;
+) -> Result<CompileArtifacts, Vec<Diagnostic>> {
+    let mut typed_program = waluau_hir::type_check_and_infer_collect(&program).map_err(|errors| {
+        errors
+            .into_iter()
+            .map(|error| resolve_diagnostic_source(error, &program))
+            .collect::<Vec<_>>()
+    })?;
+    waluau_ast::resolve_symbols(&mut typed_program).map_err(|error| vec![error])?;
+    let ir = waluau_ir::build(&typed_program).map_err(|error| vec![error])?;
+    let emitted = waluau_codegen_wasm::emit(&ir).map_err(|error| vec![error])?;
     let js = waluau_codegen_wasm::generate_js_glue_with_assets(wasm_file_name, &emitted, assets);
     Ok(CompileArtifacts {
         wasm: emitted.wasm,
@@ -83,43 +132,45 @@ fn resolve_diagnostic_source(error: Diagnostic, program: &waluau_ast::Program) -
     }
 }
 
-pub fn run() -> Result<(), Diagnostic> {
+pub fn run() -> Result<(), Vec<Diagnostic>> {
     run_with_args(std::env::args_os().skip(1))
 }
 
-pub fn run_with_args<I>(args: I) -> Result<(), Diagnostic>
+pub fn run_with_args<I>(args: I) -> Result<(), Vec<Diagnostic>>
 where
     I: IntoIterator<Item = OsString>,
 {
-    let options = parse_args(args)?;
+    let options = parse_args(args).map_err(|error| vec![error])?;
     if options.manifest.is_some() && !options.emit_js {
-        return Err(Diagnostic::new("--manifest requires --emit-js"));
+        return Err(vec![Diagnostic::new("--manifest requires --emit-js")]);
     }
     let asset_package = options
         .manifest
         .as_deref()
         .map(prepare_asset_package)
-        .transpose()?;
+        .transpose()
+        .map_err(|error| vec![error])?;
     let wasm_file_name = options
         .output
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| Diagnostic::new("output Wasm path must have a UTF-8 file name"))?;
+        .ok_or_else(|| vec![Diagnostic::new("output Wasm path must have a UTF-8 file name")])?;
     let assets = asset_package
         .as_ref()
         .map(|package| &package.generated)
         .unwrap_or_else(|| empty_asset_manifest());
-    let artifacts = compile_file_artifacts_with_assets(&options.input, wasm_file_name, assets)?;
+    let artifacts =
+        compile_file_artifacts_with_assets_collect(&options.input, wasm_file_name, assets)?;
     fs::write(&options.output, artifacts.wasm)
-        .map_err(|error| io_error("write output file", &options.output, error))?;
+        .map_err(|error| vec![io_error("write output file", &options.output, error)])?;
     if options.emit_js {
         let js_output = options.output.with_extension("js");
         fs::write(&js_output, artifacts.js)
-            .map_err(|error| io_error("write JavaScript glue", &js_output, error))?;
+            .map_err(|error| vec![io_error("write JavaScript glue", &js_output, error)])?;
     }
     if let Some(package) = asset_package {
         let output_dir = options.output.parent().unwrap_or_else(|| Path::new("."));
-        package.write_to(output_dir)?;
+        package.write_to(output_dir).map_err(|error| vec![error])?;
     }
     Ok(())
 }
@@ -975,6 +1026,57 @@ mod tests {
     }
 
     #[test]
+    fn cli_reports_type_errors_from_multiple_functions() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("multi.walu");
+        let source = concat!(
+            "function first(x: i32): bool\n",
+            "    return x\n",
+            "end\n",
+            "function second(x: i32): i32\n",
+            "    if x then\n",
+            "        return x\n",
+            "    end\n",
+            "    return x\n",
+            "end\n",
+        );
+        fs::write(&input_path, source).expect("fixture should write");
+
+        let errors = super::run_with_args([os(&input_path)]).expect_err("cli run should fail");
+        assert_eq!(errors.len(), 2, "one error per function: {errors:?}");
+    }
+
+    #[test]
+    fn cli_collects_parse_errors_across_required_modules() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let lib_path = tempdir.path().join("lib.walu");
+        let entry_path = tempdir.path().join("entry.walu");
+        // Both modules have a syntax error; both must be reported.
+        fs::write(
+            &lib_path,
+            "function broken_lib(): i32\n    return 1 +\nend\nreturn broken_lib\n",
+        )
+        .expect("fixture should write");
+        fs::write(
+            &entry_path,
+            "local lib = require(\"./lib\")\nlocal x: i32 =\n",
+        )
+        .expect("fixture should write");
+
+        let errors = super::run_with_args([os(&entry_path)]).expect_err("cli run should fail");
+        assert_eq!(errors.len(), 2, "one parse error per module: {errors:?}");
+        let rendered: Vec<String> = errors.iter().map(|error| error.render()).collect();
+        assert!(
+            rendered.iter().any(|line| line.contains("entry.walu")),
+            "entry module error missing: {rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|line| line.contains("lib.walu")),
+            "lib module error missing: {rendered:?}"
+        );
+    }
+
+    #[test]
     fn cli_writes_default_output_file() {
         let tempdir = tempdir().expect("tempdir should exist");
         let input_path = tempdir.path().join("add.walu");
@@ -1136,7 +1238,8 @@ mod tests {
         ])
         .expect_err("cli run should fail");
 
-        assert_eq!(error.to_string(), "return expects f64, got bool");
+        assert_eq!(error.len(), 1);
+        assert_eq!(error[0].to_string(), "return expects f64, got bool");
         assert!(
             !output_path.exists(),
             "failed compilation must not write output"
@@ -1164,8 +1267,9 @@ mod tests {
         ])
         .expect_err("cli run should fail");
 
+        assert_eq!(error.len(), 1);
         assert_eq!(
-            error.render(),
+            error[0].render(),
             format!(
                 "{}:4:12: cannot implicitly convert string to i32",
                 input_path
