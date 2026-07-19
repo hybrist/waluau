@@ -163,8 +163,17 @@ where
         .as_ref()
         .map(|package| &package.generated)
         .unwrap_or_else(|| empty_asset_manifest());
-    let artifacts =
-        compile_file_artifacts_with_assets_collect(&options.input, wasm_file_name, assets)?;
+    let mut session = session::CompilerSession::new();
+    let outcome = session.build_root_with_assets(&options.input, wasm_file_name, assets);
+    if let Some(report_path) = &options.report {
+        write_build_report(report_path, &outcome).map_err(|error| vec![error])?;
+    }
+    if !outcome.diagnostics.is_empty() {
+        return Err(outcome.diagnostics);
+    }
+    let artifacts = outcome
+        .artifacts
+        .expect("artifacts are present when no diagnostics were reported");
     fs::write(&options.output, artifacts.wasm)
         .map_err(|error| vec![io_error("write output file", &options.output, error)])?;
     if options.emit_js {
@@ -179,6 +188,44 @@ where
     Ok(())
 }
 
+/// Write the machine-readable build report consumed by build integrations
+/// (e.g. the vite plugin wires `involvedFiles` into its watcher).
+fn write_build_report(path: &Path, outcome: &session::BuildOutcome) -> Result<(), Diagnostic> {
+    let diagnostics: Vec<serde_json::Value> = outcome
+        .diagnostics
+        .iter()
+        .map(|diagnostic| {
+            serde_json::json!({
+                "message": diagnostic.to_string(),
+                "rendered": diagnostic.render(),
+                "file": diagnostic.file_path(),
+                "line": diagnostic.source_location().map(|(line, _)| line),
+                "column": diagnostic.source_location().map(|(_, column)| column),
+                "span": diagnostic.span().map(|span| serde_json::json!({
+                    "start": span.start,
+                    "end": span.end,
+                })),
+                "severity": match diagnostic.severity() {
+                    waluau_diagnostics::Severity::Error => "error",
+                    waluau_diagnostics::Severity::Warning => "warning",
+                },
+            })
+        })
+        .collect();
+    let report = serde_json::json!({
+        "success": outcome.artifacts.is_some(),
+        "involvedFiles": outcome
+            .involved_files
+            .iter()
+            .map(|file| file.display().to_string())
+            .collect::<Vec<_>>(),
+        "diagnostics": diagnostics,
+    });
+    let serialized = serde_json::to_string_pretty(&report)
+        .map_err(|error| Diagnostic::new(format!("serialize build report: {error}")))?;
+    fs::write(path, serialized).map_err(|error| io_error("write build report", path, error))
+}
+
 fn empty_asset_manifest() -> &'static BTreeMap<String, waluau_codegen_wasm::GeneratedAsset> {
     static EMPTY: std::sync::OnceLock<BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>> =
         std::sync::OnceLock::new();
@@ -191,12 +238,14 @@ struct CliOptions {
     output: PathBuf,
     emit_js: bool,
     manifest: Option<PathBuf>,
+    report: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy)]
 enum PendingPath {
     Output,
     Manifest,
+    Report,
 }
 
 fn parse_args<I>(args: I) -> Result<CliOptions, Diagnostic>
@@ -206,6 +255,7 @@ where
     let mut input = None;
     let mut output = None;
     let mut manifest = None;
+    let mut report = None;
     let mut pending_path = None;
     let mut emit_js = false;
 
@@ -214,6 +264,7 @@ where
             match pending {
                 PendingPath::Output => output = Some(PathBuf::from(arg)),
                 PendingPath::Manifest => manifest = Some(PathBuf::from(arg)),
+                PendingPath::Report => report = Some(PathBuf::from(arg)),
             }
             continue;
         }
@@ -221,16 +272,17 @@ where
         match arg.to_str() {
             Some("-o" | "--output") => pending_path = Some(PendingPath::Output),
             Some("--manifest") => pending_path = Some(PendingPath::Manifest),
+            Some("--report") => pending_path = Some(PendingPath::Report),
             Some("--emit-js") => emit_js = true,
             Some(flag) if flag.starts_with('-') => {
                 return Err(Diagnostic::new(format!(
-                    "unsupported flag `{flag}`\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--manifest <waluau.assets.json>]"
+                    "unsupported flag `{flag}`\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--manifest <waluau.assets.json>] [--report <report.json>]"
                 )));
             }
             _ if input.is_none() => input = Some(PathBuf::from(arg)),
             _ => {
                 return Err(Diagnostic::new(
-                    "too many positional arguments\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--manifest <waluau.assets.json>]",
+                    "too many positional arguments\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--manifest <waluau.assets.json>] [--report <report.json>]",
                 ));
             }
         }
@@ -240,15 +292,16 @@ where
         let flag = match pending {
             PendingPath::Output => "-o/--output",
             PendingPath::Manifest => "--manifest",
+            PendingPath::Report => "--report",
         };
         return Err(Diagnostic::new(format!(
-            "missing path after {flag}\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--manifest <waluau.assets.json>]"
+            "missing path after {flag}\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--manifest <waluau.assets.json>] [--report <report.json>]"
         )));
     }
 
     let input = input.ok_or_else(|| {
         Diagnostic::new(
-            "missing input path\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--manifest <waluau.assets.json>]",
+            "missing input path\nusage: waluau <input.walu> [-o <output.wasm>] [--emit-js] [--manifest <waluau.assets.json>] [--report <report.json>]",
         )
     })?;
     let output = output.unwrap_or_else(|| default_output_path(&input));
@@ -258,6 +311,7 @@ where
         output,
         emit_js,
         manifest,
+        report,
     })
 }
 
@@ -1078,6 +1132,49 @@ mod tests {
             rendered.iter().any(|line| line.contains("lib.walu")),
             "lib module error missing: {rendered:?}"
         );
+    }
+
+    #[test]
+    fn cli_report_lists_involved_files_and_diagnostics() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let lib_path = tempdir.path().join("lib.walu");
+        let entry_path = tempdir.path().join("entry.walu");
+        let report_path = tempdir.path().join("report.json");
+        fs::write(
+            &lib_path,
+            "function double(x: i32): i32\n    return x * 2\nend\nreturn double\n",
+        )
+        .expect("fixture should write");
+        fs::write(
+            &entry_path,
+            "local double = require(\"./lib\")\nfunction entry(): bool\n    return double(3)\nend\n",
+        )
+        .expect("fixture should write");
+
+        let _ = super::run_with_args([
+            os(&entry_path),
+            OsString::from("--report"),
+            os(&report_path),
+        ])
+        .expect_err("type error should fail the build");
+
+        let report: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&report_path).expect("report should exist"))
+                .expect("report should be valid JSON");
+        assert_eq!(report["success"], false);
+        let involved: Vec<String> = report["involvedFiles"]
+            .as_array()
+            .expect("involvedFiles array")
+            .iter()
+            .map(|value| value.as_str().expect("path string").to_string())
+            .collect();
+        assert_eq!(involved.len(), 2, "{involved:?}");
+        assert!(involved.iter().any(|path| path.ends_with("entry.walu")));
+        assert!(involved.iter().any(|path| path.ends_with("lib.walu")));
+        let diagnostics = report["diagnostics"].as_array().expect("diagnostics array");
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert_eq!(diagnostics[0]["severity"], "error");
+        assert!(diagnostics[0]["file"].as_str().is_some());
     }
 
     #[test]

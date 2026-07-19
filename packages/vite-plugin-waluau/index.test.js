@@ -57,7 +57,9 @@ test('passes a resolved asset manifest to the compiler', async () => {
 
     assert.deepEqual(watched, [entry, manifest, asset]);
     const args = JSON.parse(await readFile(invocation, 'utf8'));
-    assert.deepEqual(args.slice(-2), ['--manifest', manifest]);
+    const key = createHash('sha256').update(entry).digest('hex').slice(0, 12);
+    const report = join(root, '.waluau', key, 'report.json');
+    assert.deepEqual(args.slice(-4), ['--manifest', manifest, '--report', report]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -127,4 +129,53 @@ test('quotes strings as Lua source literals', () => {
   assert.equal(format('%q', '"ílo"\n\\'), '"\\"ílo\\"\\\n\\\\"');
   assert.equal(format('%q', '\0'), '"\\000"');
   assert.equal(format('%q', '\r'), '"\\r"');
+});
+
+test('watches report-involved files and rebuilds only affected entries', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
+  try {
+    const entryA = join(root, 'a.walu');
+    const entryB = join(root, 'b.walu');
+    const shared = join(root, 'shared.walu');
+    const counter = join(root, 'invocations.txt');
+    await writeFile(counter, '');
+    // Stub compiler: records which entry it was invoked for and writes a
+    // build report; a.walu's graph involves shared.walu, b.walu's does not.
+    const script = `
+      const fs = require('node:fs');
+      const args = process.argv.slice(1);
+      const entry = args[0];
+      fs.appendFileSync(${JSON.stringify(counter)}, entry + '\\n');
+      const involved = entry.endsWith('a.walu') ? [entry, ${JSON.stringify(shared)}] : [entry];
+      fs.writeFileSync(args[args.indexOf('--report') + 1], JSON.stringify({
+        success: true,
+        involvedFiles: involved,
+        diagnostics: [],
+      }));
+    `;
+    const plugin = waluau({ compiler: { command: process.execPath, args: ['-e', script] } });
+    plugin.configResolved({ root });
+
+    const watched = [];
+    const pluginContext = { addWatchFile: (file) => watched.push(file) };
+    await plugin.transform.call(pluginContext, '', entryA);
+    await plugin.transform.call(pluginContext, '', entryB);
+    assert(watched.includes(shared), `report-involved file should be watched: ${watched}`);
+
+    const invocationsBefore = (await readFile(counter, 'utf8')).trim().split('\n');
+    assert.equal(invocationsBefore.length, 2);
+
+    // Editing the shared module rebuilds only the entry whose graph uses it.
+    await plugin.handleHotUpdate({ file: shared, server: { ws: { send() {} } } });
+    const invocations = (await readFile(counter, 'utf8')).trim().split('\n');
+    assert.equal(invocations.length, 3, `unexpected rebuilds: ${invocations}`);
+    assert(invocations[2].endsWith('a.walu'));
+
+    // Editing an unrelated new file rebuilds nothing.
+    await plugin.handleHotUpdate({ file: join(root, 'unrelated-not-required.walu'), server: { ws: { send() {} } } });
+    const after = (await readFile(counter, 'utf8')).trim().split('\n');
+    assert.equal(after.length, 3, `unrelated file should not rebuild: ${after}`);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

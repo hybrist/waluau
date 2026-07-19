@@ -98,6 +98,15 @@ impl CompilerSession {
     /// all diagnostics and the involved files even when the build fails (so
     /// watch mode can still register the whole graph).
     pub fn build_root(&mut self, root: &Path, wasm_file_name: &str) -> BuildOutcome {
+        self.build_root_with_assets(root, wasm_file_name, crate::empty_asset_manifest())
+    }
+
+    pub(crate) fn build_root_with_assets(
+        &mut self,
+        root: &Path,
+        wasm_file_name: &str,
+        assets: &std::collections::BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>,
+    ) -> BuildOutcome {
         let outcome = match link::link_program_collect_with(root, &mut provider(self)) {
             Ok(outcome) => outcome,
             Err(error) => {
@@ -115,11 +124,7 @@ impl CompilerSession {
                 involved_files: outcome.involved_files,
             };
         }
-        match crate::compile_program(
-            outcome.program,
-            wasm_file_name,
-            crate::empty_asset_manifest(),
-        ) {
+        match crate::compile_program(outcome.program, wasm_file_name, assets) {
             Ok(artifacts) => BuildOutcome {
                 artifacts: Some(artifacts),
                 diagnostics: Vec::new(),

@@ -125,7 +125,15 @@ pub fn link_program_collect_with(
     } else {
         None
     };
-    let mut involved_files: Vec<PathBuf> = loader.by_path.keys().cloned().collect();
+    // Only real files belong in the involved set: engine modules register
+    // under `/@waluau/...` pseudo-paths (their sources are embedded in the
+    // compiler binary) and are useless to a file watcher.
+    let mut involved_files: Vec<PathBuf> = loader
+        .by_path
+        .keys()
+        .filter(|path| path.is_file())
+        .cloned()
+        .collect();
     involved_files.sort();
     match merge_with_builtins(
         &loader.modules,
