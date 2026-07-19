@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -87,6 +87,7 @@ html, body {
   margin: 0;
   overflow: hidden;
 }
+
 #walua-game {
   width: 100vw !important;
   height: 100vh !important;
@@ -104,11 +105,26 @@ html, body {
 `;
 }
 
+function importManifestAssets(code) {
+  const imports = [];
+  let assetIndex = 0;
+  const transformed = code.replace(
+    /(export const assetManifest = Object\.freeze\(\{[\s\S]*?\}\);)/,
+    (manifest) => manifest.replace(/url: ("(?:[^"\\]|\\.)*")/g, (_, encodedUrl) => {
+      const binding = `waluauAssetUrl${assetIndex++}`;
+      imports.push(`import ${binding} from ${JSON.stringify(`${JSON.parse(encodedUrl)}?url`)};`);
+      return `url: ${binding}`;
+    }),
+  );
+  return imports.length === 0 ? transformed : `${imports.join('\n')}\n${transformed}`;
+}
+
 /**
  * Compile imported `.walu` files into browser-hosted Waluau game modules.
  *
  * @param {{
  *   fullScreen?: boolean,
+ *   manifest?: string,
  *   workspaceRoot?: string,
  *   compiler?: { command: string, args?: string[] }
  * }} options
@@ -140,10 +156,13 @@ export function waluau(options = {}) {
   }
 
   function compilerCommand(entryPath, wasmOutput) {
+    const manifestArgs = options.manifest == null
+      ? []
+      : ['--manifest', resolve(appRoot, options.manifest)];
     if (options.compiler) {
       return {
         command: options.compiler.command,
-        args: [...(options.compiler.args ?? []), entryPath, '-o', wasmOutput, '--emit-js'],
+        args: [...(options.compiler.args ?? []), entryPath, '-o', wasmOutput, '--emit-js', ...manifestArgs],
         cwd: appRoot,
       };
     }
@@ -160,15 +179,29 @@ export function waluau(options = {}) {
           '-o',
           wasmOutput,
           '--emit-js',
+          ...manifestArgs,
         ],
         cwd: workspaceRoot,
       };
     }
     return {
       command: 'waluau',
-      args: [entryPath, '-o', wasmOutput, '--emit-js'],
+      args: [entryPath, '-o', wasmOutput, '--emit-js', ...manifestArgs],
       cwd: appRoot,
     };
+  }
+
+  function manifestFiles() {
+    if (options.manifest == null) return [];
+    const manifestPath = resolve(appRoot, options.manifest);
+    try {
+      const { assets = [] } = JSON.parse(readFileSync(manifestPath, 'utf8'));
+      return assets
+        .filter(({ path }) => typeof path === 'string')
+        .map(({ path }) => resolve(dirname(manifestPath), path));
+    } catch {
+      return [];
+    }
   }
 
   async function compileEntry(entryPath) {
@@ -202,6 +235,8 @@ export function waluau(options = {}) {
   }
 
   function watchesGameSource(file) {
+    if (options.manifest != null && file === resolve(appRoot, options.manifest)) return true;
+    if (manifestFiles().includes(file)) return true;
     return file.endsWith('.walu') && (
       isInside(appRoot, file) ||
       isInside(resolve(workspaceRoot, 'engine'), file) ||
@@ -221,7 +256,7 @@ export function waluau(options = {}) {
     async transform(code, id) {
       const file = id.split('?')[0];
       if (generatedModules.has(file)) {
-        return code.replace(
+        return importManifestAssets(code).replace(
           "new URL('./', import.meta.url)",
           "new URL(/* @vite-ignore */ './', import.meta.url)",
         );
@@ -229,6 +264,10 @@ export function waluau(options = {}) {
       if (id.includes('?') || !file.endsWith('.walu')) return null;
 
       this.addWatchFile(file);
+      if (options.manifest != null) {
+        this.addWatchFile(resolve(appRoot, options.manifest));
+        for (const asset of manifestFiles()) this.addWatchFile(asset);
+      }
       const artifacts = await compileEntry(file);
       // *.test.walu files register with vitest instead of booting a game.
       const isTestModule = file.endsWith('.test.walu');

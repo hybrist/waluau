@@ -1,76 +1,1039 @@
+-- Arcane Heist: Poker Tricks hosted by the 2D game engine. The rules remain
+-- host-independent; this module translates keyboard and mouse input into
+-- game actions.
+
 local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
+local resources = require("waluau:engine/resources")
+local audio = require("waluau:engine/audio")
+local game = require("./game")
+local render = require("./render")
 
-local VERTEX_SHADER <const>: string = [[
-attribute vec2 a_position;
-attribute vec4 a_color;
-attribute vec2 a_uv;
-varying vec2 v_uv;
-
-void main() {
-    gl_Position = vec4(a_position, 0.0, 1.0);
-    v_uv = a_uv;
+type AssetState = {
+    image_source: resources.Resource,
+    font_source: resources.Resource,
+    flip_sound: resources.Resource,
+    texture: graphics_module.Texture?,
+    font: graphics_module.Font?,
+    effects: render.EffectShaders,
+    image_finished: bool,
+    font_finished: bool,
+    sound_finished: bool,
+    audio_unlocked: bool,
+    shader_finished: bool,
+    fatal_shader_error: string,
+    fatal_audio_code: string,
+    fatal_audio_message: string,
+    error: string
 }
-]]
 
-local PIXEL_SHADER <const>: string = [[
-precision mediump float;
-varying vec2 v_uv;
-uniform float u_time;
-
-void main() {
-    vec3 violet = vec3(0.18, 0.05, 0.42);
-    vec3 coral = vec3(1.00, 0.28, 0.36);
-    vec3 cyan = vec3(0.12, 0.78, 0.92);
-    float wave = 0.5 + 0.5 * sin(u_time * 0.35 + v_uv.x * 3.2);
-    vec3 color = mix(violet, coral, smoothstep(0.0, 1.0, v_uv.x));
-    color = mix(color, cyan, v_uv.y * (0.22 + wave * 0.12));
-    gl_FragColor = vec4(color, 1.0);
+type Ui = {
+    hand_cursor: i32,
+    ward_cursor: i32,
+    cursor_area: i32,
+    play_picks: {i32},
+    swap_hand: {i32},
+    swap_wards: {i32},
+    modal: i32,
+    revealing: bool,
+    reveal_clock: f64,
+    -- Each relic's current parting offset, eased toward where the fan wants it.
+    fan_parts: {f64},
+    anims: {render.Anim},
+    anim_clock: f64,
+    anim_total: f64,
+    anim_kind: i32,
+    -- Every card scooped onto the spent pile so far, in landing order: the
+    -- pile is face up, so render shows the last entry as its top card.
+    -- Appended when the scoop is queued; render subtracts the legs still in
+    -- the air, so the pile only thickens — and its face only changes — as
+    -- cards land on it.
+    discards: {game.Card}
 }
-]]
 
-type State = { gradient: graphics_module.Shader? }
-local state: State = { gradient = nil }
+const MODAL_NONE: i32 = 0
+const MODAL_HISTORY: i32 = 1
+const MODAL_HELP: i32 = 2
+const MODAL_FINAL: i32 = 4
+-- Covers the staggered flips, the winner's pair flying into the ward row
+-- (render.walu's FLY_START + FLY_STAGGER + FLY_SECONDS = 1.87), and the
+-- halo's fade to full, before the first continue press advances play.
+const BOARD_REVEAL_SECONDS: f64 = 2.3
 
-local function load(): unit
+const ANIM_NONE: i32 = 0
+const ANIM_DEAL: i32 = 1
+const ANIM_SWAP: i32 = 2
+
+-- Mirrors the board anchor ids render.slot_x/slot_y understand.
+const SLOT_PLAYER: i32 = 0
+const SLOT_COMPUTER: i32 = 1
+const SLOT_MIDDLE: i32 = 2
+const SLOT_DECK: i32 = 3
+const SLOT_ASIDE: i32 = 4
+
+-- Mirrors render's "no relic holds focus" sentinel.
+const FAN_CLOSED: i32 = -1
+-- Exponential target-chasing response for the hand fan. It moves decisively
+-- off the cursor change, then settles softly into its exact endpoint.
+const FAN_EASE_RESPONSE: f64 = 14.0
+const FAN_EASE_SNAP: f64 = 0.001
+
+-- Mirrors the faces modes of render's animated cards.
+const FACES_DOWN: i32 = 0
+const FACES_UP: i32 = 1
+const FACES_FLIP_UP: i32 = 2
+const FACES_FLIP_DOWN: i32 = 3
+-- Mirrors render.walu's reveal flip timing so sound lands at the exact
+-- edge-on instant where the visible face changes.
+const REVEAL_FLIP_SECONDS: f64 = 0.55
+const REVEAL_FIRST_DELAY: f64 = 0.2
+const REVEAL_SECOND_DELAY: f64 = 0.585
+-- Start the scratch before the card reaches edge-on. Browser/device output
+-- latency otherwise makes a mathematically exact midpoint trigger feel late.
+const FLIP_SOUND_LEAD_SECONDS: f64 = 0.14
+const FLIP_SOUND_VOLUME: f64 = 0.62
+const FLIP_SOUND_PATH: string = "assets/card-flip.wav"
+
+-- Each journey gets a curve suited to its dramatic beat. These ids mirror
+-- render.walu's easing modes carried by render.Anim.
+const EASE_OUT_QUINT: i32 = 0
+const EASE_IN_CUBIC: i32 = 1
+const EASE_IN_OUT_CUBIC: i32 = 2
+const EASE_OUT_BACK: i32 = 3
+
+const DEAL_STEP: f64 = 0.1
+const DEAL_SECONDS: f64 = 0.38
+const SWAP_STEP: f64 = 0.12
+const SWAP_LEAVE_SECONDS: f64 = 0.4
+const SWAP_ASIDE_SECONDS: f64 = 0.4
+const SWAP_PLACE_SECONDS: f64 = 0.5
+-- Scooping the resolved formation off the table: the row's cards slide
+-- together into one pile, hold a beat, and the pile then carries face up to
+-- the spent stack, where it stays readable as the pile's new top.
+const SCOOP_GATHER_SECONDS: f64 = 0.3
+const SCOOP_HOLD_SECONDS: f64 = 0.12
+const SCOOP_CARRY_SECONDS: f64 = 0.4
+-- Closing the gaps a spent pair left: each surviving card slides one or two
+-- slots down while the scooped pile carries away, so the hand is settled
+-- before the replacement deals begin.
+const SHIFT_SECONDS: f64 = 0.45
+const SHIFT_STEP: f64 = 0.05
+
+function contains(picks: {i32}, value: i32): bool
+    for pick in picks do
+        if pick == value then return true end
+    end
+    return false
 end
 
-local function update(dt: f64, input: engine.Input): unit
-end
-
-local function draw(graphics: engine.Graphics, alpha: f64): unit
-    graphics:clear("#180d32")
-
-    if state.gradient == nil then
-        local created: graphics_module.ShaderResult = graphics:create_shader(VERTEX_SHADER, PIXEL_SHADER)
-        if not created.ok then
-            error("gradient shader failed (" .. created.error.code .. "): " .. created.error.message)
+function toggle(picks: {i32}, value: i32, limit: i32): unit
+    for index, pick in picks do
+        if pick == value then
+            table.remove(picks, index)
+            return
         end
-        state.gradient = created.shader
+    end
+    if #picks < limit then table.insert(picks, value) end
+end
+
+-- Carries the UI across a sorted hand. order[new_slot] = old_slot is the
+-- permutation game's sort reports; focus and pending picks name specific
+-- relics, so they follow their cards to the new slots, and each card keeps
+-- its parting offset so an opened fan re-eases from the shape the player was
+-- just looking at instead of snapping shut and reopening.
+function apply_hand_order(ui: Ui, order: {i32}): unit
+    local old_to_new: {i32} = { 0, 0, 0, 0, 0 }
+    for new_slot, old_slot in order do old_to_new[old_slot] = new_slot end
+    ui.hand_cursor = old_to_new[ui.hand_cursor]
+    for index, pick in ui.play_picks do ui.play_picks[index] = old_to_new[pick] end
+    for index, pick in ui.swap_hand do ui.swap_hand[index] = old_to_new[pick] end
+    local parts: {f64} = { 0.0, 0.0, 0.0, 0.0, 0.0 }
+    for new_slot, old_slot in order do parts[new_slot] = ui.fan_parts[old_slot] end
+    ui.fan_parts = parts
+end
+
+function clear_picks(ui: Ui): unit
+    ui.play_picks = {}
+    ui.swap_hand = {}
+    ui.swap_wards = {}
+    ui.cursor_area = 0
+    ui.hand_cursor = 0
+    ui.ward_cursor = 0
+end
+
+-- The relic the cursor holds, or FAN_CLOSED when none does. Focus only counts
+-- while the player can actually move it: a resolving breach and cards in flight
+-- both swallow input, so neither should leave the fan hanging open.
+function fan_focus(ui: Ui): i32
+    if ui.revealing or ui.anim_kind ~= ANIM_NONE then return FAN_CLOSED end
+    if ui.cursor_area ~= 0 then return FAN_CLOSED end
+    return ui.hand_cursor
+end
+
+-- Chases each relic's target with a quick ease-out. A small snap threshold
+-- guarantees the fan reaches the exact coordinates card flights target.
+function update_fan(ui: Ui, dt: f64): unit
+    local focus: i32 = fan_focus(ui)
+    local blend: f64 = FAN_EASE_RESPONSE * dt
+    if blend > 1.0 then blend = 1.0 end
+    for i = 0::i32, 4::i32 do
+        local delta: f64 = render.hand_part_target(i, focus) - ui.fan_parts[i]
+        if math.abs(delta) <= FAN_EASE_SNAP then ui.fan_parts[i] += delta
+        else ui.fan_parts[i] += delta * blend end
+    end
+end
+
+function begin_anims(ui: Ui, anims: {render.Anim}, total: f64, kind: i32): unit
+    ui.anims = anims
+    ui.anim_clock = 0.0
+    ui.anim_total = total
+    ui.anim_kind = kind
+end
+
+function finish_anims(ui: Ui): unit
+    ui.anims = {}
+    ui.anim_clock = 0.0
+    ui.anim_total = 0.0
+    ui.anim_kind = ANIM_NONE
+end
+
+function fatal_audio(assets: AssetState, code: string, message: string): unit
+    if #assets.fatal_audio_code > 0 then return end
+    assets.fatal_audio_code = code
+    assets.fatal_audio_message = message
+end
+
+function play_flip_sound(assets: AssetState): unit
+    if #assets.fatal_audio_code > 0 then return end
+    if assets.flip_sound.handle == 0 then
+        fatal_audio(assets, "invalid_handle", "decoded card flip sound has no resource handle")
+        return
+    end
+    if not audio.play(assets.flip_sound, false, FLIP_SOUND_VOLUME) then
+        fatal_audio(assets, "playback_failed", "the audio host refused to start decoded sound playback")
+    end
+end
+
+function crossed(previous: f64, current: f64, event_time: f64): bool
+    return previous < event_time and current >= event_time
+end
+
+function flip_sound_time(start: f64, duration: f64): f64
+    local event_time: f64 = start + duration * 0.5 - FLIP_SOUND_LEAD_SECONDS
+    if event_time < start then return start end
+    return event_time
+end
+
+-- Rendering stays side-effect free: update owns sound playback and compares
+-- the old/new clocks so every face transition produces exactly one effect.
+function play_anim_flip_sounds(assets: AssetState, anims: {render.Anim}, previous: f64, current: f64): unit
+    for anim in anims do
+        if anim.faces == FACES_FLIP_UP or anim.faces == FACES_FLIP_DOWN then
+            local event_time: f64 = flip_sound_time(anim.start, anim.duration)
+            if crossed(previous, current, event_time) then play_flip_sound(assets) end
+        end
+    end
+end
+
+function play_reveal_flip_sounds(assets: AssetState, previous: f64, current: f64): unit
+    local first: f64 = flip_sound_time(REVEAL_FIRST_DELAY, REVEAL_FLIP_SECONDS)
+    local second: f64 = flip_sound_time(REVEAL_SECOND_DELAY, REVEAL_FLIP_SECONDS)
+    if crossed(previous, current, first) then play_flip_sound(assets) end
+    if crossed(previous, current, second) then play_flip_sound(assets) end
+end
+
+-- How far a card sits from upright once it rests in a slot. Only the player's
+-- hand is fanned; every other anchor lays its cards square to the board.
+function slot_tilt(kind: i32, index: i32): f64
+    if kind == SLOT_PLAYER then return render.hand_angle(index, 0.0) end
+    return 0.0
+end
+
+-- Where a card sits *right now*, parting and all. This is only interesting for
+-- a relic leaving the hand: a feint commits straight out of a parted fan, so
+-- the relic has to set off from where the player last saw it. The other
+-- direction needs no such care — every flight outlasts the fan's ease, so a
+-- card still in the air is safe to aim at the closed-fan slot render.slot_x
+-- describes. Parting slides a relic along the arc, so its dip and tilt move
+-- with it and all three have to be read from the same offset.
+function slot_part(ui: Ui, kind: i32, index: i32): f64
+    if kind == SLOT_PLAYER then return ui.fan_parts[index] end
+    return 0.0
+end
+
+function slot_x_now(ui: Ui, kind: i32, index: i32): f64
+    if kind == SLOT_PLAYER then return render.hand_x(index, slot_part(ui, kind, index)) end
+    return render.slot_x(kind, index)
+end
+
+function slot_y_now(ui: Ui, kind: i32, index: i32): f64
+    if kind == SLOT_PLAYER then return render.hand_y(index, slot_part(ui, kind, index)) end
+    return render.slot_y(kind, index)
+end
+
+function slot_tilt_now(ui: Ui, kind: i32, index: i32): f64
+    if kind == SLOT_PLAYER then return render.hand_angle(index, slot_part(ui, kind, index)) end
+    return 0.0
+end
+
+-- One card dealt off the draw pile into a board slot; returns when it lands.
+-- A dealt card comes off the sealed deck, so it is never a card either side
+-- has already seen.
+function push_deal(anims: {render.Anim}, card: game.Card, kind: i32, index: i32, faces: i32, start: f64): f64
+    local finish: f64 = start + DEAL_SECONDS
+    table.insert(anims, {
+        card = card,
+        faces = faces,
+        known = false,
+        x0 = render.slot_x(SLOT_DECK, 0),
+        y0 = render.slot_y(SLOT_DECK, 0),
+        x1 = render.slot_x(kind, index),
+        y1 = render.slot_y(kind, index),
+        angle0 = 0.0,
+        angle1 = slot_tilt(kind, index),
+        easing = EASE_OUT_QUINT,
+        start = start,
+        duration = DEAL_SECONDS,
+        appear = start,
+        vanish = finish,
+        dest_kind = kind,
+        dest_index = index,
+    })
+    return finish
+end
+
+-- The opening deal: relics alternate to each side like a real deal, sealed
+-- for the Arch Mage and flipping face up for the player, then the three
+-- wards land in the middle.
+function queue_initial_deal(state: game.State, ui: Ui): unit
+    local anims: {render.Anim} = {}
+    local start: f64 = 0.0
+    local finish: f64 = 0.0
+    for i = 0::i32, 4::i32 do
+        finish = push_deal(anims, state.player_hand[i], SLOT_PLAYER, i, FACES_FLIP_UP, start)
+        start += DEAL_STEP
+        finish = push_deal(anims, state.computer_hand[i], SLOT_COMPUTER, i, FACES_DOWN, start)
+        start += DEAL_STEP
+    end
+    for i = 0::i32, 2::i32 do
+        finish = push_deal(anims, state.middle[i], SLOT_MIDDLE, i, FACES_FLIP_UP, start)
+        start += DEAL_STEP
+    end
+    begin_anims(ui, anims, finish, ANIM_DEAL)
+end
+
+-- One resolved card's exit, in two legs: it slides from where the reveal
+-- left it into a pile at the row's centre, holds while the rest gather, and
+-- the pile then carries face up to the spent stack. The carry legs all share
+-- one path, so the five cards read as a single scooped-up pile; only the
+-- carry leg is aimed at SLOT_ASIDE, which is what render counts when it
+-- decides how thick the spent stack draws.
+function push_scoop(anims: {render.Anim}, card: game.Card, from_x: f64, from_y: f64): unit
+    local gather_x: f64 = (render.row_left_x + render.row_right_x) * 0.5
+    local carry_start: f64 = SCOOP_GATHER_SECONDS + SCOOP_HOLD_SECONDS
+    table.insert(anims, {
+        card = card,
+        faces = FACES_UP,
+        known = false,
+        x0 = from_x,
+        y0 = from_y,
+        x1 = gather_x,
+        y1 = render.row_y,
+        angle0 = 0.0,
+        angle1 = 0.0,
+        easing = EASE_IN_CUBIC,
+        start = 0.0,
+        duration = SCOOP_GATHER_SECONDS,
+        appear = 0.0,
+        vanish = carry_start,
+        dest_kind = -1,
+        dest_index = 0,
+    })
+    table.insert(anims, {
+        card = card,
+        faces = FACES_UP,
+        known = false,
+        x0 = gather_x,
+        y0 = render.row_y,
+        x1 = render.slot_x(SLOT_ASIDE, 0),
+        y1 = render.slot_y(SLOT_ASIDE, 0),
+        angle0 = 0.0,
+        angle1 = 0.0,
+        easing = EASE_IN_OUT_CUBIC,
+        start = carry_start,
+        duration = SCOOP_CARRY_SECONDS,
+        appear = carry_start,
+        vanish = carry_start + SCOOP_CARRY_SECONDS,
+        dest_kind = SLOT_ASIDE,
+        dest_index = 0,
+    })
+end
+
+-- Replays the compaction the rules already applied to one hand: spending a
+-- pair removed two slots, so every surviving card above a spent slot slid
+-- down to close the gap. The reveal board drew the survivors in their
+-- original slots, so without this flight they would snap to their compacted
+-- slots the moment the live board takes over. Survivors keep their order;
+-- one whose slot number did not change never moved and needs no flight.
+function push_hand_shifts(anims: {render.Anim}, state: game.State, trick: game.Trick, kind: i32, start: f64): f64
+    local first: i32 = trick.player_first
+    local second: i32 = trick.player_second
+    local faces: i32 = FACES_UP
+    if kind == SLOT_COMPUTER then
+        first = trick.computer_first
+        second = trick.computer_second
+        faces = FACES_DOWN
+    end
+    local finish: f64 = start
+    local new_index: i32 = 0
+    for old_index = 0::i32, 4::i32 do
+        if old_index ~= first and old_index ~= second then
+            if old_index ~= new_index then
+                -- The live hand is already compacted, so the survivor and its
+                -- watched mark are read from the slot it is headed for.
+                local card: game.Card = state.player_hand[new_index]
+                local known: bool = state.player_known[new_index]
+                if kind == SLOT_COMPUTER then
+                    card = state.computer_hand[new_index]
+                    known = state.computer_known[new_index]
+                end
+                local depart: f64 = start + SHIFT_STEP * (new_index::f64)
+                local land: f64 = depart + SHIFT_SECONDS
+                if land > finish then finish = land end
+                table.insert(anims, {
+                    card = card,
+                    faces = faces,
+                    known = known,
+                    x0 = render.slot_x(kind, old_index),
+                    y0 = render.slot_y(kind, old_index),
+                    x1 = render.slot_x(kind, new_index),
+                    y1 = render.slot_y(kind, new_index),
+                    angle0 = slot_tilt(kind, old_index),
+                    angle1 = slot_tilt(kind, new_index),
+                    easing = EASE_IN_OUT_CUBIC,
+                    start = depart,
+                    duration = SHIFT_SECONDS,
+                    appear = 0.0,
+                    vanish = land,
+                    dest_kind = kind,
+                    dest_index = new_index,
+                })
+            end
+            new_index += 1
+        end
+    end
+    return finish
+end
+
+-- After a breach: the resolved formation is scooped off the table onto the
+-- spent pile and both hands slide down to close the gaps their spent pairs
+-- left, then both hands draw their two replacements (they land in the
+-- rightmost slots, matching how the hand re-packs) and the next wards deal.
+function queue_refill_deal(state: game.State, ui: Ui): unit
+    local anims: {render.Anim} = {}
+    -- The formation the reveal just showed: the three wards in their slots,
+    -- plus the winner's pair on the row's flanks. A stalemate never formed a
+    -- row, so only the wards are gathered and both spent pairs simply leave.
+    -- The ledger appends in the same order the scoop legs are pushed, so the
+    -- last card queued is both the last one drawn in flight and the face the
+    -- settled pile shows.
+    local trick: game.Trick = state.history[#state.history - 1]
+    for i = 0::i32, 2::i32 do
+        push_scoop(anims, trick.middle[i], render.slot_x(SLOT_MIDDLE, i), render.slot_y(SLOT_MIDDLE, i))
+        table.insert(ui.discards, trick.middle[i])
+    end
+    if trick.winner > 0 then
+        push_scoop(anims, trick.player_cards[0], render.row_left_x, render.row_y)
+        push_scoop(anims, trick.player_cards[1], render.row_right_x, render.row_y)
+        table.insert(ui.discards, trick.player_cards[0])
+        table.insert(ui.discards, trick.player_cards[1])
+    elseif trick.winner < 0 then
+        push_scoop(anims, trick.computer_cards[0], render.row_left_x, render.row_y)
+        push_scoop(anims, trick.computer_cards[1], render.row_right_x, render.row_y)
+        table.insert(ui.discards, trick.computer_cards[0])
+        table.insert(ui.discards, trick.computer_cards[1])
+    end
+    -- While the pile carries off, the survivors in both hands slide down into
+    -- their compacted slots, so the replacements land beside settled cards.
+    local finish: f64 = push_hand_shifts(anims, state, trick, SLOT_PLAYER, SCOOP_GATHER_SECONDS)
+    local computer_finish: f64 = push_hand_shifts(anims, state, trick, SLOT_COMPUTER, SCOOP_GATHER_SECONDS)
+    if computer_finish > finish then finish = computer_finish end
+    local start: f64 = SCOOP_GATHER_SECONDS + SCOOP_HOLD_SECONDS + SCOOP_CARRY_SECONDS + 0.1
+    for i = 3::i32, 4::i32 do
+        finish = push_deal(anims, state.computer_hand[i], SLOT_COMPUTER, i, FACES_DOWN, start)
+        start += DEAL_STEP
+        finish = push_deal(anims, state.player_hand[i], SLOT_PLAYER, i, FACES_FLIP_UP, start)
+        start += DEAL_STEP
+    end
+    for i = 0::i32, 2::i32 do
+        finish = push_deal(anims, state.middle[i], SLOT_MIDDLE, i, FACES_FLIP_UP, start)
+        start += DEAL_STEP
+    end
+    begin_anims(ui, anims, finish, ANIM_DEAL)
+end
+
+-- Replays the exchange the rules already applied, in three readable beats:
+-- the winner's relics rise out of the hand, the displaced wards slide aside,
+-- and both groups then travel to their final slots. Cards headed into the
+-- Arch Mage's hand seal face down mid-flight; cards leaving it reveal as
+-- they settle onto the board.
+function queue_swap_animation(state: game.State, ui: Ui): unit
+    local count: i32 = #state.swap_hand_indices
+    if state.swap_winner == 0 or count == 0 then return end
+    local player_won: bool = state.swap_winner > 0
+    local hand_kind: i32 = SLOT_PLAYER
+    if not player_won then hand_kind = SLOT_COMPUTER end
+    local last_stagger: f64 = SWAP_STEP * ((count - 1)::f64)
+    local aside_start: f64 = SWAP_LEAVE_SECONDS + last_stagger + 0.05
+    local place_start: f64 = aside_start + SWAP_ASIDE_SECONDS + last_stagger + 0.1
+    local anims: {render.Anim} = {}
+    local total: f64 = 0.0
+    for k = 0::i32, count - 1 do
+        local hand_index: i32 = state.swap_hand_indices[k]
+        local middle_index: i32 = state.swap_middle_indices[k]
+        -- After the exchange the middle holds the card that left the hand
+        -- and the hand holds the card that left the middle.
+        local outgoing: game.Card = state.middle[middle_index]
+        local incoming: game.Card = state.player_hand[hand_index]
+        if not player_won then incoming = state.computer_hand[hand_index] end
+        -- The relic rises from wherever the fan currently holds it, but the
+        -- ward coming back lands in the fan's settled slot.
+        local leave_x: f64 = slot_x_now(ui, hand_kind, hand_index)
+        local leave_y: f64 = slot_y_now(ui, hand_kind, hand_index)
+        local leave_angle: f64 = slot_tilt_now(ui, hand_kind, hand_index)
+        local land_x: f64 = render.slot_x(hand_kind, hand_index)
+        local land_y: f64 = render.slot_y(hand_kind, hand_index)
+        local land_angle: f64 = slot_tilt(hand_kind, hand_index)
+        local mid_x: f64 = render.slot_x(SLOT_MIDDLE, middle_index)
+        local mid_y: f64 = render.slot_y(SLOT_MIDDLE, middle_index)
+        local hover_x: f64 = leave_x + (mid_x - leave_x) * 0.35
+        local hover_y: f64 = leave_y - 45.0
+        if not player_won then hover_y = leave_y + 45.0 end
+        local stagger: f64 = SWAP_STEP * (k::f64)
+        local place: f64 = place_start + stagger
+        local placed: f64 = place + SWAP_PLACE_SECONDS
+        if placed > total then total = placed end
+        local leave_faces: i32 = FACES_UP
+        local settle_faces: i32 = FACES_UP
+        local return_faces: i32 = FACES_UP
+        if not player_won then
+            leave_faces = FACES_DOWN
+            settle_faces = FACES_FLIP_UP
+            return_faces = FACES_FLIP_DOWN
+        end
+        -- The winner's relic leaves the hand and hovers short of the wards,
+        -- straightening out of the fan's tilt as it goes. It flies unmarked:
+        -- the Arch Mage's relic is not the player's to read until it lands
+        -- face up on the wards a beat later, and by then it is a ward.
+        table.insert(anims, {
+            card = outgoing,
+            faces = leave_faces,
+            known = false,
+            x0 = leave_x,
+            y0 = leave_y,
+            x1 = hover_x,
+            y1 = hover_y,
+            angle0 = leave_angle,
+            angle1 = 0.0,
+            easing = EASE_OUT_BACK,
+            start = stagger,
+            duration = SWAP_LEAVE_SECONDS,
+            appear = 0.0,
+            vanish = place,
+            dest_kind = -1,
+            dest_index = 0,
+        })
+        -- ...then settles into the ward slot it bought.
+        table.insert(anims, {
+            card = outgoing,
+            faces = settle_faces,
+            known = false,
+            x0 = hover_x,
+            y0 = hover_y,
+            x1 = mid_x,
+            y1 = mid_y,
+            angle0 = 0.0,
+            angle1 = 0.0,
+            easing = EASE_OUT_BACK,
+            start = place,
+            duration = SWAP_PLACE_SECONDS,
+            appear = place,
+            vanish = placed,
+            dest_kind = SLOT_MIDDLE,
+            dest_index = middle_index,
+        })
+        -- The displaced ward is set aside at the board's edge, marked from the
+        -- moment it leaves: it spent the whole feint face up on the board, so
+        -- whichever hand takes it, the other side already knows it...
+        table.insert(anims, {
+            card = incoming,
+            faces = FACES_UP,
+            known = true,
+            x0 = mid_x,
+            y0 = mid_y,
+            x1 = render.slot_x(SLOT_ASIDE, k),
+            y1 = render.slot_y(SLOT_ASIDE, k),
+            angle0 = 0.0,
+            angle1 = 0.0,
+            easing = EASE_IN_OUT_CUBIC,
+            start = aside_start + stagger,
+            duration = SWAP_ASIDE_SECONDS,
+            appear = 0.0,
+            vanish = place,
+            dest_kind = -1,
+            dest_index = 0,
+        })
+        -- ...and finally joins the winning hand, completing the swap. Sealing
+        -- into the Arch Mage's row veils the card rather than hiding it, which
+        -- is the whole point of having watched it cross.
+        table.insert(anims, {
+            card = incoming,
+            faces = return_faces,
+            known = true,
+            x0 = render.slot_x(SLOT_ASIDE, k),
+            y0 = render.slot_y(SLOT_ASIDE, k),
+            x1 = land_x,
+            y1 = land_y,
+            angle0 = 0.0,
+            angle1 = land_angle,
+            easing = EASE_OUT_BACK,
+            start = place,
+            duration = SWAP_PLACE_SECONDS,
+            appear = place,
+            vanish = placed,
+            dest_kind = hand_kind,
+            dest_index = hand_index,
+        })
+    end
+    begin_anims(ui, anims, total, ANIM_SWAP)
+end
+
+function reset_run(state: game.State, ui: Ui): unit
+    state:reset()
+    clear_picks(ui)
+    ui.modal = MODAL_NONE
+    ui.revealing = false
+    ui.reveal_clock = 0.0
+    -- A restart deals onto a settled board, so the fan starts shut rather than
+    -- easing out of whatever the abandoned run left it parted around.
+    ui.fan_parts = { 0.0, 0.0, 0.0, 0.0, 0.0 }
+    ui.discards = {}
+    -- The deal waits behind the help modal; its clock starts once play does.
+    queue_initial_deal(state, ui)
+end
+
+function install_arcane_heist(): unit
+    local state: game.State = game.new()
+    local assets: AssetState = {
+        image_source = { handle = 0, kind = "image", path = "assets/card-back.svg" },
+        font_source = { handle = 0, kind = "font", path = "assets/Cinzel-Bold.ttf" },
+        flip_sound = { handle = 0, kind = "sound", path = FLIP_SOUND_PATH },
+        texture = nil,
+        font = nil,
+        effects = {
+            gold_shimmer = nil,
+            defeat_shroud = nil,
+            red_fire = nil,
+            blue_caustics = nil,
+            black_hole = nil,
+            green_growth = nil,
+        },
+        image_finished = false,
+        font_finished = false,
+        sound_finished = false,
+        audio_unlocked = false,
+        shader_finished = false,
+        fatal_shader_error = "",
+        fatal_audio_code = "",
+        fatal_audio_message = "",
+        error = "",
+    }
+    local ui: Ui = {
+        hand_cursor = 0,
+        ward_cursor = 0,
+        cursor_area = 0,
+        play_picks = {},
+        swap_hand = {},
+        swap_wards = {},
+        modal = MODAL_NONE,
+        revealing = false,
+        reveal_clock = 0.0,
+        fan_parts = { 0.0, 0.0, 0.0, 0.0, 0.0 },
+        anims = {},
+        anim_clock = 0.0,
+        anim_total = 0.0,
+        anim_kind = ANIM_NONE,
+        discards = {},
+    }
+
+    local function load_assets_async(): i32
+        local image_path: string = "assets/card-back.svg"
+        local image_result: resources.LoadResult = resources.await_image(image_path)
+        if image_result.ok then assets.image_source = image_result.resource
+        else
+            assets.image_finished = true
+            assets.error = image_result.error.code .. ": " .. image_result.error.message
+        end
+
+        local font_path: string = "assets/Cinzel-Bold.ttf"
+        local font_result: resources.LoadResult = resources.await_font(font_path, "Arcane Vault")
+        if font_result.ok then assets.font_source = font_result.resource
+        else
+            assets.font_finished = true
+            if #assets.error > 0 then assets.error ..= "; " end
+            assets.error ..= font_result.error.code .. ": " .. font_result.error.message
+        end
+
+        local sound_result: resources.LoadResult = audio.await_sound(FLIP_SOUND_PATH)
+        assets.sound_finished = true
+        if sound_result.ok then assets.flip_sound = sound_result.resource
+        else fatal_audio(assets, sound_result.error.code, sound_result.error.message) end
+        return 0
     end
 
-    local maybe_shader: graphics_module.Shader? = state.gradient
-    if maybe_shader == nil then return end
-    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
-    graphics:use_shader(shader)
-    graphics:set_color("#ffffff")
-    graphics:fill_rectangle(0.0, 0.0, 100.0, 100.0)
+    local function load(): unit
+        -- No reseed: the host seeds math.random per instance, so each run
+        -- deals a different shuffle. sim.walu pins its own seeds for tests.
+        reset_run(state, ui)
+        local loader: thread = coroutine.create(load_assets_async)
+        coroutine.resume(loader)
+    end
+
+    local function update(dt: f64, input: engine.Input): unit
+        if #assets.fatal_audio_code > 0 or not assets.sound_finished or not assets.audio_unlocked then return end
+        -- The fan chases the cursor whatever else is happening: a modal hides
+        -- it, but it should have settled by the time the modal lifts.
+        update_fan(ui, dt)
+        -- Turns are discrete; the clocks only drive the board reveal flip
+        -- and the card-motion animations (which pause under any modal).
+        if ui.revealing then
+            local previous: f64 = ui.reveal_clock
+            ui.reveal_clock += dt
+            if ui.reveal_clock >= BOARD_REVEAL_SECONDS then
+                ui.reveal_clock = BOARD_REVEAL_SECONDS
+            end
+            play_reveal_flip_sounds(assets, previous, ui.reveal_clock)
+        elseif ui.anim_kind ~= ANIM_NONE and ui.modal == MODAL_NONE then
+            local previous: f64 = ui.anim_clock
+            ui.anim_clock += dt
+            play_anim_flip_sounds(assets, ui.anims, previous, ui.anim_clock)
+            if ui.anim_clock >= ui.anim_total then
+                finish_anims(ui)
+            end
+        end
+    end
+
+    local function draw(graphics: engine.Graphics, alpha: f64): unit
+        if not assets.shader_finished then
+            assets.shader_finished = true
+            local shimmer_result: graphics_module.ShaderResult = render.create_gold_shimmer_shader(graphics)
+            if shimmer_result.ok then assets.effects.gold_shimmer = shimmer_result.shader
+            else
+                if #assets.error > 0 then assets.error ..= "; " end
+                assets.error ..= "gold shimmer " .. shimmer_result.error.code .. ": " .. shimmer_result.error.message
+            end
+            local defeat_result: graphics_module.ShaderResult = render.create_defeat_shroud_shader(graphics)
+            if defeat_result.ok then assets.effects.defeat_shroud = defeat_result.shader
+            else
+                assets.fatal_shader_error = "defeat shroud " .. defeat_result.error.code .. ": " .. defeat_result.error.message
+            end
+            local red_result: graphics_module.ShaderResult = render.create_red_fire_shader(graphics)
+            if red_result.ok then assets.effects.red_fire = red_result.shader
+            else
+                if #assets.error > 0 then assets.error ..= "; " end
+                assets.error ..= "red " .. red_result.error.code .. ": " .. red_result.error.message
+            end
+            local blue_result: graphics_module.ShaderResult = render.create_blue_caustics_shader(graphics)
+            if blue_result.ok then assets.effects.blue_caustics = blue_result.shader
+            else
+                if #assets.error > 0 then assets.error ..= "; " end
+                assets.error ..= "blue " .. blue_result.error.code .. ": " .. blue_result.error.message
+            end
+            local black_result: graphics_module.ShaderResult = render.create_black_hole_shader(graphics)
+            if black_result.ok then assets.effects.black_hole = black_result.shader
+            else
+                if #assets.error > 0 then assets.error ..= "; " end
+                assets.error ..= "black " .. black_result.error.code .. ": " .. black_result.error.message
+            end
+            local green_result: graphics_module.ShaderResult = render.create_green_growth_shader(graphics)
+            if green_result.ok then assets.effects.green_growth = green_result.shader
+            else
+                if #assets.error > 0 then assets.error ..= "; " end
+                assets.error ..= "green " .. green_result.error.code .. ": " .. green_result.error.message
+            end
+        end
+        if not assets.image_finished and assets.image_source.handle ~= 0 then
+            local source: resources.Resource = assets.image_source
+            local result: graphics_module.TextureResult = graphics:texture_from_resource(source)
+            resources.release(source)
+            assets.image_source = { handle = 0, kind = "image", path = source.path }
+            assets.image_finished = true
+            if result.ok then assets.texture = result.texture
+            else assets.error = result.error.code .. ": " .. result.error.message end
+        end
+        if not assets.font_finished and assets.font_source.handle ~= 0 then
+            local source: resources.Resource = assets.font_source
+            local result: graphics_module.FontResult = graphics:font_from_resource(source)
+            resources.release(source)
+            assets.font_source = { handle = 0, kind = "font", path = source.path }
+            assets.font_finished = true
+            if result.ok then assets.font = result.font
+            else
+                if #assets.error > 0 then assets.error ..= "; " end
+                assets.error ..= result.error.code .. ": " .. result.error.message
+            end
+        end
+        local maybe_gpu_font: graphics_module.Font? = assets.font
+        local custom_font_ready: bool = false
+        if maybe_gpu_font ~= nil then
+            custom_font_ready = graphics:set_font_resource(maybe_gpu_font::graphics_module.Font, 14.0)
+        end
+        if not custom_font_ready then graphics:use_builtin_font() end
+        if #assets.fatal_shader_error > 0 then
+            render.draw_shader_error(graphics, assets.fatal_shader_error)
+            return
+        end
+        if #assets.fatal_audio_code > 0 then
+            render.draw_audio_error(
+                graphics, FLIP_SOUND_PATH, assets.fatal_audio_code, assets.fatal_audio_message)
+            return
+        end
+        render.draw(graphics, assets.effects, state, fan_focus(ui), ui.fan_parts, ui.ward_cursor, ui.cursor_area,
+            ui.play_picks, ui.swap_hand, ui.swap_wards, ui.modal, ui.revealing, ui.reveal_clock,
+            ui.anims, ui.anim_clock, assets.texture, ui.discards)
+        if not assets.audio_unlocked then
+            render.draw_audio_prompt(graphics, assets.sound_finished)
+        end
+    end
+
+    local function close_modal(): unit
+        if ui.modal ~= MODAL_FINAL then
+            ui.modal = MODAL_NONE
+        end
+    end
+
+    local function submit_swap(): unit
+        if #ui.swap_hand == 0 and #ui.swap_wards == 0 then
+            state:resolve_swap({}, {})
+            clear_picks(ui)
+            queue_swap_animation(state, ui)
+            return
+        end
+        if #ui.swap_hand ~= #ui.swap_wards or #ui.swap_hand > state.player_points then return end
+        state:resolve_swap(ui.swap_hand, ui.swap_wards)
+        clear_picks(ui)
+        queue_swap_animation(state, ui)
+    end
+
+    local function submit_breach(): unit
+        if #ui.play_picks ~= 2 then
+            return
+        end
+        state:play(ui.play_picks[0], ui.play_picks[1])
+        clear_picks(ui)
+        ui.modal = MODAL_NONE
+        ui.revealing = true
+        ui.reveal_clock = 0.0
+    end
+
+    local function keypressed(key: string): unit
+        if #assets.fatal_audio_code > 0 then return end
+        if not assets.audio_unlocked then
+            if not audio.unlock() then
+                fatal_audio(assets, "unavailable", "the audio host could not unlock its playback device")
+                return
+            end
+            assets.audio_unlocked = true
+        end
+        if ui.revealing then
+            -- The first press completes the animation; a later press advances.
+            if key == "Enter" or key == " " or key == "Escape" then
+                if ui.reveal_clock < BOARD_REVEAL_SECONDS then
+                    ui.reveal_clock = BOARD_REVEAL_SECONDS
+                else
+                    ui.revealing = false
+                    if state.finished then
+                        ui.modal = MODAL_FINAL
+                    else
+                        queue_refill_deal(state, ui)
+                    end
+                end
+            elseif key == "r" or key == "R" then
+                reset_run(state, ui)
+            end
+            return
+        end
+        if key == "r" or key == "R" then
+            reset_run(state, ui)
+            return
+        elseif key == "h" or key == "H" then
+            if ui.modal == MODAL_HISTORY then ui.modal = MODAL_NONE else ui.modal = MODAL_HISTORY end
+            return
+        elseif key == "?" or key == "/" then
+            if ui.modal == MODAL_HELP then ui.modal = MODAL_NONE else ui.modal = MODAL_HELP end
+            return
+        end
+
+        if ui.modal ~= MODAL_NONE then
+            if key == "Escape" or key == "Enter" or key == " " then close_modal() end
+            return
+        end
+
+        -- Deals and swaps replay state that already changed; a press skips
+        -- straight to the settled board instead of acting on hidden cards.
+        if ui.anim_kind ~= ANIM_NONE then
+            if key == "Enter" or key == " " or key == "Escape" then finish_anims(ui) end
+            return
+        end
+
+        if key == "ArrowLeft" or key == "a" then
+            if ui.cursor_area == 0 then
+                ui.hand_cursor -= 1
+                if ui.hand_cursor < 0 then ui.hand_cursor = 4 end
+            else
+                ui.ward_cursor -= 1
+                if ui.ward_cursor < 0 then ui.ward_cursor = 2 end
+            end
+        elseif key == "ArrowRight" or key == "d" then
+            if ui.cursor_area == 0 then
+                ui.hand_cursor = (ui.hand_cursor + 1) % 5
+            else
+                ui.ward_cursor = (ui.ward_cursor + 1) % 3
+            end
+        elseif state.swap_open and (key == "ArrowUp" or key == "ArrowDown" or key == "w" or key == "s") then
+            ui.cursor_area = 1 - ui.cursor_area
+        elseif key == " " then
+            if state.swap_open then
+                if ui.cursor_area == 0 then toggle(ui.swap_hand, ui.hand_cursor, 3)
+                else toggle(ui.swap_wards, ui.ward_cursor, 3) end
+            else
+                toggle(ui.play_picks, ui.hand_cursor, 2)
+            end
+        elseif key == "c" or key == "C" then
+            apply_hand_order(ui, state:sort_player_hand(true))
+        elseif key == "v" or key == "V" then
+            apply_hand_order(ui, state:sort_player_hand(false))
+        elseif key == "p" or key == "P" then
+            if state.swap_open then
+                ui.swap_hand = {}
+                ui.swap_wards = {}
+                submit_swap()
+            end
+        elseif key == "Enter" then
+            if state.swap_open then submit_swap() else submit_breach() end
+        end
+    end
+
+    -- Hovering steers the same cursor the arrow keys move, so the fan parts
+    -- around the relic under the pointer and clicks always act on the card
+    -- the highlight already shows. Hovering dead space leaves the cursor
+    -- where it was, exactly like the keyboard between presses.
+    local function mousemoved(x: f64, y: f64, dx: f64, dy: f64): unit
+        if #assets.fatal_audio_code > 0 or not assets.audio_unlocked then return end
+        if ui.modal ~= MODAL_NONE or ui.revealing or ui.anim_kind ~= ANIM_NONE then return end
+        local hand: i32 = render.hit_hand(x, y, ui.fan_parts)
+        if hand >= 0 then
+            ui.cursor_area = 0
+            ui.hand_cursor = hand
+            return
+        end
+        if state.swap_open then
+            local ward: i32 = render.hit_ward(x, y)
+            if ward >= 0 then
+                ui.cursor_area = 1
+                ui.ward_cursor = ward
+            end
+        end
+    end
+
+    -- The left button walks the same gates as keypressed: unlock audio,
+    -- advance a reveal, close a modal, skip a running animation, and only
+    -- then read the board. On the live board a relic or ward click binds it
+    -- (Space), and the capsules commit or pass (Enter / P).
+    local function mousepressed(x: f64, y: f64, button: i32): unit
+        if button ~= 1 then return end
+        if #assets.fatal_audio_code > 0 then return end
+        if not assets.audio_unlocked then
+            if not audio.unlock() then
+                fatal_audio(assets, "unavailable", "the audio host could not unlock its playback device")
+                return
+            end
+            assets.audio_unlocked = true
+        end
+        if ui.revealing then
+            if ui.reveal_clock < BOARD_REVEAL_SECONDS then
+                ui.reveal_clock = BOARD_REVEAL_SECONDS
+            else
+                ui.revealing = false
+                if state.finished then
+                    ui.modal = MODAL_FINAL
+                else
+                    queue_refill_deal(state, ui)
+                end
+            end
+            return
+        end
+        if ui.modal == MODAL_FINAL then
+            reset_run(state, ui)
+            return
+        end
+        if ui.modal ~= MODAL_NONE then
+            close_modal()
+            return
+        end
+        if ui.anim_kind ~= ANIM_NONE then
+            finish_anims(ui)
+            return
+        end
+        if render.hit_help(x, y) then
+            ui.modal = MODAL_HELP
+            return
+        end
+        local hand: i32 = render.hit_hand(x, y, ui.fan_parts)
+        if hand >= 0 then
+            ui.cursor_area = 0
+            ui.hand_cursor = hand
+            if state.swap_open then toggle(ui.swap_hand, hand, 3)
+            else toggle(ui.play_picks, hand, 2) end
+            return
+        end
+        if state.swap_open then
+            local ward: i32 = render.hit_ward(x, y)
+            if ward >= 0 then
+                ui.cursor_area = 1
+                ui.ward_cursor = ward
+                toggle(ui.swap_wards, ward, 3)
+                return
+            end
+            if render.hit_pass(x, y) then
+                ui.swap_hand = {}
+                ui.swap_wards = {}
+                submit_swap()
+                return
+            end
+        end
+        if render.hit_commit(x, y, state.swap_open) then
+            if state.swap_open then submit_swap() else submit_breach() end
+        end
+    end
+
+    engine.start({
+        title = "Arcane Heist",
+        width = 960,
+        height = 600,
+        update_hz = 60.0,
+        max_frame_seconds = 0.25,
+        background = "#09090b",
+    }, {
+        load = load,
+        update = update,
+        draw = draw,
+        keypressed = keypressed,
+        keyreleased = nil,
+        mousepressed = mousepressed,
+        mousereleased = nil,
+        mousemoved = mousemoved,
+    })
 end
 
-local function keypressed(key: string): unit
-end
-
-engine.start({
-    title = "Ante",
-    width = 100,
-    height = 100,
-    update_hz = 60.0,
-    max_frame_seconds = 0.25,
-    background = "#180d32",
-}, {
-    load = load,
-    update = update,
-    draw = draw,
-    keypressed = keypressed,
-    keyreleased = nil,
-})
+install_arcane_heist()
