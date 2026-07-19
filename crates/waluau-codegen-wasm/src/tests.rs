@@ -1749,6 +1749,7 @@ fn emits_valid_wasm_for_tagged_union_pattern_match_binding() {
 fn emits_valid_wasm_for_varargs_and_table_pack_conformance_fixtures() {
     for source in [
         include_str!("../../../conformance/varargs_forwarding.walu"),
+        include_str!("../../../conformance/varargs_return_spread.walu"),
         include_str!("../../../conformance/varargs_table_literal.walu"),
         include_str!("../../../conformance/table_pack.walu"),
         include_str!("../../../conformance/select_n.walu"),

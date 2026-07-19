@@ -58,7 +58,7 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
             .map(|param| param.ty.clone())
             .collect::<Vec<_>>();
         if function.vararg {
-            param_types.push(Type::Array(Box::new(Type::Unknown)));
+            param_types.push(Type::Variadic(Box::new(Type::Unknown)));
         }
         let sig = (param_types, return_type);
         signatures.insert(symbol_id, sig.clone());
@@ -273,6 +273,7 @@ fn collect_type_variant_tags(ty: &Type, tag_ids: &mut BTreeMap<String, i32>) {
         }
         Type::Opaque { ty, .. }
         | Type::Array(ty)
+        | Type::Variadic(ty)
         | Type::Nullable(ty)
         | Type::ExternSubtype(ty) => {
             collect_type_variant_tags(ty, tag_ids)
@@ -845,6 +846,7 @@ fn erase_type_opaque_types(ty: &Type) -> Type {
         Type::ExternSubtype(_) => Type::Extern,
         Type::Nullable(inner) => Type::Nullable(Box::new(erase_type_opaque_types(inner))),
         Type::Array(inner) => Type::Array(Box::new(erase_type_opaque_types(inner))),
+        Type::Variadic(inner) => Type::Variadic(Box::new(erase_type_opaque_types(inner))),
         Type::Multi(types) => Type::Multi(types.iter().map(erase_type_opaque_types).collect()),
         Type::Function {
             params,
@@ -906,7 +908,10 @@ pub(crate) fn build_function(
                 .map(|param| (param.name.clone(), param.ty.clone()))
                 .collect::<Vec<_>>();
             if function.vararg {
-                params.push(("...".to_string(), Type::Array(Box::new(Type::Unknown))));
+                params.push((
+                    "...".to_string(),
+                    Type::Variadic(Box::new(Type::Unknown)),
+                ));
             }
             params
         },
@@ -1688,18 +1693,14 @@ impl Builder<'_> {
         env: &HashMap<SymbolId, ValueId>,
         types: &HashMap<SymbolId, Type>,
     ) -> Result<Vec<ValueId>, Diagnostic> {
-        if !call_arity_matches(param_types, args.len()) {
+        let mut lowered = self.lower_expr_list(args, env, types, Some(param_types))?;
+        if !call_arity_matches(param_types, lowered.len()) {
             return Err(Diagnostic::new(format!(
                 "function expects {} arguments, got {}",
                 param_types.len(),
-                args.len()
+                lowered.len()
             )));
         }
-        let mut lowered = args
-            .iter()
-            .zip(param_types.iter())
-            .map(|(arg, param_ty)| self.lower_expr(arg, env, types, Some(param_ty.clone())))
-            .collect::<Result<Vec<_>, _>>()?;
         for param_ty in &param_types[lowered.len()..] {
             lowered.push(self.emit_omitted_nullable_arg(param_ty)?);
         }
@@ -4036,7 +4037,7 @@ impl Builder<'_> {
                             "numeric literal is not assignable to {name}",
                         )));
                     }
-                    Type::Array(_) => {
+                    Type::Array(_) | Type::Variadic(_) => {
                         return Err(Diagnostic::new(
                             "numeric literal is not assignable to array",
                         ));
@@ -4134,7 +4135,7 @@ impl Builder<'_> {
                 let value = self
                     .vararg_value
                     .ok_or_else(|| Diagnostic::new("'...' used outside a vararg function"))?;
-                self.coerce_value(value, Type::Array(Box::new(Type::Unknown)), expected)?
+                self.coerce_value(value, Type::Variadic(Box::new(Type::Unknown)), expected)?
             }
             Expr::Name(name, symbol_id, _) => {
                 let symbol_id = symbol_id.expect("symbol_id should be resolved");
@@ -4382,7 +4383,7 @@ impl Builder<'_> {
                                     "unary '-' requires a numeric operand",
                                 ));
                             }
-                            Type::Array(_) | Type::TypedArray(_) => {
+                            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -4846,7 +4847,7 @@ impl Builder<'_> {
                     if let Some((param_types, _)) = self.signatures.get(symbol_id).cloned() {
                         let args = if matches!(
                             param_types.last(),
-                            Some(Type::Array(element)) if element.as_ref() == &Type::Unknown
+                            Some(Type::Variadic(element)) if element.as_ref() == &Type::Unknown
                         ) {
                             self.shape_vararg_call_args(&param_types, args, env, types)?
                         } else {
@@ -4967,32 +4968,68 @@ impl Builder<'_> {
                 let element_ty = array_ty
                     .element_type()
                     .expect("array literal must have element type");
-                if matches!(elements.last(), Some(Expr::Vararg(_))) {
-                    // `{a, b, ...}` splats the caller's varargs after the
-                    // explicit prefix; `{...}` alone is a fresh copy.
-                    let varargs = self
-                        .vararg_value
-                        .ok_or_else(|| Diagnostic::new("'...' used outside a vararg function"))?;
-                    let prefix = elements[..elements.len() - 1]
+                let trailing_ty = elements
+                    .last()
+                    .map(|element| self.infer_expr_type(element, types, None))
+                    .transpose()?;
+                let trailing_pack = trailing_ty.as_ref().is_some_and(|ty| match ty {
+                    Type::Variadic(_) => true,
+                    Type::Multi(parts) => {
+                        matches!(parts.last(), Some(Type::Variadic(_)))
+                    }
+                    _ => false,
+                });
+                if trailing_pack {
+                    // A trailing variadic expression splats after the explicit
+                    // prefix; the resulting table is always a fresh copy.
+                    let mut prefix = elements[..elements.len() - 1]
                         .iter()
                         .map(|element| self.lower_expr(element, env, types, Some(Type::Unknown)))
                         .collect::<Result<Vec<_>, _>>()?;
-                    let value = if prefix.is_empty() {
-                        let zero = self.emit_i32_const(0);
-                        self.emit(Instruction::ArraySlice {
-                            array: varargs,
-                            start: zero,
-                            element_ty: Type::Unknown,
-                        })
-                    } else {
-                        let dest = self.emit(Instruction::ArrayNew {
-                            element_ty: Type::Unknown,
-                            elements: prefix,
-                        });
-                        self.emit_array_append_all(dest, varargs);
-                        dest
+                    let tail_expr = elements.last().expect("pack requires trailing expression");
+                    let pack = match trailing_ty.expect("checked above") {
+                        Type::Variadic(element_ty) => self.lower_expr(
+                            tail_expr,
+                            env,
+                            types,
+                            Some(Type::Variadic(element_ty)),
+                        )?,
+                        Type::Multi(parts) => {
+                            let tuple = self.lower_expr(tail_expr, env, types, None)?;
+                            let last_index = parts.len() - 1;
+                            for (index, part) in parts[..last_index].iter().enumerate() {
+                                let value = self.emit(Instruction::MultiGet {
+                                    value: tuple,
+                                    index,
+                                    ty: part.clone(),
+                                });
+                                prefix.push(self.coerce_value(
+                                    value,
+                                    part.clone(),
+                                    Some(Type::Unknown),
+                                )?);
+                            }
+                            let Type::Variadic(element_ty) = &parts[last_index] else {
+                                unreachable!("checked trailing pack above")
+                            };
+                            self.emit(Instruction::MultiGet {
+                                value: tuple,
+                                index: last_index,
+                                ty: Type::Variadic(element_ty.clone()),
+                            })
+                        }
+                        _ => unreachable!("checked trailing pack above"),
                     };
-                    return self.coerce_value(value, array_ty, expected);
+                    let value = self.emit(Instruction::ArrayNew {
+                        element_ty: Type::Unknown,
+                        elements: prefix,
+                    });
+                    self.emit_array_append_all(value, pack);
+                    return self.coerce_value(
+                        value,
+                        Type::Array(Box::new(Type::Unknown)),
+                        expected,
+                    );
                 }
                 let lowered = elements
                     .iter()
@@ -5161,8 +5198,26 @@ impl Builder<'_> {
         let mut out = Vec::new();
         for expr in exprs {
             let slot_expected = expected.and_then(|types| types.get(out.len()).cloned());
+            if let (
+                Expr::Call { callee, args, .. },
+                Some(expected_ty),
+            ) = (expr, slot_expected.as_ref())
+            {
+                if let (Expr::Name(tag, None, _), [_]) = (callee.as_ref(), args.as_slice()) {
+                    if expected_ty.tagged_variant(tag).is_some() {
+                        out.push(self.lower_expr(
+                            expr,
+                            env,
+                            types,
+                            Some(expected_ty.clone()),
+                        )?);
+                        continue;
+                    }
+                }
+            }
             let remaining_expected = expected
-                .and_then(|types| (!types[out.len()..].is_empty()).then(|| &types[out.len()..]));
+                .and_then(|types| types.get(out.len()..))
+                .filter(|types| !types.is_empty());
             let ty = if let Expr::Call { callee, .. } = expr {
                 let expands_multi = builtin_name(callee.as_ref()).is_some_and(|name| {
                     name == COROUTINE_RESUME
@@ -5172,12 +5227,16 @@ impl Builder<'_> {
                         || name == STRING_GSUB
                         || name == STRING_BYTE
                 });
+                let is_potential_constructor =
+                    matches!(callee.as_ref(), Expr::Name(_, None, _));
                 if expands_multi {
                     self.infer_expr_type(
                         expr,
                         types,
                         remaining_expected.map(|types| Type::Multi(types.to_vec())),
                     )?
+                } else if is_potential_constructor {
+                    self.infer_expr_type(expr, types, slot_expected.clone())?
                 } else {
                     self.infer_expr_type(expr, types, None)?
                 }
@@ -5187,12 +5246,74 @@ impl Builder<'_> {
                 self.infer_expr_type(expr, types, slot_expected.clone())?
             };
             match ty {
+                Type::Variadic(element_ty) => {
+                    let pack = self.lower_expr(
+                        expr,
+                        env,
+                        types,
+                        Some(Type::Variadic(element_ty.clone())),
+                    )?;
+                    if matches!(
+                        remaining_expected.and_then(|types| types.first()),
+                        Some(Type::Variadic(_))
+                    ) || remaining_expected.is_none()
+                    {
+                        out.push(pack);
+                    } else if let Some(expected_types) = remaining_expected {
+                        for (index, expected_ty) in expected_types.iter().enumerate() {
+                            let index = self.emit_i32_const(index as i32);
+                            let value = self.emit(Instruction::ArrayGet {
+                                array: pack,
+                                index,
+                                element_ty: (*element_ty).clone(),
+                            });
+                            out.push(self.coerce_value(
+                                value,
+                                (*element_ty).clone(),
+                                Some(expected_ty.clone()),
+                            )?);
+                        }
+                    }
+                }
                 Type::Multi(multi_types) => {
                     let tuple = self.lower_expr(expr, env, types, None)?;
                     for (index, part) in multi_types.into_iter().enumerate() {
-                        let coerced =
-                            if let Some(exp) = expected.and_then(|types| types.get(out.len())) {
-                                coerce_type(part, Some(exp.clone()))?
+                        if let Type::Variadic(element_ty) = part {
+                            let pack = self.emit(Instruction::MultiGet {
+                                value: tuple,
+                                index,
+                                ty: Type::Variadic(element_ty.clone()),
+                            });
+                            let remaining = expected
+                                .and_then(|types| types.get(out.len()..))
+                                .filter(|types| !types.is_empty());
+                            if matches!(
+                                remaining.and_then(|types| types.first()),
+                                Some(Type::Variadic(_))
+                            ) || remaining.is_none()
+                            {
+                                out.push(pack);
+                            } else if let Some(expected_types) = remaining {
+                                for (offset, expected_ty) in expected_types.iter().enumerate() {
+                                    let index = self.emit_i32_const(offset as i32);
+                                    let value = self.emit(Instruction::ArrayGet {
+                                        array: pack,
+                                        index,
+                                        element_ty: (*element_ty).clone(),
+                                    });
+                                    out.push(self.coerce_value(
+                                        value,
+                                        (*element_ty).clone(),
+                                        Some(expected_ty.clone()),
+                                    )?);
+                                }
+                            }
+                            continue;
+                        }
+                        let coerced = if let Some(exp) =
+                            expected.and_then(|types| types.get(out.len()))
+                        {
+                            coerce_type(part, Some(exp.clone()))?
                             } else {
                                 part
                             };
@@ -5476,7 +5597,7 @@ impl Builder<'_> {
                 Some(Type::Opaque { name, .. }) => Err(Diagnostic::new(format!(
                     "numeric literal is not assignable to {name}",
                 ))),
-                Some(Type::Array(_)) => Err(Diagnostic::new(
+                Some(Type::Array(_) | Type::Variadic(_)) => Err(Diagnostic::new(
                     "numeric literal is not assignable to array",
                 )),
                 Some(Type::TypedArray(kind)) => Err(Diagnostic::new(format!(
@@ -5510,7 +5631,7 @@ impl Builder<'_> {
             Expr::Bool(..) => coerce_type(Type::Bool, expected),
             Expr::String(..) => coerce_type(Type::String, expected),
             Expr::Bytes(..) => coerce_type(Type::Bytes, expected),
-            Expr::Vararg(..) => Ok(Type::Array(Box::new(Type::Unknown))),
+            Expr::Vararg(..) => Ok(Type::Variadic(Box::new(Type::Unknown))),
             Expr::Require(path, _) => Err(Diagnostic::new(format!(
                 "unresolved require(\"{path}\") reached IR lowering"
             ))),
@@ -5663,7 +5784,7 @@ impl Builder<'_> {
                         Type::Nil | Type::Nullable(_) | Type::Named { .. } | Type::Opaque { .. } => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
-                        Type::Array(_) | Type::TypedArray(_) => {
+                        Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                         Type::Function { .. } | Type::Record(_) => {
@@ -6122,6 +6243,22 @@ impl Builder<'_> {
         match expected {
             None => Ok(value),
             Some(expected) if actual == expected => Ok(value),
+            // A variadic pack in a scalar context contributes its first value.
+            Some(expected)
+                if matches!(actual, Type::Variadic(_))
+                    && !matches!(expected, Type::Variadic(_)) =>
+            {
+                let Type::Variadic(element) = actual else {
+                    unreachable!()
+                };
+                let zero = self.emit_i32_const(0);
+                let first = self.emit(Instruction::ArrayGet {
+                    array: value,
+                    index: zero,
+                    element_ty: (*element).clone(),
+                });
+                self.coerce_value(first, *element, Some(expected))
+            }
             // Multi-value adjustment: take the first value.
             Some(expected)
                 if matches!(actual, Type::Multi(_)) && !matches!(expected, Type::Multi(_)) =>
@@ -6307,12 +6444,19 @@ impl Builder<'_> {
             }
         }
         let expected_element = expected.as_ref().and_then(Type::element_type);
-        // A trailing `...` splats the caller's varargs (unknown values) into
-        // the array, and an expected `{unknown}` boxes every element, so both
-        // force the element type to unknown.
-        if matches!(elements.last(), Some(Expr::Vararg(_)))
-            || expected_element == Some(Type::Unknown)
-        {
+        let trailing_pack = elements
+            .last()
+            .map(|element| self.infer_expr_type(element, types, None))
+            .transpose()?
+            .is_some_and(|ty| match ty {
+                Type::Variadic(_) => true,
+                Type::Multi(parts) => matches!(parts.last(), Some(Type::Variadic(_))),
+                _ => false,
+            });
+        // A trailing variadic expression splats unknown values into the array,
+        // and an expected `{unknown}` boxes every element, so both force the
+        // element type to unknown.
+        if trailing_pack || expected_element == Some(Type::Unknown) {
             return coerce_type(Type::Array(Box::new(Type::Unknown)), expected);
         }
         let mut iter = elements.iter();
@@ -7234,6 +7378,109 @@ impl Builder<'_> {
                     ));
                 }
             }
+        }
+        let trailing_pack_ty = args
+            .last()
+            .map(|arg| self.infer_expr_type(arg, types, None))
+            .transpose()?;
+        let has_trailing_pack = trailing_pack_ty.as_ref().is_some_and(|ty| match ty {
+            Type::Variadic(_) => true,
+            Type::Multi(parts) => matches!(parts.last(), Some(Type::Variadic(_))),
+            _ => false,
+        });
+        if has_trailing_pack {
+            let tail_expr = args.last().expect("pack requires a trailing expression");
+            let mut known = Vec::<(ValueId, Type)>::new();
+            for (index, arg) in args[..args.len() - 1].iter().enumerate() {
+                let target = param_types
+                    .get(index)
+                    .filter(|_| index < fixed_count)
+                    .cloned()
+                    .unwrap_or(Type::Unknown);
+                let value = self.lower_expr(arg, env, types, Some(target.clone()))?;
+                known.push((value, target));
+            }
+
+            let pack = match trailing_pack_ty.expect("checked above") {
+                Type::Variadic(element_ty) => self.lower_expr(
+                    tail_expr,
+                    env,
+                    types,
+                    Some(Type::Variadic(element_ty)),
+                )?,
+                Type::Multi(parts) => {
+                    let tuple = self.lower_expr(tail_expr, env, types, None)?;
+                    let last_index = parts.len() - 1;
+                    for (index, part) in parts[..last_index].iter().enumerate() {
+                        let value = self.emit(Instruction::MultiGet {
+                            value: tuple,
+                            index,
+                            ty: part.clone(),
+                        });
+                        known.push((value, part.clone()));
+                    }
+                    let Type::Variadic(element_ty) = &parts[last_index] else {
+                        unreachable!("checked trailing pack above")
+                    };
+                    self.emit(Instruction::MultiGet {
+                        value: tuple,
+                        index: last_index,
+                        ty: Type::Variadic(element_ty.clone()),
+                    })
+                }
+                _ => unreachable!("checked trailing pack above"),
+            };
+
+            let mut lowered = Vec::with_capacity(param_types.len());
+            for (index, (value, actual)) in known.iter().take(fixed_count).enumerate() {
+                lowered.push(self.coerce_value(
+                    *value,
+                    actual.clone(),
+                    Some(param_types[index].clone()),
+                )?);
+            }
+            if known.len() < fixed_count {
+                for (index, param_ty) in param_types
+                    .iter()
+                    .take(fixed_count)
+                    .enumerate()
+                    .skip(known.len())
+                {
+                    let offset = self.emit_i32_const((index - known.len()) as i32);
+                    let value = self.emit(Instruction::ArrayGet {
+                        array: pack,
+                        index: offset,
+                        element_ty: Type::Unknown,
+                    });
+                    lowered.push(self.coerce_value(
+                        value,
+                        Type::Unknown,
+                        Some(param_ty.clone()),
+                    )?);
+                }
+                let start = self.emit_i32_const((fixed_count - known.len()) as i32);
+                let tail = self.emit(Instruction::ArraySlice {
+                    array: pack,
+                    start,
+                    element_ty: Type::Unknown,
+                });
+                lowered.push(tail);
+            } else {
+                let extras = known
+                    .into_iter()
+                    .skip(fixed_count)
+                    .map(|(value, actual)| {
+                        self.coerce_value(value, actual, Some(Type::Unknown))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let tail = self.emit(Instruction::ArrayNew {
+                    element_ty: Type::Unknown,
+                    elements: extras,
+                });
+                self.emit_array_append_all(tail, pack);
+                lowered.push(tail);
+            }
+            return Ok(lowered);
         }
         let trailing_vararg = matches!(args.last(), Some(Expr::Vararg(_)));
         let explicit = if trailing_vararg {
@@ -9932,6 +10179,7 @@ fn lua_type_name(ty: &Type) -> &'static str {
         Type::Numeric(_) => "number",
         Type::String | Type::Bytes => "string",
         Type::Array(_)
+        | Type::Variadic(_)
         | Type::Record(_)
         | Type::TaggedVariant(_)
         | Type::TaggedUnion(_) => "table",
@@ -10069,7 +10317,7 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Opaque { name, .. } => Err(Diagnostic::new(format!(
                 "cannot implicitly convert {name} to {expected_numeric}",
             ))),
-            Type::Array(_) => Err(Diagnostic::new(format!(
+            Type::Array(_) | Type::Variadic(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert array to {expected_numeric}",
             ))),
             Type::TypedArray(kind) => Err(Diagnostic::new(format!(

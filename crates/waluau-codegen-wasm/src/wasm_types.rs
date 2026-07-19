@@ -51,7 +51,7 @@ pub(crate) fn wasm_type(
         }
         // Array values are the growable wrapper struct `{storage, len}`, not the
         // raw wasm array (which only backs the struct's storage field).
-        Type::Array(element) => {
+        Type::Array(element) | Type::Variadic(element) => {
             let index = array_registry.growable_array_index(element)?;
             Ok(ValType::Ref(RefType {
                 nullable: true,
