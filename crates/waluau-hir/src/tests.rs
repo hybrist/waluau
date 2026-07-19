@@ -3397,6 +3397,32 @@ fn rejects_overloaded_call_without_matching_types() {
 }
 
 #[test]
+fn attaches_argument_span_to_call_coercion_diagnostic() {
+    let source = r#"
+        declare function accept(value: i32): unit
+
+        function bad(): unit
+            accept("wrong")
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    let start = source
+        .find("\"wrong\"")
+        .expect("argument should be present") as u32;
+
+    assert_eq!(error.to_string(), "cannot implicitly convert string to i32");
+    assert_eq!(
+        error.span(),
+        Some(waluau_ast::Span {
+            start,
+            end: start + "\"wrong\"".len() as u32,
+        })
+    );
+}
+
+#[test]
 fn rejects_overloaded_call_without_matching_arity() {
     let source = r#"
         type Ctx = extern

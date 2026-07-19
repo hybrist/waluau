@@ -81,6 +81,18 @@ impl Diagnostic {
     pub fn action(&self) -> Option<&str> {
         self.action.as_deref()
     }
+
+    /// Render a diagnostic for a user-facing compiler surface.
+    ///
+    /// `Display` intentionally remains message-only for callers that compare or
+    /// otherwise process the human message. Compiler frontends can opt into the
+    /// source byte range when one is available.
+    pub fn render(&self) -> String {
+        match self.span {
+            Some(span) => format!("{} at {}..{}", self.message, span.start, span.end),
+            None => self.message.clone(),
+        }
+    }
 }
 
 impl fmt::Display for Diagnostic {
@@ -91,3 +103,17 @@ impl fmt::Display for Diagnostic {
 }
 
 impl Error for Diagnostic {}
+
+#[cfg(test)]
+mod tests {
+    use super::{Diagnostic, Span};
+
+    #[test]
+    fn renders_source_span_without_changing_display() {
+        let diagnostic =
+            Diagnostic::new("cannot convert string to i32").with_span(Span { start: 8, end: 13 });
+
+        assert_eq!(diagnostic.to_string(), "cannot convert string to i32");
+        assert_eq!(diagnostic.render(), "cannot convert string to i32 at 8..13");
+    }
+}

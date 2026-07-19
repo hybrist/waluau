@@ -442,7 +442,25 @@ pub(super) fn resolved_type_property_getter_name(
     (matches.len() == 1).then(|| matches.remove(0))
 }
 
+fn attach_expr_span(error: Diagnostic, expr: &Expr) -> Diagnostic {
+    match (error.span(), expr.span()) {
+        (None, Some(span)) => error.with_span(span),
+        _ => error,
+    }
+}
+
 pub(super) fn infer_expr(
+    expr: &Expr,
+    vars: &HashMap<String, Binding>,
+    fn_signatures: &HashMap<String, FnSignature>,
+    active_type_params: &HashSet<String>,
+    expected: Option<Type>,
+) -> Result<Type, Diagnostic> {
+    infer_expr_inner(expr, vars, fn_signatures, active_type_params, expected)
+        .map_err(|error| attach_expr_span(error, expr))
+}
+
+fn infer_expr_inner(
     expr: &Expr,
     vars: &HashMap<String, Binding>,
     fn_signatures: &HashMap<String, FnSignature>,
@@ -1688,6 +1706,7 @@ pub(super) fn infer_expr_list(
     expected: Option<&[Type]>,
 ) -> Result<Vec<Type>, Diagnostic> {
     let mut out = Vec::new();
+    let mut out_exprs = Vec::new();
     for expr in exprs {
         let remaining_expected = expected
             .and_then(|types| (!types[out.len()..].is_empty()).then(|| &types[out.len()..]));
@@ -1723,14 +1742,21 @@ pub(super) fn infer_expr_list(
             infer_expr(expr, vars, fn_signatures, active_type_params, next_expected)?
         };
         match ty {
-            Type::Multi(types) => out.extend(types),
-            other => out.push(other),
+            Type::Multi(types) => {
+                out_exprs.extend(std::iter::repeat_n(expr, types.len()));
+                out.extend(types);
+            }
+            other => {
+                out_exprs.push(expr);
+                out.push(other);
+            }
         }
     }
     if let Some(expected_types) = expected {
         for (index, ty) in out.clone().into_iter().enumerate() {
             if let Some(expected_ty) = expected_types.get(index) {
-                out[index] = coerce_type(ty, Some(expected_ty.clone()))?;
+                out[index] = coerce_type(ty, Some(expected_ty.clone()))
+                    .map_err(|error| attach_expr_span(error, out_exprs[index]))?;
             }
         }
     }
