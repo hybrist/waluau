@@ -1,0 +1,41 @@
+-- Untyped literal loop bounds adopt the type of the typed bounds, so
+-- `for i = 0, #a - 1` iterates with an i32 loop variable that can index
+-- the array directly.
+
+function sum_forward(): i32
+    local a: {i32} = {10, 20, 30}
+    local sum: i32 = 0
+    for i = 0, #a - 1 do
+        sum += a[i]
+    end
+    return sum
+end
+
+function join_reverse(): string
+    local words: {string} = {"a", "b", "c"}
+    local out = ""
+    for i = #words - 1, 0, -1 do
+        out ..= words[i]
+    end
+    return out
+end
+
+function count_past_end(): i32
+    local a: {i32} = {1, 2}
+    local count: i32 = 0
+    for i = 0, #a do
+        count += 1
+    end
+    return count
+end
+
+function widen_sum(): f64
+    local m: i32 = 2
+    local x: f64 = m + m
+    return x
+end
+
+assert(sum_forward() == 60)
+assert(join_reverse() == "cba")
+assert(count_past_end() == 3)
+assert(widen_sum() == 4)

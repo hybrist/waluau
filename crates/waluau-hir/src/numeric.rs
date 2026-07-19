@@ -125,6 +125,50 @@ pub(super) fn infer_numeric_common_type(
     }
 }
 
+/// True for numeric-for bounds that are untyped number literals (optionally
+/// behind unary minus, e.g. the `-1` step of a countdown loop). Such bounds
+/// carry no numeric type of their own and adopt the type of the loop's typed
+/// bounds, mirroring how untyped literals behave in binary expressions.
+pub(super) fn is_untyped_literal_bound(expr: &Expr) -> bool {
+    match expr {
+        Expr::Number(..) => true,
+        Expr::Unary {
+            op: waluau_ast::UnaryOp::Neg,
+            expr,
+            ..
+        } => is_untyped_literal_bound(expr),
+        _ => false,
+    }
+}
+
+/// Infers the loop-variable type of a numeric `for` from its bound
+/// expressions. Typed bounds are inferred first and unified; untyped literal
+/// bounds then adopt that type (defaulting to f64 when every bound is an
+/// untyped literal), so `for i = 0, #a - 1` iterates with an i32 loop
+/// variable instead of forcing the i32 bound into an f64 comparison.
+pub(super) fn infer_numeric_for_loop_type(
+    bounds: &[&Expr],
+    mut infer: impl FnMut(&Expr, Option<Type>) -> Result<Type, Diagnostic>,
+) -> Result<Type, Diagnostic> {
+    let mut typed: Option<Type> = None;
+    for bound in bounds.iter().filter(|b| !is_untyped_literal_bound(b)) {
+        let ty = infer(bound, None)?;
+        typed = Some(match typed {
+            None => ty,
+            Some(prev) => common_numeric_type(prev, ty)?,
+        });
+    }
+    let mut loop_ty = typed.unwrap_or(Type::Numeric(NumericType::F64));
+    if !matches!(loop_ty, Type::Numeric(_)) {
+        return Err(Diagnostic::new("numeric for-loop bounds must be numeric"));
+    }
+    for bound in bounds.iter().filter(|b| is_untyped_literal_bound(b)) {
+        let ty = infer(bound, Some(loop_ty.clone()))?;
+        loop_ty = common_numeric_type(loop_ty, ty)?;
+    }
+    Ok(loop_ty)
+}
+
 pub(super) fn common_numeric_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
     match (left, right) {
         (Type::Numeric(left), Type::Numeric(right)) => {

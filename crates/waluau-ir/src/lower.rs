@@ -3413,13 +3413,13 @@ impl Builder<'_> {
         types: &mut HashMap<SymbolId, Type>,
     ) -> Result<(), Diagnostic> {
         let symbol_id = symbol_id.expect("symbol_id should be resolved");
-        let start_ty = self.infer_expr_type(start, types, None)?;
-        let stop_ty = self.infer_expr_type(stop, types, None)?;
-        let mut loop_ty = common_numeric_type(start_ty, stop_ty)?;
+        let mut bounds = vec![start, stop];
         if let Some(step_expr) = step {
-            let step_ty = self.infer_expr_type(step_expr, types, None)?;
-            loop_ty = common_numeric_type(loop_ty, step_ty)?;
+            bounds.push(step_expr);
         }
+        let loop_ty = infer_numeric_for_loop_type(&bounds, |expr, expected| {
+            self.infer_expr_type(expr, types, expected)
+        })?;
         let Type::Numeric(numeric_ty) = loop_ty else {
             return Err(Diagnostic::new("numeric for-loop bounds must be numeric"));
         };
@@ -4690,7 +4690,20 @@ impl Builder<'_> {
                     }
                     let left = self.lower_expr(left, env, types, Some(operand_ty.clone()))?;
                     let right = self.lower_expr(right, env, types, Some(operand_ty.clone()))?;
-                    let raw_result_ty = self.infer_expr_type(expr, types, expected.clone())?;
+                    // The instruction produces its raw type (bool for
+                    // comparisons, the operand type otherwise) regardless of
+                    // `expected`; deriving result_ty from `expected` would
+                    // mislabel the value (e.g. an i32 sum claiming to be f64)
+                    // and skip the coercion cast below.
+                    let raw_result_ty = match op {
+                        BinaryOp::Less
+                        | BinaryOp::LessEq
+                        | BinaryOp::Greater
+                        | BinaryOp::GreaterEq
+                        | BinaryOp::Eq
+                        | BinaryOp::NotEq => Type::Bool,
+                        _ => operand_ty.clone(),
+                    };
                     let value = self.emit(Instruction::Binary {
                         op: *op,
                         left,
@@ -9901,6 +9914,50 @@ fn infer_numeric_common_type(
             common_numeric_type(left_ty, right_ty)
         }
     }
+}
+
+/// True for numeric-for bounds that are untyped number literals (optionally
+/// behind unary minus, e.g. the `-1` step of a countdown loop). Such bounds
+/// carry no numeric type of their own and adopt the type of the loop's typed
+/// bounds, mirroring how untyped literals behave in binary expressions.
+/// Mirrors `waluau_hir::numeric::is_untyped_literal_bound`.
+fn is_untyped_literal_bound(expr: &Expr) -> bool {
+    match expr {
+        Expr::Number(..) => true,
+        Expr::Unary {
+            op: UnaryOp::Neg,
+            expr,
+            ..
+        } => is_untyped_literal_bound(expr),
+        _ => false,
+    }
+}
+
+/// Infers the loop-variable type of a numeric `for` from its bound
+/// expressions: typed bounds are inferred first and unified, then untyped
+/// literal bounds adopt that type (defaulting to f64 when every bound is an
+/// untyped literal). Mirrors `waluau_hir::numeric::infer_numeric_for_loop_type`.
+fn infer_numeric_for_loop_type(
+    bounds: &[&Expr],
+    mut infer: impl FnMut(&Expr, Option<Type>) -> Result<Type, Diagnostic>,
+) -> Result<Type, Diagnostic> {
+    let mut typed: Option<Type> = None;
+    for bound in bounds.iter().filter(|b| !is_untyped_literal_bound(b)) {
+        let ty = infer(bound, None)?;
+        typed = Some(match typed {
+            None => ty,
+            Some(prev) => common_numeric_type(prev, ty)?,
+        });
+    }
+    let mut loop_ty = typed.unwrap_or(Type::Numeric(NumericType::F64));
+    if !matches!(loop_ty, Type::Numeric(_)) {
+        return Err(Diagnostic::new("numeric for-loop bounds must be numeric"));
+    }
+    for bound in bounds.iter().filter(|b| is_untyped_literal_bound(b)) {
+        let ty = infer(bound, Some(loop_ty.clone()))?;
+        loop_ty = common_numeric_type(loop_ty, ty)?;
+    }
+    Ok(loop_ty)
 }
 
 fn common_numeric_type(left: Type, right: Type) -> Result<Type, Diagnostic> {

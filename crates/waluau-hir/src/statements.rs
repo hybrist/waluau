@@ -5,7 +5,7 @@ use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
 use super::builtins::{ASSERT, PCALL};
 use super::expressions::{builtin_name, infer_expr, infer_expr_list};
-use super::numeric::{common_numeric_type, is_extern_subtype_of};
+use super::numeric::{infer_numeric_for_loop_type, is_extern_subtype_of};
 use super::signatures::{
     FnSignature, active_type_param_set, generic_diagnostic, inference_diagnostic,
     validate_type_in_scope, validate_type_param_list,
@@ -865,19 +865,17 @@ fn collect_return_types_with_scope(
                 body,
                 ..
             } => {
-                let start_ty = infer_expr(start, &scope, fn_signatures, active_type_params, None)?;
-                let stop_ty = infer_expr(stop, &scope, fn_signatures, active_type_params, None)?;
+                let mut bounds = vec![start, stop];
+                if let Some(step_expr) = step {
+                    bounds.push(step_expr);
+                }
+                let loop_ty = infer_numeric_for_loop_type(&bounds, |expr, expected| {
+                    infer_expr(expr, &scope, fn_signatures, active_type_params, expected)
+                })?;
                 seal_record_locals_in_expr(start, &mut scope);
                 seal_record_locals_in_expr(stop, &mut scope);
-                let mut loop_ty = common_numeric_type(start_ty, stop_ty)?;
                 if let Some(step_expr) = step {
-                    let step_ty =
-                        infer_expr(step_expr, &scope, fn_signatures, active_type_params, None)?;
                     seal_record_locals_in_expr(step_expr, &mut scope);
-                    loop_ty = common_numeric_type(loop_ty, step_ty)?;
-                }
-                if !matches!(loop_ty, Type::Numeric(_)) {
-                    return Err(Diagnostic::new("numeric for-loop bounds must be numeric"));
                 }
                 let mut loop_scope = scope.clone();
                 loop_scope.insert(name.clone(), binding_for(loop_ty, Rebindability::Const));
@@ -1675,18 +1673,17 @@ pub(super) fn check_stmt(
             body,
             ..
         } => {
-            let start_ty = infer_expr(start, vars, fn_signatures, active_type_params, None)?;
-            let stop_ty = infer_expr(stop, vars, fn_signatures, active_type_params, None)?;
+            let mut bounds = vec![start, stop];
+            if let Some(step_expr) = step {
+                bounds.push(step_expr);
+            }
+            let loop_ty = infer_numeric_for_loop_type(&bounds, |expr, expected| {
+                infer_expr(expr, vars, fn_signatures, active_type_params, expected)
+            })?;
             seal_record_locals_in_expr(start, vars);
             seal_record_locals_in_expr(stop, vars);
-            let mut loop_ty = common_numeric_type(start_ty, stop_ty)?;
             if let Some(step_expr) = step {
-                let step_ty = infer_expr(step_expr, vars, fn_signatures, active_type_params, None)?;
                 seal_record_locals_in_expr(step_expr, vars);
-                loop_ty = common_numeric_type(loop_ty, step_ty)?;
-            }
-            if !matches!(loop_ty, Type::Numeric(_)) {
-                return Err(Diagnostic::new("numeric for-loop bounds must be numeric"));
             }
             let mut loop_scope = vars.clone();
             loop_scope.insert(name.clone(), binding_for(loop_ty, Rebindability::Const));

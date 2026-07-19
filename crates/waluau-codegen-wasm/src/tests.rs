@@ -1860,3 +1860,77 @@ fn declared_import_overloads_emit_one_host_import_per_overload() {
     assert_eq!(fill_imports, 2, "expected one import per fill overload");
     assert_eq!(pick_imports, 2, "expected one import per pick overload");
 }
+
+#[test]
+fn numeric_for_over_array_length_with_untyped_literal_bound_emits_valid_wasm() {
+    // Regression: `for i = 0, #a - 1` used to infer the loop variable as f64
+    // from the untyped `0` while the `#a - 1` bound stayed i32, emitting
+    // invalid wasm ("type mismatch: expected f64, found i32"). The untyped
+    // literal now adopts the i32 type of the typed bound.
+    let source = r#"
+        local a: {i32} = {10, 20, 30}
+        local sum: i32 = 0
+        for i = 0, #a - 1 do
+            sum += a[i]
+        end
+        assert(sum == 60)
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+
+    // The loop runs entirely on i32 values; an f64 loop variable would show
+    // up as float comparisons in the loop header.
+    let wat = print_bytes(&wasm).expect("wat should print");
+    assert!(
+        !wat.contains("f64.lt") && !wat.contains("f64.gt"),
+        "loop over i32 bounds should not compare as f64:\n{wat}"
+    );
+}
+
+#[test]
+fn countdown_numeric_for_with_untyped_literal_bounds_emits_valid_wasm() {
+    // Regression: the i32-typed `#a - 1` start used to be labelled f64 when
+    // the untyped `0` stop defaulted the loop type to f64.
+    let source = r#"
+        local a: {string} = {"x", "y", "z"}
+        local count: i32 = 0
+        for i = #a - 1, 0, -1 do
+            count += 1
+        end
+        assert(count == 3)
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+}
+
+#[test]
+fn binary_expression_result_coerces_to_a_wider_expected_type() {
+    // Regression: lowering a binary expression against a wider expected type
+    // (`local x: f64 = m + m` with i32 operands) used to stamp the i32 result
+    // as f64 without emitting a conversion, producing invalid wasm. The same
+    // shape boxed the raw i32 into anyref for `unknown` targets.
+    let source = r#"
+        local m: i32 = 2
+        local x: f64 = m + m
+        local u: unknown = m + m
+        assert(x == 4)
+        assert((u :: i32) == 4)
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+}

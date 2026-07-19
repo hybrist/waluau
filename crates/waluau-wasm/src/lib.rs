@@ -497,6 +497,17 @@ mod tests {
     }
 
     #[test]
+    fn compile_loop_bound_literals_conformance() {
+        // Regression for `for i = 0, #a - 1`: the untyped literal bound must
+        // adopt the i32 type of the array-length bound instead of forcing an
+        // f64 loop over i32 values (which used to emit invalid wasm).
+        let source = include_str!("../../../conformance/loop_bound_literals.walu");
+        let result =
+            compile_source(source).expect("loop bound literals conformance should compile");
+        assert!(result.wat.contains("(module"));
+    }
+
+    #[test]
     fn compile_multi_coroutine_await_promise_fixture() {
         let source = r#"
             declare function make_string_promise(): extern
