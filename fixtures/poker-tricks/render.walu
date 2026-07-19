@@ -863,6 +863,92 @@ function text_centered(graphics: Graphics, value: string, center_x: f64, y: f64,
     graphics:print_aligned(value, center_x, y, "center")
 end
 
+-- Clickable commit/pass capsules sit on the old prompt line, between the ward
+-- panel's bottom edge and the top of the fan.
+const BUTTON_Y: f64 = 412.0
+const BUTTON_H: f64 = 26.0
+const COMMIT_W: f64 = 190.0
+const PASS_W: f64 = 96.0
+const BUTTON_GAP: f64 = 14.0
+-- The footer's "? HELP" caption, grown to a comfortable click target.
+const HELP_LEFT: f64 = 890.0
+const HELP_TOP: f64 = 568.0
+const HELP_RIGHT: f64 = 952.0
+const HELP_BOTTOM: f64 = 592.0
+
+-- The feint phase shows COMMIT and PASS side by side; the breach phase
+-- centres its lone COMMIT, so the button's left edge depends on the phase.
+function commit_left(swap_open: bool): f64
+    if swap_open then return WIDTH * 0.5 - (COMMIT_W + BUTTON_GAP + PASS_W) * 0.5 end
+    return WIDTH * 0.5 - COMMIT_W * 0.5
+end
+
+function pass_left(): f64
+    return commit_left(true) + COMMIT_W + BUTTON_GAP
+end
+
+function point_in_rect(x: f64, y: f64, left: f64, top: f64, width: f64, height: f64): bool
+    return x >= left and x <= left + width and y >= top and y <= top + height
+end
+
+-- The topmost relic of the fan under a point, or -1. Later slots draw over
+-- earlier ones, so the scan runs highest slot first, and each relic's card box
+-- is checked in its own tilted frame: the point moves into the card's local
+-- space by undoing the same centre/rotation transform the card was drawn with.
+function hit_hand(x: f64, y: f64, parts: {f64}): i32
+    for i = 4::i32, 0::i32, -1::i32 do
+        local part: f64 = parts[i]
+        local angle: f64 = hand_angle(i, part)
+        local dx: f64 = x - (hand_x(i, part) + CARD_W * 0.5)
+        local dy: f64 = y - (hand_y(i, part) + CARD_H * 0.5)
+        local local_x: f64 = dx * math.cos(angle) + dy * math.sin(angle)
+        local local_y: f64 = dy * math.cos(angle) - dx * math.sin(angle)
+        if math.abs(local_x) <= CARD_W * 0.5 and math.abs(local_y) <= CARD_H * 0.5 then
+            return i
+        end
+    end
+    return -1
+end
+
+-- The ward under a point, or -1. Wards lie square to the board.
+function hit_ward(x: f64, y: f64): i32
+    for i = 0::i32, 2::i32 do
+        if point_in_rect(x, y, slot_x(SLOT_MIDDLE, i), slot_y(SLOT_MIDDLE, i), CARD_W, CARD_H) then
+            return i
+        end
+    end
+    return -1
+end
+
+function hit_commit(x: f64, y: f64, swap_open: bool): bool
+    return point_in_rect(x, y, commit_left(swap_open), BUTTON_Y, COMMIT_W, BUTTON_H)
+end
+
+function hit_pass(x: f64, y: f64): bool
+    return point_in_rect(x, y, pass_left(), BUTTON_Y, PASS_W, BUTTON_H)
+end
+
+function hit_help(x: f64, y: f64): bool
+    return x >= HELP_LEFT and x <= HELP_RIGHT and y >= HELP_TOP and y <= HELP_BOTTOM
+end
+
+-- Inactive buttons stay visible but grey: a click still lands (main.walu owns
+-- the rules), it simply will not satisfy them yet.
+function draw_button(graphics: Graphics, label: string, x: f64, width: f64, active: bool): unit
+    local border: string = "#52525b"
+    local ink: string = "#8a8a92"
+    if active then
+        border = "#fbbf24"
+        ink = "#fbbf24"
+    end
+    graphics:set_color("#17171c")
+    graphics:fill_rectangle(x, BUTTON_Y, width, BUTTON_H)
+    graphics:set_color(border)
+    graphics:set_line_width(1.5)
+    graphics:stroke_rectangle(x, BUTTON_Y, width, BUTTON_H)
+    text_centered(graphics, label, x + width * 0.5, BUTTON_Y + 18.0, 11, ink)
+end
+
 function text_right(graphics: Graphics, value: string, right_x: f64, y: f64, size: f64, color: string): unit
     graphics:set_color(color)
     graphics:set_font(tostring(size) .. "px monospace")
@@ -1455,7 +1541,7 @@ function draw_resolution_board(graphics: Graphics, effects: EffectShaders, card_
         end
     end
 
-    text_centered(graphics, "ENTER CONTINUE", WIDTH * 0.5, 442.0, 12, "#fbbf24")
+    text_centered(graphics, "CLICK OR ENTER CONTINUES", WIDTH * 0.5, 442.0, 12, "#fbbf24")
     -- The cursor is not live while a breach resolves, so the fan is already
     -- easing shut; it settles closed behind the flips. The committed relics
     -- stay bound and lifted until their flight begins, so it stays clear
@@ -1572,8 +1658,18 @@ function draw_playfield(graphics: Graphics, effects: EffectShaders, card_back: g
             draw_card(graphics, effects, card_back, state.middle[i], slot_x(SLOT_MIDDLE, i), slot_y(SLOT_MIDDLE, i), selected, focused, false, false, false)
         end
     end
-    if state.swap_open then text_centered(graphics, "FEINT: BIND MATCHING RELICS + WARDS (UP/DOWN)", WIDTH * 0.5, 430.0, 12, "#fbbf24")
-    else text_centered(graphics, "BREACH: BIND TWO RELICS", WIDTH * 0.5, 430.0, 12, "#fbbf24") end
+    if state.swap_open then
+        text_centered(graphics, "FEINT: BIND MATCHING RELICS + WARDS", WIDTH * 0.5, 252.0, 11, "#fbbf24")
+        -- Mirrors main.walu's submit rule so the capsule only lights up when
+        -- a commit would actually be accepted.
+        local balanced: bool = #swap_hand == #swap_wards and #swap_hand <= state.player_points
+        draw_button(graphics, "COMMIT FEINT", commit_left(true), COMMIT_W, balanced)
+        draw_button(graphics, "PASS", pass_left(), PASS_W, true)
+    elseif #play_picks == 2 then
+        draw_button(graphics, "COMMIT BREACH", commit_left(false), COMMIT_W, true)
+    else
+        text_centered(graphics, "BREACH: BIND TWO RELICS", WIDTH * 0.5, 430.0, 12, "#fbbf24")
+    end
     -- Relics keep the order they were dealt in, focused or not: pulling the
     -- focused one to the front would slide it through its neighbours instead of
     -- opening a gap for it. The parting alone gives it room.
@@ -1644,10 +1740,11 @@ function draw_help(graphics: Graphics, effects: EffectShaders): unit
     text(graphics, "TIE", 345.0, 440.0, 11, "#d4d4d8")
     text(graphics, "ARROWS MOVE   SPACE BIND   ENTER COMMIT   H HISTORY", 126.0, 474.0, 11, "#fbbf24")
     text(graphics, "C SORT BY COLOR   V SORT BY RANK", 126.0, 498.0, 11, "#fbbf24")
+    text(graphics, "MOUSE: HOVER FOCUSES   CLICK BINDS   BUTTONS COMMIT OR PASS", 126.0, 522.0, 11, "#fbbf24")
 end
 
 function draw_history(graphics: Graphics, state: game.State): unit
-    modal_shell(graphics, "BREACH LEDGER", "H OR ESC CLOSES THE LEDGER")
+    modal_shell(graphics, "BREACH LEDGER", "H, ESC, OR A CLICK CLOSES THE LEDGER")
     if #state.history == 0 then
         text(graphics, "NO DEFENSES BREACHED YET.", 126.0, 220.0, 16, "#8a8a92")
         return
@@ -1675,7 +1772,7 @@ function draw_final(graphics: Graphics, state: game.State): unit
     text_centered(graphics, "SPARKS STOLEN", WIDTH * 0.5, 250.0, 18, "#67e8f9")
     text_centered(graphics, tostring(state.player_points), WIDTH * 0.5, 325.0, 44, "#f8fafc")
     text_centered(graphics, "BREACHES WON " .. tostring(state.player_tricks) .. " / 5", WIDTH * 0.5, 376.0, 13, "#d4d4d8")
-    text_centered(graphics, "R RESTARTS THE HEIST   H OPENS THE LEDGER", WIDTH * 0.5, 482.0, 12, "#fbbf24")
+    text_centered(graphics, "R OR CLICK RESTARTS THE HEIST   H OPENS THE LEDGER", WIDTH * 0.5, 482.0, 12, "#fbbf24")
 end
 
 function draw(graphics: Graphics, effects: EffectShaders, state: game.State, hand_focus: i32, fan_parts: {f64}, ward_cursor: i32, cursor_area: i32, play_picks: {i32}, swap_hand: {i32}, swap_wards: {i32}, modal: i32, revealing: bool, reveal_clock: f64, anims: {Anim}, anim_clock: f64, card_back: graphics_module.Texture?, discards: {game.Card}): unit
@@ -1714,7 +1811,7 @@ end
 function draw_audio_prompt(graphics: Graphics, ready: bool): unit
     panel(graphics, 280.0, 252.0, 400.0, 96.0, "#17171c", "#fbbf24")
     if ready then
-        text_centered(graphics, "PRESS ANY KEY TO BEGIN", WIDTH * 0.5, 293.0, 15, "#fbbf24")
+        text_centered(graphics, "PRESS A KEY OR CLICK TO BEGIN", WIDTH * 0.5, 293.0, 15, "#fbbf24")
         text_centered(graphics, "THE VAULT AWAITS YOUR SIGNAL", WIDTH * 0.5, 323.0, 10, "#d4d4d8")
     else
         text_centered(graphics, "PREPARING THE VAULT", WIDTH * 0.5, 304.0, 14, "#fbbf24")
@@ -1738,6 +1835,11 @@ return {
     hand_x = hand_x,
     hand_y = hand_y,
     hand_part_target = hand_part_target,
+    hit_hand = hit_hand,
+    hit_ward = hit_ward,
+    hit_commit = hit_commit,
+    hit_pass = hit_pass,
+    hit_help = hit_help,
     -- Anchors of the resolved five-card row, exported so main.walu can start
     -- the scoop legs exactly where the reveal left the cards.
     row_left_x = ROW_LEFT_X,
