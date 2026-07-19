@@ -1895,6 +1895,48 @@ fn emits_valid_wasm_for_varargs_and_table_pack_conformance_fixtures() {
 }
 
 #[test]
+fn emits_valid_wasm_for_table_create_and_static_unpack() {
+    // Mirrors conformance/table_create_unpack.walu minus the string.format /
+    // string.char checks, which need host imports this harness does not
+    // declare. Covers the fill loop, count zero, the empty one-argument form,
+    // literal unpack bounds, and expected-arity unpack from an annotated
+    // multi-binding declaration.
+    let source = r#"
+local filled: {i32} = table.create(3, 7)
+assert(#filled == 3)
+assert(filled[0] == 7)
+assert(filled[2] == 7)
+
+local empty_filled: {f64} = table.create(0, 1.5)
+assert(#empty_filled == 0)
+
+local hinted: {string} = table.create(8)
+assert(#hinted == 0)
+
+local ys: {i32} = {10, 20, 30, 40, 50}
+local second: i32, third: i32 = table.unpack(ys, 1, 2)
+assert(second == 20)
+assert(third == 30)
+
+local fourth: i32, fifth: i32 = table.unpack(ys, 3)
+assert(fourth == 40)
+assert(fifth == 50)
+
+local first: f64 = table.unpack(table.create(4, 6.5))
+assert(first == 6.5)
+"#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    waluau_ir::verify(&ir).expect("ir should verify");
+
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+}
+
+#[test]
 fn emits_valid_wasm_for_dynamic_unknown_operations() {
     for source in [
         include_str!("../../../conformance/unknown_equality.walu"),

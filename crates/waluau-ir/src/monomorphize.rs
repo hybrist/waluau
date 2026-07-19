@@ -1428,7 +1428,7 @@ impl<'a> Monomorphizer<'a> {
                 ..
             } => {
                 if let Some(name) = builtin_name(callee) {
-                    if let Some(ty) = self.infer_builtin_call_type(&name, args)? {
+                    if let Some(ty) = self.infer_builtin_call_type(&name, args, subst, types)? {
                         return Ok(ty);
                     }
                 }
@@ -1752,7 +1752,37 @@ impl<'a> Monomorphizer<'a> {
         &self,
         name: &str,
         args: &[Expr],
+        subst: &HashMap<String, Type>,
+        types: &HashMap<SymbolId, Type>,
     ) -> Result<Option<Type>, Diagnostic> {
+        match name {
+            crate::TABLE_CREATE => {
+                let element_ty = match args.get(1) {
+                    Some(value) => self.infer_expr_type(value, subst, types)?,
+                    None => Type::Unknown,
+                };
+                return Ok(Some(Type::Array(Box::new(element_ty))));
+            }
+            crate::TABLE_UNPACK => {
+                let element_ty = match args.first() {
+                    Some(array) => match self.infer_expr_type(array, subst, types)? {
+                        Type::Array(element) => *element,
+                        _ => Type::Unknown,
+                    },
+                    None => Type::Unknown,
+                };
+                // Without an expected type, the arity is only known for
+                // literal bounds or a statically sized array; the lowering
+                // reconstructs the expected-arity form from binding
+                // annotations, so an unknown count here reports zero values
+                // (which only annotated bindings can consume anyway).
+                let count = crate::table_unpack_static_indices(args, None)
+                    .map(|indices| indices.len())
+                    .unwrap_or(0);
+                return Ok(Some(Type::Multi(vec![element_ty; count])));
+            }
+            _ => {}
+        }
         match name {
             "print" | "assert" | "error" => Ok(Some(Type::Unit)),
             "pcall" => Ok(Some(Type::Multi(vec![Type::Bool, Type::Unknown]))),
