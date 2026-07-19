@@ -2207,3 +2207,55 @@ fn skips_semicolon_statement_separators() {
     assert_eq!(program.functions[0].body.len(), 3);
     assert_eq!(program.top_level.len(), 1);
 }
+
+#[test]
+fn recovery_reports_every_error_with_structural_spans() {
+    // Three independent syntax errors in three separate statements: recovery
+    // must surface all of them, each with a byte span and resolved line.
+    let source = r#"
+        function first(): i32
+            return 1 +
+        end
+        function second(): i32
+            local value: = 2
+            return value
+        end
+        function third(): i32
+            return 3
+        end
+    "#;
+
+    let outcome = crate::parse_with_recovery(source, "example.walu");
+    assert!(
+        outcome.diagnostics.len() >= 2,
+        "expected multiple diagnostics, got {:?}",
+        outcome.diagnostics
+    );
+    for diagnostic in &outcome.diagnostics {
+        assert!(
+            diagnostic.span().is_some(),
+            "diagnostic missing span: {diagnostic}"
+        );
+        assert!(
+            diagnostic.source_location().is_some(),
+            "diagnostic missing line/column: {diagnostic}"
+        );
+        assert_eq!(diagnostic.file_path(), Some("example.walu"));
+    }
+    // The healthy function after the errors still parses.
+    assert!(
+        outcome
+            .program
+            .functions
+            .iter()
+            .any(|function| matches!(&function.name, waluau_ast::FunctionName::Simple(name) if name == "third")),
+        "recovery should keep parsing later functions"
+    );
+}
+
+#[test]
+fn recovery_returns_program_and_no_diagnostics_for_valid_source() {
+    let outcome = crate::parse_with_recovery("local x: i32 = 1\n", "ok.walu");
+    assert!(outcome.diagnostics.is_empty());
+    assert_eq!(outcome.program.top_level.len(), 1);
+}

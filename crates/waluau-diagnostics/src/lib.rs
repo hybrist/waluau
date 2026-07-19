@@ -11,11 +11,21 @@ pub enum DiagnosticCategory {
     MissingContext,
 }
 
+/// How serious a diagnostic is. Errors abort compilation after the reporting
+/// stage; warnings never block a build. Maps directly onto LSP severities.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, PartialOrd, Ord)]
+pub enum Severity {
+    Warning,
+    #[default]
+    Error,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Diagnostic {
     message: String,
     code: Option<&'static str>,
     category: Option<DiagnosticCategory>,
+    severity: Severity,
     span: Option<Span>,
     file_path: Option<String>,
     source_location: Option<(u32, u32)>,
@@ -29,6 +39,7 @@ impl Diagnostic {
             message: message.into(),
             code: None,
             category: None,
+            severity: Severity::default(),
             span: None,
             file_path: None,
             source_location: None,
@@ -43,6 +54,7 @@ impl Diagnostic {
             message: message.into(),
             code: Some(code),
             category: None,
+            severity: Severity::default(),
             span: None,
             file_path: None,
             source_location: None,
@@ -58,6 +70,11 @@ impl Diagnostic {
 
     pub fn with_category(mut self, category: DiagnosticCategory) -> Self {
         self.category = Some(category);
+        self
+    }
+
+    pub fn with_severity(mut self, severity: Severity) -> Self {
+        self.severity = severity;
         self
     }
 
@@ -113,6 +130,10 @@ impl Diagnostic {
 
     pub fn category(&self) -> Option<DiagnosticCategory> {
         self.category
+    }
+
+    pub fn severity(&self) -> Severity {
+        self.severity
     }
 
     pub fn span(&self) -> Option<Span> {

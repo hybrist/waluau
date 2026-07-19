@@ -7,7 +7,14 @@ impl Parser {
     pub(super) fn expect_identifier(&mut self) -> Result<String, Diagnostic> {
         match self.advance().map(|token| token.kind) {
             Some(TokenKind::Identifier(name)) => Ok(name),
-            _ => Err(self.diagnostic_at_current("expected identifier")),
+            Some(_) => {
+                // Leave the unexpected token unconsumed so statement-level
+                // recovery can resynchronize on it (it may close a block).
+                let diagnostic = self.diagnostic_at_current("expected identifier");
+                self.index -= 1;
+                Err(diagnostic)
+            }
+            None => Err(self.diagnostic_at_current("expected identifier")),
         }
     }
 
@@ -18,14 +25,22 @@ impl Parser {
     ) -> Result<(), Diagnostic> {
         let token = self
             .advance()
-            .ok_or_else(|| Diagnostic::new("unexpected end of input"))?;
+            .ok_or_else(|| self.end_of_input_diagnostic())?;
         if same_variant(&token.kind, &expected) {
             Ok(())
         } else {
-            Err(Diagnostic::new(format!(
-                "{message} at {}..{}",
-                token.span.start, token.span.end
-            )))
+            // Leave the unexpected token unconsumed so statement-level
+            // recovery can resynchronize on it (it may close a block).
+            self.index -= 1;
+            Err(Diagnostic::new(message).with_span(token.span))
+        }
+    }
+
+    pub(super) fn end_of_input_diagnostic(&self) -> Diagnostic {
+        let diagnostic = Diagnostic::new("unexpected end of input");
+        match self.tokens.last() {
+            Some(token) => diagnostic.with_span(token.span),
+            None => diagnostic,
         }
     }
 
@@ -87,10 +102,7 @@ impl Parser {
         }
 
         if let Some(token) = self.tokens.get(self.index.saturating_sub(1)) {
-            Diagnostic::new(format!(
-                "{message} at {}..{}",
-                token.span.start, token.span.end
-            ))
+            Diagnostic::new(message).with_span(token.span)
         } else {
             Diagnostic::new(message)
         }

@@ -29,5 +29,8 @@ fn reports_multiple_errors_for_calls_and_assign_fixture() {
     let lines: Vec<_> = message.lines().collect();
     assert_eq!(lines.len(), 2);
     assert!(lines[0].contains("expected expression"));
-    assert!(lines[1].contains("expected expression"));
+    // The unexpected token is no longer consumed by the failed expression
+    // parse, so `local y: = 1` is re-parsed as its own statement and reports
+    // the accurate missing-type diagnostic instead of a cascaded one.
+    assert!(lines[1].contains("expected type"));
 }

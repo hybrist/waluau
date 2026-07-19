@@ -261,7 +261,7 @@ fn compile_sources(
 }
 
 fn compile_source(source: &str) -> Result<CompileResult, String> {
-    let mut program = waluau_parser::parse(source).map_err(|e| e.to_string())?;
+    let mut program = waluau_parser::parse(source).map_err(|e| e.render_for_playground())?;
 
     // Add builtin declarations to standalone programs
     add_builtins_to_program(&mut program).map_err(|e| e.to_string())?;
