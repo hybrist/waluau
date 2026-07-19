@@ -53,9 +53,11 @@ pub struct Program {
     pub top_level: Vec<Stmt>,
     /// The value a module exports through a trailing top-level `return`.
     ///
-    /// The value a module exports: a function name or a table of functions.
-    /// Consumed by the module linker in `waluau-driver` and ignored when a
-    /// program is compiled as a standalone entry point.
+    /// The value is a function name or a table of functions. Module linkers
+    /// consume dependency exports while resolving `require`. A trailing return
+    /// in the linked entry file does not define the Wasm export surface:
+    /// entry-file top-level functions do, so linkers discard this metadata
+    /// after hoisting any inline exported functions.
     pub export: Option<Expr>,
     pub sources: BTreeMap<String, String>,
     pub entry_file_path: String,
@@ -278,6 +280,11 @@ pub enum Type {
     /// A fixed-length numeric array in linear memory (`Float32Array` etc.).
     /// Runtime value: i32 pointer to the element data; see [`TypedArrayKind`].
     TypedArray(TypedArrayKind),
+    /// A dynamically sized sequence of values produced by `...`.
+    ///
+    /// Variadic packs use the same runtime representation as `Array`, but keep
+    /// their expansion semantics across call and return boundaries.
+    Variadic(Box<Type>),
     Multi(Vec<Type>),
     Function {
         params: Vec<Type>,
@@ -302,7 +309,7 @@ impl Type {
     }
 
     pub fn is_array(&self) -> bool {
-        matches!(self, Self::Array(_))
+        matches!(self, Self::Array(_) | Self::Variadic(_))
     }
 
     pub fn is_record(&self) -> bool {
@@ -311,7 +318,7 @@ impl Type {
 
     pub fn element_type(&self) -> Option<Type> {
         match self {
-            Self::Array(element) => Some(*element.clone()),
+            Self::Array(element) | Self::Variadic(element) => Some(*element.clone()),
             Self::TypedArray(kind) => Some(Self::Numeric(kind.element_numeric_type())),
             Self::Nullable(inner) | Self::Opaque { ty: inner, .. } => inner.element_type(),
             _ => None,
@@ -475,6 +482,7 @@ impl std::fmt::Display for Type {
             }
             Self::Opaque { name, .. } => f.write_str(name),
             Self::Array(element) => write!(f, "{{{element}}}"),
+            Self::Variadic(element) => write!(f, "{element}..."),
             Self::TypedArray(kind) => f.write_str(kind.type_name()),
             Self::Multi(types) => {
                 for (index, ty) in types.iter().enumerate() {

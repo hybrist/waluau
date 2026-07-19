@@ -14,7 +14,13 @@ pub(crate) const STATE_TAG_FIELD: u32 = 0;
 pub(crate) const STATE_YIELDED_FIELD: u32 = 1;
 pub(crate) const STATE_CONT_FIELD: u32 = 2;
 pub(crate) const STATE_AWAIT_STATUS_FIELD: u32 = 3;
-pub(crate) const STATE_PC_FIELD_BASE: u32 = 4;
+/// Shadow stack of per-activation frames `(ref null $anyref_array)`.
+pub(crate) const STATE_FRAMES_FIELD: u32 = 4;
+/// Call depth of the next suspension-capable activation to enter.
+pub(crate) const STATE_DEPTH_FIELD: u32 = 5;
+/// One-shot flag set by resume paths and synthetic call-resume dispatch: the
+/// next suspension-capable entry is a replay into a saved activation frame.
+pub(crate) const STATE_REPLAYING_FIELD: u32 = 6;
 pub(crate) const TAG_SUSPENDED: i32 = 0;
 pub(crate) const TAG_FINISHED: i32 = 1;
 pub(crate) const TAG_ERROR: i32 = 2;
@@ -22,6 +28,11 @@ pub(crate) const TAG_AWAITING_PROMISE: i32 = 3;
 pub(crate) const AWAIT_STATUS_NONE: i32 = 0;
 pub(crate) const AWAIT_STATUS_FULFILLED: i32 = 1;
 pub(crate) const AWAIT_STATUS_REJECTED: i32 = 2;
+
+/// Continuation program counter inside a per-activation frame struct.
+pub(crate) const FRAME_PC_FIELD: u32 = 0;
+/// First spill slot inside a per-activation frame struct.
+pub(crate) const FRAME_SPILL_FIELD_BASE: u32 = 1;
 
 #[derive(Clone, Debug)]
 pub(crate) struct CoroutineSpillSlot {
@@ -41,12 +52,14 @@ pub(crate) struct CoroutineCallResumePoint {
 #[derive(Clone, Debug)]
 pub(crate) struct CoroutinePlan {
     active_global: Option<u32>,
-    pc_fields: HashMap<String, u32>,
-    pc_initial_values: Vec<i32>,
     yielding_functions: BTreeSet<String>,
     call_resume_points: HashMap<String, Vec<CoroutineCallResumePoint>>,
     spill_slots: HashMap<String, Vec<CoroutineSpillSlot>>,
-    spill_field_types: Vec<Type>,
+    /// Per-function offset into the block of frame struct types (declaration
+    /// order matches `frame_functions`).
+    frame_type_offsets: HashMap<String, u32>,
+    /// Type index of the first frame struct type (set once type layout is known).
+    frame_type_base: Option<u32>,
 }
 
 impl CoroutinePlan {
@@ -101,27 +114,19 @@ impl CoroutinePlan {
         if !has_state {
             return Self {
                 active_global: None,
-                pc_fields: HashMap::new(),
-                pc_initial_values: Vec::new(),
                 yielding_functions,
                 call_resume_points: HashMap::new(),
                 spill_slots: HashMap::new(),
-                spill_field_types: Vec::new(),
+                frame_type_offsets: HashMap::new(),
+                frame_type_base: None,
             };
         }
 
-        let mut pc_fields = HashMap::new();
-        let mut pc_initial_values = Vec::new();
-        for (index, name) in yielding_functions.iter().enumerate() {
-            pc_fields.insert(name.clone(), STATE_PC_FIELD_BASE + index as u32);
-            let entry = module
-                .functions
-                .iter()
-                .find(|function| function.name == *name)
-                .map(|function| function.entry.0 as i32)
-                .unwrap_or(0);
-            pc_initial_values.push(entry);
-        }
+        let frame_type_offsets = yielding_functions
+            .iter()
+            .enumerate()
+            .map(|(index, name)| (name.clone(), index as u32))
+            .collect();
 
         let mut call_resume_points = HashMap::new();
         for function in &module.functions {
@@ -157,12 +162,11 @@ impl CoroutinePlan {
 
         Self {
             active_global: Some(imported_global_count),
-            pc_fields,
-            pc_initial_values,
             yielding_functions,
             call_resume_points,
             spill_slots: HashMap::new(),
-            spill_field_types: Vec::new(),
+            frame_type_offsets,
+            frame_type_base: None,
         }
     }
 
@@ -172,13 +176,13 @@ impl CoroutinePlan {
         signatures: &HashMap<String, FunctionSignature>,
         array_registry: &ArrayTypeRegistry,
     ) -> Result<(), Diagnostic> {
-        let mut next_field = STATE_PC_FIELD_BASE + self.pc_field_count();
         for function in &module.functions {
             if !self.function_yields(&function.name) {
                 continue;
             }
             let value_types = infer_value_types(function, signatures)?;
-            let local_plan = build_local_plan(function, &value_types, array_registry, true)?;
+            let frame_type = self.frame_type(&function.name);
+            let local_plan = build_local_plan(function, &value_types, array_registry, frame_type)?;
             let mut local_types = BTreeMap::<u32, Type>::new();
             for (value, local) in &local_plan.slots {
                 let Some(ty) = value_types.get(value) else {
@@ -207,16 +211,15 @@ impl CoroutinePlan {
                 }
             }
 
-            let mut spills = Vec::with_capacity(local_types.len());
-            for (local, ty) in local_types {
-                spills.push(CoroutineSpillSlot {
+            let spills = local_types
+                .into_iter()
+                .enumerate()
+                .map(|(index, (local, ty))| CoroutineSpillSlot {
                     local,
-                    field: next_field,
-                    ty: ty.clone(),
-                });
-                self.spill_field_types.push(ty);
-                next_field += 1;
-            }
+                    field: FRAME_SPILL_FIELD_BASE + index as u32,
+                    ty,
+                })
+                .collect();
             self.spill_slots.insert(function.name.clone(), spills);
         }
         Ok(())
@@ -231,16 +234,25 @@ impl CoroutinePlan {
             .ok_or_else(|| Diagnostic::new("missing coroutine active-instance global"))
     }
 
-    pub(crate) fn pc_field(&self, name: &str) -> Option<u32> {
-        self.pc_fields.get(name).copied()
+    /// Record where frame struct types start in the type section. Must be set
+    /// before frame types are referenced during emission.
+    pub(crate) fn set_frame_type_base(&mut self, base: u32) {
+        self.frame_type_base = Some(base);
     }
 
-    pub(crate) fn pc_field_count(&self) -> u32 {
-        self.pc_fields.len() as u32
+    /// Concrete frame struct type index for a suspension-capable function.
+    pub(crate) fn frame_type(&self, name: &str) -> Option<u32> {
+        let offset = self.frame_type_offsets.get(name)?;
+        Some(self.frame_type_base? + offset)
     }
 
-    pub(crate) fn pc_initial_values(&self) -> &[i32] {
-        &self.pc_initial_values
+    pub(crate) fn frame_count(&self) -> u32 {
+        self.frame_type_offsets.len() as u32
+    }
+
+    /// Suspension-capable functions in frame-type declaration order.
+    pub(crate) fn frame_functions(&self) -> impl Iterator<Item = &str> {
+        self.yielding_functions.iter().map(String::as_str)
     }
 
     pub(crate) fn call_resume_points(&self, name: &str) -> &[CoroutineCallResumePoint] {
@@ -259,10 +271,6 @@ impl CoroutinePlan {
 
     pub(crate) fn spill_slots(&self, name: &str) -> &[CoroutineSpillSlot] {
         self.spill_slots.get(name).map(Vec::as_slice).unwrap_or(&[])
-    }
-
-    pub(crate) fn spill_field_types(&self) -> &[Type] {
-        &self.spill_field_types
     }
 
     pub(crate) fn emit_globals(&self, globals: &mut GlobalSection, state_type_index: u32) {

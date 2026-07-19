@@ -333,6 +333,9 @@ fn insert_nullable_box_kinds(ty: &Type, out: &mut BTreeSet<NullableBoxKind>) {
             insert_nullable_box_kinds(inner, out);
         }
         Type::Array(element) => insert_nullable_box_kinds(element, out),
+        // A variadic pack carries an element type like an array does; a
+        // `T?` element still needs its box kind registered.
+        Type::Variadic(element) => insert_nullable_box_kinds(element, out),
         Type::Record(fields) => {
             for field_ty in fields.values() {
                 insert_nullable_box_kinds(field_ty, out);
@@ -436,16 +439,17 @@ fn collect_nullable_box_kinds_from_instruction(
 
 fn array_type_depth(ty: &Type) -> usize {
     match ty {
-        Type::Array(element) => 1 + array_type_depth(element),
+        Type::Array(element) | Type::Variadic(element) => 1 + array_type_depth(element),
         _ => 0,
     }
 }
 
 fn insert_array_type(ty: &Type, seen: &mut BTreeSet<String>, out: &mut Vec<Type>) {
-    if let Type::Array(element) = ty {
+    if let Type::Array(element) | Type::Variadic(element) = ty {
         insert_array_type(element, seen, out);
-        if seen.insert(type_key(ty)) {
-            out.push(ty.clone());
+        let array_ty = Type::Array(element.clone());
+        if seen.insert(type_key(&array_ty)) {
+            out.push(array_ty);
         }
     }
 }
@@ -460,7 +464,7 @@ fn insert_record_type(ty: &Type, seen: &mut BTreeSet<String>, out: &mut Vec<Type
                 out.push(ty.clone());
             }
         }
-        Type::Array(element) => insert_record_type(element, seen, out),
+        Type::Array(element) | Type::Variadic(element) => insert_record_type(element, seen, out),
         Type::Multi(types) => {
             for nested in types {
                 insert_record_type(nested, seen, out);
@@ -622,7 +626,7 @@ pub(crate) fn array_storage_type(
         // Array values are growable wrapper structs. `array_types` is
         // depth-sorted and each wrapper struct is emitted right after its raw
         // array, so the inner element's struct is always a backward reference.
-        Type::Array(inner) => {
+        Type::Array(inner) | Type::Variadic(inner) => {
             let index = registry.growable_array_index(inner)?;
             Ok(StorageType::Val(ValType::Ref(RefType {
                 nullable: true,
@@ -677,7 +681,7 @@ pub(crate) fn record_storage_type(
         Type::Nullable(inner) => record_storage_type(inner, registry),
         // Typed arrays are i32 pointers into linear memory.
         Type::TypedArray(_) => Ok(StorageType::Val(ValType::I32)),
-        Type::Array(inner) => {
+        Type::Array(inner) | Type::Variadic(inner) => {
             let index = registry.growable_array_index(inner)?;
             Ok(StorageType::Val(ValType::Ref(RefType {
                 nullable: true,

@@ -1,4 +1,4 @@
-use super::parse;
+use super::{parse, parse_with_path};
 use waluau_ast::{
     AssignOp, BinaryOp, FunctionName, NumberLiteral, NumericType, Rebindability, Stmt, Type,
     UnaryOp,
@@ -1898,6 +1898,47 @@ fn parses_require_with_string_sugar() {
         panic!("expected a let binding");
     };
     assert!(matches!(value, waluau_ast::Expr::Require(path, _) if path == "./add"));
+}
+
+#[test]
+fn rejects_non_string_require_argument_with_stable_source_diagnostic() {
+    let source = "local add = require(module_name)";
+    let start = source.find("module_name").expect("argument should exist");
+    let error = parse_with_path(source, "main.walu").expect_err("non-string require should fail");
+
+    assert_eq!(error.code(), Some("module/require-literal-path"));
+    assert_eq!(
+        error.to_string(),
+        "require expects a string literal path, e.g. require(\"./module\")"
+    );
+    assert_eq!(
+        error.span(),
+        Some(waluau_ast::Span {
+            start: start as u32,
+            end: (start + "module_name".len()) as u32,
+        })
+    );
+    assert_eq!(
+        error.render(),
+        format!(
+            "main.walu:1:{}: require expects a string literal path, e.g. \
+             require(\"./module\")",
+            start + 1
+        )
+    );
+}
+
+#[test]
+fn parse_with_path_populates_program_source_metadata() {
+    let source = "function main(): unit\nend\n";
+    let program = parse_with_path(source, "src/main.walu").expect("parse should succeed");
+
+    assert_eq!(program.entry_file_path, "src/main.walu");
+    assert_eq!(
+        program.sources.get("src/main.walu").map(String::as_str),
+        Some(source)
+    );
+    assert_eq!(program.sources.len(), 1);
 }
 
 #[test]

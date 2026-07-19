@@ -305,9 +305,14 @@ fn mark_used_by_instruction(instruction: &IrInstruction, used: &mut UsedHostImpo
             _ => {}
         },
         IrInstruction::Binary { op, operand_ty, .. } => match (op, operand_ty) {
-            (BinaryOp::Eq, Type::String) => used.js_string_eq = true,
-            (BinaryOp::Eq, Type::Bytes) => used.bytes_eq = true,
+            // `NotEq` lowers to the `Eq` helper plus a negation, so it needs
+            // the same host import as `Eq` for every host-compared type.
+            (BinaryOp::Eq | BinaryOp::NotEq, Type::String) => used.js_string_eq = true,
+            (BinaryOp::Eq | BinaryOp::NotEq, Type::Bytes) => used.bytes_eq = true,
             (BinaryOp::Eq | BinaryOp::NotEq, Type::Unknown) => used.js_eq_unknown = true,
+            (BinaryOp::Eq | BinaryOp::NotEq, Type::Extern | Type::ExternSubtype(_)) => {
+                used.js_eq_unknown = true
+            }
             (BinaryOp::Concat, Type::String) => used.js_string_concat = true,
             (BinaryOp::Concat, Type::Bytes) => used.bytes_concat = true,
             (
@@ -369,6 +374,64 @@ pub fn decode_bytes_constants_section(data: &[u8]) -> Result<Vec<Vec<u8>>, Diagn
     Ok(values)
 }
 
+/// Error message thrown (with the Lua error tag) for out-of-bounds array
+/// reads and writes, so `pcall` observes an error instead of a Wasm trap.
+pub const ERR_ARRAY_OOB: &str = "array index out of bounds";
+/// Error message for `table.remove`-style pops from an empty array.
+pub const ERR_ARRAY_POP_EMPTY: &str = "attempt to pop from an empty array";
+/// Error message when dynamically indexing an `unknown` that is not an array.
+pub const ERR_INDEX_NON_ARRAY: &str = "attempt to index a non-array value";
+/// Error message when taking `#` of an `unknown` that is not an array.
+pub const ERR_LEN_NON_ARRAY: &str = "attempt to get length of a non-array value";
+/// Lua 5.4-compatible error message for integer division by zero.
+pub const ERR_DIV_ZERO: &str = "attempt to perform 'n//0'";
+/// Lua 5.4-compatible error message for integer modulo by zero.
+pub const ERR_MOD_ZERO: &str = "attempt to perform 'n%0'";
+/// Luau-compatible error message for out-of-bounds typed-array access.
+pub const ERR_BUFFER_OOB: &str = "buffer access out of bounds";
+/// Error payload used when `pcall` catches a foreign (non-Waluau) exception
+/// raised by a host import.
+pub const ERR_FOREIGN_EXCEPTION: &str = "uncaught host exception";
+
+/// True for the integer numeric types whose Wasm division/remainder
+/// instructions can trap (divide by zero, signed overflow).
+pub(crate) fn is_integer_numeric(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Numeric(NumericType::I32 | NumericType::U32 | NumericType::I64 | NumericType::U64)
+    )
+}
+
+/// The runtime-error messages this instruction's checked codegen can throw.
+///
+/// Codegen replaces the Wasm traps these operations would otherwise hit with
+/// `throw` of the Lua error tag carrying one of these messages, so protected
+/// calls can catch them. Keep this in sync with the emission sites: every
+/// message a checked operation throws must be listed here so it is collected
+/// into the imported string constants, and any instruction listed here forces
+/// the Lua error tag to be defined.
+pub(crate) fn runtime_error_messages(instruction: &IrInstruction) -> &'static [&'static str] {
+    match instruction {
+        IrInstruction::ArrayGet { .. } | IrInstruction::ArraySet { .. } => &[ERR_ARRAY_OOB],
+        IrInstruction::ArrayPop { .. } => &[ERR_ARRAY_POP_EMPTY],
+        IrInstruction::DynIndex { .. } => &[ERR_ARRAY_OOB, ERR_INDEX_NON_ARRAY],
+        IrInstruction::DynLen { .. } => &[ERR_LEN_NON_ARRAY],
+        IrInstruction::BufferGet { .. } | IrInstruction::BufferSet { .. } => &[ERR_BUFFER_OOB],
+        IrInstruction::ProtectedCall { .. } => &[ERR_FOREIGN_EXCEPTION],
+        IrInstruction::Binary {
+            op: BinaryOp::Div | BinaryOp::FloorDiv,
+            operand_ty,
+            ..
+        } if is_integer_numeric(operand_ty) => &[ERR_DIV_ZERO],
+        IrInstruction::Binary {
+            op: BinaryOp::Mod,
+            operand_ty,
+            ..
+        } if is_integer_numeric(operand_ty) => &[ERR_MOD_ZERO],
+        _ => &[],
+    }
+}
+
 /// Collect every string literal in `module`, deduplicated in first-seen order.
 pub fn collect_string_constants(module: &Module) -> Vec<String> {
     let mut strings = Vec::new();
@@ -422,6 +485,11 @@ fn collect_from_function<'a>(
                     }
                 }
                 _ => {}
+            }
+            for message in runtime_error_messages(instruction) {
+                if indices.insert(message, strings.len() as u32).is_none() {
+                    strings.push((*message).to_string());
+                }
             }
         }
     }

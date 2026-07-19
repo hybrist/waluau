@@ -273,6 +273,89 @@ fn lowers_scalar_string_byte_as_nullable_without_changing_host_abi() {
 }
 
 #[test]
+fn clips_string_byte_ranges_and_adjusts_empty_ranges_to_nil() {
+    let source = r#"
+        declare function string_byte(value: string, index: i32): i32
+        declare function string_char2(first: i32, second: i32): string
+
+        function empty_high(): bool
+            return string.byte("hi", 9, 10) == nil
+        end
+
+        function empty_inverted(): bool
+            return string.byte("hi", 2, 1) ~= nil
+        end
+
+        function clipped(): string
+            return string.char(string.byte("hi", 1, 5))
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+
+    for function in &module.functions {
+        let mut constants: BTreeMap<ValueId, i32> = BTreeMap::new();
+        let mut byte_indices = Vec::new();
+        let mut bool_consts = Vec::new();
+        for block in function.blocks.values() {
+            for (value, instruction) in &block.instructions {
+                match instruction {
+                    Instruction::Number {
+                        ty: NumericType::I32,
+                        literal,
+                    } => {
+                        if let Ok(parsed) = literal.raw.parse::<i32>() {
+                            constants.insert(*value, parsed);
+                        }
+                    }
+                    Instruction::HostCall { name, args, .. } if name == "string_byte" => {
+                        byte_indices.push(constants.get(&args[1]).copied());
+                    }
+                    Instruction::Bool(flag) => bool_consts.push(*flag),
+                    _ => {}
+                }
+            }
+        }
+        match function.name.as_str() {
+            "empty_high" => {
+                assert!(
+                    byte_indices.is_empty(),
+                    "statically empty range must emit no host calls:\n{}",
+                    function.dump()
+                );
+                assert!(
+                    bool_consts.contains(&true),
+                    "empty range == nil should be statically true:\n{}",
+                    function.dump()
+                );
+            }
+            "empty_inverted" => {
+                assert!(
+                    byte_indices.is_empty(),
+                    "statically empty range must emit no host calls:\n{}",
+                    function.dump()
+                );
+                assert!(
+                    bool_consts.contains(&false),
+                    "empty range ~= nil should be statically false:\n{}",
+                    function.dump()
+                );
+            }
+            "clipped" => {
+                assert_eq!(
+                    byte_indices,
+                    vec![Some(1), Some(2)],
+                    "range must clip to the string bounds:\n{}",
+                    function.dump()
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+#[test]
 fn lowers_if_expression_with_phi_result() {
     let source = r#"
         function entry(flag: bool, x: i32, y: i32): i32
@@ -2707,4 +2790,164 @@ fn lowers_length_of_record_field_array_in_numeric_context() {
             .iter()
             .any(|(_, instruction)| matches!(instruction, Instruction::ArrayLen { .. }))
     }));
+}
+
+/// Collects the string literals a lowered `entry` function emits.
+fn entry_string_literals(source: &str) -> Vec<String> {
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.name == "entry")
+        .expect("entry function should exist");
+    function
+        .blocks
+        .values()
+        .flat_map(|block| block.instructions.iter())
+        .filter_map(|(_, instruction)| match instruction {
+            Instruction::String(literal) => Some(literal.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn type_of_multi_value_call_reports_the_adjusted_first_value() {
+    // Regression test for waluau-hlrk: `type()` on a multi-value call lowered
+    // to the non-Lua string "unknown" because `Type::Multi` had no mapping.
+    // Lua adjusts a call in single-value position to its first result.
+    let literals = entry_string_literals(
+        r#"
+        function pair(): (number, string)
+            return 1, "a"
+        end
+
+        function entry(): string
+            return type(pair())
+        end
+    "#,
+    );
+    assert!(
+        literals.iter().any(|literal| literal == "number"),
+        "expected the first result's type name, got {literals:?}"
+    );
+    assert!(
+        !literals.iter().any(|literal| literal == "unknown"),
+        "expected no non-Lua type name, got {literals:?}"
+    );
+}
+
+#[test]
+fn type_of_empty_multi_value_call_reports_nil() {
+    // A call returning nothing adjusts to `nil` in single-value position.
+    let literals = entry_string_literals(
+        r#"
+        function nothing(): ()
+        end
+
+        function entry(): string
+            return type(nothing())
+        end
+    "#,
+    );
+    assert!(
+        literals.iter().any(|literal| literal == "nil"),
+        "expected \"nil\" for an empty result list, got {literals:?}"
+    );
+}
+
+#[test]
+fn type_of_multi_value_call_with_unknown_first_result_dispatches_at_runtime() {
+    // The adjusted value is `unknown`, so classification must go through the
+    // dynamic `TypeName` instruction rather than any static string.
+    let source = r#"
+        function pair(): (unknown, number)
+            return 1, 2
+        end
+
+        function entry(): string
+            return type(pair())
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.name == "entry")
+        .expect("entry function should exist");
+    assert!(
+        function.blocks.values().any(|block| {
+            block.instructions.iter().any(|(_, instruction)| {
+                matches!(
+                    instruction,
+                    Instruction::TypeName {
+                        from: Type::Unknown,
+                        ..
+                    }
+                )
+            })
+        }),
+        "expected a dynamic TypeName dispatch in:\n{}",
+        function.dump()
+    );
+}
+
+#[test]
+fn type_of_nominal_alias_reports_the_underlying_representation() {
+    // A nominal alias is transparent to `type()`: a record alias is a table,
+    // and an extern alias is userdata. Neither may report "unknown".
+    let literals = entry_string_literals(
+        r#"
+        type Point = { x: number, y: number }
+
+        function entry(): string
+            local point: Point = { x = 1, y = 2 }
+            return type(point)
+        end
+    "#,
+    );
+    assert_eq!(literals, vec!["table".to_string()]);
+
+    let literals = entry_string_literals(
+        r#"
+        type Handle = extern
+        declare function make_handle(): Handle
+
+        function entry(): string
+            local handle: Handle = make_handle()
+            return type(handle)
+        end
+    "#,
+    );
+    assert_eq!(literals, vec!["userdata".to_string()]);
+}
+
+#[test]
+fn preserves_trailing_vararg_packs_in_function_returns() {
+    let source = r#"
+        function only(...)
+            return ...
+        end
+
+        function prefixed(a, ...)
+            return a, ...
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let module = build(&typed).expect("ir build should succeed");
+    verify(&module).expect("ir should verify");
+
+    assert_eq!(
+        module.functions[0].return_type,
+        Type::Variadic(Box::new(Type::Unknown))
+    );
+    assert_eq!(
+        module.functions[1].return_type,
+        Type::Multi(vec![Type::Unknown, Type::Variadic(Box::new(Type::Unknown)),])
+    );
 }

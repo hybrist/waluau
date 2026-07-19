@@ -1,6 +1,19 @@
 import { test, expect } from '@playwright/test';
 
 const COMPILER_READY_TIMEOUT = 20_000;
+const UNRELATED_EXPORT_SAMPLE = `math.randomseed(1)
+
+function unrelated(): f64
+    return math.random()
+end
+
+function inspect(): i32
+    if math.random() > 0.5 then
+        return 0::i32
+    end
+    return 1::i32
+end
+`;
 
 test.describe('inline function calling', () => {
   test.beforeEach(async ({ page }) => {
@@ -85,5 +98,23 @@ test.describe('inline function calling', () => {
     await expect(widget.locator('.result-value.success')).toHaveText('42');
     // Verify there are no logs printed in the inline widget (as requested by user)
     await expect(widget.locator('.inline-runner-logs')).not.toBeVisible();
+  });
+
+  test('only auto-runs the inline function while the Run tab is unmounted', async ({ page }) => {
+    await page.getByRole('button', { name: 'Generated IR' }).click();
+    await page.locator('.code-textarea').fill(UNRELATED_EXPORT_SAMPLE);
+    await expect(page.locator('.status-text')).toHaveText(
+      'Compilation Succeeded',
+      { timeout: COMPILER_READY_TIMEOUT },
+    );
+
+    const codeLens = page.locator('.codelens-decoration:has-text("▶ Run inspect")');
+    await expect(codeLens).toBeVisible({ timeout: 10_000 });
+    await codeLens.click();
+
+    const widget = page.locator('.inline-runner-widget');
+    await expect(widget).toBeVisible();
+    await expect(widget.locator('.inline-runner-name')).toHaveText('inspect');
+    await expect(widget.locator('.result-value.success')).toHaveText('0');
   });
 });

@@ -609,6 +609,71 @@ mod tests {
     }
 
     #[test]
+    fn compile_file_resolves_vitest_virtual_module_as_bare_globals() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("math.test.walu");
+        fs::write(
+            &input_path,
+            r#"
+                require("waluau:vitest")
+
+                function add(a: i32, b: i32): i32
+                    return a + b
+                end
+
+                describe("add", function(): unit
+                    it("adds", function(): unit
+                        expect(add(2, 2)):toBe(4)
+                        expect(add(1, 1) == 2):toBeTruthy()
+                        expect("walu"):toContain("alu")
+                    end)
+                end)
+            "#,
+        )
+        .expect("test file should write");
+
+        let wasm = super::compile_file(&input_path).expect("vitest require should compile");
+        let wat = wasmprinter::print_bytes(&wasm).expect("wasm should print");
+        assert!(
+            wat.contains(r#"(import "waluau" "describe""#),
+            "describe should import as a host function:\n{wat}"
+        );
+        assert!(
+            wat.contains(r#"(import "waluau" "NumberExpectation.toBe""#),
+            "matcher methods should import under their extern type names:\n{wat}"
+        );
+        assert!(
+            wat.contains(&format!("(export \"{}\"", "__waluau_call_callback_unit")),
+            "test bodies need the () -> unit callback trampoline:\n{wat}"
+        );
+    }
+
+    #[test]
+    fn compile_file_resolves_vitest_namespace_binding() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("suite.test.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local t = require("waluau:vitest")
+
+                t.it("works through the namespace", function(): unit
+                    t.expect(21 * 2):toBe(42)
+                end)
+            "#,
+        )
+        .expect("test file should write");
+
+        let wasm =
+            super::compile_file(&input_path).expect("vitest namespace require should compile");
+        let wat = wasmprinter::print_bytes(&wasm).expect("wasm should print");
+        assert!(
+            wat.contains(r#"(import "waluau" "it""#),
+            "namespace members should resolve to the declared host imports:\n{wat}"
+        );
+    }
+
+    #[test]
     fn compile_file_resolves_tfjs_training_namespace() {
         let tempdir = tempdir().expect("tempdir should exist");
         let input_path = tempdir.path().join("app.walu");
@@ -869,6 +934,34 @@ mod tests {
     }
 
     #[test]
+    fn compiles_string_split_function_and_method_forms() {
+        // string.split lowers to the string_split/string_split_get host
+        // imports plus a compiler-emitted loop that fills a growable
+        // {string} array; the separator defaults to ",".
+        let source = r#"
+            local parts: {string} = string.split("a,b,c", ",")
+            assert(#parts == 3)
+            assert(parts[0] == "a")
+
+            local defaulted = string.split("a,b")
+            assert(#defaulted == 2)
+
+            local chars = ("abc"):split("")
+            assert(#chars == 3)
+        "#;
+        let wasm = super::compile_source(source).expect("compile should succeed");
+        let wat = wasmprinter::print_bytes(&wasm).expect("wat should print");
+        assert!(
+            wat.contains("(import \"waluau\" \"string_split\" "),
+            "expected a string_split host import:\n{wat}"
+        );
+        assert!(
+            wat.contains("(import \"waluau\" \"string_split_get\" "),
+            "expected a string_split_get host import:\n{wat}"
+        );
+    }
+
+    #[test]
     fn rejects_invalid_fixture_file() {
         let source = fixture_source("mismatch");
         let err = super::compile_source(source).expect_err("compile should fail");
@@ -1100,6 +1193,29 @@ mod tests {
         assert!(
             error.to_string().contains("circular module import"),
             "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn reports_non_string_require_argument_at_its_source_location() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input_path = tempdir.path().join("main.walu");
+        let source = "local lib = require(module_name)\n";
+        fs::write(&input_path, source).expect("main should write");
+        let canonical_path = input_path
+            .canonicalize()
+            .expect("main path should canonicalize");
+        let column = source.find("module_name").expect("argument should exist") + 1;
+
+        let error = super::compile_file(&input_path).expect_err("non-string require should fail");
+        assert_eq!(error.code(), Some("module/require-literal-path"));
+        assert_eq!(
+            error.render(),
+            format!(
+                "{}:1:{column}: require expects a string literal path, e.g. \
+                 require(\"./module\")",
+                canonical_path.display()
+            )
         );
     }
 

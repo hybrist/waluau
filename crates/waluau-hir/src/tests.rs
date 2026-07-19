@@ -640,6 +640,50 @@ fn distinct_extern_type_aliases_do_not_implicitly_convert() {
 }
 
 #[test]
+fn type_checks_extern_reference_equality() {
+    let source = r#"
+        type Node = extern
+        type Element = extern extends Node
+
+        function same(a: Element, b: Element): bool
+            return a == b
+        end
+
+        function different(a: Element, b: Element): bool
+            return a ~= b
+        end
+
+        function across_subtypes(a: Node, b: Element): bool
+            return a == b
+        end
+
+        function nullable_side(a: Element?, b: Element): bool
+            return a == b
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_equality_between_unrelated_extern_types() {
+    let source = r#"
+        type Element = extern
+        type AudioContext = extern
+
+        function entry(a: Element, b: AudioContext): bool
+            return a == b
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "== requires compatible extern operand types"
+    );
+}
+
+#[test]
 fn extern_inheritance_allows_upcast() {
     let source = r#"
         type Node = extern
@@ -3557,5 +3601,82 @@ fn rejects_overloads_with_identical_parameters_and_conflicting_returns() {
         "conflicting declarations of host function 'ping': overloads must differ in parameter \
          types, but two declarations share the parameter list and disagree on the return type \
          or host name"
+    );
+}
+
+#[test]
+fn numeric_for_untyped_literal_bounds_adopt_the_typed_bound_type() {
+    // `0` carries no numeric type of its own, so the loop variable adopts the
+    // i32 type of `#a - 1` (mirroring untyped literals in binary expressions)
+    // instead of defaulting to f64.
+    let source = r#"
+        local a: {i32} = {1, 2, 3}
+        local sum: i32 = 0
+        for i = 0, #a - 1 do
+            local index: i32 = i
+            sum += a[index]
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program).expect("type check should succeed");
+}
+
+#[test]
+fn countdown_numeric_for_adopts_typed_bound_type_for_negative_literal_step() {
+    // The `-1` step is an untyped literal behind unary minus; it adopts the
+    // i32 loop type instead of dragging the loop to f64.
+    let source = r#"
+        local a: {i32} = {1, 2, 3}
+        local sum: i32 = 0
+        for i = #a - 1, 0, -1 do
+            local index: i32 = i
+            sum += a[index]
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program).expect("type check should succeed");
+}
+
+#[test]
+fn rejects_fractional_literal_bound_in_an_integer_loop() {
+    let source = r#"
+        local a: {i32} = {1, 2, 3}
+        local sum: i32 = 0
+        for i = 0.5, #a - 1 do
+            sum += 1
+        end
+    "#;
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "numeric literal must be an integer for i32"
+    );
+}
+
+#[test]
+fn infers_trailing_vararg_returns_as_variadic_packs() {
+    let source = r#"
+        function only(...)
+            return ...
+        end
+
+        function prefixed(a, ...)
+            return a, ...
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let typed = super::type_check_and_infer(&program).expect("type check should succeed");
+    assert_eq!(
+        typed.functions[0].return_type,
+        Some(Type::Variadic(Box::new(Type::Unknown)))
+    );
+    assert_eq!(
+        typed.functions[1].return_type,
+        Some(Type::Multi(vec![
+            Type::Unknown,
+            Type::Variadic(Box::new(Type::Unknown)),
+        ]))
     );
 }

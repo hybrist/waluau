@@ -1,0 +1,44 @@
+-- `type()` classifies the single value its argument adjusts to, and always
+-- answers with a real Luau type name. A multi-value call in single-value
+-- position yields its first result (or nil when it returns nothing), and a
+-- nominal alias reports the name of its underlying representation.
+
+type Point = { x: number, y: number }
+
+function pair(): (number, string)
+    return 1, "a"
+end
+
+function string_first(): (string, number)
+    return "a", 1
+end
+
+function unknown_first(): (unknown, number)
+    return 1, 2
+end
+
+function nothing(): ()
+end
+
+-- A call adjusts to its first result.
+assert(type(pair()) == "number")
+assert(typeof(pair()) == "number")
+assert(type(string_first()) == "string")
+
+-- A call returning nothing adjusts to nil.
+assert(type(nothing()) == "nil")
+
+-- An adjusted `unknown` still classifies at runtime.
+assert(type(unknown_first()) == "number")
+
+-- A nominal record alias is transparent: it is a table, not its alias name.
+local point: Point = { x = 1, y = 2 }
+assert(type(point) == "table")
+
+-- Directly classified values keep their Luau names.
+assert(type(1) == "number")
+assert(type("a") == "string")
+assert(type(true) == "boolean")
+assert(type(nil) == "nil")
+assert(type(pair) == "function")
+assert(type({ 1, 2, 3 }) == "table")

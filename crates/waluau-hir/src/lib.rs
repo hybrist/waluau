@@ -327,10 +327,16 @@ fn annotate_inferred_stmt_locals(
                 // Bind the loop variable so `local x = <expr using it>` in the
                 // body can be inferred; the strict passes validate types later.
                 let mut loop_scope = vars.clone();
-                if let Ok(start_ty) =
-                    infer_expr(start, vars, fn_signatures, active_type_params, None)
+                let mut bounds = vec![&*start, &*stop];
+                if let Some(step) = step {
+                    bounds.push(step);
+                }
+                if let Ok(loop_ty) =
+                    numeric::infer_numeric_for_loop_type(&bounds, |expr, expected| {
+                        infer_expr(expr, vars, fn_signatures, active_type_params, expected)
+                    })
                 {
-                    loop_scope.insert(name.clone(), binding_for(start_ty, Rebindability::Const));
+                    loop_scope.insert(name.clone(), binding_for(loop_ty, Rebindability::Const));
                 }
                 annotate_inferred_stmt_locals(
                     body,
@@ -2380,8 +2386,14 @@ fn annotate_stmt_resolved_members(
                 annotate_expr_resolved_members(step, vars, fn_signatures, active_type_params)?;
             }
             let mut loop_scope = vars.clone();
-            if let Ok(start_ty) = infer_expr(start, vars, fn_signatures, active_type_params, None) {
-                loop_scope.insert(name.clone(), binding_for(start_ty, Rebindability::Const));
+            let mut bounds = vec![&*start, &*stop];
+            if let Some(step) = step {
+                bounds.push(step);
+            }
+            if let Ok(loop_ty) = numeric::infer_numeric_for_loop_type(&bounds, |expr, expected| {
+                infer_expr(expr, vars, fn_signatures, active_type_params, expected)
+            }) {
+                loop_scope.insert(name.clone(), binding_for(loop_ty, Rebindability::Const));
             }
             annotate_stmts_resolved_members(
                 body,
