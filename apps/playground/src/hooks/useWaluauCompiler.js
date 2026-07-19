@@ -29,6 +29,10 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
   const [domMountVersion, setDomMountVersion] = useState(0);
   const domOutputRootRef = useRef(null);
   const autoExecutionRef = useRef(new Map());
+  const languageServerRef = useRef(null);
+  // Documents synced to the language server: path -> { version, text }.
+  const syncedDocumentsRef = useRef(new Map());
+  const lastDiagnosticsRef = useRef(null);
 
   const setDomOutputRoot = useCallback((node) => {
     if (domOutputRootRef.current === node) return;
@@ -53,6 +57,9 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
           return;
         }
         setCompileSource(() => module.compile_multi);
+        if (typeof module.WaluauLanguageServer === 'function') {
+          languageServerRef.current = new module.WaluauLanguageServer();
+        }
         setCompilerReady(true);
         setStatus('ready');
         setLoadErrorMsg('');
@@ -94,6 +101,64 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
       };
     }
   }, [files, entryFile, compileSource, compilerReady, loadErrorMsg, status]);
+
+  // Client-side language server: sync changed documents over the LSP
+  // lifecycle and collect per-file publishDiagnostics. Null when the wasm
+  // build predates the language server (markers then fall back to errorMsg).
+  const diagnostics = useMemo(() => {
+    const server = languageServerRef.current;
+    if (!server || !compilerReady) return null;
+    const collected = new Map();
+    let sentAny = false;
+    const send = (message) => {
+      sentAny = true;
+      for (const outgoing of server.handleMessage(JSON.stringify(message))) {
+        const parsed = JSON.parse(outgoing);
+        if (parsed.method === 'textDocument/publishDiagnostics') {
+          collected.set(parsed.params.uri, parsed.params.diagnostics);
+        }
+      }
+    };
+    const synced = syncedDocumentsRef.current;
+    for (const path of [...synced.keys()]) {
+      if (!(path in files)) {
+        synced.delete(path);
+        send({
+          jsonrpc: '2.0',
+          method: 'textDocument/didClose',
+          params: { textDocument: { uri: `file://${path}` } },
+        });
+      }
+    }
+    for (const [path, text] of Object.entries(files)) {
+      const uri = `file://${path}`;
+      const known = synced.get(path);
+      if (known == null) {
+        synced.set(path, { version: 1, text });
+        send({
+          jsonrpc: '2.0',
+          method: 'textDocument/didOpen',
+          params: { textDocument: { uri, languageId: 'waluau', version: 1, text } },
+        });
+      } else if (known.text !== text) {
+        const version = known.version + 1;
+        synced.set(path, { version, text });
+        send({
+          jsonrpc: '2.0',
+          method: 'textDocument/didChange',
+          params: {
+            textDocument: { uri, version },
+            contentChanges: [{ text }],
+          },
+        });
+      }
+    }
+    // Each server response batch reflects the complete diagnostic state; if
+    // nothing changed (memo re-ran for another reason), keep the last state.
+    if (!sentAny) return lastDiagnosticsRef.current;
+    lastDiagnosticsRef.current = collected;
+    return collected;
+  }, [files, compilerReady]);
 
   const output = compilation.output;
   const errorMsg = compilation.errorMsg;
@@ -343,6 +408,7 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
     outputWasmBytes,
     displayStatus,
     errorMsg,
+    diagnostics,
     runError,
     exportsList,
     initLogs,

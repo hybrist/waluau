@@ -47,6 +47,7 @@ export default function App() {
     outputWasmBytes,
     displayStatus,
     errorMsg,
+    diagnostics,
     runError,
     exportsList,
     initLogs,
@@ -89,7 +90,8 @@ export default function App() {
     entryFile,
     exportsList,
     outputWasmBytes,
-    errorMsg
+    errorMsg,
+    diagnostics
   });
 
   // Hotkey listener for Quick Open File Search modal
