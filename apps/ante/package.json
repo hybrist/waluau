@@ -1,0 +1,17 @@
+{
+  "name": "ante",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@waluau/vite-plugin": "workspace:*"
+  },
+  "devDependencies": {
+    "vite": "^8.0.14"
+  }
+}
