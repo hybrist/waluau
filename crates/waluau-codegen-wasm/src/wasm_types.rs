@@ -70,11 +70,12 @@ pub(crate) fn wasm_type(
             format!("nullable {} values are not supported yet", inner),
         )),
         // Nullable numerics/bools have no null representation in their raw
-        // value type, so they are boxed into `anyref` (null = nil, i31/boxed
-        // struct otherwise). Nullable reference types reuse the inner
+        // value type, so they are typed nullable box refs
+        // (`ref null $nullable_box_K`): null stands for nil and a one-field
+        // struct holds the payload. Nullable reference types reuse the inner
         // (already nullable) reference representation.
         Type::Nullable(inner) if matches!(**inner, Type::Numeric(_) | Type::Bool) => {
-            Ok(anyref_val_type())
+            array_registry.nullable_box_val_type(ty)
         }
         Type::Nullable(inner) => wasm_type(inner, array_registry),
         Type::Nil => Ok(externref_val_type()),

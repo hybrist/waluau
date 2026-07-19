@@ -8,11 +8,73 @@ use wasm_encoder::{HeapType, RefType, StorageType, ValType};
 use crate::coroutines::coroutine_state_ref_type;
 use crate::wasm_types::externref_val_type;
 
+/// Payload storage class of a typed nullable box (`i32?`, `f64?`, ...).
+///
+/// Nullable primitives are represented as `(ref null $nullable_box_K)` where
+/// `$nullable_box_K = (struct (field mut K))`: null stands for nil and a
+/// one-field box holds the payload. `i32`, `u32`, and `bool` share the i32
+/// box; `i64`/`u64` share the i64 box. The payload field is mutable purely to
+/// keep these struct types structurally distinct from the immutable
+/// `$boxed_f64`/`$boxed_bool` unknown-value boxes under wasm GC's structural
+/// (iso-recursive) type canonicalization.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) enum NullableBoxKind {
+    I32,
+    I64,
+    F32,
+    F64,
+}
+
+impl NullableBoxKind {
+    /// The box kind for a nullable type's *inner* (payload) type.
+    pub(crate) fn for_inner(inner: &Type) -> Option<Self> {
+        match inner {
+            Type::Numeric(NumericType::I32 | NumericType::U32) | Type::Bool => Some(Self::I32),
+            Type::Numeric(NumericType::I64 | NumericType::U64) => Some(Self::I64),
+            Type::Numeric(NumericType::F32) => Some(Self::F32),
+            Type::Numeric(NumericType::F64) => Some(Self::F64),
+            _ => None,
+        }
+    }
+
+    /// The box kind for a nullable type (`Some` exactly for boxed nullables).
+    pub(crate) fn of(ty: &Type) -> Option<Self> {
+        match ty {
+            Type::Nullable(inner) => Self::for_inner(inner),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn payload_val_type(self) -> ValType {
+        match self {
+            Self::I32 => ValType::I32,
+            Self::I64 => ValType::I64,
+            Self::F32 => ValType::F32,
+            Self::F64 => ValType::F64,
+        }
+    }
+
+    /// Suffix used in the exported JS interop helper names
+    /// (`__waluau_box_nullable_<suffix>` / `__waluau_unbox_nullable_<suffix>`).
+    pub(crate) fn export_suffix(self) -> &'static str {
+        match self {
+            Self::I32 => "i32",
+            Self::I64 => "i64",
+            Self::F32 => "f32",
+            Self::F64 => "f64",
+        }
+    }
+}
+
 pub(crate) struct ArrayTypeRegistry {
     pub(crate) indices: HashMap<String, u32>,
     pub(crate) record_indices: HashMap<String, u32>,
     pub(crate) record_field_indices: HashMap<String, BTreeMap<String, u32>>,
     pub(crate) coroutine_state_type: Option<u32>,
+    /// Type indices of the `$nullable_box_K` structs backing nullable
+    /// primitives (`i32?` etc.). Only the kinds the module actually uses are
+    /// emitted; see [`NullableBoxKind`].
+    pub(crate) nullable_box_indices: BTreeMap<NullableBoxKind, u32>,
     /// Type index of `$anyref_array = (array (ref null any) mutable)`.
     pub(crate) anyref_array_type: u32,
     /// Type index of `$func_val = (struct { orig_idx: i32, env: ref null $anyref_array, wrapper_idx: i32 })`.
@@ -110,6 +172,7 @@ impl ArrayTypeRegistry {
             record_indices,
             record_field_indices,
             coroutine_state_type: None,
+            nullable_box_indices: BTreeMap::new(),
             anyref_array_type: runtime_gc_types.anyref_array_type,
             func_val_struct_type: runtime_gc_types.func_val_struct_type,
             boxed_f64_struct_type: runtime_gc_types.boxed_f64_struct_type,
@@ -162,6 +225,35 @@ impl ArrayTypeRegistry {
             .copied()
             .ok_or_else(|| Diagnostic::new(format!("missing growable array type for {element_ty}")))
     }
+
+    /// The `$nullable_box_K` type index for a nullable primitive's inner type.
+    pub(crate) fn nullable_box_index_for_inner(&self, inner: &Type) -> Result<u32, Diagnostic> {
+        let kind = NullableBoxKind::for_inner(inner).ok_or_else(|| {
+            Diagnostic::new(format!("no nullable box representation for {inner}?"))
+        })?;
+        self.nullable_box_indices
+            .get(&kind)
+            .copied()
+            .ok_or_else(|| Diagnostic::new(format!("missing nullable box type for {inner}?")))
+    }
+
+    /// The `$nullable_box_K` type index for a boxed nullable type (`i32?` etc.).
+    pub(crate) fn nullable_box_index(&self, nullable_ty: &Type) -> Result<u32, Diagnostic> {
+        let Type::Nullable(inner) = nullable_ty else {
+            return Err(Diagnostic::new(format!(
+                "expected a nullable type for its box index, got {nullable_ty}"
+            )));
+        };
+        self.nullable_box_index_for_inner(inner)
+    }
+
+    /// The `(ref null $nullable_box_K)` value type for a boxed nullable type.
+    pub(crate) fn nullable_box_val_type(&self, nullable_ty: &Type) -> Result<ValType, Diagnostic> {
+        Ok(ValType::Ref(RefType {
+            nullable: true,
+            heap_type: HeapType::Concrete(self.nullable_box_index(nullable_ty)?),
+        }))
+    }
 }
 
 fn type_key(ty: &Type) -> String {
@@ -201,6 +293,145 @@ pub(crate) fn collect_record_types(module: &Module) -> Vec<Type> {
         }
     }
     types
+}
+
+/// Collect the nullable-box kinds (`i32?` etc.) a module needs, scanning every
+/// type that reaches codegen: function/import signatures and each
+/// type-carrying IR instruction. Missing a use site fails compilation with a
+/// "missing nullable box type" diagnostic rather than miscompiling.
+pub(crate) fn collect_nullable_box_kinds(
+    module: &Module,
+    declared_imports: &[&waluau_ir::DeclaredImport],
+) -> Vec<NullableBoxKind> {
+    let mut kinds = BTreeSet::new();
+    for import in declared_imports {
+        for param in &import.params {
+            insert_nullable_box_kinds(param, &mut kinds);
+        }
+        insert_nullable_box_kinds(&import.return_type, &mut kinds);
+    }
+    for function in &module.functions {
+        for (_, ty) in &function.params {
+            insert_nullable_box_kinds(ty, &mut kinds);
+        }
+        insert_nullable_box_kinds(&function.return_type, &mut kinds);
+        for block in function.blocks.values() {
+            for (_, instruction) in &block.instructions {
+                collect_nullable_box_kinds_from_instruction(instruction, &mut kinds);
+            }
+        }
+    }
+    kinds.into_iter().collect()
+}
+
+fn insert_nullable_box_kinds(ty: &Type, out: &mut BTreeSet<NullableBoxKind>) {
+    match ty {
+        Type::Nullable(inner) => {
+            if let Some(kind) = NullableBoxKind::for_inner(inner) {
+                out.insert(kind);
+            }
+            insert_nullable_box_kinds(inner, out);
+        }
+        Type::Array(element) => insert_nullable_box_kinds(element, out),
+        Type::Record(fields) => {
+            for field_ty in fields.values() {
+                insert_nullable_box_kinds(field_ty, out);
+            }
+        }
+        Type::Function {
+            params,
+            return_type,
+        } => {
+            for param in params {
+                insert_nullable_box_kinds(param, out);
+            }
+            insert_nullable_box_kinds(return_type, out);
+        }
+        Type::Multi(types) => {
+            for ty in types {
+                insert_nullable_box_kinds(ty, out);
+            }
+        }
+        Type::Opaque { ty, .. } | Type::ExternSubtype(ty) => insert_nullable_box_kinds(ty, out),
+        Type::TaggedVariant(variant) => insert_nullable_box_kinds(&variant.payload, out),
+        Type::TaggedUnion(variants) => {
+            for variant in variants {
+                insert_nullable_box_kinds(&variant.payload, out);
+            }
+        }
+        Type::Numeric(_)
+        | Type::Unit
+        | Type::Bool
+        | Type::String
+        | Type::Bytes
+        | Type::Extern
+        | Type::Nil
+        | Type::Named { .. }
+        | Type::TypedArray(_)
+        | Type::TypeParam(_)
+        | Type::Thread
+        | Type::Unknown => {}
+    }
+}
+
+fn collect_nullable_box_kinds_from_instruction(
+    instruction: &IrInstruction,
+    out: &mut BTreeSet<NullableBoxKind>,
+) {
+    let mut add = |ty: &Type| insert_nullable_box_kinds(ty, out);
+    match instruction {
+        IrInstruction::Null { ty } | IrInstruction::IsNull { ty, .. } => add(ty),
+        IrInstruction::Cast { from, to, .. } => {
+            add(from);
+            add(to);
+        }
+        IrInstruction::Binary {
+            operand_ty,
+            result_ty,
+            ..
+        } => {
+            add(operand_ty);
+            add(result_ty);
+        }
+        IrInstruction::ToString { from, .. }
+        | IrInstruction::TypeName { from, .. }
+        | IrInstruction::ToNumber { from, .. } => add(from),
+        IrInstruction::HostCall { return_type, .. } => add(return_type),
+        IrInstruction::CallValue {
+            params,
+            return_type,
+            ..
+        }
+        | IrInstruction::ProtectedCall {
+            params,
+            return_type,
+            ..
+        }
+        | IrInstruction::Closure {
+            params,
+            return_type,
+            ..
+        } => {
+            for param in params {
+                add(param);
+            }
+            add(return_type);
+        }
+        IrInstruction::ArrayNew { element_ty, .. }
+        | IrInstruction::ArrayGet { element_ty, .. }
+        | IrInstruction::ArraySet { element_ty, .. }
+        | IrInstruction::ArrayPop { element_ty, .. }
+        | IrInstruction::ArraySlice { element_ty, .. } => add(element_ty),
+        IrInstruction::StructNew { struct_ty, .. } => add(struct_ty),
+        IrInstruction::StructGet { field_ty, .. } => add(field_ty),
+        IrInstruction::PackMulti { types, .. } => {
+            for ty in types {
+                add(ty);
+            }
+        }
+        IrInstruction::MultiGet { ty, .. } => add(ty),
+        _ => {}
+    }
 }
 
 fn array_type_depth(ty: &Type) -> usize {
@@ -377,6 +608,13 @@ pub(crate) fn array_storage_type(
         Type::String | Type::Bytes | Type::Extern | Type::ExternSubtype(_) | Type::Nil => {
             Ok(StorageType::Val(externref_val_type()))
         }
+        // Nullable primitives are stored as their typed nullable box refs
+        // (`ref null $nullable_box_K`); the box types are emitted before the
+        // array types, so this is always a backward reference. Reference-typed
+        // nullables reuse their inner (already nullable) representation.
+        Type::Nullable(inner) if NullableBoxKind::for_inner(inner).is_some() => Ok(
+            StorageType::Val(registry.nullable_box_val_type(element_ty)?),
+        ),
         Type::Nullable(inner) => array_storage_type(inner, registry),
         // Typed arrays are i32 pointers into linear memory.
         Type::TypedArray(_) => Ok(StorageType::Val(ValType::I32)),
@@ -430,6 +668,11 @@ pub(crate) fn record_storage_type(
         Type::Bool => Ok(StorageType::Val(ValType::I32)),
         Type::String | Type::Bytes | Type::Extern | Type::ExternSubtype(_) | Type::Nil => {
             Ok(StorageType::Val(externref_val_type()))
+        }
+        // Nullable primitives are stored as their typed nullable box refs;
+        // the box types precede the record types in the type section.
+        Type::Nullable(inner) if NullableBoxKind::for_inner(inner).is_some() => {
+            Ok(StorageType::Val(registry.nullable_box_val_type(field_ty)?))
         }
         Type::Nullable(inner) => record_storage_type(inner, registry),
         // Typed arrays are i32 pointers into linear memory.

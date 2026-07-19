@@ -204,7 +204,18 @@ fn verify_function(
                     }
                     let widens_to_nullable = to.nullable_inner().as_ref() == Some(from)
                         || matches!((from, to), (Type::Nil, Type::Nullable(_)));
-                    if from.nullable_inner().as_ref() != Some(to) && !widens_to_nullable {
+                    // Nullable numerics widen/narrow with a payload
+                    // conversion: `i32 -> f64?`, `i32? -> i64`, `i32? -> f64?`.
+                    let nullable_numeric =
+                        |ty: &Type| matches!(ty.nullable_inner(), Some(Type::Numeric(_)));
+                    let nullable_numeric_conversion = (matches!(from, Type::Numeric(_))
+                        && nullable_numeric(to))
+                        || (nullable_numeric(from) && matches!(to, Type::Numeric(_)))
+                        || (nullable_numeric(from) && nullable_numeric(to));
+                    if from.nullable_inner().as_ref() != Some(to)
+                        && !widens_to_nullable
+                        && !nullable_numeric_conversion
+                    {
                         crate::lower::require_numeric_cast(from.clone(), to.clone())?;
                     }
                 }

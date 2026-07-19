@@ -4012,9 +4012,9 @@ impl Builder<'_> {
                         // A literal in `i32?` position lowers at the inner
                         // numeric type and boxes into the nullable.
                         let Some(Type::Numeric(numeric)) = nullable.nullable_inner() else {
-                            return Err(Diagnostic::new(
-                                "numeric literal is not assignable to nullable extern",
-                            ));
+                            return Err(Diagnostic::new(format!(
+                                "numeric literal is not assignable to {nullable}",
+                            )));
                         };
                         let value = self.emit(Instruction::Number {
                             ty: numeric,
@@ -4114,7 +4114,7 @@ impl Builder<'_> {
                     Some(Type::Unknown) => Type::Unknown,
                     Some(other) => {
                         return Err(Diagnostic::new(format!(
-                            "nil is only assignable to nullable extern, got {other}"
+                            "nil is only assignable to nullable types, got {other}"
                         )));
                     }
                     None => Type::Extern,
@@ -5466,9 +5466,9 @@ impl Builder<'_> {
                     Type::Numeric(numeric) => {
                         Ok(Type::Nullable(Box::new(Type::Numeric(numeric))))
                     }
-                    _ => Err(Diagnostic::new(
-                        "numeric literal is not assignable to nullable extern",
-                    )),
+                    other => Err(Diagnostic::new(format!(
+                        "numeric literal is not assignable to {other}?",
+                    ))),
                 },
                 Some(Type::Named { name, .. }) => Err(Diagnostic::new(format!(
                     "numeric literal is not assignable to {name}",

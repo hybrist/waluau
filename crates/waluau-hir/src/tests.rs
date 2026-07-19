@@ -484,9 +484,66 @@ fn nullable_function_values_support_locals_aliases_and_nil_narrowing() {
 }
 
 #[test]
-fn nullable_modifier_rejects_non_reference_types() {
+fn nullable_modifier_accepts_primitive_value_types() {
     let source = r#"
-        function entry(value: i32?): i32
+        function pick(a: i32?, b: u32?, c: i64?, d: u64?, e: f32?, f: f64?, g: bool?): i32
+            return 0
+        end
+
+        type HTMLInputElement = extern
+
+        declare property HTMLInputElement:selectionStart: u32?
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program)
+        .expect("nullable primitive annotations should type check");
+}
+
+#[test]
+fn nullable_primitive_nil_check_narrows_to_primitive() {
+    let source = r#"
+        function unwrap_or_zero(value: i32?): i32
+            if value ~= nil then
+                return value + 1
+            end
+            return 0
+        end
+
+        function unwrap_f64(value: f64?): f64
+            if value == nil then
+                return 0.0
+            else
+                return value * 2.0
+            end
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    super::type_check_and_infer(&program)
+        .expect("nil checks should narrow nullable primitives to their inner type");
+}
+
+#[test]
+fn nullable_primitive_does_not_implicitly_coerce_to_primitive() {
+    let source = r#"
+        function passthrough(value: i32?): i32
+            return value
+        end
+    "#;
+
+    let program = parse(source).expect("parse should succeed");
+    let error = super::type_check_and_infer(&program).expect_err("type check should fail");
+    assert_eq!(
+        error.to_string(),
+        "cannot implicitly convert nullable value to i32"
+    );
+}
+
+#[test]
+fn nullable_modifier_rejects_unsupported_inner_types() {
+    let source = r#"
+        function entry(value: unknown?): i32
             return 0
         end
     "#;
@@ -495,7 +552,7 @@ fn nullable_modifier_rejects_non_reference_types() {
     let error = super::type_check_and_infer(&program).expect_err("type check should fail");
     assert_eq!(
         error.to_string(),
-        "nullable modifier '?' is only supported on reference types, got i32"
+        "nullable modifier '?' is not supported on unknown"
     );
 }
 

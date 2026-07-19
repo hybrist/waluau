@@ -837,9 +837,13 @@ fn instruction_use_requires_local(instruction: &IrInstruction) -> bool {
         return true;
     }
     // Numeric unboxes out of `unknown` re-read the source local while
-    // dispatching on the i31 vs boxed-f64 representation.
+    // dispatching on the i31 vs boxed-f64 representation, and nullable
+    // primitive box conversions re-read the source while branching on null.
     if let IrInstruction::Cast { from, to, .. } = instruction {
         if crate::number_unbox_target(from, to).is_some() {
+            return true;
+        }
+        if from != to && (from.is_boxed_nullable() || to.is_boxed_nullable()) {
             return true;
         }
     }

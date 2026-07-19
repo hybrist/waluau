@@ -53,6 +53,14 @@ struct RequiredImportJson {
     module: String,
     name: String,
     kind: String,
+    /// Declared parameter types in surface syntax (e.g. `"u32?"`), present
+    /// for declared host-function imports. Host shims use these to adapt
+    /// nullable-primitive values, which cross the JS boundary as typed
+    /// nullable box refs.
+    #[serde(rename = "paramTypes", skip_serializing_if = "Option::is_none")]
+    param_types: Option<Vec<String>>,
+    #[serde(rename = "returnType", skip_serializing_if = "Option::is_none")]
+    return_type: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -82,6 +90,8 @@ fn required_imports_json(
             module: import.module.clone(),
             name: import.name.clone(),
             kind: import.kind.as_str().to_string(),
+            param_types: import.param_types.clone(),
+            return_type: import.return_type.clone(),
         })
         .collect()
 }
@@ -944,6 +954,42 @@ mod tests {
                 start + "\"wrong\"".len()
             )
         );
+    }
+
+    #[test]
+    fn required_imports_carry_declared_type_metadata() {
+        let source = r#"
+            type HTMLInputElement = extern
+
+            declare property HTMLInputElement:selectionStart: u32?
+
+            function probe(input: HTMLInputElement): u32
+                local start: u32? = input.selectionStart
+                if start ~= nil then
+                    return start
+                end
+                return 0
+            end
+        "#;
+        let result = compile_source(source).expect("compile should succeed");
+        let getter = result
+            .required_imports
+            .iter()
+            .find(|import| import.name == "HTMLInputElement.get/selectionStart")
+            .expect("selectionStart getter import should be required");
+        assert_eq!(getter.return_type.as_deref(), Some("u32?"));
+        assert_eq!(
+            getter.param_types.as_deref(),
+            Some(&["extern".to_string()][..])
+        );
+        // Host runtime imports carry no declared types.
+        let print = result
+            .required_imports
+            .iter()
+            .find(|import| import.module == "wasm:js-string");
+        if let Some(import) = print {
+            assert!(import.param_types.is_none());
+        }
     }
 
     #[test]
