@@ -1558,6 +1558,12 @@ fn infer_expr_inner(
                     if matches!(value_ty, Type::Nullable(_)) {
                         return Ok(Type::Bool);
                     }
+                    // An empty multi-value result (e.g. `string.byte` with a
+                    // statically empty range) adjusts to nil in scalar
+                    // context, so the comparison is well-typed.
+                    if matches!(&value_ty, Type::Multi(parts) if parts.is_empty()) {
+                        return Ok(Type::Bool);
+                    }
                     return Err(Diagnostic::new(
                         "nil comparison requires a nullable operand",
                     ));

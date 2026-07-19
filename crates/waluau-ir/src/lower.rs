@@ -1224,7 +1224,7 @@ fn string_byte_static_indices(
         _ => None,
     });
     let (start, end) = if let Some(len) = args.first().and_then(expr_string_len) {
-        (normalize_lua_index(start, len), normalize_lua_index(end, len))
+        clip_lua_byte_range(start, end, len)
     } else if start >= 1 && end >= 0 {
         (start, end)
     } else if let Some(count) = count_from_expected {
@@ -1343,9 +1343,20 @@ fn const_typed_array_bytes(kind: TypedArrayKind, elements: &[Expr]) -> Option<Ve
     Some(bytes)
 }
 
-fn normalize_lua_index(index: i32, len: i32) -> i32 {
-    let normalized = if index < 0 { len + index + 1 } else { index };
-    normalized.clamp(1, len)
+/// Lua `string.byte` range clipping (lstrlib.c `str_byte`): negative indices
+/// count from the end of the string, the start is raised to at least 1, and
+/// the end is lowered to at most the string length. Unlike a symmetric clamp,
+/// a start past the end of the string (or an end before its beginning) is left
+/// out of range so the caller observes an empty range and emits no values.
+fn clip_lua_byte_range(start: i32, end: i32, len: i32) -> (i32, i32) {
+    let posrelat = |pos: i32| {
+        if pos >= 0 {
+            pos
+        } else {
+            len.saturating_add(pos).saturating_add(1)
+        }
+    };
+    (posrelat(start).max(1), posrelat(end).min(len))
 }
 
 fn method_signature_name(base: &str, method: &str) -> String {
@@ -4658,6 +4669,17 @@ impl Builder<'_> {
                         };
                         let nullable_ty =
                             first_of_multi(self.infer_expr_type(value_expr, types, None)?);
+                        if matches!(&nullable_ty, Type::Multi(parts) if parts.is_empty()) {
+                            // An empty multi-value result (e.g. `string.byte`
+                            // with a statically empty range) adjusts to nil in
+                            // scalar context, so the comparison is statically
+                            // decided. The operand is still evaluated for its
+                            // side effects.
+                            let _ = self.lower_expr(value_expr, env, types, None)?;
+                            let result =
+                                self.emit(Instruction::Bool(matches!(op, BinaryOp::Eq)));
+                            return self.coerce_value(result, Type::Bool, expected);
+                        }
                         let inner_ty = nullable_ty.nullable_inner().ok_or_else(|| {
                             Diagnostic::new("nil comparison requires a nullable operand")
                         })?;
@@ -5959,6 +5981,12 @@ impl Builder<'_> {
                     let value_ty =
                         first_of_multi(self.infer_expr_type(value, types, None)?);
                     if matches!(value_ty, Type::Nullable(_)) {
+                        return Ok(Type::Bool);
+                    }
+                    // An empty multi-value result (e.g. `string.byte` with a
+                    // statically empty range) adjusts to nil in scalar
+                    // context, so the comparison is well-typed.
+                    if matches!(&value_ty, Type::Multi(parts) if parts.is_empty()) {
                         return Ok(Type::Bool);
                     }
                     return Err(Diagnostic::new(

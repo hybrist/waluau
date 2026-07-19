@@ -1458,10 +1458,7 @@ pub(super) fn string_byte_static_count(
         ));
     };
     let (start, end) = if let Some(len) = args.first().and_then(expr_string_len) {
-        (
-            normalize_lua_index(start, len),
-            normalize_lua_index(end, len),
-        )
+        clip_lua_byte_range(start, end, len)
     } else if start >= 1 && end >= 0 {
         (start, end)
     } else {
@@ -1495,9 +1492,20 @@ fn expr_string_len(expr: &Expr) -> Option<i32> {
     i32::try_from(value.chars().count()).ok()
 }
 
-fn normalize_lua_index(index: i32, len: i32) -> i32 {
-    let normalized = if index < 0 { len + index + 1 } else { index };
-    normalized.clamp(1, len)
+/// Lua `string.byte` range clipping (lstrlib.c `str_byte`): negative indices
+/// count from the end of the string, the start is raised to at least 1, and
+/// the end is lowered to at most the string length. Unlike a symmetric clamp,
+/// a start past the end of the string (or an end before its beginning) is left
+/// out of range so the caller observes an empty range and returns no values.
+fn clip_lua_byte_range(start: i32, end: i32, len: i32) -> (i32, i32) {
+    let posrelat = |pos: i32| {
+        if pos >= 0 {
+            pos
+        } else {
+            len.saturating_add(pos).saturating_add(1)
+        }
+    };
+    (posrelat(start).max(1), posrelat(end).min(len))
 }
 
 fn require_arg_type(
