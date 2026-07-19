@@ -667,16 +667,23 @@ fn resolve_target(
                         resolve_type_to_record(&base_ty, &base_scope, load, TYPE_CHASE_DEPTH)
                         && let Some(field_ty) = record.fields.get(name)
                     {
+                        // Fields whose type the table literal doesn't reveal
+                        // are shown without the unhelpful `: unknown`.
+                        let summary = if matches!(field_ty, Type::Unknown) {
+                            format!("(field) {base}.{name}")
+                        } else {
+                            format!("{name}: {field_ty}")
+                        };
                         return Some(match record.declared_by {
                             Some((type_def, type_scope)) => Resolved::MemberOfType {
-                                summary: format!("{name}: {field_ty}"),
+                                summary,
                                 declared_by: Box::new(resolved_in_scope(
                                     &type_def,
                                     &type_scope,
                                     path,
                                 )),
                             },
-                            None => Resolved::Info(format!("{base}.{name}: {field_ty}")),
+                            None => Resolved::Info(summary),
                         });
                     }
                     // A method on a string value (`s:upper()`).
@@ -906,18 +913,26 @@ fn push_item(items: &mut Vec<CompletionItem>, label: &str, kind: i64, detail: Op
 }
 
 /// Members under `namespace` (`ns.member` and `ns:member` definitions plus
-/// intrinsics), labeled by member name.
-fn namespace_member_items(index: &DocumentIndex, namespace: &str, items: &mut Vec<CompletionItem>) {
+/// intrinsics), labeled by member name. `methods_only` restricts to the
+/// `ns:member` form, for completion after `:`.
+fn namespace_member_items(
+    index: &DocumentIndex,
+    namespace: &str,
+    methods_only: bool,
+    items: &mut Vec<CompletionItem>,
+) {
     let dotted_prefix = format!("{namespace}.");
     let method_prefix = format!("{namespace}:");
     for definition in index.definitions.iter().chain(prelude_definitions()) {
         if is_internal_name(&definition.name) {
             continue;
         }
-        if let Some(member) = definition
-            .name
-            .strip_prefix(&dotted_prefix)
-            .or_else(|| definition.name.strip_prefix(&method_prefix))
+        let member = definition.name.strip_prefix(&method_prefix).or_else(|| {
+            (!methods_only)
+                .then(|| definition.name.strip_prefix(&dotted_prefix))
+                .flatten()
+        });
+        if let Some(member) = member
             && !member.contains('.')
         {
             push_item(
@@ -927,6 +942,9 @@ fn namespace_member_items(index: &DocumentIndex, namespace: &str, items: &mut Ve
                 Some(definition_summary(definition)),
             );
         }
+    }
+    if methods_only {
+        return;
     }
     for intrinsic in INTRINSIC_MEMBERS {
         if let Some(member) = intrinsic.strip_prefix(&dotted_prefix) {
@@ -957,12 +975,9 @@ fn typed_member_items(
         && let Some(record) = resolve_type_to_record(&ty, &type_scope, load, TYPE_CHASE_DEPTH)
     {
         for (name, field_ty) in &record.fields {
-            push_item(
-                items,
-                name,
-                completion_kind::FIELD,
-                Some(format!("{name}: {field_ty}")),
-            );
+            let detail =
+                (!matches!(field_ty, Type::Unknown)).then(|| format!("{name}: {field_ty}"));
+            push_item(items, name, completion_kind::FIELD, detail);
         }
     }
     if let Type::Named { name, .. } = &ty
@@ -1028,23 +1043,23 @@ pub fn completion(text: &str, path: &Path, offset: u32, load: Loader) -> Vec<Com
                     }
                     return items;
                 }
-                // A statically typed base: record fields and type members.
-                if typed_member_items(base_def, &index, path, load, false, &mut items) {
-                    items.sort_by(|a, b| a.label.cmp(&b.label));
-                    return items;
-                }
+                // A statically typed base contributes its record fields and
+                // type members; value-level methods (`function point:m`)
+                // live as namespaced definitions and are merged in below.
+                typed_member_items(base_def, &index, path, load, false, &mut items);
             }
-            namespace_member_items(&index, &base, &mut items);
+            namespace_member_items(&index, &base, false, &mut items);
         }
         CompletionContext::Method { base } => {
-            let produced = resolve_name(&index.definitions, &base, offset)
-                .cloned()
-                .is_some_and(|base_def| {
-                    typed_member_items(&base_def, &index, path, load, true, &mut items)
-                });
-            // No known receiver type: this is most likely a type annotation
-            // position (`local x: ...`).
-            if !produced {
+            if let Some(base_def) = resolve_name(&index.definitions, &base, offset).cloned() {
+                typed_member_items(&base_def, &index, path, load, true, &mut items);
+            }
+            // Value-level methods declared directly on the base
+            // (`function point:bump_x`).
+            namespace_member_items(&index, &base, true, &mut items);
+            // Still nothing: this is most likely a type annotation position
+            // (`local x: ...`).
+            if items.is_empty() {
                 type_name_items(&index, &mut items);
             }
         }

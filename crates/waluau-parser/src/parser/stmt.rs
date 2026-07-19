@@ -6,6 +6,28 @@ use crate::{DefinitionKind, InitializerHint};
 
 use super::Parser;
 
+/// The record shape of a table-literal initializer: field names plus the
+/// types statically visible in the literal (casts like `10::i32`, string and
+/// bool literals, nested tables). Anything else — bare number literals whose
+/// width the type checker decides, call results — stays `unknown`.
+fn table_literal_record(fields: &[waluau_ast::TableField]) -> Type {
+    let mut shape = std::collections::BTreeMap::new();
+    for field in fields {
+        shape.insert(field.name.clone(), literal_value_type(&field.value));
+    }
+    Type::Record(shape)
+}
+
+fn literal_value_type(value: &Expr) -> Type {
+    match value {
+        Expr::Cast { ty, .. } => ty.clone(),
+        Expr::String(..) => Type::String,
+        Expr::Bool(..) => Type::Bool,
+        Expr::TableLiteral { fields, .. } => table_literal_record(fields),
+        _ => Type::Unknown,
+    }
+}
+
 /// The statically chaseable shape of an initializer expression, if any.
 fn initializer_hint(value: &Expr) -> Option<InitializerHint> {
     let simple_name = |expr: &Expr| match expr {
@@ -73,6 +95,13 @@ impl Parser {
         }
         if let Some(value) = value {
             self.definitions[index].initializer = initializer_hint(value);
+            // An unannotated table-literal binding still has a statically
+            // known field shape (`local point = { x = 10::i32 }`).
+            if self.definitions[index].ty.is_none()
+                && let Expr::TableLiteral { fields, .. } = value
+            {
+                self.definitions[index].ty = Some(table_literal_record(fields));
+            }
         }
     }
     pub(super) fn parse_block_until(&mut self, end_markers: &[TokenKind]) -> Vec<Stmt> {

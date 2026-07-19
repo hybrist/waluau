@@ -642,3 +642,56 @@ end\n";
     let contents = hover["contents"]["value"].as_str().expect("hover text");
     assert!(contents.contains("round: i32"), "{contents}");
 }
+
+#[test]
+fn table_literal_locals_offer_fields_and_value_methods() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("main.walu");
+    let text = "local point = { x = 10::i32, y = 3::i32 }\n\
+function point:bump_x(delta: i32): i32\n\
+    return delta\n\
+end\n\
+assert(point.x == 10::i32)\n";
+    std::fs::write(&path, text).expect("write fixture");
+
+    let mut server = LspServer::new();
+    open(&mut server, &path, text);
+
+    // Hover the field read: the table literal's cast reveals the type.
+    let (line, character) = position_of(text, "x == 10");
+    let hover = request(&mut server, "textDocument/hover", &path, line, character);
+    let contents = hover["contents"]["value"].as_str().expect("hover text");
+    assert!(contents.contains("x: i32"), "{contents}");
+
+    // `point.` offers fields and value-level methods together.
+    let extended = format!("{text}point.");
+    change(&mut server, &path, &extended);
+    let last_line = extended.matches('\n').count() as u32;
+    let result = request(&mut server, "textDocument/completion", &path, last_line, 6);
+    let labels: Vec<&str> = result
+        .as_array()
+        .expect("completion items")
+        .iter()
+        .filter_map(|item| item["label"].as_str())
+        .collect();
+    assert!(labels.contains(&"x"), "{labels:?}");
+    assert!(labels.contains(&"y"), "{labels:?}");
+    assert!(labels.contains(&"bump_x"), "{labels:?}");
+
+    // `point:` offers only the methods.
+    let extended = format!("{text}point:");
+    change(&mut server, &path, &extended);
+    let result = request(&mut server, "textDocument/completion", &path, last_line, 6);
+    let labels: Vec<&str> = result
+        .as_array()
+        .expect("completion items")
+        .iter()
+        .filter_map(|item| item["label"].as_str())
+        .collect();
+    assert!(labels.contains(&"bump_x"), "{labels:?}");
+    assert!(!labels.contains(&"x"), "{labels:?}");
+    assert!(
+        !labels.contains(&"i32"),
+        "type names should not appear: {labels:?}"
+    );
+}
