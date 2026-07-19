@@ -1511,6 +1511,10 @@ fn pcall_emits_try_table_and_exception_tag() {
         wat.contains("try_table"),
         "pcall should lower to try_table:\n{wat}"
     );
+    assert!(
+        wat.contains(&format!("(export \"{}\"", super::LUA_ERROR_TAG_EXPORT)),
+        "the Lua error tag should be exported for JS hosts:\n{wat}"
+    );
 }
 
 #[test]

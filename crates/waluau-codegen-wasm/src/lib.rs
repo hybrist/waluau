@@ -50,6 +50,7 @@ const CALLBACK_EVENT_UNIT_TRAMPOLINE_EXPORT: &str = "__waluau_call_callback_even
 const CALLBACK_F64_UNIT_TRAMPOLINE_EXPORT: &str = "__waluau_call_callback_f64_unit";
 const CALLBACK_UNIT_EXTERN_TRAMPOLINE_EXPORT: &str = "__waluau_call_callback_unit_extern";
 const CALLBACK_UNIT_TRAMPOLINE_EXPORT: &str = "__waluau_call_callback_unit";
+const LUA_ERROR_TAG_EXPORT: &str = "__waluau_error_tag";
 const PROMISE_RESUME_TRAMPOLINE_EXPORT: &str = "__waluau_resume_promise_await";
 const PROMISE_RESET_ACTIVE_EXPORT: &str = "__waluau_reset_active_coroutine";
 
@@ -1369,6 +1370,12 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         });
     }
     let mut exports = ExportSection::new();
+    if lua_error_tag_type_idx.is_some() {
+        // Exporting the Lua error tag lets JS hosts (e.g. the walu-test
+        // vitest bridge) recognize uncaught `error`/`assert` exceptions via
+        // `exception.is(tag)` and read the message payload with `getArg`.
+        exports.export(LUA_ERROR_TAG_EXPORT, ExportKind::Tag, 0);
+    }
     let mut codes = CodeSection::new();
     for (index, function) in module.functions.iter().enumerate() {
         // User function type indices come after array, host, and coroutine types.
