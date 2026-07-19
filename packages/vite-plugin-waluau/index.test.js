@@ -68,6 +68,66 @@ test('passes a resolved asset manifest to the compiler', async () => {
   }
 });
 
+test('reuses one persistent compiler process across Vite rebuilds', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
+  let plugin;
+  try {
+    const entry = join(root, 'main.walu');
+    const serverScript = join(root, 'compiler-server.cjs');
+    const starts = join(root, 'starts.txt');
+    const builds = join(root, 'builds.txt');
+    await writeFile(serverScript, `
+      const fs = require('node:fs');
+      const readline = require('node:readline');
+      fs.appendFileSync(${JSON.stringify(starts)}, 'start\\n');
+      const lines = readline.createInterface({ input: process.stdin });
+      lines.on('line', (line) => {
+        const request = JSON.parse(line);
+        fs.appendFileSync(${JSON.stringify(builds)}, request.args[0] + '\\n');
+        const report = request.args[request.args.indexOf('--report') + 1];
+        fs.writeFileSync(report, JSON.stringify({
+          success: true,
+          involvedFiles: [request.args[0]],
+          diagnostics: [],
+        }));
+        process.stdout.write(JSON.stringify({
+          id: request.id,
+          ok: true,
+          parsesPerformed: 1,
+          cachedParseCount: 1,
+        }) + '\\n');
+      });
+    `);
+    plugin = waluau({
+      compiler: {
+        command: process.execPath,
+        args: [serverScript],
+        persistent: true,
+      },
+    });
+    plugin.configResolved({ root });
+    await plugin.transform.call({ addWatchFile() {} }, '', entry);
+
+    const entryModule = { id: entry };
+    const viteServer = {
+      moduleGraph: {
+        getModulesByFile: () => new Set([entryModule]),
+        invalidateModule() {},
+      },
+      ws: { send() {} },
+    };
+    await plugin.handleHotUpdate({ file: entry, modules: [entryModule], server: viteServer });
+    await plugin.closeBundle();
+    plugin = null;
+
+    assert.equal((await readFile(starts, 'utf8')).trim().split('\n').length, 1);
+    assert.equal((await readFile(builds, 'utf8')).trim().split('\n').length, 2);
+  } finally {
+    await plugin?.closeBundle();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('turns generated manifest URLs into Vite asset imports', async () => {
   const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
   try {

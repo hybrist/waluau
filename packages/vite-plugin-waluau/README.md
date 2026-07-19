@@ -54,7 +54,7 @@ hot.register({
     dispose = function(): unit
         local running: engine.Session? = session
         if running ~= nil then
-            running.stop()
+            running.suspend()
             session = nil
         end
     end,
@@ -71,6 +71,15 @@ or failed restores all fall back to a full page reload.
 This is transient development state. The plugin never writes it to storage and
 does not promise long-term compatibility. Use the engine save-data service for
 player saves. Production builds accept the registration as an inert no-op.
+
+The plugin keeps one stateful compiler process alive for the Vite lifecycle.
+Repeated builds reuse the compiler session's module parse cache instead of
+starting `waluau` (or `cargo run`) for every edit. Changes to embedded engine,
+builtin, extern, or Rust compiler sources restart that process deliberately so
+the next build incorporates the new compiler inputs. A custom compiler command
+keeps its historical one-process-per-build behavior unless configured with
+`compiler: { command, args, persistent: true }`; persistent commands must
+implement the `waluau --server` newline-delimited JSON protocol.
 
 ## Packaged assets
 

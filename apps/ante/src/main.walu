@@ -1210,7 +1210,7 @@ function install_arcane_heist(): unit
         dispose = function(): unit
             local running: engine.Session? = session
             if running ~= nil then
-                (running::engine.Session).stop()
+                (running::engine.Session).suspend()
                 session = nil
             end
             if assets.image_source.handle ~= 0 then resources.release(assets.image_source) end

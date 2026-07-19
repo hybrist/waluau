@@ -50,7 +50,7 @@ The compiler embeds the engine sources. `waluau:engine` selects the current
 stable major version and `waluau:engine/v1` pins major version 1. Both expose
 the same aggregate facade:
 
-- `VERSION`: the semantic API version (`1.1.0`)
+- `VERSION`: the semantic API version (`1.2.0`)
 - `start`: the browser lifecycle entry point
 - `Config`, `Game`, `Session`, `Input`, and `Graphics`: canonical public types
 
@@ -122,8 +122,10 @@ required. Updates use a fixed timestep. Drawing happens once per animation
 frame and receives an interpolation alpha in `[0, 1)`. Long frame delays are
 clamped by `max_frame_seconds` to avoid an unbounded catch-up loop.
 `start` returns a `Session`; `Session.stop()` is idempotent and releases the
-browser lifecycle registrations owned by that run. The Vite plugin uses this
-through a game's `waluau:engine/hot` dispose closure before replacing Wasm.
+browser lifecycle registrations and mounted root owned by that run. Development
+hot replacement uses `Session.suspend()` through a game's
+`waluau:engine/hot` dispose closure; it releases the callbacks while keeping
+the last frame mounted until the replacement presents its first frame.
 
 ## Porting a simple game
 

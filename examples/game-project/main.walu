@@ -62,7 +62,7 @@ hot.register({
     dispose = function(): unit
         local running: engine.Session? = session
         if running ~= nil then
-            running.stop()
+            running.suspend()
             session = nil
         end
     end,

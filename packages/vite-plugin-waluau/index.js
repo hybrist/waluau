@@ -5,6 +5,8 @@ import { mkdir } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { createCompilerHost } from './compiler-host.js';
+
 const packageRoot = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(packageRoot, '../..');
 
@@ -164,13 +166,14 @@ function importManifestAssets(code) {
  *   fullScreen?: boolean,
  *   manifest?: string,
  *   workspaceRoot?: string,
- *   compiler?: { command: string, args?: string[] }
+ *   compiler?: { command: string, args?: string[], persistent?: boolean }
  * }} options
  */
 export function waluau(options = {}) {
   let appRoot = process.cwd();
   let cacheRoot = resolve(appRoot, '.waluau');
   let server;
+  let compilerHost;
 
   const workspaceRoot = resolve(options.workspaceRoot ?? repositoryRoot);
   const fullScreen = options.fullScreen ?? true;
@@ -194,15 +197,19 @@ export function waluau(options = {}) {
     };
   }
 
-  function compilerCommand(entryPath, wasmOutput, reportOutput) {
+  function compilerBuildArgs(entryPath, wasmOutput, reportOutput) {
     const manifestArgs = options.manifest == null
       ? []
       : ['--manifest', resolve(appRoot, options.manifest)];
     const reportArgs = ['--report', reportOutput];
+    return [entryPath, '-o', wasmOutput, '--emit-js', ...manifestArgs, ...reportArgs];
+  }
+
+  function compilerCommand(buildArgs) {
     if (options.compiler) {
       return {
         command: options.compiler.command,
-        args: [...(options.compiler.args ?? []), entryPath, '-o', wasmOutput, '--emit-js', ...manifestArgs, ...reportArgs],
+        args: [...(options.compiler.args ?? []), ...buildArgs],
         cwd: appRoot,
       };
     }
@@ -215,21 +222,57 @@ export function waluau(options = {}) {
           '-p',
           'waluau-cli',
           '--',
-          entryPath,
-          '-o',
-          wasmOutput,
-          '--emit-js',
-          ...manifestArgs,
-          ...reportArgs,
+          ...buildArgs,
         ],
         cwd: workspaceRoot,
       };
     }
     return {
       command: 'waluau',
-      args: [entryPath, '-o', wasmOutput, '--emit-js', ...manifestArgs, ...reportArgs],
+      args: buildArgs,
       cwd: appRoot,
     };
+  }
+
+  function compilerServerCommand() {
+    if (options.compiler) {
+      if (options.compiler.persistent !== true) return null;
+      return {
+        command: options.compiler.command,
+        args: [...(options.compiler.args ?? []), '--server'],
+        cwd: appRoot,
+      };
+    }
+    if (existsSync(resolve(workspaceRoot, 'Cargo.toml'))) {
+      return {
+        command: 'cargo',
+        args: ['run', '--quiet', '-p', 'waluau-cli', '--', '--server'],
+        cwd: workspaceRoot,
+      };
+    }
+    return { command: 'waluau', args: ['--server'], cwd: appRoot };
+  }
+
+  async function executeCompiler(buildArgs) {
+    const serverCommand = compilerServerCommand();
+    if (serverCommand == null) {
+      const invocation = compilerCommand(buildArgs);
+      return run(invocation.command, invocation.args, invocation.cwd);
+    }
+    compilerHost ??= createCompilerHost(serverCommand);
+    return compilerHost.build(buildArgs);
+  }
+
+  async function restartCompilerHost() {
+    if (compilerHost == null) return;
+    await compilerHost.restart();
+  }
+
+  async function closeCompilerHost() {
+    if (compilerHost == null) return;
+    const activeHost = compilerHost;
+    compilerHost = undefined;
+    await activeHost.close();
   }
 
   /** Read the compiler's build report; null when missing or unparsable. */
@@ -271,9 +314,9 @@ export function waluau(options = {}) {
       do {
         state.queued = false;
         await mkdir(artifacts.outDir, { recursive: true });
-        const invocation = compilerCommand(entryPath, artifacts.wasm, artifacts.report);
+        const buildArgs = compilerBuildArgs(entryPath, artifacts.wasm, artifacts.report);
         try {
-          await run(invocation.command, invocation.args, invocation.cwd);
+          await executeCompiler(buildArgs);
           state.version += 1;
         } finally {
           // The report is written even for failed builds, so watch mode can
@@ -295,14 +338,22 @@ export function waluau(options = {}) {
   }
 
   /** Compiler-internal inputs (not in build reports) that affect every entry. */
-  function affectsAllEntries(file) {
-    if (options.manifest != null && file === resolve(appRoot, options.manifest)) return true;
-    if (manifestFiles().includes(file)) return true;
+  function affectsCompilerProcess(file) {
+    if (options.compiler != null) return false;
     return (
+      file === resolve(workspaceRoot, 'Cargo.toml') ||
+      file === resolve(workspaceRoot, 'Cargo.lock') ||
+      isInside(resolve(workspaceRoot, 'crates'), file) ||
       isInside(resolve(workspaceRoot, 'engine'), file) ||
       isInside(resolve(workspaceRoot, 'builtins'), file) ||
       isInside(resolve(workspaceRoot, 'externs'), file)
     );
+  }
+
+  function affectsAllEntries(file) {
+    if (options.manifest != null && file === resolve(appRoot, options.manifest)) return true;
+    if (manifestFiles().includes(file)) return true;
+    return affectsCompilerProcess(file);
   }
 
   /** Entries whose last build involved `file`; all entries when unknown. */
@@ -317,6 +368,7 @@ export function waluau(options = {}) {
   function watchesGameSource(file) {
     if (options.manifest != null && file === resolve(appRoot, options.manifest)) return true;
     if (manifestFiles().includes(file)) return true;
+    if (affectsCompilerProcess(file)) return true;
     return file.endsWith('.walu') && (
       isInside(appRoot, file) ||
       isInside(resolve(workspaceRoot, 'engine'), file) ||
@@ -379,7 +431,11 @@ export function waluau(options = {}) {
         viteServer.watcher.add(resolve(workspaceRoot, 'engine'));
         viteServer.watcher.add(resolve(workspaceRoot, 'builtins'));
         viteServer.watcher.add(resolve(workspaceRoot, 'externs'));
+        viteServer.watcher.add(resolve(workspaceRoot, 'crates'));
+        viteServer.watcher.add(resolve(workspaceRoot, 'Cargo.toml'));
+        viteServer.watcher.add(resolve(workspaceRoot, 'Cargo.lock'));
       }
+      viteServer.httpServer?.once('close', () => void closeCompilerHost());
     },
     async handleHotUpdate(context) {
       const file = resolve(context.file);
@@ -397,6 +453,9 @@ export function waluau(options = {}) {
       // file (all of them when a build never produced a report).
       const entries = entriesInvolving(file);
       if (entries.length === 0) return;
+      // Embedded engine/compiler inputs require a fresh process so Cargo can
+      // rebuild the binary. Ordinary game edits retain the live session.
+      if (affectsCompilerProcess(file)) await restartCompilerHost();
       await Promise.all(entries.map((entry) => compileEntry(entry)));
       const reloadServer = server ?? context.server;
       const modules = [];
@@ -419,6 +478,9 @@ export function waluau(options = {}) {
         return [];
       }
       return modules;
+    },
+    async closeBundle() {
+      await closeCompilerHost();
     },
   };
 }

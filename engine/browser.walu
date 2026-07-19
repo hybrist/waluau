@@ -30,10 +30,15 @@ type Game = {
 }
 
 -- A running browser game owns animation-frame and DOM listener registrations.
--- Development hot replacement calls stop after capturing state so the old
--- Wasm instance no longer receives input or schedules frames.
+-- Development hot replacement suspends after capturing state so the old Wasm
+-- instance no longer receives input or schedules frames while its canvas stays
+-- mounted for the replacement handoff.
 type Session = {
-    stop: () -> unit
+    stop: () -> unit,
+    -- Stop callbacks but leave the last rendered canvas mounted. Development
+    -- hot replacement uses this while the next instance prepares its first
+    -- frame, avoiding a black handoff between Wasm modules.
+    suspend: () -> unit
 }
 
 -- Browsers number mouse buttons 0/1/2 = left/middle/right; game code sees
@@ -91,13 +96,11 @@ function start(config: Config, game: Game): Session
     local document: Document = window.document
     local body: HTMLElement = document.body
     body:set_attribute("style", "margin:0;min-height:100vh;overflow:hidden;background:" .. config.background .. ";")
-    local old_root: Element? = document:get_element_by_id("walua-game")
-    if old_root ~= nil then
-        body:remove_child(old_root)
-    end
+    local previous_root: Element? = document:get_element_by_id("walua-game")
 
     local root: Element = document:create_element("main")
-    root.id = "walua-game"
+    if previous_root == nil then root.id = "walua-game"
+    else root.id = "walua-game-pending" end
     root.class_name = "flex min-h-screen w-full flex-col items-center justify-center gap-2 overflow-hidden bg-slate-950 p-2 text-slate-100"
     root:set_attribute("style", "box-sizing:border-box;display:flex;width:100vw;min-height:100vh;align-items:center;justify-content:center;overflow:hidden;padding:8px;background:" .. config.background .. ";")
     body:append_child(root)
@@ -235,32 +238,44 @@ function start(config: Config, game: Game): Session
             graphics:set_time(timestamp_ms / 1000.0)
             game.draw(graphics, clock:alpha())
             graphics:present()
+            if root.id == "walua-game-pending" then
+                local mounted_root: Element? = document:get_element_by_id("walua-game")
+                if mounted_root ~= nil then body:remove_child(mounted_root) end
+                root.id = "walua-game"
+            end
             frame_handle = window:requestAnimationFrame(frame)
         end
         frame_handle = window:requestAnimationFrame(frame)
 
-        local function stop(): unit
-            if stopped then return end
-            stopped = true
-            window:cancelAnimationFrame(frame_handle)
-            document:remove_event_listener("keydown", on_keydown)
-            document:remove_event_listener("keyup", on_keyup)
-            game_canvas:remove_event_listener("mousedown", on_mousedown)
-            game_canvas:remove_event_listener("mouseup", on_mouseup)
-            game_canvas:remove_event_listener("mousemove", on_mousemove)
-            local current_root: Element? = document:get_element_by_id("walua-game")
-            if current_root == root then
-                body:remove_child(root)
+        local function stop_session(remove_root: bool): unit
+            if not stopped then
+                stopped = true
+                window:cancelAnimationFrame(frame_handle)
+                document:remove_event_listener("keydown", on_keydown)
+                document:remove_event_listener("keyup", on_keyup)
+                game_canvas:remove_event_listener("mousedown", on_mousedown)
+                game_canvas:remove_event_listener("mouseup", on_mouseup)
+                game_canvas:remove_event_listener("mousemove", on_mousemove)
+            end
+            if remove_root then
+                local mounted_root: Element? = document:get_element_by_id(root.id)
+                if mounted_root == root then body:remove_child(root) end
             end
         end
-        return { stop = stop }
+        return {
+            stop = function(): unit stop_session(true) end,
+            suspend = function(): unit stop_session(false) end,
+        }
     else
         error("game engine could not create a WebGL2 canvas")
     end
     error("game engine could not start")
     -- `error` never returns at runtime; this unreachable value keeps the
     -- current static return checker aware that every path has a Session.
-    return { stop = function(): unit end }
+    return {
+        stop = function(): unit end,
+        suspend = function(): unit end,
+    }
 end
 
 return {
