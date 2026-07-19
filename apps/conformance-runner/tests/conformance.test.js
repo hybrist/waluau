@@ -463,6 +463,33 @@ describe('browser conformance', () => {
     expect(reported).toEqual([42, 43]);
   });
 
+  it('passes callback_unit_host_import.walu through the exported unit trampoline', async () => {
+    const source = cases.find(({ name }) => name === 'callback_unit_host_import.walu').source;
+    let callback;
+    const reported = [];
+    const exports = await compileAndInstantiateWithExports(
+      { '/main.walu': source },
+      '/main.walu',
+      {
+        hostImports: {
+          register_body_callback(body) {
+            callback = body;
+          },
+          report_run_count(value) {
+            reported.push(value);
+          },
+        },
+      },
+    );
+
+    expect(typeof exports.__waluau_call_callback_unit).toBe('function');
+    exports.register_runner(6);
+    expect(callback).toBeDefined();
+    exports.__waluau_call_callback_unit(callback);
+    exports.__waluau_call_callback_unit(callback);
+    expect(reported).toEqual([7, 8]);
+  });
+
   it('passes callback_f64_host_import.walu through the exported frame trampoline', async () => {
     const source = cases.find(({ name }) => name === 'callback_f64_host_import.walu').source;
     let callback;

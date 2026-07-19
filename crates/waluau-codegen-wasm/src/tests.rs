@@ -1141,6 +1141,69 @@ fn declared_nullable_host_callback_accepts_callback_and_nil() {
 }
 
 #[test]
+fn declared_host_unit_callback_import_exports_trampoline() {
+    let source = r#"
+        declare function run_test(body: () -> unit): unit
+        declare function record(value: i32): unit
+
+        function register(seed: i32): unit
+            local count: i32 = seed
+            run_test(function(): unit
+                count = count + 1
+                record(count)
+            end)
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        wat.contains(r#"(import "waluau" "run_test""#),
+        "expected declared host callback import in:\n{wat}"
+    );
+    let trampoline_idx = wasm_export_func_index(&wasm, super::CALLBACK_UNIT_TRAMPOLINE_EXPORT)
+        .expect("() -> unit callback trampoline should be exported");
+    assert!(
+        wasm_function_body_has_call_indirect(&wasm, trampoline_idx),
+        "callback trampoline should dispatch through the closure wrapper table"
+    );
+}
+
+#[test]
+fn unused_host_unit_callback_declaration_omits_import_and_trampoline() {
+    let source = r#"
+        declare function run_test(body: () -> unit): unit
+
+        function entry(): i32
+            return 1
+        end
+    "#;
+    let program = waluau_parser::parse(source).expect("parse should succeed");
+    let typed = waluau_hir::type_check_and_infer(&program).expect("type check should succeed");
+    let ir = waluau_ir::build(&typed).expect("ir should succeed");
+    let wasm = emit(&ir).expect("emit should succeed");
+    Validator::new()
+        .validate_all(&wasm)
+        .expect("emitted module should validate");
+    let wat = print_bytes(&wasm).expect("wat should print");
+
+    assert!(
+        !wat.contains(r#"(import "waluau" "run_test""#),
+        "unused callback declaration should not emit an import:\n{wat}"
+    );
+    assert!(
+        wasm_export_func_index(&wasm, super::CALLBACK_UNIT_TRAMPOLINE_EXPORT).is_none(),
+        "unused callback declaration should not emit a trampoline"
+    );
+}
+
+#[test]
 fn unused_host_callback_declaration_omits_import_and_trampoline() {
     let source = r#"
         type Event = extern
