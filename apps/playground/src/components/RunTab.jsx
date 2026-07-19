@@ -98,6 +98,7 @@ export default function RunTab({
   handleInputChange,
   handleRecordFieldChange,
   handleManualRun,
+  requestAutoRun,
   getResult,
 }) {
   const [isFullscreen, setIsFullscreen] = useState(() => {
@@ -128,6 +129,18 @@ export default function RunTab({
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [isFullscreen]);
+
+  useEffect(() => {
+    if (!autoRun) return;
+    for (const func of exportsList) {
+      requestAutoRun(
+        func.name,
+        func.params,
+        func.richParams,
+        func.richReturns
+      );
+    }
+  }, [autoRun, exportsList, funcInputs, requestAutoRun]);
 
   return (
     <div className="func-calling-container">
