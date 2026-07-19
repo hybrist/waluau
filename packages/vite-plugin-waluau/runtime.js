@@ -10,7 +10,7 @@ export const WALUAU_STRING_CONSTANTS_MODULE = 'string_constants';
 export const WALUAU_IMPORT_MODULE = 'waluau';
 export const WALUAU_MAIN_EXPORT = '__waluau_main';
 // Must match waluau_codegen_wasm::host::HOST_IMPORT_COUNT
-export const WALUAU_HOST_IMPORT_COUNT = 24;
+export const WALUAU_HOST_IMPORT_COUNT = 26;
 const PROMISE_RESUME_TRAMPOLINE_EXPORT = '__waluau_resume_promise_await';
 const PROMISE_RESET_ACTIVE_EXPORT = '__waluau_reset_active_coroutine';
 const CALLBACK_UNIT_EXTERN_TRAMPOLINE_EXPORT = '__waluau_call_callback_unit_extern';
@@ -35,8 +35,14 @@ export function luauToString(value) {
   return String(Number(value.toPrecision(14)));
 }
 
+// Classifies a value that reached the JS host through the dynamic `type()` /
+// `typeof()` chain. Wasm-side classification already handled nil, numbers,
+// booleans, and GC references (functions, tables, threads), so objects seen
+// here are host values: strings, bytes (Uint8Array, statically typed
+// "string"), and extern host objects ("userdata").
 function luauTypeName(value) {
   if (value == null) return 'nil';
+  if (value instanceof Uint8Array) return 'string';
   switch (typeof value) {
     case 'boolean': return 'boolean';
     case 'number':
@@ -44,29 +50,68 @@ function luauTypeName(value) {
       return 'number';
     case 'string': return 'string';
     case 'function': return 'function';
-    case 'object': return 'table';
     default: return 'userdata';
   }
 }
 
+// Stable per-object identities backing `tostring(fn)` -> "function: 0x1"-style
+// formatting. Wasm GC references round-trip to the same JS wrapper object, so
+// a WeakMap keyed on the wrapper yields a consistent id per value.
+const luauRefIds = new WeakMap();
+let nextLuauRefId = 0;
+function luauToStringNamedRef(value, name) {
+  if (value == null) return 'nil';
+  let id = luauRefIds.get(value);
+  if (id === undefined) {
+    id = ++nextLuauRefId;
+    luauRefIds.set(value, id);
+  }
+  return `${name}: 0x${id.toString(16).padStart(8, '0')}`;
+}
+
+// Luau's tonumber semantics: returns the parsed number, or fails (Lua nil).
+// The wasm ABI receives `[ok, value]` so failure is distinguishable from
+// legitimately parsing NaN (e.g. tonumber("nan")).
 function luauToNumber(value, base = 0) {
+  const failure = [0, 0];
   const radix = Number(base) | 0;
   if (radix !== 0) {
-    if (typeof value !== 'string' || radix < 2 || radix > 36) return NaN;
+    if (typeof value !== 'string' || radix < 2 || radix > 36) return failure;
     const text = value.trim();
-    if (text === '') return NaN;
+    if (text === '') return failure;
     const sign = text.startsWith('-') ? -1 : 1;
     const digits = text.replace(/^[+-]/, '');
+    if (digits === '') return failure;
     const valid = new RegExp(`^[0-${Math.min(radix - 1, 9)}${radix > 10 ? `a-${String.fromCharCode(86 + radix)}` : ''}]+$`, 'i');
-    if (!valid.test(digits)) return NaN;
-    return sign * parseInt(digits, radix);
+    if (!valid.test(digits)) return failure;
+    return [1, sign * parseInt(digits, radix)];
   }
-  if (typeof value === 'number') return value;
-  if (typeof value !== 'string') return NaN;
+  if (typeof value === 'number') return [1, value];
+  if (typeof value !== 'string') return failure;
   const text = value.trim();
-  if (text === '') return NaN;
+  if (text === '') return failure;
+  // Luau parses via strtod, which accepts "nan"/"inf"/"infinity" (with sign);
+  // JS Number() does not, so handle those spellings explicitly.
+  const special = /^([+-]?)(nan|inf(?:inity)?)$/i.exec(text);
+  if (special) {
+    const negative = special[1] === '-';
+    if (special[2].toLowerCase() === 'nan') return [1, NaN];
+    return [1, negative ? -Infinity : Infinity];
+  }
+  // JS Number() rejects signed hex ("-0x10"); strtod accepts it.
+  const signedHex = /^([+-])(0[xX][0-9a-fA-F]+)$/.exec(text);
+  if (signedHex) {
+    const magnitude = Number(signedHex[2]);
+    return [1, signedHex[1] === '-' ? -magnitude : magnitude];
+  }
+  // Luau also accepts binary literals ("0b1010", with sign).
+  const binary = /^([+-]?)0[bB]([01]+)$/.exec(text);
+  if (binary) {
+    const magnitude = parseInt(binary[2], 2);
+    return [1, binary[1] === '-' ? -magnitude : magnitude];
+  }
   const parsed = Number(text);
-  return Number.isNaN(parsed) ? NaN : parsed;
+  return Number.isNaN(parsed) ? failure : [1, parsed];
 }
 
 function luaQuoteString(value) {
@@ -2202,6 +2247,8 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
         wasmImport.name === 'js_tonumber_unknown'
       ) {
         waluauImports[wasmImport.name] = luauToNumber;
+      } else if (wasmImport.name === 'js_tostring_named') {
+        waluauImports[wasmImport.name] = luauToStringNamedRef;
       } else if (wasmImport.name === 'js_tostring_bool') {
         waluauImports[wasmImport.name] = (value) => (value ? 'true' : 'false');
       } else {

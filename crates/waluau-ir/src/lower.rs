@@ -7184,14 +7184,14 @@ impl Builder<'_> {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
-        if !(arg_ty.is_numeric()
-            || arg_ty == Type::Bool
-            || arg_ty == Type::String
-            || arg_ty == Type::Unknown)
-        {
+        if !tostring_supported_type(&arg_ty) {
             return Some(Err(Diagnostic::new(format!(
-                "{TO_STRING} expects a primitive argument (numeric, bool, or string), got {arg_ty}",
+                "{TO_STRING} cannot convert a {arg_ty} value",
             ))));
+        }
+        if arg_ty == Type::Nil {
+            let value = self.emit(Instruction::String("nil".to_string()));
+            return Some(self.coerce_value(value, Type::String, expected));
         }
         let lowered = match self.lower_expr(&args[0], env, types, Some(arg_ty.clone())) {
             Ok(value) => value,
@@ -7199,6 +7199,18 @@ impl Builder<'_> {
         };
         let value = if arg_ty == Type::String {
             lowered
+        } else if matches!(arg_ty, Type::Nullable(_)) {
+            // A nullable value stringifies through the dynamic chain: nil
+            // becomes "nil", the inner value formats as itself.
+            let boxed = self.emit(Instruction::Cast {
+                value: lowered,
+                from: arg_ty,
+                to: Type::Unknown,
+            });
+            self.emit(Instruction::ToString {
+                value: boxed,
+                from: Type::Unknown,
+            })
         } else {
             self.emit(Instruction::ToString {
                 value: lowered,
@@ -7239,6 +7251,22 @@ impl Builder<'_> {
             };
             self.emit(Instruction::TypeName {
                 value: lowered,
+                from: Type::Unknown,
+            })
+        } else if matches!(arg_ty, Type::Nullable(_)) {
+            // A nullable value's type is only known at runtime ("nil" vs the
+            // inner type's name); classify through the dynamic chain.
+            let lowered = match self.lower_expr(&args[0], env, types, Some(arg_ty.clone())) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            let boxed = self.emit(Instruction::Cast {
+                value: lowered,
+                from: arg_ty,
+                to: Type::Unknown,
+            });
+            self.emit(Instruction::TypeName {
+                value: boxed,
                 from: Type::Unknown,
             })
         } else {
@@ -7314,12 +7342,25 @@ impl Builder<'_> {
         } else {
             None
         };
+        // Runtime parses can fail, so the result is `f64?` (nil on failure).
+        // A numeric expected type keeps the plain f64 result (the unbox traps
+        // on nil, matching Lua's arithmetic-on-nil error).
+        let nullable_ty = Type::Nullable(Box::new(result_ty.clone()));
         let value = self.emit(Instruction::ToNumber {
             value: lowered,
             from: arg_ty,
             base,
         });
-        Some(self.coerce_value(value, result_ty, expected))
+        if string_byte_requires_numeric_value(expected.as_ref()) {
+            let value = self.emit(Instruction::Cast {
+                value,
+                from: nullable_ty,
+                to: result_ty.clone(),
+            });
+            Some(self.coerce_value(value, result_ty, expected))
+        } else {
+            Some(self.coerce_value(value, nullable_ty, expected))
+        }
     }
 
     fn lower_select_builtin_call(
@@ -8774,15 +8815,11 @@ impl Builder<'_> {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
-        if arg_ty.is_numeric()
-            || arg_ty == Type::Bool
-            || arg_ty == Type::String
-            || arg_ty == Type::Unknown
-        {
+        if tostring_supported_type(&arg_ty) {
             Some(Ok(Type::String))
         } else {
             Some(Err(Diagnostic::new(format!(
-                "{TO_STRING} expects a primitive argument (numeric, bool, or string), got {arg_ty}",
+                "{TO_STRING} cannot convert a {arg_ty} value",
             ))))
         }
     }
@@ -8850,7 +8887,17 @@ impl Builder<'_> {
                 ))));
             }
         }
-        Some(coerce_type(Type::Numeric(NumericType::F64), expected))
+        let f64_ty = Type::Numeric(NumericType::F64);
+        if args.len() == 1 && arg_ty.is_numeric() {
+            return Some(coerce_type(f64_ty, expected));
+        }
+        // Runtime parses yield `f64?` (nil on failure) unless the context
+        // requires a plain number.
+        if string_byte_requires_numeric_value(expected.as_ref()) {
+            Some(coerce_type(f64_ty, expected))
+        } else {
+            Some(coerce_type(Type::Nullable(Box::new(f64_ty)), expected))
+        }
     }
 
     fn infer_select_builtin_call_type(
@@ -10745,6 +10792,27 @@ fn common_numeric_type(left: Type, right: Type) -> Result<Type, Diagnostic> {
             "change one operand type or cast explicitly",
         )),
     }
+}
+
+/// Types `tostring` accepts: primitives stringify by value, `nil` folds to
+/// "nil", reference types (functions, tables, threads) format their identity,
+/// and nullable/unknown values dispatch at runtime.
+fn tostring_supported_type(ty: &Type) -> bool {
+    ty.is_numeric()
+        || matches!(
+            ty,
+            Type::Bool
+                | Type::String
+                | Type::Unknown
+                | Type::Nil
+                | Type::Function { .. }
+                | Type::Array(_)
+                | Type::Record(_)
+                | Type::TaggedVariant(_)
+                | Type::TaggedUnion(_)
+                | Type::Thread
+                | Type::Nullable(_)
+        )
 }
 
 /// Collapses a multi-value type to the single value Lua adjusts it to.

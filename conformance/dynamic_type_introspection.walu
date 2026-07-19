@@ -1,0 +1,139 @@
+-- type()/typeof() return Lua type-name strings, tostring() converts any
+-- supported value to a string, and tonumber() parses with Lua coercion
+-- semantics (nil on failure, optional base 2..36). Statically-typed operands
+-- fold at compile time; unknown-boxed values classify at runtime.
+
+-- type()/typeof() on statically-typed values.
+assert(type(nil) == "nil")
+assert(type(true) == "boolean")
+assert(type(1) == "number")
+assert(type(1.5) == "number")
+assert(type("hi") == "string")
+assert(typeof(false) == "boolean")
+assert(typeof(42) == "number")
+assert(typeof("x") == "string")
+
+local function double(x: i32): i32
+    return x * 2
+end
+assert(type(double) == "function")
+assert(typeof(double) == "function")
+
+local list = {1, 2, 3}
+assert(type(list) == "table")
+local record = { name = "waluau", version = 1 }
+assert(type(record) == "table")
+
+local function body(): i32
+    return 7
+end
+local co = coroutine.create(body)
+assert(type(co) == "thread")
+assert(typeof(co) == "thread")
+
+local buf = Float32Array.create(4)
+assert(type(buf) == "buffer")
+assert(typeof(buf) == "buffer")
+
+-- type()/typeof() on unknown-boxed values classify at runtime.
+local un: unknown = nil
+assert(type(un) == "nil")
+local bv: bool = true
+local ub: unknown = bv
+assert(type(ub) == "boolean")
+assert(typeof(ub) == "boolean")
+local iv: i32 = 5
+local ui: unknown = iv
+assert(type(ui) == "number")
+local fv: f64 = 2.5
+local uf: unknown = fv
+assert(type(uf) == "number")
+local sv: string = "str"
+local us: unknown = sv
+assert(type(us) == "string")
+local ufn: unknown = double
+assert(type(ufn) == "function")
+assert(typeof(ufn) == "function")
+local ul: unknown = list
+assert(type(ul) == "table")
+local ur: unknown = record
+assert(type(ur) == "table")
+local uc: unknown = co
+assert(type(uc) == "thread")
+
+-- tostring() on primitives.
+assert(tostring(nil) == "nil")
+assert(tostring(true) == "true")
+assert(tostring(false) == "false")
+assert(tostring(12) == "12")
+assert(tostring(-3.5) == "-3.5")
+assert(tostring("already") == "already")
+
+-- tostring() on reference values formats a stable "<type>: 0x..." identity.
+assert(string.sub(tostring(list), 1, 6) == "table:")
+assert(string.sub(tostring(double), 1, 9) == "function:")
+assert(string.sub(tostring(co), 1, 7) == "thread:")
+assert(tostring(list) == tostring(list))
+local other = {4, 5}
+assert(tostring(list) ~= tostring(other))
+
+-- tostring() on unknown-boxed values.
+assert(tostring(un) == "nil")
+assert(tostring(ub) == "true")
+assert(tostring(ui) == "5")
+assert(tostring(uf) == "2.5")
+assert(tostring(us) == "str")
+assert(string.sub(tostring(ufn), 1, 9) == "function:")
+assert(string.sub(tostring(ul), 1, 6) == "table:")
+assert(tostring(ul) == tostring(list))
+
+-- type of a tostring result folds/classifies as string either way.
+assert(type(tostring(nil)) == "string")
+assert(type(tostring(ui)) == "string")
+
+-- tonumber() passes numbers through and parses strings.
+assert(tonumber(42) == 42)
+assert(tonumber(2.5) == 2.5)
+assert(tonumber("42") == 42)
+assert(tonumber("  10  ") == 10)
+assert(tonumber("-12") == -12)
+assert(tonumber("+0.01") == 0.01)
+assert(tonumber("1.3e-2") == 0.013)
+assert(tonumber("0x1A") == 26)
+assert(tonumber("-0x2") == -2)
+
+-- tonumber() returns nil on failure.
+assert(tonumber("") == nil)
+assert(tonumber("  ") == nil)
+assert(tonumber("x") == nil)
+assert(tonumber("1  a") == nil)
+assert(tonumber("e1") == nil)
+assert(tonumber("1e") == nil)
+assert(tonumber(".") == nil)
+assert(tonumber("+ 0.01") == nil)
+
+-- tonumber() with an explicit base.
+assert(tonumber("1010", 2) == 10)
+assert(tonumber("  1010  ", 2) == 10)
+assert(tonumber("ff", 16) == 255)
+assert(tonumber("-ff", 16) == -255)
+assert(tonumber("10", 36) == 36)
+assert(tonumber("z", 36) == 35)
+assert(tonumber("99", 8) == nil)
+assert(tonumber("fFfa", 15) == nil)
+assert(tonumber("", 8) == nil)
+
+-- tonumber() on unknown-boxed values.
+assert(tonumber(ui) == 5)
+assert(tonumber(uf) == 2.5)
+assert(tonumber(us) == nil)
+local numsv: string = "77"
+local unum: unknown = numsv
+assert(tonumber(unum) == 77)
+assert(tonumber(unum, 8) == 63)
+assert(tonumber(ub) == nil)
+assert(tonumber(ul) == nil)
+
+-- A numeric annotation keeps the plain f64 result.
+local parsed: f64 = tonumber("6.25")
+assert(parsed * 4 == 25)

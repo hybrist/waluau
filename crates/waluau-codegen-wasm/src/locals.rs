@@ -50,6 +50,9 @@ pub(crate) struct LocalPlan {
     /// Scratch i32 local holding a freshly allocated typed-array pointer while
     /// `BufferNew`/`BufferConst` initialize the allocation.
     pub(crate) buffer_scratch: Option<u32>,
+    /// Scratch f64 local for spilling a `js_tonumber_*` host result while its
+    /// success flag is branched on.
+    pub(crate) tonumber_scratch: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -289,6 +292,25 @@ pub(crate) fn build_local_plan(
         None
     };
 
+    let needs_tonumber_scratch = function.blocks.values().any(|block| {
+        block.instructions.iter().any(|(_, instruction)| {
+            matches!(
+                instruction,
+                IrInstruction::ToNumber {
+                    from: Type::String | Type::Unknown,
+                    ..
+                }
+            )
+        })
+    });
+    let tonumber_scratch = if needs_tonumber_scratch {
+        let slot = function.params.len() as u32 + extra_locals.len() as u32;
+        extra_locals.push(ValType::F64);
+        Some(slot)
+    } else {
+        None
+    };
+
     Ok(LocalPlan {
         slots,
         multi_slots,
@@ -307,6 +329,7 @@ pub(crate) fn build_local_plan(
         protected_call_value_tmp,
         array_scratch,
         buffer_scratch,
+        tonumber_scratch,
     })
 }
 
@@ -351,7 +374,15 @@ pub(crate) fn infer_value_types(
                 IrInstruction::BitwiseIntrinsic { result_ty, .. } => result_ty.clone(),
                 IrInstruction::ToString { .. } => Type::String,
                 IrInstruction::TypeName { .. } => Type::String,
-                IrInstruction::ToNumber { .. } => Type::Numeric(NumericType::F64),
+                IrInstruction::ToNumber { from, .. } => {
+                    if from.is_numeric() {
+                        Type::Numeric(NumericType::F64)
+                    } else {
+                        // Runtime string/unknown parses yield `f64?` (nil on
+                        // failure), represented as anyref.
+                        Type::Nullable(Box::new(Type::Numeric(NumericType::F64)))
+                    }
+                }
                 IrInstruction::Print { .. } | IrInstruction::Throw { .. } => Type::Unit,
                 IrInstruction::Call { name, .. } => signatures
                     .get(name)
@@ -1005,6 +1036,12 @@ pub(crate) fn buffer_scratch_local(local_plan: &LocalPlan) -> Result<u32, Diagno
     local_plan
         .buffer_scratch
         .ok_or_else(|| Diagnostic::new("missing typed-array scratch local"))
+}
+
+pub(crate) fn tonumber_scratch_local(local_plan: &LocalPlan) -> Result<u32, Diagnostic> {
+    local_plan
+        .tonumber_scratch
+        .ok_or_else(|| Diagnostic::new("missing tonumber scratch local"))
 }
 
 pub(crate) fn array_scratch_local(
