@@ -31,6 +31,42 @@ test.describe('function calling tab', () => {
     await expect(page.locator('.func-result-value.success')).toHaveText('8');
   });
 
+  test('does not show a stale auto-run result when auto-run is re-enabled', async ({ page }) => {
+    const inputs = page.locator('.func-input-field');
+    await inputs.nth(0).fill('5');
+    await inputs.nth(1).fill('3');
+    await expect(page.locator('.func-result-value.success')).toHaveText('8');
+
+    const autoRunToggle = page.locator(
+      'label:has-text("Auto-run on input change") input[type="checkbox"]'
+    );
+    await autoRunToggle.uncheck();
+    await inputs.nth(0).fill('9');
+    await inputs.nth(1).fill('1');
+    await expect(page.locator('.func-result-value.idle')).toBeVisible();
+
+    await page.evaluate(() => {
+      const resultBox = document.querySelector('.func-result-box');
+      window.__autoRunResultTexts = [];
+      window.__autoRunResultObserver = new MutationObserver(() => {
+        window.__autoRunResultTexts.push(resultBox.textContent);
+      });
+      window.__autoRunResultObserver.observe(resultBox, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+    });
+
+    await autoRunToggle.check();
+    await expect(page.locator('.func-result-value.success')).toHaveText('10');
+    const observedTexts = await page.evaluate(() => {
+      window.__autoRunResultObserver.disconnect();
+      return window.__autoRunResultTexts;
+    });
+    expect(observedTexts.some((text) => text.endsWith('8'))).toBe(false);
+  });
+
   test('disabling auto-run shows idle state until Run Function is clicked', async ({ page }) => {
     // Uncheck the auto-run toggle.
     await page.locator('label:has-text("Auto-run on input change") input[type="checkbox"]').uncheck();

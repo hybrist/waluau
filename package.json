@@ -3,12 +3,16 @@
   "private": true,
   "packageManager": "pnpm@10.20.0",
   "scripts": {
+    "build:ante": "pnpm --filter ante build",
     "build:playground": "pnpm --filter playground build",
+    "dev:ante": "pnpm --filter ante dev",
     "dev": "pnpm --filter playground dev",
     "generate:dom-externs": "node tools/dom-idl/generate-dom-externs.mjs",
     "test:dom-externs": "node --test tools/dom-idl/generate-dom-externs.test.mjs",
     "test:playground": "pnpm --filter playground test",
-    "test:conformance-browser": "pnpm --filter conformance-runner test:browser"
+    "test:ante": "pnpm --filter ante test",
+    "test:conformance-browser": "pnpm --filter conformance-runner test:browser",
+    "test:vite-plugin": "node --test packages/vite-plugin-waluau/index.test.js"
   },
   "devDependencies": {
     "@webref/idl": "^3.80.0",

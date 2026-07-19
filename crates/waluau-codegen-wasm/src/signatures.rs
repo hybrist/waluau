@@ -61,14 +61,22 @@ impl SignatureRegistry {
     }
 }
 
+/// Which exported host-callback/coroutine trampolines a module needs, so the
+/// signature registry can pre-register their closure wrapper signatures.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct TrampolineNeeds {
+    pub(crate) callback_event_unit: bool,
+    pub(crate) callback_f64_unit: bool,
+    pub(crate) callback_unit_extern: bool,
+    pub(crate) callback_unit: bool,
+    pub(crate) promise_resume: bool,
+}
+
 pub(crate) fn collect_user_signatures(
     module: &Module,
     declared_imports: &[&DeclaredImport],
     start_thunk: bool,
-    callback_event_unit_trampoline: bool,
-    callback_f64_unit_trampoline: bool,
-    callback_unit_extern_trampoline: bool,
-    promise_resume_trampoline: bool,
+    trampolines: TrampolineNeeds,
 ) -> SignatureRegistry {
     let mut registry = SignatureRegistry::new();
     for function in &module.functions {
@@ -111,19 +119,22 @@ pub(crate) fn collect_user_signatures(
     if start_thunk {
         registry.add(Vec::new(), Type::Unit);
     }
-    if callback_event_unit_trampoline {
+    if trampolines.callback_event_unit {
         registry.add_wrapper(vec![Type::Extern], Type::Unit);
     }
-    if callback_f64_unit_trampoline {
+    if trampolines.callback_f64_unit {
         registry.add_wrapper(
             vec![Type::Numeric(waluau_ast::NumericType::F64)],
             Type::Unit,
         );
     }
-    if callback_unit_extern_trampoline {
+    if trampolines.callback_unit_extern {
         registry.add_wrapper(Vec::new(), Type::Extern);
     }
-    if promise_resume_trampoline {
+    if trampolines.callback_unit {
+        registry.add_wrapper(Vec::new(), Type::Unit);
+    }
+    if trampolines.promise_resume {
         registry.add(Vec::new(), Type::Unit);
         registry.add(
             vec![

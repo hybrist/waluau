@@ -207,6 +207,15 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
     match expected {
         None => Ok(actual),
         Some(expected) if actual == expected => Ok(expected),
+        // A variadic pack in a scalar context contributes its first value.
+        Some(expected)
+            if matches!(actual, Type::Variadic(_)) && !matches!(expected, Type::Variadic(_)) =>
+        {
+            let Type::Variadic(element) = actual else {
+                unreachable!()
+            };
+            coerce_type(*element, Some(expected))
+        }
         // A multi-value result in a single-value context collapses to its
         // first value, following Lua's adjustment rules.
         Some(expected)
@@ -481,7 +490,7 @@ pub(super) fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, 
             Type::Opaque { name, .. } => Err(Diagnostic::new(format!(
                 "cannot implicitly convert {name} to {expected_numeric}",
             ))),
-            Type::Array(_) => Err(Diagnostic::new(format!(
+            Type::Array(_) | Type::Variadic(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert array to {expected_numeric}",
             ))),
             Type::TypedArray(kind) => Err(Diagnostic::new(format!(
@@ -619,7 +628,7 @@ pub(super) fn resolve_number_literal(
         Some(Type::Opaque { name, .. }) => Err(Diagnostic::new(format!(
             "numeric literal is not assignable to {name}",
         ))),
-        Some(Type::Array(_)) => Err(Diagnostic::new(
+        Some(Type::Array(_) | Type::Variadic(_)) => Err(Diagnostic::new(
             "numeric literal is not assignable to array",
         )),
         Some(Type::TypedArray(kind)) => Err(Diagnostic::new(format!(

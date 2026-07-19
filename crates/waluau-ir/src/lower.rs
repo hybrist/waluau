@@ -58,7 +58,7 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
             .map(|param| param.ty.clone())
             .collect::<Vec<_>>();
         if function.vararg {
-            param_types.push(Type::Array(Box::new(Type::Unknown)));
+            param_types.push(Type::Variadic(Box::new(Type::Unknown)));
         }
         let sig = (param_types, return_type);
         signatures.insert(symbol_id, sig.clone());
@@ -273,6 +273,7 @@ fn collect_type_variant_tags(ty: &Type, tag_ids: &mut BTreeMap<String, i32>) {
         }
         Type::Opaque { ty, .. }
         | Type::Array(ty)
+        | Type::Variadic(ty)
         | Type::Nullable(ty)
         | Type::ExternSubtype(ty) => {
             collect_type_variant_tags(ty, tag_ids)
@@ -845,6 +846,7 @@ fn erase_type_opaque_types(ty: &Type) -> Type {
         Type::ExternSubtype(_) => Type::Extern,
         Type::Nullable(inner) => Type::Nullable(Box::new(erase_type_opaque_types(inner))),
         Type::Array(inner) => Type::Array(Box::new(erase_type_opaque_types(inner))),
+        Type::Variadic(inner) => Type::Variadic(Box::new(erase_type_opaque_types(inner))),
         Type::Multi(types) => Type::Multi(types.iter().map(erase_type_opaque_types).collect()),
         Type::Function {
             params,
@@ -906,7 +908,10 @@ pub(crate) fn build_function(
                 .map(|param| (param.name.clone(), param.ty.clone()))
                 .collect::<Vec<_>>();
             if function.vararg {
-                params.push(("...".to_string(), Type::Array(Box::new(Type::Unknown))));
+                params.push((
+                    "...".to_string(),
+                    Type::Variadic(Box::new(Type::Unknown)),
+                ));
             }
             params
         },
@@ -1224,7 +1229,7 @@ fn string_byte_static_indices(
         _ => None,
     });
     let (start, end) = if let Some(len) = args.first().and_then(expr_string_len) {
-        (normalize_lua_index(start, len), normalize_lua_index(end, len))
+        clip_lua_byte_range(start, end, len)
     } else if start >= 1 && end >= 0 {
         (start, end)
     } else if let Some(count) = count_from_expected {
@@ -1241,13 +1246,8 @@ fn string_byte_static_indices(
     }
 }
 
-fn expr_i32_literal(expr: &Expr) -> Option<i32> {
-    match expr {
-        Expr::Number(number, _) => number.raw.replace('_', "").parse::<i32>().ok(),
-        Expr::Unary { op: UnaryOp::Neg, expr, .. } => expr_i32_literal(expr).and_then(i32::checked_neg),
-        _ => None,
-    }
-}
+// expr_i32_literal, table_unpack_static_indices, and expr_static_array_len
+// live at the crate root (lib.rs) because the monomorphizer needs them too.
 
 fn expr_string_len(expr: &Expr) -> Option<i32> {
     let Expr::String(value, _) = expr else {
@@ -1343,9 +1343,20 @@ fn const_typed_array_bytes(kind: TypedArrayKind, elements: &[Expr]) -> Option<Ve
     Some(bytes)
 }
 
-fn normalize_lua_index(index: i32, len: i32) -> i32 {
-    let normalized = if index < 0 { len + index + 1 } else { index };
-    normalized.clamp(1, len)
+/// Lua `string.byte` range clipping (lstrlib.c `str_byte`): negative indices
+/// count from the end of the string, the start is raised to at least 1, and
+/// the end is lowered to at most the string length. Unlike a symmetric clamp,
+/// a start past the end of the string (or an end before its beginning) is left
+/// out of range so the caller observes an empty range and emits no values.
+fn clip_lua_byte_range(start: i32, end: i32, len: i32) -> (i32, i32) {
+    let posrelat = |pos: i32| {
+        if pos >= 0 {
+            pos
+        } else {
+            len.saturating_add(pos).saturating_add(1)
+        }
+    };
+    (posrelat(start).max(1), posrelat(end).min(len))
 }
 
 fn method_signature_name(base: &str, method: &str) -> String {
@@ -1688,18 +1699,14 @@ impl Builder<'_> {
         env: &HashMap<SymbolId, ValueId>,
         types: &HashMap<SymbolId, Type>,
     ) -> Result<Vec<ValueId>, Diagnostic> {
-        if !call_arity_matches(param_types, args.len()) {
+        let mut lowered = self.lower_expr_list(args, env, types, Some(param_types))?;
+        if !call_arity_matches(param_types, lowered.len()) {
             return Err(Diagnostic::new(format!(
                 "function expects {} arguments, got {}",
                 param_types.len(),
-                args.len()
+                lowered.len()
             )));
         }
-        let mut lowered = args
-            .iter()
-            .zip(param_types.iter())
-            .map(|(arg, param_ty)| self.lower_expr(arg, env, types, Some(param_ty.clone())))
-            .collect::<Result<Vec<_>, _>>()?;
         for param_ty in &param_types[lowered.len()..] {
             lowered.push(self.emit_omitted_nullable_arg(param_ty)?);
         }
@@ -4036,7 +4043,7 @@ impl Builder<'_> {
                             "numeric literal is not assignable to {name}",
                         )));
                     }
-                    Type::Array(_) => {
+                    Type::Array(_) | Type::Variadic(_) => {
                         return Err(Diagnostic::new(
                             "numeric literal is not assignable to array",
                         ));
@@ -4134,7 +4141,7 @@ impl Builder<'_> {
                 let value = self
                     .vararg_value
                     .ok_or_else(|| Diagnostic::new("'...' used outside a vararg function"))?;
-                self.coerce_value(value, Type::Array(Box::new(Type::Unknown)), expected)?
+                self.coerce_value(value, Type::Variadic(Box::new(Type::Unknown)), expected)?
             }
             Expr::Name(name, symbol_id, _) => {
                 let symbol_id = symbol_id.expect("symbol_id should be resolved");
@@ -4382,7 +4389,7 @@ impl Builder<'_> {
                                     "unary '-' requires a numeric operand",
                                 ));
                             }
-                            Type::Array(_) | Type::TypedArray(_) => {
+                            Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => {
                                 return Err(Diagnostic::new(
                                     "unary '-' requires a numeric operand",
                                 ));
@@ -4658,6 +4665,17 @@ impl Builder<'_> {
                         };
                         let nullable_ty =
                             first_of_multi(self.infer_expr_type(value_expr, types, None)?);
+                        if matches!(&nullable_ty, Type::Multi(parts) if parts.is_empty()) {
+                            // An empty multi-value result (e.g. `string.byte`
+                            // with a statically empty range) adjusts to nil in
+                            // scalar context, so the comparison is statically
+                            // decided. The operand is still evaluated for its
+                            // side effects.
+                            let _ = self.lower_expr(value_expr, env, types, None)?;
+                            let result =
+                                self.emit(Instruction::Bool(matches!(op, BinaryOp::Eq)));
+                            return self.coerce_value(result, Type::Bool, expected);
+                        }
                         let inner_ty = nullable_ty.nullable_inner().ok_or_else(|| {
                             Diagnostic::new("nil comparison requires a nullable operand")
                         })?;
@@ -4690,20 +4708,13 @@ impl Builder<'_> {
                     }
                     let left = self.lower_expr(left, env, types, Some(operand_ty.clone()))?;
                     let right = self.lower_expr(right, env, types, Some(operand_ty.clone()))?;
-                    // The instruction produces its raw type (bool for
-                    // comparisons, the operand type otherwise) regardless of
-                    // `expected`; deriving result_ty from `expected` would
-                    // mislabel the value (e.g. an i32 sum claiming to be f64)
-                    // and skip the coercion cast below.
-                    let raw_result_ty = match op {
-                        BinaryOp::Less
-                        | BinaryOp::LessEq
-                        | BinaryOp::Greater
-                        | BinaryOp::GreaterEq
-                        | BinaryOp::Eq
-                        | BinaryOp::NotEq => Type::Bool,
-                        _ => operand_ty.clone(),
-                    };
+                    // Type the instruction by its operands; the coercion into
+                    // a wider expected type (e.g. boxing into `unknown` for a
+                    // yield payload) must go through `coerce_value` so the
+                    // conversion is actually emitted rather than silently
+                    // stamped onto the raw arithmetic result.
+                    let raw_result_ty =
+                        self.infer_expr_type(expr, types, Some(operand_ty.clone()))?;
                     let value = self.emit(Instruction::Binary {
                         op: *op,
                         left,
@@ -4859,7 +4870,7 @@ impl Builder<'_> {
                     if let Some((param_types, _)) = self.signatures.get(symbol_id).cloned() {
                         let args = if matches!(
                             param_types.last(),
-                            Some(Type::Array(element)) if element.as_ref() == &Type::Unknown
+                            Some(Type::Variadic(element)) if element.as_ref() == &Type::Unknown
                         ) {
                             self.shape_vararg_call_args(&param_types, args, env, types)?
                         } else {
@@ -4980,32 +4991,68 @@ impl Builder<'_> {
                 let element_ty = array_ty
                     .element_type()
                     .expect("array literal must have element type");
-                if matches!(elements.last(), Some(Expr::Vararg(_))) {
-                    // `{a, b, ...}` splats the caller's varargs after the
-                    // explicit prefix; `{...}` alone is a fresh copy.
-                    let varargs = self
-                        .vararg_value
-                        .ok_or_else(|| Diagnostic::new("'...' used outside a vararg function"))?;
-                    let prefix = elements[..elements.len() - 1]
+                let trailing_ty = elements
+                    .last()
+                    .map(|element| self.infer_expr_type(element, types, None))
+                    .transpose()?;
+                let trailing_pack = trailing_ty.as_ref().is_some_and(|ty| match ty {
+                    Type::Variadic(_) => true,
+                    Type::Multi(parts) => {
+                        matches!(parts.last(), Some(Type::Variadic(_)))
+                    }
+                    _ => false,
+                });
+                if trailing_pack {
+                    // A trailing variadic expression splats after the explicit
+                    // prefix; the resulting table is always a fresh copy.
+                    let mut prefix = elements[..elements.len() - 1]
                         .iter()
                         .map(|element| self.lower_expr(element, env, types, Some(Type::Unknown)))
                         .collect::<Result<Vec<_>, _>>()?;
-                    let value = if prefix.is_empty() {
-                        let zero = self.emit_i32_const(0);
-                        self.emit(Instruction::ArraySlice {
-                            array: varargs,
-                            start: zero,
-                            element_ty: Type::Unknown,
-                        })
-                    } else {
-                        let dest = self.emit(Instruction::ArrayNew {
-                            element_ty: Type::Unknown,
-                            elements: prefix,
-                        });
-                        self.emit_array_append_all(dest, varargs);
-                        dest
+                    let tail_expr = elements.last().expect("pack requires trailing expression");
+                    let pack = match trailing_ty.expect("checked above") {
+                        Type::Variadic(element_ty) => self.lower_expr(
+                            tail_expr,
+                            env,
+                            types,
+                            Some(Type::Variadic(element_ty)),
+                        )?,
+                        Type::Multi(parts) => {
+                            let tuple = self.lower_expr(tail_expr, env, types, None)?;
+                            let last_index = parts.len() - 1;
+                            for (index, part) in parts[..last_index].iter().enumerate() {
+                                let value = self.emit(Instruction::MultiGet {
+                                    value: tuple,
+                                    index,
+                                    ty: part.clone(),
+                                });
+                                prefix.push(self.coerce_value(
+                                    value,
+                                    part.clone(),
+                                    Some(Type::Unknown),
+                                )?);
+                            }
+                            let Type::Variadic(element_ty) = &parts[last_index] else {
+                                unreachable!("checked trailing pack above")
+                            };
+                            self.emit(Instruction::MultiGet {
+                                value: tuple,
+                                index: last_index,
+                                ty: Type::Variadic(element_ty.clone()),
+                            })
+                        }
+                        _ => unreachable!("checked trailing pack above"),
                     };
-                    return self.coerce_value(value, array_ty, expected);
+                    let value = self.emit(Instruction::ArrayNew {
+                        element_ty: Type::Unknown,
+                        elements: prefix,
+                    });
+                    self.emit_array_append_all(value, pack);
+                    return self.coerce_value(
+                        value,
+                        Type::Array(Box::new(Type::Unknown)),
+                        expected,
+                    );
                 }
                 let lowered = elements
                     .iter()
@@ -5174,8 +5221,26 @@ impl Builder<'_> {
         let mut out = Vec::new();
         for expr in exprs {
             let slot_expected = expected.and_then(|types| types.get(out.len()).cloned());
+            if let (
+                Expr::Call { callee, args, .. },
+                Some(expected_ty),
+            ) = (expr, slot_expected.as_ref())
+            {
+                if let (Expr::Name(tag, None, _), [_]) = (callee.as_ref(), args.as_slice()) {
+                    if expected_ty.tagged_variant(tag).is_some() {
+                        out.push(self.lower_expr(
+                            expr,
+                            env,
+                            types,
+                            Some(expected_ty.clone()),
+                        )?);
+                        continue;
+                    }
+                }
+            }
             let remaining_expected = expected
-                .and_then(|types| (!types[out.len()..].is_empty()).then(|| &types[out.len()..]));
+                .and_then(|types| types.get(out.len()..))
+                .filter(|types| !types.is_empty());
             let ty = if let Expr::Call { callee, .. } = expr {
                 let expands_multi = builtin_name(callee.as_ref()).is_some_and(|name| {
                     name == COROUTINE_RESUME
@@ -5184,13 +5249,18 @@ impl Builder<'_> {
                         || name == STRING_MATCH
                         || name == STRING_GSUB
                         || name == STRING_BYTE
+                        || name == TABLE_UNPACK
                 });
+                let is_potential_constructor =
+                    matches!(callee.as_ref(), Expr::Name(_, None, _));
                 if expands_multi {
                     self.infer_expr_type(
                         expr,
                         types,
                         remaining_expected.map(|types| Type::Multi(types.to_vec())),
                     )?
+                } else if is_potential_constructor {
+                    self.infer_expr_type(expr, types, slot_expected.clone())?
                 } else {
                     self.infer_expr_type(expr, types, None)?
                 }
@@ -5200,12 +5270,85 @@ impl Builder<'_> {
                 self.infer_expr_type(expr, types, slot_expected.clone())?
             };
             match ty {
+                Type::Variadic(element_ty) => {
+                    let pack = self.lower_expr(
+                        expr,
+                        env,
+                        types,
+                        Some(Type::Variadic(element_ty.clone())),
+                    )?;
+                    if matches!(
+                        remaining_expected.and_then(|types| types.first()),
+                        Some(Type::Variadic(_))
+                    ) || remaining_expected.is_none()
+                    {
+                        out.push(pack);
+                    } else if let Some(expected_types) = remaining_expected {
+                        for (index, expected_ty) in expected_types.iter().enumerate() {
+                            let index = self.emit_i32_const(index as i32);
+                            let value = self.emit(Instruction::ArrayGet {
+                                array: pack,
+                                index,
+                                element_ty: (*element_ty).clone(),
+                            });
+                            out.push(self.coerce_value(
+                                value,
+                                (*element_ty).clone(),
+                                Some(expected_ty.clone()),
+                            )?);
+                        }
+                    }
+                }
                 Type::Multi(multi_types) => {
-                    let tuple = self.lower_expr(expr, env, types, None)?;
+                    // table.unpack derives its static arity from the expected
+                    // multi-value type, so lowering must see the same expected
+                    // shape that inference used; other multi-value builtins
+                    // recover their arity from their arguments alone.
+                    let tuple_expected = if let Expr::Call { callee, .. } = expr {
+                        builtin_name(callee.as_ref())
+                            .is_some_and(|name| name == TABLE_UNPACK)
+                            .then(|| Type::Multi(multi_types.clone()))
+                    } else {
+                        None
+                    };
+                    let tuple = self.lower_expr(expr, env, types, tuple_expected)?;
                     for (index, part) in multi_types.into_iter().enumerate() {
-                        let coerced =
-                            if let Some(exp) = expected.and_then(|types| types.get(out.len())) {
-                                coerce_type(part, Some(exp.clone()))?
+                        if let Type::Variadic(element_ty) = part {
+                            let pack = self.emit(Instruction::MultiGet {
+                                value: tuple,
+                                index,
+                                ty: Type::Variadic(element_ty.clone()),
+                            });
+                            let remaining = expected
+                                .and_then(|types| types.get(out.len()..))
+                                .filter(|types| !types.is_empty());
+                            if matches!(
+                                remaining.and_then(|types| types.first()),
+                                Some(Type::Variadic(_))
+                            ) || remaining.is_none()
+                            {
+                                out.push(pack);
+                            } else if let Some(expected_types) = remaining {
+                                for (offset, expected_ty) in expected_types.iter().enumerate() {
+                                    let index = self.emit_i32_const(offset as i32);
+                                    let value = self.emit(Instruction::ArrayGet {
+                                        array: pack,
+                                        index,
+                                        element_ty: (*element_ty).clone(),
+                                    });
+                                    out.push(self.coerce_value(
+                                        value,
+                                        (*element_ty).clone(),
+                                        Some(expected_ty.clone()),
+                                    )?);
+                                }
+                            }
+                            continue;
+                        }
+                        let coerced = if let Some(exp) =
+                            expected.and_then(|types| types.get(out.len()))
+                        {
+                            coerce_type(part, Some(exp.clone()))?
                             } else {
                                 part
                             };
@@ -5489,7 +5632,7 @@ impl Builder<'_> {
                 Some(Type::Opaque { name, .. }) => Err(Diagnostic::new(format!(
                     "numeric literal is not assignable to {name}",
                 ))),
-                Some(Type::Array(_)) => Err(Diagnostic::new(
+                Some(Type::Array(_) | Type::Variadic(_)) => Err(Diagnostic::new(
                     "numeric literal is not assignable to array",
                 )),
                 Some(Type::TypedArray(kind)) => Err(Diagnostic::new(format!(
@@ -5523,7 +5666,7 @@ impl Builder<'_> {
             Expr::Bool(..) => coerce_type(Type::Bool, expected),
             Expr::String(..) => coerce_type(Type::String, expected),
             Expr::Bytes(..) => coerce_type(Type::Bytes, expected),
-            Expr::Vararg(..) => Ok(Type::Array(Box::new(Type::Unknown))),
+            Expr::Vararg(..) => Ok(Type::Variadic(Box::new(Type::Unknown))),
             Expr::Require(path, _) => Err(Diagnostic::new(format!(
                 "unresolved require(\"{path}\") reached IR lowering"
             ))),
@@ -5676,7 +5819,7 @@ impl Builder<'_> {
                         Type::Nil | Type::Nullable(_) | Type::Named { .. } | Type::Opaque { .. } => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
-                        Type::Array(_) | Type::TypedArray(_) => {
+                        Type::Array(_) | Type::Variadic(_) | Type::TypedArray(_) => {
                             Err(Diagnostic::new("unary '-' requires a numeric operand"))
                         }
                         Type::Function { .. } | Type::Record(_) => {
@@ -5807,7 +5950,9 @@ impl Builder<'_> {
                     {
                         return result;
                     }
-                    if let Some(result) = self.infer_table_builtin_call_type(&name, expr, types) {
+                    if let Some(result) =
+                        self.infer_table_builtin_call_type(&name, expr, types, expected.clone())
+                    {
                         return result;
                     }
                     if let Some(result) =
@@ -5974,6 +6119,12 @@ impl Builder<'_> {
                     if matches!(value_ty, Type::Nullable(_)) {
                         return Ok(Type::Bool);
                     }
+                    // An empty multi-value result (e.g. `string.byte` with a
+                    // statically empty range) adjusts to nil in scalar
+                    // context, so the comparison is well-typed.
+                    if matches!(&value_ty, Type::Multi(parts) if parts.is_empty()) {
+                        return Ok(Type::Bool);
+                    }
                     return Err(Diagnostic::new(
                         "nil comparison requires a nullable operand",
                     ));
@@ -6030,6 +6181,21 @@ impl Builder<'_> {
                     let right_ty = self.infer_expr_type(right, types, Some(left_ty.clone()))?;
                     if right_ty == left_ty {
                         Ok(left_ty)
+                    } else {
+                        Err(Diagnostic::new(
+                            "could not resolve operand type during IR lowering",
+                        ))
+                    }
+                } else if left_ty == Type::Extern {
+                    // Extern references compare by host identity. Opaque extern
+                    // aliases are already erased to `extern` at this stage.
+                    let right_ty = first_of_multi(self.infer_expr_type(
+                        right,
+                        types,
+                        Some(Type::Extern),
+                    )?);
+                    if right_ty == Type::Extern {
+                        Ok(Type::Extern)
                     } else {
                         Err(Diagnostic::new(
                             "could not resolve operand type during IR lowering",
@@ -6135,6 +6301,22 @@ impl Builder<'_> {
         match expected {
             None => Ok(value),
             Some(expected) if actual == expected => Ok(value),
+            // A variadic pack in a scalar context contributes its first value.
+            Some(expected)
+                if matches!(actual, Type::Variadic(_))
+                    && !matches!(expected, Type::Variadic(_)) =>
+            {
+                let Type::Variadic(element) = actual else {
+                    unreachable!()
+                };
+                let zero = self.emit_i32_const(0);
+                let first = self.emit(Instruction::ArrayGet {
+                    array: value,
+                    index: zero,
+                    element_ty: (*element).clone(),
+                });
+                self.coerce_value(first, *element, Some(expected))
+            }
             // Multi-value adjustment: take the first value.
             Some(expected)
                 if matches!(actual, Type::Multi(_)) && !matches!(expected, Type::Multi(_)) =>
@@ -6320,12 +6502,19 @@ impl Builder<'_> {
             }
         }
         let expected_element = expected.as_ref().and_then(Type::element_type);
-        // A trailing `...` splats the caller's varargs (unknown values) into
-        // the array, and an expected `{unknown}` boxes every element, so both
-        // force the element type to unknown.
-        if matches!(elements.last(), Some(Expr::Vararg(_)))
-            || expected_element == Some(Type::Unknown)
-        {
+        let trailing_pack = elements
+            .last()
+            .map(|element| self.infer_expr_type(element, types, None))
+            .transpose()?
+            .is_some_and(|ty| match ty {
+                Type::Variadic(_) => true,
+                Type::Multi(parts) => matches!(parts.last(), Some(Type::Variadic(_))),
+                _ => false,
+            });
+        // A trailing variadic expression splats unknown values into the array,
+        // and an expected `{unknown}` boxes every element, so both force the
+        // element type to unknown.
+        if trailing_pack || expected_element == Some(Type::Unknown) {
             return coerce_type(Type::Array(Box::new(Type::Unknown)), expected);
         }
         let mut iter = elements.iter();
@@ -7248,6 +7437,109 @@ impl Builder<'_> {
                 }
             }
         }
+        let trailing_pack_ty = args
+            .last()
+            .map(|arg| self.infer_expr_type(arg, types, None))
+            .transpose()?;
+        let has_trailing_pack = trailing_pack_ty.as_ref().is_some_and(|ty| match ty {
+            Type::Variadic(_) => true,
+            Type::Multi(parts) => matches!(parts.last(), Some(Type::Variadic(_))),
+            _ => false,
+        });
+        if has_trailing_pack {
+            let tail_expr = args.last().expect("pack requires a trailing expression");
+            let mut known = Vec::<(ValueId, Type)>::new();
+            for (index, arg) in args[..args.len() - 1].iter().enumerate() {
+                let target = param_types
+                    .get(index)
+                    .filter(|_| index < fixed_count)
+                    .cloned()
+                    .unwrap_or(Type::Unknown);
+                let value = self.lower_expr(arg, env, types, Some(target.clone()))?;
+                known.push((value, target));
+            }
+
+            let pack = match trailing_pack_ty.expect("checked above") {
+                Type::Variadic(element_ty) => self.lower_expr(
+                    tail_expr,
+                    env,
+                    types,
+                    Some(Type::Variadic(element_ty)),
+                )?,
+                Type::Multi(parts) => {
+                    let tuple = self.lower_expr(tail_expr, env, types, None)?;
+                    let last_index = parts.len() - 1;
+                    for (index, part) in parts[..last_index].iter().enumerate() {
+                        let value = self.emit(Instruction::MultiGet {
+                            value: tuple,
+                            index,
+                            ty: part.clone(),
+                        });
+                        known.push((value, part.clone()));
+                    }
+                    let Type::Variadic(element_ty) = &parts[last_index] else {
+                        unreachable!("checked trailing pack above")
+                    };
+                    self.emit(Instruction::MultiGet {
+                        value: tuple,
+                        index: last_index,
+                        ty: Type::Variadic(element_ty.clone()),
+                    })
+                }
+                _ => unreachable!("checked trailing pack above"),
+            };
+
+            let mut lowered = Vec::with_capacity(param_types.len());
+            for (index, (value, actual)) in known.iter().take(fixed_count).enumerate() {
+                lowered.push(self.coerce_value(
+                    *value,
+                    actual.clone(),
+                    Some(param_types[index].clone()),
+                )?);
+            }
+            if known.len() < fixed_count {
+                for (index, param_ty) in param_types
+                    .iter()
+                    .take(fixed_count)
+                    .enumerate()
+                    .skip(known.len())
+                {
+                    let offset = self.emit_i32_const((index - known.len()) as i32);
+                    let value = self.emit(Instruction::ArrayGet {
+                        array: pack,
+                        index: offset,
+                        element_ty: Type::Unknown,
+                    });
+                    lowered.push(self.coerce_value(
+                        value,
+                        Type::Unknown,
+                        Some(param_ty.clone()),
+                    )?);
+                }
+                let start = self.emit_i32_const((fixed_count - known.len()) as i32);
+                let tail = self.emit(Instruction::ArraySlice {
+                    array: pack,
+                    start,
+                    element_ty: Type::Unknown,
+                });
+                lowered.push(tail);
+            } else {
+                let extras = known
+                    .into_iter()
+                    .skip(fixed_count)
+                    .map(|(value, actual)| {
+                        self.coerce_value(value, actual, Some(Type::Unknown))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let tail = self.emit(Instruction::ArrayNew {
+                    element_ty: Type::Unknown,
+                    elements: extras,
+                });
+                self.emit_array_append_all(tail, pack);
+                lowered.push(tail);
+            }
+            return Ok(lowered);
+        }
         let trailing_vararg = matches!(args.last(), Some(Expr::Vararg(_)));
         let explicit = if trailing_vararg {
             &args[..args.len() - 1]
@@ -7565,6 +7857,8 @@ impl Builder<'_> {
         match name {
             TABLE_CONCAT => {}
             TABLE_PACK => return Some(self.lower_table_pack(args, env, types, expected)),
+            TABLE_CREATE => return Some(self.lower_table_create(args, env, types, expected)),
+            TABLE_UNPACK => return Some(self.lower_table_unpack(args, env, types, expected)),
             TABLE_GETN => return Some(self.lower_table_getn(args, env, types, expected)),
             TABLE_INSERT => return Some(self.lower_table_insert(args, env, types, expected)),
             TABLE_REMOVE => return Some(self.lower_table_remove(args, env, types, expected)),
@@ -7786,6 +8080,156 @@ impl Builder<'_> {
             dest
         };
         self.coerce_value(value, array_ty, expected)
+    }
+
+    /// `table.create(count, value)` builds a growable array of `count` copies
+    /// of `value` via an inline counted append loop. The one-argument form is
+    /// an empty array: the capacity hint has no effect on growable arrays.
+    fn lower_table_create(
+        &mut self,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(Diagnostic::new(format!(
+                "{TABLE_CREATE} expects 1 or 2 arguments, got {}",
+                args.len()
+            )));
+        }
+        let expected_element = match &expected {
+            Some(Type::Array(element)) => Some((**element).clone()),
+            _ => None,
+        };
+        let element_ty = match args.get(1) {
+            Some(value) => first_of_multi(self.infer_expr_type(value, types, expected_element)?),
+            None => expected_element.unwrap_or(Type::Unknown),
+        };
+        let count = self.lower_index_to_i32(&args[0], env, types)?;
+        let array = self.emit(Instruction::ArrayNew {
+            element_ty: element_ty.clone(),
+            elements: Vec::new(),
+        });
+        if let Some(value_expr) = args.get(1) {
+            let value = self.lower_expr(value_expr, env, types, Some(element_ty.clone()))?;
+            let i32_ty = Type::Numeric(NumericType::I32);
+            let zero = self.emit_i32_const(0);
+            let one = self.emit_i32_const(1);
+
+            let preheader = self.current_block;
+            let header = self.new_block();
+            let body = self.new_block();
+            let exit = self.new_block();
+            self.set_terminator(preheader, Terminator::Jump(header));
+
+            self.current_block = header;
+            let index_phi = self.emit(Instruction::Phi(vec![(preheader, zero)]));
+            // `count` is loop-invariant, but it must still be threaded through
+            // a phi (with a trivial `+ 0` self-edge) so the local allocator's
+            // liveness analysis treats it as live across the back edge —
+            // mirrors the table.concat loop above.
+            let count_phi = self.emit(Instruction::Phi(vec![(preheader, count)]));
+            let cond = self.emit(Instruction::Binary {
+                op: BinaryOp::Less,
+                left: index_phi,
+                right: count_phi,
+                operand_ty: i32_ty.clone(),
+                result_ty: Type::Bool,
+            });
+            self.set_terminator(
+                header,
+                Terminator::Branch {
+                    condition: cond,
+                    then_block: body,
+                    else_block: exit,
+                },
+            );
+
+            self.current_block = body;
+            // Write-at-length appends grow the array by one element.
+            let len = self.emit(Instruction::ArrayLen { array });
+            self.emit(Instruction::ArraySet {
+                array,
+                index: len,
+                value,
+                element_ty: element_ty.clone(),
+            });
+            let next_index = self.emit(Instruction::Binary {
+                op: BinaryOp::Add,
+                left: index_phi,
+                right: one,
+                operand_ty: i32_ty.clone(),
+                result_ty: i32_ty.clone(),
+            });
+            let next_count = self.emit(Instruction::Binary {
+                op: BinaryOp::Add,
+                left: count_phi,
+                right: zero,
+                operand_ty: i32_ty.clone(),
+                result_ty: i32_ty,
+            });
+            let body_exit = self.current_block;
+            self.set_terminator(body_exit, Terminator::Jump(header));
+            add_phi_incoming(
+                &mut self.function,
+                header,
+                index_phi,
+                (body_exit, next_index),
+            );
+            add_phi_incoming(
+                &mut self.function,
+                header,
+                count_phi,
+                (body_exit, next_count),
+            );
+            self.current_block = exit;
+        }
+        self.coerce_value(array, Type::Array(Box::new(element_ty)), expected)
+    }
+
+    /// `table.unpack(a [, first [, last]])` with statically-knowable bounds
+    /// lowers to a fixed tuple of element loads. The bounds are 0-based like
+    /// all Waluau array indexing and default to the whole array; the
+    /// runtime-variable arity case is not supported yet.
+    fn lower_table_unpack(
+        &mut self,
+        args: &[Expr],
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        if args.is_empty() || args.len() > 3 {
+            return Err(Diagnostic::new(format!(
+                "{TABLE_UNPACK} expects 1 to 3 arguments, got {}",
+                args.len()
+            )));
+        }
+        let element_ty = self.table_array_element_type(TABLE_UNPACK, args, types)?;
+        let indices = table_unpack_static_indices(args, expected.as_ref())?;
+        let array = self.lower_expr(
+            &args[0],
+            env,
+            types,
+            Some(Type::Array(Box::new(element_ty.clone()))),
+        )?;
+        // The bound arguments are compile-time literals (checked above), so
+        // they need no lowering of their own.
+        let mut values = Vec::with_capacity(indices.len());
+        for index in indices {
+            let index = self.emit_i32_const(index);
+            values.push(self.emit(Instruction::ArrayGet {
+                array,
+                index,
+                element_ty: element_ty.clone(),
+            }));
+        }
+        let result_types = vec![element_ty; values.len()];
+        let packed = self.emit(Instruction::PackMulti {
+            values,
+            types: result_types.clone(),
+        });
+        self.coerce_value(packed, Type::Multi(result_types), expected)
     }
 
     fn lower_table_insert(
@@ -8435,10 +8879,18 @@ impl Builder<'_> {
         name: &str,
         call: &Expr,
         types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
     ) -> Option<Result<Type, Diagnostic>> {
         if !matches!(
             name,
-            TABLE_CONCAT | TABLE_INSERT | TABLE_REMOVE | TABLE_SORT | TABLE_GETN | TABLE_PACK
+            TABLE_CONCAT
+                | TABLE_INSERT
+                | TABLE_REMOVE
+                | TABLE_SORT
+                | TABLE_GETN
+                | TABLE_PACK
+                | TABLE_CREATE
+                | TABLE_UNPACK
         ) {
             return None;
         }
@@ -8447,6 +8899,31 @@ impl Builder<'_> {
         };
         match name {
             TABLE_PACK => return Some(Ok(Type::Array(Box::new(Type::Unknown)))),
+            TABLE_CREATE => {
+                let expected_element = match &expected {
+                    Some(Type::Array(element)) => Some((**element).clone()),
+                    _ => None,
+                };
+                let element_ty = match args.get(1) {
+                    Some(value) => match self.infer_expr_type(value, types, expected_element) {
+                        Ok(ty) => first_of_multi(ty),
+                        Err(error) => return Some(Err(error)),
+                    },
+                    None => expected_element.unwrap_or(Type::Unknown),
+                };
+                return Some(Ok(Type::Array(Box::new(element_ty))));
+            }
+            TABLE_UNPACK => {
+                let element_ty = match self.table_array_element_type(TABLE_UNPACK, args, types) {
+                    Ok(ty) => ty,
+                    Err(error) => return Some(Err(error)),
+                };
+                let indices = match table_unpack_static_indices(args, expected.as_ref()) {
+                    Ok(indices) => indices,
+                    Err(error) => return Some(Err(error)),
+                };
+                return Some(Ok(Type::Multi(vec![element_ty; indices.len()])));
+            }
             TABLE_GETN => return Some(Ok(Type::Numeric(NumericType::I32))),
             TABLE_INSERT | TABLE_SORT => return Some(Ok(Type::Unit)),
             TABLE_REMOVE => {
@@ -8873,9 +9350,16 @@ impl Builder<'_> {
         let left_nullable = side_is_nullable(self, left);
         let right_nullable = side_is_nullable(self, right);
         if left_nullable && right_nullable {
-            return Err(Diagnostic::new(
-                "comparing two nullable numeric values is not supported yet",
-            ));
+            return self.lower_boxed_nullable_pair_equality(
+                op,
+                left,
+                right,
+                nullable_ty,
+                inner,
+                env,
+                types,
+                expected,
+            );
         }
         let left_expected = if left_nullable {
             nullable_ty.clone()
@@ -8935,6 +9419,135 @@ impl Builder<'_> {
 
         self.current_block = merge_block;
         let mut incoming = vec![(null_exit, null_result), (value_exit, value_result)];
+        incoming.sort_by_key(|(pred, _)| *pred);
+        let value = self.emit(Instruction::Phi(incoming));
+        self.coerce_value(value, Type::Bool, expected)
+    }
+
+    /// Equality between two boxed nullables of the same inner type (`i32? ==
+    /// i32?`). Lua semantics: `nil == nil` is true, `nil == value` is false,
+    /// and two present values compare by their unboxed contents. Lowered as
+    /// nested diamonds so the unboxing casts only run where both sides are
+    /// known to be non-nil.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_boxed_nullable_pair_equality(
+        &mut self,
+        op: BinaryOp,
+        left: &Expr,
+        right: &Expr,
+        nullable_ty: Type,
+        inner: Type,
+        env: &HashMap<SymbolId, ValueId>,
+        types: &HashMap<SymbolId, Type>,
+        expected: Option<Type>,
+    ) -> Result<ValueId, Diagnostic> {
+        // i64/u64/f32 have no `unknown` boxing yet (see waluau-agmp), so their
+        // nullables cannot be unboxed for the value-vs-value arm.
+        if !matches!(
+            inner,
+            Type::Bool | Type::Numeric(NumericType::I32 | NumericType::U32 | NumericType::F64)
+        ) {
+            return Err(Diagnostic::new(format!(
+                "comparing two nullable {inner} values is not supported yet",
+            )));
+        }
+        let is_eq = matches!(op, BinaryOp::Eq);
+
+        let left_value = self.lower_expr(left, env, types, Some(nullable_ty.clone()))?;
+        let right_value = self.lower_expr(right, env, types, Some(nullable_ty.clone()))?;
+        let left_is_null = self.emit(Instruction::IsNull {
+            value: left_value,
+            ty: inner.clone(),
+        });
+        let right_is_null = self.emit(Instruction::IsNull {
+            value: right_value,
+            ty: inner.clone(),
+        });
+
+        let left_null_block = self.new_block();
+        let left_value_block = self.new_block();
+        let merge_block = self.new_block();
+        self.set_terminator(
+            self.current_block,
+            Terminator::Branch {
+                condition: left_is_null,
+                then_block: left_null_block,
+                else_block: left_value_block,
+            },
+        );
+
+        // left is nil: equal exactly when right is nil too.
+        self.current_block = left_null_block;
+        let left_null_result = if is_eq {
+            right_is_null
+        } else {
+            let false_value = self.emit(Instruction::Bool(false));
+            self.emit(Instruction::Binary {
+                op: BinaryOp::Eq,
+                left: right_is_null,
+                right: false_value,
+                operand_ty: Type::Bool,
+                result_ty: Type::Bool,
+            })
+        };
+        let left_null_exit = self.current_block;
+        self.set_terminator(left_null_exit, Terminator::Jump(merge_block));
+
+        // left is present: nil on the right is never equal, otherwise unbox both.
+        self.current_block = left_value_block;
+        let right_null_block = self.new_block();
+        let both_present_block = self.new_block();
+        let inner_merge_block = self.new_block();
+        self.set_terminator(
+            self.current_block,
+            Terminator::Branch {
+                condition: right_is_null,
+                then_block: right_null_block,
+                else_block: both_present_block,
+            },
+        );
+
+        self.current_block = right_null_block;
+        let right_null_result = self.emit(Instruction::Bool(!is_eq));
+        let right_null_exit = self.current_block;
+        self.set_terminator(right_null_exit, Terminator::Jump(inner_merge_block));
+
+        self.current_block = both_present_block;
+        let left_unboxed = self.emit(Instruction::Cast {
+            value: left_value,
+            from: nullable_ty.clone(),
+            to: inner.clone(),
+        });
+        let right_unboxed = self.emit(Instruction::Cast {
+            value: right_value,
+            from: nullable_ty,
+            to: inner.clone(),
+        });
+        let both_present_result = self.emit(Instruction::Binary {
+            op,
+            left: left_unboxed,
+            right: right_unboxed,
+            operand_ty: inner,
+            result_ty: Type::Bool,
+        });
+        let both_present_exit = self.current_block;
+        self.set_terminator(both_present_exit, Terminator::Jump(inner_merge_block));
+
+        self.current_block = inner_merge_block;
+        let mut inner_incoming = vec![
+            (right_null_exit, right_null_result),
+            (both_present_exit, both_present_result),
+        ];
+        inner_incoming.sort_by_key(|(pred, _)| *pred);
+        let inner_result = self.emit(Instruction::Phi(inner_incoming));
+        let inner_merge_exit = self.current_block;
+        self.set_terminator(inner_merge_exit, Terminator::Jump(merge_block));
+
+        self.current_block = merge_block;
+        let mut incoming = vec![
+            (left_null_exit, left_null_result),
+            (inner_merge_exit, inner_result),
+        ];
         incoming.sort_by_key(|(pred, _)| *pred);
         let value = self.emit(Instruction::Phi(incoming));
         self.coerce_value(value, Type::Bool, expected)
@@ -9989,6 +10602,7 @@ fn lua_type_name(ty: &Type) -> &'static str {
         Type::Numeric(_) => "number",
         Type::String | Type::Bytes => "string",
         Type::Array(_)
+        | Type::Variadic(_)
         | Type::Record(_)
         | Type::TaggedVariant(_)
         | Type::TaggedUnion(_) => "table",
@@ -10126,7 +10740,7 @@ fn coerce_type(actual: Type, expected: Option<Type>) -> Result<Type, Diagnostic>
             Type::Opaque { name, .. } => Err(Diagnostic::new(format!(
                 "cannot implicitly convert {name} to {expected_numeric}",
             ))),
-            Type::Array(_) => Err(Diagnostic::new(format!(
+            Type::Array(_) | Type::Variadic(_) => Err(Diagnostic::new(format!(
                 "cannot implicitly convert array to {expected_numeric}",
             ))),
             Type::TypedArray(kind) => Err(Diagnostic::new(format!(
