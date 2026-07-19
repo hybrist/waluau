@@ -1,10 +1,10 @@
-// Meta-tests for the walu-test vitest bridge (tools/walu-test/host.js).
+// Meta-tests for the Waluau vitest bridge (@waluau/vite-plugin/testing).
 // A recording fake stands in for vitest's registration API so we can verify
 // suite structure, hook wiring, matcher behavior, and failure propagation —
 // including paths that must fail, which the demo *.test.walu suites cannot
 // express. Matchers still run through the real vitest `expect`.
 import { describe, it, expect } from 'vitest';
-import { registerWaluTests } from '../../../tools/walu-test/host.js';
+import { registerWaluTests } from '@waluau/vite-plugin/testing';
 
 async function loadCompiler() {
   const module = await import('./../src/waluau-wasm/waluau_wasm.js');
@@ -67,6 +67,8 @@ describe('walu-test host bridge', () => {
     const recorder = createRecordingApi();
     await register(
       `
+require("waluau:vitest")
+
 describe("outer", function(): unit
     before_each(function(): unit
     end)
@@ -111,6 +113,8 @@ end)
     const recorder = createRecordingApi();
     await register(
       `
+require("waluau:vitest")
+
 describe("state", function(): unit
     local counter: i32 = 0
     before_each(function(): unit
@@ -137,6 +141,8 @@ end)
     const recorder = createRecordingApi();
     await register(
       `
+require("waluau:vitest")
+
 it("matchers", function(): unit
     expect(4):toBe(4)
     expect(4):notToBe(5)
@@ -167,6 +173,8 @@ end)
     const recorder = createRecordingApi();
     await register(
       `
+require("waluau:vitest")
+
 it("fails", function(): unit
     expect(1):toBe(2)
 end)
@@ -187,6 +195,8 @@ end)
     const recorder = createRecordingApi();
     await register(
       `
+require("waluau:vitest")
+
 it("lua assert", function(): unit
     assert(1 == 2, "one is not two")
 end)
@@ -202,6 +212,8 @@ end)
     await expect(
       register(
         `
+require("waluau:vitest")
+
 it("broken", function(): unit
     expect(1):toBe("not a number")
 end)

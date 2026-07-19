@@ -1,7 +1,9 @@
--- Waluau test API bridged onto vitest (tools/walu-test/host.js).
+-- Waluau test API bridged onto vitest (@waluau/vite-plugin/testing).
 --
--- Test files (*.test.walu) get these declarations appended automatically by
--- the walu-test vite plugin, so suites read like busted specs:
+-- Test files (*.test.walu) pull these declarations in with
+-- require("waluau:vitest"); after that, suites read like busted specs:
+--
+--     require("waluau:vitest")
 --
 --     describe("scoring", function(): unit
 --         it("ranks a pair above high card", function(): unit

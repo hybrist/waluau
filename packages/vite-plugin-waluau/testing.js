@@ -1,21 +1,19 @@
-// JS half of the walu-test bridge: maps the host imports declared in
-// externs/vitest.walu onto a vitest-style API. Suite/test/hook bodies arrive
-// as opaque Waluau closure values and are invoked through the module's
-// exported __waluau_call_callback_unit trampoline; `expect` values arrive as
-// raw wasm boundary values (numbers, JS strings, 0/1 booleans, extern refs)
-// and each matcher import knows how to map its receiver back to a JS value.
+// JS half of the Waluau test bridge: maps the host imports declared in
+// externs/vitest.walu (available to test files via require("waluau:vitest"))
+// onto a vitest-style API. Suite/test/hook bodies arrive as opaque Waluau
+// closure values and are invoked through the module's exported
+// __waluau_call_callback_unit trampoline; `expect` values arrive as raw wasm
+// boundary values (numbers, JS strings, 0/1 booleans, extern refs) and each
+// matcher import knows how to map its receiver back to a JS value.
 import * as vitest from 'vitest';
 import {
   WALUAU_STRING_CONSTANTS_MODULE,
   WALUAU_MAIN_EXPORT,
   buildWaluauImports,
-} from '../../apps/playground/src/utils/wasm.js';
-import preludeSource from '../../externs/vitest.walu?raw';
+} from './runtime.js';
 
 const CALLBACK_UNIT_TRAMPOLINE_EXPORT = '__waluau_call_callback_unit';
 const LUA_ERROR_TAG_EXPORT = '__waluau_error_tag';
-
-export { preludeSource };
 
 // Rethrows Waluau `error`/`assert` exceptions as plain JS errors carrying the
 // Lua error message, so vitest failure output stays readable. Other values
@@ -39,11 +37,11 @@ function normalizeWaluError(error, getWasmExports) {
 // beforeAll/afterAll, and expect — the real vitest module satisfies it, and
 // meta-tests can pass a recording fake.
 export function createWaluTestHost(api = vitest) {
-  let wasmExports = null;
-  const getWasmExports = () => wasmExports;
+  let exportsProvider = () => null;
+  const getWasmExports = () => exportsProvider();
 
   const invokeBody = (callback) => {
-    const trampoline = wasmExports?.[CALLBACK_UNIT_TRAMPOLINE_EXPORT];
+    const trampoline = getWasmExports()?.[CALLBACK_UNIT_TRAMPOLINE_EXPORT];
     if (typeof trampoline !== 'function') {
       throw new Error(
         `Missing ${CALLBACK_UNIT_TRAMPOLINE_EXPORT} export for walu-test body callback`,
@@ -108,24 +106,50 @@ export function createWaluTestHost(api = vitest) {
   return {
     hostImports,
     setWasmExports: (exports) => {
-      wasmExports = exports;
+      exportsProvider = () => exports;
+    },
+    // The glue-module path resolves exports lazily: suite bodies already run
+    // while the glue's run() is still executing (before the caller ever sees
+    // the instantiated exports), so the provider must come from the
+    // createImports context.
+    setWasmExportsProvider: (provider) => {
+      exportsProvider = provider;
     },
     getWasmExports,
   };
 }
 
-// Compiles a *.test.walu source (with the vitest.walu declarations appended),
+// Registers a test module compiled ahead of time by the waluau CLI, using the
+// generated glue module's `run` entry point. Called from the module the
+// waluau() vite plugin generates for each *.test.walu file.
+export async function registerWaluGlueTests({ run, api }) {
+  const host = createWaluTestHost(api);
+  try {
+    const loaded = await run({
+      createImports: (context) => {
+        host.setWasmExportsProvider(context.getWasmExports);
+        return buildWaluauImports(null, undefined, {
+          requiredImports: context.requiredImports,
+          bytesConstants: context.bytesConstants,
+          hostImports: host.hostImports,
+          getWasmExports: context.getWasmExports,
+        });
+      },
+    });
+    return { exports: loaded.exports, host };
+  } catch (error) {
+    throw normalizeWaluError(error, host.getWasmExports);
+  }
+}
+
+// Compiles a *.test.walu source in the browser with the waluau-wasm compiler,
 // instantiates it, and runs its top level so the describe/it host imports
-// register the suite with vitest. Called from the module the walu-test vite
-// plugin generates for each test file.
+// register the suite with vitest. Used by apps that ship the in-browser
+// compiler (e.g. the conformance runner).
 export async function registerWaluTests({ source, path, init, compile_multi, api }) {
   await init();
   const entryPath = path.startsWith('/') ? path : `/${path}`;
-  // The prelude is appended (not prepended) so line numbers in the test
-  // file's own error messages stay accurate; declarations are hoisted, so
-  // order does not matter to the compiler.
-  const files = { [entryPath]: `${source}\n${preludeSource}` };
-  const output = compile_multi(files, entryPath);
+  const output = compile_multi({ [entryPath]: source }, entryPath);
   const wasmBuffer = new Uint8Array(output.wasm);
   const wasmModule = await WebAssembly.compile(wasmBuffer, {
     builtins: ['js-string'],

@@ -1,2 +1,4 @@
 dist
 .waluau
+.vitest-attachments
+src/__screenshots__

@@ -1,18 +1,17 @@
-// Vite plugin that turns *.test.walu files into runnable vitest modules.
+// Vite plugin that turns *.test.walu files into runnable vitest modules by
+// compiling them in the browser with the app's built waluau-wasm compiler.
 //
-// Each matched file becomes a JS module that compiles the Waluau source in
-// the browser (via the app's built waluau-wasm compiler), instantiates it
-// with the walu-test host bridge, and runs its top level — which registers
-// the file's describe/it suites with vitest during collection.
+// Most apps should use the waluau() plugin from @waluau/vite-plugin instead,
+// which compiles test files ahead of time with the native CLI. This variant
+// exists for apps that ship the wasm compiler (e.g. the conformance runner)
+// and want test compilation to exercise that in-browser pipeline.
 import { readFile } from 'node:fs/promises'
 import { dirname, relative, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-const HOST_MODULE_PATH = fileURLToPath(new URL('./host.js', import.meta.url))
 
 // Imports in the generated module are emitted relative to the test file so
-// Vite resolves them like hand-written relative imports (the monorepo's
-// workspace root keeps them inside the allowed fs scope).
+// Vite resolves them like hand-written relative imports; the bare
+// '@waluau/vite-plugin/testing' specifier resolves through the consuming
+// app's node_modules.
 function importSpecifier(fromFile, target) {
   const specifier = relative(dirname(fromFile), target).split('\\').join('/')
   return specifier.startsWith('.') ? specifier : `./${specifier}`
@@ -36,12 +35,11 @@ export function waluTestPlugin(options = {}) {
         return null
       }
       const source = await readFile(filePath, 'utf8')
-      const hostSpecifier = importSpecifier(filePath, HOST_MODULE_PATH)
       const wasmSpecifier = importSpecifier(filePath, resolvedWasmPath)
       const entryName = filePath.split('/').pop()
       return [
         `import init, { compile_multi } from ${JSON.stringify(wasmSpecifier)};`,
-        `import { registerWaluTests } from ${JSON.stringify(hostSpecifier)};`,
+        `import { registerWaluTests } from '@waluau/vite-plugin/testing';`,
         `const source = ${JSON.stringify(source)};`,
         `await registerWaluTests({ source, path: ${JSON.stringify(`/${entryName}`)}, init, compile_multi });`,
         '',

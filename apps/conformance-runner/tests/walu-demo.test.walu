@@ -1,7 +1,9 @@
--- Demo suite for the walu-test bridge: busted-style structure with
+-- Demo suite for the Waluau vitest bridge: busted-style structure with
 -- vitest-style matchers, compiled and run in the browser by vitest itself.
--- The describe/it/expect declarations come from externs/vitest.walu, which
--- the walu-test vite plugin appends to every *.test.walu file.
+-- The describe/it/expect declarations come from the waluau:vitest virtual
+-- module (externs/vitest.walu).
+
+require("waluau:vitest")
 
 function add(a: i32, b: i32): i32
     return a + b

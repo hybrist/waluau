@@ -70,6 +70,15 @@ export default game;
 `;
 }
 
+function testModuleSource(generatedModule) {
+  return `
+import { run } from ${JSON.stringify(generatedModule)};
+import { registerWaluGlueTests } from '@waluau/vite-plugin/testing';
+
+await registerWaluGlueTests({ run });
+`;
+}
+
 function fullScreenStyle() {
   return `
 html, body {
@@ -221,8 +230,10 @@ export function waluau(options = {}) {
 
       this.addWatchFile(file);
       const artifacts = await compileEntry(file);
+      // *.test.walu files register with vitest instead of booting a game.
+      const isTestModule = file.endsWith('.test.walu');
       return {
-        code: runtimeSource(artifacts.module),
+        code: isTestModule ? testModuleSource(artifacts.module) : runtimeSource(artifacts.module),
         map: null,
       };
     },
