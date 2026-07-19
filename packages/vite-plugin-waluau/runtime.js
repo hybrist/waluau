@@ -70,9 +70,43 @@ function luauToNumber(value, base = 0) {
 }
 
 function luaQuoteString(value) {
-  return JSON.stringify(String(value))
-    .replace(/\u2028/g, '\\u2028')
-    .replace(/\u2029/g, '\\u2029');
+  let quoted = '"';
+  const namedControlEscapes = new Map([
+    ['\x07', '\\a'],
+    ['\b', '\\b'],
+    ['\f', '\\f'],
+    ['\r', '\\r'],
+    ['\t', '\\t'],
+    ['\v', '\\v'],
+  ]);
+  for (const char of String(value)) {
+    const codePoint = char.codePointAt(0);
+    if (char === '"' || char === '\\') {
+      quoted += `\\${char}`;
+    } else if (char === '\n') {
+      // Lua quotes a newline as a backslash followed by the literal newline.
+      quoted += '\\\n';
+    } else if (namedControlEscapes.has(char)) {
+      quoted += namedControlEscapes.get(char);
+    } else if (codePoint < 0x20 || codePoint === 0x7f) {
+      quoted += `\\${String(codePoint).padStart(3, '0')}`;
+    } else {
+      quoted += char;
+    }
+  }
+  return `${quoted}"`;
+}
+
+function formatExponent(value, specifier, precision) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    const formatted = luauToString(number);
+    return specifier === 'E' ? formatted.toUpperCase() : formatted;
+  }
+  const [mantissa, exponent] = number.toExponential(precision ?? 6).split('e');
+  const sign = exponent.startsWith('-') ? '-' : '+';
+  const digits = exponent.replace(/^[+-]/, '').padStart(2, '0');
+  return `${mantissa}${specifier}${sign}${digits}`;
 }
 
 function formatNumber(value, specifier, precision) {
@@ -91,6 +125,9 @@ function formatNumber(value, specifier, precision) {
       return BigInt.asUintN(64, BigInt(Math.trunc(number))).toString(16).toUpperCase();
     case 'f':
       return number.toFixed(precision ?? 6);
+    case 'e':
+    case 'E':
+      return formatExponent(number, specifier, precision);
     case 'g':
     case 'G':
       return precision == null ? luauToString(number) : String(Number(number.toPrecision(precision)));
@@ -149,7 +186,7 @@ function stringFormat(format, ...args) {
       out += String(args[argIndex++]);
       continue;
     }
-    if (!'diuofegGxXqsc'.includes(specifier)) {
+    if (!'diuofeEgGxXqsc'.includes(specifier)) {
       throw new Error(`unsupported string.format specifier %${specifier}`);
     }
     if (argIndex >= args.length) {
