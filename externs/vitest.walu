@@ -1,0 +1,69 @@
+-- Waluau test API bridged onto vitest (@waluau/vite-plugin/testing).
+--
+-- Test files (*.test.walu) pull these declarations in with
+-- require("waluau:vitest"); after that, suites read like busted specs:
+--
+--     require("waluau:vitest")
+--
+--     describe("scoring", function(): unit
+--         it("ranks a pair above high card", function(): unit
+--             expect(compare_hands(pair, high_card)):toBe(1)
+--         end)
+--     end)
+--
+-- Suite/test/hook bodies are () -> unit callbacks that the host invokes
+-- through the exported __waluau_call_callback_unit trampoline. `expect`
+-- returns a per-value-type expectation extern so the host bridge knows how
+-- each raw wasm value (numbers, strings, 0/1 booleans, extern refs) maps
+-- back onto a JS value before handing it to vitest's expect().
+
+type NumberExpectation = extern
+type StringExpectation = extern
+type BoolExpectation = extern
+type ExternExpectation = extern
+
+-- Suite structure. `test` is an alias for `it`; `xdescribe`/`xit` register
+-- skipped suites/tests (vitest describe.skip / it.skip); `todo` registers a
+-- placeholder test (vitest it.todo).
+declare function describe(name: string, body: () -> unit): unit
+declare function it(name: string, body: () -> unit): unit
+declare function test(name: string, body: () -> unit): unit
+declare function xdescribe(name: string, body: () -> unit): unit
+declare function xit(name: string, body: () -> unit): unit
+declare function todo(name: string): unit
+
+-- Lifecycle hooks, scoped to the enclosing describe (busted naming).
+declare function before_each(body: () -> unit): unit
+declare function after_each(body: () -> unit): unit
+declare function before_all(body: () -> unit): unit
+declare function after_all(body: () -> unit): unit
+
+-- Expectations. Overload selection picks the variant matching the actual
+-- value's type; integer widths coerce to the f64 variant.
+declare function expect(value: f64): NumberExpectation
+declare function expect(value: string): StringExpectation
+declare function expect(value: bool): BoolExpectation
+declare function expect(value: extern): ExternExpectation
+
+declare function NumberExpectation:toBe(expected: f64): unit
+declare function NumberExpectation:notToBe(expected: f64): unit
+declare function NumberExpectation:toBeCloseTo(expected: f64): unit
+declare function NumberExpectation:toBeCloseTo(expected: f64, digits: i32): unit
+declare function NumberExpectation:toBeGreaterThan(expected: f64): unit
+declare function NumberExpectation:toBeGreaterThanOrEqual(expected: f64): unit
+declare function NumberExpectation:toBeLessThan(expected: f64): unit
+declare function NumberExpectation:toBeLessThanOrEqual(expected: f64): unit
+
+declare function StringExpectation:toBe(expected: string): unit
+declare function StringExpectation:notToBe(expected: string): unit
+declare function StringExpectation:toContain(expected: string): unit
+declare function StringExpectation:notToContain(expected: string): unit
+declare function StringExpectation:toHaveLength(expected: i32): unit
+
+declare function BoolExpectation:toBe(expected: bool): unit
+declare function BoolExpectation:toBeTruthy(): unit
+declare function BoolExpectation:toBeFalsy(): unit
+
+-- Extern expectations compare by JS identity (vitest toBe).
+declare function ExternExpectation:toBe(expected: extern): unit
+declare function ExternExpectation:notToBe(expected: extern): unit

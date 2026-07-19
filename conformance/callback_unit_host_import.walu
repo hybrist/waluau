@@ -1,0 +1,15 @@
+-- Host imports can accept Waluau () -> unit callback values for
+-- test-runner-style APIs such as vitest's describe/it bodies. The browser
+-- conformance runner invokes the stored callback through
+-- __waluau_call_callback_unit and verifies captured state mutation.
+
+declare function register_body_callback(body: () -> unit): unit
+declare function report_run_count(value: i32): unit
+
+function register_runner(seed: i32): unit
+    local count: i32 = seed
+    register_body_callback(function(): unit
+        count = count + 1
+        report_run_count(count)
+    end)
+end

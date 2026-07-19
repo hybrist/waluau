@@ -31,6 +31,7 @@ const DOM_WINDOW_FUNCTION: &str = "dom_window";
 const DOM_WINDOW_TYPE: &str = "Window";
 const TFJS_REQUIRE: &str = "tfjs";
 const ENGINE_REQUIRE: &str = "waluau:engine";
+const VITEST_REQUIRE: &str = "waluau:vitest";
 
 /// Resolve the module graph rooted at `entry` and merge it into one program.
 pub fn link_program(entry: &Path) -> Result<Program, Diagnostic> {
@@ -56,6 +57,11 @@ pub fn link_program(entry: &Path) -> Result<Program, Diagnostic> {
     } else {
         None
     };
+    let vitest_externs = if loader.requires_vitest_externs {
+        Some(loader.load_vitest_externs()?)
+    } else {
+        None
+    };
     merge_with_builtins(
         &loader.modules,
         entry_id,
@@ -63,6 +69,7 @@ pub fn link_program(entry: &Path) -> Result<Program, Diagnostic> {
         builtin_constants,
         dom_externs,
         tfjs_externs,
+        vitest_externs,
     )
 }
 
@@ -81,6 +88,7 @@ struct Loader {
     stack: Vec<PathBuf>,
     requires_dom_externs: bool,
     requires_tfjs_externs: bool,
+    requires_vitest_externs: bool,
 }
 
 impl Loader {
@@ -127,6 +135,11 @@ impl Loader {
             }
             if raw == TFJS_REQUIRE {
                 self.requires_tfjs_externs = true;
+                virtual_requires.insert(raw);
+                continue;
+            }
+            if raw == VITEST_REQUIRE {
+                self.requires_vitest_externs = true;
                 virtual_requires.insert(raw);
                 continue;
             }
@@ -262,6 +275,13 @@ impl Loader {
             "externs/tfjs.walu",
         )
     }
+
+    fn load_vitest_externs(&mut self) -> Result<Program, Diagnostic> {
+        waluau_parser::parse_with_path(
+            include_str!("../../../externs/vitest.walu"),
+            "externs/vitest.walu",
+        )
+    }
 }
 
 fn unsupported_dom_require(raw: &str) -> Diagnostic {
@@ -276,7 +296,7 @@ fn is_unsupported_virtual_require(raw: &str) -> bool {
 
 fn unsupported_virtual_require(raw: &str) -> Diagnostic {
     Diagnostic::new(format!(
-        "unsupported virtual module \"{raw}\"; supported specifiers: \"{DOM_WINDOW_REQUIRE}\", \"{TFJS_REQUIRE}\", \"{ENGINE_REQUIRE}\""
+        "unsupported virtual module \"{raw}\"; supported specifiers: \"{DOM_WINDOW_REQUIRE}\", \"{TFJS_REQUIRE}\", \"{ENGINE_REQUIRE}\", \"{VITEST_REQUIRE}\""
     ))
 }
 
@@ -354,6 +374,7 @@ fn merge_with_builtins(
     builtin_constants: Vec<DeclaredConstant>,
     dom_externs: Option<Program>,
     tfjs_externs: Option<Program>,
+    vitest_externs: Option<Program>,
 ) -> Result<Program, Diagnostic> {
     let mut functions = Vec::new();
     let mut declared_imports = builtin_imports;
@@ -369,6 +390,11 @@ fn merge_with_builtins(
         declared_imports.extend(tfjs_program.declared_imports);
         extend_unique_type_declarations(&mut type_declarations, tfjs_program.type_declarations)?;
         extern_sources.extend(tfjs_program.sources);
+    }
+    if let Some(vitest_program) = vitest_externs {
+        declared_imports.extend(vitest_program.declared_imports);
+        extend_unique_type_declarations(&mut type_declarations, vitest_program.type_declarations)?;
+        extern_sources.extend(vitest_program.sources);
     }
     let mut top_level = Vec::new();
     let mut export_cache = HashMap::new();
@@ -558,8 +584,34 @@ fn resolve_virtual_import(raw: &str) -> Result<ResolvedImport, Diagnostic> {
         TFJS_REQUIRE => Ok(ResolvedImport::Namespace(ModuleNamespace::from_functions(
             tfjs_namespace(),
         ))),
+        VITEST_REQUIRE => Ok(ResolvedImport::Namespace(ModuleNamespace::from_functions(
+            vitest_namespace(),
+        ))),
         _ => Err(unsupported_virtual_require(raw)),
     }
+}
+
+// The vitest test API (externs/vitest.walu) is usable both through this
+// namespace (`local t = require("waluau:vitest")` then `t.describe(...)`)
+// and as busted-style bare globals, since the module's declared imports
+// merge program-wide once any file requires it.
+fn vitest_namespace() -> BTreeMap<String, String> {
+    [
+        "describe",
+        "it",
+        "test",
+        "xdescribe",
+        "xit",
+        "todo",
+        "before_each",
+        "after_each",
+        "before_all",
+        "after_all",
+        "expect",
+    ]
+    .into_iter()
+    .map(|name| (name.to_string(), name.to_string()))
+    .collect()
 }
 
 fn dom_window_expr(span: Option<waluau_ast::Span>) -> Expr {
@@ -1322,17 +1374,19 @@ impl Rewriter<'_> {
     fn rewrite_block(&mut self, stmts: &mut Vec<Stmt>, bound: &mut HashSet<String>) {
         let mut index = 0;
         while index < stmts.len() {
-            // A bare require of the DOM virtual module is an extern-only
-            // dependency declaration. Loading the module above already made
-            // its ambient types and host declarations available, so do not
-            // synthesize the value-returning `dom_window()` call unless the
-            // require expression is actually used as a value.
-            let is_bare_dom_dependency = matches!(
+            // A bare require of an extern-only virtual module (dom:window,
+            // tfjs, waluau:vitest) is a dependency declaration. Loading the
+            // module above already made its ambient types and host
+            // declarations available, so do not synthesize a value unless the
+            // require expression is actually used as one.
+            let is_bare_extern_dependency = matches!(
                 &stmts[index],
                 Stmt::Expr(Expr::Require(path, _))
                     if matches!(self.imports.get(path), Some(ResolvedImport::DomWindow))
+                        || path == TFJS_REQUIRE
+                        || path == VITEST_REQUIRE
             );
-            if is_bare_dom_dependency {
+            if is_bare_extern_dependency {
                 stmts.remove(index);
                 continue;
             }
