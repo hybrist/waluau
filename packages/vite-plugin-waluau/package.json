@@ -1,0 +1,12 @@
+{
+  "name": "@waluau/vite-plugin",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./runtime": "./runtime.js"
+  },
+  "peerDependencies": {
+    "vite": "^8.0.0"
+  }
+}

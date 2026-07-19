@@ -1,0 +1,76 @@
+local engine = require("waluau:engine")
+local graphics_module = require("waluau:engine/graphics")
+
+local VERTEX_SHADER <const>: string = [[
+attribute vec2 a_position;
+attribute vec4 a_color;
+attribute vec2 a_uv;
+varying vec2 v_uv;
+
+void main() {
+    gl_Position = vec4(a_position, 0.0, 1.0);
+    v_uv = a_uv;
+}
+]]
+
+local PIXEL_SHADER <const>: string = [[
+precision mediump float;
+varying vec2 v_uv;
+uniform float u_time;
+
+void main() {
+    vec3 violet = vec3(0.18, 0.05, 0.42);
+    vec3 coral = vec3(1.00, 0.28, 0.36);
+    vec3 cyan = vec3(0.12, 0.78, 0.92);
+    float wave = 0.5 + 0.5 * sin(u_time * 0.35 + v_uv.x * 3.2);
+    vec3 color = mix(violet, coral, smoothstep(0.0, 1.0, v_uv.x));
+    color = mix(color, cyan, v_uv.y * (0.22 + wave * 0.12));
+    gl_FragColor = vec4(color, 1.0);
+}
+]]
+
+type State = { gradient: graphics_module.Shader? }
+local state: State = { gradient = nil }
+
+local function load(): unit
+end
+
+local function update(dt: f64, input: engine.Input): unit
+end
+
+local function draw(graphics: engine.Graphics, alpha: f64): unit
+    graphics:clear("#180d32")
+
+    if state.gradient == nil then
+        local created: graphics_module.ShaderResult = graphics:create_shader(VERTEX_SHADER, PIXEL_SHADER)
+        if not created.ok then
+            error("gradient shader failed (" .. created.error.code .. "): " .. created.error.message)
+        end
+        state.gradient = created.shader
+    end
+
+    local maybe_shader: graphics_module.Shader? = state.gradient
+    if maybe_shader == nil then return end
+    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
+    graphics:use_shader(shader)
+    graphics:set_color("#ffffff")
+    graphics:fill_rectangle(0.0, 0.0, 100.0, 100.0)
+end
+
+local function keypressed(key: string): unit
+end
+
+engine.start({
+    title = "Ante",
+    width = 100,
+    height = 100,
+    update_hz = 60.0,
+    max_frame_seconds = 0.25,
+    background = "#180d32",
+}, {
+    load = load,
+    update = update,
+    draw = draw,
+    keypressed = keypressed,
+    keyreleased = nil,
+})

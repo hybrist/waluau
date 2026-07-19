@@ -15,6 +15,16 @@ importers:
         specifier: ^24.5.0
         version: 24.5.0
 
+  apps/ante:
+    dependencies:
+      '@waluau/vite-plugin':
+        specifier: workspace:*
+        version: link:../../packages/vite-plugin-waluau
+    devDependencies:
+      vite:
+        specifier: ^8.0.14
+        version: 8.0.14(@types/node@25.9.3)
+
   apps/conformance-runner:
     dependencies:
       '@tensorflow/tfjs':
@@ -81,6 +91,12 @@ importers:
         version: 17.6.0
       vite:
         specifier: ^8.0.14
+        version: 8.0.14(@types/node@25.9.3)
+
+  packages/vite-plugin-waluau:
+    dependencies:
+      vite:
+        specifier: ^8.0.0
         version: 8.0.14(@types/node@25.9.3)
 
 packages:
