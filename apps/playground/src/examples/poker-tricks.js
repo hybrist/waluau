@@ -2,9 +2,9 @@
 // standalone /output/poker-tricks page can render it without pulling in the
 // editor, the preset list, or the rest of the fixtures.
 
-import cardBackUrl from '../../../../fixtures/poker-tricks/assets/card-back.svg?url';
-import vaultFontUrl from '../../../../fixtures/poker-tricks/assets/Cinzel-Bold.ttf?url';
-import cardFlipUrl from '../../../../fixtures/poker-tricks/assets/card-flip.wav?url';
+import cardBackUrl from '../../../ante/assets/card-back.svg?url';
+import vaultFontUrl from '../../../ante/assets/Cinzel-Bold.ttf?url';
+import cardFlipUrl from '../../../ante/assets/card-flip.wav?url';
 
 const engineModules = import.meta.glob('../../../../engine/*.walu', {
   eager: true,
@@ -12,7 +12,10 @@ const engineModules = import.meta.glob('../../../../engine/*.walu', {
   import: 'default'
 });
 
-const pokerTricksModules = import.meta.glob('../../../../fixtures/poker-tricks/*.walu', {
+const pokerTricksModules = import.meta.glob([
+  '../../../ante/src/*.walu',
+  '!../../../ante/src/*.test.walu',
+], {
   eager: true,
   query: '?raw',
   import: 'default'
