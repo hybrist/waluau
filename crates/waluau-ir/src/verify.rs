@@ -1005,10 +1005,19 @@ fn verify_function(
                     if !(from.is_numeric()
                         || *from == Type::Bool
                         || *from == Type::String
-                        || *from == Type::Unknown)
+                        || *from == Type::Unknown
+                        || matches!(
+                            from,
+                            Type::Function { .. }
+                                | Type::Array(_)
+                                | Type::Record(_)
+                                | Type::TaggedVariant(_)
+                                | Type::TaggedUnion(_)
+                                | Type::Thread
+                        ))
                     {
                         return Err(Diagnostic::new(format!(
-                            "tostring requires primitive source type, got {}",
+                            "tostring requires a primitive or reference source type, got {}",
                             from
                         )));
                     }
@@ -1279,7 +1288,14 @@ fn infer_instruction_type(
         Instruction::BitwiseIntrinsic { result_ty, .. } => Ok(result_ty.clone()),
         Instruction::ToString { .. } => Ok(Type::String),
         Instruction::TypeName { .. } => Ok(Type::String),
-        Instruction::ToNumber { .. } => Ok(Type::Numeric(NumericType::F64)),
+        Instruction::ToNumber { from, .. } => {
+            if from.is_numeric() {
+                Ok(Type::Numeric(NumericType::F64))
+            } else {
+                // Runtime string/unknown parses yield `f64?`: nil on failure.
+                Ok(Type::Nullable(Box::new(Type::Numeric(NumericType::F64))))
+            }
+        }
         Instruction::IsNull { .. } => Ok(Type::Bool),
         Instruction::ExternCastTest { .. } => Ok(Type::Bool),
         Instruction::Print { .. } => Ok(Type::Unit),

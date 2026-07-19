@@ -217,7 +217,14 @@ fn needs_closure_gc_types(module: &Module, declared_imports: &[&DeclaredImport])
                     IrInstruction::DynIndex { .. } => {
                         return true;
                     }
-                    // Casting to/from `unknown` with f64/bool uses dedicated boxes.
+                    // The nullable f64 result of a runtime `tonumber` is
+                    // boxed into anyref via `$boxed_f64`.
+                    IrInstruction::ToNumber { .. } => {
+                        return true;
+                    }
+                    // Casting to/from `unknown` (or a boxed nullable, which
+                    // shares the anyref representation) with f64/bool uses
+                    // dedicated boxes.
                     IrInstruction::Cast { from, to, .. } => {
                         if matches!(
                             (from, to),
@@ -226,6 +233,18 @@ fn needs_closure_gc_types(module: &Module, declared_imports: &[&DeclaredImport])
                                 | (Type::Bool, Type::Unknown)
                                 | (Type::Unknown, Type::Bool)
                         ) {
+                            return true;
+                        }
+                        let boxed_f64_or_bool_nullable = |ty: &Type| {
+                            matches!(
+                                ty,
+                                Type::Nullable(inner) if matches!(
+                                    **inner,
+                                    Type::Numeric(waluau_ast::NumericType::F64) | Type::Bool
+                                )
+                            )
+                        };
+                        if boxed_f64_or_bool_nullable(from) || boxed_f64_or_bool_nullable(to) {
                             return true;
                         }
                     }
@@ -362,6 +381,7 @@ fn collect_required_imports(
         (used.attach_promise, host::IMPORT_ATTACH_PROMISE),
         (used.math_pow, host::IMPORT_MATH_POW),
         (used.js_eq_unknown, host::IMPORT_JS_EQ_UNKNOWN),
+        (used.js_tostring_named, host::IMPORT_JS_TOSTRING_NAMED),
     ] {
         push_required_function_import(&mut imports, needed, host::IMPORT_MODULE, name);
     }
@@ -722,8 +742,18 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         (&[externref_val_type()], &[ValType::I32]),
         (&[anyref_val_type()], &[externref_val_type()]),
         (&[ValType::F64, ValType::F64], &[ValType::F64]),
-        (&[externref_val_type(), ValType::I32], &[ValType::F64]),
-        (&[anyref_val_type(), ValType::I32], &[ValType::F64]),
+        (
+            &[externref_val_type(), ValType::I32],
+            &[ValType::I32, ValType::F64],
+        ),
+        (
+            &[anyref_val_type(), ValType::I32],
+            &[ValType::I32, ValType::F64],
+        ),
+        (
+            &[anyref_val_type(), externref_val_type()],
+            &[externref_val_type()],
+        ),
     ];
     for (slot, (params, results)) in host_type_specs.iter().enumerate() {
         if needed_host_slots[slot] {
@@ -1221,6 +1251,13 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
             host::IMPORT_MODULE,
             host::IMPORT_JS_EQ_UNKNOWN,
             EntityType::Function(host_slot_type_index[0].unwrap()),
+        );
+    }
+    if used_imports.js_tostring_named {
+        imports.import(
+            host::IMPORT_MODULE,
+            host::IMPORT_JS_TOSTRING_NAMED,
+            EntityType::Function(host_slot_type_index[13].unwrap()),
         );
     }
     let mut declared_import_indices = HashMap::new();
@@ -2951,66 +2988,99 @@ fn emit_block_instructions(
                             ctx.host_func_index(host::IMPORT_JS_TOSTRING_BOOL_FUNC)?,
                         ));
                     }
-                    Type::Unknown if ctx.array_registry.closure_gc_present => {
-                        // Boxed f64/bool values reach the JS host as opaque GC
-                        // struct that `String()` cannot format; unbox it here
-                        // and use the concrete stringifier instead. (i31-boxed
-                        // i32/u32 values externalize as JS numbers already.)
-                        let boxed_f64 = ctx.array_registry.boxed_f64_struct_type;
-                        let boxed_bool = ctx.array_registry.boxed_bool_struct_type;
-                        out.instruction(&Instruction::RefTestNullable(HeapType::Concrete(
-                            boxed_f64,
-                        )));
-                        out.instruction(&Instruction::If(BlockType::Result(externref_val_type())));
-                        emit_value_operand(out, local_plan, *source)?;
-                        out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
-                            boxed_f64,
-                        )));
-                        out.instruction(&Instruction::StructGet {
-                            struct_type_index: boxed_f64,
-                            field_index: 0,
-                        });
-                        out.instruction(&Instruction::Call(
-                            ctx.host_func_index(host::IMPORT_JS_TOSTRING_F64_FUNC)?,
-                        ));
-                        out.instruction(&Instruction::Else);
-                        emit_value_operand(out, local_plan, *source)?;
-                        out.instruction(&Instruction::RefTestNullable(HeapType::Concrete(
-                            boxed_bool,
-                        )));
-                        out.instruction(&Instruction::If(BlockType::Result(externref_val_type())));
-                        emit_value_operand(out, local_plan, *source)?;
-                        out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
-                            boxed_bool,
-                        )));
-                        out.instruction(&Instruction::StructGet {
-                            struct_type_index: boxed_bool,
-                            field_index: 0,
-                        });
-                        out.instruction(&Instruction::Call(
-                            ctx.host_func_index(host::IMPORT_JS_TOSTRING_BOOL_FUNC)?,
-                        ));
-                        out.instruction(&Instruction::Else);
-                        emit_value_operand(out, local_plan, *source)?;
-                        out.instruction(&Instruction::Call(
-                            ctx.host_func_index(host::IMPORT_JS_TOSTRING_UNKNOWN_FUNC)?,
-                        ));
-                        out.instruction(&Instruction::End);
-                        out.instruction(&Instruction::End);
-                    }
                     Type::Unknown => {
-                        // No f64 boxing in this module; the anyref is an i31
-                        // number, an externalized string/extern, or a GC ref.
-                        out.instruction(&Instruction::Call(
-                            ctx.host_func_index(host::IMPORT_JS_TOSTRING_UNKNOWN_FUNC)?,
-                        ));
+                        // The anyref may be nil, a boxed f64/bool, an i31
+                        // number, a GC reference (function, table, thread), or
+                        // an externalized host value (string, extern object).
+                        // Dispatch nil and boxed numbers here, classify GC
+                        // references, and leave the rest to the JS host.
+                        out.instruction(&Instruction::RefIsNull);
+                        out.instruction(&Instruction::If(BlockType::Result(externref_val_type())));
+                        out.instruction(&Instruction::GlobalGet(host::string_constant_index(
+                            ctx.string_constants,
+                            "nil",
+                        )?));
+                        out.instruction(&Instruction::Else);
+                        let mut end_count = 0usize;
+                        if ctx.array_registry.closure_gc_present {
+                            // Boxed f64/bool values reach the JS host as opaque
+                            // GC structs that `String()` cannot format; unbox
+                            // them here and use the concrete stringifiers.
+                            let boxed_f64 = ctx.array_registry.boxed_f64_struct_type;
+                            let boxed_bool = ctx.array_registry.boxed_bool_struct_type;
+                            emit_value_operand(out, local_plan, *source)?;
+                            out.instruction(&Instruction::RefTestNullable(HeapType::Concrete(
+                                boxed_f64,
+                            )));
+                            out.instruction(&Instruction::If(BlockType::Result(
+                                externref_val_type(),
+                            )));
+                            emit_value_operand(out, local_plan, *source)?;
+                            out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
+                                boxed_f64,
+                            )));
+                            out.instruction(&Instruction::StructGet {
+                                struct_type_index: boxed_f64,
+                                field_index: 0,
+                            });
+                            out.instruction(&Instruction::Call(
+                                ctx.host_func_index(host::IMPORT_JS_TOSTRING_F64_FUNC)?,
+                            ));
+                            out.instruction(&Instruction::Else);
+                            emit_value_operand(out, local_plan, *source)?;
+                            out.instruction(&Instruction::RefTestNullable(HeapType::Concrete(
+                                boxed_bool,
+                            )));
+                            out.instruction(&Instruction::If(BlockType::Result(
+                                externref_val_type(),
+                            )));
+                            emit_value_operand(out, local_plan, *source)?;
+                            out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
+                                boxed_bool,
+                            )));
+                            out.instruction(&Instruction::StructGet {
+                                struct_type_index: boxed_bool,
+                                field_index: 0,
+                            });
+                            out.instruction(&Instruction::Call(
+                                ctx.host_func_index(host::IMPORT_JS_TOSTRING_BOOL_FUNC)?,
+                            ));
+                            out.instruction(&Instruction::Else);
+                            end_count += 2;
+                        }
+                        emit_ref_classification_tail(
+                            out,
+                            ctx,
+                            local_plan,
+                            *source,
+                            RefClassifyMode::ToString,
+                        )?;
+                        for _ in 0..end_count {
+                            out.instruction(&Instruction::End);
+                        }
+                        out.instruction(&Instruction::End);
                     }
                     Type::String => {}
                     other => {
-                        return Err(Diagnostic::new(format!(
-                            "tostring is not supported for {} during wasm emission",
-                            other
-                        )));
+                        if let Some(prefix) = host::tostring_named_prefix(other) {
+                            // A statically-typed reference value (function,
+                            // table, thread): format its identity with the
+                            // known type-name prefix. The concrete GC ref on
+                            // the stack is a subtype of the import's anyref
+                            // parameter.
+                            out.instruction(&Instruction::GlobalGet(host::string_constant_index(
+                                ctx.string_constants,
+                                prefix,
+                            )?));
+                            out.instruction(&Instruction::Call(
+                                ctx.host_func_index(host::IMPORT_JS_TOSTRING_NAMED_FUNC)?,
+                            ));
+                        } else {
+                            return Err(Diagnostic::new(format!(
+                                "tostring is not supported for {} during wasm emission",
+                                other
+                            )));
+                        }
                     }
                 }
                 emit_value_store(out, local_plan, *value)?;
@@ -3058,10 +3128,13 @@ fn emit_block_instructions(
                         out.instruction(&Instruction::If(BlockType::Result(externref_val_type())));
                         out.instruction(&Instruction::GlobalGet(number_index));
                         out.instruction(&Instruction::Else);
-                        emit_value_operand(out, local_plan, *source)?;
-                        out.instruction(&Instruction::Call(
-                            ctx.host_func_index(host::IMPORT_JS_TYPEOF_UNKNOWN_FUNC)?,
-                        ));
+                        emit_ref_classification_tail(
+                            out,
+                            ctx,
+                            local_plan,
+                            *source,
+                            RefClassifyMode::TypeName,
+                        )?;
                         out.instruction(&Instruction::End);
                         if ctx.array_registry.closure_gc_present {
                             out.instruction(&Instruction::End);
@@ -3086,6 +3159,10 @@ fn emit_block_instructions(
                 from,
                 base,
             } => {
+                // The runtime `tonumber` result is a nullable f64 (`f64?`):
+                // an anyref holding a `$boxed_f64` on success and null (nil)
+                // on parse failure. The host imports return an `(i32 ok,
+                // f64 value)` pair that is boxed here.
                 match from {
                     Type::String => {
                         emit_value_operand(out, local_plan, *source)?;
@@ -3097,28 +3174,31 @@ fn emit_block_instructions(
                         out.instruction(&Instruction::Call(
                             ctx.host_func_index(host::IMPORT_JS_TONUMBER_STRING_FUNC)?,
                         ));
+                        emit_tonumber_result_box(out, ctx, local_plan)?;
                     }
                     Type::Unknown if base.is_none() && ctx.array_registry.closure_gc_present => {
+                        // A boxed f64 or i31 number is already a valid `f64?`
+                        // representation; pass it through without a host call.
                         let boxed_f64 = ctx.array_registry.boxed_f64_struct_type;
                         emit_value_operand(out, local_plan, *source)?;
                         out.instruction(&Instruction::RefTestNullable(HeapType::Concrete(
                             boxed_f64,
                         )));
-                        out.instruction(&Instruction::If(BlockType::Result(ValType::F64)));
+                        out.instruction(&Instruction::If(BlockType::Result(anyref_val_type())));
                         emit_value_operand(out, local_plan, *source)?;
-                        out.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
-                            boxed_f64,
-                        )));
-                        out.instruction(&Instruction::StructGet {
-                            struct_type_index: boxed_f64,
-                            field_index: 0,
-                        });
+                        out.instruction(&Instruction::Else);
+                        emit_value_operand(out, local_plan, *source)?;
+                        out.instruction(&Instruction::RefTestNullable(i31_heap_type()));
+                        out.instruction(&Instruction::If(BlockType::Result(anyref_val_type())));
+                        emit_value_operand(out, local_plan, *source)?;
                         out.instruction(&Instruction::Else);
                         emit_value_operand(out, local_plan, *source)?;
                         out.instruction(&Instruction::I32Const(0));
                         out.instruction(&Instruction::Call(
                             ctx.host_func_index(host::IMPORT_JS_TONUMBER_UNKNOWN_FUNC)?,
                         ));
+                        emit_tonumber_result_box(out, ctx, local_plan)?;
+                        out.instruction(&Instruction::End);
                         out.instruction(&Instruction::End);
                     }
                     Type::Unknown => {
@@ -3131,6 +3211,7 @@ fn emit_block_instructions(
                         out.instruction(&Instruction::Call(
                             ctx.host_func_index(host::IMPORT_JS_TONUMBER_UNKNOWN_FUNC)?,
                         ));
+                        emit_tonumber_result_box(out, ctx, local_plan)?;
                     }
                     other => {
                         return Err(Diagnostic::new(format!(
@@ -4770,6 +4851,107 @@ fn emit_number_unbox_dispatch(
     out.instruction(&Instruction::End);
 }
 
+/// How a runtime-classified GC reference produces its externref result.
+#[derive(Clone, Copy)]
+enum RefClassifyMode {
+    /// Push the Lua type-name string constant ("function"/"table"/"thread").
+    TypeName,
+    /// Format the value's identity as `"<name>: 0x<id>"` via `js_tostring_named`.
+    ToString,
+}
+
+/// Classify a non-null anyref that is known not to be a boxed f64/bool and
+/// produce an externref result: closures → "function", coroutine states →
+/// "thread", any other GC struct or array (growable arrays, records, tagged
+/// unions) → "table". Externalized host values (strings, i31/JS numbers,
+/// extern objects) fall through to the mode's JS fallback import.
+fn emit_ref_classification_tail(
+    out: &mut Function,
+    ctx: &EmissionContext<'_>,
+    local_plan: &LocalPlan,
+    source: waluau_ir::ValueId,
+    mode: RefClassifyMode,
+) -> Result<(), Diagnostic> {
+    let mut tests: Vec<(HeapType, &str)> = Vec::new();
+    if ctx.array_registry.closure_gc_present {
+        tests.push((
+            HeapType::Concrete(ctx.array_registry.func_val_struct_type),
+            "function",
+        ));
+    }
+    if let Some(state_ty) = ctx.array_registry.coroutine_state_type {
+        tests.push((HeapType::Concrete(state_ty), "thread"));
+    }
+    tests.push((
+        HeapType::Abstract {
+            shared: false,
+            ty: AbstractHeapType::Struct,
+        },
+        "table",
+    ));
+    tests.push((
+        HeapType::Abstract {
+            shared: false,
+            ty: AbstractHeapType::Array,
+        },
+        "table",
+    ));
+
+    for (heap_ty, name) in &tests {
+        emit_value_operand(out, local_plan, source)?;
+        out.instruction(&Instruction::RefTestNullable(*heap_ty));
+        out.instruction(&Instruction::If(BlockType::Result(externref_val_type())));
+        let name_index = host::string_constant_index(ctx.string_constants, name)?;
+        match mode {
+            RefClassifyMode::TypeName => {
+                out.instruction(&Instruction::GlobalGet(name_index));
+            }
+            RefClassifyMode::ToString => {
+                emit_value_operand(out, local_plan, source)?;
+                out.instruction(&Instruction::GlobalGet(name_index));
+                out.instruction(&Instruction::Call(
+                    ctx.host_func_index(host::IMPORT_JS_TOSTRING_NAMED_FUNC)?,
+                ));
+            }
+        }
+        out.instruction(&Instruction::Else);
+    }
+    emit_value_operand(out, local_plan, source)?;
+    let fallback = match mode {
+        RefClassifyMode::TypeName => host::IMPORT_JS_TYPEOF_UNKNOWN_FUNC,
+        RefClassifyMode::ToString => host::IMPORT_JS_TOSTRING_UNKNOWN_FUNC,
+    };
+    out.instruction(&Instruction::Call(ctx.host_func_index(fallback)?));
+    for _ in &tests {
+        out.instruction(&Instruction::End);
+    }
+    Ok(())
+}
+
+/// Convert the `(i32 ok, f64 value)` pair a `js_tonumber_*` host import
+/// leaves on the stack into the `f64?` anyref representation: a `$boxed_f64`
+/// on success, null (nil) on failure.
+fn emit_tonumber_result_box(
+    out: &mut Function,
+    ctx: &EmissionContext<'_>,
+    local_plan: &LocalPlan,
+) -> Result<(), Diagnostic> {
+    let scratch = locals::tonumber_scratch_local(local_plan)?;
+    out.instruction(&Instruction::LocalSet(scratch));
+    out.instruction(&Instruction::If(BlockType::Result(anyref_val_type())));
+    out.instruction(&Instruction::LocalGet(scratch));
+    out.instruction(&Instruction::StructNew(
+        ctx.array_registry.boxed_f64_struct_type,
+    ));
+    out.instruction(&Instruction::Else);
+    out.instruction(&Instruction::RefNull(HeapType::Abstract {
+        shared: false,
+        ty: AbstractHeapType::Any,
+    }));
+    out.instruction(&Instruction::End);
+    Ok(())
+}
+
 /// Emit `#` on an `unknown` (anyref) local, leaving the logical length (i32)
 /// on the stack. Dispatches over every growable array wrapper type in the
 /// module and traps when the value is none of them.
@@ -5047,6 +5229,14 @@ fn emit_box(
             Ok(())
         }
         Type::Array(_) | Type::Function { .. } | Type::Record(_) | Type::Thread => Ok(()),
+        // Boxed nullables (`f64?` etc.) already share the anyref
+        // representation; reference-typed nullables box like their inner type
+        // (with wasm null representing nil in both cases).
+        Type::Nullable(inner) if from.is_boxed_nullable() => {
+            let _ = inner;
+            Ok(())
+        }
+        Type::Nullable(inner) => emit_box(out, inner, array_registry),
         Type::Unit => {
             out.instruction(&Instruction::RefNull(HeapType::Abstract {
                 shared: false,

@@ -507,17 +507,34 @@ pub(super) fn infer_tostring_builtin_call(
         Ok(ty) => ty,
         Err(error) => return Some(Err(error)),
     };
-    if arg_ty.is_numeric()
-        || arg_ty == Type::Bool
-        || arg_ty == Type::String
-        || arg_ty == Type::Unknown
-    {
+    if tostring_supported_type(&arg_ty) {
         Some(coerce_type(Type::String, expected))
     } else {
         Some(Err(Diagnostic::new(format!(
-            "{TO_STRING} expects a primitive argument (numeric, bool, or string), got {arg_ty}",
+            "{TO_STRING} cannot convert a {arg_ty} value",
         ))))
     }
+}
+
+/// Types `tostring` accepts: primitives stringify by value, `nil` folds to
+/// "nil", reference types (functions, tables, threads) format their identity,
+/// and nullable/unknown values dispatch at runtime.
+fn tostring_supported_type(ty: &Type) -> bool {
+    ty.is_numeric()
+        || matches!(
+            ty,
+            Type::Bool
+                | Type::String
+                | Type::Unknown
+                | Type::Nil
+                | Type::Function { .. }
+                | Type::Array(_)
+                | Type::Record(_)
+                | Type::TaggedVariant(_)
+                | Type::TaggedUnion(_)
+                | Type::Thread
+                | Type::Nullable(_)
+        )
 }
 
 pub(super) fn infer_type_builtin_call(
@@ -593,7 +610,17 @@ pub(super) fn infer_tonumber_builtin_call(
             ))));
         }
     }
-    Some(coerce_type(Type::Numeric(NumericType::F64), expected))
+    let f64_ty = Type::Numeric(NumericType::F64);
+    if args.len() == 1 && arg_ty.is_numeric() {
+        return Some(coerce_type(f64_ty, expected));
+    }
+    // Runtime parses yield `f64?` (nil on failure) unless the context
+    // requires a plain number (mirroring string.byte's scalar form).
+    if string_byte_requires_numeric_value(expected.as_ref()) {
+        Some(coerce_type(f64_ty, expected))
+    } else {
+        Some(coerce_type(Type::Nullable(Box::new(f64_ty)), expected))
+    }
 }
 
 pub(super) fn infer_select_builtin_call(

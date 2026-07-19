@@ -531,12 +531,19 @@ fn infer_expr_inner(
         }
         Expr::Unary { op, expr, .. } => match op {
             UnaryOp::Neg => {
+                // A nullable numeric expectation (e.g. comparing against a
+                // `tonumber` result) applies to the negation's result; the
+                // operand itself is inferred against the inner numeric type.
+                let operand_expected = match &expected {
+                    Some(Type::Nullable(inner)) if inner.is_numeric() => Some((**inner).clone()),
+                    other => other.clone(),
+                };
                 let actual = infer_expr(
                     expr,
                     vars,
                     fn_signatures,
                     active_type_params,
-                    expected.clone(),
+                    operand_expected,
                 )?;
                 if let Some(method) = unary_operator_method(op) {
                     if let Some((_, return_type)) = resolve_operator_overload(

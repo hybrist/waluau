@@ -9,6 +9,10 @@ declare function print(message: string): unit
 declare function type(value: unknown): string
 declare function typeof(value: unknown): string
 declare function tostring(value: unknown): string
+-- Note: the true return type is `f64?` (nil on parse failure); HIR/IR
+-- lowering intercepts tonumber calls and applies the nullable result type.
+-- The declaration stays `f64` because the surface syntax does not accept
+-- nullable primitives yet.
 declare function tonumber(value: unknown): f64
 declare function tonumber(value: unknown, base: i32): f64
 
