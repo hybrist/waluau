@@ -35,6 +35,18 @@ type View = {
     swap_open: bool,
     finished: bool
 }
+-- The pair one side committed to a resolved trick, the hand slots it left,
+-- and that side's full revealed hand — see trick_side.
+type TrickSide = {
+    cards: {Card},
+    first: i32,
+    second: i32,
+    value: i32,
+    hand: {Card},
+    known: {bool}
+}
+-- One side's live hand and watched marks — see view_side.
+type HandView = { hand: {Card}, known: {bool} }
 -- TODO(waluau-language): Opaque exported record types with module-private
 -- fields would let State expose only domain operations and read-only views.
 -- Until then, test/game_fixture.walu centralizes the one mutable test adapter.
@@ -77,13 +89,24 @@ function draw(deck: {Card}): Card
     return card
 end
 
+-- Scores are packed as base-SCORE_RADIX digits: the category occupies the
+-- most significant digit, five kicker components the rest. CATEGORY_DIVISOR
+-- is SCORE_RADIX^5, spelled out because top-level constants require literal
+-- initializers; category_of and score_component are the pack inverses.
+const SCORE_RADIX: i32 = 15
+const CATEGORY_DIVISOR: i32 = 759375
+
 function pack(category: i32, a: i32, b: i32, c: i32, d: i32, e: i32): i32
     local value: i32 = category
-    value = value * 15 + a
-    value = value * 15 + b
-    value = value * 15 + c
-    value = value * 15 + d
-    return value * 15 + e
+    value = value * SCORE_RADIX + a
+    value = value * SCORE_RADIX + b
+    value = value * SCORE_RADIX + c
+    value = value * SCORE_RADIX + d
+    return value * SCORE_RADIX + e
+end
+
+function category_of(value: i32): i32
+    return value // CATEGORY_DIVISOR
 end
 
 -- Return a lexicographically sortable score for exactly five cards. Category
@@ -750,6 +773,43 @@ function State:last_trick(): Trick?
     return self.history[#self.history - 1]
 end
 
+-- One side of a resolved trick, selected by owner: 1 is the player, -1 the
+-- Arch Mage, and trick.winner / -trick.winner name the winning and losing
+-- side of a decisive trick. Consumers resolve "the winner's pair" or "the
+-- loser's slots" once instead of re-selecting player_/computer_ fields at
+-- every use. owner 0 names no side and is a caller error.
+function trick_side(trick: Trick, owner: i32): TrickSide
+    assert(owner ~= 0)
+    if owner > 0 then
+        return {
+            cards = trick.player_cards,
+            first = trick.player_first,
+            second = trick.player_second,
+            value = trick.player_value,
+            hand = trick.player_hand,
+            known = trick.player_known,
+        }
+    end
+    return {
+        cards = trick.computer_cards,
+        first = trick.computer_first,
+        second = trick.computer_second,
+        value = trick.computer_value,
+        hand = trick.computer_hand,
+        known = trick.computer_known,
+    }
+end
+
+-- The same owner selection over a live board view: the side's current hand
+-- and its watched marks.
+function view_side(view: View, owner: i32): HandView
+    assert(owner ~= 0)
+    if owner > 0 then
+        return { hand = view.player_hand, known = view.player_known }
+    end
+    return { hand = view.computer_hand, known = view.computer_known }
+end
+
 function State:reset(): unit
     local fresh: State = new()
     self.deck = fresh.deck
@@ -795,7 +855,7 @@ function card_name(card: Card): string
 end
 
 function category_name(value: i32): string
-    local category: i32 = value // 759375
+    local category: i32 = category_of(value)
     if category == 8 then return "perfect convergence" end
     if category == 7 then return "fourfold circle" end
     if category == 6 then return "bound trinity" end
@@ -807,14 +867,13 @@ function category_name(value: i32): string
     return "lone spark"
 end
 
+-- Kicker component `index` of a packed score, most significant first.
 function score_component(value: i32, index: i32): i32
-    local divisor: i32 = 1
-    if index == 0 then divisor = 50625
-    elseif index == 1 then divisor = 3375
-    elseif index == 2 then divisor = 225
-    elseif index == 3 then divisor = 15 end
+    local divisor: i32 = CATEGORY_DIVISOR // SCORE_RADIX
+    for _ = 1, index do divisor //= SCORE_RADIX end
+    if divisor < 1 then divisor = 1 end
     local quotient: i32 = value // divisor
-    return quotient - (quotient // 15) * 15
+    return quotient - (quotient // SCORE_RADIX) * SCORE_RADIX
 end
 
 function made_components_match(value: i32, other_value: i32, count: i32): bool
@@ -826,7 +885,7 @@ end
 
 function formation_cards(cards: {Card}, value: i32): {bool}
     assert(#cards == 5)
-    local category: i32 = value // 759375
+    local category: i32 = category_of(value)
     if category == 8 or category == 5 or category == 4 then
         return { true, true, true, true, true }
     end
@@ -853,8 +912,8 @@ end
 function scoring_cards(cards: {Card}, value: i32, other_value: i32): {bool}
     assert(#cards == 5)
     local marked_ranks: {i32} = {}
-    local category: i32 = value // 759375
-    local other_category: i32 = other_value // 759375
+    local category: i32 = category_of(value)
+    local other_category: i32 = category_of(other_value)
 
     if category == 8 or category == 5 or category == 4 then
         return { true, true, true, true, true }
@@ -892,6 +951,8 @@ end
 return {
     new = new,
     view = view,
+    view_side = view_side,
+    trick_side = trick_side,
     make_deck = make_deck,
     rank_five = rank_five,
     value_for_pair = value_for_pair,
@@ -900,6 +961,7 @@ return {
     swap_priority = swap_priority,
     proposed_swap = proposed_swap,
     best_swap = best_swap,
+    rank_name = rank_name,
     card_name = card_name,
     category_name = category_name,
     formation_cards = formation_cards,

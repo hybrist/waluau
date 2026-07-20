@@ -199,14 +199,15 @@ function install_arcane_heist(): unit
             ui, rules:is_finished(), choreography.is_animating(presentation),
             flow.command_none
         ) ~= flow.result_live then return end
-        local hand: i32 = choreography.hit_hand(presentation, x, y)
+        local at: render.Point = render.point(x, y)
+        local hand: i32 = choreography.hit_hand(presentation, at)
         if hand >= 0 then
             ui.cursor_area = flow.cursor_hand
             ui.hand_cursor = hand
             return
         end
         if rules:feint_open() then
-            local ward: i32 = render.hit_ward(x, y)
+            local ward: i32 = render.hit_ward(at)
             if ward >= 0 then
                 ui.cursor_area = flow.cursor_wards
                 ui.ward_cursor = ward
@@ -219,11 +220,12 @@ function install_arcane_heist(): unit
         if not presentation_resources.unlock_audio(assets) then return end
         if consume_gate(flow.command_primary) then return end
 
-        if render.hit_help(x, y) then
+        local at: render.Point = render.point(x, y)
+        if render.hit_help(at) then
             flow.gate(ui, rules:is_finished(), false, flow.command_help)
             return
         end
-        local hand: i32 = choreography.hit_hand(presentation, x, y)
+        local hand: i32 = choreography.hit_hand(presentation, at)
         if hand >= 0 then
             ui.cursor_area = flow.cursor_hand
             ui.hand_cursor = hand
@@ -232,21 +234,21 @@ function install_arcane_heist(): unit
             return
         end
         if rules:feint_open() then
-            local ward: i32 = render.hit_ward(x, y)
+            local ward: i32 = render.hit_ward(at)
             if ward >= 0 then
                 ui.cursor_area = flow.cursor_wards
                 ui.ward_cursor = ward
                 flow.toggle(ui.swap_wards, ward, 3)
                 return
             end
-            if render.hit_pass(x, y) then
+            if render.hit_pass(at) then
                 ui.swap_hand = {}
                 ui.swap_wards = {}
                 submit_swap()
                 return
             end
         end
-        if render.hit_commit(x, y, rules:feint_open()) then
+        if render.hit_commit(at, rules:feint_open()) then
             if rules:feint_open() then submit_swap() else submit_breach() end
         end
     end
