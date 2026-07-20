@@ -1,0 +1,322 @@
+-- The heist screen: the rules/flow/choreography triple behind the live board,
+-- plus the keyboard and mouse adapters that drive it. The entry module only
+-- routes engine callbacks here while this screen is active; audio unlock and
+-- resource lifetime stay with the entry module, so by the time input reaches
+-- this screen the browser gesture requirement is already satisfied.
+
+local engine = require("waluau:engine")
+local graphics_module = require("waluau:engine/graphics")
+local game = require("./game")
+local render = require("./render")
+local choreography = require("./choreography")
+local flow = require("./flow")
+
+type State = {
+    rules: game.State,
+    ui: flow.State,
+    presentation: choreography.State
+}
+
+const ACTION_NONE: i32 = 0
+const ACTION_EXIT: i32 = 1
+
+function new(): State
+    return {
+        rules = game.new(),
+        ui = flow.new(),
+        presentation = choreography.new(),
+    }
+end
+
+function reset(state: State): unit
+    state.rules:reset()
+    flow.reset(state.ui)
+    choreography.reset(state.presentation)
+    -- The opening deal is already reflected in rules state; choreography
+    -- reveals that settled result as the screen comes alive.
+    choreography.opening_deal(game.view(state.rules), state.presentation)
+end
+
+function key_command(key: string): i32
+    if key == "r" or key == "R" then return flow.command_restart end
+    if key == "h" or key == "H" then return flow.command_history end
+    if key == "?" or key == "/" then return flow.command_help end
+    if key == "Enter" or key == " " or key == "Escape" then
+        return flow.command_advance
+    end
+    return flow.command_none
+end
+
+function power_for_key(key: string): i32
+    if key == "0" then return 0 end
+    if key == "1" then return 1 end
+    if key == "2" then return 2 end
+    if key == "3" then return 3 end
+    if key == "4" then return 4 end
+    return -1
+end
+
+-- Returns how many card-flip sound cues this tick earned; the entry module
+-- owns audio resources and playback.
+function update(state: State, dt: f64): i32
+    local ui: flow.State = state.ui
+    local presentation: choreography.State = state.presentation
+    local animating: bool = choreography.is_animating(presentation)
+    choreography.update_fan(presentation, flow.fan_focus(ui, animating), dt)
+    choreography.update_power(presentation, dt)
+    if ui.revealing then
+        local clocks: {f64} = flow.update_reveal(ui, dt)
+        return choreography.reveal_flip_cues(clocks[0], clocks[1])
+    end
+    if ui.modal == flow.modal_none then
+        return choreography.update(presentation, dt)
+    end
+    return 0
+end
+
+function draw(
+    state: State,
+    graphics: engine.Graphics,
+    effects: render.EffectShaders,
+    card_back: graphics_module.Texture?
+): unit
+    local ui: flow.State = state.ui
+    choreography.draw(
+        graphics,
+        effects,
+        game.view(state.rules),
+        state.presentation,
+        {
+            hand_focus = flow.fan_focus(
+                ui, choreography.is_animating(state.presentation)),
+            ward_cursor = ui.ward_cursor,
+            cursor_area = ui.cursor_area,
+            play_picks = ui.play_picks,
+            swap_hand = ui.swap_hand,
+            swap_wards = ui.swap_wards,
+            modal = ui.modal,
+            revealing = ui.revealing,
+            reveal_clock = ui.reveal_clock,
+        },
+        card_back
+    )
+end
+
+function submit_swap(state: State): unit
+    local ui: flow.State = state.ui
+    local outcome: game.FeintOutcome?
+    if #ui.swap_hand == 0 and #ui.swap_wards == 0 then
+        outcome = state.rules:resolve_swap({}, {})
+    elseif #ui.swap_hand ~= #ui.swap_wards or #ui.swap_hand > state.rules:sparks() then
+        return
+    else
+        outcome = state.rules:resolve_swap(ui.swap_hand, ui.swap_wards)
+    end
+    flow.clear_picks(ui)
+    if outcome ~= nil then
+        choreography.feint(outcome::game.FeintOutcome, state.presentation)
+    end
+end
+
+function submit_breach(state: State): unit
+    local ui: flow.State = state.ui
+    if #ui.play_picks ~= 2 then return end
+    local trick: game.Trick? = state.rules:play(ui.play_picks[0], ui.play_picks[1])
+    if trick == nil then return end
+    choreography.record_burned_losers(state.presentation, trick::game.Trick)
+    flow.begin_reveal(ui)
+end
+
+function consume_gate(state: State, command: i32): bool
+    local result: i32 = flow.gate(
+        state.ui, state.rules:is_finished(),
+        choreography.is_animating(state.presentation), command)
+    if result == flow.result_live then return false end
+    if result == flow.result_reset then
+        reset(state)
+    elseif result == flow.result_refill then
+        local trick: game.Trick? = state.rules:last_trick()
+        if trick ~= nil then
+            choreography.resolved_breach_cleanup(
+                game.view(state.rules), trick::game.Trick, state.presentation)
+        end
+    elseif result == flow.result_skip then
+        choreography.skip(state.presentation)
+    end
+    return true
+end
+
+-- TODO(waluau-language): Exhaustive enums and pattern matching for host key
+-- values would replace this string ladder and make unmapped controls a
+-- compile-time decision shared by every input adapter.
+function keypressed(state: State, key: string): i32
+    local ui: flow.State = state.ui
+    local rules: game.State = state.rules
+    local presentation: choreography.State = state.presentation
+    if key == "m" or key == "M" then return ACTION_EXIT end
+    local power: i32 = power_for_key(key)
+    if power >= 0 then
+        if ui.modal ~= flow.modal_none or ui.revealing or rules:is_finished() then
+            return ACTION_NONE
+        end
+        -- The preview controls should respond on the first gesture. If the
+        -- opening deal is still running, settle it before the projectile
+        -- launches so the target ward is visibly present for the impact.
+        if power > 0 and choreography.is_animating(presentation) then
+            choreography.skip(presentation)
+        end
+        choreography.apply_power(presentation, power)
+        return ACTION_NONE
+    end
+    if consume_gate(state, key_command(key)) then return ACTION_NONE end
+
+    if key == "ArrowLeft" or key == "a" then
+        if ui.cursor_area == flow.cursor_hand then
+            ui.hand_cursor -= 1
+            if ui.hand_cursor < 0 then ui.hand_cursor = 4 end
+        else
+            ui.ward_cursor -= 1
+            if ui.ward_cursor < 0 then ui.ward_cursor = 2 end
+        end
+    elseif key == "ArrowRight" or key == "d" then
+        if ui.cursor_area == flow.cursor_hand then
+            ui.hand_cursor = (ui.hand_cursor + 1) % 5
+        else
+            ui.ward_cursor = (ui.ward_cursor + 1) % 3
+        end
+    elseif rules:feint_open() and (
+        key == "ArrowUp" or key == "ArrowDown" or key == "w" or key == "s"
+    ) then
+        ui.cursor_area = 1 - ui.cursor_area
+    elseif key == " " then
+        if rules:feint_open() then
+            if ui.cursor_area == flow.cursor_hand then
+                flow.toggle(ui.swap_hand, ui.hand_cursor, 3)
+            else
+                flow.toggle(ui.swap_wards, ui.ward_cursor, 3)
+            end
+        else
+            flow.toggle(ui.play_picks, ui.hand_cursor, 2)
+        end
+    elseif key == "c" or key == "C" then
+        local order: {i32} = rules:sort_player_hand(true)
+        flow.apply_hand_order(ui, order)
+        choreography.apply_hand_order(presentation, order)
+    elseif key == "v" or key == "V" then
+        local order: {i32} = rules:sort_player_hand(false)
+        flow.apply_hand_order(ui, order)
+        choreography.apply_hand_order(presentation, order)
+    elseif key == "p" or key == "P" then
+        if rules:feint_open() then
+            ui.swap_hand = {}
+            ui.swap_wards = {}
+            submit_swap(state)
+        end
+    elseif key == "Enter" then
+        if rules:feint_open() then submit_swap(state) else submit_breach(state) end
+    end
+    return ACTION_NONE
+end
+
+function mousemoved(state: State, x: f64, y: f64): unit
+    local ui: flow.State = state.ui
+    if flow.gate(
+        ui, state.rules:is_finished(),
+        choreography.is_animating(state.presentation), flow.command_none
+    ) ~= flow.result_live then return end
+    local at: render.Point = render.point(x, y)
+    local hand: i32 = choreography.hit_hand(state.presentation, at)
+    if hand >= 0 then
+        ui.cursor_area = flow.cursor_hand
+        ui.hand_cursor = hand
+        return
+    end
+    if state.rules:feint_open() then
+        local ward: i32 = render.hit_ward(at)
+        if ward >= 0 then
+            ui.cursor_area = flow.cursor_wards
+            ui.ward_cursor = ward
+        end
+    end
+end
+
+function mousepressed(state: State, x: f64, y: f64, button: i32): unit
+    if button ~= 1 then return end
+    if consume_gate(state, flow.command_primary) then return end
+
+    local ui: flow.State = state.ui
+    local rules: game.State = state.rules
+    local at: render.Point = render.point(x, y)
+    if render.hit_help(at) then
+        flow.gate(ui, rules:is_finished(), false, flow.command_help)
+        return
+    end
+    local hand: i32 = choreography.hit_hand(state.presentation, at)
+    if hand >= 0 then
+        ui.cursor_area = flow.cursor_hand
+        ui.hand_cursor = hand
+        if rules:feint_open() then flow.toggle(ui.swap_hand, hand, 3)
+        else flow.toggle(ui.play_picks, hand, 2) end
+        return
+    end
+    if rules:feint_open() then
+        local ward: i32 = render.hit_ward(at)
+        if ward >= 0 then
+            ui.cursor_area = flow.cursor_wards
+            ui.ward_cursor = ward
+            flow.toggle(ui.swap_wards, ward, 3)
+            return
+        end
+        if render.hit_pass(at) then
+            ui.swap_hand = {}
+            ui.swap_wards = {}
+            submit_swap(state)
+            return
+        end
+    end
+    if render.hit_commit(at, rules:feint_open()) then
+        if rules:feint_open() then submit_swap(state) else submit_breach(state) end
+    end
+end
+
+-- Three independently versioned development-snapshot payloads, in the same
+-- order restore expects them. The entry module owns the frame around them.
+function snapshot(state: State): {string}
+    return {
+        game.snapshot(state.rules),
+        flow.snapshot(state.ui),
+        choreography.snapshot(state.presentation),
+    }
+end
+
+function restore(
+    rules_payload: string,
+    ui_payload: string,
+    presentation_payload: string
+): State?
+    local rules: game.State? = game.restore(rules_payload)
+    local ui: flow.State? = flow.restore(ui_payload)
+    local presentation: choreography.State? = choreography.restore(presentation_payload)
+    if rules == nil then return nil end
+    if ui == nil then return nil end
+    if presentation == nil then return nil end
+    return {
+        rules = rules::game.State,
+        ui = ui::flow.State,
+        presentation = presentation::choreography.State,
+    }
+end
+
+return {
+    new = new,
+    reset = reset,
+    update = update,
+    draw = draw,
+    keypressed = keypressed,
+    mousemoved = mousemoved,
+    mousepressed = mousepressed,
+    snapshot = snapshot,
+    restore = restore,
+    action_none = ACTION_NONE,
+    action_exit = ACTION_EXIT,
+}

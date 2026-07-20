@@ -15,19 +15,11 @@ function frameSignature(canvas) {
   });
 }
 
-async function openGame(page) {
-  await page.goto('/');
-  await expect(page.locator('h1')).toHaveText('Arcane Heist', { timeout: GAME_READY_TIMEOUT });
-  return page.locator('canvas#walua-game-canvas');
-}
-
-test('renders Arcane Heist and loads its packaged card-back asset', async ({ page }) => {
-  const pageErrors = [];
-  page.on('pageerror', (error) => pageErrors.push(error.message));
-  const canvas = await openGame(page);
-
-  await expect(canvas).toBeVisible();
-  const countCardBackInk = () => canvas.evaluate((node) => {
+// Card-back ink on the draw pile: only the heist screen draws the deck, so a
+// positive count both proves the packaged asset decoded and that the menu has
+// handed over to the game screen.
+function countCardBackInk(canvas) {
+  return canvas.evaluate((node) => {
     const gl = node.getContext('webgl2');
     const pixels = new Uint8Array(104 * 128 * 4);
     gl.readPixels(56, node.height - 292 - 128, 104, 128, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
@@ -41,15 +33,75 @@ test('renders Arcane Heist and loads its packaged card-back asset', async ({ pag
     }
     return count;
   });
-  await expect.poll(countCardBackInk).toBeGreaterThan(40);
+}
+
+// Gold title ink in the band the menu's large "ARCANE HEIST" occupies. The
+// heist screen keeps that band free of gold, so this distinguishes the menu
+// from the game without depending on a perfectly still frame.
+function countMenuTitleInk(canvas) {
+  return canvas.evaluate((node) => {
+    const width = Math.min(600, node.width - 300);
+    const height = 120;
+    const gl = node.getContext('webgl2');
+    const pixels = new Uint8Array(width * height * 4);
+    gl.readPixels(300, node.height - 280, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    let count = 0;
+    for (let index = 0; index < pixels.length; index += 4) {
+      if (
+        Math.abs(pixels[index] - 251) <= 20
+        && Math.abs(pixels[index + 1] - 191) <= 20
+        && Math.abs(pixels[index + 2] - 36) <= 20
+      ) count += 1;
+    }
+    return count;
+  });
+}
+
+async function openGame(page) {
+  await page.goto('/');
+  await expect(page.locator('h1')).toHaveText('Arcane Heist', { timeout: GAME_READY_TIMEOUT });
+  return page.locator('canvas#walua-game-canvas');
+}
+
+async function beginHeist(page, canvas) {
+  await canvas.click();
+  await expect
+    .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
+    .toBeGreaterThan(40);
+}
+
+test('boots to a menu screen and returns to it with M', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  const canvas = await openGame(page);
+
+  await expect
+    .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
+    .toBeGreaterThan(300);
+  await beginHeist(page, canvas);
+  await page.keyboard.press('m');
+  await expect
+    .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
+    .toBeGreaterThan(300);
+  expect(pageErrors).toEqual([]);
+});
+
+test('renders Arcane Heist and loads its packaged card-back asset', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  const canvas = await openGame(page);
+
+  await expect(canvas).toBeVisible();
+  await beginHeist(page, canvas);
   expect(pageErrors).toEqual([]);
 });
 
 test('responds to keyboard input without an iframe focus step', async ({ page }) => {
   const canvas = await openGame(page);
-  const beforeHistory = await frameSignature(canvas);
-  await page.keyboard.press('h');
-  await expect.poll(() => frameSignature(canvas)).not.toBe(beforeHistory);
+  await page.keyboard.press('Enter');
+  await expect
+    .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
+    .toBeGreaterThan(40);
 });
 
 test('previews four persistent card powers and resets them with key 0', async ({ page }) => {
@@ -57,7 +109,7 @@ test('previews four persistent card powers and resets them with key 0', async ({
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const canvas = await openGame(page);
 
-  await canvas.click();
+  await beginHeist(page, canvas);
   await page.keyboard.press('1');
   await page.keyboard.press('0');
   await page.waitForTimeout(500);
@@ -120,7 +172,7 @@ test('plays a complete Arcane Heist game through the 2D engine', async ({ page }
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const canvas = await openGame(page);
 
-  await canvas.click();
+  await beginHeist(page, canvas);
   const playSignature = await frameSignature(canvas);
   await page.keyboard.press('h');
   await expect.poll(() => frameSignature(canvas)).not.toBe(playSignature);

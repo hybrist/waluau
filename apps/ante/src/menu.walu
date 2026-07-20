@@ -1,0 +1,99 @@
+-- The menu screen shown before a heist begins. It owns the pre-game
+-- presentation and turns raw input into screen actions; the entry module
+-- decides what beginning the heist means (audio unlock, fresh deal, screen
+-- switch), so this module stays free of resource and rules concerns.
+
+local engine = require("waluau:engine")
+local render = require("./render")
+
+type State = { clock: f64 }
+
+const ACTION_NONE: i32 = 0
+const ACTION_START: i32 = 1
+
+const WIDTH: f64 = 960.0
+const BEGIN_X: f64 = 280.0
+const BEGIN_Y: f64 = 330.0
+const BEGIN_W: f64 = 400.0
+const BEGIN_H: f64 = 84.0
+
+function new(): State
+    return { clock = 0.0 }
+end
+
+function reset(state: State): unit
+    state.clock = 0.0
+end
+
+function update(state: State, dt: f64): unit
+    state.clock += dt
+end
+
+-- `ready` reports whether the required flip sound has finished loading. The
+-- menu accepts the begin gesture either way — the heist screen already waits
+-- for its resources — but the panel says so instead of promising a start that
+-- will visibly stall.
+function draw(state: State, graphics: engine.Graphics, ready: bool): unit
+    render.draw_backdrop(graphics)
+    render.text_centered(graphics, "ARCANE HEIST", WIDTH * 0.5, 212.0, 52, "#fbbf24")
+    render.text_centered(
+        graphics, "FIVE BREACHES STAND BETWEEN THE ROBBERS AND THE VAULT",
+        WIDTH * 0.5, 252.0, 12, "#d4d4d8")
+    -- The four schools of magic as small sparks under the title, in the same
+    -- colours the footer legend uses in the vault.
+    local school_inks: {string} = { "#ef4444", "#38bdf8", "#a855f7", "#4ade80" }
+    for i = 0::i32, 3::i32 do
+        graphics:set_color(school_inks[i])
+        graphics:fill_circle(WIDTH * 0.5 - 54.0 + (i::f64) * 36.0, 282.0, 6.0)
+    end
+
+    local edge: string = "#52525b"
+    if ready then edge = "#fbbf24" end
+    render.panel(graphics, BEGIN_X, BEGIN_Y, BEGIN_W, BEGIN_H, "#17171c", edge)
+    if ready then
+        -- A halo breathing around the begin panel: the one moving element on
+        -- an otherwise still screen, pointing at the gesture that starts it all.
+        local grow: f64 = 5.0 + math.sin(state.clock * 2.4) * 3.0
+        graphics:set_color("#fbbf24")
+        graphics:set_line_width(1.0)
+        graphics:stroke_rectangle(
+            BEGIN_X - grow, BEGIN_Y - grow, BEGIN_W + grow * 2.0, BEGIN_H + grow * 2.0)
+        render.text_centered(
+            graphics, "PRESS ENTER OR CLICK TO BEGIN", WIDTH * 0.5, 368.0, 15, "#fbbf24")
+        render.text_centered(
+            graphics, "THE VAULT AWAITS YOUR SIGNAL", WIDTH * 0.5, 396.0, 10, "#d4d4d8")
+    else
+        render.text_centered(
+            graphics, "PREPARING THE VAULT", WIDTH * 0.5, 380.0, 14, "#fbbf24")
+    end
+
+    render.text_centered(
+        graphics, "ARROWS MOVE   SPACE BIND   ENTER COMMIT",
+        WIDTH * 0.5, 476.0, 11, "#a1a1aa")
+    render.text_centered(
+        graphics, "IN THE VAULT: ? HELP   H LEDGER   R RESTART   M MENU",
+        WIDTH * 0.5, 500.0, 10, "#8a8a92")
+end
+
+function keypressed(state: State, key: string): i32
+    if key == "Enter" or key == " " then return ACTION_START end
+    return ACTION_NONE
+end
+
+-- Any primary click begins: the panel is an affordance, not a hit target, so
+-- the browser's audio-unlock gesture never misses by a few pixels.
+function mousepressed(state: State, x: f64, y: f64, button: i32): i32
+    if button == 1 then return ACTION_START end
+    return ACTION_NONE
+end
+
+return {
+    new = new,
+    reset = reset,
+    update = update,
+    draw = draw,
+    keypressed = keypressed,
+    mousepressed = mousepressed,
+    action_none = ACTION_NONE,
+    action_start = ACTION_START,
+}

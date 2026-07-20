@@ -167,10 +167,6 @@ function draw_failure(state: State, graphics: engine.Graphics): bool
     return false
 end
 
-function draw_audio_prompt(state: State, graphics: engine.Graphics): unit
-    if not state.audio_unlocked then render.draw_audio_prompt(graphics, state.sound_finished) end
-end
-
 function dispose(state: State): unit
     if state.image_source.handle ~= 0 then resources.release(state.image_source) end
     if state.font_source.handle ~= 0 then resources.release(state.font_source) end
@@ -188,6 +184,5 @@ return {
     play_flip = play_flip,
     can_update = can_update,
     draw_failure = draw_failure,
-    draw_audio_prompt = draw_audio_prompt,
     dispose = dispose,
 }
