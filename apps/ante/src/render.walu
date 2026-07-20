@@ -1557,12 +1557,12 @@ function draw_hand_disintegration(graphics: Graphics, effects: EffectShaders, ca
 end
 
 function trick_scoring(trick: game.Trick): {bool}
-    if trick.winner > 0 then
-        return game.scoring_cards({ trick.middle[0], trick.middle[1], trick.middle[2], trick.player_cards[0], trick.player_cards[1] }, trick.player_value, trick.computer_value)
-    elseif trick.winner < 0 then
-        return game.scoring_cards({ trick.middle[0], trick.middle[1], trick.middle[2], trick.computer_cards[0], trick.computer_cards[1] }, trick.computer_value, trick.player_value)
-    end
-    return { false, false, false, false, false }
+    if trick.winner == 0 then return { false, false, false, false, false } end
+    local winner: game.TrickSide = game.trick_side(trick, trick.winner)
+    local loser: game.TrickSide = game.trick_side(trick, -trick.winner)
+    return game.scoring_cards(
+        { trick.middle[0], trick.middle[1], trick.middle[2], winner.cards[0], winner.cards[1] },
+        winner.value, loser.value)
 end
 
 function draw_resolution_board(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, state: game.View, fan_parts: {f64}, reveal_clock: f64, discards: {game.Card}, computer_won: {game.Card}, player_won: {game.Card}): unit

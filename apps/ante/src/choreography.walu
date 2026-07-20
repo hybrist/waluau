@@ -157,6 +157,13 @@ function reveal_flip_cues(previous: f64, current: f64): i32
     return cues
 end
 
+-- The board row a side's hand occupies: owner 1 is the player's fan, -1 the
+-- Arch Mage's sealed row.
+function hand_slot_kind(owner: i32): i32
+    if owner > 0 then return render.slot_player end
+    return render.slot_computer
+end
+
 function slot_tilt(kind: i32, index: i32): f64
     if kind == render.slot_player then return render.hand_angle(index, 0.0) end
     return 0.0
@@ -261,26 +268,19 @@ function push_burn_pair(anims: {render.Anim}, first_card: game.Card, second_card
     push_scoop(anims, second_card, b, gather, render.slot_aside)
 end
 
-function push_hand_shifts(anims: {render.Anim}, view: game.View, trick: game.Trick, kind: i32, start: f64): f64
-    local first: i32 = trick.player_first
-    local second: i32 = trick.player_second
+function push_hand_shifts(anims: {render.Anim}, view: game.View, trick: game.Trick, owner: i32, start: f64): f64
+    local side: game.TrickSide = game.trick_side(trick, owner)
+    local live: game.HandView = game.view_side(view, owner)
+    local kind: i32 = hand_slot_kind(owner)
     local faces: i32 = render.faces_up
-    if kind == render.slot_computer then
-        first = trick.computer_first
-        second = trick.computer_second
-        faces = render.faces_down
-    end
+    if owner < 0 then faces = render.faces_down end
     local finish: f64 = start
     local new_index: i32 = 0
     for old_index = 0::i32, 4::i32 do
-        if old_index ~= first and old_index ~= second then
+        if old_index ~= side.first and old_index ~= side.second then
             if old_index ~= new_index then
-                local card: game.Card = view.player_hand[new_index]
-                local known: bool = view.player_known[new_index]
-                if kind == render.slot_computer then
-                    card = view.computer_hand[new_index]
-                    known = view.computer_known[new_index]
-                end
+                local card: game.Card = live.hand[new_index]
+                local known: bool = live.known[new_index]
                 local depart: f64 = start + SHIFT_STEP * (new_index::f64)
                 local land: f64 = depart + SHIFT_SECONDS
                 if land > finish then finish = land end
@@ -308,19 +308,18 @@ function push_hand_shifts(anims: {render.Anim}, view: game.View, trick: game.Tri
 end
 
 function record_burned_losers(state: State, trick: game.Trick): unit
-    if trick.winner > 0 then
-        table.insert(state.discards, trick.computer_cards[0])
-        table.insert(state.discards, trick.computer_cards[1])
-    elseif trick.winner < 0 then
-        table.insert(state.discards, trick.player_cards[0])
-        table.insert(state.discards, trick.player_cards[1])
-    end
+    if trick.winner == 0 then return end
+    local loser: game.TrickSide = game.trick_side(trick, -trick.winner)
+    table.insert(state.discards, loser.cards[0])
+    table.insert(state.discards, loser.cards[1])
 end
 
 function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: State): unit
     local anims: {render.Anim} = {}
     local row_center: render.Point = render.midpoint(render.row_left(), render.row_right())
     if trick.winner ~= 0 then
+        local winner: game.TrickSide = game.trick_side(trick, trick.winner)
+        local loser: game.TrickSide = game.trick_side(trick, -trick.winner)
         local won_kind: i32 = render.slot_computer_won
         local won: {game.Card} = state.computer_won
         if trick.winner > 0 then
@@ -331,25 +330,14 @@ function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: Stat
             push_scoop(anims, trick.middle[i], render.slot_pos(render.slot_middle, i), row_center, won_kind)
             table.insert(won, trick.middle[i])
         end
-        local first_card: game.Card = trick.computer_cards[0]
-        local second_card: game.Card = trick.computer_cards[1]
-        if trick.winner > 0 then
-            first_card = trick.player_cards[0]
-            second_card = trick.player_cards[1]
-        end
-        push_scoop(anims, first_card, render.row_left(), row_center, won_kind)
-        push_scoop(anims, second_card, render.row_right(), row_center, won_kind)
-        table.insert(won, first_card)
-        table.insert(won, second_card)
-        local loser_kind: i32 = render.slot_computer
-        if trick.winner < 0 then loser_kind = render.slot_player end
-        local first_index: i32 = trick.computer_first
-        local second_index: i32 = trick.computer_second
-        if trick.winner < 0 then
-            first_index = trick.player_first
-            second_index = trick.player_second
-        end
-        push_burn_pair(anims, first_card, second_card, loser_kind, first_index, second_index)
+        push_scoop(anims, winner.cards[0], render.row_left(), row_center, won_kind)
+        push_scoop(anims, winner.cards[1], render.row_right(), row_center, won_kind)
+        table.insert(won, winner.cards[0])
+        table.insert(won, winner.cards[1])
+        -- The burn sweep gathers off the loser's played slots. It has always
+        -- flown the winner's card faces along that sweep (the burn ledger
+        -- already holds the loser's pair), and this refactor preserves that.
+        push_burn_pair(anims, winner.cards[0], winner.cards[1], hand_slot_kind(-trick.winner), loser.first, loser.second)
     else
         for i = 0::i32, 2::i32 do
             push_scoop(anims, trick.middle[i], render.slot_pos(render.slot_middle, i), row_center, render.slot_aside)
@@ -362,8 +350,8 @@ function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: Stat
         table.insert(state.discards, trick.computer_cards[0])
         table.insert(state.discards, trick.computer_cards[1])
     end
-    local finish: f64 = push_hand_shifts(anims, view, trick, render.slot_player, SCOOP_GATHER_SECONDS)
-    local computer_finish: f64 = push_hand_shifts(anims, view, trick, render.slot_computer, SCOOP_GATHER_SECONDS)
+    local finish: f64 = push_hand_shifts(anims, view, trick, 1, SCOOP_GATHER_SECONDS)
+    local computer_finish: f64 = push_hand_shifts(anims, view, trick, -1, SCOOP_GATHER_SECONDS)
     if computer_finish > finish then finish = computer_finish end
     local start: f64 = SCOOP_GATHER_SECONDS + SCOOP_HOLD_SECONDS + SCOOP_CARRY_SECONDS + 0.1
     for i = 3::i32, 4::i32 do
@@ -383,8 +371,7 @@ function feint(outcome: game.FeintOutcome, state: State): unit
     local count: i32 = #outcome.hand_indices
     if outcome.winner == 0 or count == 0 then return end
     local player_won: bool = outcome.winner > 0
-    local hand_kind: i32 = render.slot_player
-    if not player_won then hand_kind = render.slot_computer end
+    local hand_kind: i32 = hand_slot_kind(outcome.winner)
     local last_stagger: f64 = SWAP_STEP * ((count - 1)::f64)
     local aside_start: f64 = SWAP_LEAVE_SECONDS + last_stagger + 0.05
     local place_start: f64 = aside_start + SWAP_ASIDE_SECONDS + last_stagger + 0.1

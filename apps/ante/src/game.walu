@@ -35,6 +35,18 @@ type View = {
     swap_open: bool,
     finished: bool
 }
+-- The pair one side committed to a resolved trick, the hand slots it left,
+-- and that side's full revealed hand — see trick_side.
+type TrickSide = {
+    cards: {Card},
+    first: i32,
+    second: i32,
+    value: i32,
+    hand: {Card},
+    known: {bool}
+}
+-- One side's live hand and watched marks — see view_side.
+type HandView = { hand: {Card}, known: {bool} }
 -- TODO(waluau-language): Opaque exported record types with module-private
 -- fields would let State expose only domain operations and read-only views.
 -- Until then, test/game_fixture.walu centralizes the one mutable test adapter.
@@ -750,6 +762,43 @@ function State:last_trick(): Trick?
     return self.history[#self.history - 1]
 end
 
+-- One side of a resolved trick, selected by owner: 1 is the player, -1 the
+-- Arch Mage, and trick.winner / -trick.winner name the winning and losing
+-- side of a decisive trick. Consumers resolve "the winner's pair" or "the
+-- loser's slots" once instead of re-selecting player_/computer_ fields at
+-- every use. owner 0 names no side and is a caller error.
+function trick_side(trick: Trick, owner: i32): TrickSide
+    assert(owner ~= 0)
+    if owner > 0 then
+        return {
+            cards = trick.player_cards,
+            first = trick.player_first,
+            second = trick.player_second,
+            value = trick.player_value,
+            hand = trick.player_hand,
+            known = trick.player_known,
+        }
+    end
+    return {
+        cards = trick.computer_cards,
+        first = trick.computer_first,
+        second = trick.computer_second,
+        value = trick.computer_value,
+        hand = trick.computer_hand,
+        known = trick.computer_known,
+    }
+end
+
+-- The same owner selection over a live board view: the side's current hand
+-- and its watched marks.
+function view_side(view: View, owner: i32): HandView
+    assert(owner ~= 0)
+    if owner > 0 then
+        return { hand = view.player_hand, known = view.player_known }
+    end
+    return { hand = view.computer_hand, known = view.computer_known }
+end
+
 function State:reset(): unit
     local fresh: State = new()
     self.deck = fresh.deck
@@ -892,6 +941,8 @@ end
 return {
     new = new,
     view = view,
+    view_side = view_side,
+    trick_side = trick_side,
     make_deck = make_deck,
     rank_five = rank_five,
     value_for_pair = value_for_pair,
