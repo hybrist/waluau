@@ -72,6 +72,87 @@ This is transient development state. The plugin never writes it to storage and
 does not promise long-term compatibility. Use the engine save-data service for
 player saves. Production builds accept the registration as an inert no-op.
 
+## External shader sources
+
+The `shaderSources` option gives standalone shader files stable application
+names. Paths are resolved from the Vite project root.
+
+```js
+export default defineConfig({
+  plugins: [
+    waluau({
+      shaderSources: {
+        'effects.vertex': 'src/shaders/effects.vert',
+        'effects.fire': 'src/shaders/fire.frag',
+      },
+    }),
+  ],
+});
+```
+
+Vite imports these files as raw strings in development and production, so both
+modes use the same source contract. Do not also list shader files in
+`waluau.assets.json`; shader sources are synchronous build inputs, not runtime
+resource loads.
+
+Waluau code opens each name through `waluau:engine/shader_sources` and polls at
+a frame boundary. The first poll returns the initial text with `changed =
+true`. Each later Vite edit advances that source's revision and is returned
+once, without invoking the Waluau compiler or replacing the running Wasm
+instance.
+
+```walu
+local shader_sources = require("waluau:engine/shader_sources")
+
+local vertex = shader_sources.open("effects.vertex")
+local pixel = shader_sources.open("effects.fire")
+local vertex_text: string = ""
+local pixel_text: string = ""
+local shader: graphics_module.Shader? = nil
+local shader_error: graphics_module.GraphicsError? = nil
+
+function refresh_shader(graphics: graphics_module.Graphics): unit
+    local vertex_update = vertex:poll()
+    local pixel_update = pixel:poll()
+    if not vertex_update.ok or not pixel_update.ok then
+        local failure = if not vertex_update.ok then vertex_update.error else pixel_update.error
+        shader_error = { code = failure.code, message = failure.message }
+        return
+    end
+    if vertex_update.changed then vertex_text = vertex_update.source end
+    if pixel_update.changed then pixel_text = pixel_update.source end
+    if not vertex_update.changed and not pixel_update.changed then return end
+
+    local current = shader
+    local result: graphics_module.ShaderResult
+    if current == nil then
+        result = graphics:create_shader(vertex_text, pixel_text)
+    else
+        result = graphics:replace_shader(current::graphics_module.Shader, vertex_text, pixel_text)
+    end
+    if result.ok then
+        shader = result.shader
+        shader_error = nil
+    else
+        -- This revision is consumed, so it is not retried every frame. The
+        -- next edit advances the revision and retries. replace_shader keeps
+        -- the last valid program live.
+        shader_error = result.error
+    end
+end
+```
+
+`Source:poll()` returns `{ changed, ok, source, revision, error }`. A missing
+plugin configuration or unknown name produces a structured `missing` error on
+the first poll rather than a Wasm instantiation failure. Invalid GLSL remains
+an application-level `vertex_compile`, `pixel_compile`, or `link` diagnostic
+from `Graphics:replace_shader`; a later valid edit can recover using the same
+shader handle. Released shader handles return a `released` error.
+
+Each raw dependency has its own Vite accept callback. Editing one of several
+shader files updates only its configured name; the `.walu` module's normal
+whole-game HMR path is not entered.
+
 The plugin keeps one stateful compiler process alive for the Vite lifecycle.
 Repeated builds reuse the compiler session's module parse cache instead of
 starting `waluau` (or `cargo run`) for every edit. Changes to embedded engine,

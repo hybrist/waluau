@@ -80,12 +80,37 @@ function install_gpu_shader_fixture(): unit
         assert(graphics:set_uniform_int("u_enabled", 1))
         assert(not graphics:set_uniform_float("missing", 1.0))
 
+        local original_id: i32 = created.shader.id
+        local original_program: WebGLProgram? = created.shader.program
+        local bad_vertex_replacement: graphics_module.ShaderResult = graphics:replace_shader(
+            created.shader, "not valid GLSL", PIXEL_SOURCE
+        )
+        assert(not bad_vertex_replacement.ok and bad_vertex_replacement.error.code == "vertex_compile")
+        assert(created.shader.id == original_id and created.shader.program == original_program)
+        local bad_pixel_replacement: graphics_module.ShaderResult = graphics:replace_shader(
+            created.shader, VERTEX_SOURCE, "not valid GLSL"
+        )
+        assert(not bad_pixel_replacement.ok and bad_pixel_replacement.error.code == "pixel_compile")
+        assert(created.shader.id == original_id and created.shader.program == original_program)
+        local bad_link_replacement: graphics_module.ShaderResult = graphics:replace_shader(
+            created.shader, VERTEX_SOURCE, LINK_FAILURE_PIXEL_SOURCE
+        )
+        assert(not bad_link_replacement.ok and bad_link_replacement.error.code == "link")
+        assert(created.shader.id == original_id and created.shader.program == original_program)
+
+        -- The failed replacements leave the active old program usable.
         graphics:clear("#000000")
         graphics:set_color("#ffffff")
         graphics:fill_rectangle(24.0, 24.0, 80.0, 48.0)
-        local second: graphics_module.ShaderResult = graphics:create_shader(VERTEX_SOURCE, SECOND_PIXEL_SOURCE)
-        assert(second.ok)
-        assert(graphics:use_shader(second.shader))
+
+        -- Replacing while active flushes the old batch, rebinds the new
+        -- program on the same handle/id, and only then retires the old one.
+        local replaced: graphics_module.ShaderResult = graphics:replace_shader(
+            created.shader, VERTEX_SOURCE, SECOND_PIXEL_SOURCE
+        )
+        assert(replaced.ok and replaced.shader.id == original_id)
+        assert(created.shader.program ~= original_program)
+        assert(not graphics.gl:isProgram(original_program))
         graphics:set_color("#ffffff")
         graphics:fill_rectangle(120.0, 24.0, 32.0, 48.0)
         graphics:use_default_shader()
@@ -96,7 +121,10 @@ function install_gpu_shader_fixture(): unit
 
         graphics:release_shader(created.shader)
         assert(not graphics:use_shader(created.shader))
-        graphics:release_shader(second.shader)
+        local released_replacement: graphics_module.ShaderResult = graphics:replace_shader(
+            created.shader, VERTEX_SOURCE, PIXEL_SOURCE
+        )
+        assert(not released_replacement.ok and released_replacement.error.code == "released")
     end
     local function keypressed(key: string): unit end
     local function keyreleased(key: string): unit end

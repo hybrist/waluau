@@ -2020,6 +2020,13 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
     __waluau_hmr_get_snapshot() { return ''; },
     __waluau_hmr_set_restore_result() {},
   };
+  // External shader source declarations are safe in every artifact. Hosts
+  // without @waluau/vite-plugin expose missing keys as structured guest poll
+  // results rather than failing Wasm instantiation.
+  const shaderSourceHost = options.shaderSources?.imports ?? {
+    __waluau_shader_source_revision() { return -1; },
+    __waluau_shader_source_text() { return ''; },
+  };
   const hostImports = options.hostImports ?? {};
   const reportAsyncError = (error) => {
     if (typeof options.onAsyncError === 'function') {
@@ -2061,6 +2068,7 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
     ...tfjsHost,
     ...gameServicesHost,
     ...hotReplacementHost,
+    ...shaderSourceHost,
     ...hostImports,
     __waluau_attach_promise: (threadHandle, promise) => {
       if (promise == null || typeof promise.then !== 'function') {

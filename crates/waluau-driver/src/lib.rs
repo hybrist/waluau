@@ -1760,6 +1760,34 @@ mod tests {
     }
 
     #[test]
+    fn compiles_revisioned_shader_source_package() {
+        let project = tempdir().expect("temp project should exist");
+        let entry = project.path().join("main.walu");
+        fs::write(
+            &entry,
+            r#"
+                local shader_sources = require("waluau:engine/v1/shader_sources")
+                local pixel = shader_sources.open("effects.pixel")
+                local update = pixel:poll()
+                assert(update.changed)
+            "#,
+        )
+        .expect("external shader source project should write");
+
+        let wasm = super::compile_file(&entry)
+            .expect("versioned shader source subsystem import should compile");
+        let wat = wasmprinter::print_bytes(&wasm).expect("shader source Wasm should print");
+        assert!(
+            wat.contains(r#"(import "waluau" "__waluau_shader_source_revision""#),
+            "shader source polling should import the host revision:\n{wat}"
+        );
+        assert!(
+            wat.contains(r#"(import "waluau" "__waluau_shader_source_text""#),
+            "shader source polling should import the host text:\n{wat}"
+        );
+    }
+
+    #[test]
     fn compiles_namespace_table_exports() {
         super::compile_file(&fixture_path("modules/namespace_main.walu"))
             .expect("compile should succeed");

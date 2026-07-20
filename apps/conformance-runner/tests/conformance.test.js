@@ -17,6 +17,7 @@ import gameEngineTextAlignment from '../../../fixtures/game-engine/text-alignmen
 import gameEngineGraphicsPaths from '../../../fixtures/game-engine/graphics-paths.walu?raw';
 import stableEngineProject from '../../../examples/game-project/main.walu?raw';
 import gameEngineGpuShaders from '../../../fixtures/game-engine/gpu-shaders.walu?raw';
+import gameEngineShaderSources from '../../../fixtures/game-engine/shader-sources.walu?raw';
 import gameEngineGpuResources from '../../../fixtures/game-engine/gpu-resources.walu?raw';
 import gameEngineGpuFontResources from '../../../fixtures/game-engine/gpu-font-resources.walu?raw';
 import pokerCardBack from '../../../apps/ante/assets/card-back.svg?raw';
@@ -31,7 +32,9 @@ import gameEngineTime from '../../../engine/time.walu?raw';
 import gameEngineResources from '../../../engine/resources.walu?raw';
 import gameEngineAudio from '../../../engine/audio.walu?raw';
 import gameEngineSave from '../../../engine/save.walu?raw';
+import gameEngineShaderSourcesModule from '../../../engine/shader_sources.walu?raw';
 import gameEngineResourceSample from '../../../fixtures/game-engine/resources.walu?raw';
+import { createWaluauShaderSourceHost } from '../../../packages/vite-plugin-waluau/shaders.js';
 import transitiveAwaitStateMain from '../../../fixtures/coroutine-await-state/main.walu?raw';
 import transitiveAwaitStateWorker from '../../../fixtures/coroutine-await-state/worker.walu?raw';
 const conformanceModules = import.meta.glob('../../../conformance/**/*.walu', {
@@ -1115,6 +1118,36 @@ describe('browser conformance', () => {
     } finally {
       cleanup();
     }
+  });
+
+  it('polls each external shader source revision once and recovers on a later edit', async () => {
+    const shaderSources = createWaluauShaderSourceHost({ pixel: 'initial source' });
+    let pixelRevisionReads = 0;
+    await compileAndInstantiate(
+      {
+        '/fixtures/game-engine/shader-sources.walu': gameEngineShaderSources,
+        '/engine/shader_sources.walu': gameEngineShaderSourcesModule,
+      },
+      '/fixtures/game-engine/shader-sources.walu',
+      {
+        shaderSources,
+        hostImports: {
+          __waluau_shader_source_revision(name) {
+            if (name === 'pixel') {
+              pixelRevisionReads += 1;
+              if (pixelRevisionReads === 3) {
+                shaderSources.update('pixel', 'bad shader source');
+              } else if (pixelRevisionReads === 5) {
+                shaderSources.update('pixel', 'recovered shader source');
+              }
+            }
+            return shaderSources.imports.__waluau_shader_source_revision(name);
+          },
+          __waluau_shader_source_text: shaderSources.imports.__waluau_shader_source_text,
+        },
+      },
+    );
+    expect(pixelRevisionReads).toBe(5);
   });
 
   it('uploads Resource images, batches atlas sprites, and composites an offscreen target', async () => {
