@@ -109,10 +109,10 @@ function reset(state: State): unit
     state.player_won = fresh.player_won
 end
 
--- Power previews are presentation-only: applying one replaces the prior
--- condition on the first ward and restarts its launch from the screen corner.
+-- Power previews are presentation-only: 1-4 replace the prior condition on
+-- the first ward and restart its launch; zero clears the condition entirely.
 function apply_power(state: State, kind: i32): unit
-    if kind < 1 or kind > 4 then return end
+    if kind < 0 or kind > 4 then return end
     state.power_kind = kind
     state.power_clock = 0.0
 end

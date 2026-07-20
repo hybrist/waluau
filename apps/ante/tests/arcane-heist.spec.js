@@ -52,12 +52,16 @@ test('responds to keyboard input without an iframe focus step', async ({ page })
   await expect.poll(() => frameSignature(canvas)).not.toBe(beforeHistory);
 });
 
-test('previews four distinct persistent card powers with keys 1 through 4', async ({ page }) => {
+test('previews four persistent card powers and resets them with key 0', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const canvas = await openGame(page);
 
   await canvas.click();
+  await page.keyboard.press('1');
+  await page.keyboard.press('0');
+  await page.waitForTimeout(500);
+  const baseline = await frameSignature(canvas);
   const signatures = [];
   for (const key of ['1', '2', '3', '4']) {
     await page.keyboard.press(key);
@@ -67,6 +71,9 @@ test('previews four distinct persistent card powers with keys 1 through 4', asyn
     signatures.push(signature);
   }
 
+  await page.keyboard.press('0');
+  await page.waitForTimeout(500);
+  expect(await frameSignature(canvas)).toBe(baseline);
   expect(pageErrors).toEqual([]);
 });
 

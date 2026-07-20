@@ -1379,6 +1379,7 @@ function draw_footer(graphics: Graphics): unit
     text(graphics, "2 FREEZE", 82.0, 582.0, 9, "#38bdf8")
     text(graphics, "3 RAISE", 165.0, 582.0, 9, "#a3e635")
     text(graphics, "4 GROW", 243.0, 582.0, 9, "#4ade80")
+    text(graphics, "0 RESET", 312.0, 582.0, 9, "#a1a1aa")
     text_right(graphics, "? HELP", WIDTH - 17.0, 582.0, 10, "#8a8a92")
 end
 
