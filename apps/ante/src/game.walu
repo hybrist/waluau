@@ -14,18 +14,19 @@ type FeintOutcome = {
     outgoing: {Card},
     incoming: {Card}
 }
-type Trick = { round: i32, middle: {Card}, player_hand: {Card}, computer_hand: {Card}, player_known: {bool}, computer_known: {bool}, player_cards: {Card}, computer_cards: {Card}, player_first: i32, player_second: i32, computer_first: i32, computer_second: i32, player_value: i32, computer_value: i32, winner: i32, points: i32, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32 }
--- player_known and computer_known run parallel to the hands: slot i is marked
--- when the card sitting there arrived from the middle, which both sides were
--- looking at, and so is no longer secret from the opponent. Cards drawn off the
--- deck are secret; only an exchange leaks one.
-type State = { deck: {Card}, player_hand: {Card}, computer_hand: {Card}, player_known: {bool}, computer_known: {bool}, middle: {Card}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool }
+-- One slot of a hand: the card sitting there, plus whether the opponent has
+-- watched it. `known` is set when the card arrived from the middle, which
+-- both sides were looking at, so it is no longer secret; cards drawn off the
+-- deck are secret, and only an exchange leaks one. Keeping the mark on the
+-- slot means removal, sorting, and snapshots can never desynchronize a card
+-- from its mark.
+type HandSlot = { card: Card, known: bool }
+type Trick = { round: i32, middle: {Card}, player_hand: {HandSlot}, computer_hand: {HandSlot}, player_cards: {Card}, computer_cards: {Card}, player_first: i32, player_second: i32, computer_first: i32, computer_second: i32, player_value: i32, computer_value: i32, winner: i32, points: i32, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32 }
+type State = { deck: {Card}, player_hand: {HandSlot}, computer_hand: {HandSlot}, middle: {Card}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool }
 type View = {
     deck_count: i32,
-    player_hand: {Card},
-    computer_hand: {Card},
-    player_known: {bool},
-    computer_known: {bool},
+    player_hand: {HandSlot},
+    computer_hand: {HandSlot},
     middle: {Card},
     history: {Trick},
     round: i32,
@@ -42,11 +43,8 @@ type TrickSide = {
     first: i32,
     second: i32,
     value: i32,
-    hand: {Card},
-    known: {bool}
+    hand: {HandSlot}
 }
--- One side's live hand and watched marks — see view_side.
-type HandView = { hand: {Card}, known: {bool} }
 -- TODO(waluau-language): Opaque exported record types with module-private
 -- fields would let State expose only domain operations and read-only views.
 -- Until then, test/game_fixture.walu centralizes the one mutable test adapter.
@@ -59,7 +57,7 @@ const ONE: i32 = 1
 const TWO: i32 = 2
 const MAX_ROUNDS: i32 = 5
 const ARCH_MAGE_WINS_TO_END: i32 = 3
-const SNAPSHOT_SCHEMA: string = "ante-state-v1"
+const SNAPSHOT_SCHEMA: string = "ante-state-v2"
 const SNAPSHOT_COLLECTION_LIMIT: i32 = 256
 
 function make_deck(): {Card}
@@ -87,6 +85,29 @@ function draw(deck: {Card}): Card
     local card: Card = deck[#deck - ONE]
     table.remove(deck)
     return card
+end
+
+-- A freshly dealt slot: replacements come off the sealed deck, so neither
+-- side has seen them yet.
+function deal_slot(deck: {Card}): HandSlot
+    return { card = draw(deck), known = false }
+end
+
+-- The bare cards of a hand, for the card-identity scoring and AI functions,
+-- which have no business knowing about watched marks.
+function hand_cards(slots: {HandSlot}): {Card}
+    local cards: {Card} = {}
+    for slot in slots do table.insert(cards, slot.card) end
+    return cards
+end
+
+-- Slot copies for a Trick: the live slots keep mutating (marks, removal,
+-- refills) after the trick resolves, so history must hold its own records.
+-- Cards themselves are immutable and safe to share.
+function clone_slots(slots: {HandSlot}): {HandSlot}
+    local copy: {HandSlot} = {}
+    for slot in slots do table.insert(copy, { card = slot.card, known = slot.known }) end
+    return copy
 end
 
 -- Scores are packed as base-SCORE_RADIX digits: the category occupies the
@@ -206,6 +227,8 @@ function clone_cards(cards: {Card}): {Card}
     return copy
 end
 
+-- The card-level exchange best_swap and proposed_swap score against: it runs
+-- over throwaway clones, so no watched marks are involved.
 function exchange(hand: {Card}, middle: {Card}, hand_indices: {i32}, middle_indices: {i32}): unit
     assert(#hand_indices == #middle_indices)
     for i = ZERO, #hand_indices - ONE do
@@ -215,12 +238,17 @@ function exchange(hand: {Card}, middle: {Card}, hand_indices: {i32}, middle_indi
     end
 end
 
--- Every slot an exchange touched now holds a card that was face up in the
--- middle a moment ago, so the opponent knows all of them. Whatever the slot
--- held before is gone, and with it any secrecy it still had. Kept apart from
--- exchange itself, which also runs over the throwaway clones best_swap scores.
-function mark_known(known: {bool}, hand_indices: {i32}): unit
-    for index in hand_indices do known[index] = true end
+-- The same exchange against a live hand. Every slot it touches now holds a
+-- card that was face up in the middle a moment ago, so the opponent knows all
+-- of them: the replacement slot is born marked, and whatever secrecy the old
+-- slot still had leaves with its card.
+function exchange_live(hand: {HandSlot}, middle: {Card}, hand_indices: {i32}, middle_indices: {i32}): unit
+    assert(#hand_indices == #middle_indices)
+    for i = ZERO, #hand_indices - ONE do
+        local outgoing: Card = hand[hand_indices[i]].card
+        hand[hand_indices[i]] = { card = middle[middle_indices[i]], known = true }
+        middle[middle_indices[i]] = outgoing
+    end
 end
 
 -- Three-card poker ordering used only to break equal swap wagers:
@@ -298,26 +326,14 @@ function best_swap(hand: {Card}, middle: {Card}): SwapChoice
     return best
 end
 
-function remove_pair(hand: {Card}, first: i32, second: i32): unit
+-- Spend two slots of a hand; the watched marks travel inside their slots.
+function remove_pair(hand: {HandSlot}, first: i32, second: i32): unit
     if first > second then
         table.remove(hand, first)
         table.remove(hand, second)
     else
         table.remove(hand, second)
         table.remove(hand, first)
-    end
-end
-
--- The same removal against a hand's parallel marks. Spending two cards shifts
--- every slot above them down, and the marks have to shift with them or they
--- start describing the wrong cards.
-function remove_pair_known(known: {bool}, first: i32, second: i32): unit
-    if first > second then
-        table.remove(known, first)
-        table.remove(known, second)
-    else
-        table.remove(known, second)
-        table.remove(known, first)
     end
 end
 
@@ -335,12 +351,12 @@ end
 function State:sort_player_hand(by_school: bool): {i32}
     local order: {i32} = {}
     local keys: {i32} = {}
-    for index, card in self.player_hand do
+    for index, slot in self.player_hand do
         table.insert(order, index)
         if by_school then
-            table.insert(keys, card.suit * 15 + (MAX_RANK - card.rank))
+            table.insert(keys, slot.card.suit * 15 + (MAX_RANK - slot.card.rank))
         else
-            table.insert(keys, (MAX_RANK - card.rank) * 4 + card.suit)
+            table.insert(keys, (MAX_RANK - slot.card.rank) * 4 + slot.card.suit)
         end
     end
     -- A tiny selection sort over the parallel slot/key lists: five relics
@@ -359,14 +375,11 @@ function State:sort_player_hand(by_school: bool): {i32}
             order[smallest] = slot
         end
     end
-    local sorted_hand: {Card} = {}
-    local sorted_known: {bool} = {}
+    local sorted_hand: {HandSlot} = {}
     for slot in order do
         table.insert(sorted_hand, self.player_hand[slot])
-        table.insert(sorted_known, self.player_known[slot])
     end
     self.player_hand = sorted_hand
-    self.player_known = sorted_known
     return order
 end
 
@@ -376,10 +389,10 @@ function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): FeintOu
     local valid_player_swap: bool = player_wager <= 3 and player_wager <= self.player_points and player_wager == #middle_indices
     if not valid_player_swap then return nil end
 
-    local computer: SwapChoice = best_swap(self.computer_hand, self.middle)
+    local computer: SwapChoice = best_swap(hand_cards(self.computer_hand), self.middle)
     local player_community: i32 = 0
     if valid_player_swap then
-        player_community = proposed_swap(self.player_hand, self.middle, hand_indices, middle_indices).community_value
+        player_community = proposed_swap(hand_cards(self.player_hand), self.middle, hand_indices, middle_indices).community_value
     end
 
     self.player_wager = player_wager
@@ -394,14 +407,12 @@ function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): FeintOu
     self.swap_hand_indices = {}
     self.swap_middle_indices = {}
     if self.swap_winner > 0 then
-        exchange(self.player_hand, self.middle, hand_indices, middle_indices)
-        mark_known(self.player_known, hand_indices)
+        exchange_live(self.player_hand, self.middle, hand_indices, middle_indices)
         self.swap_count = #hand_indices
         self.swap_hand_indices = hand_indices
         self.swap_middle_indices = middle_indices
     elseif self.swap_winner < 0 then
-        exchange(self.computer_hand, self.middle, computer.hand_indices, computer.middle_indices)
-        mark_known(self.computer_known, computer.hand_indices)
+        exchange_live(self.computer_hand, self.middle, computer.hand_indices, computer.middle_indices)
         self.swap_count = #computer.hand_indices
         self.swap_hand_indices = computer.hand_indices
         self.swap_middle_indices = computer.middle_indices
@@ -414,8 +425,8 @@ function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): FeintOu
             local hand_index: i32 = self.swap_hand_indices[k]
             local middle_index: i32 = self.swap_middle_indices[k]
             table.insert(outgoing, self.middle[middle_index])
-            if self.swap_winner > 0 then table.insert(incoming, self.player_hand[hand_index])
-            else table.insert(incoming, self.computer_hand[hand_index]) end
+            if self.swap_winner > 0 then table.insert(incoming, self.player_hand[hand_index].card)
+            else table.insert(incoming, self.computer_hand[hand_index].card) end
         end
     end
     return {
@@ -432,8 +443,8 @@ function State:play(first: i32, second: i32): Trick?
         return nil
     end
 
-    local computer: PairChoice = best_pair(self.computer_hand, self.middle)
-    self.last_player_value = value_for_pair(self.player_hand, self.middle, first, second)
+    local computer: PairChoice = best_pair(hand_cards(self.computer_hand), self.middle)
+    self.last_player_value = value_for_pair(hand_cards(self.player_hand), self.middle, first, second)
     self.last_computer_value = computer.value
     self.last_winner = 0
     local trick_points: i32 = 0
@@ -454,14 +465,12 @@ function State:play(first: i32, second: i32): Trick?
         round = self.round,
         middle = { self.middle[0], self.middle[1], self.middle[2] },
         -- Resolution runs after the live hands have been compacted and
-        -- refilled. Preserve every original slot and its watched mark so
+        -- refilled. Copy every original slot and its watched mark so
         -- replacement cards do not appear until their deal animation starts.
-        player_hand = { self.player_hand[0], self.player_hand[1], self.player_hand[2], self.player_hand[3], self.player_hand[4] },
-        computer_hand = { self.computer_hand[0], self.computer_hand[1], self.computer_hand[2], self.computer_hand[3], self.computer_hand[4] },
-        player_known = { self.player_known[0], self.player_known[1], self.player_known[2], self.player_known[3], self.player_known[4] },
-        computer_known = { self.computer_known[0], self.computer_known[1], self.computer_known[2], self.computer_known[3], self.computer_known[4] },
-        player_cards = { self.player_hand[first], self.player_hand[second] },
-        computer_cards = { self.computer_hand[computer.first], self.computer_hand[computer.second] },
+        player_hand = clone_slots(self.player_hand),
+        computer_hand = clone_slots(self.computer_hand),
+        player_cards = { self.player_hand[first].card, self.player_hand[second].card },
+        computer_cards = { self.computer_hand[computer.first].card, self.computer_hand[computer.second].card },
         -- Hand slots both sides played, so the presentation can resolve the
         -- trick in place on the board after the hands have been refilled.
         player_first = first,
@@ -482,14 +491,9 @@ function State:play(first: i32, second: i32): Trick?
 
     remove_pair(self.player_hand, first, second)
     remove_pair(self.computer_hand, computer.first, computer.second)
-    remove_pair_known(self.player_known, first, second)
-    remove_pair_known(self.computer_known, computer.first, computer.second)
-    -- Replacements come off the sealed deck, so neither side has seen them.
     for _ = 1, 2 do
-        table.insert(self.player_hand, draw(self.deck))
-        table.insert(self.computer_hand, draw(self.deck))
-        table.insert(self.player_known, false)
-        table.insert(self.computer_known, false)
+        table.insert(self.player_hand, deal_slot(self.deck))
+        table.insert(self.computer_hand, deal_slot(self.deck))
     end
 
     if self.computer_tricks >= ARCH_MAGE_WINS_TO_END or self.round >= MAX_ROUNDS then
@@ -522,18 +526,20 @@ function append_cards(parts: {string}, cards: {Card}): unit
     end
 end
 
-function append_bools(parts: {string}, values: {bool}): unit
-    snapshot_data.append_i32(parts, #values)
-    for value in values do snapshot_data.append_bool(parts, value) end
+function append_slots(parts: {string}, slots: {HandSlot}): unit
+    snapshot_data.append_i32(parts, #slots)
+    for slot in slots do
+        snapshot_data.append_i32(parts, slot.card.rank)
+        snapshot_data.append_i32(parts, slot.card.suit)
+        snapshot_data.append_bool(parts, slot.known)
+    end
 end
 
 function append_trick(parts: {string}, trick: Trick): unit
     snapshot_data.append_i32(parts, trick.round)
     append_cards(parts, trick.middle)
-    append_cards(parts, trick.player_hand)
-    append_cards(parts, trick.computer_hand)
-    append_bools(parts, trick.player_known)
-    append_bools(parts, trick.computer_known)
+    append_slots(parts, trick.player_hand)
+    append_slots(parts, trick.computer_hand)
     append_cards(parts, trick.player_cards)
     append_cards(parts, trick.computer_cards)
     snapshot_data.append_i32(parts, trick.player_first)
@@ -554,10 +560,8 @@ end
 function snapshot(state: State): string
     local parts: {string} = { SNAPSHOT_SCHEMA }
     append_cards(parts, state.deck)
-    append_cards(parts, state.player_hand)
-    append_cards(parts, state.computer_hand)
-    append_bools(parts, state.player_known)
-    append_bools(parts, state.computer_known)
+    append_slots(parts, state.player_hand)
+    append_slots(parts, state.computer_hand)
     append_cards(parts, state.middle)
     snapshot_data.append_i32(parts, #state.history)
     for trick in state.history do append_trick(parts, trick) end
@@ -589,20 +593,23 @@ function next_cards(reader: snapshot_data.Reader): {Card}
     return cards
 end
 
-function next_bools(reader: snapshot_data.Reader): {bool}
-    local values: {bool} = {}
+function next_slots(reader: snapshot_data.Reader): {HandSlot}
+    local slots: {HandSlot} = {}
     local length: i32 = reader:next_length()
-    for _ = 1, length do table.insert(values, reader:next_bool()) end
-    return values
+    for _ = 1, length do
+        table.insert(slots, {
+            card = { rank = reader:next_i32(), suit = reader:next_i32() },
+            known = reader:next_bool(),
+        })
+    end
+    return slots
 end
 
 function next_trick(reader: snapshot_data.Reader): Trick
     local round: i32 = reader:next_i32()
     local middle: {Card} = next_cards(reader)
-    local player_hand: {Card} = next_cards(reader)
-    local computer_hand: {Card} = next_cards(reader)
-    local player_known: {bool} = next_bools(reader)
-    local computer_known: {bool} = next_bools(reader)
+    local player_hand: {HandSlot} = next_slots(reader)
+    local computer_hand: {HandSlot} = next_slots(reader)
     local player_cards: {Card} = next_cards(reader)
     local computer_cards: {Card} = next_cards(reader)
     local player_first: i32 = reader:next_i32()
@@ -623,8 +630,6 @@ function next_trick(reader: snapshot_data.Reader): Trick
         middle = middle,
         player_hand = player_hand,
         computer_hand = computer_hand,
-        player_known = player_known,
-        computer_known = computer_known,
         player_cards = player_cards,
         computer_cards = computer_cards,
         player_first = player_first,
@@ -647,10 +652,8 @@ function restore(snapshot_value: string): State?
     local reader: snapshot_data.Reader = snapshot_data.reader(snapshot_value, SNAPSHOT_COLLECTION_LIMIT)
     if reader:next_string() ~= SNAPSHOT_SCHEMA then return nil end
     local deck: {Card} = next_cards(reader)
-    local player_hand: {Card} = next_cards(reader)
-    local computer_hand: {Card} = next_cards(reader)
-    local player_known: {bool} = next_bools(reader)
-    local computer_known: {bool} = next_bools(reader)
+    local player_hand: {HandSlot} = next_slots(reader)
+    local computer_hand: {HandSlot} = next_slots(reader)
     local middle: {Card} = next_cards(reader)
     local history: {Trick} = {}
     local history_length: i32 = reader:next_length()
@@ -676,8 +679,6 @@ function restore(snapshot_value: string): State?
         deck = deck,
         player_hand = player_hand,
         computer_hand = computer_hand,
-        player_known = player_known,
-        computer_known = computer_known,
         middle = middle,
         history = history,
         round = round,
@@ -707,8 +708,6 @@ function new(): State
         deck = deck,
         player_hand = {},
         computer_hand = {},
-        player_known = {},
-        computer_known = {},
         middle = {},
         history = {},
         round = 1,
@@ -729,10 +728,8 @@ function new(): State
         finished = false,
     }
     for _ = 1, 5 do
-        table.insert(state.player_hand, draw(state.deck))
-        table.insert(state.computer_hand, draw(state.deck))
-        table.insert(state.player_known, false)
-        table.insert(state.computer_known, false)
+        table.insert(state.player_hand, deal_slot(state.deck))
+        table.insert(state.computer_hand, deal_slot(state.deck))
     end
     state:reveal_middle()
     return state
@@ -743,8 +740,6 @@ function view(state: State): View
         deck_count = #state.deck,
         player_hand = state.player_hand,
         computer_hand = state.computer_hand,
-        player_known = state.player_known,
-        computer_known = state.computer_known,
         middle = state.middle,
         history = state.history,
         round = state.round,
@@ -787,7 +782,6 @@ function trick_side(trick: Trick, owner: i32): TrickSide
             second = trick.player_second,
             value = trick.player_value,
             hand = trick.player_hand,
-            known = trick.player_known,
         }
     end
     return {
@@ -796,18 +790,15 @@ function trick_side(trick: Trick, owner: i32): TrickSide
         second = trick.computer_second,
         value = trick.computer_value,
         hand = trick.computer_hand,
-        known = trick.computer_known,
     }
 end
 
--- The same owner selection over a live board view: the side's current hand
--- and its watched marks.
-function view_side(view: View, owner: i32): HandView
+-- The same owner selection over a live board view: the side's current hand,
+-- each slot carrying its own watched mark.
+function view_side(view: View, owner: i32): {HandSlot}
     assert(owner ~= 0)
-    if owner > 0 then
-        return { hand = view.player_hand, known = view.player_known }
-    end
-    return { hand = view.computer_hand, known = view.computer_known }
+    if owner > 0 then return view.player_hand end
+    return view.computer_hand
 end
 
 function State:reset(): unit
@@ -815,8 +806,6 @@ function State:reset(): unit
     self.deck = fresh.deck
     self.player_hand = fresh.player_hand
     self.computer_hand = fresh.computer_hand
-    self.player_known = fresh.player_known
-    self.computer_known = fresh.computer_known
     self.middle = fresh.middle
     self.history = fresh.history
     self.round = fresh.round
@@ -953,6 +942,7 @@ return {
     view = view,
     view_side = view_side,
     trick_side = trick_side,
+    hand_cards = hand_cards,
     make_deck = make_deck,
     rank_five = rank_five,
     value_for_pair = value_for_pair,

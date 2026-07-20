@@ -1623,7 +1623,7 @@ function draw_resolution_board(graphics: Graphics, effects: EffectShaders, card_
                 end
             end
         else
-            draw_card(graphics, effects, card_back, trick.computer_hand[i], slot.x, slot.y, false, false, true, false, trick.computer_known[i])
+            draw_card(graphics, effects, card_back, trick.computer_hand[i].card, slot.x, slot.y, false, false, true, false, trick.computer_hand[i].known)
         end
     end
 
@@ -1662,7 +1662,7 @@ function draw_resolution_board(graphics: Graphics, effects: EffectShaders, card_
                 end
             end
         else
-            draw_hand_card(graphics, effects, card_back, trick.player_hand[i], i, fan_parts[i], false, false, false, trick.player_known[i])
+            draw_hand_card(graphics, effects, card_back, trick.player_hand[i].card, i, fan_parts[i], false, false, false, trick.player_hand[i].known)
         end
     end
     draw_footer(graphics)
@@ -1715,8 +1715,8 @@ function draw_hand_slot(graphics: Graphics, effects: EffectShaders, card_back: g
     if slot_hidden(anims, anim_clock, SLOT_PLAYER, index) then return end
     local selected: bool = is_picked(play_picks, index)
     if state.swap_open then selected = is_picked(swap_hand, index) end
-    draw_hand_card(graphics, effects, card_back, state.player_hand[index], index, parts[index], selected, index == focus,
-        false, state.player_known[index])
+    draw_hand_card(graphics, effects, card_back, state.player_hand[index].card, index, parts[index], selected, index == focus,
+        false, state.player_hand[index].known)
 end
 
 -- hand_focus is the relic the cursor holds, or FAN_CLOSED when nothing does;
@@ -1739,11 +1739,11 @@ function draw_playfield(graphics: Graphics, effects: EffectShaders, card_back: g
     for i = 0::i32, 4::i32 do
         if not slot_hidden(anims, anim_clock, SLOT_COMPUTER, i) then
             local slot: Point = slot_pos(SLOT_COMPUTER, i)
-            draw_card(graphics, effects, card_back, state.computer_hand[i], slot.x, slot.y, false, false, true, false, state.computer_known[i])
+            draw_card(graphics, effects, card_back, state.computer_hand[i].card, slot.x, slot.y, false, false, true, false, state.computer_hand[i].known)
         end
     end
     if not state.swap_open and #play_picks == 2 then
-        local preview_value: i32 = game.value_for_pair(state.player_hand, state.middle, play_picks[0], play_picks[1])
+        local preview_value: i32 = game.value_for_pair(game.hand_cards(state.player_hand), state.middle, play_picks[0], play_picks[1])
         text_centered(graphics, "OFFER: " .. game.category_name(preview_value), WIDTH * 0.5, 252.0, 11, "#d4d4d8")
     end
     panel(graphics, 278.0, 258.0, 404.0, 148.0, "#101013", "#3f3f46")

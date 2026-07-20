@@ -10,6 +10,16 @@ function clone_cards(cards: {game.Card}): {game.Card}
     return copy
 end
 
+-- Hand slots for freshly arranged cards: nothing arranged this way has been
+-- watched by the opponent yet.
+function fresh_slots(cards: {game.Card}): {game.HandSlot}
+    local slots: {game.HandSlot} = {}
+    for card in cards do
+        table.insert(slots, { card = { rank = card.rank, suit = card.suit }, known = false })
+    end
+    return slots
+end
+
 function arrange_breach(
     state: game.State,
     middle: {game.Card},
@@ -17,10 +27,8 @@ function arrange_breach(
     computer_hand: {game.Card}
 ): unit
     state.middle = clone_cards(middle)
-    state.player_hand = clone_cards(player_hand)
-    state.computer_hand = clone_cards(computer_hand)
-    state.player_known = { false, false, false, false, false }
-    state.computer_known = { false, false, false, false, false }
+    state.player_hand = fresh_slots(player_hand)
+    state.computer_hand = fresh_slots(computer_hand)
 end
 
 function arrange_arch_mage(
@@ -29,8 +37,7 @@ function arrange_arch_mage(
     computer_hand: {game.Card}
 ): unit
     state.middle = clone_cards(middle)
-    state.computer_hand = clone_cards(computer_hand)
-    state.computer_known = { false, false, false, false, false }
+    state.computer_hand = fresh_slots(computer_hand)
 end
 
 function arrange_player(
@@ -38,8 +45,9 @@ function arrange_player(
     player_hand: {game.Card},
     player_known: {bool}
 ): unit
-    state.player_hand = clone_cards(player_hand)
-    state.player_known = player_known
+    local slots: {game.HandSlot} = fresh_slots(player_hand)
+    for index, known in player_known do slots[index].known = known end
+    state.player_hand = slots
 end
 
 function set_player_points(state: game.State, points: i32): unit
