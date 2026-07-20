@@ -44,12 +44,17 @@ type Ui = {
     anim_clock: f64,
     anim_total: f64,
     anim_kind: i32,
-    -- Every card scooped onto the spent pile so far, in landing order: the
-    -- pile is face up, so render shows the last entry as its top card.
-    -- Appended when the scoop is queued; render subtracts the legs still in
-    -- the air, so the pile only thickens — and its face only changes — as
-    -- cards land on it.
-    discards: {game.Card}
+    -- The three right-edge piles, each in landing order: the piles are face up,
+    -- so render shows the last entry as the top card. `discards` is the burn
+    -- pile (losing pairs and cancelled stalemates); the won piles are each
+    -- side's claimed tricks. Winners are appended when their scoop is queued and
+    -- render subtracts the legs still in the air, so a pile only thickens — and
+    -- its face only changes — as cards land on it. Burned losers are logged the
+    -- instant the trick resolves, since they land on the burn pile as their
+    -- reveal disintegration completes rather than on a scoop.
+    discards: {game.Card},
+    computer_won: {game.Card},
+    player_won: {game.Card}
 }
 type UiSnapshotReader = { tokens: {string}, index: i32, ok: bool }
 
@@ -72,6 +77,8 @@ const SLOT_COMPUTER: i32 = 1
 const SLOT_MIDDLE: i32 = 2
 const SLOT_DECK: i32 = 3
 const SLOT_ASIDE: i32 = 4
+const SLOT_COMPUTER_WON: i32 = 5
+const SLOT_PLAYER_WON: i32 = 6
 
 -- Mirrors render's "no relic holds focus" sentinel.
 const FAN_CLOSED: i32 = -1
@@ -121,7 +128,7 @@ const SCOOP_CARRY_SECONDS: f64 = 0.4
 const SHIFT_SECONDS: f64 = 0.45
 const SHIFT_STEP: f64 = 0.05
 const HOT_SNAPSHOT_SCHEMA: string = "ante-hmr-v1"
-const UI_SNAPSHOT_SCHEMA: string = "ante-ui-v1"
+const UI_SNAPSHOT_SCHEMA: string = "ante-ui-v2"
 const UI_SNAPSHOT_COLLECTION_LIMIT: i32 = 256
 
 function contains(picks: {i32}, value: i32): bool
@@ -327,14 +334,16 @@ function queue_initial_deal(state: game.State, ui: Ui): unit
     begin_anims(ui, anims, finish, ANIM_DEAL)
 end
 
--- One resolved card's exit, in two legs: it slides from where the reveal
--- left it into a pile at the row's centre, holds while the rest gather, and
--- the pile then carries face up to the spent stack. The carry legs all share
--- one path, so the five cards read as a single scooped-up pile; only the
--- carry leg is aimed at SLOT_ASIDE, which is what render counts when it
--- decides how thick the spent stack draws.
-function push_scoop(anims: {render.Anim}, card: game.Card, from_x: f64, from_y: f64): unit
-    local gather_x: f64 = (render.row_left_x + render.row_right_x) * 0.5
+-- One resolved card's exit, in two legs: it slides from where the reveal left
+-- it into a pile at the group's gather point, holds while the rest of the group
+-- gathers, and the pile then carries face up to `dest_kind`. A group's carry
+-- legs all share one gather point and destination, so its cards read as a
+-- single scooped-up pile; only the carry leg is aimed at `dest_kind`, which is
+-- what render counts when it decides how thick that pile draws. The winner's
+-- five cards gather at the row centre and carry to the winner's own pile; the
+-- loser's pair (or a stalemate's whole board) gathers at its own midpoint and
+-- carries to the burn pile.
+function push_scoop(anims: {render.Anim}, card: game.Card, from_x: f64, from_y: f64, gather_x: f64, gather_y: f64, dest_kind: i32): unit
     local carry_start: f64 = SCOOP_GATHER_SECONDS + SCOOP_HOLD_SECONDS
     table.insert(anims, {
         card = card,
@@ -343,7 +352,7 @@ function push_scoop(anims: {render.Anim}, card: game.Card, from_x: f64, from_y: 
         x0 = from_x,
         y0 = from_y,
         x1 = gather_x,
-        y1 = render.row_y,
+        y1 = gather_y,
         angle0 = 0.0,
         angle1 = 0.0,
         easing = EASE_IN_CUBIC,
@@ -359,9 +368,9 @@ function push_scoop(anims: {render.Anim}, card: game.Card, from_x: f64, from_y: 
         faces = FACES_UP,
         known = false,
         x0 = gather_x,
-        y0 = render.row_y,
-        x1 = render.slot_x(SLOT_ASIDE, 0),
-        y1 = render.slot_y(SLOT_ASIDE, 0),
+        y0 = gather_y,
+        x1 = render.slot_x(dest_kind, 0),
+        y1 = render.slot_y(dest_kind, 0),
         angle0 = 0.0,
         angle1 = 0.0,
         easing = EASE_IN_OUT_CUBIC,
@@ -369,9 +378,24 @@ function push_scoop(anims: {render.Anim}, card: game.Card, from_x: f64, from_y: 
         duration = SCOOP_CARRY_SECONDS,
         appear = carry_start,
         vanish = carry_start + SCOOP_CARRY_SECONDS,
-        dest_kind = SLOT_ASIDE,
+        dest_kind = dest_kind,
         dest_index = 0,
     })
+end
+
+-- A losing or cancelled pair sweeping to the burn pile: the two cards gather at
+-- the midpoint of the slots they were played from, then carry together to the
+-- burn pile. Used for a decisive trick's disintegrated loser and for both pairs
+-- of a stalemate.
+function push_burn_pair(anims: {render.Anim}, first_card: game.Card, second_card: game.Card, kind: i32, first_index: i32, second_index: i32): unit
+    local ax: f64 = render.slot_x(kind, first_index)
+    local ay: f64 = render.slot_y(kind, first_index)
+    local bx: f64 = render.slot_x(kind, second_index)
+    local by: f64 = render.slot_y(kind, second_index)
+    local gather_x: f64 = (ax + bx) * 0.5
+    local gather_y: f64 = (ay + by) * 0.5
+    push_scoop(anims, first_card, ax, ay, gather_x, gather_y, SLOT_ASIDE)
+    push_scoop(anims, second_card, bx, by, gather_x, gather_y, SLOT_ASIDE)
 end
 
 -- Replays the compaction the rules already applied to one hand: spending a
@@ -430,31 +454,85 @@ function push_hand_shifts(anims: {render.Anim}, state: game.State, trick: game.T
     return finish
 end
 
--- After a breach: the resolved formation is scooped off the table onto the
--- spent pile and both hands slide down to close the gaps their spent pairs
--- left, then both hands draw their two replacements (they land in the
+-- The pair that lost a decisive breach burns to embers during the reveal; the
+-- burn pile between the hands records each card the instant the trick resolves,
+-- so the pile can grow while the reveal is still on screen. Render holds the two
+-- back until their disintegration completes, then lets them land. A stalemate
+-- burns nothing here — neither pair broke, so its whole board is swept to the
+-- burn pile when play advances instead (see queue_refill_deal).
+function record_burned_losers(ui: Ui, trick: game.Trick): unit
+    if trick.winner > 0 then
+        table.insert(ui.discards, trick.computer_cards[0])
+        table.insert(ui.discards, trick.computer_cards[1])
+    elseif trick.winner < 0 then
+        table.insert(ui.discards, trick.player_cards[0])
+        table.insert(ui.discards, trick.player_cards[1])
+    end
+end
+
+-- After a breach: the resolved formation is scooped off the table — the winner
+-- collects the whole trick into its own pile while the loser's embers are swept
+-- to the burn pile — then both hands slide down to close the gaps their spent
+-- pairs left, then both hands draw their two replacements (they land in the
 -- rightmost slots, matching how the hand re-packs) and the next wards deal.
 function queue_refill_deal(state: game.State, ui: Ui): unit
     local anims: {render.Anim} = {}
-    -- The formation the reveal just showed: the three wards in their slots,
-    -- plus the winner's pair on the row's flanks. A stalemate never formed a
-    -- row, so only the wards are gathered and both spent pairs simply leave.
-    -- The ledger appends in the same order the scoop legs are pushed, so the
-    -- last card queued is both the last one drawn in flight and the face the
-    -- settled pile shows.
+    -- The formation the reveal just showed: the three wards in their slots, plus
+    -- the winner's pair on the row's flanks. The winner keeps all five, scooped
+    -- from the row centre they completed into the winner's own pile. Each
+    -- ledger appends in the same order its scoop legs are pushed, so the last
+    -- card queued is both the last one drawn in flight and the face the settled
+    -- pile shows. The losing pair is not scooped here — it burned into the pile
+    -- during the reveal (recorded by record_burned_losers), so its cards are
+    -- already logged; a stalemate, which burns nothing during the reveal, sweeps
+    -- its whole cancelled board to the burn pile instead.
     local trick: game.Trick = state.history[#state.history - 1]
-    for i = 0::i32, 2::i32 do
-        push_scoop(anims, trick.middle[i], render.slot_x(SLOT_MIDDLE, i), render.slot_y(SLOT_MIDDLE, i))
-        table.insert(ui.discards, trick.middle[i])
-    end
-    if trick.winner > 0 then
-        push_scoop(anims, trick.player_cards[0], render.row_left_x, render.row_y)
-        push_scoop(anims, trick.player_cards[1], render.row_right_x, render.row_y)
+    local row_center_x: f64 = (render.row_left_x + render.row_right_x) * 0.5
+    if trick.winner ~= 0 then
+        local won_kind: i32 = SLOT_COMPUTER_WON
+        local won: {game.Card} = ui.computer_won
+        if trick.winner > 0 then
+            won_kind = SLOT_PLAYER_WON
+            won = ui.player_won
+        end
+        for i = 0::i32, 2::i32 do
+            push_scoop(anims, trick.middle[i], render.slot_x(SLOT_MIDDLE, i), render.slot_y(SLOT_MIDDLE, i), row_center_x, render.row_y, won_kind)
+            table.insert(won, trick.middle[i])
+        end
+        local first_card: game.Card = trick.computer_cards[0]
+        local second_card: game.Card = trick.computer_cards[1]
+        if trick.winner > 0 then
+            first_card = trick.player_cards[0]
+            second_card = trick.player_cards[1]
+        end
+        push_scoop(anims, first_card, render.row_left_x, render.row_y, row_center_x, render.row_y, won_kind)
+        push_scoop(anims, second_card, render.row_right_x, render.row_y, row_center_x, render.row_y, won_kind)
+        table.insert(won, first_card)
+        table.insert(won, second_card)
+        -- The loser's ashes gather off its own played slots and settle on the
+        -- burn pile. Its cards are already in ui.discards from the reveal, so
+        -- the scoop only supplies the motion.
+        local loser_kind: i32 = SLOT_COMPUTER
+        if trick.winner < 0 then loser_kind = SLOT_PLAYER end
+        local first_index: i32 = trick.computer_first
+        local second_index: i32 = trick.computer_second
+        if trick.winner < 0 then
+            first_index = trick.player_first
+            second_index = trick.player_second
+        end
+        push_burn_pair(anims, first_card, second_card, loser_kind, first_index, second_index)
+    else
+        -- A stalemate claims nothing: the three wards and both cancelled pairs
+        -- are swept to the burn pile. The wards gather at the row centre; each
+        -- pair gathers off its own slots.
+        for i = 0::i32, 2::i32 do
+            push_scoop(anims, trick.middle[i], render.slot_x(SLOT_MIDDLE, i), render.slot_y(SLOT_MIDDLE, i), row_center_x, render.row_y, SLOT_ASIDE)
+            table.insert(ui.discards, trick.middle[i])
+        end
+        push_burn_pair(anims, trick.player_cards[0], trick.player_cards[1], SLOT_PLAYER, trick.player_first, trick.player_second)
+        push_burn_pair(anims, trick.computer_cards[0], trick.computer_cards[1], SLOT_COMPUTER, trick.computer_first, trick.computer_second)
         table.insert(ui.discards, trick.player_cards[0])
         table.insert(ui.discards, trick.player_cards[1])
-    elseif trick.winner < 0 then
-        push_scoop(anims, trick.computer_cards[0], render.row_left_x, render.row_y)
-        push_scoop(anims, trick.computer_cards[1], render.row_right_x, render.row_y)
         table.insert(ui.discards, trick.computer_cards[0])
         table.insert(ui.discards, trick.computer_cards[1])
     end
@@ -623,6 +701,8 @@ function reset_run(state: game.State, ui: Ui): unit
     -- easing out of whatever the abandoned run left it parted around.
     ui.fan_parts = { 0.0, 0.0, 0.0, 0.0, 0.0 }
     ui.discards = {}
+    ui.computer_won = {}
+    ui.player_won = {}
     -- The deal waits behind the help modal; its clock starts once play does.
     queue_initial_deal(state, ui)
 end
@@ -666,6 +746,8 @@ function snapshot_ui(ui: Ui): string
     table.insert(parts, tostring(ui.reveal_clock))
     append_snapshot_f64s(parts, ui.fan_parts)
     append_snapshot_cards(parts, ui.discards)
+    append_snapshot_cards(parts, ui.computer_won)
+    append_snapshot_cards(parts, ui.player_won)
     return table.concat(parts, ",")
 end
 
@@ -755,6 +837,8 @@ function restore_ui(snapshot_value: string): Ui?
     local reveal_clock: f64 = reader:next_f64()
     local fan_parts: {f64} = reader:next_f64s()
     local discards: {game.Card} = reader:next_cards()
+    local computer_won: {game.Card} = reader:next_cards()
+    local player_won: {game.Card} = reader:next_cards()
     if not reader.ok or reader.index ~= #reader.tokens then return nil end
     local restored: Ui = {
         hand_cursor = hand_cursor,
@@ -775,6 +859,8 @@ function restore_ui(snapshot_value: string): Ui?
         anim_total = 0.0,
         anim_kind = ANIM_NONE,
         discards = discards,
+        computer_won = computer_won,
+        player_won = player_won,
     }
     return restored
 end
@@ -821,6 +907,8 @@ function install_arcane_heist(): unit
         anim_total = 0.0,
         anim_kind = ANIM_NONE,
         discards = {},
+        computer_won = {},
+        player_won = {},
     }
 
     local function load_assets_async(): i32
@@ -957,7 +1045,7 @@ function install_arcane_heist(): unit
         end
         render.draw(graphics, assets.effects, state, fan_focus(ui), ui.fan_parts, ui.ward_cursor, ui.cursor_area,
             ui.play_picks, ui.swap_hand, ui.swap_wards, ui.modal, ui.revealing, ui.reveal_clock,
-            ui.anims, ui.anim_clock, assets.texture, ui.discards)
+            ui.anims, ui.anim_clock, assets.texture, ui.discards, ui.computer_won, ui.player_won)
         if not assets.audio_unlocked then
             render.draw_audio_prompt(graphics, assets.sound_finished)
         end
@@ -987,6 +1075,7 @@ function install_arcane_heist(): unit
             return
         end
         state:play(ui.play_picks[0], ui.play_picks[1])
+        record_burned_losers(ui, state.history[#state.history - 1])
         clear_picks(ui)
         ui.modal = MODAL_NONE
         ui.revealing = true
