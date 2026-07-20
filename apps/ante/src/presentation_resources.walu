@@ -6,6 +6,7 @@ local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
 local resources = require("waluau:engine/resources")
 local audio = require("waluau:engine/audio")
+local effect_shaders = require("./effect_shaders")
 local render = require("./render")
 
 type State = {
@@ -15,15 +16,19 @@ type State = {
     texture: graphics_module.Texture?,
     font: graphics_module.Font?,
     effects: render.EffectShaders,
+    effect_set: effect_shaders.State,
+    graphics: engine.Graphics?,
     image_finished: bool,
     font_finished: bool,
     sound_finished: bool,
     audio_unlocked: bool,
-    shader_finished: bool,
     fatal_shader_error: string,
     fatal_audio_code: string,
     fatal_audio_message: string,
-    warnings: string
+    -- Resource failures are historical; shader diagnostics instead describe
+    -- only the current live revision so a valid HMR edit can clear them.
+    warnings: string,
+    shader_warnings: string
 }
 
 const IMAGE_PATH: string = "assets/card-back.svg"
@@ -32,29 +37,25 @@ const SOUND_PATH: string = "assets/card-flip.wav"
 const FLIP_SOUND_VOLUME: f64 = 0.62
 
 function new(): State
+    local effect_set: effect_shaders.State = effect_shaders.new()
     return {
         image_source = { handle = 0, kind = "image", path = IMAGE_PATH },
         font_source = { handle = 0, kind = "font", path = FONT_PATH },
         flip_sound = { handle = 0, kind = "sound", path = SOUND_PATH },
         texture = nil,
         font = nil,
-        effects = {
-            gold_shimmer = nil,
-            defeat_shroud = nil,
-            red_fire = nil,
-            blue_caustics = nil,
-            black_hole = nil,
-            green_growth = nil,
-        },
+        effects = effect_set.shaders,
+        effect_set = effect_set,
+        graphics = nil,
         image_finished = false,
         font_finished = false,
         sound_finished = false,
         audio_unlocked = false,
-        shader_finished = false,
         fatal_shader_error = "",
         fatal_audio_code = "",
         fatal_audio_message = "",
         warnings = "",
+        shader_warnings = "",
     }
 end
 
@@ -95,12 +96,16 @@ function load_async(state: State): i32
 end
 
 function prepare(state: State, graphics: engine.Graphics): unit
-    if not state.shader_finished then
-        state.shader_finished = true
-        local result: render.EffectSetResult = render.create_effects(graphics)
-        state.effects = result.effects
-        state.fatal_shader_error = result.fatal_error
-        if #result.warnings > 0 then append_warning(state, result.warnings) end
+    state.graphics = graphics
+    effect_shaders.refresh(state.effect_set, graphics)
+    local shader_diagnostics: effect_shaders.Diagnostics = effect_shaders.diagnostics(
+        state.effect_set)
+    state.fatal_shader_error = shader_diagnostics.fatal_error
+    if shader_diagnostics.warnings ~= state.shader_warnings then
+        state.shader_warnings = shader_diagnostics.warnings
+        if #state.shader_warnings > 0 then
+            print("ante: optional shader warning: " .. state.shader_warnings)
+        end
     end
     if not state.image_finished and state.image_source.handle ~= 0 then
         local source: resources.Resource = state.image_source
@@ -168,6 +173,12 @@ function draw_failure(state: State, graphics: engine.Graphics): bool
 end
 
 function dispose(state: State): unit
+    local maybe_graphics: engine.Graphics? = state.graphics
+    if maybe_graphics ~= nil then
+        effect_shaders.release(
+            state.effect_set, maybe_graphics::engine.Graphics)
+        state.graphics = nil
+    end
     if state.image_source.handle ~= 0 then resources.release(state.image_source) end
     if state.font_source.handle ~= 0 then resources.release(state.font_source) end
     if state.flip_sound.handle ~= 0 then resources.release(state.flip_sound) end
