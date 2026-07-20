@@ -334,10 +334,7 @@ function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: Stat
         push_scoop(anims, winner.cards[1], render.row_right(), row_center, won_kind)
         table.insert(won, winner.cards[0])
         table.insert(won, winner.cards[1])
-        -- The burn sweep gathers off the loser's played slots. It has always
-        -- flown the winner's card faces along that sweep (the burn ledger
-        -- already holds the loser's pair), and this refactor preserves that.
-        push_burn_pair(anims, winner.cards[0], winner.cards[1], hand_slot_kind(-trick.winner), loser.first, loser.second)
+        push_burn_pair(anims, loser.cards[0], loser.cards[1], hand_slot_kind(-trick.winner), loser.first, loser.second)
     else
         for i = 0::i32, 2::i32 do
             push_scoop(anims, trick.middle[i], render.slot_pos(render.slot_middle, i), row_center, render.slot_aside)
