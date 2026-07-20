@@ -1,0 +1,170 @@
+-- The menu screen shown before a heist begins: a cursor-driven option list,
+-- not a tap-through splash. It owns the pre-game presentation and turns raw
+-- input into screen actions; the entry module decides what starting the heist
+-- means (audio unlock, fresh deal, screen switch), so this module stays free
+-- of resource and rules concerns.
+
+local engine = require("waluau:engine")
+local render = require("./render")
+
+type State = { clock: f64, cursor: i32, help_open: bool }
+
+const ACTION_NONE: i32 = 0
+const ACTION_START: i32 = 1
+
+const WIDTH: f64 = 960.0
+
+const ITEM_NEW_GAME: i32 = 0
+const ITEM_HOW_TO_PLAY: i32 = 1
+const ITEM_COUNT: i32 = 2
+const ITEM_X: f64 = 290.0
+const ITEM_W: f64 = 380.0
+const ITEM_H: f64 = 52.0
+const ITEM_TOP: f64 = 330.0
+const ITEM_PITCH: f64 = 66.0
+
+function new(): State
+    return { clock = 0.0, cursor = ITEM_NEW_GAME, help_open = false }
+end
+
+function reset(state: State): unit
+    state.clock = 0.0
+    state.cursor = ITEM_NEW_GAME
+    state.help_open = false
+end
+
+function update(state: State, dt: f64): unit
+    state.clock += dt
+end
+
+function item_top(index: i32): f64
+    return ITEM_TOP + (index::f64) * ITEM_PITCH
+end
+
+function item_at(x: f64, y: f64): i32
+    if x < ITEM_X or x > ITEM_X + ITEM_W then return -1 end
+    for index = 0::i32, ITEM_COUNT - 1 do
+        local top: f64 = item_top(index)
+        if y >= top and y <= top + ITEM_H then return index end
+    end
+    return -1
+end
+
+-- NEW GAME is the entry module's decision; HOW TO PLAY is presentation the
+-- menu can satisfy itself with the shared help modal.
+function activate(state: State, item: i32): i32
+    if item == ITEM_NEW_GAME then return ACTION_START end
+    state.help_open = true
+    return ACTION_NONE
+end
+
+function draw_item(state: State, graphics: engine.Graphics, index: i32, label: string): unit
+    local top: f64 = item_top(index)
+    local edge: string = "#52525b"
+    local ink: string = "#8a8a92"
+    if index == state.cursor then
+        edge = "#fbbf24"
+        ink = "#fbbf24"
+        -- A halo breathing around the selected option: the one moving element
+        -- on an otherwise still screen, pointing at what Enter will do.
+        local grow: f64 = 4.0 + math.sin(state.clock * 2.4) * 2.5
+        graphics:set_color("#fbbf24")
+        graphics:set_line_width(1.0)
+        graphics:stroke_rectangle(
+            ITEM_X - grow, top - grow, ITEM_W + grow * 2.0, ITEM_H + grow * 2.0)
+    end
+    render.panel(graphics, ITEM_X, top, ITEM_W, ITEM_H, "#17171c", edge)
+    render.text_centered(graphics, label, WIDTH * 0.5, top + 33.0, 15, ink)
+end
+
+-- `ready` reports whether the required flip sound has finished loading. The
+-- menu accepts NEW GAME either way — the heist screen already waits for its
+-- resources — but says so instead of promising a start that visibly stalls.
+function draw(state: State, graphics: engine.Graphics, effects: render.EffectShaders, ready: bool): unit
+    render.draw_backdrop(graphics)
+    if state.help_open then
+        render.draw_help(graphics, effects)
+        return
+    end
+    render.text_centered(graphics, "ARCANE HEIST", WIDTH * 0.5, 212.0, 52, "#fbbf24")
+    render.text_centered(
+        graphics, "FIVE BREACHES STAND BETWEEN THE ROBBERS AND THE VAULT",
+        WIDTH * 0.5, 252.0, 12, "#d4d4d8")
+    -- The four schools of magic as small sparks under the title, in the same
+    -- colours the footer legend uses in the vault.
+    local school_inks: {string} = { "#ef4444", "#38bdf8", "#a855f7", "#4ade80" }
+    for i = 0::i32, 3::i32 do
+        graphics:set_color(school_inks[i])
+        graphics:fill_circle(WIDTH * 0.5 - 54.0 + (i::f64) * 36.0, 282.0, 6.0)
+    end
+
+    draw_item(state, graphics, ITEM_NEW_GAME, "NEW GAME")
+    draw_item(state, graphics, ITEM_HOW_TO_PLAY, "HOW TO PLAY")
+    if not ready then
+        render.text_centered(
+            graphics, "PREPARING THE VAULT", WIDTH * 0.5, 478.0, 10, "#8a8a92")
+    end
+
+    render.text_centered(
+        graphics, "ARROWS MOVE   ENTER OR CLICK SELECTS",
+        WIDTH * 0.5, 524.0, 11, "#a1a1aa")
+    render.text_centered(
+        graphics, "IN THE VAULT: ? HELP   H LEDGER   R RESTART   M MENU",
+        WIDTH * 0.5, 548.0, 10, "#8a8a92")
+end
+
+function keypressed(state: State, key: string): i32
+    if state.help_open then
+        if key == "Enter" or key == " " or key == "Escape" or key == "?" or key == "/" then
+            state.help_open = false
+        end
+        return ACTION_NONE
+    end
+    if key == "ArrowUp" or key == "w" or key == "W" then
+        state.cursor -= 1
+        if state.cursor < 0 then state.cursor = ITEM_COUNT - 1 end
+        return ACTION_NONE
+    end
+    if key == "ArrowDown" or key == "s" or key == "S" then
+        state.cursor = (state.cursor + 1) % ITEM_COUNT
+        return ACTION_NONE
+    end
+    if key == "?" or key == "/" then
+        state.help_open = true
+        return ACTION_NONE
+    end
+    if key == "Enter" or key == " " then
+        return activate(state, state.cursor)
+    end
+    return ACTION_NONE
+end
+
+function mousemoved(state: State, x: f64, y: f64): unit
+    if state.help_open then return end
+    local item: i32 = item_at(x, y)
+    if item >= 0 then state.cursor = item end
+end
+
+function mousepressed(state: State, x: f64, y: f64, button: i32): i32
+    if button ~= 1 then return ACTION_NONE end
+    if state.help_open then
+        state.help_open = false
+        return ACTION_NONE
+    end
+    local item: i32 = item_at(x, y)
+    if item < 0 then return ACTION_NONE end
+    state.cursor = item
+    return activate(state, item)
+end
+
+return {
+    new = new,
+    reset = reset,
+    update = update,
+    draw = draw,
+    keypressed = keypressed,
+    mousemoved = mousemoved,
+    mousepressed = mousepressed,
+    action_none = ACTION_NONE,
+    action_start = ACTION_START,
+}

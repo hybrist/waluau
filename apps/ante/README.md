@@ -14,8 +14,8 @@ breach win ends the heist, while player wins never end the five-breach run early
 leaving room to maximize the final spark score.
 
 The browser entry imports only the engine facade and contains no DOM or canvas
-host calls. The game, help, history, and final outcome all render inside one
-960×600 logical canvas that scales to the viewport. Trick results remain on the
+host calls. The menu, game, help, history, and final outcome all render inside
+one 960×600 logical canvas that scales to the viewport. Trick results remain on the
 board, where color identifies the winning formation and any decisive kickers.
 After the reveal flips, the winner's two cards fly out of their row and flank
 the three wards, completing the five-card formation in the middle of the
@@ -65,7 +65,15 @@ flat.
 
 ## Controls
 
-Keyboard:
+The app boots to a menu screen with NEW GAME and HOW TO PLAY options. Arrow
+keys (or hovering) move the selection, Enter/Space or a click on an option
+activates it, and ? jumps straight to help. Activating NEW GAME begins the
+heist — that gesture also unlocks browser audio — and M returns to the menu
+from the vault. The menu and the heist board are separate screen modules
+(`menu.walu` and `game_screen.walu`); `main.walu` only decides which one
+receives engine callbacks.
+
+Keyboard (in the vault):
 
 - Arrow keys or WASD move focus; up/down switches between relics and wards.
 - Space binds or unbinds the focused relic or ward.
@@ -87,12 +95,13 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
   capsule only lights up while the pending binds would be accepted.
 - A click advances or skips reveals and animations, closes the ledger and
   help, restarts from the final screen, and the footer's "? HELP" opens help.
-- The first click (like the first key) also unlocks browser audio.
 
 | File | Purpose |
 | --- | --- |
 | `project.js` | Stable source-project adapter for playground and conformance hosts. |
-| `main.walu` | Thin engine adapter that wires callbacks to the deeper game modules. |
+| `main.walu` | Thin engine adapter that owns the session and routes callbacks to the live screen. |
+| `menu.walu` | The pre-game menu screen: presentation plus begin-gesture interpretation. |
+| `game_screen.walu` | The heist screen: rules/flow/choreography wiring and its input adapters. |
 | `game.walu` | Host-independent rules, AI, commands, outcomes, and read-only presentation view. |
 | `flow.walu` | Host-independent input gating, focus, modal, selection, and reveal flow. |
 | `choreography.walu` | Domain-level deal, feint, breach, fan, pile, and animation choreography. |

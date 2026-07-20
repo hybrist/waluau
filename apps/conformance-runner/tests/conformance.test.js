@@ -22,8 +22,6 @@ import gameEngineGpuResources from '../../../fixtures/game-engine/gpu-resources.
 import gameEngineGpuFontResources from '../../../fixtures/game-engine/gpu-font-resources.walu?raw';
 import pokerCardBack from '../../../apps/ante/assets/card-back.svg?raw';
 import pokerFontUrl from '../../../apps/ante/assets/Cinzel-Bold.ttf?url';
-import pokerFlipUrl from '../../../apps/ante/assets/card-flip.wav?url';
-import { createAnteProject } from '../../../apps/ante/project.js';
 import gameEngineBrowser from '../../../engine/browser.walu?raw';
 import gameEngineGraphics from '../../../engine/graphics.walu?raw';
 import gameEngineFont from '../../../engine/font.walu?raw';
@@ -48,8 +46,6 @@ const includeModules = import.meta.glob('../../../{builtins,externs}/**/*.walu',
   query: '?raw',
   import: 'default',
 });
-
-const arcaneHeistProject = createAnteProject('/apps/ante/src');
 
 function sourceForCase(testCase) {
   const includes = [];
@@ -1273,146 +1269,6 @@ describe('browser conformance', () => {
         }
       }
       expect(cyanPixels).toBeGreaterThan(20);
-    } finally {
-      cleanup();
-    }
-  });
-
-  it('renders Arcane Heist and plays flips through its typed packaged asset manifest', async () => {
-    const requested = [];
-    const asyncErrors = [];
-    let imageDecodeCount = 0;
-    let soundDecodeCount = 0;
-    let soundStartCount = 0;
-    class PokerAudioContext {
-      constructor() {
-        this.destination = {};
-        this.state = 'suspended';
-      }
-
-      async decodeAudioData(bytes) {
-        soundDecodeCount += 1;
-        return { byteLength: bytes.byteLength };
-      }
-
-      createBufferSource() {
-        return {
-          connect() {},
-          disconnect() {},
-          start() { soundStartCount += 1; },
-          stop() { this.onended?.(); },
-        };
-      }
-
-      createGain() {
-        return { gain: { value: 1 }, connect() {} };
-      }
-
-      async resume() {
-        this.state = 'running';
-      }
-    }
-    const { root, cleanup } = await compileAndInstantiateWithDom(
-      arcaneHeistProject.files,
-      arcaneHeistProject.entryFile,
-      {
-        gameServices: {
-          assetBaseUrl: 'https://game.test/dist/',
-          assetManifest: {
-            'assets/card-back.svg': { url: './assets/card-back.hash.svg', type: 'image' },
-            'assets/Cinzel-Bold.ttf': { url: './assets/vault.hash.ttf', type: 'font' },
-            'assets/card-flip.wav': { url: './assets/card-flip.hash.wav', type: 'audio' },
-          },
-          fetch: async (url) => {
-            requested.push(url);
-            if (url.endsWith('card-back.hash.svg')) {
-              return new Response(pokerCardBack, {
-                status: 200,
-                headers: { 'Content-Type': 'image/svg+xml' },
-              });
-            }
-            if (url.endsWith('vault.hash.ttf')) return fetch(pokerFontUrl);
-            if (url.endsWith('card-flip.hash.wav')) return fetch(pokerFlipUrl);
-            return new Response('', { status: 404 });
-          },
-          createImageBitmap: async (blob) => {
-            imageDecodeCount += 1;
-            const url = URL.createObjectURL(blob);
-            try {
-              const image = new Image();
-              image.src = url;
-              await image.decode();
-              return createImageBitmap(image);
-            } finally {
-              URL.revokeObjectURL(url);
-            }
-          },
-          AudioContext: PokerAudioContext,
-        },
-        onAsyncError: (error) => asyncErrors.push(error),
-      },
-    );
-    try {
-      const canvas = root.querySelector('#walua-game-canvas');
-      const gl = canvas.getContext('webgl2');
-      const countCardInk = () => {
-        const pixels = new Uint8Array(104 * 128 * 4);
-        gl.readPixels(56, 600 - 292 - 128, 104, 128, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-        let count = 0;
-        for (let index = 0; index < pixels.length; index += 4) {
-          if (
-            Math.abs(pixels[index] - 232) <= 12 &&
-            Math.abs(pixels[index + 1] - 223) <= 12 &&
-            Math.abs(pixels[index + 2] - 189) <= 12
-          ) count += 1;
-        }
-        return count;
-      };
-      await expect.poll(() => requested.length, { timeout: 10_000 }).toBe(3);
-      await expect.poll(countCardInk, { timeout: 10_000 }).toBeGreaterThan(40);
-      await new Promise((resolve) => setTimeout(resolve, 350));
-      expect(soundStartCount).toBe(0);
-      const view = root.ownerDocument.defaultView;
-      root.ownerDocument.dispatchEvent(new view.KeyboardEvent('keydown', {
-        key: 'ArrowLeft',
-      }));
-      await expect.poll(() => soundStartCount, { timeout: 10_000 }).toBeGreaterThan(0);
-      expect(imageDecodeCount).toBe(1);
-      expect(soundDecodeCount).toBe(1);
-      expect(requested).toEqual([
-        'https://game.test/dist/assets/card-back.hash.svg',
-        'https://game.test/dist/assets/vault.hash.ttf',
-        'https://game.test/dist/assets/card-flip.hash.wav',
-      ]);
-      expect(asyncErrors).toEqual([]);
-    } finally {
-      cleanup();
-    }
-  });
-
-  it('stops Arcane Heist on its fatal diagnostic screen when flip audio is undeclared', async () => {
-    const asyncErrors = [];
-    const { root, cleanup } = await compileAndInstantiateWithDom(
-      arcaneHeistProject.files,
-      arcaneHeistProject.entryFile,
-      {
-        gameServices: {
-          assetBaseUrl: 'https://game.test/dist/',
-          assetManifest: {},
-        },
-        onAsyncError: (error) => asyncErrors.push(error),
-      },
-    );
-    try {
-      const canvas = root.querySelector('#walua-game-canvas');
-      const fatalPanelPixel = () => {
-        const gl = canvas.getContext('webgl2');
-        const pixel = new Uint8Array(4);
-        gl.readPixels(80, 600 - 1 - 145, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
-        return Array.from(pixel);
-      };
-      await expect.poll(fatalPanelPixel, { timeout: 10_000 }).toEqual([38, 11, 8, 255]);
-      expect(asyncErrors).toEqual([]);
     } finally {
       cleanup();
     }

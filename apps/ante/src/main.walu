@@ -1,58 +1,28 @@
 -- Arcane Heist hosted by the 2D engine. This entry module is intentionally an
--- adapter: rules, heist flow, presentation choreography, snapshot framing, and
--- resource lifetime each live behind their own deep interface.
+-- adapter: it owns the engine session, the shared presentation resources, and
+-- which screen is live. The menu and the heist board each live behind their
+-- own screen module; neither knows the other exists.
 
 local engine = require("waluau:engine")
 local hot = require("waluau:engine/hot")
-local game = require("./game")
-local render = require("./render")
-local choreography = require("./choreography")
-local flow = require("./flow")
+local menu = require("./menu")
+local game_screen = require("./game_screen")
 local snapshot_data = require("./snapshot")
 local presentation_resources = require("./presentation_resources")
 
-const HOT_SNAPSHOT_SCHEMA: string = "ante-hmr-v1"
+const HOT_SNAPSHOT_SCHEMA: string = "ante-hmr-v2"
+
+const SCREEN_MENU: i32 = 0
+const SCREEN_GAME: i32 = 1
 
 function play_flip_cues(assets: presentation_resources.State, count: i32): unit
     for _ = 1, count do presentation_resources.play_flip(assets) end
 end
 
-function reset_run(
-    rules: game.State,
-    ui: flow.State,
-    presentation: choreography.State
-): unit
-    rules:reset()
-    flow.reset(ui)
-    choreography.reset(presentation)
-    -- The opening deal is already reflected in rules state; choreography
-    -- reveals that settled result after the browser audio gesture.
-    choreography.opening_deal(game.view(rules), presentation)
-end
-
-function key_command(key: string): i32
-    if key == "r" or key == "R" then return flow.command_restart end
-    if key == "h" or key == "H" then return flow.command_history end
-    if key == "?" or key == "/" then return flow.command_help end
-    if key == "Enter" or key == " " or key == "Escape" then
-        return flow.command_advance
-    end
-    return flow.command_none
-end
-
-function power_for_key(key: string): i32
-    if key == "0" then return 0 end
-    if key == "1" then return 1 end
-    if key == "2" then return 2 end
-    if key == "3" then return 3 end
-    if key == "4" then return 4 end
-    return -1
-end
-
 function install_arcane_heist(): unit
-    local rules: game.State = game.new()
-    local ui: flow.State = flow.new()
-    local presentation: choreography.State = choreography.new()
+    local screen: i32 = SCREEN_MENU
+    local menu_state: menu.State = menu.new()
+    local heist: game_screen.State = game_screen.new()
     local assets: presentation_resources.State = presentation_resources.new()
 
     local function load_assets_async(): i32
@@ -60,219 +30,74 @@ function install_arcane_heist(): unit
     end
 
     local function load(): unit
-        -- No reseed: the host seeds math.random per instance, so each run
-        -- deals a different shuffle. sim.test.walu pins its own seeds.
-        reset_run(rules, ui, presentation)
         local loader: thread = coroutine.create(load_assets_async)
         coroutine.resume(loader)
     end
 
+    -- The begin gesture doubles as the browser audio unlock. No reseed: the
+    -- host seeds math.random per instance, so each heist deals a different
+    -- shuffle. sim.test.walu pins its own seeds.
+    local function begin_heist(): unit
+        if not presentation_resources.unlock_audio(assets) then return end
+        game_screen.reset(heist)
+        screen = SCREEN_GAME
+    end
+
+    local function leave_heist(): unit
+        menu.reset(menu_state)
+        screen = SCREEN_MENU
+    end
+
     local function update(dt: f64, input: engine.Input): unit
-        if not presentation_resources.can_update(assets) then return end
-        local animating: bool = choreography.is_animating(presentation)
-        choreography.update_fan(presentation, flow.fan_focus(ui, animating), dt)
-        choreography.update_power(presentation, dt)
-        local cues: i32 = 0
-        if ui.revealing then
-            local clocks: {f64} = flow.update_reveal(ui, dt)
-            cues = choreography.reveal_flip_cues(clocks[0], clocks[1])
-        elseif ui.modal == flow.modal_none then
-            cues = choreography.update(presentation, dt)
+        if screen == SCREEN_MENU then
+            menu.update(menu_state, dt)
+            return
         end
-        play_flip_cues(assets, cues)
+        if not presentation_resources.can_update(assets) then return end
+        play_flip_cues(assets, game_screen.update(heist, dt))
     end
 
     local function draw(graphics: engine.Graphics, alpha: f64): unit
         presentation_resources.prepare(assets, graphics)
         if presentation_resources.draw_failure(assets, graphics) then return end
-        choreography.draw(
-            graphics,
-            assets.effects,
-            game.view(rules),
-            presentation,
-            {
-                hand_focus = flow.fan_focus(
-                    ui, choreography.is_animating(presentation)),
-                ward_cursor = ui.ward_cursor,
-                cursor_area = ui.cursor_area,
-                play_picks = ui.play_picks,
-                swap_hand = ui.swap_hand,
-                swap_wards = ui.swap_wards,
-                modal = ui.modal,
-                revealing = ui.revealing,
-                reveal_clock = ui.reveal_clock,
-            },
-            assets.texture
-        )
-        presentation_resources.draw_audio_prompt(assets, graphics)
-    end
-
-    local function submit_swap(): unit
-        local outcome: game.FeintOutcome?
-        if #ui.swap_hand == 0 and #ui.swap_wards == 0 then
-            outcome = rules:resolve_swap({}, {})
-        elseif #ui.swap_hand ~= #ui.swap_wards or #ui.swap_hand > rules:sparks() then
+        if screen == SCREEN_MENU then
+            menu.draw(menu_state, graphics, assets.effects, assets.sound_finished)
             return
-        else
-            outcome = rules:resolve_swap(ui.swap_hand, ui.swap_wards)
         end
-        flow.clear_picks(ui)
-        if outcome ~= nil then
-            choreography.feint(outcome::game.FeintOutcome, presentation)
-        end
+        game_screen.draw(heist, graphics, assets.effects, assets.texture)
     end
 
-    local function submit_breach(): unit
-        if #ui.play_picks ~= 2 then return end
-        local trick: game.Trick? = rules:play(ui.play_picks[0], ui.play_picks[1])
-        if trick == nil then return end
-        choreography.record_burned_losers(presentation, trick::game.Trick)
-        flow.begin_reveal(ui)
-    end
-
-    local function consume_gate(command: i32): bool
-        local result: i32 = flow.gate(
-            ui, rules:is_finished(), choreography.is_animating(presentation), command)
-        if result == flow.result_live then return false end
-        if result == flow.result_reset then
-            reset_run(rules, ui, presentation)
-        elseif result == flow.result_refill then
-            local trick: game.Trick? = rules:last_trick()
-            if trick ~= nil then
-                choreography.resolved_breach_cleanup(
-                    game.view(rules), trick::game.Trick, presentation)
-            end
-        elseif result == flow.result_skip then
-            choreography.skip(presentation)
-        end
-        return true
-    end
-
-    -- TODO(waluau-language): Exhaustive enums and pattern matching for host key
-    -- values would replace this string ladder and make unmapped controls a
-    -- compile-time decision shared by every input adapter.
     local function keypressed(key: string): unit
         if #assets.fatal_audio_code > 0 then return end
-        if not presentation_resources.unlock_audio(assets) then return end
-        local power: i32 = power_for_key(key)
-        if power >= 0 then
-            if ui.modal ~= flow.modal_none or ui.revealing or rules:is_finished() then return end
-            -- The preview controls should respond on the first gesture. If the
-            -- opening deal is still running, settle it before the projectile
-            -- launches so the target ward is visibly present for the impact.
-            if power > 0 and choreography.is_animating(presentation) then
-                choreography.skip(presentation)
+        if screen == SCREEN_MENU then
+            if menu.keypressed(menu_state, key) == menu.action_start then
+                begin_heist()
             end
-            choreography.apply_power(presentation, power)
             return
         end
-        if consume_gate(key_command(key)) then return end
-
-        if key == "ArrowLeft" or key == "a" then
-            if ui.cursor_area == flow.cursor_hand then
-                ui.hand_cursor -= 1
-                if ui.hand_cursor < 0 then ui.hand_cursor = 4 end
-            else
-                ui.ward_cursor -= 1
-                if ui.ward_cursor < 0 then ui.ward_cursor = 2 end
-            end
-        elseif key == "ArrowRight" or key == "d" then
-            if ui.cursor_area == flow.cursor_hand then
-                ui.hand_cursor = (ui.hand_cursor + 1) % 5
-            else
-                ui.ward_cursor = (ui.ward_cursor + 1) % 3
-            end
-        elseif rules:feint_open() and (
-            key == "ArrowUp" or key == "ArrowDown" or key == "w" or key == "s"
-        ) then
-            ui.cursor_area = 1 - ui.cursor_area
-        elseif key == " " then
-            if rules:feint_open() then
-                if ui.cursor_area == flow.cursor_hand then
-                    flow.toggle(ui.swap_hand, ui.hand_cursor, 3)
-                else
-                    flow.toggle(ui.swap_wards, ui.ward_cursor, 3)
-                end
-            else
-                flow.toggle(ui.play_picks, ui.hand_cursor, 2)
-            end
-        elseif key == "c" or key == "C" then
-            local order: {i32} = rules:sort_player_hand(true)
-            flow.apply_hand_order(ui, order)
-            choreography.apply_hand_order(presentation, order)
-        elseif key == "v" or key == "V" then
-            local order: {i32} = rules:sort_player_hand(false)
-            flow.apply_hand_order(ui, order)
-            choreography.apply_hand_order(presentation, order)
-        elseif key == "p" or key == "P" then
-            if rules:feint_open() then
-                ui.swap_hand = {}
-                ui.swap_wards = {}
-                submit_swap()
-            end
-        elseif key == "Enter" then
-            if rules:feint_open() then submit_swap() else submit_breach() end
+        if game_screen.keypressed(heist, key) == game_screen.action_exit then
+            leave_heist()
         end
     end
 
     local function mousemoved(x: f64, y: f64, dx: f64, dy: f64): unit
-        if #assets.fatal_audio_code > 0 or not assets.audio_unlocked then return end
-        if flow.gate(
-            ui, rules:is_finished(), choreography.is_animating(presentation),
-            flow.command_none
-        ) ~= flow.result_live then return end
-        local at: render.Point = render.point(x, y)
-        local hand: i32 = choreography.hit_hand(presentation, at)
-        if hand >= 0 then
-            ui.cursor_area = flow.cursor_hand
-            ui.hand_cursor = hand
+        if #assets.fatal_audio_code > 0 then return end
+        if screen == SCREEN_MENU then
+            menu.mousemoved(menu_state, x, y)
             return
         end
-        if rules:feint_open() then
-            local ward: i32 = render.hit_ward(at)
-            if ward >= 0 then
-                ui.cursor_area = flow.cursor_wards
-                ui.ward_cursor = ward
-            end
-        end
+        game_screen.mousemoved(heist, x, y)
     end
 
     local function mousepressed(x: f64, y: f64, button: i32): unit
-        if button ~= 1 or #assets.fatal_audio_code > 0 then return end
-        if not presentation_resources.unlock_audio(assets) then return end
-        if consume_gate(flow.command_primary) then return end
-
-        local at: render.Point = render.point(x, y)
-        if render.hit_help(at) then
-            flow.gate(ui, rules:is_finished(), false, flow.command_help)
+        if #assets.fatal_audio_code > 0 then return end
+        if screen == SCREEN_MENU then
+            if menu.mousepressed(menu_state, x, y, button) == menu.action_start then
+                begin_heist()
+            end
             return
         end
-        local hand: i32 = choreography.hit_hand(presentation, at)
-        if hand >= 0 then
-            ui.cursor_area = flow.cursor_hand
-            ui.hand_cursor = hand
-            if rules:feint_open() then flow.toggle(ui.swap_hand, hand, 3)
-            else flow.toggle(ui.play_picks, hand, 2) end
-            return
-        end
-        if rules:feint_open() then
-            local ward: i32 = render.hit_ward(at)
-            if ward >= 0 then
-                ui.cursor_area = flow.cursor_wards
-                ui.ward_cursor = ward
-                flow.toggle(ui.swap_wards, ward, 3)
-                return
-            end
-            if render.hit_pass(at) then
-                ui.swap_hand = {}
-                ui.swap_wards = {}
-                submit_swap()
-                return
-            end
-        end
-        if render.hit_commit(at, rules:feint_open()) then
-            if rules:feint_open() then submit_swap() else submit_breach() end
-        end
+        game_screen.mousepressed(heist, x, y, button)
     end
 
     local session: engine.Session? = engine.start({
@@ -295,28 +120,32 @@ function install_arcane_heist(): unit
 
     hot.register({
         snapshot = function(): string
-            return snapshot_data.frame3(
+            local sections: {string} = game_screen.snapshot(heist)
+            return snapshot_data.frame4(
                 HOT_SNAPSHOT_SCHEMA,
-                game.snapshot(rules),
-                flow.snapshot(ui),
-                choreography.snapshot(presentation)
+                tostring(screen),
+                sections[0],
+                sections[1],
+                sections[2]
             )
         end,
         restore = function(snapshot_value: string): bool
-            local sections: {string}? = snapshot_data.unframe3(
+            local sections: {string}? = snapshot_data.unframe4(
                 snapshot_value, HOT_SNAPSHOT_SCHEMA)
             if sections == nil then return false end
             local payloads: {string} = sections::{string}
-            local restored_rules: game.State? = game.restore(payloads[0])
-            local restored_ui: flow.State? = flow.restore(payloads[1])
-            local restored_presentation: choreography.State? = choreography.restore(
-                payloads[2])
-            if restored_rules == nil then return false end
-            if restored_ui == nil then return false end
-            if restored_presentation == nil then return false end
-            rules = restored_rules
-            ui = restored_ui
-            presentation = restored_presentation
+            local screen_token: f64? = tonumber(payloads[0])
+            if screen_token == nil then return false end
+            local restored_screen: i32 = (screen_token::f64)::i32
+            if restored_screen ~= SCREEN_MENU and restored_screen ~= SCREEN_GAME then
+                return false
+            end
+            local restored: game_screen.State? = game_screen.restore(
+                payloads[1], payloads[2], payloads[3])
+            if restored == nil then return false end
+            heist = restored::game_screen.State
+            menu.reset(menu_state)
+            screen = restored_screen
             return true
         end,
         dispose = function(): unit

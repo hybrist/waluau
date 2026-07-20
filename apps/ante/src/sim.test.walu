@@ -344,28 +344,29 @@ describe("Arcane Heist development snapshots", function()
         expect(game.restore(encoded .. ",unexpected") == nil):toBe(true)
     end)
 
-    it("frames rules, flow, and presentation payloads atomically", function()
+    it("frames screen, rules, flow, and presentation payloads atomically", function()
         local rules: game.State = game.new()
         local ui: flow.State = flow.new()
         ui.modal = flow.modal_help
 
         local encoded_flow: string = flow.snapshot(ui)
-        local framed: string = snapshot_data.frame3(
-            "ante-test-frame", game.snapshot(rules), encoded_flow, "presentation")
-        local sections: {string}? = snapshot_data.unframe3(framed, "ante-test-frame")
+        local framed: string = snapshot_data.frame4(
+            "ante-test-frame", "1", game.snapshot(rules), encoded_flow, "presentation")
+        local sections: {string}? = snapshot_data.unframe4(framed, "ante-test-frame")
         expect(sections == nil):toBe(false)
         if sections ~= nil then
             local payloads: {string} = sections
-            local restored_rules: game.State? = game.restore(payloads[0])
-            local restored_ui: flow.State? = flow.restore(payloads[1])
+            expect(payloads[0]):toBe("1")
+            local restored_rules: game.State? = game.restore(payloads[1])
+            local restored_ui: flow.State? = flow.restore(payloads[2])
             expect(restored_rules == nil):toBe(false)
             expect(restored_ui == nil):toBe(false)
-            expect(payloads[2]):toBe("presentation")
+            expect(payloads[3]):toBe("presentation")
             if restored_ui ~= nil then expect(restored_ui.modal):toBe(flow.modal_help) end
         end
 
-        expect(snapshot_data.unframe3(framed, "wrong-schema") == nil):toBe(true)
-        expect(snapshot_data.unframe3(framed .. "|extra", "ante-test-frame") == nil):toBe(true)
+        expect(snapshot_data.unframe4(framed, "wrong-schema") == nil):toBe(true)
+        expect(snapshot_data.unframe4(framed .. "|extra", "ante-test-frame") == nil):toBe(true)
     end)
 end)
 
