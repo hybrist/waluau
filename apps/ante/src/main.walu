@@ -6,6 +6,7 @@ local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
 local resources = require("waluau:engine/resources")
 local audio = require("waluau:engine/audio")
+local hot = require("waluau:engine/hot")
 local game = require("./game")
 local render = require("./render")
 
@@ -50,6 +51,7 @@ type Ui = {
     -- cards land on it.
     discards: {game.Card}
 }
+type UiSnapshotReader = { tokens: {string}, index: i32, ok: bool }
 
 const MODAL_NONE: i32 = 0
 const MODAL_HISTORY: i32 = 1
@@ -118,6 +120,9 @@ const SCOOP_CARRY_SECONDS: f64 = 0.4
 -- before the replacement deals begin.
 const SHIFT_SECONDS: f64 = 0.45
 const SHIFT_STEP: f64 = 0.05
+const HOT_SNAPSHOT_SCHEMA: string = "ante-hmr-v1"
+const UI_SNAPSHOT_SCHEMA: string = "ante-ui-v1"
+const UI_SNAPSHOT_COLLECTION_LIMIT: i32 = 256
 
 function contains(picks: {i32}, value: i32): bool
     for pick in picks do
@@ -622,6 +627,158 @@ function reset_run(state: game.State, ui: Ui): unit
     queue_initial_deal(state, ui)
 end
 
+function append_snapshot_i32(parts: {string}, value: i32): unit
+    table.insert(parts, tostring(value))
+end
+
+function append_snapshot_bool(parts: {string}, value: bool): unit
+    if value then table.insert(parts, "1") else table.insert(parts, "0") end
+end
+
+function append_snapshot_indices(parts: {string}, values: {i32}): unit
+    append_snapshot_i32(parts, #values)
+    for value in values do append_snapshot_i32(parts, value) end
+end
+
+function append_snapshot_f64s(parts: {string}, values: {f64}): unit
+    append_snapshot_i32(parts, #values)
+    for value in values do table.insert(parts, tostring(value)) end
+end
+
+function append_snapshot_cards(parts: {string}, cards: {game.Card}): unit
+    append_snapshot_i32(parts, #cards)
+    for card in cards do
+        append_snapshot_i32(parts, card.rank)
+        append_snapshot_i32(parts, card.suit)
+    end
+end
+
+function snapshot_ui(ui: Ui): string
+    local parts: {string} = { UI_SNAPSHOT_SCHEMA }
+    append_snapshot_i32(parts, ui.hand_cursor)
+    append_snapshot_i32(parts, ui.ward_cursor)
+    append_snapshot_i32(parts, ui.cursor_area)
+    append_snapshot_indices(parts, ui.play_picks)
+    append_snapshot_indices(parts, ui.swap_hand)
+    append_snapshot_indices(parts, ui.swap_wards)
+    append_snapshot_i32(parts, ui.modal)
+    append_snapshot_bool(parts, ui.revealing)
+    table.insert(parts, tostring(ui.reveal_clock))
+    append_snapshot_f64s(parts, ui.fan_parts)
+    append_snapshot_cards(parts, ui.discards)
+    return table.concat(parts, ",")
+end
+
+function ui_snapshot_reader(value: string): UiSnapshotReader
+    return { tokens = string.split(value, ","), index = 0, ok = true }
+end
+
+function UiSnapshotReader:next_string(): string
+    if not self.ok or self.index >= #self.tokens then
+        self.ok = false
+        return ""
+    end
+    local value: string = self.tokens[self.index]
+    self.index += 1
+    return value
+end
+
+function UiSnapshotReader:next_f64(): f64
+    local text: string = self:next_string()
+    if not self.ok then return 0.0 end
+    local parsed: f64? = tonumber(text)
+    if parsed == nil then
+        self.ok = false
+        return 0.0
+    end
+    return parsed::f64
+end
+
+function UiSnapshotReader:next_i32(): i32
+    local decimal: f64 = self:next_f64()
+    local value: i32 = decimal::i32
+    if self.ok and (value::f64) ~= decimal then self.ok = false end
+    return value
+end
+
+function UiSnapshotReader:next_bool(): bool
+    local value: i32 = self:next_i32()
+    if not self.ok then return false end
+    if value == 1 then return true end
+    if value ~= 0 then self.ok = false end
+    return false
+end
+
+function UiSnapshotReader:next_length(): i32
+    local length: i32 = self:next_i32()
+    if length < 0 or length > UI_SNAPSHOT_COLLECTION_LIMIT then
+        self.ok = false
+        return 0
+    end
+    return length
+end
+
+function UiSnapshotReader:next_indices(): {i32}
+    local values: {i32} = {}
+    local length: i32 = self:next_length()
+    for _ = 1, length do table.insert(values, self:next_i32()) end
+    return values
+end
+
+function UiSnapshotReader:next_f64s(): {f64}
+    local values: {f64} = {}
+    local length: i32 = self:next_length()
+    for _ = 1, length do table.insert(values, self:next_f64()) end
+    return values
+end
+
+function UiSnapshotReader:next_cards(): {game.Card}
+    local cards: {game.Card} = {}
+    local length: i32 = self:next_length()
+    for _ = 1, length do
+        table.insert(cards, { rank = self:next_i32(), suit = self:next_i32() })
+    end
+    return cards
+end
+
+function restore_ui(snapshot_value: string): Ui?
+    local reader: UiSnapshotReader = ui_snapshot_reader(snapshot_value)
+    if reader:next_string() ~= UI_SNAPSHOT_SCHEMA then return nil end
+    local hand_cursor: i32 = reader:next_i32()
+    local ward_cursor: i32 = reader:next_i32()
+    local cursor_area: i32 = reader:next_i32()
+    local play_picks: {i32} = reader:next_indices()
+    local swap_hand: {i32} = reader:next_indices()
+    local swap_wards: {i32} = reader:next_indices()
+    local modal: i32 = reader:next_i32()
+    local revealing: bool = reader:next_bool()
+    local reveal_clock: f64 = reader:next_f64()
+    local fan_parts: {f64} = reader:next_f64s()
+    local discards: {game.Card} = reader:next_cards()
+    if not reader.ok or reader.index ~= #reader.tokens then return nil end
+    local restored: Ui = {
+        hand_cursor = hand_cursor,
+        ward_cursor = ward_cursor,
+        cursor_area = cursor_area,
+        play_picks = play_picks,
+        swap_hand = swap_hand,
+        swap_wards = swap_wards,
+        modal = modal,
+        revealing = revealing,
+        reveal_clock = reveal_clock,
+        fan_parts = fan_parts,
+        -- Animation records describe resources and geometry owned by the old
+        -- module. The rules state already contains their final result, so a
+        -- replacement resumes from that settled frame.
+        anims = {},
+        anim_clock = 0.0,
+        anim_total = 0.0,
+        anim_kind = ANIM_NONE,
+        discards = discards,
+    }
+    return restored
+end
+
 function install_arcane_heist(): unit
     local state: game.State = game.new()
     local assets: AssetState = {
@@ -1017,7 +1174,7 @@ function install_arcane_heist(): unit
         end
     end
 
-    engine.start({
+    local session: engine.Session? = engine.start({
         title = "Arcane Heist",
         width = 960,
         height = 600,
@@ -1033,6 +1190,33 @@ function install_arcane_heist(): unit
         mousepressed = mousepressed,
         mousereleased = nil,
         mousemoved = mousemoved,
+    })
+
+    hot.register({
+        snapshot = function(): string
+            return HOT_SNAPSHOT_SCHEMA .. "|" .. game.snapshot(state) .. "|" .. snapshot_ui(ui)
+        end,
+        restore = function(snapshot_value: string): bool
+            local sections: {string} = string.split(snapshot_value, "|")
+            if #sections ~= 3 or sections[0] ~= HOT_SNAPSHOT_SCHEMA then return false end
+            local restored_state: game.State? = game.restore(sections[1])
+            local restored_ui: Ui? = restore_ui(sections[2])
+            if restored_state == nil then return false end
+            if restored_ui == nil then return false end
+            state = restored_state
+            ui = restored_ui
+            return true
+        end,
+        dispose = function(): unit
+            local running: engine.Session? = session
+            if running ~= nil then
+                (running::engine.Session).suspend()
+                session = nil
+            end
+            if assets.image_source.handle ~= 0 then resources.release(assets.image_source) end
+            if assets.font_source.handle ~= 0 then resources.release(assets.font_source) end
+            if assets.flip_sound.handle ~= 0 then resources.release(assets.flip_sound) end
+        end,
     })
 end
 

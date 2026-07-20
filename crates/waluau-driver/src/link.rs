@@ -413,6 +413,7 @@ fn engine_module_name(specifier: &str) -> Option<&str> {
         "waluau:engine/audio" | "waluau:engine/v1/audio" => Some("audio"),
         "waluau:engine/time" | "waluau:engine/v1/time" => Some("time"),
         "waluau:engine/font" | "waluau:engine/v1/font" => Some("font"),
+        "waluau:engine/hot" | "waluau:engine/v1/hot" => Some("hot"),
         _ => None,
     }
 }
@@ -443,6 +444,7 @@ fn engine_module_source(module: &str) -> Option<&'static str> {
         "audio" => Some(include_str!("../../../engine/audio.walu")),
         "time" => Some(include_str!("../../../engine/time.walu")),
         "font" => Some(include_str!("../../../engine/font.walu")),
+        "hot" => Some(include_str!("../../../engine/hot.walu")),
         _ => None,
     }
 }

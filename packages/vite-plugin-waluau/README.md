@@ -26,6 +26,63 @@ The same file can be imported from JavaScript with
 without the viewport styles. Outside the Waluau repository, install the
 `waluau` compiler binary or pass a custom `compiler` command.
 
+## Development hot replacement
+
+When Vite recompiles a running game, the plugin can replace its Wasm instance
+without reloading the page. A game opts in by registering three closures:
+
+```walu
+local engine = require("waluau:engine")
+local hot = require("waluau:engine/hot")
+local session: engine.Session? = nil
+local score: i32 = 0
+
+session = engine.start(config, callbacks)
+
+hot.register({
+    snapshot = function(): string
+        return "my-game:v1:" .. tostring(score)
+    end,
+    restore = function(snapshot: string): bool
+        const prefix: string = "my-game:v1:"
+        if string.sub(snapshot, 1, #prefix) ~= prefix then return false end
+        local restored: f64? = tonumber(string.sub(snapshot, #prefix + 1))
+        if restored == nil then return false end
+        score = (restored::f64)::i32
+        return true
+    end,
+    dispose = function(): unit
+        local running: engine.Session? = session
+        if running ~= nil then
+            running.suspend()
+            session = nil
+        end
+    end,
+})
+```
+
+The plugin captures the old snapshot, disposes its browser loop, starts the
+new Wasm module, and passes the snapshot to the registered restore closure.
+The snapshot must be a self-contained string; include a schema or build marker
+and return `false` when the new code cannot safely interpret it. Missing
+registration, capture or startup errors, non-string snapshots, and rejected
+or failed restores all fall back to a full page reload.
+
+This is transient development state. The plugin never writes it to storage and
+does not promise long-term compatibility. Use the engine save-data service for
+player saves. Production builds accept the registration as an inert no-op.
+
+The plugin keeps one stateful compiler process alive for the Vite lifecycle.
+Repeated builds reuse the compiler session's module parse cache instead of
+starting `waluau` (or `cargo run`) for every edit. Changes to embedded engine,
+builtin, extern, or Rust compiler sources restart that process deliberately so
+the next build incorporates the new compiler inputs. Inside this repository,
+the host uses Cargo's optimized release profile so development rebuilds do not
+pay debug-build execution costs. A custom compiler command
+keeps its historical one-process-per-build behavior unless configured with
+`compiler: { command, args, persistent: true }`; persistent commands must
+implement the `waluau --server` newline-delimited JSON protocol.
+
 ## Packaged assets
 
 Pass a version-1 `waluau.assets.json` file through the `manifest` option to

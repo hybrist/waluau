@@ -25,7 +25,7 @@ end
 local function draw(graphics: engine.Graphics, alpha: f64): unit
 end
 
-engine.start({
+local session: engine.Session = engine.start({
     title = "My game",
     width = 640,
     height = 360,
@@ -39,6 +39,9 @@ engine.start({
     keypressed = keypressed,
     keyreleased = keyreleased,
 })
+
+-- Stops the animation loop and unregisters browser input listeners.
+session.stop()
 ```
 
 ## Package and version contract
@@ -47,9 +50,9 @@ The compiler embeds the engine sources. `waluau:engine` selects the current
 stable major version and `waluau:engine/v1` pins major version 1. Both expose
 the same aggregate facade:
 
-- `VERSION`: the semantic API version (`1.0.0`)
+- `VERSION`: the semantic API version (`1.2.0`)
 - `start`: the browser lifecycle entry point
-- `Config`, `Game`, `Input`, and `Graphics`: canonical public types
+- `Config`, `Game`, `Session`, `Input`, and `Graphics`: canonical public types
 
 Aggregate type exports are identity-preserving aliases. For example,
 `engine.Input`, `input.Input`, and the `Input` accepted inside the browser
@@ -65,6 +68,7 @@ Subsystem modules remain supported for focused and host-independent programs:
 | `waluau:engine/audio` | `waluau:engine/v1/audio` | decoded effects, streamed music, and playback control |
 | `waluau:engine/time` | `waluau:engine/v1/time` | deterministic fixed-step clock |
 | `waluau:engine/browser` | `waluau:engine/v1/browser` | browser lifecycle adapter |
+| `waluau:engine/hot` | `waluau:engine/v1/hot` | development snapshot/restore registration |
 
 Relative imports remain valid for engine development, but applications should
 use package imports. See [`examples/game-project`](../examples/game-project/)
@@ -117,6 +121,11 @@ end
 required. Updates use a fixed timestep. Drawing happens once per animation
 frame and receives an interpolation alpha in `[0, 1)`. Long frame delays are
 clamped by `max_frame_seconds` to avoid an unbounded catch-up loop.
+`start` returns a `Session`; `Session.stop()` is idempotent and releases the
+browser lifecycle registrations and mounted root owned by that run. Development
+hot replacement uses `Session.suspend()` through a game's
+`waluau:engine/hot` dispose closure; it releases the callbacks while keeping
+the last frame mounted until the replacement presents its first frame.
 
 ## Porting a simple game
 

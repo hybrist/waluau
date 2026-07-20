@@ -4,6 +4,7 @@
   "type": "module",
   "exports": {
     ".": "./index.js",
+    "./hot": "./hot.js",
     "./runtime": "./runtime.js",
     "./testing": "./testing.js"
   },

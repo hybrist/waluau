@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use waluau_diagnostics::Diagnostic;
 
 mod link;
@@ -148,6 +148,17 @@ pub fn run_with_args<I>(args: I) -> Result<(), Vec<Diagnostic>>
 where
     I: IntoIterator<Item = OsString>,
 {
+    let mut session = session::CompilerSession::new();
+    run_with_session_args(&mut session, args)
+}
+
+fn run_with_session_args<I>(
+    session: &mut session::CompilerSession,
+    args: I,
+) -> Result<(), Vec<Diagnostic>>
+where
+    I: IntoIterator<Item = OsString>,
+{
     let options = parse_args(args).map_err(|error| vec![error])?;
     if options.manifest.is_some() && !options.emit_js {
         return Err(vec![Diagnostic::new("--manifest requires --emit-js")]);
@@ -171,7 +182,6 @@ where
         .as_ref()
         .map(|package| &package.generated)
         .unwrap_or_else(|| empty_asset_manifest());
-    let mut session = session::CompilerSession::new();
     let outcome = session.build_root_with_assets(&options.input, wasm_file_name, assets);
     if let Some(report_path) = &options.report {
         write_build_report(report_path, &outcome).map_err(|error| vec![error])?;
@@ -194,6 +204,74 @@ where
         package.write_to(output_dir).map_err(|error| vec![error])?;
     }
     Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CompilerServerRequest {
+    id: u64,
+    args: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CompilerServerResponse {
+    id: u64,
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    parses_performed: usize,
+    cached_parse_count: usize,
+}
+
+/// Serve repeated CLI-compatible builds over newline-delimited JSON.
+///
+/// Each request is `{ "id": number, "args": string[] }`; each response uses
+/// the same id and reports success plus session cache counters. The process
+/// retains one [`CompilerSession`] until stdin closes, allowing Vite and other
+/// build hosts to reuse parsed modules without embedding the compiler.
+pub fn run_server(
+    mut input: impl std::io::BufRead,
+    mut output: impl std::io::Write,
+) -> Result<(), Diagnostic> {
+    let mut session = session::CompilerSession::new();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let bytes_read = input
+            .read_line(&mut line)
+            .map_err(|error| Diagnostic::new(format!("read compiler server request: {error}")))?;
+        if bytes_read == 0 {
+            return Ok(());
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        let request: CompilerServerRequest = serde_json::from_str(&line).map_err(|error| {
+            Diagnostic::new(format!("invalid compiler server request: {error}"))
+        })?;
+        let result =
+            run_with_session_args(&mut session, request.args.into_iter().map(OsString::from));
+        let response = CompilerServerResponse {
+            id: request.id,
+            ok: result.is_ok(),
+            error: result.err().map(|diagnostics| {
+                diagnostics
+                    .iter()
+                    .map(Diagnostic::render)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }),
+            parses_performed: session.parses_performed(),
+            cached_parse_count: session.cached_parse_count(),
+        };
+        serde_json::to_writer(&mut output, &response)
+            .map_err(|error| Diagnostic::new(format!("write compiler server response: {error}")))?;
+        output
+            .write_all(b"\n")
+            .and_then(|()| output.flush())
+            .map_err(|error| Diagnostic::new(format!("flush compiler server response: {error}")))?;
+    }
 }
 
 /// Write the machine-readable build report consumed by build integrations
@@ -1186,6 +1264,49 @@ mod tests {
     }
 
     #[test]
+    fn compiler_server_reuses_one_session_across_build_requests() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        let input = tempdir.path().join("main.walu");
+        let output = tempdir.path().join("game.wasm");
+        let report = tempdir.path().join("report.json");
+        fs::write(&input, "local answer: i32 = 42\n").expect("source should write");
+        let args = vec![
+            input.display().to_string(),
+            "-o".to_string(),
+            output.display().to_string(),
+            "--emit-js".to_string(),
+            "--report".to_string(),
+            report.display().to_string(),
+        ];
+        let requests = format!(
+            "{}\n{}\n",
+            serde_json::json!({ "id": 1, "args": args }),
+            serde_json::json!({ "id": 2, "args": args }),
+        );
+        let mut responses = Vec::new();
+
+        super::run_server(std::io::Cursor::new(requests), &mut responses)
+            .expect("compiler server should complete");
+
+        let responses = String::from_utf8(responses).expect("responses should be UTF-8");
+        let parsed: Vec<serde_json::Value> = responses
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("response should be JSON"))
+            .collect();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0]["ok"], true);
+        assert_eq!(parsed[1]["ok"], true);
+        assert_eq!(parsed[0]["parsesPerformed"], 1);
+        assert_eq!(
+            parsed[1]["parsesPerformed"], 1,
+            "the unchanged second build should reuse the cached parse"
+        );
+        assert_eq!(parsed[1]["cachedParseCount"], 1);
+        assert!(output.exists());
+        assert!(output.with_extension("js").exists());
+    }
+
+    #[test]
     fn cli_writes_default_output_file() {
         let tempdir = tempdir().expect("tempdir should exist");
         let input_path = tempdir.path().join("add.walu");
@@ -1577,8 +1698,17 @@ mod tests {
         )
         .expect("external project entry should write");
 
-        super::compile_file(&entry)
+        let wasm = super::compile_file(&entry)
             .expect("embedded engine package and its re-exported callback types should compile");
+        let wat = wasmprinter::print_bytes(&wasm).expect("game package Wasm should print");
+        assert!(
+            wat.contains(r#"(import "waluau" "__waluau_hmr_register""#),
+            "hot registration should use the development host bridge:\n{wat}"
+        );
+        assert!(
+            wat.contains(r#"(export "__waluau_call_callback_unit""#),
+            "hot registration closures should emit the unit callback trampoline:\n{wat}"
+        );
     }
 
     #[test]
