@@ -5,6 +5,7 @@ members = [
     "crates/waluau-span",
     "crates/waluau-diagnostics",
     "crates/waluau-ast",
+    "crates/waluau-fmt",
     "crates/waluau-lexer",
     "crates/waluau-parser",
     "crates/waluau-hir",
@@ -28,6 +29,7 @@ waluau-cli = { path = "crates/waluau-cli" }
 waluau-codegen-wasm = { path = "crates/waluau-codegen-wasm" }
 waluau-diagnostics = { path = "crates/waluau-diagnostics" }
 waluau-driver = { path = "crates/waluau-driver" }
+waluau-fmt = { path = "crates/waluau-fmt" }
 waluau-hir = { path = "crates/waluau-hir" }
 waluau-ir = { path = "crates/waluau-ir" }
 waluau-lexer = { path = "crates/waluau-lexer" }
