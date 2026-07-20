@@ -1197,12 +1197,10 @@ end
 -- draw pile. count is how many cards have visibly arrived; the top card is read
 -- from the same ledger, so a scoop still in the air leaves both the thickness
 -- and the face showing exactly what the table last saw. The stack's shadow
--- steps left, away from the board edge, and the count sits above the card:
--- the three piles stack close enough down the right edge that a label beneath
--- each would collide with the pile below, so every right-edge count labels up
--- into the gap over its card. `tint` colours the count in the owning side's
--- hue, matching the round orbs and the breach/hold banners.
-function draw_pile(graphics: Graphics, effects: EffectShaders, cards: {game.Card}, count: i32, kind: i32, label: string, tint: string): unit
+-- steps left, away from the board edge. The piles carry no count label: which
+-- side each belongs to is clear from its place on the board, and the round orbs
+-- already tally the run.
+function draw_pile(graphics: Graphics, effects: EffectShaders, cards: {game.Card}, count: i32, kind: i32): unit
     if count <= 0 then return end
     local x: f64 = slot_x(kind, 0)
     local y: f64 = slot_y(kind, 0)
@@ -1210,17 +1208,15 @@ function draw_pile(graphics: Graphics, effects: EffectShaders, cards: {game.Card
     if count > 6 then panel(graphics, x - 3.0, y + 3.0, CARD_W, CARD_H, "#17171c", "#3f3f46") end
     panel(graphics, x, y, CARD_W, CARD_H, "#17171c", "#52525b")
     draw_card_face(graphics, effects, cards[count - 1], x, y, false, false)
-    text_centered(graphics, tostring(count) .. " " .. label, x + CARD_W * 0.5, y - 12.0, 10, tint)
 end
 
--- Draws whichever of the three right-edge piles hold cards. The won piles carry
--- the owning side's hue; the burn pile stays the neutral grey of spent history.
--- Each pile's count is how many of its cards have visibly landed — the ledger
--- total minus the scoop legs still in the air (see pile_landed).
+-- Draws whichever of the three right-edge piles hold cards. Each pile's count is
+-- how many of its cards have visibly landed — the ledger total minus the scoop
+-- legs still in the air (see pile_landed).
 function draw_piles(graphics: Graphics, effects: EffectShaders, discards: {game.Card}, discard_count: i32, computer_won: {game.Card}, computer_won_count: i32, player_won: {game.Card}, player_won_count: i32): unit
-    draw_pile(graphics, effects, computer_won, computer_won_count, SLOT_COMPUTER_WON, "HELD", ORB_ARCH_MAGE_FILL)
-    draw_pile(graphics, effects, discards, discard_count, SLOT_ASIDE, "BURNED", "#8a8a92")
-    draw_pile(graphics, effects, player_won, player_won_count, SLOT_PLAYER_WON, "WON", ORB_ROBBERS_FILL)
+    draw_pile(graphics, effects, computer_won, computer_won_count, SLOT_COMPUTER_WON)
+    draw_pile(graphics, effects, discards, discard_count, SLOT_ASIDE)
+    draw_pile(graphics, effects, player_won, player_won_count, SLOT_PLAYER_WON)
 end
 
 -- How many of a pile's cards have actually arrived: the ledger's total minus
