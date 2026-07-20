@@ -40,6 +40,15 @@ function key_command(key: string): i32
     return flow.command_none
 end
 
+function power_for_key(key: string): i32
+    if key == "0" then return 0 end
+    if key == "1" then return 1 end
+    if key == "2" then return 2 end
+    if key == "3" then return 3 end
+    if key == "4" then return 4 end
+    return -1
+end
+
 function install_arcane_heist(): unit
     local rules: game.State = game.new()
     local ui: flow.State = flow.new()
@@ -62,6 +71,7 @@ function install_arcane_heist(): unit
         if not presentation_resources.can_update(assets) then return end
         local animating: bool = choreography.is_animating(presentation)
         choreography.update_fan(presentation, flow.fan_focus(ui, animating), dt)
+        choreography.update_power(presentation, dt)
         local cues: i32 = 0
         if ui.revealing then
             local clocks: {f64} = flow.update_reveal(ui, dt)
@@ -144,6 +154,18 @@ function install_arcane_heist(): unit
     local function keypressed(key: string): unit
         if #assets.fatal_audio_code > 0 then return end
         if not presentation_resources.unlock_audio(assets) then return end
+        local power: i32 = power_for_key(key)
+        if power >= 0 then
+            if ui.modal ~= flow.modal_none or ui.revealing or rules:is_finished() then return end
+            -- The preview controls should respond on the first gesture. If the
+            -- opening deal is still running, settle it before the projectile
+            -- launches so the target ward is visibly present for the impact.
+            if power > 0 and choreography.is_animating(presentation) then
+                choreography.skip(presentation)
+            end
+            choreography.apply_power(presentation, power)
+            return
+        end
         if consume_gate(key_command(key)) then return end
 
         if key == "ArrowLeft" or key == "a" then

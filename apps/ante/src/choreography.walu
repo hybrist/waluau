@@ -14,6 +14,8 @@ type State = {
     anim_clock: f64,
     anim_total: f64,
     anim_kind: i32,
+    power_kind: i32,
+    power_clock: f64,
     discards: {game.Card},
     computer_won: {game.Card},
     player_won: {game.Card}
@@ -57,7 +59,7 @@ const REVEAL_FLIP_SECONDS: f64 = 0.55
 const REVEAL_FIRST_DELAY: f64 = 0.2
 const REVEAL_SECOND_DELAY: f64 = 0.585
 const FLIP_SOUND_LEAD_SECONDS: f64 = 0.14
-const SNAPSHOT_SCHEMA: string = "ante-presentation-v1"
+const SNAPSHOT_SCHEMA: string = "ante-presentation-v2"
 const SNAPSHOT_COLLECTION_LIMIT: i32 = 256
 
 function new(): State
@@ -67,6 +69,8 @@ function new(): State
         anim_clock = 0.0,
         anim_total = 0.0,
         anim_kind = ANIM_NONE,
+        power_kind = 0,
+        power_clock = 0.0,
         discards = {},
         computer_won = {},
         player_won = {},
@@ -98,9 +102,24 @@ function reset(state: State): unit
     state.anim_clock = fresh.anim_clock
     state.anim_total = fresh.anim_total
     state.anim_kind = fresh.anim_kind
+    state.power_kind = fresh.power_kind
+    state.power_clock = fresh.power_clock
     state.discards = fresh.discards
     state.computer_won = fresh.computer_won
     state.player_won = fresh.player_won
+end
+
+-- Power previews are presentation-only: 1-4 replace the prior condition on
+-- the first ward and restart its launch; zero clears the condition entirely.
+function apply_power(state: State, kind: i32): unit
+    if kind < 0 or kind > 4 then return end
+    state.power_kind = kind
+    state.power_clock = 0.0
+end
+
+function update_power(state: State, dt: f64): unit
+    if state.power_kind == 0 then return end
+    state.power_clock += dt
 end
 
 function apply_hand_order(state: State, order: {i32}): unit
@@ -477,6 +496,8 @@ end
 
 function append_snapshot(parts: {string}, state: State): unit
     snapshot_data.append_f64s(parts, state.fan_parts)
+    snapshot_data.append_i32(parts, state.power_kind)
+    snapshot_data.append_f64(parts, state.power_clock)
     append_cards(parts, state.discards)
     append_cards(parts, state.computer_won)
     append_cards(parts, state.player_won)
@@ -494,6 +515,8 @@ end
 function restore_snapshot(reader: snapshot_data.Reader): State
     local state: State = new()
     state.fan_parts = reader:next_f64s()
+    state.power_kind = reader:next_i32()
+    state.power_clock = reader:next_f64()
     state.discards = next_cards(reader)
     state.computer_won = next_cards(reader)
     state.player_won = next_cards(reader)
@@ -542,7 +565,9 @@ function draw(
         card_back,
         state.discards,
         state.computer_won,
-        state.player_won
+        state.player_won,
+        state.power_kind,
+        state.power_clock
     )
 end
 
@@ -557,6 +582,8 @@ return {
     is_animating = is_animating,
     update = update,
     update_fan = update_fan,
+    apply_power = apply_power,
+    update_power = update_power,
     apply_hand_order = apply_hand_order,
     reveal_flip_cues = reveal_flip_cues,
     opening_deal = opening_deal,

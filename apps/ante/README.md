@@ -72,6 +72,7 @@ Keyboard:
 - Enter commits a feint or breach.
 - P passes during the feint phase.
 - C sorts the relic fan by school (color); V sorts it by rank.
+- 1–4 preview Fireball, Freeze Ray, Raise Dead, and Growth on the first ward; 0 clears the preview.
 - H opens the breach ledger, ? opens help, and R restarts.
 - Enter, Space, or Esc skips a running deal or feint animation.
 
