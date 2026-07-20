@@ -1030,14 +1030,6 @@ function school_color(suit: i32): string
     return "#4ade80"
 end
 
-function rank_name(rank: i32): string
-    if rank == 14 then return "A" end
-    if rank == 13 then return "K" end
-    if rank == 12 then return "Q" end
-    if rank == 11 then return "J" end
-    return tostring(rank)
-end
-
 function is_picked(picks: {i32}, value: i32): bool
     for pick in picks do if pick == value then return true end end
     return false
@@ -1153,7 +1145,7 @@ function draw_card_face(graphics: Graphics, effects: EffectShaders, card: game.C
     local accent: string = school_color(card.suit)
     graphics:set_color(accent)
     graphics:fill_rectangle(x + 7.0, y + 7.0, 5.0, CARD_H - 14.0)
-    text(graphics, rank_name(card.rank), x + 20.0, y + 31.0, 24, "#f8fafc")
+    text(graphics, game.rank_name(card.rank), x + 20.0, y + 31.0, 24, "#f8fafc")
     -- The school never appears in words on a card: the accent stripe and the
     -- sigil carry it, the same pairing the help legend teaches.
     draw_sigil(graphics, card.suit, x + 42.0, y + 82.0)
