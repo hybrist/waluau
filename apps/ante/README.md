@@ -105,12 +105,23 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `game.walu` | Host-independent rules, AI, commands, outcomes, and read-only presentation view. |
 | `flow.walu` | Host-independent input gating, focus, modal, selection, and reveal flow. |
 | `choreography.walu` | Domain-level deal, feint, breach, fan, pile, and animation choreography. |
-| `render.walu` | Playfield/modal drawing and the game's vertex/pixel effects. |
+| `render.walu` | Playfield/modal drawing and effect use. |
+| `effect_shaders.walu` | External shader polling, live replacement diagnostics, and GPU lifetime. |
+| `src/shaders/` | Shared vertex stage and the six effect fragment stages. |
 | `presentation_resources.walu` | Asynchronous asset loading, GPU promotion, audio, effects, and disposal. |
 | `snapshot.walu` | Shared validated snapshot primitives and atomic payload framing. |
 | `test/game_fixture.walu` | Narrow mutable test adapter for deterministic rule arrangements. |
 | `sim.test.walu` | Deterministic Vitest assertions for rules, flow, snapshots, and full-game completion. |
 | `waluau.assets.json` | Typed package manifest for the card back, vault font, and flip sound. |
+
+Vite maps every file under `src/shaders/` through the plugin's
+`shaderSources` option. Production bundles the same source contract; in
+development, a fragment edit replaces only its live effect program and an edit
+to the shared vertex stage refreshes all six without rebuilding the Wasm game.
+Invalid live edits keep the previous program allocated while reporting the
+current shader diagnostic (fatal overlay for the defeat shroud, console warning
+for optional effects), and a later valid edit clears that diagnostic.
+Shader files are intentionally not runtime assets in `waluau.assets.json`.
 
 The sealed-card artwork is the committed vector
 [`assets/card-back.svg`](assets/card-back.svg). Until its asynchronous image

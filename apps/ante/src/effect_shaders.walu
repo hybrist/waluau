@@ -1,0 +1,336 @@
+-- External shader source polling and GPU lifetime for Arcane Heist effects.
+-- The first poll creates every program. Later source revisions are consumed
+-- once at the frame boundary and transactionally replace only dirty programs.
+
+local engine = require("waluau:engine")
+local graphics_module = require("waluau:engine/graphics")
+local shader_sources = require("waluau:engine/shader_sources")
+
+type Graphics = engine.Graphics
+type Source = shader_sources.Source
+type SourceUpdate = shader_sources.SourceUpdate
+
+type EffectShaders = {
+    gold_shimmer: graphics_module.Shader?,
+    defeat_shroud: graphics_module.Shader?,
+    red_fire: graphics_module.Shader?,
+    blue_caustics: graphics_module.Shader?,
+    black_hole: graphics_module.Shader?,
+    green_growth: graphics_module.Shader?
+}
+type Sources = {
+    vertex: Source,
+    gold_shimmer: Source,
+    defeat_shroud: Source,
+    red_fire: Source,
+    blue_caustics: Source,
+    black_hole: Source,
+    green_growth: Source
+}
+type SourceTexts = {
+    vertex: string,
+    gold_shimmer: string,
+    defeat_shroud: string,
+    red_fire: string,
+    blue_caustics: string,
+    black_hole: string,
+    green_growth: string
+}
+type SourceReadiness = {
+    vertex: bool,
+    gold_shimmer: bool,
+    defeat_shroud: bool,
+    red_fire: bool,
+    blue_caustics: bool,
+    black_hole: bool,
+    green_growth: bool
+}
+type EffectErrors = {
+    vertex: string,
+    gold_shimmer: string,
+    defeat_shroud: string,
+    red_fire: string,
+    blue_caustics: string,
+    black_hole: string,
+    green_growth: string
+}
+type State = {
+    shaders: EffectShaders,
+    sources: Sources,
+    texts: SourceTexts,
+    ready: SourceReadiness,
+    errors: EffectErrors
+}
+type Diagnostics = {
+    fatal_error: string,
+    warnings: string
+}
+
+function new(): State
+    return {
+        shaders = {
+            gold_shimmer = nil,
+            defeat_shroud = nil,
+            red_fire = nil,
+            blue_caustics = nil,
+            black_hole = nil,
+            green_growth = nil,
+        },
+        sources = {
+            vertex = shader_sources.open("ante.effects.vertex"),
+            gold_shimmer = shader_sources.open("ante.effects.gold-shimmer"),
+            defeat_shroud = shader_sources.open("ante.effects.defeat-shroud"),
+            red_fire = shader_sources.open("ante.effects.red-fire"),
+            blue_caustics = shader_sources.open("ante.effects.blue-caustics"),
+            black_hole = shader_sources.open("ante.effects.black-hole"),
+            green_growth = shader_sources.open("ante.effects.green-growth"),
+        },
+        texts = {
+            vertex = "",
+            gold_shimmer = "",
+            defeat_shroud = "",
+            red_fire = "",
+            blue_caustics = "",
+            black_hole = "",
+            green_growth = "",
+        },
+        ready = {
+            vertex = false,
+            gold_shimmer = false,
+            defeat_shroud = false,
+            red_fire = false,
+            blue_caustics = false,
+            black_hole = false,
+            green_growth = false,
+        },
+        errors = {
+            vertex = "",
+            gold_shimmer = "",
+            defeat_shroud = "",
+            red_fire = "",
+            blue_caustics = "",
+            black_hole = "",
+            green_growth = "",
+        },
+    }
+end
+
+function source_failure(update: SourceUpdate): string
+    return update.error.code .. ": " .. update.error.message
+end
+
+function shader_failure(name: string, result: graphics_module.ShaderResult): string
+    return name .. " " .. result.error.code .. ": " .. result.error.message
+end
+
+function rebuild(
+    graphics: Graphics,
+    current: graphics_module.Shader?,
+    vertex_source: string,
+    pixel_source: string
+): graphics_module.ShaderResult
+    if current == nil then return graphics:create_shader(vertex_source, pixel_source) end
+    return graphics:replace_shader(
+        current::graphics_module.Shader, vertex_source, pixel_source)
+end
+
+-- Poll every source before rebuilding anything. This keeps independent
+-- revisions current even when the shared vertex stage or another effect fails.
+function refresh(state: State, graphics: Graphics): unit
+    local vertex: SourceUpdate = state.sources.vertex:poll()
+    local gold: SourceUpdate = state.sources.gold_shimmer:poll()
+    local defeat: SourceUpdate = state.sources.defeat_shroud:poll()
+    local red: SourceUpdate = state.sources.red_fire:poll()
+    local blue: SourceUpdate = state.sources.blue_caustics:poll()
+    local black: SourceUpdate = state.sources.black_hole:poll()
+    local green: SourceUpdate = state.sources.green_growth:poll()
+
+    if vertex.changed then
+        if vertex.ok then
+            state.texts.vertex = vertex.source
+            state.ready.vertex = true
+            state.errors.vertex = ""
+        else
+            state.ready.vertex = false
+            state.errors.vertex = source_failure(vertex)
+        end
+    end
+    if gold.changed then
+        if gold.ok then
+            state.texts.gold_shimmer = gold.source
+            state.ready.gold_shimmer = true
+            state.errors.gold_shimmer = ""
+        else
+            state.ready.gold_shimmer = false
+            state.errors.gold_shimmer = "gold shimmer " .. source_failure(gold)
+        end
+    end
+    if defeat.changed then
+        if defeat.ok then
+            state.texts.defeat_shroud = defeat.source
+            state.ready.defeat_shroud = true
+            state.errors.defeat_shroud = ""
+        else
+            state.ready.defeat_shroud = false
+            state.errors.defeat_shroud = "defeat shroud " .. source_failure(defeat)
+        end
+    end
+    if red.changed then
+        if red.ok then
+            state.texts.red_fire = red.source
+            state.ready.red_fire = true
+            state.errors.red_fire = ""
+        else
+            state.ready.red_fire = false
+            state.errors.red_fire = "red " .. source_failure(red)
+        end
+    end
+    if blue.changed then
+        if blue.ok then
+            state.texts.blue_caustics = blue.source
+            state.ready.blue_caustics = true
+            state.errors.blue_caustics = ""
+        else
+            state.ready.blue_caustics = false
+            state.errors.blue_caustics = "blue " .. source_failure(blue)
+        end
+    end
+    if black.changed then
+        if black.ok then
+            state.texts.black_hole = black.source
+            state.ready.black_hole = true
+            state.errors.black_hole = ""
+        else
+            state.ready.black_hole = false
+            state.errors.black_hole = "black " .. source_failure(black)
+        end
+    end
+    if green.changed then
+        if green.ok then
+            state.texts.green_growth = green.source
+            state.ready.green_growth = true
+            state.errors.green_growth = ""
+        else
+            state.ready.green_growth = false
+            state.errors.green_growth = "green " .. source_failure(green)
+        end
+    end
+
+    if not state.ready.vertex then return end
+
+    if (vertex.changed or gold.changed) and state.ready.gold_shimmer then
+        local result: graphics_module.ShaderResult = rebuild(
+            graphics, state.shaders.gold_shimmer,
+            state.texts.vertex, state.texts.gold_shimmer)
+        if result.ok then
+            state.shaders.gold_shimmer = result.shader
+            state.errors.gold_shimmer = ""
+        else state.errors.gold_shimmer = shader_failure("gold shimmer", result) end
+    end
+
+    if (vertex.changed or defeat.changed) and state.ready.defeat_shroud then
+        local result: graphics_module.ShaderResult = rebuild(
+            graphics, state.shaders.defeat_shroud,
+            state.texts.vertex, state.texts.defeat_shroud)
+        if result.ok then
+            state.shaders.defeat_shroud = result.shader
+            state.errors.defeat_shroud = ""
+        else state.errors.defeat_shroud = shader_failure("defeat shroud", result) end
+    end
+
+    if (vertex.changed or red.changed) and state.ready.red_fire then
+        local result: graphics_module.ShaderResult = rebuild(
+            graphics, state.shaders.red_fire,
+            state.texts.vertex, state.texts.red_fire)
+        if result.ok then
+            state.shaders.red_fire = result.shader
+            state.errors.red_fire = ""
+        else state.errors.red_fire = shader_failure("red", result) end
+    end
+
+    if (vertex.changed or blue.changed) and state.ready.blue_caustics then
+        local result: graphics_module.ShaderResult = rebuild(
+            graphics, state.shaders.blue_caustics,
+            state.texts.vertex, state.texts.blue_caustics)
+        if result.ok then
+            state.shaders.blue_caustics = result.shader
+            state.errors.blue_caustics = ""
+        else state.errors.blue_caustics = shader_failure("blue", result) end
+    end
+
+    if (vertex.changed or black.changed) and state.ready.black_hole then
+        local result: graphics_module.ShaderResult = rebuild(
+            graphics, state.shaders.black_hole,
+            state.texts.vertex, state.texts.black_hole)
+        if result.ok then
+            state.shaders.black_hole = result.shader
+            state.errors.black_hole = ""
+        else state.errors.black_hole = shader_failure("black", result) end
+    end
+
+    if (vertex.changed or green.changed) and state.ready.green_growth then
+        local result: graphics_module.ShaderResult = rebuild(
+            graphics, state.shaders.green_growth,
+            state.texts.vertex, state.texts.green_growth)
+        if result.ok then
+            state.shaders.green_growth = result.shader
+            state.errors.green_growth = ""
+        else state.errors.green_growth = shader_failure("green", result) end
+    end
+end
+
+function append_warning(warnings: string, warning: string): string
+    if #warning == 0 then return warnings end
+    if #warnings > 0 then warnings ..= "; " end
+    return warnings .. warning
+end
+
+function diagnostics(state: State): Diagnostics
+    local vertex_error: string = state.errors.vertex
+    local fatal_error: string = state.errors.defeat_shroud
+    local warnings: string = ""
+    if #vertex_error > 0 then
+        fatal_error = "defeat shroud " .. vertex_error
+        warnings = append_warning(warnings, "gold shimmer " .. vertex_error)
+        warnings = append_warning(warnings, "red " .. vertex_error)
+        warnings = append_warning(warnings, "blue " .. vertex_error)
+        warnings = append_warning(warnings, "black " .. vertex_error)
+        warnings = append_warning(warnings, "green " .. vertex_error)
+    else
+        warnings = append_warning(warnings, state.errors.gold_shimmer)
+        warnings = append_warning(warnings, state.errors.red_fire)
+        warnings = append_warning(warnings, state.errors.blue_caustics)
+        warnings = append_warning(warnings, state.errors.black_hole)
+        warnings = append_warning(warnings, state.errors.green_growth)
+    end
+    return { fatal_error = fatal_error, warnings = warnings }
+end
+
+function release(state: State, graphics: Graphics): unit
+    local gold: graphics_module.Shader? = state.shaders.gold_shimmer
+    if gold ~= nil then graphics:release_shader(gold::graphics_module.Shader) end
+    local defeat: graphics_module.Shader? = state.shaders.defeat_shroud
+    if defeat ~= nil then graphics:release_shader(defeat::graphics_module.Shader) end
+    local red: graphics_module.Shader? = state.shaders.red_fire
+    if red ~= nil then graphics:release_shader(red::graphics_module.Shader) end
+    local blue: graphics_module.Shader? = state.shaders.blue_caustics
+    if blue ~= nil then graphics:release_shader(blue::graphics_module.Shader) end
+    local black: graphics_module.Shader? = state.shaders.black_hole
+    if black ~= nil then graphics:release_shader(black::graphics_module.Shader) end
+    local green: graphics_module.Shader? = state.shaders.green_growth
+    if green ~= nil then graphics:release_shader(green::graphics_module.Shader) end
+
+    state.shaders.gold_shimmer = nil
+    state.shaders.defeat_shroud = nil
+    state.shaders.red_fire = nil
+    state.shaders.blue_caustics = nil
+    state.shaders.black_hole = nil
+    state.shaders.green_growth = nil
+end
+
+return {
+    new = new,
+    refresh = refresh,
+    diagnostics = diagnostics,
+    release = release,
+}
