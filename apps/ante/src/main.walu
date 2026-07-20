@@ -215,7 +215,7 @@ function play_flip_sound(assets: AssetState): unit
         return
     end
     if not audio.play(assets.flip_sound, false, FLIP_SOUND_VOLUME) then
-        fatal_audio(assets, "playback_failed", "the audio host refused to start decoded sound playback")
+        print("ante: the audio host refused to start decoded sound playback")
     end
 end
 
