@@ -1336,13 +1336,15 @@ describe('browser conformance', () => {
         return count;
       };
       await expect.poll(() => requested.length, { timeout: 10_000 }).toBe(3);
-      await expect.poll(countCardInk, { timeout: 10_000 }).toBeGreaterThan(40);
+      // The app boots to its menu screen: assets decode there without any
+      // audio playback until the begin gesture unlocks the browser audio host.
       await new Promise((resolve) => setTimeout(resolve, 350));
       expect(soundStartCount).toBe(0);
       const view = root.ownerDocument.defaultView;
       root.ownerDocument.dispatchEvent(new view.KeyboardEvent('keydown', {
-        key: 'ArrowLeft',
+        key: 'Enter',
       }));
+      await expect.poll(countCardInk, { timeout: 10_000 }).toBeGreaterThan(40);
       await expect.poll(() => soundStartCount, { timeout: 10_000 }).toBeGreaterThan(0);
       expect(imageDecodeCount).toBe(1);
       expect(soundDecodeCount).toBe(1);
