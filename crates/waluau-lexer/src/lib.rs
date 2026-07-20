@@ -89,11 +89,35 @@ pub enum TokenKind {
     RBracket,
     LParen,
     RParen,
+    /// A single-line `-- ...` comment. Holds the raw lexeme including the
+    /// leading `--` (e.g. `-- hello`). Only produced by [`lex_with_trivia`].
+    LineComment(String),
+    /// A `--[[ ... ]]` block comment (any bracket level). Holds the raw
+    /// lexeme including the delimiters. Only produced by [`lex_with_trivia`].
+    BlockComment(String),
+}
+
+impl TokenKind {
+    /// Whether this token is comment trivia. Only [`lex_with_trivia`] emits
+    /// these; the compiler token stream from [`lex`] never contains them.
+    pub fn is_comment(&self) -> bool {
+        matches!(self, TokenKind::LineComment(_) | TokenKind::BlockComment(_))
+    }
 }
 
 pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
     let chars: Vec<char> = source.chars().collect();
-    let (tokens, _) = lex_range(&chars, 0, false)?;
+    let (tokens, _) = lex_range(&chars, 0, false, false)?;
+    Ok(tokens)
+}
+
+/// Like [`lex`], but preserves comments as [`TokenKind::LineComment`] /
+/// [`TokenKind::BlockComment`] trivia tokens (with accurate spans) instead of
+/// discarding them. Used by the formatter to place comments; the compiler path
+/// keeps using [`lex`], whose output is unchanged.
+pub fn lex_with_trivia(source: &str) -> Result<Vec<Token>, Diagnostic> {
+    let chars: Vec<char> = source.chars().collect();
+    let (tokens, _) = lex_range(&chars, 0, false, true)?;
     Ok(tokens)
 }
 
@@ -105,6 +129,7 @@ fn lex_range(
     chars: &[char],
     start: usize,
     stop_at_unmatched_rbrace: bool,
+    keep_comments: bool,
 ) -> Result<(Vec<Token>, usize), Diagnostic> {
     let mut tokens = Vec::new();
     let mut i = start;
@@ -150,7 +175,7 @@ fn lex_range(
                 (TokenKind::RBrace, 1)
             }
             '`' => {
-                i = lex_interpolated_string(chars, i, &mut tokens)?;
+                i = lex_interpolated_string(chars, i, &mut tokens, keep_comments)?;
                 continue;
             }
             '#' => (TokenKind::Hash, 1),
@@ -256,12 +281,32 @@ fn lex_range(
                             level,
                             "unterminated block comment '--[[...]]'",
                         )?;
+                        if keep_comments {
+                            let raw: String = chars[i..end].iter().collect();
+                            tokens.push(Token {
+                                kind: TokenKind::BlockComment(raw),
+                                span: Span {
+                                    start,
+                                    end: end as u32,
+                                },
+                            });
+                        }
                         i = end;
                         continue;
                     }
                     let mut end = i + 2;
                     while end < chars.len() && chars[end] != '\n' {
                         end += 1;
+                    }
+                    if keep_comments {
+                        let raw: String = chars[i..end].iter().collect();
+                        tokens.push(Token {
+                            kind: TokenKind::LineComment(raw),
+                            span: Span {
+                                start,
+                                end: end as u32,
+                            },
+                        });
                     }
                     i = end;
                     continue;
@@ -450,6 +495,7 @@ fn lex_interpolated_string(
     chars: &[char],
     backtick_index: usize,
     tokens: &mut Vec<Token>,
+    keep_comments: bool,
 ) -> Result<usize, Diagnostic> {
     enum Part {
         Lit(String, Span),
@@ -483,7 +529,7 @@ fn lex_interpolated_string(
             }
             Some('{') => {
                 flush_lit(&mut lit, lit_start, i, &mut parts);
-                let (expr_tokens, rbrace) = lex_range(chars, i + 1, true)?;
+                let (expr_tokens, rbrace) = lex_range(chars, i + 1, true, keep_comments)?;
                 if expr_tokens.is_empty() {
                     return Err(Diagnostic::new(
                         "empty interpolation '{}' in backtick string",
@@ -823,9 +869,75 @@ fn parse_bytes_literal(chars: &[char], quote_index: usize) -> Result<(Vec<u8>, u
 
 #[cfg(test)]
 mod tests {
-    use super::{Token, TokenKind, lex};
+    use super::{Token, TokenKind, lex, lex_with_trivia};
     use waluau_diagnostics::Diagnostic;
     use waluau_span::Span;
+
+    fn trivia_kinds(source: &str) -> Vec<TokenKind> {
+        lex_with_trivia(source)
+            .expect("lex_with_trivia should succeed")
+            .into_iter()
+            .map(|token| token.kind)
+            .collect()
+    }
+
+    #[test]
+    fn lex_with_trivia_preserves_line_comments() {
+        assert_eq!(
+            trivia_kinds("local x = 1 -- hi\n-- whole line\nx = 2"),
+            vec![
+                TokenKind::Local,
+                TokenKind::Identifier("x".into()),
+                TokenKind::Equal,
+                TokenKind::Number("1".into()),
+                TokenKind::LineComment("-- hi".into()),
+                TokenKind::LineComment("-- whole line".into()),
+                TokenKind::Identifier("x".into()),
+                TokenKind::Equal,
+                TokenKind::Number("2".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn lex_with_trivia_preserves_block_comments_with_level() {
+        assert_eq!(
+            trivia_kinds("local x --[==[ a ]] still ]==] = 1"),
+            vec![
+                TokenKind::Local,
+                TokenKind::Identifier("x".into()),
+                TokenKind::BlockComment("--[==[ a ]] still ]==]".into()),
+                TokenKind::Equal,
+                TokenKind::Number("1".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn lex_with_trivia_records_comment_spans() {
+        let tokens = lex_with_trivia("x -- c").expect("lex should succeed");
+        let comment = tokens
+            .iter()
+            .find(|t| t.kind.is_comment())
+            .expect("comment token present");
+        assert_eq!(comment.span, Span { start: 2, end: 6 });
+    }
+
+    #[test]
+    fn plain_lex_still_discards_comments() {
+        assert_eq!(
+            kinds("local x = 1 -- hi\n--[[ b ]] x = 2"),
+            vec![
+                TokenKind::Local,
+                TokenKind::Identifier("x".into()),
+                TokenKind::Equal,
+                TokenKind::Number("1".into()),
+                TokenKind::Identifier("x".into()),
+                TokenKind::Equal,
+                TokenKind::Number("2".into()),
+            ]
+        );
+    }
 
     fn kinds(source: &str) -> Vec<TokenKind> {
         lex(source)
