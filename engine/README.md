@@ -69,6 +69,7 @@ Subsystem modules remain supported for focused and host-independent programs:
 | `waluau:engine/time` | `waluau:engine/v1/time` | deterministic fixed-step clock |
 | `waluau:engine/browser` | `waluau:engine/v1/browser` | browser lifecycle adapter |
 | `waluau:engine/hot` | `waluau:engine/v1/hot` | development snapshot/restore registration |
+| `waluau:engine/shader_sources` | `waluau:engine/v1/shader_sources` | revisioned external shader source polling |
 
 Relative imports remain valid for engine development, but applications should
 use package imports. See [`examples/game-project`](../examples/game-project/)
@@ -95,8 +96,12 @@ Custom shaders consume any subset of the renderer's standard vertex attributes:
 `u_texture`, live frame time in `u_time`, and logical-pixel scaling in
 `u_pixel_scale` when those uniforms are declared. `use_shader` and
 `use_default_shader` switch programs; float/vector and integer uniform setters
-target the active program. Program and uniform changes flush pending geometry,
-so one batch never observes two shader states.
+target the active program. `replace_shader` compiles and links a fresh program,
+then atomically updates the existing `Shader` handle. A compile/link failure
+returns structured data and leaves the prior program live; replacing an active
+program flushes and rebinds it before deleting the old program. Program and
+uniform changes flush pending geometry, so one batch never observes two shader
+states.
 
 For filled rectangles, `a_uv` spans `(0, 0)` at the top-left to `(1, 1)` at
 the bottom-right even though `a_textured` is zero. This gives procedural

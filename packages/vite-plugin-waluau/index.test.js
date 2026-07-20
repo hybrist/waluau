@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
+
+import { chromium } from 'playwright';
+import { build as viteBuild, createServer as createViteServer } from 'vite';
 
 import { waluau } from './index.js';
 import { buildWaluauImports, WALUAU_IMPORT_MODULE } from './runtime.js';
+import { createWaluauShaderSourceHost } from './shaders.js';
 
 test('transforms a .walu import into an ES module', async () => {
   const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
@@ -130,6 +134,284 @@ test('reuses one persistent compiler process across Vite rebuilds', async () => 
     );
   } finally {
     await plugin?.closeBundle();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('loads shader sources in production and accepts dev updates without rebuilding Wasm', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
+  try {
+    const entry = join(root, 'main.walu');
+    const vertex = join(root, 'shaders', 'effect.vert');
+    // Deliberately use .walu and include it in the compiler report. Configured
+    // source classification must still win over generic Waluau rebuild logic.
+    const pixel = join(root, 'shaders', 'effect.walu');
+    const counter = join(root, 'compiler-invocations.txt');
+    await writeFile(counter, '');
+    const script = `
+      const fs = require('node:fs');
+      const args = process.argv.slice(1);
+      fs.appendFileSync(${JSON.stringify(counter)}, args[0] + '\\n');
+      fs.writeFileSync(args[args.indexOf('--report') + 1], JSON.stringify({
+        success: true,
+        involvedFiles: [args[0], ${JSON.stringify(pixel)}],
+        diagnostics: [],
+      }));
+    `;
+    const plugin = waluau({
+      shaderSources: {
+        'effect.vertex': 'shaders/effect.vert',
+        'effect.pixel': 'shaders/effect.walu',
+        ['__proto__']: 'shaders/effect.vert',
+      },
+      compiler: { command: process.execPath, args: ['-e', script] },
+    });
+    plugin.configResolved({ root });
+    const transformed = await plugin.transform.call({ addWatchFile() {} }, '', entry);
+    const shaderModuleId = /import shaderSourceHost from "(virtual:waluau-shader-sources:[^"]+)"/
+      .exec(transformed.code)?.[1];
+    assert(shaderModuleId, 'transformed game should import its isolated shader source module');
+    const shaderModule = plugin.load(plugin.resolveId(shaderModuleId));
+
+    // These eager raw imports are present in both Vite dev and production
+    // through an isolated module; production bundles the same initial text.
+    assert.match(shaderModule, new RegExp(
+      `import waluauShaderSource0 from ${JSON.stringify(`${vertex}?raw`).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+    ));
+    assert.match(shaderModule, new RegExp(
+      `import waluauShaderSource1 from ${JSON.stringify(`${pixel}?raw`).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+    ));
+    assert.match(shaderModule, /\["effect\.vertex"\]: waluauShaderSource0/);
+    assert.match(shaderModule, /\["__proto__"\]: waluauShaderSource2/);
+    assert.match(transformed.code, /shaderSources: shaderSourceHost/);
+
+    // Every dependency owns its key-specific accept callback. Updating just
+    // the pixel module cannot shift its module into the vertex key.
+    assert.match(
+      shaderModule,
+      /accept\([^)]*effect\.vert\?raw[^]*shaderSourceHost\.update\("effect\.vertex", module\?\.default\)/,
+    );
+    assert.match(
+      shaderModule,
+      /accept\([^)]*effect\.walu\?raw[^]*shaderSourceHost\.update\("effect\.pixel", module\?\.default\)/,
+    );
+
+    const invalidated = [];
+    const messages = [];
+    const result = await plugin.handleHotUpdate({
+      file: pixel,
+      modules: [{ id: `${pixel}?raw` }],
+      server: {
+        moduleGraph: {
+          getModulesByFile() {
+            throw new Error('a shader edit must not inspect Waluau entry modules');
+          },
+          invalidateModule(module) {
+            invalidated.push(module);
+          },
+        },
+        ws: { send(message) { messages.push(message); } },
+      },
+    });
+
+    assert.equal(result, undefined);
+    assert.equal((await readFile(counter, 'utf8')).trim().split('\n').length, 1);
+    assert.deepEqual(invalidated, []);
+    assert.deepEqual(messages, []);
+    assert.doesNotMatch(
+      shaderModule.match(/accept\([^)]*effect\.walu\?raw[^]*?\n  \}\);/)?.[0] ?? '',
+      /runWaluau|replaceWaluauGame|invalidate/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('bundles configured shader source text in a production Vite build', async () => {
+  // Vite 8's HTML emitter requires the temporary root to be below the build
+  // process cwd when using the in-memory write:false output.
+  const root = await mkdtemp(join(resolve('.'), '.waluau-vite-plugin-build-'));
+  try {
+    const shaderSentinel = 'PRODUCTION_SHADER_SOURCE_SENTINEL_9fc7';
+    const compiler = join(root, 'compiler.cjs');
+    await mkdir(join(root, 'shaders'), { recursive: true });
+    await writeFile(
+      join(root, 'index.html'),
+      '<script type="module" src="/main.walu"></script>',
+    );
+    await writeFile(join(root, 'main.walu'), 'print("production build")');
+    await writeFile(join(root, 'shaders', 'effect.frag'), shaderSentinel);
+    await writeFile(compiler, `
+      const fs = require('node:fs');
+      const path = require('node:path');
+      const args = process.argv.slice(2);
+      const wasm = args[args.indexOf('-o') + 1];
+      const report = args[args.indexOf('--report') + 1];
+      fs.mkdirSync(path.dirname(wasm), { recursive: true });
+      fs.writeFileSync(wasm, Buffer.from([]));
+      fs.writeFileSync(path.join(path.dirname(wasm), 'game.js'), [
+        'export const wasmUrl = null;',
+        'export async function run() { return { exports: {} }; }',
+      ].join('\\n'));
+      fs.writeFileSync(report, JSON.stringify({
+        success: true,
+        involvedFiles: [args[0]],
+        diagnostics: [],
+      }));
+    `);
+
+    const output = await viteBuild({
+      root,
+      configFile: false,
+      logLevel: 'silent',
+      resolve: {
+        alias: [
+          {
+            find: '@waluau/vite-plugin/runtime',
+            replacement: resolve('packages/vite-plugin-waluau/runtime.js'),
+          },
+          {
+            find: '@waluau/vite-plugin/hot',
+            replacement: resolve('packages/vite-plugin-waluau/hot.js'),
+          },
+          {
+            find: '@waluau/vite-plugin/shaders',
+            replacement: resolve('packages/vite-plugin-waluau/shaders.js'),
+          },
+        ],
+      },
+      plugins: [waluau({
+        fullScreen: false,
+        shaderSources: { pixel: 'shaders/effect.frag' },
+        compiler: { command: process.execPath, args: [compiler] },
+      })],
+      build: {
+        minify: false,
+        write: false,
+      },
+    });
+    const outputs = Array.isArray(output) ? output.flatMap((result) => result.output) : output.output;
+    const bundledCode = outputs
+      .filter((item) => item.type === 'chunk')
+      .map((item) => item.code)
+      .join('\n');
+
+    assert.match(bundledCode, new RegExp(shaderSentinel));
+    assert.doesNotMatch(bundledCode, /import\.meta\.hot/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('delivers a real Vite shader HMR update without replacing the running game', async () => {
+  const root = await mkdtemp(join(resolve('.'), '.waluau-vite-plugin-hmr-'));
+  let server;
+  let browser;
+  try {
+    const shader = join(root, 'shaders', 'effect.frag');
+    const compiler = join(root, 'compiler.cjs');
+    const counter = join(root, 'compiler-invocations.txt');
+    await mkdir(dirname(shader), { recursive: true });
+    await writeFile(
+      join(root, 'index.html'),
+      '<script type="module" src="/main.walu"></script>',
+    );
+    await writeFile(join(root, 'main.walu'), 'print("development hmr")');
+    await writeFile(shader, 'initial live shader');
+    await writeFile(counter, '');
+    await writeFile(compiler, `
+      const fs = require('node:fs');
+      const path = require('node:path');
+      const args = process.argv.slice(2);
+      const wasm = args[args.indexOf('-o') + 1];
+      const report = args[args.indexOf('--report') + 1];
+      fs.appendFileSync(${JSON.stringify(counter)}, 'compile\\n');
+      fs.mkdirSync(path.dirname(wasm), { recursive: true });
+      fs.writeFileSync(wasm, Buffer.from([]));
+      fs.writeFileSync(path.join(path.dirname(wasm), 'game.js'), [
+        'export const wasmUrl = null;',
+        'export async function run({ createImports }) {',
+        '  const exports = {};',
+        '  const imports = createImports({',
+        '    requiredImports: [], bytesConstants: [],',
+        '    getWasmExports: () => exports,',
+        '    assetBaseUrl: new URL("./", import.meta.url), assetManifest: {},',
+        '  }).waluau;',
+        '  const marker = {};',
+        '  globalThis.__waluauShaderRuns = (globalThis.__waluauShaderRuns || 0) + 1;',
+        '  globalThis.__waluauShaderTest = {',
+        '    marker,',
+        '    revision: () => imports.__waluau_shader_source_revision("pixel"),',
+        '    text: () => imports.__waluau_shader_source_text("pixel"),',
+        '  };',
+        '  return { exports };',
+        '}',
+      ].join('\\n'));
+      fs.writeFileSync(report, JSON.stringify({
+        success: true, involvedFiles: [args[0]], diagnostics: [],
+      }));
+    `);
+
+    server = await createViteServer({
+      root,
+      configFile: false,
+      logLevel: 'silent',
+      resolve: {
+        alias: [
+          {
+            find: '@waluau/vite-plugin/runtime',
+            replacement: resolve('packages/vite-plugin-waluau/runtime.js'),
+          },
+          {
+            find: '@waluau/vite-plugin/hot',
+            replacement: resolve('packages/vite-plugin-waluau/hot.js'),
+          },
+          {
+            find: '@waluau/vite-plugin/shaders',
+            replacement: resolve('packages/vite-plugin-waluau/shaders.js'),
+          },
+        ],
+      },
+      plugins: [waluau({
+        fullScreen: false,
+        shaderSources: { pixel: 'shaders/effect.frag' },
+        compiler: { command: process.execPath, args: [compiler] },
+      })],
+      server: { host: '127.0.0.1', port: 0 },
+    });
+    await server.listen();
+
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    let loads = 0;
+    page.on('load', () => { loads += 1; });
+    await page.goto(server.resolvedUrls.local[0]);
+    await page.waitForFunction(() => globalThis.__waluauShaderTest?.revision() === 1);
+    await page.evaluate(() => {
+      globalThis.__waluauInitialMarker = globalThis.__waluauShaderTest.marker;
+    });
+    const initialLoads = loads;
+
+    await writeFile(shader, 'updated live shader');
+    await page.waitForFunction(
+      () => (
+        globalThis.__waluauShaderTest?.revision() === 2
+        && globalThis.__waluauShaderTest?.text() === 'updated live shader'
+      ),
+    );
+
+    assert.equal(await page.evaluate(() => globalThis.__waluauShaderRuns), 1);
+    assert.equal(
+      await page.evaluate(
+        () => globalThis.__waluauShaderTest.marker === globalThis.__waluauInitialMarker,
+      ),
+      true,
+    );
+    assert.equal(loads, initialLoads);
+    assert.equal((await readFile(counter, 'utf8')).trim().split('\n').length, 1);
+  } finally {
+    await browser?.close();
+    await server?.close();
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -259,6 +541,29 @@ test('accepts development snapshot registration as a production no-op', () => {
 
   assert.doesNotThrow(() => imports.__waluau_hmr_register({}, {}, {}));
   assert.equal(imports.__waluau_hmr_get_snapshot(), '');
+});
+
+test('bridges configured shader sources and makes absent hosts recoverable', () => {
+  const requiredImports = [
+    { module: WALUAU_IMPORT_MODULE, name: '__waluau_shader_source_revision', kind: 'function' },
+    { module: WALUAU_IMPORT_MODULE, name: '__waluau_shader_source_text', kind: 'function' },
+  ];
+  const absent = buildWaluauImports(null, undefined, {
+    requiredImports,
+    bytesConstants: [],
+  })[WALUAU_IMPORT_MODULE];
+
+  assert.equal(absent.__waluau_shader_source_revision('pixel'), -1);
+  assert.equal(absent.__waluau_shader_source_text('pixel'), '');
+
+  const shaderSources = createWaluauShaderSourceHost({ pixel: 'bundled pixel' });
+  const configured = buildWaluauImports(null, undefined, {
+    requiredImports,
+    bytesConstants: [],
+    shaderSources,
+  })[WALUAU_IMPORT_MODULE];
+  assert.equal(configured.__waluau_shader_source_revision('pixel'), 1);
+  assert.equal(configured.__waluau_shader_source_text('pixel'), 'bundled pixel');
 });
 
 test('watches report-involved files and rebuilds only affected entries', async () => {

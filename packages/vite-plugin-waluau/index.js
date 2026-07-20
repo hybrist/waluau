@@ -9,6 +9,7 @@ import { createCompilerHost } from './compiler-host.js';
 
 const packageRoot = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(packageRoot, '../..');
+const shaderModulePrefix = 'virtual:waluau-shader-sources:';
 
 function run(command, args, cwd) {
   return new Promise((resolveRun, rejectRun) => {
@@ -46,7 +47,39 @@ function reportError(error) {
 `;
 }
 
-function runtimeSource(generatedModule, version) {
+function shaderModuleSource(shaderSources) {
+  const shaderImports = shaderSources.map(
+    ({ specifier }, index) => `import waluauShaderSource${index} from ${JSON.stringify(specifier)};`,
+  ).join('\n');
+  const initialShaderSources = shaderSources.map(
+    ({ name }, index) => `[${JSON.stringify(name)}]: waluauShaderSource${index}`,
+  ).join(',\n  ');
+  // Accept each dependency independently. Vite may update only one member of
+  // a multi-source shader set, so a positional multi-dependency callback
+  // would risk associating an unchanged/undefined module with the wrong key.
+  const shaderHotAccepts = shaderSources.map(
+    ({ name, specifier }) => `
+  import.meta.hot.accept(${JSON.stringify(specifier)}, (module) => {
+    shaderSourceHost.update(${JSON.stringify(name)}, module?.default);
+  });`,
+  ).join('\n');
+  return `
+import { createWaluauShaderSourceHost } from '@waluau/vite-plugin/shaders';
+${shaderImports}
+
+const shaderSourceHost = createWaluauShaderSourceHost({
+  ${initialShaderSources}
+});
+
+if (import.meta.hot) {
+${shaderHotAccepts}
+}
+
+export default shaderSourceHost;
+`;
+}
+
+function runtimeSource(generatedModule, version, shaderModule) {
   const generatedSpecifier = `${generatedModule}?waluau-hmr=${version}`;
   return `
 import { buildWaluauImports } from '@waluau/vite-plugin/runtime';
@@ -56,6 +89,7 @@ import {
   HotReplacementFallback,
   replaceWaluauGame,
 } from '@waluau/vite-plugin/hot';
+import shaderSourceHost from ${JSON.stringify(shaderModule)};
 import {
   run as runWaluau,
   wasmUrl as generatedWasmUrl,
@@ -82,6 +116,7 @@ function startGame() {
       getWasmExports: context.getWasmExports,
       onAsyncError: reportError,
       hotReplacement,
+      shaderSources: shaderSourceHost,
       gameServices: {
         assetBaseUrl: context.assetBaseUrl,
         assetManifest: context.assetManifest,
@@ -165,6 +200,7 @@ function importManifestAssets(code) {
  * @param {{
  *   fullScreen?: boolean,
  *   manifest?: string,
+ *   shaderSources?: Record<string, string>,
  *   workspaceRoot?: string,
  *   compiler?: { command: string, args?: string[], persistent?: boolean }
  * }} options
@@ -177,9 +213,27 @@ export function waluau(options = {}) {
 
   const workspaceRoot = resolve(options.workspaceRoot ?? repositoryRoot);
   const fullScreen = options.fullScreen ?? true;
+  if (
+    options.shaderSources != null
+    && (Array.isArray(options.shaderSources) || typeof options.shaderSources !== 'object')
+  ) {
+    throw new TypeError('shaderSources must be a name-to-path object');
+  }
+  const configuredShaderSources = Object.entries(options.shaderSources ?? {}).map(
+    ([name, path]) => {
+      if (name.length === 0) {
+        throw new TypeError('shaderSources names must be non-empty strings');
+      }
+      if (typeof path !== 'string' || path.length === 0) {
+        throw new TypeError(`shaderSources["${name}"] must be a non-empty path`);
+      }
+      return { name, path };
+    },
+  );
   const compileStates = new Map();
   const compiledEntries = new Set();
   const generatedModules = new Set();
+  const shaderModules = new Map();
 
   function resolvePaths(root) {
     appRoot = root;
@@ -195,6 +249,17 @@ export function waluau(options = {}) {
       module: resolve(outDir, 'game.js'),
       report: resolve(outDir, 'report.json'),
     };
+  }
+
+  function resolvedShaderSources() {
+    return configuredShaderSources.map(({ name, path }) => {
+      const file = resolve(appRoot, path);
+      return { name, file, specifier: `${file}?raw` };
+    });
+  }
+
+  function isConfiguredShaderSource(file) {
+    return resolvedShaderSources().some((source) => source.file === file);
   }
 
   function compilerBuildArgs(entryPath, wasmOutput, reportOutput) {
@@ -427,12 +492,28 @@ export function waluau(options = {}) {
       }
       // *.test.walu files register with vitest instead of booting a game.
       const isTestModule = file.endsWith('.test.walu');
+      const shaderModule = `${shaderModulePrefix}${createHash('sha256')
+        .update(file)
+        .digest('hex')
+        .slice(0, 12)}`;
+      shaderModules.set(`\0${shaderModule}`, shaderModuleSource(resolvedShaderSources()));
       return {
         code: isTestModule
           ? testModuleSource(artifacts.module)
-          : runtimeSource(artifacts.module, compileStates.get(file).version),
+          : runtimeSource(
+            artifacts.module,
+            compileStates.get(file).version,
+            shaderModule,
+          ),
         map: null,
       };
+    },
+    resolveId(id) {
+      if (id.startsWith(shaderModulePrefix)) return `\0${id}`;
+      return null;
+    },
+    load(id) {
+      return shaderModules.get(id) ?? null;
     },
     transformIndexHtml() {
       if (!fullScreen) return [];
@@ -457,6 +538,11 @@ export function waluau(options = {}) {
       // otherwise Vite can apply stale dependency updates or full reloads
       // before the versioned source-entry update, then recompile in a loop.
       if (isGeneratedArtifact(file)) return [];
+      // Configured shader files belong to Vite's raw dependency graph, even
+      // when a path also ends in .walu or appeared in a compiler build report.
+      // Let the generated dependency-specific accept callback handle it before
+      // any Waluau rebuild/invalidation logic can observe the edit.
+      if (isConfiguredShaderSource(file)) return;
       if (compiledEntries.size === 0) return;
       const isKnownInvolved = Array.from(compiledEntries).some(
         (entry) => compileStates.get(entry)?.involvedFiles?.has(file),

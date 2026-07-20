@@ -1,0 +1,25 @@
+-- Browser-executed contract test for revision consumption and missing-source
+-- errors. The JavaScript test mutates the same host after instantiation.
+local shader_sources = require("../../engine/shader_sources")
+
+local pixel = shader_sources.open("pixel")
+local first = pixel:poll()
+assert(first.changed and first.ok and first.revision == 1 and first.source == "initial source")
+local unchanged = pixel:poll()
+assert(not unchanged.changed)
+
+local bad = pixel:poll()
+assert(bad.changed and bad.ok and bad.revision == 2 and bad.source == "bad shader source")
+assert(not pixel:poll().changed)
+local recovered = pixel:poll()
+assert(
+    recovered.changed and recovered.ok and recovered.revision == 3 and recovered.source == "recovered shader source"
+)
+
+local missing = shader_sources.open("missing")
+local missing_first = missing:poll()
+assert(missing_first.changed and not missing_first.ok and missing_first.error.code == "missing")
+local missing_unchanged = missing:poll()
+assert(
+    not missing_unchanged.changed and not missing_unchanged.ok and missing_unchanged.error.code == "missing"
+)

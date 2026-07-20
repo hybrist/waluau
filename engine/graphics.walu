@@ -524,6 +524,60 @@ function Graphics:create_shader(vertex_source: string, pixel_source: string): Sh
     return result
 end
 
+-- Compile and link a replacement before touching the live shader. Failures
+-- preserve the same handle, id, and old program; success updates every
+-- reference to the Shader record.
+function Graphics:replace_shader(shader: Shader, vertex_source: string, pixel_source: string): ShaderResult
+    if shader.released or shader.program == nil then
+        return {
+            ok = false,
+            shader = shader,
+            error = { code = "released", message = "cannot replace a released shader" },
+        }
+    end
+    local maybe_old_program: WebGLProgram? = shader.program
+    assert(maybe_old_program ~= nil)
+    local old_program: WebGLProgram = maybe_old_program::WebGLProgram
+    if not self.gl:isProgram(old_program) then
+        return {
+            ok = false,
+            shader = shader,
+            error = { code = "foreign", message = "shader does not belong to this graphics context" },
+        }
+    end
+
+    local replacement_result: ShaderResult = build_shader(self.gl, vertex_source, pixel_source, shader.id)
+    if not replacement_result.ok then
+        return { ok = false, shader = shader, error = replacement_result.error }
+    end
+
+    local replacement: Shader = replacement_result.shader
+    local was_active: bool = self.active_shader.program == maybe_old_program
+    if was_active then self:flush() end
+
+    shader.program = replacement.program
+    shader.position_location = replacement.position_location
+    shader.color_location = replacement.color_location
+    shader.uv_location = replacement.uv_location
+    shader.textured_location = replacement.textured_location
+    shader.time_location = replacement.time_location
+    shader.pixel_scale_location = replacement.pixel_scale_location
+    shader.texture_location = replacement.texture_location
+
+    if was_active then
+        self.active_shader = shader
+        bind_shader(
+            self.gl,
+            shader,
+            (self.gl.drawingBufferWidth::f64) / self.width,
+            (self.gl.drawingBufferHeight::f64) / self.height,
+            self.time
+        )
+    end
+    self.gl:deleteProgram(old_program)
+    return { ok = true, shader = shader, error = { code = "", message = "" } }
+end
+
 function Graphics:use_shader(shader: Shader): bool
     if shader.released or shader.program == nil then return false end
     if self.active_shader.id == shader.id then return true end

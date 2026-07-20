@@ -1,0 +1,62 @@
+-- Revisioned source text supplied by @waluau/vite-plugin. The host is inert
+-- outside a configured plugin, so absent keys remain ordinary structured
+-- errors instead of preventing Wasm instantiation.
+type SourceError = { code: string, message: string }
+type SourceUpdate = { changed: bool, ok: bool, source: string, revision: i32, error: SourceError }
+type Source = { name: string, revision: i32 }
+
+declare function __waluau_shader_source_revision(name: string): i32
+declare function __waluau_shader_source_text(name: string): string
+
+function Source:poll(): SourceUpdate
+    local revision: i32 = __waluau_shader_source_revision(self.name)
+    if revision == self.revision then
+        if revision < 0 then
+            return {
+                changed = false,
+                ok = false,
+                source = "",
+                revision = revision,
+                error = {
+                    code = "missing",
+                    message = "shader source is not configured: " .. self.name
+                }
+            }
+        end
+        return {
+            changed = false,
+            ok = true,
+            source = "",
+            revision = revision,
+            error = { code = "", message = "" }
+        }
+    end
+
+    -- Consume every host revision exactly once, including missing-source and
+    -- invalid-GLSL attempts. A later edit advances the revision and retries.
+    self.revision = revision
+    if revision < 0 then
+        return {
+            changed = true,
+            ok = false,
+            source = "",
+            revision = revision,
+            error = { code = "missing", message = "shader source is not configured: " .. self.name }
+        }
+    end
+    return {
+        changed = true,
+        ok = true,
+        source = __waluau_shader_source_text(self.name),
+        revision = revision,
+        error = { code = "", message = "" }
+    }
+end
+
+function open(name: string): Source
+    -- Host revisions begin at one. -2 also makes a missing source's -1 state
+    -- observable on the first poll.
+    return { name = name, revision = -2 }
+end
+
+return { open = open }
