@@ -215,7 +215,7 @@ export default function useFiles() {
 
     // 5. Arcane Heist fixture files
     for (const [path, source] of Object.entries(pokerTricksFixtures)) {
-      const filename = path.split('/').pop();
+      const filename = path.slice('/fixtures/poker-tricks/'.length);
       items.push({
         type: 'fixture',
         path,
@@ -224,7 +224,7 @@ export default function useFiles() {
         category: 'Fixture',
         onSelect: () => {
           selectPreset(POKER_TRICKS_PRESET);
-          setActiveFile(`/fixtures/poker-tricks/${filename}`);
+          setActiveFile(path);
         }
       });
     }

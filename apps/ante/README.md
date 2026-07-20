@@ -90,10 +90,16 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 
 | File | Purpose |
 | --- | --- |
-| `main.walu` | Engine entry point and keyboard/mouse-driven game flow. |
-| `render.walu` | Playfield/modal rendering and the game's vertex/pixel effect shader. |
-| `game.walu` | Host-independent deck, ranking, AI, and scoring rules. |
-| `sim.test.walu` | Deterministic Vitest assertions for rankings and full-game completion. |
+| `project.js` | Stable source-project adapter for playground and conformance hosts. |
+| `main.walu` | Thin engine adapter that wires callbacks to the deeper game modules. |
+| `game.walu` | Host-independent rules, AI, commands, outcomes, and read-only presentation view. |
+| `flow.walu` | Host-independent input gating, focus, modal, selection, and reveal flow. |
+| `choreography.walu` | Domain-level deal, feint, breach, fan, pile, and animation choreography. |
+| `render.walu` | Playfield/modal drawing and the game's vertex/pixel effects. |
+| `presentation_resources.walu` | Asynchronous asset loading, GPU promotion, audio, effects, and disposal. |
+| `snapshot.walu` | Shared validated snapshot primitives and atomic payload framing. |
+| `test/game_fixture.walu` | Narrow mutable test adapter for deterministic rule arrangements. |
+| `sim.test.walu` | Deterministic Vitest assertions for rules, flow, snapshots, and full-game completion. |
 | `waluau.assets.json` | Typed package manifest for the card back, vault font, and flip sound. |
 
 The sealed-card artwork is the committed vector

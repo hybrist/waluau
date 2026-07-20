@@ -22,6 +22,7 @@ import gameEngineGpuFontResources from '../../../fixtures/game-engine/gpu-font-r
 import pokerCardBack from '../../../apps/ante/assets/card-back.svg?raw';
 import pokerFontUrl from '../../../apps/ante/assets/Cinzel-Bold.ttf?url';
 import pokerFlipUrl from '../../../apps/ante/assets/card-flip.wav?url';
+import { createAnteProject } from '../../../apps/ante/project.js';
 import gameEngineBrowser from '../../../engine/browser.walu?raw';
 import gameEngineGraphics from '../../../engine/graphics.walu?raw';
 import gameEngineFont from '../../../engine/font.walu?raw';
@@ -33,10 +34,6 @@ import gameEngineSave from '../../../engine/save.walu?raw';
 import gameEngineResourceSample from '../../../fixtures/game-engine/resources.walu?raw';
 import transitiveAwaitStateMain from '../../../fixtures/coroutine-await-state/main.walu?raw';
 import transitiveAwaitStateWorker from '../../../fixtures/coroutine-await-state/worker.walu?raw';
-import arcaneHeistGame from '../../../apps/ante/src/game.walu?raw';
-import arcaneHeistMain from '../../../apps/ante/src/main.walu?raw';
-import arcaneHeistRender from '../../../apps/ante/src/render.walu?raw';
-
 const conformanceModules = import.meta.glob('../../../conformance/**/*.walu', {
   eager: true,
   query: '?raw',
@@ -48,6 +45,8 @@ const includeModules = import.meta.glob('../../../{builtins,externs}/**/*.walu',
   query: '?raw',
   import: 'default',
 });
+
+const arcaneHeistProject = createAnteProject('/apps/ante/src');
 
 function sourceForCase(testCase) {
   const includes = [];
@@ -1246,7 +1245,7 @@ describe('browser conformance', () => {
     }
   });
 
-  it('renders poker-tricks and plays flips through its typed packaged asset manifest', async () => {
+  it('renders Arcane Heist and plays flips through its typed packaged asset manifest', async () => {
     const requested = [];
     const asyncErrors = [];
     let imageDecodeCount = 0;
@@ -1281,12 +1280,8 @@ describe('browser conformance', () => {
       }
     }
     const { root, cleanup } = await compileAndInstantiateWithDom(
-      {
-        '/apps/ante/src/main.walu': arcaneHeistMain,
-        '/apps/ante/src/game.walu': arcaneHeistGame,
-        '/apps/ante/src/render.walu': arcaneHeistRender,
-      },
-      '/apps/ante/src/main.walu',
+      arcaneHeistProject.files,
+      arcaneHeistProject.entryFile,
       {
         gameServices: {
           assetBaseUrl: 'https://game.test/dist/',
@@ -1362,15 +1357,11 @@ describe('browser conformance', () => {
     }
   });
 
-  it('stops poker-tricks on its fatal diagnostic screen when flip audio is undeclared', async () => {
+  it('stops Arcane Heist on its fatal diagnostic screen when flip audio is undeclared', async () => {
     const asyncErrors = [];
     const { root, cleanup } = await compileAndInstantiateWithDom(
-      {
-        '/apps/ante/src/main.walu': arcaneHeistMain,
-        '/apps/ante/src/game.walu': arcaneHeistGame,
-        '/apps/ante/src/render.walu': arcaneHeistRender,
-      },
-      '/apps/ante/src/main.walu',
+      arcaneHeistProject.files,
+      arcaneHeistProject.entryFile,
       {
         gameServices: {
           assetBaseUrl: 'https://game.test/dist/',

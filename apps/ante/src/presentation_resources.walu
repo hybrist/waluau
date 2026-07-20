@@ -1,0 +1,193 @@
+-- Resource lifetime and failure policy for Arcane Heist presentation assets.
+-- Engine callbacks ask this module to load, prepare, unlock, play, diagnose,
+-- and dispose; source/GPU ownership no longer leaks across the entry module.
+
+local engine = require("waluau:engine")
+local graphics_module = require("waluau:engine/graphics")
+local resources = require("waluau:engine/resources")
+local audio = require("waluau:engine/audio")
+local render = require("./render")
+
+type State = {
+    image_source: resources.Resource,
+    font_source: resources.Resource,
+    flip_sound: resources.Resource,
+    texture: graphics_module.Texture?,
+    font: graphics_module.Font?,
+    effects: render.EffectShaders,
+    image_finished: bool,
+    font_finished: bool,
+    sound_finished: bool,
+    audio_unlocked: bool,
+    shader_finished: bool,
+    fatal_shader_error: string,
+    fatal_audio_code: string,
+    fatal_audio_message: string,
+    warnings: string
+}
+
+const IMAGE_PATH: string = "assets/card-back.svg"
+const FONT_PATH: string = "assets/Cinzel-Bold.ttf"
+const SOUND_PATH: string = "assets/card-flip.wav"
+const FLIP_SOUND_VOLUME: f64 = 0.62
+
+function new(): State
+    return {
+        image_source = { handle = 0, kind = "image", path = IMAGE_PATH },
+        font_source = { handle = 0, kind = "font", path = FONT_PATH },
+        flip_sound = { handle = 0, kind = "sound", path = SOUND_PATH },
+        texture = nil,
+        font = nil,
+        effects = {
+            gold_shimmer = nil,
+            defeat_shroud = nil,
+            red_fire = nil,
+            blue_caustics = nil,
+            black_hole = nil,
+            green_growth = nil,
+        },
+        image_finished = false,
+        font_finished = false,
+        sound_finished = false,
+        audio_unlocked = false,
+        shader_finished = false,
+        fatal_shader_error = "",
+        fatal_audio_code = "",
+        fatal_audio_message = "",
+        warnings = "",
+    }
+end
+
+function append_warning(state: State, warning: string): unit
+    if #state.warnings > 0 then state.warnings ..= "; " end
+    state.warnings ..= warning
+end
+
+function fatal_audio(state: State, code: string, message: string): unit
+    if #state.fatal_audio_code > 0 then return end
+    state.fatal_audio_code = code
+    state.fatal_audio_message = message
+end
+
+-- TODO(waluau-engine): A typed asset-bundle loader should await the manifest as
+-- one operation and return a bundle whose resources share one release owner.
+-- That would remove the repeated path/error plumbing and partial-ready flags.
+function load_async(state: State): i32
+    local image_result: resources.LoadResult = resources.await_image(IMAGE_PATH)
+    if image_result.ok then state.image_source = image_result.resource
+    else
+        state.image_finished = true
+        append_warning(state, image_result.error.code .. ": " .. image_result.error.message)
+    end
+
+    local font_result: resources.LoadResult = resources.await_font(FONT_PATH, "Arcane Vault")
+    if font_result.ok then state.font_source = font_result.resource
+    else
+        state.font_finished = true
+        append_warning(state, font_result.error.code .. ": " .. font_result.error.message)
+    end
+
+    local sound_result: resources.LoadResult = audio.await_sound(SOUND_PATH)
+    state.sound_finished = true
+    if sound_result.ok then state.flip_sound = sound_result.resource
+    else fatal_audio(state, sound_result.error.code, sound_result.error.message) end
+    return 0
+end
+
+function prepare(state: State, graphics: engine.Graphics): unit
+    if not state.shader_finished then
+        state.shader_finished = true
+        local result: render.EffectSetResult = render.create_effects(graphics)
+        state.effects = result.effects
+        state.fatal_shader_error = result.fatal_error
+        if #result.warnings > 0 then append_warning(state, result.warnings) end
+    end
+    if not state.image_finished and state.image_source.handle ~= 0 then
+        local source: resources.Resource = state.image_source
+        local result: graphics_module.TextureResult = graphics:texture_from_resource(source)
+        resources.release(source)
+        state.image_source = { handle = 0, kind = "image", path = source.path }
+        state.image_finished = true
+        if result.ok then state.texture = result.texture
+        else append_warning(state, result.error.code .. ": " .. result.error.message) end
+    end
+    if not state.font_finished and state.font_source.handle ~= 0 then
+        local source: resources.Resource = state.font_source
+        local result: graphics_module.FontResult = graphics:font_from_resource(source)
+        resources.release(source)
+        state.font_source = { handle = 0, kind = "font", path = source.path }
+        state.font_finished = true
+        if result.ok then state.font = result.font
+        else append_warning(state, result.error.code .. ": " .. result.error.message) end
+    end
+
+    local maybe_font: graphics_module.Font? = state.font
+    local custom_font_ready: bool = false
+    if maybe_font ~= nil then
+        custom_font_ready = graphics:set_font_resource(maybe_font::graphics_module.Font, 14.0)
+    end
+    if not custom_font_ready then graphics:use_builtin_font() end
+end
+
+function unlock_audio(state: State): bool
+    if state.audio_unlocked then return true end
+    if not audio.unlock() then
+        fatal_audio(state, "unavailable", "the audio host could not unlock its playback device")
+        return false
+    end
+    state.audio_unlocked = true
+    return true
+end
+
+function play_flip(state: State): unit
+    if #state.fatal_audio_code > 0 then return end
+    if state.flip_sound.handle == 0 then
+        fatal_audio(state, "invalid_handle", "decoded card flip sound has no resource handle")
+        return
+    end
+    if not audio.play(state.flip_sound, false, FLIP_SOUND_VOLUME) then
+        print("ante: the audio host refused to start decoded sound playback")
+    end
+end
+
+function can_update(state: State): bool
+    return #state.fatal_audio_code == 0 and state.sound_finished and state.audio_unlocked
+end
+
+function draw_failure(state: State, graphics: engine.Graphics): bool
+    if #state.fatal_shader_error > 0 then
+        render.draw_shader_error(graphics, state.fatal_shader_error)
+        return true
+    end
+    if #state.fatal_audio_code > 0 then
+        render.draw_audio_error(
+            graphics, SOUND_PATH, state.fatal_audio_code, state.fatal_audio_message)
+        return true
+    end
+    return false
+end
+
+function draw_audio_prompt(state: State, graphics: engine.Graphics): unit
+    if not state.audio_unlocked then render.draw_audio_prompt(graphics, state.sound_finished) end
+end
+
+function dispose(state: State): unit
+    if state.image_source.handle ~= 0 then resources.release(state.image_source) end
+    if state.font_source.handle ~= 0 then resources.release(state.font_source) end
+    if state.flip_sound.handle ~= 0 then resources.release(state.flip_sound) end
+    state.image_source.handle = 0
+    state.font_source.handle = 0
+    state.flip_sound.handle = 0
+end
+
+return {
+    new = new,
+    load_async = load_async,
+    prepare = prepare,
+    unlock_audio = unlock_audio,
+    play_flip = play_flip,
+    can_update = can_update,
+    draw_failure = draw_failure,
+    draw_audio_prompt = draw_audio_prompt,
+    dispose = dispose,
+}

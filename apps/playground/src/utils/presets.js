@@ -32,14 +32,10 @@ const gameEngineModules = import.meta.glob('../../../../engine/*.walu', {
   import: 'default'
 });
 
-const pokerTricksFixtures = import.meta.glob([
-  '../../../ante/src/*.walu',
-  '!../../../ante/src/*.test.walu',
-], {
-  eager: true,
-  query: '?raw',
-  import: 'default'
-});
+const pokerTricksFixtures = Object.fromEntries(
+  Object.entries(POKER_TRICKS_EXAMPLE.files)
+    .filter(([path]) => path.startsWith('/fixtures/poker-tricks/'))
+);
 
 const conformanceModules = import.meta.glob('../../../../conformance/*.walu', {
   eager: true,

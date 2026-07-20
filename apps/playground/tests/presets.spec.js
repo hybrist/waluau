@@ -190,18 +190,17 @@ test.describe('preset selector', () => {
     });
   });
 
-  test('file search finds the Arcane Heist fixture files and loads the preset', async ({ page }) => {
+  test('file search finds the Arcane Heist entry and loads the preset', async ({ page }) => {
     await page.getByRole('button', { name: 'Search (Cmd+P)' }).click();
     await page.locator('.search-input-field').fill('poker-tricks');
 
     const results = page.locator('.search-item');
-    await expect(results.locator('.search-item-name')).toHaveText([
-      'poker-tricks/game.walu',
-      'poker-tricks/main.walu',
-      'poker-tricks/render.walu',
-    ]);
-
-    await results.filter({ hasText: 'poker-tricks/main.walu' }).click();
+    const entry = results.filter({ hasText: 'poker-tricks/main.walu' });
+    await expect(entry).toHaveCount(1);
+    await entry.click();
+    await expect(page.locator('.file-item.active')).toContainText(
+      'fixtures/poker-tricks/main.walu',
+    );
     await expect(page.locator('.code-textarea')).toContainText('function install_arcane_heist');
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
       timeout: COMPILER_READY_TIMEOUT,

@@ -14,6 +14,11 @@ type EffectShaders = {
     black_hole: graphics_module.Shader?,
     green_growth: graphics_module.Shader?
 }
+type EffectSetResult = {
+    effects: EffectShaders,
+    fatal_error: string,
+    warnings: string
+}
 
 const WIDTH: f64 = 960.0
 const HEIGHT: f64 = 600.0
@@ -523,28 +528,57 @@ void main() {
 }
 ]]
 
-function create_gold_shimmer_shader(graphics: Graphics): graphics_module.ShaderResult
-    return graphics:create_shader(EFFECT_VERTEX_SOURCE, GOLD_SHIMMER_PIXEL_SOURCE)
+function append_effect_warning(warnings: string, name: string, result: graphics_module.ShaderResult): string
+    if result.ok then return warnings end
+    if #warnings > 0 then warnings ..= "; " end
+    return warnings .. name .. " " .. result.error.code .. ": " .. result.error.message
 end
 
-function create_defeat_shroud_shader(graphics: Graphics): graphics_module.ShaderResult
-    return graphics:create_shader(EFFECT_VERTEX_SOURCE, DEFEAT_SHROUD_PIXEL_SOURCE)
-end
+-- Compile the complete visual language in one operation. Callers do not need
+-- to know shader names, sources, or which missing effect is fatal.
+function create_effects(graphics: Graphics): EffectSetResult
+    local effects: EffectShaders = {
+        gold_shimmer = nil,
+        defeat_shroud = nil,
+        red_fire = nil,
+        blue_caustics = nil,
+        black_hole = nil,
+        green_growth = nil,
+    }
+    local warnings: string = ""
+    local fatal_error: string = ""
 
-function create_red_fire_shader(graphics: Graphics): graphics_module.ShaderResult
-    return graphics:create_shader(EFFECT_VERTEX_SOURCE, RED_FIRE_PIXEL_SOURCE)
-end
+    local gold: graphics_module.ShaderResult = graphics:create_shader(
+        EFFECT_VERTEX_SOURCE, GOLD_SHIMMER_PIXEL_SOURCE)
+    if gold.ok then effects.gold_shimmer = gold.shader
+    else warnings = append_effect_warning(warnings, "gold shimmer", gold) end
 
-function create_blue_caustics_shader(graphics: Graphics): graphics_module.ShaderResult
-    return graphics:create_shader(EFFECT_VERTEX_SOURCE, BLUE_CAUSTICS_PIXEL_SOURCE)
-end
+    local defeat: graphics_module.ShaderResult = graphics:create_shader(
+        EFFECT_VERTEX_SOURCE, DEFEAT_SHROUD_PIXEL_SOURCE)
+    if defeat.ok then effects.defeat_shroud = defeat.shader
+    else fatal_error = "defeat shroud " .. defeat.error.code .. ": " .. defeat.error.message end
 
-function create_green_growth_shader(graphics: Graphics): graphics_module.ShaderResult
-    return graphics:create_shader(EFFECT_VERTEX_SOURCE, GREEN_GROWTH_PIXEL_SOURCE)
-end
+    local red: graphics_module.ShaderResult = graphics:create_shader(
+        EFFECT_VERTEX_SOURCE, RED_FIRE_PIXEL_SOURCE)
+    if red.ok then effects.red_fire = red.shader
+    else warnings = append_effect_warning(warnings, "red", red) end
 
-function create_black_hole_shader(graphics: Graphics): graphics_module.ShaderResult
-    return graphics:create_shader(EFFECT_VERTEX_SOURCE, BLACK_HOLE_PIXEL_SOURCE)
+    local blue: graphics_module.ShaderResult = graphics:create_shader(
+        EFFECT_VERTEX_SOURCE, BLUE_CAUSTICS_PIXEL_SOURCE)
+    if blue.ok then effects.blue_caustics = blue.shader
+    else warnings = append_effect_warning(warnings, "blue", blue) end
+
+    local black: graphics_module.ShaderResult = graphics:create_shader(
+        EFFECT_VERTEX_SOURCE, BLACK_HOLE_PIXEL_SOURCE)
+    if black.ok then effects.black_hole = black.shader
+    else warnings = append_effect_warning(warnings, "black", black) end
+
+    local green: graphics_module.ShaderResult = graphics:create_shader(
+        EFFECT_VERTEX_SOURCE, GREEN_GROWTH_PIXEL_SOURCE)
+    if green.ok then effects.green_growth = green.shader
+    else warnings = append_effect_warning(warnings, "green", green) end
+
+    return { effects = effects, fatal_error = fatal_error, warnings = warnings }
 end
 
 function use_gold_shimmer(graphics: Graphics, effects: EffectShaders, strength: f64, aspect: f64): bool
@@ -568,6 +602,9 @@ function use_defeat_shroud(graphics: Graphics, effects: EffectShaders, strength:
 end
 
 function use_red_fire(graphics: Graphics, effects: EffectShaders, selected: bool, colored: bool, aspect: f64): bool
+    -- TODO(waluau-engine): Typed shader parameter blocks would let all four
+    -- school effects share one checked binding path instead of repeating
+    -- use_shader plus individual string-keyed uniform writes.
     local maybe_shader: graphics_module.Shader? = effects.red_fire
     if maybe_shader == nil then return false end
     local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
@@ -1289,7 +1326,7 @@ function draw_orb(graphics: Graphics, x: f64, y: f64, edge: string, fill: string
     end
 end
 
-function draw_round_orbs(graphics: Graphics, state: game.State): unit
+function draw_round_orbs(graphics: Graphics, state: game.View): unit
     for round = 0::i32, TOTAL_ROUNDS - 1 do
         local x: f64 = 412.0 + (round::f64) * 34.0
         local edge: string = "#52525b"
@@ -1319,7 +1356,7 @@ function draw_round_orbs(graphics: Graphics, state: game.State): unit
     end
 end
 
-function draw_hud(graphics: Graphics, state: game.State): unit
+function draw_hud(graphics: Graphics, state: game.View): unit
     text(graphics, "ARCANE HEIST", 32.0, 47.0, 22, "#fbbf24")
     draw_round_orbs(graphics, state)
     local score: string = tostring(state.player_points)
@@ -1490,10 +1527,10 @@ function trick_scoring(trick: game.Trick): {bool}
     return { false, false, false, false, false }
 end
 
-function draw_resolution_board(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, state: game.State, fan_parts: {f64}, reveal_clock: f64, discards: {game.Card}, computer_won: {game.Card}, player_won: {game.Card}): unit
+function draw_resolution_board(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, state: game.View, fan_parts: {f64}, reveal_clock: f64, discards: {game.Card}, computer_won: {game.Card}, player_won: {game.Card}): unit
     local trick: game.Trick = state.history[#state.history - 1]
     draw_hud(graphics, state)
-    draw_deck(graphics, effects, card_back, #state.deck)
+    draw_deck(graphics, effects, card_back, state.deck_count)
     local scoring: {bool} = trick_scoring(trick)
     -- Flight progress for the winner's two cards; a stalemate has no winner,
     -- so nothing takes off and both played pairs stay where they revealed.
@@ -1644,7 +1681,7 @@ function draw_resolution_board(graphics: Graphics, effects: EffectShaders, card_
 end
 
 -- One relic of the fan, unless a card bound for that slot is still in flight.
-function draw_hand_slot(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, state: game.State, index: i32, focus: i32, parts: {f64}, play_picks: {i32}, swap_hand: {i32}, anims: {Anim}, anim_clock: f64): unit
+function draw_hand_slot(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, state: game.View, index: i32, focus: i32, parts: {f64}, play_picks: {i32}, swap_hand: {i32}, anims: {Anim}, anim_clock: f64): unit
     if slot_hidden(anims, anim_clock, SLOT_PLAYER, index) then return end
     local selected: bool = is_picked(play_picks, index)
     if state.swap_open then selected = is_picked(swap_hand, index) end
@@ -1656,13 +1693,13 @@ end
 -- fan_parts carries each relic's eased parting offset. main.walu owns both, so
 -- the fan's motion survives a frame and the focus edge and the parting can
 -- never disagree about which relic is active.
-function draw_playfield(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, state: game.State, hand_focus: i32, fan_parts: {f64}, ward_cursor: i32, cursor_area: i32, play_picks: {i32}, swap_hand: {i32}, swap_wards: {i32}, revealing: bool, reveal_clock: f64, anims: {Anim}, anim_clock: f64, discards: {game.Card}, computer_won: {game.Card}, player_won: {game.Card}): unit
+function draw_playfield(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, state: game.View, hand_focus: i32, fan_parts: {f64}, ward_cursor: i32, cursor_area: i32, play_picks: {i32}, swap_hand: {i32}, swap_wards: {i32}, revealing: bool, reveal_clock: f64, anims: {Anim}, anim_clock: f64, discards: {game.Card}, computer_won: {game.Card}, player_won: {game.Card}): unit
     if revealing and #state.history > 0 then
         draw_resolution_board(graphics, effects, card_back, state, fan_parts, reveal_clock, discards, computer_won, player_won)
         return
     end
     draw_hud(graphics, state)
-    draw_deck(graphics, effects, card_back, #state.deck)
+    draw_deck(graphics, effects, card_back, state.deck_count)
     draw_piles(graphics, effects,
         discards, pile_landed(discards, anims, anim_clock, SLOT_ASIDE),
         computer_won, pile_landed(computer_won, anims, anim_clock, SLOT_COMPUTER_WON),
@@ -1775,7 +1812,7 @@ function draw_help(graphics: Graphics, effects: EffectShaders): unit
     text(graphics, "MOUSE: HOVER FOCUSES   CLICK BINDS   BUTTONS COMMIT OR PASS", 126.0, 522.0, 11, "#fbbf24")
 end
 
-function draw_history(graphics: Graphics, state: game.State): unit
+function draw_history(graphics: Graphics, state: game.View): unit
     modal_shell(graphics, "BREACH LEDGER", "H, ESC, OR A CLICK CLOSES THE LEDGER")
     if #state.history == 0 then
         text(graphics, "NO DEFENSES BREACHED YET.", 126.0, 220.0, 16, "#8a8a92")
@@ -1793,7 +1830,7 @@ function draw_history(graphics: Graphics, state: game.State): unit
     end
 end
 
-function draw_final(graphics: Graphics, state: game.State): unit
+function draw_final(graphics: Graphics, state: game.View): unit
     local title: string = "THE VAULT IS YOURS"
     local subtitle: string = "FIVE BREACHES COMPLETE"
     if state.computer_tricks >= 3 then
@@ -1807,7 +1844,7 @@ function draw_final(graphics: Graphics, state: game.State): unit
     text_centered(graphics, "R OR CLICK RESTARTS THE HEIST   H OPENS THE LEDGER", WIDTH * 0.5, 482.0, 12, "#fbbf24")
 end
 
-function draw(graphics: Graphics, effects: EffectShaders, state: game.State, hand_focus: i32, fan_parts: {f64}, ward_cursor: i32, cursor_area: i32, play_picks: {i32}, swap_hand: {i32}, swap_wards: {i32}, modal: i32, revealing: bool, reveal_clock: f64, anims: {Anim}, anim_clock: f64, card_back: graphics_module.Texture?, discards: {game.Card}, computer_won: {game.Card}, player_won: {game.Card}): unit
+function draw(graphics: Graphics, effects: EffectShaders, state: game.View, hand_focus: i32, fan_parts: {f64}, ward_cursor: i32, cursor_area: i32, play_picks: {i32}, swap_hand: {i32}, swap_wards: {i32}, modal: i32, revealing: bool, reveal_clock: f64, anims: {Anim}, anim_clock: f64, card_back: graphics_module.Texture?, discards: {game.Card}, computer_won: {game.Card}, player_won: {game.Card}): unit
     draw_backdrop(graphics)
     -- The terminal breach still flips on the board, so keep the playfield up
     -- while a reveal is running even after the game finishes.
@@ -1855,12 +1892,7 @@ return {
     draw_shader_error = draw_shader_error,
     draw_audio_error = draw_audio_error,
     draw_audio_prompt = draw_audio_prompt,
-    create_gold_shimmer_shader = create_gold_shimmer_shader,
-    create_defeat_shroud_shader = create_defeat_shroud_shader,
-    create_red_fire_shader = create_red_fire_shader,
-    create_blue_caustics_shader = create_blue_caustics_shader,
-    create_black_hole_shader = create_black_hole_shader,
-    create_green_growth_shader = create_green_growth_shader,
+    create_effects = create_effects,
     slot_x = slot_x,
     slot_y = slot_y,
     hand_angle = hand_angle,

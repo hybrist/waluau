@@ -1,0 +1,64 @@
+-- Deterministic test adapter for the deep rules module. Production enters
+-- through shuffled deals; tests enter through explicit relic and ward layouts
+-- without spreading mutable State setup across every scenario.
+
+local game = require("../src/game")
+
+function clone_cards(cards: {game.Card}): {game.Card}
+    local copy: {game.Card} = {}
+    for card in cards do table.insert(copy, { rank = card.rank, suit = card.suit }) end
+    return copy
+end
+
+function arrange_breach(
+    state: game.State,
+    middle: {game.Card},
+    player_hand: {game.Card},
+    computer_hand: {game.Card}
+): unit
+    state.middle = clone_cards(middle)
+    state.player_hand = clone_cards(player_hand)
+    state.computer_hand = clone_cards(computer_hand)
+    state.player_known = { false, false, false, false, false }
+    state.computer_known = { false, false, false, false, false }
+end
+
+function arrange_arch_mage(
+    state: game.State,
+    middle: {game.Card},
+    computer_hand: {game.Card}
+): unit
+    state.middle = clone_cards(middle)
+    state.computer_hand = clone_cards(computer_hand)
+    state.computer_known = { false, false, false, false, false }
+end
+
+function arrange_player(
+    state: game.State,
+    player_hand: {game.Card},
+    player_known: {bool}
+): unit
+    state.player_hand = clone_cards(player_hand)
+    state.player_known = player_known
+end
+
+function set_player_points(state: game.State, points: i32): unit
+    state.player_points = points
+end
+
+function set_swap_trace(
+    state: game.State,
+    hand_indices: {i32},
+    middle_indices: {i32}
+): unit
+    state.swap_hand_indices = hand_indices
+    state.swap_middle_indices = middle_indices
+end
+
+return {
+    arrange_breach = arrange_breach,
+    arrange_arch_mage = arrange_arch_mage,
+    arrange_player = arrange_player,
+    set_player_points = set_player_points,
+    set_swap_trace = set_swap_trace,
+}

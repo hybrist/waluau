@@ -1,0 +1,123 @@
+-- Shared framing and primitive validation for Arcane Heist development
+-- snapshots. Rules and presentation modules keep ownership of their fields;
+-- this module owns the token format both use.
+
+type Reader = { tokens: {string}, index: i32, ok: bool, collection_limit: i32 }
+
+function append_i32(parts: {string}, value: i32): unit
+    table.insert(parts, tostring(value))
+end
+
+function append_bool(parts: {string}, value: bool): unit
+    if value then table.insert(parts, "1") else table.insert(parts, "0") end
+end
+
+function append_f64(parts: {string}, value: f64): unit
+    table.insert(parts, tostring(value))
+end
+
+function append_indices(parts: {string}, values: {i32}): unit
+    append_i32(parts, #values)
+    for value in values do append_i32(parts, value) end
+end
+
+function append_f64s(parts: {string}, values: {f64}): unit
+    append_i32(parts, #values)
+    for value in values do append_f64(parts, value) end
+end
+
+function reader(value: string, collection_limit: i32): Reader
+    return {
+        tokens = string.split(value, ","),
+        index = 0,
+        ok = true,
+        collection_limit = collection_limit,
+    }
+end
+
+function Reader:next_string(): string
+    if not self.ok or self.index >= #self.tokens then
+        self.ok = false
+        return ""
+    end
+    local value: string = self.tokens[self.index]
+    self.index += 1
+    return value
+end
+
+function Reader:next_f64(): f64
+    local text: string = self:next_string()
+    if not self.ok then return 0.0 end
+    local parsed: f64? = tonumber(text)
+    if parsed == nil then
+        self.ok = false
+        return 0.0
+    end
+    return parsed::f64
+end
+
+function Reader:next_i32(): i32
+    local decimal: f64 = self:next_f64()
+    local value: i32 = decimal::i32
+    if self.ok and (value::f64) ~= decimal then self.ok = false end
+    return value
+end
+
+function Reader:next_bool(): bool
+    local value: i32 = self:next_i32()
+    if not self.ok then return false end
+    if value == 1 then return true end
+    if value ~= 0 then self.ok = false end
+    return false
+end
+
+function Reader:next_length(): i32
+    local length: i32 = self:next_i32()
+    if length < 0 or length > self.collection_limit then
+        self.ok = false
+        return 0
+    end
+    return length
+end
+
+function Reader:next_indices(): {i32}
+    local values: {i32} = {}
+    local length: i32 = self:next_length()
+    for _ = 1, length do table.insert(values, self:next_i32()) end
+    return values
+end
+
+function Reader:next_f64s(): {f64}
+    local values: {f64} = {}
+    local length: i32 = self:next_length()
+    for _ = 1, length do table.insert(values, self:next_f64()) end
+    return values
+end
+
+function Reader:complete(): bool
+    return self.ok and self.index == #self.tokens
+end
+
+-- Hot replacement has three independently versioned payloads. Keeping framing
+-- here makes restore atomic without making rules, flow, or choreography
+-- understand either of the other schemas.
+function frame3(schema: string, first: string, second: string, third: string): string
+    return schema .. "|" .. first .. "|" .. second .. "|" .. third
+end
+
+function unframe3(value: string, schema: string): {string}?
+    local sections: {string} = string.split(value, "|")
+    if #sections ~= 4 or sections[0] ~= schema then return nil end
+    return { sections[1], sections[2], sections[3] }
+end
+
+return {
+    append_i32 = append_i32,
+    append_bool = append_bool,
+    append_f64 = append_f64,
+    append_indices = append_indices,
+    append_f64s = append_f64s,
+    reader = reader,
+    frame3 = frame3,
+    unframe3 = unframe3,
+}

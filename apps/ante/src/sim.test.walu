@@ -3,6 +3,9 @@
 require("waluau:vitest")
 
 local game = require("./game")
+local game_fixture = require("../test/game_fixture")
+local flow = require("./flow")
+local snapshot_data = require("./snapshot")
 
 const FIRST_ROUND: i32 = 1
 const LAST_ROUND: i32 = 5
@@ -12,21 +15,30 @@ local function card(rank: i32, suit: i32): game.Card
 end
 
 local function force_player_win(state: game.State): unit
-    state.middle = { card(10, 0), card(11, 0), card(12, 0) }
-    state.player_hand = { card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3) }
-    state.computer_hand = { card(2, 1), card(3, 2), card(4, 3), card(6, 1), card(8, 2) }
+    game_fixture.arrange_breach(
+        state,
+        { card(10, 0), card(11, 0), card(12, 0) },
+        { card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3) },
+        { card(2, 1), card(3, 2), card(4, 3), card(6, 1), card(8, 2) }
+    )
 end
 
 local function force_computer_win(state: game.State): unit
-    state.middle = { card(10, 0), card(11, 0), card(12, 0) }
-    state.player_hand = { card(2, 1), card(3, 2), card(4, 3), card(6, 1), card(8, 2) }
-    state.computer_hand = { card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3) }
+    game_fixture.arrange_breach(
+        state,
+        { card(10, 0), card(11, 0), card(12, 0) },
+        { card(2, 1), card(3, 2), card(4, 3), card(6, 1), card(8, 2) },
+        { card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3) }
+    )
 end
 
 local function force_stalemate(state: game.State): unit
-    state.middle = { card(7, 3), card(2, 3), card(8, 2) }
-    state.player_hand = { card(13, 0), card(13, 1), card(4, 0), card(5, 1), card(6, 0) }
-    state.computer_hand = { card(13, 2), card(13, 3), card(4, 2), card(5, 3), card(6, 2) }
+    game_fixture.arrange_breach(
+        state,
+        { card(7, 3), card(2, 3), card(8, 2) },
+        { card(13, 0), card(13, 1), card(4, 0), card(5, 1), card(6, 0) },
+        { card(13, 2), card(13, 3), card(4, 2), card(5, 3), card(6, 2) }
+    )
 end
 
 describe("Arcane Heist scoring", function()
@@ -106,16 +118,35 @@ describe("Arcane Heist swaps", function()
     it("exchanges a winning proposal once without consuming the deck", function()
         math.randomseed(7)
         local state = game.new()
-        state.middle = { card(10, 0), card(11, 0), card(12, 0) }
-        state.computer_hand = { card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3) }
+        game_fixture.arrange_arch_mage(
+            state,
+            { card(10, 0), card(11, 0), card(12, 0) },
+            { card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3) }
+        )
         state:play(0, 1)
         expect(#state.history):toBe(0)
         local old_hand = state.player_hand[0]
         local old_middle = state.middle[0]
         local old_deck_size: i32 = #state.deck
-        state:resolve_swap({ 0 }, { 0 })
+        local outcome: game.FeintOutcome? = state:resolve_swap({ 0 }, { 0 })
+        assert(outcome ~= nil)
+        local won_feint: game.FeintOutcome = outcome::game.FeintOutcome
+        local outcome_winner: i32 = won_feint.winner
+        local outcome_hand_count: i32 = #won_feint.hand_indices
+        local outcome_hand_index: i32 = won_feint.hand_indices[0]
+        local outcome_middle_count: i32 = #won_feint.middle_indices
+        local outcome_middle_index: i32 = won_feint.middle_indices[0]
+        local outcome_outgoing_rank: i32 = won_feint.outgoing[0].rank
+        local outcome_incoming_rank: i32 = won_feint.incoming[0].rank
 
         expect(state.swap_open):toBe(false)
+        expect(outcome_winner):toBe(1)
+        expect(outcome_hand_count):toBe(1)
+        expect(outcome_hand_index):toBe(0)
+        expect(outcome_middle_count):toBe(1)
+        expect(outcome_middle_index):toBe(0)
+        expect(outcome_outgoing_rank):toBe(old_hand.rank)
+        expect(outcome_incoming_rank):toBe(old_middle.rank)
         expect(state.swap_winner):toBe(1)
         expect(state.swap_count):toBe(1)
         expect(#state.swap_hand_indices):toBe(1)
@@ -129,6 +160,8 @@ describe("Arcane Heist swaps", function()
         expect(state.middle[0].rank):toBe(old_hand.rank)
         expect(state.middle[0].suit):toBe(old_hand.suit)
         expect(#state.deck):toBe(old_deck_size)
+        local visible_deck_count: i32 = game.view(state).deck_count
+        expect(visible_deck_count):toBe(old_deck_size)
         expect(state.player_known[0]):toBe(true)
         expect(state.player_known[1]):toBe(false)
         expect(state.player_known[2]):toBe(false)
@@ -144,17 +177,23 @@ describe("Arcane Heist swaps", function()
     it("re-packs watched marks with the hand after a trick", function()
         math.randomseed(46)
         local state = game.new()
-        state.middle = { card(10, 0), card(11, 0), card(12, 0) }
-        state.computer_hand = { card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3) }
+        game_fixture.arrange_arch_mage(
+            state,
+            { card(10, 0), card(11, 0), card(12, 0) },
+            { card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3) }
+        )
         local marked_card = state.middle[0]
         state:resolve_swap({ 3 }, { 0 })
         expect(state.swap_winner):toBe(1)
         expect(state.player_known[3]):toBe(true)
-        state:play(0, 1)
+        local played: game.Trick? = state:play(0, 1)
+        assert(played ~= nil)
 
         expect(#state.player_known):toBe(5)
         expect(#state.player_hand):toBe(5)
         local trick = state.history[0]
+        local played_round: i32 = (played::game.Trick).round
+        expect(played_round):toBe(trick.round)
         expect(trick.player_known[3]):toBe(true)
         expect(trick.player_known[1]):toBe(false)
         expect(trick.player_hand[3].rank):toBe(marked_card.rank)
@@ -171,8 +210,11 @@ describe("Arcane Heist swaps", function()
     it("sorts relics and watched marks without mutating the deal", function()
         math.randomseed(48)
         local state = game.new()
-        state.player_hand = { card(3, 2), card(14, 1), card(3, 1), card(9, 2), card(14, 3) }
-        state.player_known = { false, true, false, false, false }
+        game_fixture.arrange_player(
+            state,
+            { card(3, 2), card(14, 1), card(3, 1), card(9, 2), card(14, 3) },
+            { false, true, false, false, false }
+        )
         local deck_size: i32 = #state.deck
         local rank_order = state:sort_player_hand(false)
 
@@ -223,15 +265,18 @@ describe("Arcane Heist swaps", function()
 
     it("uses proposed cards as the wager and rejects unaffordable proposals", function()
         local two_card_state = game.new()
-        two_card_state.middle = { card(10, 0), card(11, 0), card(12, 0) }
-        two_card_state.computer_hand = { card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3) }
+        game_fixture.arrange_arch_mage(
+            two_card_state,
+            { card(10, 0), card(11, 0), card(12, 0) },
+            { card(13, 0), card(14, 0), card(2, 1), card(4, 2), card(6, 3) }
+        )
         two_card_state:resolve_swap({ 0, 1 }, { 0, 1 })
         expect(two_card_state.player_wager):toBe(2)
         expect(two_card_state.player_points):toBe(8)
         expect(two_card_state.pot):toBe(2)
 
         local unaffordable_state = game.new()
-        unaffordable_state.player_points = 1
+        game_fixture.set_player_points(unaffordable_state, 1)
         unaffordable_state:resolve_swap({ 0, 1 }, { 0, 1 })
         expect(unaffordable_state.swap_open):toBe(true)
         expect(unaffordable_state.player_wager):toBe(0)
@@ -239,8 +284,11 @@ describe("Arcane Heist swaps", function()
 
     it("lets the Arch Mage make an unrestricted three-card feint", function()
         local state = game.new()
-        state.computer_hand = { card(10, 0), card(11, 0), card(12, 0), card(13, 0), card(14, 0) }
-        state.middle = { card(2, 1), card(4, 2), card(6, 3) }
+        game_fixture.arrange_arch_mage(
+            state,
+            { card(2, 1), card(4, 2), card(6, 3) },
+            { card(10, 0), card(11, 0), card(12, 0), card(13, 0), card(14, 0) }
+        )
         local swap = game.best_swap(state.computer_hand, state.middle)
         expect(#swap.hand_indices):toBe(3)
         expect(#swap.middle_indices):toBe(3)
@@ -277,8 +325,7 @@ describe("Arcane Heist development snapshots", function()
         force_player_win(state)
         state:play(0, 1)
         state:resolve_swap({}, {})
-        state.swap_hand_indices = { 2 }
-        state.swap_middle_indices = { 0 }
+        game_fixture.set_swap_trace(state, { 2 }, { 0 })
 
         local encoded: string = game.snapshot(state)
         local restored: game.State? = game.restore(encoded)
@@ -295,6 +342,62 @@ describe("Arcane Heist development snapshots", function()
 
         expect(game.restore("ante-state-v0,0") == nil):toBe(true)
         expect(game.restore(encoded .. ",unexpected") == nil):toBe(true)
+    end)
+
+    it("frames rules, flow, and presentation payloads atomically", function()
+        local rules: game.State = game.new()
+        local ui: flow.State = flow.new()
+        ui.modal = flow.modal_help
+
+        local encoded_flow: string = flow.snapshot(ui)
+        local framed: string = snapshot_data.frame3(
+            "ante-test-frame", game.snapshot(rules), encoded_flow, "presentation")
+        local sections: {string}? = snapshot_data.unframe3(framed, "ante-test-frame")
+        expect(sections == nil):toBe(false)
+        if sections ~= nil then
+            local payloads: {string} = sections
+            local restored_rules: game.State? = game.restore(payloads[0])
+            local restored_ui: flow.State? = flow.restore(payloads[1])
+            expect(restored_rules == nil):toBe(false)
+            expect(restored_ui == nil):toBe(false)
+            expect(payloads[2]):toBe("presentation")
+            if restored_ui ~= nil then expect(restored_ui.modal):toBe(flow.modal_help) end
+        end
+
+        expect(snapshot_data.unframe3(framed, "wrong-schema") == nil):toBe(true)
+        expect(snapshot_data.unframe3(framed .. "|extra", "ante-test-frame") == nil):toBe(true)
+    end)
+end)
+
+describe("Arcane Heist heist flow", function()
+    it("applies the same modal and animation gates to both input adapters", function()
+        local keyboard: flow.State = flow.new()
+        local mouse: flow.State = flow.new()
+        keyboard.modal = flow.modal_help
+        mouse.modal = flow.modal_help
+
+        expect(flow.gate(keyboard, false, false, flow.command_advance)):toBe(flow.result_consumed)
+        expect(flow.gate(mouse, false, false, flow.command_primary)):toBe(flow.result_consumed)
+        expect(keyboard.modal):toBe(flow.modal_none)
+        expect(mouse.modal):toBe(flow.modal_none)
+
+        expect(flow.gate(keyboard, false, true, flow.command_advance)):toBe(flow.result_skip)
+        expect(flow.gate(mouse, false, true, flow.command_primary)):toBe(flow.result_skip)
+    end)
+
+    it("finishes a reveal before advancing to breach cleanup", function()
+        local ui: flow.State = flow.new()
+        flow.begin_reveal(ui)
+
+        expect(flow.gate(ui, false, false, flow.command_advance)):toBe(flow.result_consumed)
+        expect(ui.revealing):toBe(true)
+        expect(flow.gate(ui, false, false, flow.command_advance)):toBe(flow.result_refill)
+        expect(ui.revealing):toBe(false)
+
+        flow.begin_reveal(ui)
+        expect(flow.gate(ui, true, false, flow.command_primary)):toBe(flow.result_consumed)
+        expect(flow.gate(ui, true, false, flow.command_primary)):toBe(flow.result_consumed)
+        expect(ui.modal):toBe(flow.modal_final)
     end)
 end)
 
