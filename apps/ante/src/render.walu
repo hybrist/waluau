@@ -1909,4 +1909,22 @@ return {
     row_left_x = ROW_LEFT_X,
     row_right_x = ROW_RIGHT_X,
     row_y = ROW_Y,
+    -- The board anchor, face-mode, and easing vocabulary Anim records use.
+    -- Declared once here so choreography builds animations against the same
+    -- ids this module interprets, instead of mirroring the integers.
+    slot_player = SLOT_PLAYER,
+    slot_computer = SLOT_COMPUTER,
+    slot_middle = SLOT_MIDDLE,
+    slot_deck = SLOT_DECK,
+    slot_aside = SLOT_ASIDE,
+    slot_computer_won = SLOT_COMPUTER_WON,
+    slot_player_won = SLOT_PLAYER_WON,
+    faces_down = FACES_DOWN,
+    faces_up = FACES_UP,
+    faces_flip_up = FACES_FLIP_UP,
+    faces_flip_down = FACES_FLIP_DOWN,
+    ease_out_quint = EASE_OUT_QUINT,
+    ease_in_cubic = EASE_IN_CUBIC,
+    ease_in_out_cubic = EASE_IN_OUT_CUBIC,
+    ease_out_back = EASE_OUT_BACK,
 }
