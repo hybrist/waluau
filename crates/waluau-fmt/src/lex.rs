@@ -44,17 +44,22 @@ pub fn significant_tokens(source: &str) -> Result<TokenStream, Diagnostic> {
         let blank_before = newlines >= 2;
 
         match comment_text(&kind) {
-            Some(text) => {
+            Some((text, block)) => {
                 if newlines == 0 && last_was_significant {
                     // Same line as the code before it: a trailing comment.
                     if let Some(last) = out.last_mut() {
                         last.trailing = Some(Comment {
                             text,
+                            block,
                             blank_before: false,
                         });
                     }
                 } else {
-                    pending_leading.push(Comment { text, blank_before });
+                    pending_leading.push(Comment {
+                        text,
+                        block,
+                        blank_before,
+                    });
                 }
                 last_was_significant = false;
             }
@@ -81,10 +86,12 @@ pub fn significant_tokens(source: &str) -> Result<TokenStream, Diagnostic> {
     })
 }
 
-/// The raw comment lexeme if `kind` is comment trivia.
-fn comment_text(kind: &TokenKind) -> Option<String> {
+/// The raw comment lexeme and whether it is a block comment, if `kind` is
+/// comment trivia.
+fn comment_text(kind: &TokenKind) -> Option<(String, bool)> {
     match kind {
-        TokenKind::LineComment(s) | TokenKind::BlockComment(s) => Some(s.clone()),
+        TokenKind::LineComment(s) => Some((s.clone(), false)),
+        TokenKind::BlockComment(s) => Some((s.clone(), true)),
         _ => None,
     }
 }

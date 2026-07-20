@@ -71,7 +71,6 @@ pub enum SyntaxKind {
     LiteralExpr,
     VarargExpr,
     FunctionExpr,
-    RequireExpr,
     ArrayLiteral,
     TableLiteral,
     TableField,
@@ -97,6 +96,9 @@ pub enum SyntaxKind {
 pub struct Comment {
     /// The raw comment lexeme, e.g. `-- hi` or `--[[ block ]]`.
     pub text: String,
+    /// A `--[[ ]]` block comment (vs a `--` line comment). A line comment
+    /// forces a newline after it; a block comment can stay inline.
+    pub block: bool,
     /// Whether a blank line preceded this comment in the source.
     pub blank_before: bool,
 }
@@ -152,6 +154,28 @@ impl Tree {
 }
 
 impl Node {
+    pub fn as_tree(&self) -> Option<&Tree> {
+        match self {
+            Node::Tree(t) => Some(t),
+            Node::Token(_) => None,
+        }
+    }
+
+    pub fn as_token(&self) -> Option<&SynToken> {
+        match self {
+            Node::Token(t) => Some(t),
+            Node::Tree(_) => None,
+        }
+    }
+
+    /// The first token in this element (depth-first).
+    pub fn first_token(&self) -> Option<&SynToken> {
+        match self {
+            Node::Token(t) => Some(t),
+            Node::Tree(t) => t.first_token(),
+        }
+    }
+
     /// Debug helper: reconstruct source text ignoring layout (tokens joined by
     /// single spaces, comments dropped). Used only to sanity-check the parse
     /// covered every token; real output comes from the [`Doc`](crate::doc)

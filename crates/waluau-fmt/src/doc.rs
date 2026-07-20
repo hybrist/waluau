@@ -24,6 +24,11 @@ enum DocKind {
     Nil,
     /// Literal text. Must not contain `\n` — use [`hardline`] for newlines.
     Text(String),
+    /// Verbatim text that may contain newlines, emitted exactly as-is with no
+    /// re-indentation. For content whose internal layout is significant, such
+    /// as long-string literals (`[[...]]`) and multi-line block comments. Any
+    /// contained newline forces enclosing groups to break.
+    RawText(String),
     /// A space when flat, a newline (+ indent) when its group breaks.
     Line,
     /// Nothing when flat, a newline (+ indent) when its group breaks.
@@ -48,6 +53,12 @@ pub fn text(s: impl Into<String>) -> Doc {
     let s = s.into();
     debug_assert!(!s.contains('\n'), "Doc::text must not contain newlines");
     Doc(Rc::new(DocKind::Text(s)))
+}
+
+/// Text emitted verbatim, allowed to contain newlines (see
+/// [`DocKind::RawText`]). Prefer [`text`] for single-line content.
+pub fn raw_text(s: impl Into<String>) -> Doc {
+    Doc(Rc::new(DocKind::RawText(s.into())))
 }
 
 /// A space when flat, a newline when the enclosing group breaks.
@@ -100,6 +111,7 @@ impl Doc {
     fn has_forced_break(&self) -> bool {
         match &*self.0 {
             DocKind::HardLine => true,
+            DocKind::RawText(s) => s.contains('\n'),
             DocKind::Text(_) | DocKind::Nil | DocKind::Line | DocKind::SoftLine => false,
             DocKind::Indent(d) | DocKind::Group(d) => d.has_forced_break(),
             DocKind::Concat(parts) => parts.iter().any(Doc::has_forced_break),
@@ -156,6 +168,13 @@ pub fn print(doc: &Doc, opts: PrintOptions) -> String {
             DocKind::Text(s) => {
                 out.push_str(s);
                 pos += s.chars().count();
+            }
+            DocKind::RawText(s) => {
+                out.push_str(s);
+                pos = match s.rfind('\n') {
+                    Some(nl) => s[nl + 1..].chars().count(),
+                    None => pos + s.chars().count(),
+                };
             }
             DocKind::Concat(parts) => {
                 for part in parts.iter().rev() {
@@ -255,6 +274,14 @@ fn fits(remaining: usize, next: Cmd, rest: &[Cmd], opts: PrintOptions) -> bool {
         match &*doc.0 {
             DocKind::Nil => {}
             DocKind::Text(s) => remaining -= s.chars().count() as isize,
+            DocKind::RawText(s) => match s.find('\n') {
+                // A newline ends the current line: everything so far fit.
+                Some(nl) => {
+                    remaining -= s[..nl].chars().count() as isize;
+                    return remaining >= 0;
+                }
+                None => remaining -= s.chars().count() as isize,
+            },
             DocKind::Concat(parts) => {
                 for part in parts.iter().rev() {
                     stack.push(Cmd {
