@@ -375,6 +375,11 @@ dependencies = [
 [[package]]
 name = "waluau-fmt"
 version = "0.1.0"
+dependencies = [
+ "waluau-diagnostics",
+ "waluau-lexer",
+ "waluau-parser",
+]
 
 [[package]]
 name = "waluau-hir"

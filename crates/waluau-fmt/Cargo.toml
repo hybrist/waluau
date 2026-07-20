@@ -6,3 +6,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+waluau-lexer.workspace = true
+waluau-diagnostics.workspace = true
+
+[dev-dependencies]
+waluau-parser.workspace = true

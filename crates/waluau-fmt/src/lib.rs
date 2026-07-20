@@ -2,12 +2,14 @@
 //!
 //! This crate is a full reflowing pretty-printer: it re-wraps constructs to a
 //! target line width rather than preserving the author's line breaks. It is
-//! built on a lossless concrete syntax tree (added separately) plus the
-//! [`doc`] layout engine in this module; it deliberately does *not* reprint the
-//! compiler AST, which reorders top-level items and desugars string
-//! interpolation.
-//!
-//! Today this crate exposes the [`doc`] engine. The CST-to-[`doc`] lowering and
-//! the `format_source` entry point land in follow-up changes.
+//! built on a lossless concrete syntax tree ([`cst`]) parsed from a
+//! comment-preserving token stream, plus the [`doc`] layout engine; it
+//! deliberately does *not* reprint the compiler AST, which reorders top-level
+//! items and desugars string interpolation.
 
+pub mod cst;
 pub mod doc;
+mod lex;
+mod parse;
+
+pub use parse::parse;
