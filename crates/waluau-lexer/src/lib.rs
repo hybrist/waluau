@@ -95,6 +95,11 @@ pub enum TokenKind {
     /// A `--[[ ... ]]` block comment (any bracket level). Holds the raw
     /// lexeme including the delimiters. Only produced by [`lex_with_trivia`].
     BlockComment(String),
+    /// A backtick interpolated string, kept raw (undesugared) including the
+    /// enclosing backticks and any `{expr}` holes, e.g. `` `hi {x}` ``. Only
+    /// produced by [`lex_with_trivia`]; the compiler path desugars these into a
+    /// parenthesized concatenation instead.
+    InterpString(String),
 }
 
 impl TokenKind {
@@ -111,10 +116,12 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
     Ok(tokens)
 }
 
-/// Like [`lex`], but preserves comments as [`TokenKind::LineComment`] /
-/// [`TokenKind::BlockComment`] trivia tokens (with accurate spans) instead of
-/// discarding them. Used by the formatter to place comments; the compiler path
-/// keeps using [`lex`], whose output is unchanged.
+/// Like [`lex`], but lossless: preserves comments as [`TokenKind::LineComment`]
+/// / [`TokenKind::BlockComment`] trivia tokens, and keeps backtick strings raw
+/// as [`TokenKind::InterpString`] rather than desugaring them, all with
+/// accurate spans. Used by tooling (the formatter) that must reconstruct the
+/// original source; the compiler path keeps using [`lex`], whose output is
+/// unchanged.
 pub fn lex_with_trivia(source: &str) -> Result<Vec<Token>, Diagnostic> {
     let chars: Vec<char> = source.chars().collect();
     let (tokens, _) = lex_range(&chars, 0, false, true)?;
@@ -129,7 +136,7 @@ fn lex_range(
     chars: &[char],
     start: usize,
     stop_at_unmatched_rbrace: bool,
-    keep_comments: bool,
+    lossless: bool,
 ) -> Result<(Vec<Token>, usize), Diagnostic> {
     let mut tokens = Vec::new();
     let mut i = start;
@@ -175,7 +182,7 @@ fn lex_range(
                 (TokenKind::RBrace, 1)
             }
             '`' => {
-                i = lex_interpolated_string(chars, i, &mut tokens, keep_comments)?;
+                i = lex_interpolated_string(chars, i, &mut tokens, lossless)?;
                 continue;
             }
             '#' => (TokenKind::Hash, 1),
@@ -281,7 +288,7 @@ fn lex_range(
                             level,
                             "unterminated block comment '--[[...]]'",
                         )?;
-                        if keep_comments {
+                        if lossless {
                             let raw: String = chars[i..end].iter().collect();
                             tokens.push(Token {
                                 kind: TokenKind::BlockComment(raw),
@@ -298,7 +305,7 @@ fn lex_range(
                     while end < chars.len() && chars[end] != '\n' {
                         end += 1;
                     }
-                    if keep_comments {
+                    if lossless {
                         let raw: String = chars[i..end].iter().collect();
                         tokens.push(Token {
                             kind: TokenKind::LineComment(raw),
@@ -491,12 +498,54 @@ fn lex_range(
 /// desugar it directly into the token stream as a parenthesized concatenation:
 /// `` `a{x}b` `` becomes `("a" .. tostring(x) .. "b")`. Returns the index just
 /// past the closing backtick.
+/// Find the index just past the closing backtick of the interpolated string
+/// starting at `backtick_index`, without desugaring. `{expr}` holes are skipped
+/// using the same `}`-matching logic as the desugaring path, and escapes are
+/// consumed so that `` \` `` and `\{` do not end the string or open a hole.
+fn scan_interpolated_end(chars: &[char], backtick_index: usize) -> Result<usize, Diagnostic> {
+    let mut i = backtick_index + 1;
+    let mut scratch = String::new();
+    loop {
+        match chars.get(i) {
+            None | Some('\n') => {
+                return Err(Diagnostic::new("unterminated interpolated string literal"));
+            }
+            Some('`') => return Ok(i + 1),
+            Some('{') => {
+                // Skip the embedded expression up to its matching `}`.
+                let (_, rbrace) = lex_range(chars, i + 1, true, true)?;
+                i = rbrace + 1;
+            }
+            Some('\\') => {
+                scratch.clear();
+                i = push_string_escape(chars, i + 1, &mut scratch)?;
+            }
+            Some(_) => i += 1,
+        }
+    }
+}
+
 fn lex_interpolated_string(
     chars: &[char],
     backtick_index: usize,
     tokens: &mut Vec<Token>,
-    keep_comments: bool,
+    lossless: bool,
 ) -> Result<usize, Diagnostic> {
+    // Lossless mode keeps the whole backtick literal as one raw token so the
+    // formatter can reproduce it verbatim, rather than desugaring to concat.
+    if lossless {
+        let end = scan_interpolated_end(chars, backtick_index)?;
+        let raw: String = chars[backtick_index..end].iter().collect();
+        tokens.push(Token {
+            kind: TokenKind::InterpString(raw),
+            span: Span {
+                start: backtick_index as u32,
+                end: end as u32,
+            },
+        });
+        return Ok(end);
+    }
+
     enum Part {
         Lit(String, Span),
         Expr(Vec<Token>),
@@ -529,7 +578,7 @@ fn lex_interpolated_string(
             }
             Some('{') => {
                 flush_lit(&mut lit, lit_start, i, &mut parts);
-                let (expr_tokens, rbrace) = lex_range(chars, i + 1, true, keep_comments)?;
+                let (expr_tokens, rbrace) = lex_range(chars, i + 1, true, lossless)?;
                 if expr_tokens.is_empty() {
                     return Err(Diagnostic::new(
                         "empty interpolation '{}' in backtick string",
@@ -911,6 +960,27 @@ mod tests {
                 TokenKind::Number("1".into()),
             ]
         );
+    }
+
+    #[test]
+    fn lex_with_trivia_keeps_interpolation_raw() {
+        assert_eq!(
+            trivia_kinds(r#"local s = `hi {name}!`"#),
+            vec![
+                TokenKind::Local,
+                TokenKind::Identifier("s".into()),
+                TokenKind::Equal,
+                TokenKind::InterpString("`hi {name}!`".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn lex_with_trivia_interpolation_handles_nested_braces_and_strings() {
+        // A `}` inside a nested table/string within the hole must not end the
+        // interpolation early, and an escaped backtick must not end the string.
+        let src = r#"`a {f({x = "}"})} \` b`"#;
+        assert_eq!(trivia_kinds(src), vec![TokenKind::InterpString(src.into())]);
     }
 
     #[test]
