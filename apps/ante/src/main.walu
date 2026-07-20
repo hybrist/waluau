@@ -61,7 +61,7 @@ function install_arcane_heist(): unit
         presentation_resources.prepare(assets, graphics)
         if presentation_resources.draw_failure(assets, graphics) then return end
         if screen == SCREEN_MENU then
-            menu.draw(menu_state, graphics, assets.sound_finished)
+            menu.draw(menu_state, graphics, assets.effects, assets.sound_finished)
             return
         end
         game_screen.draw(heist, graphics, assets.effects, assets.texture)
@@ -81,7 +81,11 @@ function install_arcane_heist(): unit
     end
 
     local function mousemoved(x: f64, y: f64, dx: f64, dy: f64): unit
-        if #assets.fatal_audio_code > 0 or screen ~= SCREEN_GAME then return end
+        if #assets.fatal_audio_code > 0 then return end
+        if screen == SCREEN_MENU then
+            menu.mousemoved(menu_state, x, y)
+            return
+        end
         game_screen.mousemoved(heist, x, y)
     end
 

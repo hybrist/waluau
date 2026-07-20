@@ -2467,9 +2467,10 @@ return {
     draw = draw,
     draw_shader_error = draw_shader_error,
     draw_audio_error = draw_audio_error,
-    -- The menu screen shares the vault's backdrop, panel chrome, and centred
-    -- type instead of restating the presentation vocabulary.
+    -- The menu screen shares the vault's backdrop, panel chrome, centred
+    -- type, and help modal instead of restating the presentation vocabulary.
     draw_backdrop = draw_backdrop,
+    draw_help = draw_help,
     panel = panel,
     text_centered = text_centered,
     create_effects = create_effects,

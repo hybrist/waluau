@@ -65,9 +65,11 @@ flat.
 
 ## Controls
 
-The app boots to a menu screen. Enter, Space, or any click begins the heist —
-that begin gesture also unlocks browser audio — and M returns to the menu from
-the vault. The menu and the heist board are separate screen modules
+The app boots to a menu screen with NEW GAME and HOW TO PLAY options. Arrow
+keys (or hovering) move the selection, Enter/Space or a click on an option
+activates it, and ? jumps straight to help. Activating NEW GAME begins the
+heist — that gesture also unlocks browser audio — and M returns to the menu
+from the vault. The menu and the heist board are separate screen modules
 (`menu.walu` and `game_screen.walu`); `main.walu` only decides which one
 receives engine callbacks.
 

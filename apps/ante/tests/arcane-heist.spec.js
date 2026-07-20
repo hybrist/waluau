@@ -63,14 +63,16 @@ async function openGame(page) {
   return page.locator('canvas#walua-game-canvas');
 }
 
+// NEW GAME is the menu's default selection, so Enter activates it. The Enter
+// press is also the user gesture that unlocks browser audio.
 async function beginHeist(page, canvas) {
-  await canvas.click();
+  await page.keyboard.press('Enter');
   await expect
     .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
     .toBeGreaterThan(40);
 }
 
-test('boots to a menu screen and returns to it with M', async ({ page }) => {
+test('boots to a menu with new game and how to play options', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const canvas = await openGame(page);
@@ -78,7 +80,25 @@ test('boots to a menu screen and returns to it with M', async ({ page }) => {
   await expect
     .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
     .toBeGreaterThan(300);
-  await beginHeist(page, canvas);
+
+  // HOW TO PLAY opens the shared help modal, which covers the title band;
+  // Escape returns to the option list.
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect
+    .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
+    .toBeLessThan(50);
+  await page.keyboard.press('Escape');
+  await expect
+    .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
+    .toBeGreaterThan(300);
+
+  // Clicking the NEW GAME option starts the heist; M returns to the menu.
+  const box = await canvas.boundingBox();
+  await page.mouse.click(box.x + box.width * (480 / 960), box.y + box.height * (356 / 600));
+  await expect
+    .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
+    .toBeGreaterThan(40);
   await page.keyboard.press('m');
   await expect
     .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
@@ -164,6 +184,81 @@ test.describe('on high-DPI displays', () => {
       drawingBufferHeight: 1200,
     });
   });
+});
+
+// Moved from the conformance runner: exercising Arcane Heist's packaged asset
+// manifest is this app's concern, not the compiler's. The probe wraps the real
+// AudioContext before the app boots so decode and playback are observable.
+test('plays card flips through the packaged audio manifest only after the begin gesture', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  await page.addInitScript(() => {
+    window.__audioProbe = { decodes: 0, starts: 0 };
+    const RealAudioContext = window.AudioContext;
+    window.AudioContext = class extends RealAudioContext {
+      decodeAudioData(...args) {
+        window.__audioProbe.decodes += 1;
+        return super.decodeAudioData(...args);
+      }
+      createBufferSource() {
+        const source = super.createBufferSource();
+        const realStart = source.start.bind(source);
+        source.start = (...args) => {
+          window.__audioProbe.starts += 1;
+          return realStart(...args);
+        };
+        return source;
+      }
+    };
+  });
+  const assetRequests = [];
+  page.on('request', (request) => {
+    if (request.url().includes('/assets/')) assetRequests.push(request.url());
+  });
+
+  const canvas = await openGame(page);
+  const probe = () => page.evaluate(() => window.__audioProbe);
+  await expect
+    .poll(async () => (await probe()).decodes, { timeout: GAME_READY_TIMEOUT })
+    .toBe(1);
+  // Still on the menu: assets decode without any playback before the gesture.
+  expect((await probe()).starts).toBe(0);
+
+  await beginHeist(page, canvas);
+  await expect
+    .poll(async () => (await probe()).starts, { timeout: GAME_READY_TIMEOUT })
+    .toBeGreaterThan(0);
+
+  // The sound and font were served through their hashed manifest URLs. The
+  // card back is small enough that the bundler inlines it — beginHeist's deck
+  // ink poll already proves it decoded.
+  expect(assetRequests.some((url) => /card-flip\..+\.wav$/.test(url))).toBe(true);
+  expect(assetRequests.some((url) => /Cinzel-Bold\..+\.ttf$/.test(url))).toBe(true);
+  expect(pageErrors).toEqual([]);
+});
+
+// Moved from the conformance runner: a missing flip sound must stop the app on
+// its fatal audio diagnostic panel instead of playing on silently.
+test('stops on the fatal audio diagnostic when the flip sound cannot load', async ({ page }) => {
+  await page.route('**/*.wav', (route) => route.fulfill({ status: 404, body: '' }));
+  const canvas = await openGame(page);
+  const countFatalPanelInk = () => canvas.evaluate((node) => {
+    const gl = node.getContext('webgl2');
+    const data = new Uint8Array(node.width * node.height * 4);
+    gl.readPixels(0, 0, node.width, node.height, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    let count = 0;
+    for (let index = 0; index < data.length; index += 4) {
+      if (
+        Math.abs(data[index] - 38) <= 6
+        && Math.abs(data[index + 1] - 11) <= 6
+        && Math.abs(data[index + 2] - 8) <= 6
+      ) count += 1;
+    }
+    return count;
+  });
+  await expect
+    .poll(countFatalPanelInk, { timeout: GAME_READY_TIMEOUT })
+    .toBeGreaterThan(5000);
 });
 
 test('plays a complete Arcane Heist game through the 2D engine', async ({ page }) => {
