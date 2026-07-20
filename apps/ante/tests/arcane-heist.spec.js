@@ -52,6 +52,24 @@ test('responds to keyboard input without an iframe focus step', async ({ page })
   await expect.poll(() => frameSignature(canvas)).not.toBe(beforeHistory);
 });
 
+test('previews four distinct persistent card powers with keys 1 through 4', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  const canvas = await openGame(page);
+
+  await canvas.click();
+  const signatures = [];
+  for (const key of ['1', '2', '3', '4']) {
+    await page.keyboard.press(key);
+    await page.waitForTimeout(1_500);
+    const signature = await frameSignature(canvas);
+    expect(signatures).not.toContain(signature);
+    signatures.push(signature);
+  }
+
+  expect(pageErrors).toEqual([]);
+});
+
 test.describe('on high-DPI displays', () => {
   test.use({ deviceScaleFactor: 2, viewport: { width: 1200, height: 800 } });
 
