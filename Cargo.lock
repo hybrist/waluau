@@ -366,6 +366,7 @@ dependencies = [
  "waluau-ast",
  "waluau-codegen-wasm",
  "waluau-diagnostics",
+ "waluau-fmt",
  "waluau-hir",
  "waluau-ir",
  "waluau-parser",
@@ -375,6 +376,11 @@ dependencies = [
 [[package]]
 name = "waluau-fmt"
 version = "0.1.0"
+dependencies = [
+ "waluau-diagnostics",
+ "waluau-lexer",
+ "waluau-parser",
+]
 
 [[package]]
 name = "waluau-hir"
@@ -412,6 +418,7 @@ dependencies = [
  "waluau-ast",
  "waluau-diagnostics",
  "waluau-driver",
+ "waluau-fmt",
  "waluau-lexer",
  "waluau-parser",
 ]

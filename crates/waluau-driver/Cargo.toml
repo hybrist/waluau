@@ -11,6 +11,7 @@ serde_json = "1.0"
 waluau-ast.workspace = true
 waluau-codegen-wasm.workspace = true
 waluau-diagnostics.workspace = true
+waluau-fmt.workspace = true
 waluau-hir.workspace = true
 waluau-ir.workspace = true
 waluau-parser.workspace = true
