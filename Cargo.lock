@@ -366,6 +366,7 @@ dependencies = [
  "waluau-ast",
  "waluau-codegen-wasm",
  "waluau-diagnostics",
+ "waluau-fmt",
  "waluau-hir",
  "waluau-ir",
  "waluau-parser",

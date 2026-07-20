@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use waluau_diagnostics::Diagnostic;
 
+mod fmt;
 mod link;
 pub mod session;
 
@@ -148,6 +149,12 @@ pub fn run_with_args<I>(args: I) -> Result<(), Vec<Diagnostic>>
 where
     I: IntoIterator<Item = OsString>,
 {
+    let mut args = args.into_iter().peekable();
+    // The `fmt` subcommand is dispatched before the default build path.
+    if args.peek().is_some_and(|arg| arg == "fmt") {
+        args.next();
+        return fmt::run_fmt(args);
+    }
     let mut session = session::CompilerSession::new();
     run_with_session_args(&mut session, args)
 }
