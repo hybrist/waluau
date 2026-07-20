@@ -117,11 +117,17 @@ test('reuses one persistent compiler process across Vite rebuilds', async () => 
       ws: { send() {} },
     };
     await plugin.handleHotUpdate({ file: entry, modules: [entryModule], server: viteServer });
+    const retransformed = await plugin.transform.call({ addWatchFile() {} }, '', entry);
     await plugin.closeBundle();
     plugin = null;
 
+    assert.match(retransformed.code, /waluau-hmr=2/);
     assert.equal((await readFile(starts, 'utf8')).trim().split('\n').length, 1);
-    assert.equal((await readFile(builds, 'utf8')).trim().split('\n').length, 2);
+    assert.equal(
+      (await readFile(builds, 'utf8')).trim().split('\n').length,
+      2,
+      'the post-update transform should reuse the artifact built by handleHotUpdate',
+    );
   } finally {
     await plugin?.closeBundle();
     await rm(root, { recursive: true, force: true });

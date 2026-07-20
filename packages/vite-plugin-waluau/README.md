@@ -76,7 +76,9 @@ The plugin keeps one stateful compiler process alive for the Vite lifecycle.
 Repeated builds reuse the compiler session's module parse cache instead of
 starting `waluau` (or `cargo run`) for every edit. Changes to embedded engine,
 builtin, extern, or Rust compiler sources restart that process deliberately so
-the next build incorporates the new compiler inputs. A custom compiler command
+the next build incorporates the new compiler inputs. Inside this repository,
+the host uses Cargo's optimized release profile so development rebuilds do not
+pay debug-build execution costs. A custom compiler command
 keeps its historical one-process-per-build behavior unless configured with
 `compiler: { command, args, persistent: true }`; persistent commands must
 implement the `waluau --server` newline-delimited JSON protocol.

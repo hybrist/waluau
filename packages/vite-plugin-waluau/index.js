@@ -219,6 +219,7 @@ export function waluau(options = {}) {
         args: [
           'run',
           '--quiet',
+          '--release',
           '-p',
           'waluau-cli',
           '--',
@@ -246,7 +247,7 @@ export function waluau(options = {}) {
     if (existsSync(resolve(workspaceRoot, 'Cargo.toml'))) {
       return {
         command: 'cargo',
-        args: ['run', '--quiet', '-p', 'waluau-cli', '--', '--server'],
+        args: ['run', '--quiet', '--release', '-p', 'waluau-cli', '--', '--server'],
         cwd: workspaceRoot,
       };
     }
@@ -297,27 +298,39 @@ export function waluau(options = {}) {
     }
   }
 
-  async function compileEntry(entryPath) {
+  async function compileEntry(entryPath, { force = false } = {}) {
     const artifacts = artifactPaths(entryPath);
     let state = compileStates.get(entryPath);
     if (!state) {
-      state = { inFlight: null, queued: false, involvedFiles: null, version: 0 };
+      state = {
+        fresh: false,
+        inFlight: null,
+        queued: false,
+        involvedFiles: null,
+        version: 0,
+      };
       compileStates.set(entryPath, state);
     }
     if (state.inFlight) {
-      state.queued = true;
+      if (force) state.queued = true;
       await state.inFlight;
       return artifacts;
     }
+    // `handleHotUpdate` prepares the new artifacts before invalidating the
+    // entry module. Vite then transforms that module again; reuse the prepared
+    // generation instead of compiling the same source a second time.
+    if (!force && state.fresh) return artifacts;
 
     state.inFlight = (async () => {
       do {
         state.queued = false;
+        state.fresh = false;
         await mkdir(artifacts.outDir, { recursive: true });
         const buildArgs = compilerBuildArgs(entryPath, artifacts.wasm, artifacts.report);
         try {
           await executeCompiler(buildArgs);
           state.version += 1;
+          state.fresh = true;
         } finally {
           // The report is written even for failed builds, so watch mode can
           // still track every file in the entry's require graph.
@@ -456,7 +469,7 @@ export function waluau(options = {}) {
       // Embedded engine/compiler inputs require a fresh process so Cargo can
       // rebuild the binary. Ordinary game edits retain the live session.
       if (affectsCompilerProcess(file)) await restartCompilerHost();
-      await Promise.all(entries.map((entry) => compileEntry(entry)));
+      await Promise.all(entries.map((entry) => compileEntry(entry, { force: true })));
       const reloadServer = server ?? context.server;
       const modules = [];
       for (const entry of entries) {
