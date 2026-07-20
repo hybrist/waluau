@@ -167,14 +167,11 @@ function slot_part(state: State, kind: i32, index: i32): f64
     return 0.0
 end
 
-function slot_x_now(state: State, kind: i32, index: i32): f64
-    if kind == render.slot_player then return render.hand_x(index, slot_part(state, kind, index)) end
-    return render.slot_x(kind, index)
-end
-
-function slot_y_now(state: State, kind: i32, index: i32): f64
-    if kind == render.slot_player then return render.hand_y(index, slot_part(state, kind, index)) end
-    return render.slot_y(kind, index)
+-- Where a card sits *right now*, parting and all: only the player's fanned
+-- hand can differ from the settled slot render.slot_pos describes.
+function slot_pos_now(state: State, kind: i32, index: i32): render.Point
+    if kind == render.slot_player then return render.hand_pos(index, slot_part(state, kind, index)) end
+    return render.slot_pos(kind, index)
 end
 
 function slot_tilt_now(state: State, kind: i32, index: i32): f64
@@ -188,10 +185,8 @@ function push_deal(anims: {render.Anim}, card: game.Card, kind: i32, index: i32,
         card = card,
         faces = faces,
         known = false,
-        x0 = render.slot_x(render.slot_deck, 0),
-        y0 = render.slot_y(render.slot_deck, 0),
-        x1 = render.slot_x(kind, index),
-        y1 = render.slot_y(kind, index),
+        from = render.slot_pos(render.slot_deck, 0),
+        to = render.slot_pos(kind, index),
         angle0 = 0.0,
         angle1 = slot_tilt(kind, index),
         easing = render.ease_out_quint,
@@ -222,16 +217,14 @@ function opening_deal(view: game.View, state: State): unit
     begin_anims(state, anims, finish, ANIM_DEAL)
 end
 
-function push_scoop(anims: {render.Anim}, card: game.Card, from_x: f64, from_y: f64, gather_x: f64, gather_y: f64, dest_kind: i32): unit
+function push_scoop(anims: {render.Anim}, card: game.Card, from: render.Point, gather: render.Point, dest_kind: i32): unit
     local carry_start: f64 = SCOOP_GATHER_SECONDS + SCOOP_HOLD_SECONDS
     table.insert(anims, {
         card = card,
         faces = render.faces_up,
         known = false,
-        x0 = from_x,
-        y0 = from_y,
-        x1 = gather_x,
-        y1 = gather_y,
+        from = from,
+        to = gather,
         angle0 = 0.0,
         angle1 = 0.0,
         easing = render.ease_in_cubic,
@@ -246,10 +239,8 @@ function push_scoop(anims: {render.Anim}, card: game.Card, from_x: f64, from_y: 
         card = card,
         faces = render.faces_up,
         known = false,
-        x0 = gather_x,
-        y0 = gather_y,
-        x1 = render.slot_x(dest_kind, 0),
-        y1 = render.slot_y(dest_kind, 0),
+        from = gather,
+        to = render.slot_pos(dest_kind, 0),
         angle0 = 0.0,
         angle1 = 0.0,
         easing = render.ease_in_out_cubic,
@@ -263,14 +254,11 @@ function push_scoop(anims: {render.Anim}, card: game.Card, from_x: f64, from_y: 
 end
 
 function push_burn_pair(anims: {render.Anim}, first_card: game.Card, second_card: game.Card, kind: i32, first_index: i32, second_index: i32): unit
-    local ax: f64 = render.slot_x(kind, first_index)
-    local ay: f64 = render.slot_y(kind, first_index)
-    local bx: f64 = render.slot_x(kind, second_index)
-    local by: f64 = render.slot_y(kind, second_index)
-    local gather_x: f64 = (ax + bx) * 0.5
-    local gather_y: f64 = (ay + by) * 0.5
-    push_scoop(anims, first_card, ax, ay, gather_x, gather_y, render.slot_aside)
-    push_scoop(anims, second_card, bx, by, gather_x, gather_y, render.slot_aside)
+    local a: render.Point = render.slot_pos(kind, first_index)
+    local b: render.Point = render.slot_pos(kind, second_index)
+    local gather: render.Point = render.midpoint(a, b)
+    push_scoop(anims, first_card, a, gather, render.slot_aside)
+    push_scoop(anims, second_card, b, gather, render.slot_aside)
 end
 
 function push_hand_shifts(anims: {render.Anim}, view: game.View, trick: game.Trick, kind: i32, start: f64): f64
@@ -300,10 +288,8 @@ function push_hand_shifts(anims: {render.Anim}, view: game.View, trick: game.Tri
                     card = card,
                     faces = faces,
                     known = known,
-                    x0 = render.slot_x(kind, old_index),
-                    y0 = render.slot_y(kind, old_index),
-                    x1 = render.slot_x(kind, new_index),
-                    y1 = render.slot_y(kind, new_index),
+                    from = render.slot_pos(kind, old_index),
+                    to = render.slot_pos(kind, new_index),
                     angle0 = slot_tilt(kind, old_index),
                     angle1 = slot_tilt(kind, new_index),
                     easing = render.ease_in_out_cubic,
@@ -333,7 +319,7 @@ end
 
 function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: State): unit
     local anims: {render.Anim} = {}
-    local row_center_x: f64 = (render.row_left_x + render.row_right_x) * 0.5
+    local row_center: render.Point = render.midpoint(render.row_left(), render.row_right())
     if trick.winner ~= 0 then
         local won_kind: i32 = render.slot_computer_won
         local won: {game.Card} = state.computer_won
@@ -342,7 +328,7 @@ function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: Stat
             won = state.player_won
         end
         for i = 0::i32, 2::i32 do
-            push_scoop(anims, trick.middle[i], render.slot_x(render.slot_middle, i), render.slot_y(render.slot_middle, i), row_center_x, render.row_y, won_kind)
+            push_scoop(anims, trick.middle[i], render.slot_pos(render.slot_middle, i), row_center, won_kind)
             table.insert(won, trick.middle[i])
         end
         local first_card: game.Card = trick.computer_cards[0]
@@ -351,8 +337,8 @@ function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: Stat
             first_card = trick.player_cards[0]
             second_card = trick.player_cards[1]
         end
-        push_scoop(anims, first_card, render.row_left_x, render.row_y, row_center_x, render.row_y, won_kind)
-        push_scoop(anims, second_card, render.row_right_x, render.row_y, row_center_x, render.row_y, won_kind)
+        push_scoop(anims, first_card, render.row_left(), row_center, won_kind)
+        push_scoop(anims, second_card, render.row_right(), row_center, won_kind)
         table.insert(won, first_card)
         table.insert(won, second_card)
         local loser_kind: i32 = render.slot_computer
@@ -366,7 +352,7 @@ function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: Stat
         push_burn_pair(anims, first_card, second_card, loser_kind, first_index, second_index)
     else
         for i = 0::i32, 2::i32 do
-            push_scoop(anims, trick.middle[i], render.slot_x(render.slot_middle, i), render.slot_y(render.slot_middle, i), row_center_x, render.row_y, render.slot_aside)
+            push_scoop(anims, trick.middle[i], render.slot_pos(render.slot_middle, i), row_center, render.slot_aside)
             table.insert(state.discards, trick.middle[i])
         end
         push_burn_pair(anims, trick.player_cards[0], trick.player_cards[1], render.slot_player, trick.player_first, trick.player_second)
@@ -409,17 +395,14 @@ function feint(outcome: game.FeintOutcome, state: State): unit
         local middle_index: i32 = outcome.middle_indices[k]
         local outgoing: game.Card = outcome.outgoing[k]
         local incoming: game.Card = outcome.incoming[k]
-        local leave_x: f64 = slot_x_now(state, hand_kind, hand_index)
-        local leave_y: f64 = slot_y_now(state, hand_kind, hand_index)
+        local leave: render.Point = slot_pos_now(state, hand_kind, hand_index)
         local leave_angle: f64 = slot_tilt_now(state, hand_kind, hand_index)
-        local land_x: f64 = render.slot_x(hand_kind, hand_index)
-        local land_y: f64 = render.slot_y(hand_kind, hand_index)
+        local land: render.Point = render.slot_pos(hand_kind, hand_index)
         local land_angle: f64 = slot_tilt(hand_kind, hand_index)
-        local mid_x: f64 = render.slot_x(render.slot_middle, middle_index)
-        local mid_y: f64 = render.slot_y(render.slot_middle, middle_index)
-        local hover_x: f64 = leave_x + (mid_x - leave_x) * 0.35
-        local hover_y: f64 = leave_y - 45.0
-        if not player_won then hover_y = leave_y + 45.0 end
+        local mid: render.Point = render.slot_pos(render.slot_middle, middle_index)
+        local hover_lift: f64 = -45.0
+        if not player_won then hover_lift = 45.0 end
+        local hover: render.Point = render.point(leave.x + (mid.x - leave.x) * 0.35, leave.y + hover_lift)
         local stagger: f64 = SWAP_STEP * (k::f64)
         local place: f64 = place_start + stagger
         local placed: f64 = place + SWAP_PLACE_SECONDS
@@ -436,10 +419,8 @@ function feint(outcome: game.FeintOutcome, state: State): unit
             card = outgoing,
             faces = leave_faces,
             known = false,
-            x0 = leave_x,
-            y0 = leave_y,
-            x1 = hover_x,
-            y1 = hover_y,
+            from = leave,
+            to = hover,
             angle0 = leave_angle,
             angle1 = 0.0,
             easing = render.ease_out_back,
@@ -454,10 +435,8 @@ function feint(outcome: game.FeintOutcome, state: State): unit
             card = outgoing,
             faces = settle_faces,
             known = false,
-            x0 = hover_x,
-            y0 = hover_y,
-            x1 = mid_x,
-            y1 = mid_y,
+            from = hover,
+            to = mid,
             angle0 = 0.0,
             angle1 = 0.0,
             easing = render.ease_out_back,
@@ -472,10 +451,8 @@ function feint(outcome: game.FeintOutcome, state: State): unit
             card = incoming,
             faces = render.faces_up,
             known = true,
-            x0 = mid_x,
-            y0 = mid_y,
-            x1 = render.slot_x(render.slot_aside, k),
-            y1 = render.slot_y(render.slot_aside, k),
+            from = mid,
+            to = render.slot_pos(render.slot_aside, k),
             angle0 = 0.0,
             angle1 = 0.0,
             easing = render.ease_in_out_cubic,
@@ -490,10 +467,8 @@ function feint(outcome: game.FeintOutcome, state: State): unit
             card = incoming,
             faces = return_faces,
             known = true,
-            x0 = render.slot_x(render.slot_aside, k),
-            y0 = render.slot_y(render.slot_aside, k),
-            x1 = land_x,
-            y1 = land_y,
+            from = render.slot_pos(render.slot_aside, k),
+            to = land,
             angle0 = 0.0,
             angle1 = land_angle,
             easing = render.ease_out_back,
@@ -587,8 +562,8 @@ function draw(
     )
 end
 
-function hit_hand(state: State, x: f64, y: f64): i32
-    return render.hit_hand(x, y, state.fan_parts)
+function hit_hand(state: State, at: render.Point): i32
+    return render.hit_hand(at, state.fan_parts)
 end
 
 return {
