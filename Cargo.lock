@@ -418,6 +418,7 @@ dependencies = [
  "waluau-ast",
  "waluau-diagnostics",
  "waluau-driver",
+ "waluau-fmt",
  "waluau-lexer",
  "waluau-parser",
 ]

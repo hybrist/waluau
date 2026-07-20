@@ -8,7 +8,7 @@
 //! sub-[`Tree`]s or [`SynToken`] leaves — which keeps the parser and the
 //! CST→[`Doc`](crate::doc) lowering small.
 
-use waluau_lexer::TokenKind;
+use waluau_lexer::{Span, TokenKind};
 
 /// The role a [`Tree`] plays in the grammar. Tokens keep their lexer
 /// [`TokenKind`]; only interior nodes need a `SyntaxKind`.
@@ -108,6 +108,9 @@ pub struct Comment {
 pub struct SynToken {
     /// The lexer classification, used by the parser and by layout decisions.
     pub kind: TokenKind,
+    /// The token's span in the original source (char offsets). Synthetic
+    /// tokens use an empty span.
+    pub span: Span,
     /// The exact source lexeme (verbatim, including quotes/escapes).
     pub text: String,
     /// Comments that appear before this token on their own line(s).
@@ -150,6 +153,29 @@ impl Tree {
             }
         }
         None
+    }
+
+    /// The last token in this subtree, if any (depth-first).
+    pub fn last_token(&self) -> Option<&SynToken> {
+        for child in self.children.iter().rev() {
+            match child {
+                Node::Token(t) => return Some(t),
+                Node::Tree(t) => {
+                    if let Some(tok) = t.last_token() {
+                        return Some(tok);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// The source span covered by this subtree (first token start to last token
+    /// end), if it contains any non-synthetic tokens.
+    pub fn span(&self) -> Option<Span> {
+        let start = self.first_token()?.span.start;
+        let end = self.last_token()?.span.end;
+        Some(Span { start, end })
     }
 }
 

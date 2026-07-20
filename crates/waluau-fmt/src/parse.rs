@@ -10,7 +10,7 @@
 use std::mem::discriminant;
 
 use waluau_diagnostics::Diagnostic;
-use waluau_lexer::TokenKind;
+use waluau_lexer::{Span, TokenKind};
 
 use crate::cst::{Comment, Node, SynToken, SyntaxKind, Tree};
 use crate::lex::significant_tokens;
@@ -132,8 +132,15 @@ impl Parser {
         // trailing node the printer can emit.
         if !self.trailing_comments.is_empty() {
             let comments = std::mem::take(&mut self.trailing_comments);
+            // Place the synthetic trailer at end-of-source so it sorts after
+            // every real item for range queries.
+            let eof = self.toks.last().map(|t| t.span.end).unwrap_or(0);
             children.push(Node::Token(SynToken {
                 kind: TokenKind::LineComment(String::new()),
+                span: Span {
+                    start: eof,
+                    end: eof,
+                },
                 text: String::new(),
                 leading: comments,
                 trailing: None,
@@ -1048,12 +1055,19 @@ impl Parser {
             return Ok(());
         }
         if self.at(&TokenKind::GreaterEqual) {
-            // Rewrite the current token to `=` and treat the `>` as consumed.
+            // Rewrite the current token to `=` and treat the `>` as consumed,
+            // splitting the `>=` span between the two halves.
+            let gt_start = self.toks[self.pos].span.start;
             let tok = &mut self.toks[self.pos];
             tok.kind = TokenKind::Equal;
             tok.text = "=".to_string();
+            tok.span.start += 1;
             children.push(Node::Token(SynToken {
                 kind: TokenKind::Greater,
+                span: Span {
+                    start: gt_start,
+                    end: gt_start + 1,
+                },
                 text: ">".to_string(),
                 leading: Vec::new(),
                 trailing: None,

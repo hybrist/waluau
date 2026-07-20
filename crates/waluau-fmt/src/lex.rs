@@ -69,6 +69,7 @@ pub fn significant_tokens(source: &str) -> Result<TokenStream, Diagnostic> {
                     .collect();
                 out.push(SynToken {
                     kind,
+                    span,
                     text,
                     leading: std::mem::take(&mut pending_leading),
                     trailing: None,

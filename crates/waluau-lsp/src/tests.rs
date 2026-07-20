@@ -100,6 +100,93 @@ fn did_open_publishes_every_error_with_ranges() {
     );
 }
 
+fn formatting_request(server: &mut LspServer, method: &str, path: &Path, range: Value) -> Value {
+    let mut params = json!({
+        "textDocument": {"uri": format!("file://{}", path.display())},
+        "options": {"tabSize": 4, "insertSpaces": true},
+    });
+    if !range.is_null() {
+        params["range"] = range;
+    }
+    let responses = send(
+        server,
+        json!({"jsonrpc": "2.0", "id": 9, "method": method, "params": params}),
+    );
+    responses[0]["result"].clone()
+}
+
+#[test]
+fn initialize_advertises_formatting_providers() {
+    let mut server = LspServer::new();
+    let responses = send(
+        &mut server,
+        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+    );
+    let caps = &responses[0]["result"]["capabilities"];
+    assert_eq!(caps["documentFormattingProvider"], true);
+    assert_eq!(caps["documentRangeFormattingProvider"], true);
+}
+
+#[test]
+fn document_formatting_returns_full_document_edit() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("main.walu");
+    let messy = "function  f(a:i32):i32\nreturn a\nend\n";
+    std::fs::write(&path, messy).expect("write");
+
+    let mut server = LspServer::new();
+    open(&mut server, &path, messy);
+    let result = formatting_request(&mut server, "textDocument/formatting", &path, Value::Null);
+    let edits = result.as_array().expect("edits array");
+    assert_eq!(edits.len(), 1);
+    assert_eq!(
+        edits[0]["newText"],
+        "function f(a: i32): i32\n    return a\nend\n"
+    );
+    assert_eq!(
+        edits[0]["range"]["start"],
+        json!({"line": 0, "character": 0})
+    );
+}
+
+#[test]
+fn document_formatting_of_clean_file_returns_no_edits() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("main.walu");
+    let clean = "local x = 1\n";
+    std::fs::write(&path, clean).expect("write");
+
+    let mut server = LspServer::new();
+    open(&mut server, &path, clean);
+    let result = formatting_request(&mut server, "textDocument/formatting", &path, Value::Null);
+    assert_eq!(result, json!([]));
+}
+
+#[test]
+fn range_formatting_only_touches_overlapping_lines() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("main.walu");
+    // Line 0 is clean; line 1 is messy.
+    let source = "local x = 1\nlocal    y=2\n";
+    std::fs::write(&path, source).expect("write");
+
+    let mut server = LspServer::new();
+    open(&mut server, &path, source);
+
+    // A range on the messy line yields an edit for just that line.
+    let range = json!({"start": {"line": 1, "character": 0}, "end": {"line": 1, "character": 0}});
+    let result = formatting_request(&mut server, "textDocument/rangeFormatting", &path, range);
+    let edits = result.as_array().expect("edits");
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0]["newText"], "local y = 2\n");
+    assert_eq!(edits[0]["range"]["start"]["line"], 1);
+
+    // A range on the already-clean line yields no edit.
+    let range = json!({"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}});
+    let result = formatting_request(&mut server, "textDocument/rangeFormatting", &path, range);
+    assert_eq!(result, json!([]));
+}
+
 #[test]
 fn did_change_clears_fixed_diagnostics() {
     let dir = tempfile::tempdir().expect("tempdir");

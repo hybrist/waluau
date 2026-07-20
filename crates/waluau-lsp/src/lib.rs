@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 use waluau_diagnostics::{Diagnostic, Severity};
 use waluau_driver::CompilerSession;
+use waluau_fmt::{FormatConfig, format_source};
 
 mod features;
 
@@ -128,6 +129,8 @@ impl<B: AnalysisBackend> LspServer<B> {
                         "hoverProvider": true,
                         "definitionProvider": true,
                         "completionProvider": {"triggerCharacters": [".", ":"]},
+                        "documentFormattingProvider": true,
+                        "documentRangeFormattingProvider": true,
                     },
                     "serverInfo": {"name": "waluau-lsp", "version": env!("CARGO_PKG_VERSION")},
                 }),
@@ -180,6 +183,10 @@ impl<B: AnalysisBackend> LspServer<B> {
             ("textDocument/hover", Some(id)) => vec![self.handle_hover(id, &params)],
             ("textDocument/definition", Some(id)) => vec![self.handle_definition(id, &params)],
             ("textDocument/completion", Some(id)) => vec![self.handle_completion(id, &params)],
+            ("textDocument/formatting", Some(id)) => vec![self.handle_formatting(id, &params)],
+            ("textDocument/rangeFormatting", Some(id)) => {
+                vec![self.handle_range_formatting(id, &params)]
+            }
             // Unknown request (has an id): report method-not-found.
             (_, Some(id)) => vec![error_response(
                 id,
@@ -367,6 +374,116 @@ impl<B: AnalysisBackend> LspServer<B> {
             .collect();
         response(id, json!(items))
     }
+
+    /// `textDocument/formatting`: reformat the whole document. Returns a single
+    /// full-document edit, or no edits when the document is already formatted
+    /// or does not parse.
+    fn handle_formatting(&self, id: Value, params: &Value) -> String {
+        let Some((path, _uri)) = document_path(params) else {
+            return response(id, Value::Null);
+        };
+        let Some(text) = self.file_text(&path) else {
+            return response(id, json!([]));
+        };
+        let Ok(formatted) = format_source(&text, &FormatConfig::default()) else {
+            // Invalid source: nothing to format.
+            return response(id, json!([]));
+        };
+        if formatted == text {
+            return response(id, json!([]));
+        }
+        let edit = json!({
+            "range": {
+                "start": {"line": 0, "character": 0},
+                "end": position(&text, text.len()),
+            },
+            "newText": formatted,
+        });
+        response(id, json!([edit]))
+    }
+
+    /// `textDocument/rangeFormatting`: reformat, but only emit an edit for the
+    /// minimal block of changed lines, and only when it overlaps the requested
+    /// range. The formatter needs whole-file context to parse, so it formats
+    /// the document and returns a line-granular diff scoped to the request.
+    fn handle_range_formatting(&self, id: Value, params: &Value) -> String {
+        let Some((path, _uri)) = document_path(params) else {
+            return response(id, Value::Null);
+        };
+        let Some(text) = self.file_text(&path) else {
+            return response(id, json!([]));
+        };
+        let start_line = params["range"]["start"]["line"].as_u64().unwrap_or(0) as usize;
+        let end_line = params["range"]["end"]["line"].as_u64().unwrap_or(u64::MAX) as usize;
+
+        let Ok(formatted) = format_source(&text, &FormatConfig::default()) else {
+            return response(id, json!([]));
+        };
+        let Some(edit) = line_diff_edit(&text, &formatted) else {
+            return response(id, json!([])); // already formatted
+        };
+        // Only act when the changed block overlaps the requested line range.
+        if edit.start_line > end_line || edit.end_line <= start_line {
+            return response(id, json!([]));
+        }
+        let value = json!({
+            "range": {
+                "start": {"line": edit.start_line, "character": 0},
+                "end": {"line": edit.end_line, "character": 0},
+            },
+            "newText": edit.new_text,
+        });
+        response(id, json!([value]))
+    }
+}
+
+/// The minimal line-range edit turning `original` into `formatted`: the block
+/// of lines `[start_line, end_line)` to replace, and its replacement text
+/// (newline-terminated). `None` when the two are identical. Computed by
+/// trimming equal leading and trailing lines so the edit is as small as
+/// possible.
+struct LineEdit {
+    start_line: usize,
+    end_line: usize,
+    new_text: String,
+}
+
+fn line_diff_edit(original: &str, formatted: &str) -> Option<LineEdit> {
+    if original == formatted {
+        return None;
+    }
+    // `lines()` drops the trailing newline; include an explicit final empty
+    // segment so full-line ranges map cleanly to `{line, character: 0}`.
+    let orig: Vec<&str> = original.split('\n').collect();
+    let fmt: Vec<&str> = formatted.split('\n').collect();
+
+    let mut prefix = 0;
+    while prefix < orig.len() && prefix < fmt.len() && orig[prefix] == fmt[prefix] {
+        prefix += 1;
+    }
+    let mut suffix = 0;
+    while suffix < orig.len() - prefix
+        && suffix < fmt.len() - prefix
+        && orig[orig.len() - 1 - suffix] == fmt[fmt.len() - 1 - suffix]
+    {
+        suffix += 1;
+    }
+
+    let start_line = prefix;
+    let end_line = orig.len() - suffix; // exclusive
+    let replacement_lines = &fmt[prefix..fmt.len() - suffix];
+    // Each replaced source line owns its trailing newline (the edit range ends
+    // at the start of `end_line`), so terminate every replacement line too.
+    let mut new_text = String::new();
+    for line in replacement_lines {
+        new_text.push_str(line);
+        new_text.push('\n');
+    }
+    Some(LineEdit {
+        start_line,
+        end_line,
+        new_text,
+    })
 }
 
 /// LSP position (zero-based line, UTF-16 column) to a byte offset in `text`;
