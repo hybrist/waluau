@@ -37,7 +37,7 @@ type View = {
 }
 -- TODO(waluau-language): Opaque exported record types with module-private
 -- fields would let State expose only domain operations and read-only views.
--- Until then, game_fixture.walu centralizes the one mutable test adapter.
+-- Until then, test/game_fixture.walu centralizes the one mutable test adapter.
 const MIN_RANK: i32 = 2
 const MAX_RANK: i32 = 14
 const MIN_SUIT: i32 = 0

@@ -2,7 +2,7 @@
 -- through shuffled deals; tests enter through explicit relic and ward layouts
 -- without spreading mutable State setup across every scenario.
 
-local game = require("./game")
+local game = require("../src/game")
 
 function clone_cards(cards: {game.Card}): {game.Card}
     local copy: {game.Card} = {}

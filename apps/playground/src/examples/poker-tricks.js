@@ -5,17 +5,9 @@
 import cardBackUrl from '../../../ante/assets/card-back.svg?url';
 import vaultFontUrl from '../../../ante/assets/Cinzel-Bold.ttf?url';
 import cardFlipUrl from '../../../ante/assets/card-flip.wav?url';
+import { createAnteProject } from '../../../ante/project.js';
 
 const engineModules = import.meta.glob('../../../../engine/*.walu', {
-  eager: true,
-  query: '?raw',
-  import: 'default'
-});
-
-const pokerTricksModules = import.meta.glob([
-  '../../../ante/src/*.walu',
-  '!../../../ante/src/*.test.walu',
-], {
   eager: true,
   query: '?raw',
   import: 'default'
@@ -28,14 +20,16 @@ function filesUnder(modules, directory) {
   }, {});
 }
 
+const anteProject = createAnteProject('/fixtures/poker-tricks');
+
 export const POKER_TRICKS_EXAMPLE = {
   key: 'poker-tricks',
   label: 'Arcane Heist',
   files: {
     ...filesUnder(engineModules, '/engine'),
-    ...filesUnder(pokerTricksModules, '/fixtures/poker-tricks')
+    ...anteProject.files,
   },
-  entryFile: '/fixtures/poker-tricks/main.walu',
+  entryFile: anteProject.entryFile,
   assetManifest: {
     'assets/card-back.svg': { url: cardBackUrl, type: 'image' },
     'assets/Cinzel-Bold.ttf': { url: vaultFontUrl, type: 'font' },

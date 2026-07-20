@@ -3,7 +3,7 @@
 require("waluau:vitest")
 
 local game = require("./game")
-local game_fixture = require("./game_fixture")
+local game_fixture = require("../test/game_fixture")
 local flow = require("./flow")
 local snapshot_data = require("./snapshot")
 

@@ -90,6 +90,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 
 | File | Purpose |
 | --- | --- |
+| `project.js` | Stable source-project adapter for playground and conformance hosts. |
 | `main.walu` | Thin engine adapter that wires callbacks to the deeper game modules. |
 | `game.walu` | Host-independent rules, AI, commands, outcomes, and read-only presentation view. |
 | `flow.walu` | Host-independent input gating, focus, modal, selection, and reveal flow. |
@@ -97,7 +98,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `render.walu` | Playfield/modal drawing and the game's vertex/pixel effects. |
 | `presentation_resources.walu` | Asynchronous asset loading, GPU promotion, audio, effects, and disposal. |
 | `snapshot.walu` | Shared validated snapshot primitives and atomic payload framing. |
-| `game_fixture.walu` | Narrow mutable test adapter for deterministic rule arrangements. |
+| `test/game_fixture.walu` | Narrow mutable test adapter for deterministic rule arrangements. |
 | `sim.test.walu` | Deterministic Vitest assertions for rules, flow, snapshots, and full-game completion. |
 | `waluau.assets.json` | Typed package manifest for the card back, vault font, and flip sound. |
 
