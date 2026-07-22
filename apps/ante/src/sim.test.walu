@@ -117,7 +117,7 @@ end)
 describe("Arcane Heist swaps", function()
     it("exchanges a winning proposal once without consuming the deck", function()
         math.randomseed(7)
-        local state = game.new()
+        local state = game.new(false)
         game_fixture.arrange_arch_mage(
             state,
             { card(10, 0), card(11, 0), card(12, 0) },
@@ -176,7 +176,7 @@ describe("Arcane Heist swaps", function()
 
     it("re-packs watched marks with the hand after a trick", function()
         math.randomseed(46)
-        local state = game.new()
+        local state = game.new(false)
         game_fixture.arrange_arch_mage(
             state,
             { card(10, 0), card(11, 0), card(12, 0) },
@@ -209,7 +209,7 @@ describe("Arcane Heist swaps", function()
 
     it("sorts relics and watched marks without mutating the deal", function()
         math.randomseed(48)
-        local state = game.new()
+        local state = game.new(false)
         game_fixture.arrange_player(
             state,
             { card(3, 2), card(14, 1), card(3, 1), card(9, 2), card(14, 3) },
@@ -264,7 +264,7 @@ describe("Arcane Heist swaps", function()
     end)
 
     it("uses proposed cards as the wager and rejects unaffordable proposals", function()
-        local two_card_state = game.new()
+        local two_card_state = game.new(false)
         game_fixture.arrange_arch_mage(
             two_card_state,
             { card(10, 0), card(11, 0), card(12, 0) },
@@ -275,7 +275,7 @@ describe("Arcane Heist swaps", function()
         expect(two_card_state.player_points):toBe(8)
         expect(two_card_state.pot):toBe(2)
 
-        local unaffordable_state = game.new()
+        local unaffordable_state = game.new(false)
         game_fixture.set_player_points(unaffordable_state, 1)
         unaffordable_state:resolve_swap({ 0, 1 }, { 0, 1 })
         expect(unaffordable_state.swap_open):toBe(true)
@@ -283,7 +283,7 @@ describe("Arcane Heist swaps", function()
     end)
 
     it("lets the Arch Mage make an unrestricted three-card feint", function()
-        local state = game.new()
+        local state = game.new(false)
         game_fixture.arrange_arch_mage(
             state,
             { card(2, 1), card(4, 2), card(6, 3) },
@@ -320,7 +320,7 @@ end)
 describe("Arcane Heist development snapshots", function()
     it("round-trips the complete rules state and rejects incompatible data", function()
         math.randomseed(49)
-        local state: game.State = game.new()
+        local state: game.State = game.new(false)
         state:resolve_swap({ 0 }, { 1 })
         force_player_win(state)
         state:play(0, 1)
@@ -345,7 +345,7 @@ describe("Arcane Heist development snapshots", function()
     end)
 
     it("frames screen, rules, flow, and presentation payloads atomically", function()
-        local rules: game.State = game.new()
+        local rules: game.State = game.new(false)
         local ui: flow.State = flow.new()
         ui.modal = flow.modal_help
 
@@ -405,7 +405,7 @@ end)
 describe("Arcane Heist game flow", function()
     it("plays all five rounds after three player wins", function()
         math.randomseed(42)
-        local state = game.new()
+        local state = game.new(false)
         expect(#state.deck):toBe(39)
         expect(#state.middle):toBe(3)
         expect(state.player_points):toBe(10)
@@ -458,7 +458,7 @@ describe("Arcane Heist game flow", function()
 
     it("ends immediately on the Arch Mage's third win", function()
         math.randomseed(43)
-        local state = game.new()
+        local state = game.new(false)
         for expected_round = FIRST_ROUND, 3 do
             state:resolve_swap({}, {})
             force_computer_win(state)
@@ -478,7 +478,7 @@ describe("Arcane Heist game flow", function()
 
     it("keeps a stalemate open and refunds its wager", function()
         math.randomseed(44)
-        local state = game.new()
+        local state = game.new(false)
         state:resolve_swap({}, {})
         force_stalemate(state)
         local points: i32 = state.player_points
@@ -495,7 +495,7 @@ describe("Arcane Heist game flow", function()
 
     it("does not count a stalemate as a third Arch Mage hold", function()
         math.randomseed(45)
-        local state = game.new()
+        local state = game.new(false)
         for _ = 1, 2 do
             state:resolve_swap({}, {})
             force_computer_win(state)
@@ -511,5 +511,123 @@ describe("Arcane Heist game flow", function()
         expect(state.player_tricks):toBe(0)
         expect(state.finished):toBe(false)
         expect(state.round):toBe(4)
+    end)
+end)
+
+-- Boss battle hands shrink between breaches, so a forced win is sized to
+-- whatever the hands currently hold: the player keeps a royal pair against
+-- the fixed ward row while the Arch Mage holds a ladder that never beats it.
+local function force_boss_player_win(state: game.State): unit
+    local count: i32 = #state.player_hand
+    local player: {game.Card} = { card(13, 0), card(14, 0) }
+    for rank = 2, count - 1 do table.insert(player, card(rank, 1)) end
+    local computer: {game.Card} = {}
+    for rank = 2, count + 1 do table.insert(computer, card(rank, 2)) end
+    game_fixture.arrange_breach(
+        state, { card(10, 0), card(11, 0), card(12, 0) }, player, computer)
+end
+
+describe("Arcane Heist boss battle", function()
+    it("deals eleven relics and never replaces a spent one", function()
+        math.randomseed(50)
+        local state = game.new(true)
+        expect(state.boss):toBe(true)
+        expect(#state.deck):toBe(27)
+        expect(#state.player_hand):toBe(11)
+        expect(#state.computer_hand):toBe(11)
+        expect(#state.middle):toBe(3)
+        expect(state.player_points):toBe(10)
+        expect(state.swap_open):toBe(true)
+
+        for expected_round = FIRST_ROUND, LAST_ROUND do
+            expect(state.round):toBe(expected_round)
+            expect(state.finished):toBe(false)
+            local expected_hand: i32 = 13 - expected_round * 2
+            expect(#state.player_hand):toBe(expected_hand)
+            expect(#state.computer_hand):toBe(expected_hand)
+            local deck_before: i32 = #state.deck
+            state:resolve_swap({}, {})
+            force_boss_player_win(state)
+            state:play(0, 1)
+            local trick = state.history[expected_round - 1]
+            expect(trick.winner):toBe(1)
+            expect(#trick.player_hand):toBe(expected_hand)
+            expect(#trick.computer_hand):toBe(expected_hand)
+            -- Only the next ward row leaves the deck: spent relics are never
+            -- replaced, and the terminal breach reveals no further wards.
+            if expected_round < LAST_ROUND then
+                expect(#state.deck):toBe(deck_before - 3)
+            else
+                expect(#state.deck):toBe(deck_before)
+            end
+        end
+
+        expect(state.finished):toBe(true)
+        expect(state.player_tricks):toBe(5)
+        expect(#state.player_hand):toBe(1)
+        expect(#state.computer_hand):toBe(1)
+        expect(#state.middle):toBe(0)
+        expect(#state.deck):toBe(15)
+    end)
+
+    it("keeps the standard game's five-card deal and replacements", function()
+        math.randomseed(52)
+        local state = game.new(false)
+        expect(state.boss):toBe(false)
+        state:resolve_swap({}, {})
+        force_player_win(state)
+        state:play(0, 1)
+        expect(#state.player_hand):toBe(5)
+        expect(#state.computer_hand):toBe(5)
+    end)
+
+    it("searches the whole eleven-card hand for the best feint", function()
+        local middle: {game.Card} = { card(9, 2), card(5, 0), card(6, 1) }
+        local hand: {game.Card} = {
+            card(2, 0), card(3, 1), card(4, 2), card(7, 3), card(8, 0),
+            card(2, 1), card(3, 2), card(4, 3),
+            card(9, 3), card(9, 0), card(9, 1),
+        }
+        -- Two of the hand's three nines must stay home while a third joins
+        -- the wards, so every fourfold-circle swap binds an index past the
+        -- old five-card option table.
+        local choice = game.best_swap(hand, middle)
+        expect(game.category_name(choice.hand_value)):toBe("fourfold circle")
+        local high_index: i32 = 0
+        for index in choice.hand_indices do
+            if index > high_index then high_index = index end
+        end
+        expect(high_index >= 5):toBe(true)
+    end)
+
+    it("round-trips the variant through development snapshots", function()
+        math.randomseed(51)
+        local state = game.new(true)
+        local encoded: string = game.snapshot(state)
+        local restored: game.State? = game.restore(encoded)
+        expect(restored == nil):toBe(false)
+        if restored ~= nil then
+            expect(restored.boss):toBe(true)
+            expect(#restored.player_hand):toBe(11)
+            expect(game.snapshot(restored)):toBe(encoded)
+        end
+
+        local standard: game.State = game.new(false)
+        local restored_standard: game.State? = game.restore(game.snapshot(standard))
+        expect(restored_standard == nil):toBe(false)
+        if restored_standard ~= nil then
+            expect(restored_standard.boss):toBe(false)
+        end
+    end)
+
+    it("restarts as the variant the reset asks for", function()
+        math.randomseed(53)
+        local state = game.new(false)
+        state:reset(true)
+        expect(state:is_boss()):toBe(true)
+        expect(state:hand_size()):toBe(11)
+        state:reset(false)
+        expect(state:is_boss()):toBe(false)
+        expect(state:hand_size()):toBe(5)
     end)
 end)

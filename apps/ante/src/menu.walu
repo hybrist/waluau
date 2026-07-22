@@ -11,17 +11,19 @@ type State = { clock: f64, cursor: i32, help_open: bool }
 
 const ACTION_NONE: i32 = 0
 const ACTION_START: i32 = 1
+const ACTION_START_BOSS: i32 = 2
 
 const WIDTH: f64 = 960.0
 
 const ITEM_NEW_GAME: i32 = 0
-const ITEM_HOW_TO_PLAY: i32 = 1
-const ITEM_COUNT: i32 = 2
+const ITEM_BOSS_BATTLE: i32 = 1
+const ITEM_HOW_TO_PLAY: i32 = 2
+const ITEM_COUNT: i32 = 3
 const ITEM_X: f64 = 290.0
 const ITEM_W: f64 = 380.0
 const ITEM_H: f64 = 52.0
-const ITEM_TOP: f64 = 330.0
-const ITEM_PITCH: f64 = 66.0
+const ITEM_TOP: f64 = 306.0
+const ITEM_PITCH: f64 = 60.0
 
 function new(): State
     return { clock = 0.0, cursor = ITEM_NEW_GAME, help_open = false }
@@ -50,10 +52,12 @@ function item_at(x: f64, y: f64): i32
     return -1
 end
 
--- NEW GAME is the entry module's decision; HOW TO PLAY is presentation the
--- menu can satisfy itself with the shared help modal.
+-- Starting a heist — standard or boss battle — is the entry module's
+-- decision; HOW TO PLAY is presentation the menu can satisfy itself with the
+-- shared help modal.
 function activate(state: State, item: i32): i32
     if item == ITEM_NEW_GAME then return ACTION_START end
+    if item == ITEM_BOSS_BATTLE then return ACTION_START_BOSS end
     state.help_open = true
     return ACTION_NONE
 end
@@ -99,10 +103,17 @@ function draw(state: State, graphics: engine.Graphics, effects: render.EffectSha
     end
 
     draw_item(state, graphics, ITEM_NEW_GAME, "NEW GAME")
+    -- The boss battle deals eleven relics and never replaces a spent one;
+    -- the label carries the stakes without needing its own help screen.
+    draw_item(state, graphics, ITEM_BOSS_BATTLE, "BOSS BATTLE")
     draw_item(state, graphics, ITEM_HOW_TO_PLAY, "HOW TO PLAY")
-    if not ready then
+    if state.cursor == ITEM_BOSS_BATTLE then
         render.text_centered(
-            graphics, "PREPARING THE VAULT", WIDTH * 0.5, 478.0, 10, "#8a8a92")
+            graphics, "ELEVEN RELICS. NO REPLACEMENTS. THE FAN ONLY SHRINKS",
+            WIDTH * 0.5, 502.0, 10, "#fbbf24")
+    elseif not ready then
+        render.text_centered(
+            graphics, "PREPARING THE VAULT", WIDTH * 0.5, 502.0, 10, "#8a8a92")
     end
 
     render.text_centered(
@@ -167,4 +178,5 @@ return {
     mousepressed = mousepressed,
     action_none = ACTION_NONE,
     action_start = ACTION_START,
+    action_start_boss = ACTION_START_BOSS,
 }
