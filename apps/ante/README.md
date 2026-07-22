@@ -13,6 +13,14 @@ The Arch Mage can commit any valid feint without a spark balance. Its third
 breach win ends the heist, while player wins never end the five-breach run early,
 leaving room to maximize the final spark score.
 
+The menu also offers a boss battle: both sides are dealt eleven relics up
+front and spent pairs are never replaced from the draw pile, so the hands
+shrink by two every breach and the fifth breach is fought from a three-card
+fan. Everything else — feints, wagers, scoring, and the five-breach run —
+matches the standard heist. Both hand rows lay themselves out for however
+many cards they hold, tightening their pitch (and the fan its tilt and arc)
+so an eleven-relic row still clears the deck and the three right-edge piles.
+
 The browser entry imports only the engine facade and contains no DOM or canvas
 host calls. The menu, game, help, history, and final outcome all render inside
 one 960×600 logical canvas that scales to the viewport. Trick results remain on the

@@ -22,14 +22,16 @@ const ACTION_EXIT: i32 = 1
 
 function new(): State
     return {
-        rules = game.new(),
+        rules = game.new(false),
         ui = flow.new(),
         presentation = choreography.new(),
     }
 end
 
-function reset(state: State): unit
-    state.rules:reset()
+-- `boss` picks the variant the fresh heist is dealt as; the entry module
+-- passes the menu's choice, and in-game restarts replay the current variant.
+function reset(state: State, boss: bool): unit
+    state.rules:reset(boss)
     flow.reset(state.ui)
     choreography.reset(state.presentation)
     -- The opening deal is already reflected in rules state; choreography
@@ -133,7 +135,7 @@ function consume_gate(state: State, command: i32): bool
         choreography.is_animating(state.presentation), command)
     if result == flow.result_live then return false end
     if result == flow.result_reset then
-        reset(state)
+        reset(state, state.rules:is_boss())
     elseif result == flow.result_refill then
         local trick: game.Trick? = state.rules:last_trick()
         if trick ~= nil then
@@ -173,14 +175,14 @@ function keypressed(state: State, key: string): i32
     if key == "ArrowLeft" or key == "a" then
         if ui.cursor_area == flow.cursor_hand then
             ui.hand_cursor -= 1
-            if ui.hand_cursor < 0 then ui.hand_cursor = 4 end
+            if ui.hand_cursor < 0 then ui.hand_cursor = rules:hand_size() - 1 end
         else
             ui.ward_cursor -= 1
             if ui.ward_cursor < 0 then ui.ward_cursor = 2 end
         end
     elseif key == "ArrowRight" or key == "d" then
         if ui.cursor_area == flow.cursor_hand then
-            ui.hand_cursor = (ui.hand_cursor + 1) % 5
+            ui.hand_cursor = (ui.hand_cursor + 1) % rules:hand_size()
         else
             ui.ward_cursor = (ui.ward_cursor + 1) % 3
         end

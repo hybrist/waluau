@@ -22,7 +22,10 @@ type FeintOutcome = {
 -- from its mark.
 type HandSlot = { card: Card, known: bool }
 type Trick = { round: i32, middle: {Card}, player_hand: {HandSlot}, computer_hand: {HandSlot}, player_cards: {Card}, computer_cards: {Card}, player_first: i32, player_second: i32, computer_first: i32, computer_second: i32, player_value: i32, computer_value: i32, winner: i32, points: i32, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32 }
-type State = { deck: {Card}, player_hand: {HandSlot}, computer_hand: {HandSlot}, middle: {Card}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool }
+-- `boss` selects the boss battle variant: both sides start with eleven relics
+-- instead of five and never draw replacements, so the hands shrink by two each
+-- breach and the fifth breach is fought from a three-card hand.
+type State = { deck: {Card}, player_hand: {HandSlot}, computer_hand: {HandSlot}, middle: {Card}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool, boss: bool }
 type View = {
     deck_count: i32,
     player_hand: {HandSlot},
@@ -57,7 +60,9 @@ const ONE: i32 = 1
 const TWO: i32 = 2
 const MAX_ROUNDS: i32 = 5
 const ARCH_MAGE_WINS_TO_END: i32 = 3
-const SNAPSHOT_SCHEMA: string = "ante-state-v2"
+const HAND_SIZE: i32 = 5
+const BOSS_HAND_SIZE: i32 = 11
+const SNAPSHOT_SCHEMA: string = "ante-state-v3"
 const SNAPSHOT_COLLECTION_LIMIT: i32 = 256
 
 function make_deck(): {Card}
@@ -296,14 +301,33 @@ function proposed_swap(hand: {Card}, middle: {Card}, hand_indices: {i32}, middle
     }
 end
 
+-- Every way to pull one, two, or three cards out of a hand of `count` cards.
+-- The five-card hand's twenty-five options used to be a literal table; boss
+-- battle hands run up to eleven cards, so the options are enumerated instead.
+function swap_hand_options(count: i32): {{i32}}
+    local options: {{i32}} = {}
+    for first = ZERO, count - ONE do
+        table.insert(options, { first })
+    end
+    for first = ZERO, count - TWO do
+        for second = first + ONE, count - ONE do
+            table.insert(options, { first, second })
+        end
+    end
+    for first = ZERO, count - TWO - ONE do
+        for second = first + ONE, count - TWO do
+            for third = second + ONE, count - ONE do
+                table.insert(options, { first, second, third })
+            end
+        end
+    end
+    return options
+end
+
 function best_swap(hand: {Card}, middle: {Card}): SwapChoice
     local baseline: i32 = best_pair(hand, middle).value
     local best: SwapChoice = { hand_indices = {}, middle_indices = {}, community_value = rank_three(middle), hand_value = baseline }
-    local hand_options: {{i32}} = {
-        { 0 }, { 1 }, { 2 }, { 3 }, { 4 },
-        { 0, 1 }, { 0, 2 }, { 0, 3 }, { 0, 4 }, { 1, 2 }, { 1, 3 }, { 1, 4 }, { 2, 3 }, { 2, 4 }, { 3, 4 },
-        { 0, 1, 2 }, { 0, 1, 3 }, { 0, 1, 4 }, { 0, 2, 3 }, { 0, 2, 4 }, { 0, 3, 4 }, { 1, 2, 3 }, { 1, 2, 4 }, { 1, 3, 4 }, { 2, 3, 4 },
-    }
+    local hand_options: {{i32}} = swap_hand_options(#hand)
     local middle_options: {{i32}} = { { 0 }, { 1 }, { 2 }, { 0, 1 }, { 0, 2 }, { 1, 2 }, { 0, 1, 2 } }
     for hand_indices in hand_options do
         for middle_indices in middle_options do
@@ -491,9 +515,13 @@ function State:play(first: i32, second: i32): Trick?
 
     remove_pair(self.player_hand, first, second)
     remove_pair(self.computer_hand, computer.first, computer.second)
-    for _ = 1, 2 do
-        table.insert(self.player_hand, deal_slot(self.deck))
-        table.insert(self.computer_hand, deal_slot(self.deck))
+    -- Boss battles never replace spent relics: the opening eleven are the
+    -- whole run, so both hands shrink toward the three-card final breach.
+    if not self.boss then
+        for _ = 1, 2 do
+            table.insert(self.player_hand, deal_slot(self.deck))
+            table.insert(self.computer_hand, deal_slot(self.deck))
+        end
     end
 
     if self.computer_tricks >= ARCH_MAGE_WINS_TO_END or self.round >= MAX_ROUNDS then
@@ -581,6 +609,7 @@ function snapshot(state: State): string
     snapshot_data.append_indices(parts, state.swap_hand_indices)
     snapshot_data.append_indices(parts, state.swap_middle_indices)
     snapshot_data.append_bool(parts, state.finished)
+    snapshot_data.append_bool(parts, state.boss)
     return table.concat(parts, ",")
 end
 
@@ -674,6 +703,7 @@ function restore(snapshot_value: string): State?
     local swap_hand_indices: {i32} = reader:next_indices()
     local swap_middle_indices: {i32} = reader:next_indices()
     local finished: bool = reader:next_bool()
+    local boss: bool = reader:next_bool()
     if not reader:complete() then return nil end
     local restored: State = {
         deck = deck,
@@ -697,11 +727,12 @@ function restore(snapshot_value: string): State?
         swap_hand_indices = swap_hand_indices,
         swap_middle_indices = swap_middle_indices,
         finished = finished,
+        boss = boss,
     }
     return restored
 end
 
-function new(): State
+function new(boss: bool): State
     local deck: {Card} = make_deck()
     shuffle(deck)
     local state: State = {
@@ -726,8 +757,11 @@ function new(): State
         swap_hand_indices = {},
         swap_middle_indices = {},
         finished = false,
+        boss = boss,
     }
-    for _ = 1, 5 do
+    local hand_size: i32 = HAND_SIZE
+    if boss then hand_size = BOSS_HAND_SIZE end
+    for _ = 1, hand_size do
         table.insert(state.player_hand, deal_slot(state.deck))
         table.insert(state.computer_hand, deal_slot(state.deck))
     end
@@ -753,6 +787,14 @@ end
 
 function State:is_finished(): bool
     return self.finished
+end
+
+function State:is_boss(): bool
+    return self.boss
+end
+
+function State:hand_size(): i32
+    return #self.player_hand
 end
 
 function State:feint_open(): bool
@@ -801,8 +843,11 @@ function view_side(view: View, owner: i32): {HandSlot}
     return view.computer_hand
 end
 
-function State:reset(): unit
-    local fresh: State = new()
+-- Start over as the given variant: the mode is an argument rather than a
+-- carried-over field so a restart can also be a mode switch from the menu.
+function State:reset(boss: bool): unit
+    local fresh: State = new(boss)
+    self.boss = fresh.boss
     self.deck = fresh.deck
     self.player_hand = fresh.player_hand
     self.computer_hand = fresh.computer_hand

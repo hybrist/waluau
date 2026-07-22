@@ -36,10 +36,11 @@ function install_arcane_heist(): unit
 
     -- The begin gesture doubles as the browser audio unlock. No reseed: the
     -- host seeds math.random per instance, so each heist deals a different
-    -- shuffle. sim.test.walu pins its own seeds.
-    local function begin_heist(): unit
+    -- shuffle. sim.test.walu pins its own seeds. `boss` is the menu's choice
+    -- between the standard five-card heist and the boss battle variant.
+    local function begin_heist(boss: bool): unit
         if not presentation_resources.unlock_audio(assets) then return end
-        game_screen.reset(heist)
+        game_screen.reset(heist, boss)
         screen = SCREEN_GAME
     end
 
@@ -67,12 +68,15 @@ function install_arcane_heist(): unit
         game_screen.draw(heist, graphics, assets.effects, assets.texture)
     end
 
+    local function menu_action(action: i32): unit
+        if action == menu.action_start then begin_heist(false)
+        elseif action == menu.action_start_boss then begin_heist(true) end
+    end
+
     local function keypressed(key: string): unit
         if #assets.fatal_audio_code > 0 then return end
         if screen == SCREEN_MENU then
-            if menu.keypressed(menu_state, key) == menu.action_start then
-                begin_heist()
-            end
+            menu_action(menu.keypressed(menu_state, key))
             return
         end
         if game_screen.keypressed(heist, key) == game_screen.action_exit then
@@ -92,9 +96,7 @@ function install_arcane_heist(): unit
     local function mousepressed(x: f64, y: f64, button: i32): unit
         if #assets.fatal_audio_code > 0 then return end
         if screen == SCREEN_MENU then
-            if menu.mousepressed(menu_state, x, y, button) == menu.action_start then
-                begin_heist()
-            end
+            menu_action(menu.mousepressed(menu_state, x, y, button))
             return
         end
         game_screen.mousepressed(heist, x, y, button)

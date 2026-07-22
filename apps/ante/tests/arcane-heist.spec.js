@@ -72,7 +72,7 @@ async function beginHeist(page, canvas) {
     .toBeGreaterThan(40);
 }
 
-test('boots to a menu with new game and how to play options', async ({ page }) => {
+test('boots to a menu with new game, boss battle, and how to play options', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const canvas = await openGame(page);
@@ -81,8 +81,9 @@ test('boots to a menu with new game and how to play options', async ({ page }) =
     .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
     .toBeGreaterThan(300);
 
-  // HOW TO PLAY opens the shared help modal, which covers the title band;
-  // Escape returns to the option list.
+  // HOW TO PLAY (below NEW GAME and BOSS BATTLE) opens the shared help modal,
+  // which covers the title band; Escape returns to the option list.
+  await page.keyboard.press('ArrowDown');
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
   await expect
@@ -103,6 +104,21 @@ test('boots to a menu with new game and how to play options', async ({ page }) =
   await expect
     .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
     .toBeGreaterThan(300);
+  expect(pageErrors).toEqual([]);
+});
+
+test('starts a boss battle from its menu option', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  const canvas = await openGame(page);
+
+  // BOSS BATTLE sits directly under NEW GAME; Enter on it deals the
+  // eleven-card variant, whose board still shows the sealed draw pile.
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect
+    .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
+    .toBeGreaterThan(40);
   expect(pageErrors).toEqual([]);
 });
 

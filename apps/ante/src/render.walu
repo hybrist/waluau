@@ -223,6 +223,15 @@ const FAN_TILT: f64 = 0.075
 const FAN_DROP: f64 = 2.8
 const FAN_CENTER_X: f64 = 480.0
 const FAN_CENTER_Y: f64 = 509.0
+-- Widest sideways spread either hand row may occupy, first to last card
+-- centre. Five cards never reach it; a boss battle's eleven-card rows shrink
+-- their pitch to it so both rows clear the piles on the right edge.
+const HAND_SPAN_LIMIT: f64 = 520.0
+-- The Arch Mage's flat row: pitch of the five-card layout and the fixed
+-- centre both layouts share (190 + (4 * 116 + 104) / 2 in the original).
+const COMPUTER_PITCH: f64 = 116.0
+const COMPUTER_CENTER_X: f64 = 474.0
+const COMPUTER_ROW_Y: f64 = 116.0
 -- How far the fan slides open around the focused relic, in the same steps as
 -- everything else here — about a quarter of the gap to its neighbour. This is
 -- deliberately short of the ~0.41 steps it would take for FAN_PITCH to clear
@@ -301,27 +310,52 @@ function ease_progress(t: f64, easing: i32): f64
     return ease_out_quint(t)
 end
 
+-- Both hand rows are laid out for however many cards they currently hold.
+-- The five-card layout is the reference; boss battles start at eleven and
+-- shrink after every breach, so the geometry below is parametric on that
+-- count. Every caller knows its row's size — the live view, the last trick's
+-- recorded hands, or the fan_parts list all carry it — so the count is an
+-- argument rather than hidden layout state.
+function fan_middle_of(count: i32): f64
+    return ((count - 1)::f64) * 0.5
+end
+
+-- How much a larger fan flattens its tilt and dip so its outermost relics
+-- keep the reference five-card silhouette instead of curling off the board.
+function fan_scale_of(count: i32): f64
+    local middle: f64 = fan_middle_of(count)
+    if middle <= FAN_MIDDLE then return 1.0 end
+    return FAN_MIDDLE / middle
+end
+
+function row_pitch_of(pitch: f64, count: i32): f64
+    if count <= 1 then return pitch end
+    return math.min(pitch, HAND_SPAN_LIMIT / ((count - 1)::f64))
+end
+
 -- Where a relic sits along the fan: steps from the middle relic, negative to
 -- its left, plus however far the parting has pushed it. This one number is the
 -- fan's only degree of freedom — slide, dip, and tilt all read off it — so a
 -- parting relic travels along the arc the fan already describes instead of
 -- skidding sideways out of the curve.
-function hand_step(index: i32, part: f64): f64
-    return (index::f64) - FAN_MIDDLE + part
+function hand_step_at(index: i32, part: f64, count: i32): f64
+    return (index::f64) - fan_middle_of(count) + part
 end
 
-function hand_angle(index: i32, part: f64): f64
-    return hand_step(index, part) * FAN_TILT
+function hand_angle_at(index: i32, part: f64, count: i32): f64
+    return hand_step_at(index, part, count) * FAN_TILT * fan_scale_of(count)
 end
 
 -- Top-left of a relic's card box, in its own tilted frame.
-function hand_pos(index: i32, part: f64): Point
-    local step: f64 = hand_step(index, part)
+function hand_pos_at(index: i32, part: f64, count: i32): Point
+    local step: f64 = hand_step_at(index, part, count)
+    local scale: f64 = fan_scale_of(count)
     return {
-        x = FAN_CENTER_X + step * FAN_PITCH - CARD_W * 0.5,
-        y = FAN_CENTER_Y + step * step * FAN_DROP - CARD_H * 0.5,
+        x = FAN_CENTER_X + step * row_pitch_of(FAN_PITCH, count) - CARD_W * 0.5,
+        y = FAN_CENTER_Y + step * step * FAN_DROP * scale * scale - CARD_H * 0.5,
     }
 end
+
 
 -- Where a relic's parting offset is headed: the fan opens around the focused
 -- relic, everything left of it sliding left and everything right sliding right,
@@ -339,14 +373,26 @@ end
 -- fan; the burn pile and both won piles share the right edge, one card column
 -- opposite the deck, each at its owner's height: the Arch Mage's up beside its
 -- sealed row, the player's down beside the fan, the burn pile centred between.
-function slot_pos(kind: i32, index: i32): Point
-    if kind == SLOT_PLAYER then return hand_pos(index, 0.0) end
-    if kind == SLOT_COMPUTER then return point(190.0 + (index::f64) * 116.0, 116.0) end
+-- The count parameter sizes the two hand rows; every other slot ignores it.
+function slot_pos_at(kind: i32, index: i32, count: i32): Point
+    if kind == SLOT_PLAYER then return hand_pos_at(index, 0.0, count) end
+    if kind == SLOT_COMPUTER then
+        local pitch: f64 = row_pitch_of(COMPUTER_PITCH, count)
+        local left: f64 = COMPUTER_CENTER_X - (((count - 1)::f64) * pitch + CARD_W) * 0.5
+        return point(left + (index::f64) * pitch, COMPUTER_ROW_Y)
+    end
     if kind == SLOT_MIDDLE then return point(302.0 + (index::f64) * 116.0, 292.0) end
     if kind == SLOT_DECK then return point(56.0, 292.0) end
     if kind == SLOT_COMPUTER_WON then return point(800.0, 116.0) end
     if kind == SLOT_PLAYER_WON then return point(800.0, 452.0) end
     return point(800.0 + (index::f64) * 4.0, 292.0 + (index::f64) * 12.0)
+end
+
+-- Countless slots — the wards, the deck, and the three piles — never move
+-- with the hand layout; this shorthand names them without inventing a count.
+-- The two hand rows must go through slot_pos_at with their real size.
+function slot_pos(kind: i32, index: i32): Point
+    return slot_pos_at(kind, index, 5)
 end
 
 function slot_hidden(anims: {Anim}, clock: f64, kind: i32, index: i32): bool
@@ -403,10 +449,10 @@ end
 -- is checked in its own tilted frame: the point moves into the card's local
 -- space by undoing the same centre/rotation transform the card was drawn with.
 function hit_hand(at: Point, parts: {f64}): i32
-    for i = 4::i32, 0::i32, -1::i32 do
+    for i = #parts - 1, 0::i32, -1::i32 do
         local part: f64 = parts[i]
-        local angle: f64 = hand_angle(i, part)
-        local slot: Point = hand_pos(i, part)
+        local angle: f64 = hand_angle_at(i, part, #parts)
+        local slot: Point = hand_pos_at(i, part, #parts)
         local dx: f64 = at.x - (slot.x + CARD_W * 0.5)
         local dy: f64 = at.y - (slot.y + CARD_H * 0.5)
         local local_x: f64 = dx * math.cos(angle) + dy * math.sin(angle)
@@ -625,11 +671,11 @@ end
 -- the tilt carry everything with it — the bind lift rises along the card's own
 -- axis rather than straight up the screen, and the focus edge stays square to
 -- the card.
-function draw_hand_card(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, index: i32, part: f64, selected: bool, focused: bool, colored: bool, known: bool): unit
-    local slot: Point = hand_pos(index, part)
+function draw_hand_card(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, index: i32, part: f64, count: i32, selected: bool, focused: bool, colored: bool, known: bool): unit
+    local slot: Point = hand_pos_at(index, part, count)
     graphics:push()
     graphics:translate(slot.x + CARD_W * 0.5, slot.y + CARD_H * 0.5)
-    graphics:rotate(hand_angle(index, part))
+    graphics:rotate(hand_angle_at(index, part, count))
     draw_card(graphics, effects, card_back, card, -(CARD_W * 0.5), -(CARD_H * 0.5), selected, focused, false, colored, known)
     graphics:pop()
 end
@@ -835,18 +881,18 @@ function row_right(): Point
     return point(ROW_RIGHT_X, ROW_Y)
 end
 
--- Centre of a board slot's card box.
-function slot_center(kind: i32, index: i32): Point
-    local slot: Point = slot_pos(kind, index)
+-- Centre of a board slot's card box, in a hand row laid out for `count`.
+function slot_center(kind: i32, index: i32, count: i32): Point
+    local slot: Point = slot_pos_at(kind, index, count)
     return point(slot.x + CARD_W * 0.5, slot.y + CARD_H * 0.5)
 end
 
 -- Centre of a bound relic in the fan: the bind lift rises along the card's
 -- tilted axis, so the launch point folds that (0, -10) offset through the
 -- relic's angle instead of lifting straight up the screen.
-function bound_hand_center(index: i32, part: f64): Point
-    local angle: f64 = hand_angle(index, part)
-    local slot: Point = hand_pos(index, part)
+function bound_hand_center(index: i32, part: f64, count: i32): Point
+    local angle: f64 = hand_angle_at(index, part, count)
+    local slot: Point = hand_pos_at(index, part, count)
     return {
         x = slot.x + CARD_W * 0.5 + math.sin(angle) * 10.0,
         y = slot.y + CARD_H * 0.5 - math.cos(angle) * 10.0,
@@ -994,11 +1040,11 @@ function draw_disintegrating_card(graphics: Graphics, effects: EffectShaders, ca
     end
 end
 
-function draw_hand_disintegration(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, index: i32, part: f64, progress: f64, seed: i32): unit
-    local slot: Point = hand_pos(index, part)
+function draw_hand_disintegration(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, index: i32, part: f64, count: i32, progress: f64, seed: i32): unit
+    local slot: Point = hand_pos_at(index, part, count)
     graphics:push()
     graphics:translate(slot.x + CARD_W * 0.5, slot.y + CARD_H * 0.5)
-    graphics:rotate(hand_angle(index, part))
+    graphics:rotate(hand_angle_at(index, part, count))
     draw_disintegrating_card(graphics, effects, card_back, card, -(CARD_W * 0.5), -(CARD_H * 0.5), true, progress, seed)
     graphics:pop()
 end
@@ -1527,6 +1573,10 @@ end
 
 function draw_resolution_board(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, state: game.View, fan_parts: {f64}, reveal_clock: f64, discards: {game.Card}, computer_won: {game.Card}, player_won: {game.Card}, power_kind: i32, power_clock: f64): unit
     local trick: game.Trick = state.history[#state.history - 1]
+    -- The reveal shows the hands as they were played, so the rows keep the
+    -- trick's layout even though a boss battle's live hands have already
+    -- shrunk underneath it.
+    local hand_count: i32 = #trick.player_hand
     draw_hud(graphics, state)
     draw_deck(graphics, effects, card_back, state.deck_count)
     local scoring: {bool} = trick_scoring(trick)
@@ -1572,8 +1622,8 @@ function draw_resolution_board(graphics: Graphics, effects: EffectShaders, card_
     -- the ward row if the wards held; a slot goes empty the moment its card
     -- takes off. Everything else stays sealed, so only the winning formation
     -- gains suit color.
-    for i = 0::i32, 4::i32 do
-        local slot: Point = slot_pos(SLOT_COMPUTER, i)
+    for i = 0::i32, #trick.computer_hand - 1 do
+        local slot: Point = slot_pos_at(SLOT_COMPUTER, i, hand_count)
         if i == trick.computer_first then
             if trick.winner >= 0 or fly0 <= 0.0 then
                 if trick.winner > 0 and loss_progress > 0.0 then
@@ -1620,25 +1670,25 @@ function draw_resolution_board(graphics: Graphics, effects: EffectShaders, card_
     -- stay bound and lifted until their flight begins, so it stays clear
     -- which cards faced the Arch Mage; after takeoff their fan slots simply
     -- stand empty, the way a spent relic's would.
-    for i = 0::i32, 4::i32 do
+    for i = 0::i32, #trick.player_hand - 1 do
         if i == trick.player_first then
             if trick.winner <= 0 or fly0 <= 0.0 then
                 if trick.winner < 0 and loss_progress > 0.0 then
-                    draw_hand_disintegration(graphics, effects, card_back, trick.player_cards[0], i, fan_parts[i], loss_progress, 47)
+                    draw_hand_disintegration(graphics, effects, card_back, trick.player_cards[0], i, fan_parts[i], hand_count, loss_progress, 47)
                 else
-                    draw_hand_card(graphics, effects, card_back, trick.player_cards[0], i, fan_parts[i], true, false, trick.winner > 0 and scoring[3], false)
+                    draw_hand_card(graphics, effects, card_back, trick.player_cards[0], i, fan_parts[i], hand_count, true, false, trick.winner > 0 and scoring[3], false)
                 end
             end
         elseif i == trick.player_second then
             if trick.winner <= 0 or fly1 <= 0.0 then
                 if trick.winner < 0 and loss_progress > 0.0 then
-                    draw_hand_disintegration(graphics, effects, card_back, trick.player_cards[1], i, fan_parts[i], loss_progress, 71)
+                    draw_hand_disintegration(graphics, effects, card_back, trick.player_cards[1], i, fan_parts[i], hand_count, loss_progress, 71)
                 else
-                    draw_hand_card(graphics, effects, card_back, trick.player_cards[1], i, fan_parts[i], true, false, trick.winner > 0 and scoring[4], false)
+                    draw_hand_card(graphics, effects, card_back, trick.player_cards[1], i, fan_parts[i], hand_count, true, false, trick.winner > 0 and scoring[4], false)
                 end
             end
         else
-            draw_hand_card(graphics, effects, card_back, trick.player_hand[i].card, i, fan_parts[i], false, false, false, trick.player_hand[i].known)
+            draw_hand_card(graphics, effects, card_back, trick.player_hand[i].card, i, fan_parts[i], hand_count, false, false, false, trick.player_hand[i].known)
         end
     end
     draw_footer(graphics)
@@ -1675,19 +1725,19 @@ function draw_resolution_board(graphics: Graphics, effects: EffectShaders, card_
     -- takeoff continues the lift instead of snapping back down to the slot.
     if trick.winner < 0 then
         draw_winner_flight(graphics, effects, card_back, trick.computer_cards[0],
-            slot_center(SLOT_COMPUTER, trick.computer_first), 0.0,
+            slot_center(SLOT_COMPUTER, trick.computer_first, hand_count), 0.0,
             point(ROW_LEFT_X, ROW_Y), fly0, scoring[3])
         draw_winner_flight(graphics, effects, card_back, trick.computer_cards[1],
-            slot_center(SLOT_COMPUTER, trick.computer_second), 0.0,
+            slot_center(SLOT_COMPUTER, trick.computer_second, hand_count), 0.0,
             point(ROW_RIGHT_X, ROW_Y), fly1, scoring[4])
     elseif trick.winner > 0 then
-        local angle0: f64 = hand_angle(trick.player_first, fan_parts[trick.player_first])
-        local angle1: f64 = hand_angle(trick.player_second, fan_parts[trick.player_second])
+        local angle0: f64 = hand_angle_at(trick.player_first, fan_parts[trick.player_first], hand_count)
+        local angle1: f64 = hand_angle_at(trick.player_second, fan_parts[trick.player_second], hand_count)
         draw_winner_flight(graphics, effects, card_back, trick.player_cards[0],
-            bound_hand_center(trick.player_first, fan_parts[trick.player_first]),
+            bound_hand_center(trick.player_first, fan_parts[trick.player_first], hand_count),
             angle0, point(ROW_LEFT_X, ROW_Y), fly0, scoring[3])
         draw_winner_flight(graphics, effects, card_back, trick.player_cards[1],
-            bound_hand_center(trick.player_second, fan_parts[trick.player_second]),
+            bound_hand_center(trick.player_second, fan_parts[trick.player_second], hand_count),
             angle1, point(ROW_RIGHT_X, ROW_Y), fly1, scoring[4])
     end
     if foreground then graphics:pop() end
@@ -1699,7 +1749,7 @@ function draw_hand_slot(graphics: Graphics, effects: EffectShaders, card_back: g
     if slot_hidden(anims, anim_clock, SLOT_PLAYER, index) then return end
     local selected: bool = is_picked(play_picks, index)
     if state.swap_open then selected = is_picked(swap_hand, index) end
-    draw_hand_card(graphics, effects, card_back, state.player_hand[index].card, index, parts[index], selected, index == focus,
+    draw_hand_card(graphics, effects, card_back, state.player_hand[index].card, index, parts[index], #state.player_hand, selected, index == focus,
         false, state.player_hand[index].known)
 end
 
@@ -1720,9 +1770,9 @@ function draw_playfield(graphics: Graphics, effects: EffectShaders, card_back: g
         player_won, pile_landed(player_won, anims, anim_clock, SLOT_PLAYER_WON))
     -- Slots claimed by an in-flight card stay empty until it lands, so the
     -- already-updated game state cannot leak ahead of the animation.
-    for i = 0::i32, 4::i32 do
+    for i = 0::i32, #state.computer_hand - 1 do
         if not slot_hidden(anims, anim_clock, SLOT_COMPUTER, i) then
-            local slot: Point = slot_pos(SLOT_COMPUTER, i)
+            local slot: Point = slot_pos_at(SLOT_COMPUTER, i, #state.computer_hand)
             draw_card(graphics, effects, card_back, state.computer_hand[i].card, slot.x, slot.y, false, false, true, false, state.computer_hand[i].known)
         end
     end
@@ -1766,7 +1816,7 @@ function draw_playfield(graphics: Graphics, effects: EffectShaders, card_back: g
     -- Relics keep the order they were dealt in, focused or not: pulling the
     -- focused one to the front would slide it through its neighbours instead of
     -- opening a gap for it. The parting alone gives it room.
-    for i = 0::i32, 4::i32 do
+    for i = 0::i32, #state.player_hand - 1 do
         draw_hand_slot(graphics, effects, card_back, state, i, hand_focus, fan_parts, play_picks, swap_hand, anims, anim_clock)
     end
     draw_footer(graphics)
@@ -1915,9 +1965,10 @@ return {
     point = point,
     midpoint = midpoint,
     slot_pos = slot_pos,
+    slot_pos_at = slot_pos_at,
     slot_center = slot_center,
-    hand_angle = hand_angle,
-    hand_pos = hand_pos,
+    hand_angle_at = hand_angle_at,
+    hand_pos_at = hand_pos_at,
     hand_part_target = hand_part_target,
     hit_hand = hit_hand,
     hit_ward = hit_ward,
