@@ -16,7 +16,12 @@ type EffectShaders = {
     red_fire: graphics_module.Shader?,
     blue_caustics: graphics_module.Shader?,
     black_hole: graphics_module.Shader?,
-    green_growth: graphics_module.Shader?
+    green_growth: graphics_module.Shader?,
+    ice_freeze: graphics_module.Shader?,
+    -- The tileable data texture the ice shader samples. Presentation resource
+    -- loading fills it in; it travels with the shaders so every draw site that
+    -- can use the ice effect already holds it.
+    noise_texture: graphics_module.Texture?
 }
 type Sources = {
     vertex: Source,
@@ -25,7 +30,8 @@ type Sources = {
     red_fire: Source,
     blue_caustics: Source,
     black_hole: Source,
-    green_growth: Source
+    green_growth: Source,
+    ice_freeze: Source
 }
 type SourceTexts = {
     vertex: string,
@@ -34,7 +40,8 @@ type SourceTexts = {
     red_fire: string,
     blue_caustics: string,
     black_hole: string,
-    green_growth: string
+    green_growth: string,
+    ice_freeze: string
 }
 type SourceReadiness = {
     vertex: bool,
@@ -43,7 +50,8 @@ type SourceReadiness = {
     red_fire: bool,
     blue_caustics: bool,
     black_hole: bool,
-    green_growth: bool
+    green_growth: bool,
+    ice_freeze: bool
 }
 type EffectErrors = {
     vertex: string,
@@ -52,7 +60,8 @@ type EffectErrors = {
     red_fire: string,
     blue_caustics: string,
     black_hole: string,
-    green_growth: string
+    green_growth: string,
+    ice_freeze: string
 }
 type State = {
     shaders: EffectShaders,
@@ -75,6 +84,8 @@ function new(): State
             blue_caustics = nil,
             black_hole = nil,
             green_growth = nil,
+            ice_freeze = nil,
+            noise_texture = nil,
         },
         sources = {
             vertex = shader_sources.open("ante.effects.vertex"),
@@ -84,6 +95,7 @@ function new(): State
             blue_caustics = shader_sources.open("ante.effects.blue-caustics"),
             black_hole = shader_sources.open("ante.effects.black-hole"),
             green_growth = shader_sources.open("ante.effects.green-growth"),
+            ice_freeze = shader_sources.open("ante.effects.ice-freeze"),
         },
         texts = {
             vertex = "",
@@ -93,6 +105,7 @@ function new(): State
             blue_caustics = "",
             black_hole = "",
             green_growth = "",
+            ice_freeze = "",
         },
         ready = {
             vertex = false,
@@ -102,6 +115,7 @@ function new(): State
             blue_caustics = false,
             black_hole = false,
             green_growth = false,
+            ice_freeze = false,
         },
         errors = {
             vertex = "",
@@ -111,6 +125,7 @@ function new(): State
             blue_caustics = "",
             black_hole = "",
             green_growth = "",
+            ice_freeze = "",
         },
     }
 end
@@ -144,6 +159,7 @@ function refresh(state: State, graphics: Graphics): unit
     local blue: SourceUpdate = state.sources.blue_caustics:poll()
     local black: SourceUpdate = state.sources.black_hole:poll()
     local green: SourceUpdate = state.sources.green_growth:poll()
+    local ice: SourceUpdate = state.sources.ice_freeze:poll()
 
     if vertex.changed then
         if vertex.ok then
@@ -216,6 +232,17 @@ function refresh(state: State, graphics: Graphics): unit
         end
     end
 
+    if ice.changed then
+        if ice.ok then
+            state.texts.ice_freeze = ice.source
+            state.ready.ice_freeze = true
+            state.errors.ice_freeze = ""
+        else
+            state.ready.ice_freeze = false
+            state.errors.ice_freeze = "ice " .. source_failure(ice)
+        end
+    end
+
     if not state.ready.vertex then return end
 
     if (vertex.changed or gold.changed) and state.ready.gold_shimmer then
@@ -277,6 +304,16 @@ function refresh(state: State, graphics: Graphics): unit
             state.errors.green_growth = ""
         else state.errors.green_growth = shader_failure("green", result) end
     end
+
+    if (vertex.changed or ice.changed) and state.ready.ice_freeze then
+        local result: graphics_module.ShaderResult = rebuild(
+            graphics, state.shaders.ice_freeze,
+            state.texts.vertex, state.texts.ice_freeze)
+        if result.ok then
+            state.shaders.ice_freeze = result.shader
+            state.errors.ice_freeze = ""
+        else state.errors.ice_freeze = shader_failure("ice", result) end
+    end
 end
 
 function append_warning(warnings: string, warning: string): string
@@ -296,12 +333,14 @@ function diagnostics(state: State): Diagnostics
         warnings = append_warning(warnings, "blue " .. vertex_error)
         warnings = append_warning(warnings, "black " .. vertex_error)
         warnings = append_warning(warnings, "green " .. vertex_error)
+        warnings = append_warning(warnings, "ice " .. vertex_error)
     else
         warnings = append_warning(warnings, state.errors.gold_shimmer)
         warnings = append_warning(warnings, state.errors.red_fire)
         warnings = append_warning(warnings, state.errors.blue_caustics)
         warnings = append_warning(warnings, state.errors.black_hole)
         warnings = append_warning(warnings, state.errors.green_growth)
+        warnings = append_warning(warnings, state.errors.ice_freeze)
     end
     return { fatal_error = fatal_error, warnings = warnings }
 end
@@ -319,6 +358,10 @@ function release(state: State, graphics: Graphics): unit
     if black ~= nil then graphics:release_shader(black::graphics_module.Shader) end
     local green: graphics_module.Shader? = state.shaders.green_growth
     if green ~= nil then graphics:release_shader(green::graphics_module.Shader) end
+    local ice: graphics_module.Shader? = state.shaders.ice_freeze
+    if ice ~= nil then graphics:release_shader(ice::graphics_module.Shader) end
+    local noise: graphics_module.Texture? = state.shaders.noise_texture
+    if noise ~= nil then graphics:release_texture(noise::graphics_module.Texture) end
 
     state.shaders.gold_shimmer = nil
     state.shaders.defeat_shroud = nil
@@ -326,6 +369,8 @@ function release(state: State, graphics: Graphics): unit
     state.shaders.blue_caustics = nil
     state.shaders.black_hole = nil
     state.shaders.green_growth = nil
+    state.shaders.ice_freeze = nil
+    state.shaders.noise_texture = nil
 end
 
 return {
