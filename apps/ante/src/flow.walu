@@ -4,6 +4,9 @@
 
 local snapshot_data = require("./snapshot")
 
+-- `casting` is the spell-targeting mode: entered by the cast key, it points
+-- ward_cursor at the ward the spell would hit until the player confirms or
+-- cancels. While it holds, ordinary binding input is suspended.
 type State = {
     hand_cursor: i32,
     ward_cursor: i32,
@@ -13,7 +16,8 @@ type State = {
     swap_wards: {i32},
     modal: i32,
     revealing: bool,
-    reveal_clock: f64
+    reveal_clock: f64,
+    casting: bool
 }
 
 const MODAL_NONE: i32 = 0
@@ -38,7 +42,7 @@ const CURSOR_HAND: i32 = 0
 const CURSOR_WARDS: i32 = 1
 const FAN_CLOSED: i32 = -1
 const BOARD_REVEAL_SECONDS: f64 = 2.3
-const UI_SNAPSHOT_SCHEMA: string = "ante-flow-v1"
+const UI_SNAPSHOT_SCHEMA: string = "ante-flow-v2"
 const UI_SNAPSHOT_COLLECTION_LIMIT: i32 = 256
 
 function new(): State
@@ -52,6 +56,7 @@ function new(): State
         modal = MODAL_NONE,
         revealing = false,
         reveal_clock = 0.0,
+        casting = false,
     }
 end
 
@@ -85,6 +90,7 @@ function reset(state: State): unit
     state.modal = fresh.modal
     state.revealing = fresh.revealing
     state.reveal_clock = fresh.reveal_clock
+    state.casting = fresh.casting
 end
 
 function begin_reveal(state: State): unit
@@ -92,6 +98,7 @@ function begin_reveal(state: State): unit
     state.modal = MODAL_NONE
     state.revealing = true
     state.reveal_clock = 0.0
+    state.casting = false
 end
 
 function apply_hand_order(state: State, order: {i32}): unit
@@ -105,6 +112,9 @@ end
 
 function fan_focus(state: State, animating: bool): i32
     if state.revealing or animating then return FAN_CLOSED end
+    -- Targeting a spell points at the wards, so the fan folds shut the same
+    -- way it does when the cursor crosses up to the ward row.
+    if state.casting then return FAN_CLOSED end
     if state.cursor_area ~= CURSOR_HAND then return FAN_CLOSED end
     return state.hand_cursor
 end
@@ -175,6 +185,7 @@ function snapshot(state: State): string
     snapshot_data.append_i32(parts, state.modal)
     snapshot_data.append_bool(parts, state.revealing)
     snapshot_data.append_f64(parts, state.reveal_clock)
+    snapshot_data.append_bool(parts, state.casting)
     return table.concat(parts, ",")
 end
 
@@ -191,6 +202,7 @@ function restore(snapshot_value: string): State?
     local modal: i32 = reader:next_i32()
     local revealing: bool = reader:next_bool()
     local reveal_clock: f64 = reader:next_f64()
+    local casting: bool = reader:next_bool()
     local restored: State = {
         hand_cursor = hand_cursor,
         ward_cursor = ward_cursor,
@@ -201,6 +213,7 @@ function restore(snapshot_value: string): State?
         modal = modal,
         revealing = revealing,
         reveal_clock = reveal_clock,
+        casting = casting,
     }
     if not reader:complete() then return nil end
     return restored

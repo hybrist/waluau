@@ -37,10 +37,11 @@ function install_arcane_heist(): unit
     -- The begin gesture doubles as the browser audio unlock. No reseed: the
     -- host seeds math.random per instance, so each heist deals a different
     -- shuffle. sim.test.walu pins its own seeds. `boss` is the menu's choice
-    -- between the standard five-card heist and the boss battle variant.
-    local function begin_heist(boss: bool): unit
+    -- between the standard five-card heist and the boss battle variant;
+    -- `spell` is the starting spell picked on the menu's second list.
+    local function begin_heist(boss: bool, spell: i32): unit
         if not presentation_resources.unlock_audio(assets) then return end
-        game_screen.reset(heist, boss)
+        game_screen.reset(heist, boss, spell)
         screen = SCREEN_GAME
     end
 
@@ -69,8 +70,11 @@ function install_arcane_heist(): unit
     end
 
     local function menu_action(action: i32): unit
-        if action == menu.action_start then begin_heist(false)
-        elseif action == menu.action_start_boss then begin_heist(true) end
+        if action == menu.action_start then
+            begin_heist(false, menu.selected_spell(menu_state))
+        elseif action == menu.action_start_boss then
+            begin_heist(true, menu.selected_spell(menu_state))
+        end
     end
 
     local function keypressed(key: string): unit
