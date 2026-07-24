@@ -57,7 +57,7 @@ function install_gpu_resources_fixture(): unit
         assert(target_result.ok)
         local target: graphics_module.RenderTarget = target_result.target
         assert(graphics:set_render_target(target))
-        graphics:clear("#2040ff")
+        graphics:clear("#2040ff00")
         assert(graphics:draw_sprite(texture, 8.0, 8.0, 16.0, 16.0, 0.0, 1.0, 1.0, 1.0))
         graphics:set_screen_target()
         assert(graphics:draw_render_target(target, 84.0, 8.0, 48.0, 48.0))

@@ -490,13 +490,15 @@ function Graphics:clear(color: string): unit
     local red: f64 = 0.0
     local green: f64 = 0.0
     local blue: f64 = 0.0
-    if #color == 7 then
+    local alpha: f64 = 1.0
+    if #color == 7 or #color == 9 then
         red = channel(color, 2)
         green = channel(color, 4)
         blue = channel(color, 6)
+        if #color == 9 then alpha = channel(color, 8) end
     end
     local gl: WebGL2RenderingContext = self.gl
-    gl:clearColor(red::f32, green::f32, blue::f32, 1.0::f32)
+    gl:clearColor(red::f32, green::f32, blue::f32, alpha::f32)
     gl:clear(GL_COLOR_BUFFER_BIT)
 end
 

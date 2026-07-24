@@ -1146,7 +1146,7 @@ describe('browser conformance', () => {
     expect(pixelRevisionReads).toBe(5);
   });
 
-  it('uploads Resource images, batches atlas sprites, and composites an offscreen target', async () => {
+  it('uploads images, batches sprites, and composites a transparent offscreen target', async () => {
     const steps = [];
     const asyncErrors = [];
     const atlasPixels = new Uint8ClampedArray([
@@ -1199,7 +1199,8 @@ describe('browser conformance', () => {
       expect(decodeCount).toBe(1);
       expect(pixelAt(20, 20)).toEqual([255, 0, 0, 255]);
       expect(pixelAt(56, 20)).toEqual([0, 255, 0, 255]);
-      expect(pixelAt(90, 14)).toEqual([32, 64, 255, 255]);
+      expect(pixelAt(90, 14)).toEqual([0, 0, 0, 255]);
+      expect(pixelAt(100, 20)).toEqual([0, 0, 255, 255]);
     } finally {
       cleanup();
     }

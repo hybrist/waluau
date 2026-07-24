@@ -22,10 +22,12 @@ const SHADER_SOURCES = Object.freeze({
   'ante.effects.vertex': 'src/shaders/effects.vert',
   'ante.effects.gold-shimmer': 'src/shaders/gold-shimmer.frag',
   'ante.effects.defeat-shroud': 'src/shaders/defeat-shroud.frag',
+  'ante.effects.card-burn': 'src/shaders/card-burn.frag',
   'ante.effects.red-fire': 'src/shaders/red-fire.frag',
   'ante.effects.blue-caustics': 'src/shaders/blue-caustics.frag',
   'ante.effects.green-growth': 'src/shaders/green-growth.frag',
   'ante.effects.black-hole': 'src/shaders/black-hole.frag',
+  'ante.effects.ice-freeze': 'src/shaders/ice-freeze.frag',
 });
 
 const VERTEX_NAME = 'ante.effects.vertex';
@@ -212,7 +214,7 @@ async function copyAnteApp(destination) {
   ]);
 }
 
-test('production includes and compiles all seven external shader sources', async ({ page }) => {
+test('production includes and compiles all nine external shader sources', async ({ page }) => {
   const shaders = await readShaderSources();
   const configSource = await readFile(VITE_CONFIG, 'utf8');
   const renderSource = await readFile(join(ANTE_ROOT, 'src', 'render.walu'), 'utf8');
@@ -233,8 +235,8 @@ test('production includes and compiles all seven external shader sources', async
 
   const expectedCounts = Object.fromEntries([
     // The engine's default renderer uses the same vertex contract once, then
-    // Ante compiles it once for each of its six external effect programs.
-    [VERTEX_NAME, 7],
+    // Ante compiles it once for each of its eight external effect programs.
+    [VERTEX_NAME, 9],
     ...PIXEL_NAMES.map((name) => [name, 1]),
   ]);
   await expect.poll(
@@ -377,13 +379,13 @@ test('development HMR fans out, retains the last good shader, and recovers', asy
     await expect.poll(
       () => sourceCounts(page, { vertex: vertexUpdate }),
       { timeout: GAME_READY_TIMEOUT },
-    ).toEqual({ vertex: 6 });
+    ).toEqual({ vertex: 8 });
     await expect.poll(probeSnapshot.bind(null, page)).toMatchObject({
-      programCreates: afterFragments.programCreates + 6,
-      programDeletes: afterFragments.programDeletes + 6,
+      programCreates: afterFragments.programCreates + 8,
+      programDeletes: afterFragments.programDeletes + 8,
     });
     await page.waitForTimeout(250);
-    expect(await sourceCounts(page, { vertex: vertexUpdate })).toEqual({ vertex: 6 });
+    expect(await sourceCounts(page, { vertex: vertexUpdate })).toEqual({ vertex: 8 });
 
     const beforeInvalid = await probeSnapshot(page);
     const validDefeat = fragmentUpdates[DEFEAT_NAME];
