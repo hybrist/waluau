@@ -9,6 +9,7 @@ export default defineConfig({
       'ante.effects.vertex': 'src/shaders/effects.vert',
       'ante.effects.gold-shimmer': 'src/shaders/gold-shimmer.frag',
       'ante.effects.defeat-shroud': 'src/shaders/defeat-shroud.frag',
+      'ante.effects.card-burn': 'src/shaders/card-burn.frag',
       'ante.effects.red-fire': 'src/shaders/red-fire.frag',
       'ante.effects.blue-caustics': 'src/shaders/blue-caustics.frag',
       'ante.effects.green-growth': 'src/shaders/green-growth.frag',

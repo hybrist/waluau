@@ -37,7 +37,9 @@ const RESULT_SKIP: i32 = 4
 const CURSOR_HAND: i32 = 0
 const CURSOR_WARDS: i32 = 1
 const FAN_CLOSED: i32 = -1
-const BOARD_REVEAL_SECONDS: f64 = 2.3
+-- Leave enough room after the formation lands for the losing cards to ignite,
+-- char through, and finally crumble. A second press still skips to the end.
+const BOARD_REVEAL_SECONDS: f64 = 3.45
 const UI_SNAPSHOT_SCHEMA: string = "ante-flow-v1"
 const UI_SNAPSHOT_COLLECTION_LIMIT: i32 = 256
 

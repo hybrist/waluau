@@ -148,7 +148,9 @@ test('previews four persistent card powers and resets them with key 0', async ({
   await beginHeist(page, canvas);
   await page.keyboard.press('1');
   await page.keyboard.press('0');
-  await page.waitForTimeout(500);
+  // Applying a power skips the opening deal, after which the fan still eases
+  // into its resting pose. Capture the reset baseline only once that settles.
+  await page.waitForTimeout(1_000);
   const baseline = await frameSignature(canvas);
   const signatures = [];
   for (const key of ['1', '2', '3', '4']) {
@@ -160,8 +162,7 @@ test('previews four persistent card powers and resets them with key 0', async ({
   }
 
   await page.keyboard.press('0');
-  await page.waitForTimeout(500);
-  expect(await frameSignature(canvas)).toBe(baseline);
+  await expect.poll(() => frameSignature(canvas)).toBe(baseline);
   expect(pageErrors).toEqual([]);
 });
 

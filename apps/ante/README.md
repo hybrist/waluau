@@ -28,7 +28,8 @@ board, where color identifies the winning formation and any decisive kickers.
 After the reveal flips, the winner's two cards fly out of their row and flank
 the three wards, completing the five-card formation in the middle of the
 board; a single golden halo then ignites around the whole set while the losing
-pair fractures into suit-lit shards and disintegrates. That halo remains gold
+pair ignites at its centre, chars through along a ragged ember front, and
+crumbles into drifting ash. That halo remains gold
 when the player wins; when the Arch Mage holds the wards, contracting crimson
 seals, sinking ash, and encroaching shadow smother the formation instead. The
 game's own vertex/pixel shaders keep both result fields moving off the live
@@ -115,7 +116,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `choreography.walu` | Domain-level deal, feint, breach, fan, pile, and animation choreography. |
 | `render.walu` | Playfield/modal drawing and effect use. |
 | `effect_shaders.walu` | External shader polling, live replacement diagnostics, and GPU lifetime. |
-| `src/shaders/` | Shared vertex stage and the six effect fragment stages. |
+| `src/shaders/` | Shared vertex stage and the seven effect fragment stages. |
 | `presentation_resources.walu` | Asynchronous asset loading, GPU promotion, audio, effects, and disposal. |
 | `snapshot.walu` | Shared validated snapshot primitives and atomic payload framing. |
 | `test/game_fixture.walu` | Narrow mutable test adapter for deterministic rule arrangements. |
