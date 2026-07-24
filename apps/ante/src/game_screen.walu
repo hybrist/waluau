@@ -60,8 +60,7 @@ function update(state: State, dt: f64): i32
     choreography.update_fan(presentation, flow.fan_focus(ui, animating), dt)
     choreography.update_power(presentation, dt)
     if ui.revealing then
-        local clocks: {f64} = flow.update_reveal(ui, dt)
-        return choreography.reveal_flip_cues(clocks[0], clocks[1])
+        return choreography.update_reveal(presentation, dt)
     end
     if ui.modal == flow.modal_none then
         return choreography.update(presentation, dt)
@@ -91,7 +90,6 @@ function draw(
             swap_wards = ui.swap_wards,
             modal = ui.modal,
             revealing = ui.revealing,
-            reveal_clock = ui.reveal_clock,
             casting = ui.casting,
         },
         card_back
@@ -132,12 +130,14 @@ function submit_breach(state: State): unit
     if trick == nil then return end
     choreography.record_burned_losers(state.presentation, trick::game.Trick)
     flow.begin_reveal(ui)
+    choreography.begin_reveal(state.presentation)
 end
 
 function consume_gate(state: State, command: i32): bool
     local result: i32 = flow.gate(
         state.ui, state.rules:is_finished(),
-        choreography.is_animating(state.presentation), command)
+        choreography.is_animating(state.presentation),
+        choreography.reveal_finished(state.presentation), command)
     if result == flow.result_live then return false end
     if result == flow.result_reset then
         reset(state, state.rules:is_boss(), state.rules:spell_kind())
@@ -149,6 +149,8 @@ function consume_gate(state: State, command: i32): bool
         end
     elseif result == flow.result_skip then
         choreography.skip(state.presentation)
+    elseif result == flow.result_finish_reveal then
+        choreography.finish_reveal(state.presentation)
     end
     return true
 end
@@ -247,7 +249,8 @@ function mousemoved(state: State, x: f64, y: f64): unit
     local ui: flow.State = state.ui
     if flow.gate(
         ui, state.rules:is_finished(),
-        choreography.is_animating(state.presentation), flow.command_none
+        choreography.is_animating(state.presentation),
+        choreography.reveal_finished(state.presentation), flow.command_none
     ) ~= flow.result_live then return end
     local at: render.Point = render.point(x, y)
     -- While aiming a cast, the pointer only steers the ward the spell would
@@ -290,7 +293,9 @@ function mousepressed(state: State, x: f64, y: f64, button: i32): unit
         return
     end
     if render.hit_help(at) then
-        flow.gate(ui, rules:is_finished(), false, flow.command_help)
+        flow.gate(
+            ui, rules:is_finished(), false,
+            choreography.reveal_finished(state.presentation), flow.command_help)
         return
     end
     local hand: i32 = choreography.hit_hand(state.presentation, at)

@@ -1,21 +1,12 @@
 import { defineConfig } from 'vite';
 import { playwright } from '@vitest/browser-playwright';
 import { waluau } from '@waluau/vite-plugin';
+import { shaderSources } from './shader-sources.js';
 
 export default defineConfig({
   plugins: [waluau({
     manifest: 'waluau.assets.json',
-    shaderSources: {
-      'ante.effects.vertex': 'src/shaders/effects.vert',
-      'ante.effects.gold-shimmer': 'src/shaders/gold-shimmer.frag',
-      'ante.effects.defeat-shroud': 'src/shaders/defeat-shroud.frag',
-      'ante.effects.card-burn': 'src/shaders/card-burn.frag',
-      'ante.effects.red-fire': 'src/shaders/red-fire.frag',
-      'ante.effects.blue-caustics': 'src/shaders/blue-caustics.frag',
-      'ante.effects.green-growth': 'src/shaders/green-growth.frag',
-      'ante.effects.black-hole': 'src/shaders/black-hole.frag',
-      'ante.effects.ice-freeze': 'src/shaders/ice-freeze.frag',
-    },
+    shaderSources,
   })],
   test: {
     include: ['src/**/*.test.walu'],

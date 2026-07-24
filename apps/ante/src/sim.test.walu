@@ -377,27 +377,27 @@ describe("Arcane Heist heist flow", function()
         keyboard.modal = flow.modal_help
         mouse.modal = flow.modal_help
 
-        expect(flow.gate(keyboard, false, false, flow.command_advance)):toBe(flow.result_consumed)
-        expect(flow.gate(mouse, false, false, flow.command_primary)):toBe(flow.result_consumed)
+        expect(flow.gate(keyboard, false, false, false, flow.command_advance)):toBe(flow.result_consumed)
+        expect(flow.gate(mouse, false, false, false, flow.command_primary)):toBe(flow.result_consumed)
         expect(keyboard.modal):toBe(flow.modal_none)
         expect(mouse.modal):toBe(flow.modal_none)
 
-        expect(flow.gate(keyboard, false, true, flow.command_advance)):toBe(flow.result_skip)
-        expect(flow.gate(mouse, false, true, flow.command_primary)):toBe(flow.result_skip)
+        expect(flow.gate(keyboard, false, true, false, flow.command_advance)):toBe(flow.result_skip)
+        expect(flow.gate(mouse, false, true, false, flow.command_primary)):toBe(flow.result_skip)
     end)
 
     it("finishes a reveal before advancing to breach cleanup", function()
         local ui: flow.State = flow.new()
         flow.begin_reveal(ui)
 
-        expect(flow.gate(ui, false, false, flow.command_advance)):toBe(flow.result_consumed)
+        expect(flow.gate(ui, false, false, false, flow.command_advance)):toBe(flow.result_finish_reveal)
         expect(ui.revealing):toBe(true)
-        expect(flow.gate(ui, false, false, flow.command_advance)):toBe(flow.result_refill)
+        expect(flow.gate(ui, false, false, true, flow.command_advance)):toBe(flow.result_refill)
         expect(ui.revealing):toBe(false)
 
         flow.begin_reveal(ui)
-        expect(flow.gate(ui, true, false, flow.command_primary)):toBe(flow.result_consumed)
-        expect(flow.gate(ui, true, false, flow.command_primary)):toBe(flow.result_consumed)
+        expect(flow.gate(ui, true, false, false, flow.command_primary)):toBe(flow.result_finish_reveal)
+        expect(flow.gate(ui, true, false, true, flow.command_primary)):toBe(flow.result_consumed)
         expect(ui.modal):toBe(flow.modal_final)
     end)
 end)

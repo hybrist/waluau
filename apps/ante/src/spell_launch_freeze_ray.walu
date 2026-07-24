@@ -1,0 +1,32 @@
+-- Freeze Ray's carrier and impact. Its visual decisions are intentionally
+-- independent from Firebolt and the other spell implementations.
+local engine = require("waluau:engine")
+local effect_shaders = require("./effect_shaders")
+local spell_cast = require("./spell_cast")
+
+type Graphics = engine.Graphics
+type EffectShaders = effect_shaders.EffectShaders
+
+function draw(graphics: Graphics, effects: EffectShaders, cast: spell_cast.Cast): unit
+    if cast.progress < 1.0 then
+        local head: spell_cast.Point = spell_cast.at(cast, cast.progress)
+        graphics:set_color("#0c4a6e88")
+        graphics:set_line_width(8.0)
+        graphics:line(cast.origin.x, cast.origin.y, head.x, head.y)
+        graphics:set_color("#e0f2fe")
+        graphics:set_line_width(2.5)
+        graphics:line(cast.origin.x, cast.origin.y, head.x, head.y)
+        for shard = 0::i32, 5::i32 do
+            local t: f64 = cast.progress - (shard::f64) * 0.075
+            if t > 0.0 then
+                local at: spell_cast.Point = spell_cast.at(cast, t)
+                graphics:line(at.x - 6.0, at.y + 3.0, at.x + 5.0, at.y - 5.0)
+            end
+        end
+        graphics:set_color("#ffffff")
+        graphics:fill_circle(head.x, head.y, 6.0)
+    end
+    spell_cast.draw_radial_impact(graphics, cast, "#38bdf8")
+end
+
+return { draw = draw }

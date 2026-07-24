@@ -89,7 +89,7 @@ Keyboard (in the vault):
 - Enter commits a feint or breach.
 - P passes during the feint phase.
 - C sorts the relic fan by school (color); V sorts it by rank.
-- 1–4 preview Fireball, Freeze Ray, Raise Dead, and Growth on the first ward; 0 clears the preview.
+- 1 enters targeting for the spell chosen before the heist; arrows choose a ward, Enter casts, and Esc cancels.
 - H opens the breach ledger, ? opens help, and R restarts.
 - Enter, Space, or Esc skips a running deal or feint animation.
 
@@ -112,21 +112,29 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `menu.walu` | The pre-game menu screen: presentation plus begin-gesture interpretation. |
 | `game_screen.walu` | The heist screen: rules/flow/choreography wiring and its input adapters. |
 | `game.walu` | Host-independent rules, AI, commands, outcomes, and read-only presentation view. |
-| `flow.walu` | Host-independent input gating, focus, modal, selection, and reveal flow. |
-| `choreography.walu` | Domain-level deal, feint, breach, fan, pile, and animation choreography. |
-| `render.walu` | Playfield/modal drawing and effect use. |
-| `effect_shaders.walu` | External shader polling, live replacement diagnostics, and GPU lifetime. |
-| `src/shaders/` | Shared vertex stage and the seven effect fragment stages. |
+| `flow.walu` | Host-independent input gating, focus, modal, selection, and reveal phase transitions. |
+| `choreography.walu` | Domain-level deal, feint, breach, fan, pile, reveal timing, and animation choreography. |
+| `render.walu` | Playfield/modal drawing behind a single nested frame interface. |
+| `spell_cast.walu` | Target-aware spell trajectory and shared impact geometry. |
+| `spell_launch*.walu` | Stable launch seam plus one independently editable carrier/impact module per spell. |
+| `burn_particles.walu` | Shared card-burn shader binding and deterministic ash/ember primitives. |
+| `effect_shaders.walu` | Data-driven effect registry and shared-vertex coordination. |
+| `shader_program.walu` | Deep lifecycle module for one independently managed fragment program. |
+| `shader-sources.js` | Convention-based fragment discovery shared by Vite and shader behavior tests. |
+| `src/shaders/` | Shared vertex stage and independently reloadable effect fragment stages. |
 | `presentation_resources.walu` | Asynchronous asset loading, GPU promotion, audio, effects, and disposal. |
 | `snapshot.walu` | Shared validated snapshot primitives and atomic payload framing. |
 | `test/game_fixture.walu` | Narrow mutable test adapter for deterministic rule arrangements. |
 | `sim.test.walu` | Deterministic Vitest assertions for rules, flow, snapshots, and full-game completion. |
+| `tests/game-driver.js` | Shared browser-test seam for booting a heist and observing rendered frames. |
+| `tests/spell-effects.spec.js` | Spell-presentation behavior isolated from menu and gameplay browser coverage. |
 | `waluau.assets.json` | Typed package manifest for the card back, vault font, and flip sound. |
 
-Vite maps every file under `src/shaders/` through the plugin's
-`shaderSources` option. Production bundles the same source contract; in
+Vite discovers every `src/shaders/*.frag` file through `shader-sources.js` and
+maps it through the plugin's `shaderSources` option. Production bundles the same source contract; in
 development, a fragment edit replaces only its live effect program and an edit
-to the shared vertex stage refreshes all six without rebuilding the Wasm game.
+to the shared vertex stage refreshes every registered effect without rebuilding
+the Wasm game. Tests discover the catalog rather than maintaining shader totals.
 Invalid live edits keep the previous program allocated while reporting the
 current shader diagnostic (fatal overlay for the defeat shroud, console warning
 for optional effects), and a later valid edit clears that diagnostic.

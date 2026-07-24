@@ -16,7 +16,6 @@ type State = {
     swap_wards: {i32},
     modal: i32,
     revealing: bool,
-    reveal_clock: f64,
     casting: bool
 }
 
@@ -37,14 +36,12 @@ const RESULT_CONSUMED: i32 = 1
 const RESULT_RESET: i32 = 2
 const RESULT_REFILL: i32 = 3
 const RESULT_SKIP: i32 = 4
+const RESULT_FINISH_REVEAL: i32 = 5
 
 const CURSOR_HAND: i32 = 0
 const CURSOR_WARDS: i32 = 1
 const FAN_CLOSED: i32 = -1
--- Leave enough room after the formation lands for the losing cards to ignite,
--- char through, and finally crumble. A second press still skips to the end.
-const BOARD_REVEAL_SECONDS: f64 = 3.45
-const UI_SNAPSHOT_SCHEMA: string = "ante-flow-v2"
+const UI_SNAPSHOT_SCHEMA: string = "ante-flow-v3"
 const UI_SNAPSHOT_COLLECTION_LIMIT: i32 = 256
 
 function new(): State
@@ -57,7 +54,6 @@ function new(): State
         swap_wards = {},
         modal = MODAL_NONE,
         revealing = false,
-        reveal_clock = 0.0,
         casting = false,
     }
 end
@@ -91,7 +87,6 @@ function reset(state: State): unit
     state.swap_wards = fresh.swap_wards
     state.modal = fresh.modal
     state.revealing = fresh.revealing
-    state.reveal_clock = fresh.reveal_clock
     state.casting = fresh.casting
 end
 
@@ -99,7 +94,6 @@ function begin_reveal(state: State): unit
     clear_picks(state)
     state.modal = MODAL_NONE
     state.revealing = true
-    state.reveal_clock = 0.0
     state.casting = false
 end
 
@@ -121,28 +115,22 @@ function fan_focus(state: State, animating: bool): i32
     return state.hand_cursor
 end
 
-function update_reveal(state: State, dt: f64): {f64}
-    local previous: f64 = state.reveal_clock
-    state.reveal_clock += dt
-    if state.reveal_clock >= BOARD_REVEAL_SECONDS then
-        state.reveal_clock = BOARD_REVEAL_SECONDS
-    end
-    return { previous, state.reveal_clock }
-end
-
 -- Enforce the same phase ordering for every input adapter. RESULT_LIVE is the
 -- only result that permits an adapter to interpret board-specific input.
-function gate(state: State, finished: bool, animating: bool, command: i32): i32
+function gate(
+    state: State,
+    finished: bool,
+    animating: bool,
+    reveal_finished: bool,
+    command: i32
+): i32
     if state.revealing then
         if command == COMMAND_RESTART then return RESULT_RESET end
         if command == COMMAND_ADVANCE or command == COMMAND_PRIMARY then
-            if state.reveal_clock < BOARD_REVEAL_SECONDS then
-                state.reveal_clock = BOARD_REVEAL_SECONDS
-            else
-                state.revealing = false
-                if finished then state.modal = MODAL_FINAL
-                else return RESULT_REFILL end
-            end
+            if not reveal_finished then return RESULT_FINISH_REVEAL end
+            state.revealing = false
+            if finished then state.modal = MODAL_FINAL
+            else return RESULT_REFILL end
         end
         return RESULT_CONSUMED
     end
@@ -186,7 +174,6 @@ function snapshot(state: State): string
     snapshot_data.append_indices(parts, state.swap_wards)
     snapshot_data.append_i32(parts, state.modal)
     snapshot_data.append_bool(parts, state.revealing)
-    snapshot_data.append_f64(parts, state.reveal_clock)
     snapshot_data.append_bool(parts, state.casting)
     return table.concat(parts, ",")
 end
@@ -203,7 +190,6 @@ function restore(snapshot_value: string): State?
     local swap_wards: {i32} = reader:next_indices()
     local modal: i32 = reader:next_i32()
     local revealing: bool = reader:next_bool()
-    local reveal_clock: f64 = reader:next_f64()
     local casting: bool = reader:next_bool()
     local restored: State = {
         hand_cursor = hand_cursor,
@@ -214,7 +200,6 @@ function restore(snapshot_value: string): State?
         swap_wards = swap_wards,
         modal = modal,
         revealing = revealing,
-        reveal_clock = reveal_clock,
         casting = casting,
     }
     if not reader:complete() then return nil end
@@ -229,7 +214,6 @@ return {
     begin_reveal = begin_reveal,
     apply_hand_order = apply_hand_order,
     fan_focus = fan_focus,
-    update_reveal = update_reveal,
     gate = gate,
     snapshot = snapshot,
     restore = restore,
@@ -244,6 +228,7 @@ return {
     result_reset = RESULT_RESET,
     result_refill = RESULT_REFILL,
     result_skip = RESULT_SKIP,
+    result_finish_reveal = RESULT_FINISH_REVEAL,
     cursor_hand = CURSOR_HAND,
     cursor_wards = CURSOR_WARDS,
     modal_none = MODAL_NONE,

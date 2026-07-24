@@ -1,0 +1,68 @@
+-- Stable spell-launch seam. Targeting supplies the destination; each spell
+-- implementation owns its carrier and impact without sharing an edit site.
+local engine = require("waluau:engine")
+local effect_shaders = require("./effect_shaders")
+local spell_cast = require("./spell_cast")
+local firebolt = require("./spell_launch_firebolt")
+local freeze_ray = require("./spell_launch_freeze_ray")
+local raise_card = require("./spell_launch_raise_card")
+local clone = require("./spell_launch_clone")
+
+type Graphics = engine.Graphics
+type EffectShaders = effect_shaders.EffectShaders
+
+const FIREBOLT: i32 = 1
+const FREEZE_RAY: i32 = 2
+const RAISE_CARD: i32 = 3
+const CLONE: i32 = 4
+
+function name(kind: i32): string
+    if kind == FIREBOLT then
+        return "FIREBOLT"
+    end
+    if kind == FREEZE_RAY then
+        return "FREEZE RAY"
+    end
+    if kind == RAISE_CARD then
+        return "RAISE CARD"
+    end
+    if kind == CLONE then
+        return "CLONE"
+    end
+    return "NO SPELL"
+end
+
+function color(kind: i32): string
+    if kind == FIREBOLT then
+        return "#ef4444"
+    end
+    if kind == FREEZE_RAY then
+        return "#38bdf8"
+    end
+    if kind == RAISE_CARD then
+        return "#a3e635"
+    end
+    return "#4ade80"
+end
+
+function draw(
+    graphics: Graphics,
+    effects: EffectShaders,
+    kind: i32,
+    clock: f64,
+    target_x: f64,
+    target_y: f64
+): unit
+    local cast: spell_cast.Cast = spell_cast.new(clock, target_x, target_y)
+    if kind == FIREBOLT then
+        firebolt.draw(graphics, effects, cast)
+    elseif kind == FREEZE_RAY then
+        freeze_ray.draw(graphics, effects, cast)
+    elseif kind == RAISE_CARD then
+        raise_card.draw(graphics, effects, cast)
+    elseif kind == CLONE then
+        clone.draw(graphics, effects, cast)
+    end
+end
+
+return { draw = draw, name = name, color = color }
