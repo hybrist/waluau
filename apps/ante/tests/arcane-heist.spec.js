@@ -63,9 +63,11 @@ async function openGame(page) {
   return page.locator('canvas#walua-game-canvas');
 }
 
-// NEW GAME is the menu's default selection, so Enter activates it. The Enter
-// press is also the user gesture that unlocks browser audio.
+// NEW GAME is the menu's default selection, so Enter activates it and opens
+// the starting-spell list, where a second Enter takes the default FIREBOLT.
+// The first Enter press is also the user gesture that unlocks browser audio.
 async function beginHeist(page, canvas) {
+  await page.keyboard.press('Enter');
   await page.keyboard.press('Enter');
   await expect
     .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
@@ -94,8 +96,11 @@ test('boots to a menu with new game, boss battle, and how to play options', asyn
     .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
     .toBeGreaterThan(300);
 
-  // Clicking the NEW GAME option starts the heist; M returns to the menu.
+  // Clicking the NEW GAME option opens the starting-spell list; the same
+  // top-row spot now names FIREBOLT, and clicking it starts the heist. M
+  // returns to the menu.
   const box = await canvas.boundingBox();
+  await page.mouse.click(box.x + box.width * (480 / 960), box.y + box.height * (356 / 600));
   await page.mouse.click(box.x + box.width * (480 / 960), box.y + box.height * (356 / 600));
   await expect
     .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
@@ -112,9 +117,11 @@ test('starts a boss battle from its menu option', async ({ page }) => {
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const canvas = await openGame(page);
 
-  // BOSS BATTLE sits directly under NEW GAME; Enter on it deals the
-  // eleven-card variant, whose board still shows the sealed draw pile.
+  // BOSS BATTLE sits directly under NEW GAME; Enter on it opens the spell
+  // list, and a second Enter deals the eleven-card variant, whose board
+  // still shows the sealed draw pile.
   await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
   await page.keyboard.press('Enter');
   await expect
     .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
@@ -135,34 +142,37 @@ test('renders Arcane Heist and loads its packaged card-back asset', async ({ pag
 test('responds to keyboard input without an iframe focus step', async ({ page }) => {
   const canvas = await openGame(page);
   await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
   await expect
     .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
     .toBeGreaterThan(40);
 });
 
-test('previews four persistent card powers and resets them with key 0', async ({ page }) => {
+test('casts the chosen spell at a targeted ward for mana', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const canvas = await openGame(page);
 
+  // The default spell pick is FIREBOLT; the board settles to a still frame
+  // once the opening deal finishes.
   await beginHeist(page, canvas);
-  await page.keyboard.press('1');
-  await page.keyboard.press('0');
-  // Applying a power skips the opening deal, after which the fan still eases
-  // into its resting pose. Capture the reset baseline only once that settles.
-  await page.waitForTimeout(1_000);
+  await page.waitForTimeout(2_500);
   const baseline = await frameSignature(canvas);
-  const signatures = [];
-  for (const key of ['1', '2', '3', '4']) {
-    await page.keyboard.press(key);
-    await page.waitForTimeout(1_500);
-    const signature = await frameSignature(canvas);
-    expect(signatures).not.toContain(signature);
-    signatures.push(signature);
-  }
 
-  await page.keyboard.press('0');
+  // Key 1 opens targeting (the aim ring and prompt change the frame);
+  // Escape cancels without charging mana, restoring the settled board.
+  await page.keyboard.press('1');
+  await expect.poll(() => frameSignature(canvas)).not.toBe(baseline);
+  await page.keyboard.press('Escape');
   await expect.poll(() => frameSignature(canvas)).toBe(baseline);
+
+  // Aiming at the middle ward and confirming launches the persistent burn
+  // effect there and deducts 5 mana, so the board never returns to baseline.
+  await page.keyboard.press('1');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(1_500);
+  expect(await frameSignature(canvas)).not.toBe(baseline);
   expect(pageErrors).toEqual([]);
 });
 

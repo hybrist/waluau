@@ -16,6 +16,7 @@ type State = {
     anim_kind: i32,
     power_kind: i32,
     power_clock: f64,
+    power_target: i32,
     discards: {game.Card},
     computer_won: {game.Card},
     player_won: {game.Card}
@@ -29,7 +30,8 @@ type Interaction = {
     swap_wards: {i32},
     modal: i32,
     revealing: bool,
-    reveal_clock: f64
+    reveal_clock: f64,
+    casting: bool
 }
 
 const ANIM_NONE: i32 = 0
@@ -59,7 +61,7 @@ const REVEAL_FLIP_SECONDS: f64 = 0.55
 const REVEAL_FIRST_DELAY: f64 = 0.2
 const REVEAL_SECOND_DELAY: f64 = 0.585
 const FLIP_SOUND_LEAD_SECONDS: f64 = 0.14
-const SNAPSHOT_SCHEMA: string = "ante-presentation-v2"
+const SNAPSHOT_SCHEMA: string = "ante-presentation-v3"
 const SNAPSHOT_COLLECTION_LIMIT: i32 = 256
 
 function new(): State
@@ -71,6 +73,7 @@ function new(): State
         anim_kind = ANIM_NONE,
         power_kind = 0,
         power_clock = 0.0,
+        power_target = 0,
         discards = {},
         computer_won = {},
         player_won = {},
@@ -104,17 +107,21 @@ function reset(state: State): unit
     state.anim_kind = fresh.anim_kind
     state.power_kind = fresh.power_kind
     state.power_clock = fresh.power_clock
+    state.power_target = fresh.power_target
     state.discards = fresh.discards
     state.computer_won = fresh.computer_won
     state.player_won = fresh.player_won
 end
 
--- Power previews are presentation-only: 1-4 replace the prior condition on
--- the first ward and restart its launch; zero clears the condition entirely.
-function apply_power(state: State, kind: i32): unit
+-- Spell effects are presentation-only: kinds 1-4 replace the prior condition
+-- on the targeted ward and restart the launch toward it; kind zero clears the
+-- condition entirely.
+function apply_power(state: State, kind: i32, target: i32): unit
     if kind < 0 or kind > 4 then return end
+    if target < 0 or target > 2 then return end
     state.power_kind = kind
     state.power_clock = 0.0
+    state.power_target = target
 end
 
 function update_power(state: State, dt: f64): unit
@@ -542,6 +549,7 @@ function append_snapshot(parts: {string}, state: State): unit
     snapshot_data.append_f64s(parts, state.fan_parts)
     snapshot_data.append_i32(parts, state.power_kind)
     snapshot_data.append_f64(parts, state.power_clock)
+    snapshot_data.append_i32(parts, state.power_target)
     append_cards(parts, state.discards)
     append_cards(parts, state.computer_won)
     append_cards(parts, state.player_won)
@@ -561,6 +569,7 @@ function restore_snapshot(reader: snapshot_data.Reader): State
     state.fan_parts = reader:next_f64s()
     state.power_kind = reader:next_i32()
     state.power_clock = reader:next_f64()
+    state.power_target = reader:next_i32()
     state.discards = next_cards(reader)
     state.computer_won = next_cards(reader)
     state.player_won = next_cards(reader)
@@ -611,7 +620,9 @@ function draw(
         state.computer_won,
         state.player_won,
         state.power_kind,
-        state.power_clock
+        state.power_clock,
+        state.power_target,
+        interaction.casting
     )
 end
 

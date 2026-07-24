@@ -3,11 +3,22 @@
 -- input into screen actions; the entry module decides what starting the heist
 -- means (audio unlock, fresh deal, screen switch), so this module stays free
 -- of resource and rules concerns.
+--
+-- Picking NEW GAME or BOSS BATTLE leads to a second list: the starting spell
+-- the robbers bring on the job. Only confirming a spell emits a start action,
+-- so the entry module always receives a complete mode-plus-spell choice.
 
 local engine = require("waluau:engine")
 local render = require("./render")
 
-type State = { clock: f64, cursor: i32, help_open: bool }
+type State = {
+    clock: f64,
+    cursor: i32,
+    help_open: bool,
+    stage: i32,
+    boss_choice: bool,
+    spell_cursor: i32
+}
 
 const ACTION_NONE: i32 = 0
 const ACTION_START: i32 = 1
@@ -15,10 +26,14 @@ const ACTION_START_BOSS: i32 = 2
 
 const WIDTH: f64 = 960.0
 
+const STAGE_MAIN: i32 = 0
+const STAGE_SPELL: i32 = 1
+
 const ITEM_NEW_GAME: i32 = 0
 const ITEM_BOSS_BATTLE: i32 = 1
 const ITEM_HOW_TO_PLAY: i32 = 2
 const ITEM_COUNT: i32 = 3
+const SPELL_COUNT: i32 = 4
 const ITEM_X: f64 = 290.0
 const ITEM_W: f64 = 380.0
 const ITEM_H: f64 = 52.0
@@ -26,46 +41,78 @@ const ITEM_TOP: f64 = 306.0
 const ITEM_PITCH: f64 = 60.0
 
 function new(): State
-    return { clock = 0.0, cursor = ITEM_NEW_GAME, help_open = false }
+    return {
+        clock = 0.0,
+        cursor = ITEM_NEW_GAME,
+        help_open = false,
+        stage = STAGE_MAIN,
+        boss_choice = false,
+        spell_cursor = 0,
+    }
 end
 
 function reset(state: State): unit
     state.clock = 0.0
     state.cursor = ITEM_NEW_GAME
     state.help_open = false
+    state.stage = STAGE_MAIN
+    state.boss_choice = false
+    state.spell_cursor = 0
 end
 
 function update(state: State, dt: f64): unit
     state.clock += dt
 end
 
+-- The starting spell the current selection names, as the rules' spell kind.
+function selected_spell(state: State): i32
+    return state.spell_cursor + 1
+end
+
 function item_top(index: i32): f64
     return ITEM_TOP + (index::f64) * ITEM_PITCH
 end
 
-function item_at(x: f64, y: f64): i32
+-- Both stages share the option-list geometry; only the row count differs.
+function item_at(x: f64, y: f64, count: i32): i32
     if x < ITEM_X or x > ITEM_X + ITEM_W then return -1 end
-    for index = 0::i32, ITEM_COUNT - 1 do
+    for index = 0::i32, count - 1 do
         local top: f64 = item_top(index)
         if y >= top and y <= top + ITEM_H then return index end
     end
     return -1
 end
 
--- Starting a heist — standard or boss battle — is the entry module's
--- decision; HOW TO PLAY is presentation the menu can satisfy itself with the
--- shared help modal.
+function stage_item_count(state: State): i32
+    if state.stage == STAGE_SPELL then return SPELL_COUNT end
+    return ITEM_COUNT
+end
+
+-- Starting a heist — standard or boss battle — first routes through the
+-- spell list; HOW TO PLAY is presentation the menu can satisfy itself with
+-- the shared help modal.
 function activate(state: State, item: i32): i32
-    if item == ITEM_NEW_GAME then return ACTION_START end
-    if item == ITEM_BOSS_BATTLE then return ACTION_START_BOSS end
+    if item == ITEM_NEW_GAME or item == ITEM_BOSS_BATTLE then
+        state.stage = STAGE_SPELL
+        state.boss_choice = item == ITEM_BOSS_BATTLE
+        -- The shared cursor now points into the spell list; keep it on the
+        -- remembered spell so the halo and the eventual pick agree.
+        state.cursor = state.spell_cursor
+        return ACTION_NONE
+    end
     state.help_open = true
     return ACTION_NONE
 end
 
-function draw_item(state: State, graphics: engine.Graphics, index: i32, label: string): unit
+function start_action(state: State): i32
+    if state.boss_choice then return ACTION_START_BOSS end
+    return ACTION_START
+end
+
+function draw_item(state: State, graphics: engine.Graphics, index: i32, label: string, idle_ink: string): unit
     local top: f64 = item_top(index)
     local edge: string = "#52525b"
-    local ink: string = "#8a8a92"
+    local ink: string = idle_ink
     if index == state.cursor then
         edge = "#fbbf24"
         ink = "#fbbf24"
@@ -81,6 +128,26 @@ function draw_item(state: State, graphics: engine.Graphics, index: i32, label: s
     render.text_centered(graphics, label, WIDTH * 0.5, top + 33.0, 15, ink)
 end
 
+function draw_spell_stage(state: State, graphics: engine.Graphics): unit
+    local mode: string = "NEW GAME"
+    if state.boss_choice then mode = "BOSS BATTLE" end
+    render.text_centered(graphics, "CHOOSE A STARTING SPELL", WIDTH * 0.5, 212.0, 30, "#fbbf24")
+    render.text_centered(
+        graphics, mode .. " — EVERY CAST COSTS 5 MANA",
+        WIDTH * 0.5, 252.0, 12, "#d4d4d8")
+    for spell = 0::i32, SPELL_COUNT - 1 do
+        local kind: i32 = spell + 1
+        -- Each idle row wears its spell's colour, so the list doubles as the
+        -- legend for the effect the pick will launch in the vault.
+        draw_item(
+            state, graphics, spell,
+            render.spell_name(kind), render.power_color(kind))
+    end
+    render.text_centered(
+        graphics, "ARROWS MOVE   ENTER OR CLICK SELECTS   ESC GOES BACK",
+        WIDTH * 0.5, 566.0, 11, "#a1a1aa")
+end
+
 -- `ready` reports whether the required flip sound has finished loading. The
 -- menu accepts NEW GAME either way — the heist screen already waits for its
 -- resources — but says so instead of promising a start that visibly stalls.
@@ -90,23 +157,27 @@ function draw(state: State, graphics: engine.Graphics, effects: render.EffectSha
         render.draw_help(graphics, effects)
         return
     end
+    if state.stage == STAGE_SPELL then
+        draw_spell_stage(state, graphics)
+        return
+    end
     render.text_centered(graphics, "ARCANE HEIST", WIDTH * 0.5, 212.0, 52, "#fbbf24")
     render.text_centered(
         graphics, "FIVE BREACHES STAND BETWEEN THE ROBBERS AND THE VAULT",
         WIDTH * 0.5, 252.0, 12, "#d4d4d8")
-    -- The four schools of magic as small sparks under the title, in the same
-    -- colours the footer legend uses in the vault.
+    -- The four schools of magic as small mana motes under the title, in the
+    -- same colours the footer legend uses in the vault.
     local school_inks: {string} = { "#ef4444", "#38bdf8", "#a855f7", "#4ade80" }
     for i = 0::i32, 3::i32 do
         graphics:set_color(school_inks[i])
         graphics:fill_circle(WIDTH * 0.5 - 54.0 + (i::f64) * 36.0, 282.0, 6.0)
     end
 
-    draw_item(state, graphics, ITEM_NEW_GAME, "NEW GAME")
+    draw_item(state, graphics, ITEM_NEW_GAME, "NEW GAME", "#8a8a92")
     -- The boss battle deals eleven relics and never replaces a spent one;
     -- the label carries the stakes without needing its own help screen.
-    draw_item(state, graphics, ITEM_BOSS_BATTLE, "BOSS BATTLE")
-    draw_item(state, graphics, ITEM_HOW_TO_PLAY, "HOW TO PLAY")
+    draw_item(state, graphics, ITEM_BOSS_BATTLE, "BOSS BATTLE", "#8a8a92")
+    draw_item(state, graphics, ITEM_HOW_TO_PLAY, "HOW TO PLAY", "#8a8a92")
     if state.cursor == ITEM_BOSS_BATTLE then
         render.text_centered(
             graphics, "ELEVEN RELICS. NO REPLACEMENTS. THE FAN ONLY SHRINKS",
@@ -131,6 +202,29 @@ function keypressed(state: State, key: string): i32
         end
         return ACTION_NONE
     end
+    if state.stage == STAGE_SPELL then
+        if key == "Escape" then
+            state.stage = STAGE_MAIN
+            state.cursor = ITEM_NEW_GAME
+            if state.boss_choice then state.cursor = ITEM_BOSS_BATTLE end
+            return ACTION_NONE
+        end
+        if key == "ArrowUp" or key == "w" or key == "W" then
+            state.spell_cursor -= 1
+            if state.spell_cursor < 0 then state.spell_cursor = SPELL_COUNT - 1 end
+            state.cursor = state.spell_cursor
+            return ACTION_NONE
+        end
+        if key == "ArrowDown" or key == "s" or key == "S" then
+            state.spell_cursor = (state.spell_cursor + 1) % SPELL_COUNT
+            state.cursor = state.spell_cursor
+            return ACTION_NONE
+        end
+        if key == "Enter" or key == " " then
+            return start_action(state)
+        end
+        return ACTION_NONE
+    end
     if key == "ArrowUp" or key == "w" or key == "W" then
         state.cursor -= 1
         if state.cursor < 0 then state.cursor = ITEM_COUNT - 1 end
@@ -152,8 +246,10 @@ end
 
 function mousemoved(state: State, x: f64, y: f64): unit
     if state.help_open then return end
-    local item: i32 = item_at(x, y)
-    if item >= 0 then state.cursor = item end
+    local item: i32 = item_at(x, y, stage_item_count(state))
+    if item < 0 then return end
+    state.cursor = item
+    if state.stage == STAGE_SPELL then state.spell_cursor = item end
 end
 
 function mousepressed(state: State, x: f64, y: f64, button: i32): i32
@@ -162,9 +258,13 @@ function mousepressed(state: State, x: f64, y: f64, button: i32): i32
         state.help_open = false
         return ACTION_NONE
     end
-    local item: i32 = item_at(x, y)
+    local item: i32 = item_at(x, y, stage_item_count(state))
     if item < 0 then return ACTION_NONE end
     state.cursor = item
+    if state.stage == STAGE_SPELL then
+        state.spell_cursor = item
+        return start_action(state)
+    end
     return activate(state, item)
 end
 
@@ -176,6 +276,7 @@ return {
     keypressed = keypressed,
     mousemoved = mousemoved,
     mousepressed = mousepressed,
+    selected_spell = selected_spell,
     action_none = ACTION_NONE,
     action_start = ACTION_START,
     action_start_boss = ACTION_START_BOSS,

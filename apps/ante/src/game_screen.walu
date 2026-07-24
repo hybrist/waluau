@@ -22,16 +22,17 @@ const ACTION_EXIT: i32 = 1
 
 function new(): State
     return {
-        rules = game.new(false),
+        rules = game.new(false, game.spell_firebolt),
         ui = flow.new(),
         presentation = choreography.new(),
     }
 end
 
--- `boss` picks the variant the fresh heist is dealt as; the entry module
--- passes the menu's choice, and in-game restarts replay the current variant.
-function reset(state: State, boss: bool): unit
-    state.rules:reset(boss)
+-- `boss` picks the variant the fresh heist is dealt as and `spell` the
+-- starting spell it is fought with; the entry module passes the menu's
+-- choices, and in-game restarts replay the current pair.
+function reset(state: State, boss: bool, spell: i32): unit
+    state.rules:reset(boss, spell)
     flow.reset(state.ui)
     choreography.reset(state.presentation)
     -- The opening deal is already reflected in rules state; choreography
@@ -49,14 +50,6 @@ function key_command(key: string): i32
     return flow.command_none
 end
 
-function power_for_key(key: string): i32
-    if key == "0" then return 0 end
-    if key == "1" then return 1 end
-    if key == "2" then return 2 end
-    if key == "3" then return 3 end
-    if key == "4" then return 4 end
-    return -1
-end
 
 -- Returns how many card-flip sound cues this tick earned; the entry module
 -- owns audio resources and playback.
@@ -99,6 +92,7 @@ function draw(
             modal = ui.modal,
             revealing = ui.revealing,
             reveal_clock = ui.reveal_clock,
+            casting = ui.casting,
         },
         card_back
     )
@@ -109,7 +103,7 @@ function submit_swap(state: State): unit
     local outcome: game.FeintOutcome?
     if #ui.swap_hand == 0 and #ui.swap_wards == 0 then
         outcome = state.rules:resolve_swap({}, {})
-    elseif #ui.swap_hand ~= #ui.swap_wards or #ui.swap_hand > state.rules:sparks() then
+    elseif #ui.swap_hand ~= #ui.swap_wards or #ui.swap_hand > state.rules:mana() then
         return
     else
         outcome = state.rules:resolve_swap(ui.swap_hand, ui.swap_wards)
@@ -118,6 +112,17 @@ function submit_swap(state: State): unit
     if outcome ~= nil then
         choreography.feint(outcome::game.FeintOutcome, state.presentation)
     end
+end
+
+-- Pay for and launch the chosen spell at the given ward. The rules charge the
+-- mana only when they accept the cast, so a cancelled or unaffordable attempt
+-- costs nothing; targeting mode ends either way.
+function confirm_cast(state: State, ward: i32): unit
+    if state.rules:cast_spell() then
+        choreography.apply_power(
+            state.presentation, state.rules:spell_kind(), ward)
+    end
+    state.ui.casting = false
 end
 
 function submit_breach(state: State): unit
@@ -135,7 +140,7 @@ function consume_gate(state: State, command: i32): bool
         choreography.is_animating(state.presentation), command)
     if result == flow.result_live then return false end
     if result == flow.result_reset then
-        reset(state, state.rules:is_boss())
+        reset(state, state.rules:is_boss(), state.rules:spell_kind())
     elseif result == flow.result_refill then
         local trick: game.Trick? = state.rules:last_trick()
         if trick ~= nil then
@@ -156,18 +161,36 @@ function keypressed(state: State, key: string): i32
     local rules: game.State = state.rules
     local presentation: choreography.State = state.presentation
     if key == "m" or key == "M" then return ACTION_EXIT end
-    local power: i32 = power_for_key(key)
-    if power >= 0 then
+    if key == "1" then
         if ui.modal ~= flow.modal_none or ui.revealing or rules:is_finished() then
             return ACTION_NONE
         end
-        -- The preview controls should respond on the first gesture. If the
-        -- opening deal is still running, settle it before the projectile
-        -- launches so the target ward is visibly present for the impact.
-        if power > 0 and choreography.is_animating(presentation) then
+        -- The cast key toggles: a second press while aiming calls it off.
+        if ui.casting then
+            ui.casting = false
+            return ACTION_NONE
+        end
+        if not rules:can_cast() then return ACTION_NONE end
+        -- The cast should respond on the first gesture. If the opening deal
+        -- is still running, settle it before targeting begins so the wards
+        -- are visibly present for the aim cursor.
+        if choreography.is_animating(presentation) then
             choreography.skip(presentation)
         end
-        choreography.apply_power(presentation, power)
+        ui.casting = true
+        return ACTION_NONE
+    end
+    if ui.casting then
+        if key == "Escape" then
+            ui.casting = false
+        elseif key == "ArrowLeft" or key == "a" then
+            ui.ward_cursor -= 1
+            if ui.ward_cursor < 0 then ui.ward_cursor = 2 end
+        elseif key == "ArrowRight" or key == "d" then
+            ui.ward_cursor = (ui.ward_cursor + 1) % 3
+        elseif key == "Enter" or key == " " then
+            confirm_cast(state, ui.ward_cursor)
+        end
         return ACTION_NONE
     end
     if consume_gate(state, key_command(key)) then return ACTION_NONE end
@@ -227,6 +250,13 @@ function mousemoved(state: State, x: f64, y: f64): unit
         choreography.is_animating(state.presentation), flow.command_none
     ) ~= flow.result_live then return end
     local at: render.Point = render.point(x, y)
+    -- While aiming a cast, the pointer only steers the ward the spell would
+    -- hit; the fan below stays folded and unfocused.
+    if ui.casting then
+        local target: i32 = render.hit_ward(at)
+        if target >= 0 then ui.ward_cursor = target end
+        return
+    end
     local hand: i32 = choreography.hit_hand(state.presentation, at)
     if hand >= 0 then
         ui.cursor_area = flow.cursor_hand
@@ -249,6 +279,16 @@ function mousepressed(state: State, x: f64, y: f64, button: i32): unit
     local ui: flow.State = state.ui
     local rules: game.State = state.rules
     local at: render.Point = render.point(x, y)
+    -- Clicking a ward while aiming confirms the cast on it; anywhere else
+    -- keeps targeting open for the keyboard to finish or cancel.
+    if ui.casting then
+        local target: i32 = render.hit_ward(at)
+        if target >= 0 then
+            ui.ward_cursor = target
+            confirm_cast(state, target)
+        end
+        return
+    end
     if render.hit_help(at) then
         flow.gate(ui, rules:is_finished(), false, flow.command_help)
         return
