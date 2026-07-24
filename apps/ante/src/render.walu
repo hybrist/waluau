@@ -41,6 +41,8 @@ const POWER_RAISE: i32 = 3
 const POWER_GROWTH: i32 = 4
 const POWER_TRAVEL_SECONDS: f64 = 0.62
 const POWER_FORM_SECONDS: f64 = 0.78
+const FIREBALL_BURN_SECONDS: f64 = 1.55
+const FIREBALL_ASH_FADE_SECONDS: f64 = 1.10
 const POWER_ORIGIN_X: f64 = 30.0
 const POWER_ORIGIN_Y: f64 = 548.0
 const POWER_TARGET_X: f64 = 354.0
@@ -64,6 +66,50 @@ function use_defeat_shroud(graphics: Graphics, effects: EffectShaders, strength:
     local strength_ok: bool = graphics:set_uniform_float("u_strength", strength)
     local aspect_ok: bool = graphics:set_uniform_float("u_aspect", aspect)
     return strength_ok and aspect_ok
+end
+
+function use_card_burn(graphics: Graphics, effects: EffectShaders, progress: f64, seed: i32, suit: i32): bool
+    local maybe_shader: graphics_module.Shader? = effects.card_burn
+    if maybe_shader == nil then return false end
+    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
+    if not graphics:use_shader(shader) then return false end
+    local progress_ok: bool = graphics:set_uniform_float("u_progress", progress)
+    local seed_ok: bool = graphics:set_uniform_float("u_seed", seed::f64)
+    local aspect_ok: bool = graphics:set_uniform_float("u_aspect", CARD_W / CARD_H)
+    local mode_ok: bool = graphics:set_uniform_float("u_particle_mode", 0.0)
+    local accent_red: f64 = 0.29
+    local accent_green: f64 = 0.87
+    local accent_blue: f64 = 0.50
+    if suit == 0 then
+        accent_red = 0.94
+        accent_green = 0.27
+        accent_blue = 0.27
+    elseif suit == 1 then
+        accent_red = 0.22
+        accent_green = 0.74
+        accent_blue = 0.97
+    elseif suit == 2 then
+        accent_red = 0.66
+        accent_green = 0.33
+        accent_blue = 0.97
+    end
+    local accent_ok: bool = graphics:set_uniform_vec3(
+        "u_accent_color", accent_red, accent_green, accent_blue)
+    return progress_ok and seed_ok and aspect_ok and mode_ok and accent_ok
+end
+
+function use_burn_particles(graphics: Graphics, effects: EffectShaders, seed: i32, ember: bool): bool
+    local maybe_shader: graphics_module.Shader? = effects.card_burn
+    if maybe_shader == nil then return false end
+    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
+    if not graphics:use_shader(shader) then return false end
+    local kind: f64 = 0.0
+    if ember then kind = 1.0 end
+    local progress_ok: bool = graphics:set_uniform_float("u_progress", kind)
+    local seed_ok: bool = graphics:set_uniform_float("u_seed", seed::f64)
+    local aspect_ok: bool = graphics:set_uniform_float("u_aspect", 1.0)
+    local mode_ok: bool = graphics:set_uniform_float("u_particle_mode", 1.0)
+    return progress_ok and seed_ok and aspect_ok and mode_ok
 end
 
 function use_red_fire(graphics: Graphics, effects: EffectShaders, selected: bool, colored: bool, aspect: f64): bool
@@ -185,11 +231,10 @@ const WIN_GLOW_START: f64 = 1.87
 const WIN_GLOW_FADE: f64 = 0.35
 const SHIMMER_MARGIN: f64 = 64.0
 -- The losing pair breaks apart on the same beat as the halo ignition. Its
--- fragments finish dispersing just before the board reveal reaches its 2.3s
--- cap, leaving the completed formation alone in the settled result.
-const LOSS_DISINTEGRATE_SECONDS: f64 = 0.38
-const LOSS_FRAGMENT_COLUMNS: i32 = 6
-const LOSS_FRAGMENT_ROWS: i32 = 8
+-- The burn is intentionally long enough to read as three distinct beats:
+-- ignition, an advancing char front, then collapse into ash.
+const LOSS_DISINTEGRATE_SECONDS: f64 = 1.42
+const LOSS_ASH_FLECKS: i32 = 28
 
 -- The three outcomes a resolved breach can have. The help legend draws the
 -- same orbs from these, so a colour only ever means one thing on screen.
@@ -964,6 +1009,33 @@ function fragment_alpha(progress: f64): string
     return "30"
 end
 
+-- Particle quads are only carriers for the burn shader: its noisy alpha mask
+-- cuts every side away before the fleck reaches the screen. The ellipse is a
+-- shader-less fallback, so an optional-program failure never exposes a square
+-- or a triangle in the fire.
+function draw_organic_particle(
+    graphics: Graphics,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    rotation: f64,
+    color: string,
+    shader_ok: bool
+): unit
+    graphics:push()
+    graphics:translate(x, y)
+    graphics:rotate(rotation)
+    graphics:set_color(color)
+    if shader_ok then
+        graphics:fill_rectangle(-width * 0.5, -height * 0.5, width, height)
+    else
+        graphics:scale(width, height)
+        graphics:fill_circle(0.0, 0.0, 0.5)
+    end
+    graphics:pop()
+end
+
 function draw_disintegration_ring(graphics: Graphics, x: f64, y: f64, radius: f64): unit
     graphics:begin_path()
     for step = 0::i32, 32::i32 do
@@ -976,100 +1048,140 @@ function draw_disintegration_ring(graphics: Graphics, x: f64, y: f64, radius: f6
     graphics:stroke()
 end
 
--- The intact face holds for the first instant while cracks and the shock ring
--- announce the break. A tiled copy then bursts away from the card centre;
--- irregular launch delays stop the grid from reading as a checkerboard, and
--- the rapidly shrinking fragments leave only sparks and ash at the end.
+-- Capture the complete live card into one texture before burning it. The rank,
+-- school shader, sigil, and border then share a single UV space, letting one
+-- noisy front eat the object instead of dissolving each drawing primitive.
+function capture_card_face(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, colored: bool, known: bool): graphics_module.RenderTarget?
+    stop_effect(graphics)
+    local result: graphics_module.RenderTargetResult = graphics:create_render_target(
+        CARD_W::i32, CARD_H::i32)
+    if not result.ok then return nil end
+    local target: graphics_module.RenderTarget = result.target
+    if not graphics:set_render_target(target) then
+        graphics:release_render_target(target)
+        return nil
+    end
+    graphics:clear("#00000000")
+    draw_card(
+        graphics, effects, card_back, card, 0.0, 0.0,
+        false, false, false, colored, known)
+    -- The burn target owns a texture exactly the size of the card. Reassert
+    -- the two thin identity layers last: the ordinary renderer can safely
+    -- batch them among the face primitives, but on a target boundary the
+    -- frame stroke is partially clipped and the five-pixel school stripe can
+    -- otherwise disappear at the handoff. They remain part of this texture,
+    -- so the shader chars and removes them only when its front reaches them.
+    graphics:set_color("#52525b")
+    graphics:set_line_width(2.0)
+    graphics:stroke_rectangle(1.0, 1.0, CARD_W - 2.0, CARD_H - 2.0)
+    graphics:set_color(school_color(card.suit))
+    graphics:fill_rectangle(7.0, 7.0, 5.0, CARD_H - 14.0)
+    graphics:set_screen_target()
+    return target
+end
+
+-- Once the black sheet loses cohesion, porous soft-edged flakes peel from
+-- positions across the original face. Each has a different ignition delay,
+-- sideways draft, tumble, and strictly downward fall, so there is no residual
+-- tile grid or moment where the ash appears to hover.
+function draw_burn_ash(graphics: Graphics, effects: EffectShaders, x: f64, y: f64, progress: f64, seed: i32): unit
+    if progress < 0.56 or progress >= 0.995 then return end
+    local particles_ok: bool = use_burn_particles(
+        graphics, effects, seed + 401, false)
+    if not particles_ok then stop_effect(graphics) end
+    for fleck = 0::i32, LOSS_ASH_FLECKS - 1 do
+        local id: i32 = seed * 59 + fleck
+        local local_x: f64 = (fragment_hash(id, 4.0) - 0.5) * (CARD_W - 10.0)
+        local local_y: f64 = (fragment_hash(id, 5.0) - 0.5) * (CARD_H - 10.0)
+        local nx: f64 = local_x / (CARD_W * 0.5)
+        local ny: f64 = local_y / (CARD_H * 0.5)
+        local distance: f64 = math.sqrt(nx * nx + ny * ny)
+        if distance > 1.0 then distance = 1.0 end
+        local delay: f64 = 0.56 + distance * 0.18 + fragment_hash(id, 6.0) * 0.10
+        local ash_progress: f64 = (progress - delay) / (1.0 - delay)
+        if ash_progress > 0.0 then
+            if ash_progress > 1.0 then ash_progress = 1.0 end
+            local travel: f64 = ease_out_quint(ash_progress)
+            local draft: f64 = (fragment_hash(id, 7.0) - 0.5) * 52.0
+            local fall: f64 = ash_progress
+                * (5.0 + fragment_hash(id, 8.0) * 8.0)
+                + ash_progress * ash_progress
+                * (56.0 + fragment_hash(id, 9.0) * 62.0)
+            local fleck_x: f64 = x + CARD_W * 0.5 + local_x + draft * travel
+            local fleck_y: f64 = y + CARD_H * 0.5 + local_y + fall
+            local width: f64 = 1.4 + fragment_hash(id, 10.0) * 3.8
+            local height: f64 = 2.4 + fragment_hash(id, 11.0) * 7.2
+            local scale: f64 = 1.0 - ash_progress * 0.72
+            local color: string = "#292524"
+            if fleck % 7 == 0 then color = "#9a3412"
+            elseif fleck % 3 == 0 then color = "#78716c" end
+            draw_organic_particle(
+                graphics, fleck_x, fleck_y,
+                width * 2.0 * scale, height * 2.0 * scale,
+                (fragment_hash(id, 12.0) - 0.5) * 9.0 * travel,
+                color .. fragment_alpha(ash_progress), particles_ok)
+        end
+    end
+    if particles_ok then stop_effect(graphics) end
+end
+
+function draw_captured_burn(graphics: Graphics, effects: EffectShaders, target: graphics_module.RenderTarget, x: f64, y: f64, progress: f64, seed: i32, suit: i32): unit
+    local shader_ok: bool = use_card_burn(
+        graphics, effects, progress, seed, suit)
+    if shader_ok then
+        graphics:set_color("#ffffffff")
+        graphics:draw_render_target(target, x, y, CARD_W, CARD_H)
+        stop_effect(graphics)
+    else
+        stop_effect(graphics)
+        -- A missing optional program keeps the reveal playable and legible.
+        -- The late cutoff still hands the silhouette to the ash particles.
+        if progress < 0.68 then
+            graphics:set_color("#ffffffff")
+            graphics:draw_render_target(target, x, y, CARD_W, CARD_H)
+        end
+    end
+    draw_burn_ash(graphics, effects, x, y, progress, seed)
+end
+
 function draw_disintegrating_card(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, x: f64, y: f64, selected: bool, progress: f64, seed: i32): unit
     if progress <= 0.0 then
         draw_card(graphics, effects, card_back, card, x, y, selected, false, false, false, false)
         return
     end
     if progress >= 1.0 then return end
-
+    local target: graphics_module.RenderTarget? = capture_card_face(
+        graphics, effects, card_back, card, false, false)
+    if target == nil then
+        if progress < 0.68 then
+            draw_card(graphics, effects, card_back, card, x, y, selected, false, false, false, false)
+        end
+        return
+    end
     local selected_offset: f64 = 0.0
     if selected then selected_offset = -10.0 end
-    local top: f64 = y + selected_offset
-    local center_x: f64 = x + CARD_W * 0.5
-    local center_y: f64 = top + CARD_H * 0.5
-
-    -- Keep the real face behind the opening fracture so the transition begins
-    -- with the exact card the player was looking at, not an abstract tile.
-    if progress < 0.30 then
-        draw_card(graphics, effects, card_back, card, x, y, selected, false, false, false, false)
-    end
-
-    local ring_progress: f64 = progress / 0.46
-    if ring_progress < 1.0 then
-        graphics:set_color("#f8fafc" .. fragment_alpha(ring_progress))
-        graphics:set_line_width(3.0 * (1.0 - ring_progress) + 0.8)
-        draw_disintegration_ring(graphics, center_x, center_y, 12.0 + ring_progress * 82.0)
-    end
-
-    -- Bright fault lines flash across the intact face before it comes apart.
-    if progress < 0.38 then
-        local crack: f64 = progress / 0.38
-        graphics:set_color(school_color(card.suit) .. fragment_alpha(crack))
-        graphics:set_line_width(1.6)
-        for ray = 0::i32, 7::i32 do
-            local angle: f64 = (ray::f64) * math.pi * 0.25 + fragment_hash(seed + ray, 1.0) * 0.35
-            local length: f64 = (28.0 + fragment_hash(seed + ray, 2.0) * 50.0) * ease_out_quint(crack)
-            graphics:line(center_x, center_y,
-                center_x + math.cos(angle) * length,
-                center_y + math.sin(angle) * length)
-        end
-    end
-
-    local cell_w: f64 = CARD_W / (LOSS_FRAGMENT_COLUMNS::f64)
-    local cell_h: f64 = CARD_H / (LOSS_FRAGMENT_ROWS::f64)
-    for row = 0::i32, LOSS_FRAGMENT_ROWS - 1 do
-        for column = 0::i32, LOSS_FRAGMENT_COLUMNS - 1 do
-            local id: i32 = seed * 53 + row * LOSS_FRAGMENT_COLUMNS + column
-            local delay: f64 = 0.03 + fragment_hash(id, 3.0) * 0.15
-            local shard_progress: f64 = (progress - delay) / (1.0 - delay)
-            if shard_progress > 0.0 then
-                if shard_progress > 1.0 then shard_progress = 1.0 end
-                local travel: f64 = ease_out_quint(shard_progress)
-                local local_x: f64 = ((column::f64) + 0.5) * cell_w - CARD_W * 0.5
-                local local_y: f64 = ((row::f64) + 0.5) * cell_h - CARD_H * 0.5
-                local burst_x: f64 = local_x * 0.72 + (fragment_hash(id, 4.0) - 0.5) * 92.0
-                local burst_y: f64 = local_y * 0.50 + (fragment_hash(id, 5.0) - 0.5) * 74.0 - 26.0
-                local shard_x: f64 = center_x + local_x + burst_x * travel
-                local shard_y: f64 = center_y + local_y + burst_y * travel + shard_progress * shard_progress * 42.0
-                local spin: f64 = (fragment_hash(id, 6.0) - 0.5) * 5.2 * travel
-                local scale: f64 = 1.0 - shard_progress * 0.78
-                local color: string = "#17171c"
-                if column == 0 then color = school_color(card.suit)
-                elseif row == 0 or row == LOSS_FRAGMENT_ROWS - 1 or column == LOSS_FRAGMENT_COLUMNS - 1 then color = "#71717a" end
-
-                graphics:push()
-                graphics:translate(shard_x, shard_y)
-                graphics:rotate(spin)
-                graphics:scale(scale, scale)
-                graphics:set_color(color .. fragment_alpha(shard_progress))
-                graphics:fill_rectangle(-cell_w * 0.46, -cell_h * 0.45, cell_w * 0.92, cell_h * 0.90)
-                graphics:pop()
-
-                -- A small hot mote leads each third fragment, making the
-                -- breakup read as magical combustion rather than a card drop.
-                if id % 3 == 0 and shard_progress < 0.88 then
-                    local mote_x: f64 = shard_x + burst_x * 0.12
-                    local mote_y: f64 = shard_y + burst_y * 0.12
-                    graphics:set_color(school_color(card.suit) .. fragment_alpha(shard_progress))
-                    graphics:fill_circle(mote_x, mote_y, 2.8 * (1.0 - shard_progress) + 0.7)
-                end
-            end
-        end
-    end
+    local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
+    draw_captured_burn(
+        graphics, effects, captured,
+        x, y + selected_offset, progress, seed, card.suit)
+    graphics:release_render_target(captured)
 end
 
 function draw_hand_disintegration(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, index: i32, part: f64, count: i32, progress: f64, seed: i32): unit
+    local target: graphics_module.RenderTarget? = capture_card_face(
+        graphics, effects, card_back, card, false, false)
+    if target == nil then return end
+    local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
     local slot: Point = hand_pos_at(index, part, count)
     graphics:push()
     graphics:translate(slot.x + CARD_W * 0.5, slot.y + CARD_H * 0.5)
     graphics:rotate(hand_angle_at(index, part, count))
-    draw_disintegrating_card(graphics, effects, card_back, card, -(CARD_W * 0.5), -(CARD_H * 0.5), true, progress, seed)
+    draw_captured_burn(
+        graphics, effects, captured,
+        -(CARD_W * 0.5), -(CARD_H * 0.5) - 10.0,
+        progress, seed, card.suit)
     graphics:pop()
+    graphics:release_render_target(captured)
 end
 
 function clamp_power_progress(value: f64): f64
@@ -1081,6 +1193,11 @@ end
 function power_formation(clock: f64): f64
     return clamp_power_progress(
         (clock - POWER_TRAVEL_SECONDS) / POWER_FORM_SECONDS)
+end
+
+function fireball_formation(clock: f64): f64
+    return clamp_power_progress(
+        (clock - POWER_TRAVEL_SECONDS) / FIREBALL_BURN_SECONDS)
 end
 
 function draw_power_ellipse(
@@ -1124,9 +1241,78 @@ function draw_scaled_power_card(
     graphics:pop()
 end
 
--- Fireball consumes the face from its centre. The expanding black core stays
--- clipped to the card rectangle while red-hot motes leap past its edge; once
--- the core reaches the border, only a broken ash shadow and a few coals remain.
+function draw_departing_card_ash(
+    graphics: Graphics,
+    effects: EffectShaders,
+    x: f64,
+    y: f64,
+    progress: f64,
+    seed: i32,
+    clock: f64
+): unit
+    if progress < 0.64 then return end
+    local ash_clock: f64 = clock - (
+        POWER_TRAVEL_SECONDS + FIREBALL_BURN_SECONDS)
+    local after_burn: f64 = 0.0
+    if ash_clock > 0.0 then
+        after_burn = ash_clock / FIREBALL_ASH_FADE_SECONDS
+    end
+    if after_burn >= 1.0 then return end
+
+    -- These late flakes continue the same outward crumble instead of forming
+    -- a pile. Their origins cover the card face, their stagger follows the
+    -- centre-out burn, and gravity begins as soon as each flake is released.
+    -- At full burn they are already partway through their fall; after_burn
+    -- merely carries that uninterrupted motion through its final fade.
+    local particles_ok: bool = use_burn_particles(
+        graphics, effects, seed + 607, false)
+    if not particles_ok then stop_effect(graphics) end
+    for piece = 0::i32, 23::i32 do
+        local id: i32 = seed * 43 + piece
+        local local_x: f64 = (fragment_hash(id, 1.0) - 0.5) * (CARD_W - 12.0)
+        local local_y: f64 = (fragment_hash(id, 4.0) - 0.5) * (CARD_H - 14.0)
+        local nx: f64 = local_x / (CARD_W * 0.5)
+        local ny: f64 = local_y / (CARD_H * 0.5)
+        local distance: f64 = math.sqrt(nx * nx + ny * ny)
+        if distance > 1.0 then distance = 1.0 end
+        local release: f64 = 0.64 + distance * 0.17
+            + fragment_hash(id, 8.0) * 0.08
+        local burn_motion: f64 = (progress - release) / (1.0 - release)
+        if burn_motion > 1.0 then burn_motion = 1.0 end
+        if burn_motion > 0.0 then
+            local motion: f64 = burn_motion * 0.34 + after_burn * 0.66
+            if motion > 1.0 then motion = 1.0 end
+            local travel: f64 = ease_out_quint(motion)
+            local drift: f64 = (fragment_hash(id, 6.0) - 0.5) * 68.0
+            local flutter: f64 = math.sin(
+                motion * math.pi * 3.0 + fragment_hash(id, 12.0) * 6.0)
+                * (2.0 + fragment_hash(id, 7.0) * 4.0) * motion
+            local fall: f64 = motion
+                * (7.0 + fragment_hash(id, 9.0) * 11.0)
+                + motion * motion
+                * (82.0 + fragment_hash(id, 10.0) * 78.0)
+            local px: f64 = x + CARD_W * 0.5 + local_x
+                + drift * travel + flutter
+            local py: f64 = y + CARD_H * 0.5 + local_y + fall
+            local width: f64 = 2.2 + fragment_hash(id, 2.0) * 6.2
+            local height: f64 = 2.5 + fragment_hash(id, 3.0) * 8.5
+            local scale: f64 = 1.0 - motion * 0.82
+            local color: string = "#44403c"
+            if piece % 5 == 0 then color = "#78716c"
+            elseif piece % 7 == 0 then color = "#9a3412" end
+            draw_organic_particle(
+                graphics, px, py,
+                width * 2.0 * scale, height * 2.0 * scale,
+                (fragment_hash(id, 5.0) - 0.5) * 7.0 * travel,
+                color .. fragment_alpha(motion), particles_ok)
+        end
+    end
+    if particles_ok then stop_effect(graphics) end
+end
+
+-- Fireball now burns the rendered card itself: a small centre ignition grows
+-- through a noisy ember/char boundary, holes open behind it, and the remaining
+-- black sheet sheds into ash that catches a draft, falls away, and disappears.
 function draw_fireball_card(
     graphics: Graphics,
     effects: EffectShaders,
@@ -1141,61 +1327,29 @@ function draw_fireball_card(
     formation: f64,
     clock: f64
 ): unit
-    local center_x: f64 = x + CARD_W * 0.5
-    local center_y: f64 = y + CARD_H * 0.5
-    if formation < 0.98 then
-        draw_card(
-            graphics, effects, card_back, card, x, y,
-            selected, focused, false, colored, known)
-        local burn: f64 = ease_in_out_cubic(formation)
-        local burn_w: f64 = 8.0 + (CARD_W - 12.0) * burn
-        local burn_h: f64 = 8.0 + (CARD_H - 12.0) * burn
-        graphics:set_color("#080302ee")
-        graphics:fill_rectangle(
-            center_x - burn_w * 0.5, center_y - burn_h * 0.5,
-            burn_w, burn_h)
-        graphics:set_color("#ef4444")
-        graphics:set_line_width(3.0)
-        graphics:stroke_rectangle(
-            center_x - burn_w * 0.5, center_y - burn_h * 0.5,
-            burn_w, burn_h)
-        for mote = 0::i32, 9::i32 do
-            local angle: f64 = (mote::f64) * math.pi * 0.2
-                + fragment_hash(mote + 91, 2.0) * 0.25
-            local radius: f64 = 8.0 + burn * (
-                34.0 + fragment_hash(mote + 91, 3.0) * 38.0)
-            local lift: f64 = formation * (
-                8.0 + fragment_hash(mote + 91, 4.0) * 20.0)
-            graphics:set_color("#fb7185")
-            graphics:fill_circle(
-                center_x + math.cos(angle) * radius,
-                center_y + math.sin(angle) * radius - lift,
-                1.2 + fragment_hash(mote + 91, 5.0) * 2.2)
+    local selected_offset: f64 = 0.0
+    if selected then selected_offset = -10.0 end
+    local top: f64 = y + selected_offset
+    local seed: i32 = card.rank * 17 + card.suit * 97 + 191
+    local target: graphics_module.RenderTarget? = capture_card_face(
+        graphics, effects, card_back, card, colored, known)
+    if target == nil then
+        if formation < 0.86 then
+            draw_card(
+                graphics, effects, card_back, card, x, y,
+                selected, focused, false, colored, known)
         end
+        draw_departing_card_ash(
+            graphics, effects, x, top, formation, seed, clock)
         return
     end
-
-    graphics:push()
-    graphics:translate(center_x, y + CARD_H - 5.0)
-    graphics:scale(1.45, 0.26)
-    graphics:set_color("#030303d8")
-    graphics:fill_circle(0.0, 0.0, 34.0)
-    graphics:pop()
-    graphics:set_color("#2b1714c0")
-    graphics:set_line_width(3.0)
-    graphics:line(x + 14.0, y + 111.0, x + 29.0, y + 117.0)
-    graphics:line(x + 43.0, y + 118.0, x + 60.0, y + 112.0)
-    graphics:line(x + 75.0, y + 116.0, x + 91.0, y + 107.0)
-    for coal = 0::i32, 5::i32 do
-        local pulse: f64 = 0.5 + 0.5 * math.sin(
-            clock * (2.4 + (coal::f64) * 0.17) + (coal::f64))
-        local radius: f64 = 1.1 + pulse * 1.6
-        graphics:set_color("#ef4444")
-        graphics:fill_circle(
-            x + 17.0 + (coal::f64) * 14.0,
-            y + 110.0 - fragment_hash(coal + 31, 1.0) * 9.0,
-            radius)
-    end
+    local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
+    draw_captured_burn(
+        graphics, effects, captured,
+        x, top, formation, seed, card.suit)
+    graphics:release_render_target(captured)
+    draw_departing_card_ash(
+        graphics, effects, x, top, formation, seed, clock)
 end
 
 -- Freeze Ray leaves the card readable under a translucent shell. The ice
@@ -1465,6 +1619,9 @@ function draw_powered_card(
     power_clock: f64
 ): unit
     local formation: f64 = power_formation(power_clock)
+    if power_kind == POWER_FIREBALL then
+        formation = fireball_formation(power_clock)
+    end
     if power_kind == 0 or hidden or formation <= 0.0 then
         draw_card(
             graphics, effects, card_back, card, x, y,
@@ -1516,7 +1673,12 @@ end
 -- Every spell visibly enters the board from the same lower-left source, but
 -- its carrier has a different silhouette: ember comet, hard ray, grave-orb,
 -- or dividing spore. The persistent card renderer takes over after impact.
-function draw_power_launch(graphics: Graphics, kind: i32, clock: f64): unit
+function draw_power_launch(
+    graphics: Graphics,
+    effects: EffectShaders,
+    kind: i32,
+    clock: f64
+): unit
     if kind < 1 or kind > 4 then return end
     local progress: f64 = clamp_power_progress(clock / POWER_TRAVEL_SECONDS)
     if progress < 1.0 then
@@ -1540,20 +1702,28 @@ function draw_power_launch(graphics: Graphics, kind: i32, clock: f64): unit
             graphics:set_color("#ffffff")
             graphics:fill_circle(head_x, head_y, 6.0)
         elseif kind == POWER_FIREBALL then
-            for ember = 0::i32, 9::i32 do
+            local embers_ok: bool = use_burn_particles(
+                graphics, effects, 913, true)
+            if not embers_ok then stop_effect(graphics) end
+            for ember = 0::i32, 10::i32 do
                 local t: f64 = progress - (ember::f64) * 0.032
                 if t > 0.0 then
-                    graphics:set_color("#fb7185aa")
-                    graphics:fill_circle(
-                        power_path_x(t),
-                        power_path_y(t) + (ember::f64) * 1.5,
-                        8.0 - (ember::f64) * 0.55)
+                    local ember_x: f64 = power_path_x(t)
+                    local ember_y: f64 = power_path_y(t) + (ember::f64) * 1.25
+                    local half: f64 = 5.5 - (ember::f64) * 0.35
+                    draw_organic_particle(
+                        graphics, ember_x - half * 0.4, ember_y,
+                        half * 3.6, half * 2.0, -0.55,
+                        "#f97316b0", embers_ok)
                 end
             end
-            graphics:set_color("#ef4444")
-            graphics:fill_circle(head_x, head_y, 13.0)
-            graphics:set_color("#fef2f2")
-            graphics:fill_circle(head_x, head_y, 7.0)
+            draw_organic_particle(
+                graphics, head_x, head_y, 34.0, 22.0, -0.55,
+                "#ef4444", embers_ok)
+            draw_organic_particle(
+                graphics, head_x + 3.0, head_y, 20.0, 10.0, -0.55,
+                "#fff7d6", embers_ok)
+            if embers_ok then stop_effect(graphics) end
         elseif kind == POWER_RAISE then
             graphics:set_color("#12091ddd")
             graphics:fill_circle(head_x, head_y, 18.0)
@@ -1590,16 +1760,37 @@ function draw_power_launch(graphics: Graphics, kind: i32, clock: f64): unit
     local impact: f64 = (
         clock - POWER_TRAVEL_SECONDS) / 0.34
     if impact > 0.0 and impact < 1.0 then
-        graphics:set_color(power_color(kind))
-        graphics:set_line_width(3.0 * (1.0 - impact) + 0.7)
-        for ray = 0::i32, 7::i32 do
-            local angle: f64 = (ray::f64) * math.pi * 0.25
-            local length: f64 = 18.0 + impact * 42.0
-            graphics:line(
-                POWER_TARGET_X + math.cos(angle) * 9.0,
-                POWER_TARGET_Y + math.sin(angle) * 9.0,
-                POWER_TARGET_X + math.cos(angle) * length,
-                POWER_TARGET_Y + math.sin(angle) * length)
+        if kind == POWER_FIREBALL then
+            local sparks_ok: bool = use_burn_particles(
+                graphics, effects, 1049, true)
+            if not sparks_ok then stop_effect(graphics) end
+            for spark = 0::i32, 13::i32 do
+                local angle: f64 = (spark::f64) * math.pi * 2.0 / 14.0
+                    + fragment_hash(spark + 119, 2.0) * 0.18
+                local inner: f64 = 8.0 + impact * 18.0
+                local outer: f64 = inner + 12.0 + fragment_hash(spark + 119, 3.0) * 28.0
+                local width: f64 = 3.0 + (1.0 - impact) * 4.5
+                local middle: f64 = (inner + outer) * 0.5
+                draw_organic_particle(
+                    graphics,
+                    POWER_TARGET_X + math.cos(angle) * middle,
+                    POWER_TARGET_Y + math.sin(angle) * middle,
+                    outer - inner, width, angle,
+                    "#fb923c" .. fragment_alpha(impact), sparks_ok)
+            end
+            if sparks_ok then stop_effect(graphics) end
+        else
+            graphics:set_color(power_color(kind))
+            graphics:set_line_width(3.0 * (1.0 - impact) + 0.7)
+            for ray = 0::i32, 7::i32 do
+                local angle: f64 = (ray::f64) * math.pi * 0.25
+                local length: f64 = 18.0 + impact * 42.0
+                graphics:line(
+                    POWER_TARGET_X + math.cos(angle) * 9.0,
+                    POWER_TARGET_Y + math.sin(angle) * 9.0,
+                    POWER_TARGET_X + math.cos(angle) * length,
+                    POWER_TARGET_Y + math.sin(angle) * length)
+            end
         end
     end
 end
@@ -1783,7 +1974,7 @@ function draw_resolution_board(graphics: Graphics, effects: EffectShaders, card_
             angle1, point(ROW_RIGHT_X, ROW_Y), fly1, scoring[4])
     end
     if foreground then graphics:pop() end
-    draw_power_launch(graphics, power_kind, power_clock)
+    draw_power_launch(graphics, effects, power_kind, power_clock)
 end
 
 -- One relic of the fan, unless a card bound for that slot is still in flight.
@@ -1863,7 +2054,7 @@ function draw_playfield(graphics: Graphics, effects: EffectShaders, card_back: g
     end
     draw_footer(graphics)
     draw_anims(graphics, effects, card_back, anims, anim_clock)
-    draw_power_launch(graphics, power_kind, power_clock)
+    draw_power_launch(graphics, effects, power_kind, power_clock)
 end
 
 function modal_shell(graphics: Graphics, title: string, subtitle: string): unit

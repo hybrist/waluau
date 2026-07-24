@@ -13,6 +13,7 @@ type SourceUpdate = shader_sources.SourceUpdate
 type EffectShaders = {
     gold_shimmer: graphics_module.Shader?,
     defeat_shroud: graphics_module.Shader?,
+    card_burn: graphics_module.Shader?,
     red_fire: graphics_module.Shader?,
     blue_caustics: graphics_module.Shader?,
     black_hole: graphics_module.Shader?,
@@ -27,6 +28,7 @@ type Sources = {
     vertex: Source,
     gold_shimmer: Source,
     defeat_shroud: Source,
+    card_burn: Source,
     red_fire: Source,
     blue_caustics: Source,
     black_hole: Source,
@@ -37,6 +39,7 @@ type SourceTexts = {
     vertex: string,
     gold_shimmer: string,
     defeat_shroud: string,
+    card_burn: string,
     red_fire: string,
     blue_caustics: string,
     black_hole: string,
@@ -47,6 +50,7 @@ type SourceReadiness = {
     vertex: bool,
     gold_shimmer: bool,
     defeat_shroud: bool,
+    card_burn: bool,
     red_fire: bool,
     blue_caustics: bool,
     black_hole: bool,
@@ -57,6 +61,7 @@ type EffectErrors = {
     vertex: string,
     gold_shimmer: string,
     defeat_shroud: string,
+    card_burn: string,
     red_fire: string,
     blue_caustics: string,
     black_hole: string,
@@ -80,6 +85,7 @@ function new(): State
         shaders = {
             gold_shimmer = nil,
             defeat_shroud = nil,
+            card_burn = nil,
             red_fire = nil,
             blue_caustics = nil,
             black_hole = nil,
@@ -91,6 +97,7 @@ function new(): State
             vertex = shader_sources.open("ante.effects.vertex"),
             gold_shimmer = shader_sources.open("ante.effects.gold-shimmer"),
             defeat_shroud = shader_sources.open("ante.effects.defeat-shroud"),
+            card_burn = shader_sources.open("ante.effects.card-burn"),
             red_fire = shader_sources.open("ante.effects.red-fire"),
             blue_caustics = shader_sources.open("ante.effects.blue-caustics"),
             black_hole = shader_sources.open("ante.effects.black-hole"),
@@ -101,6 +108,7 @@ function new(): State
             vertex = "",
             gold_shimmer = "",
             defeat_shroud = "",
+            card_burn = "",
             red_fire = "",
             blue_caustics = "",
             black_hole = "",
@@ -111,6 +119,7 @@ function new(): State
             vertex = false,
             gold_shimmer = false,
             defeat_shroud = false,
+            card_burn = false,
             red_fire = false,
             blue_caustics = false,
             black_hole = false,
@@ -121,6 +130,7 @@ function new(): State
             vertex = "",
             gold_shimmer = "",
             defeat_shroud = "",
+            card_burn = "",
             red_fire = "",
             blue_caustics = "",
             black_hole = "",
@@ -155,6 +165,7 @@ function refresh(state: State, graphics: Graphics): unit
     local vertex: SourceUpdate = state.sources.vertex:poll()
     local gold: SourceUpdate = state.sources.gold_shimmer:poll()
     local defeat: SourceUpdate = state.sources.defeat_shroud:poll()
+    local burn: SourceUpdate = state.sources.card_burn:poll()
     local red: SourceUpdate = state.sources.red_fire:poll()
     local blue: SourceUpdate = state.sources.blue_caustics:poll()
     local black: SourceUpdate = state.sources.black_hole:poll()
@@ -189,6 +200,16 @@ function refresh(state: State, graphics: Graphics): unit
         else
             state.ready.defeat_shroud = false
             state.errors.defeat_shroud = "defeat shroud " .. source_failure(defeat)
+        end
+    end
+    if burn.changed then
+        if burn.ok then
+            state.texts.card_burn = burn.source
+            state.ready.card_burn = true
+            state.errors.card_burn = ""
+        else
+            state.ready.card_burn = false
+            state.errors.card_burn = "card burn " .. source_failure(burn)
         end
     end
     if red.changed then
@@ -265,6 +286,16 @@ function refresh(state: State, graphics: Graphics): unit
         else state.errors.defeat_shroud = shader_failure("defeat shroud", result) end
     end
 
+    if (vertex.changed or burn.changed) and state.ready.card_burn then
+        local result: graphics_module.ShaderResult = rebuild(
+            graphics, state.shaders.card_burn,
+            state.texts.vertex, state.texts.card_burn)
+        if result.ok then
+            state.shaders.card_burn = result.shader
+            state.errors.card_burn = ""
+        else state.errors.card_burn = shader_failure("card burn", result) end
+    end
+
     if (vertex.changed or red.changed) and state.ready.red_fire then
         local result: graphics_module.ShaderResult = rebuild(
             graphics, state.shaders.red_fire,
@@ -329,6 +360,7 @@ function diagnostics(state: State): Diagnostics
     if #vertex_error > 0 then
         fatal_error = "defeat shroud " .. vertex_error
         warnings = append_warning(warnings, "gold shimmer " .. vertex_error)
+        warnings = append_warning(warnings, "card burn " .. vertex_error)
         warnings = append_warning(warnings, "red " .. vertex_error)
         warnings = append_warning(warnings, "blue " .. vertex_error)
         warnings = append_warning(warnings, "black " .. vertex_error)
@@ -336,6 +368,7 @@ function diagnostics(state: State): Diagnostics
         warnings = append_warning(warnings, "ice " .. vertex_error)
     else
         warnings = append_warning(warnings, state.errors.gold_shimmer)
+        warnings = append_warning(warnings, state.errors.card_burn)
         warnings = append_warning(warnings, state.errors.red_fire)
         warnings = append_warning(warnings, state.errors.blue_caustics)
         warnings = append_warning(warnings, state.errors.black_hole)
@@ -350,6 +383,8 @@ function release(state: State, graphics: Graphics): unit
     if gold ~= nil then graphics:release_shader(gold::graphics_module.Shader) end
     local defeat: graphics_module.Shader? = state.shaders.defeat_shroud
     if defeat ~= nil then graphics:release_shader(defeat::graphics_module.Shader) end
+    local burn: graphics_module.Shader? = state.shaders.card_burn
+    if burn ~= nil then graphics:release_shader(burn::graphics_module.Shader) end
     local red: graphics_module.Shader? = state.shaders.red_fire
     if red ~= nil then graphics:release_shader(red::graphics_module.Shader) end
     local blue: graphics_module.Shader? = state.shaders.blue_caustics
@@ -365,6 +400,7 @@ function release(state: State, graphics: Graphics): unit
 
     state.shaders.gold_shimmer = nil
     state.shaders.defeat_shroud = nil
+    state.shaders.card_burn = nil
     state.shaders.red_fire = nil
     state.shaders.blue_caustics = nil
     state.shaders.black_hole = nil
