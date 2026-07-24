@@ -13,6 +13,7 @@ export default defineConfig({
       'ante.effects.blue-caustics': 'src/shaders/blue-caustics.frag',
       'ante.effects.green-growth': 'src/shaders/green-growth.frag',
       'ante.effects.black-hole': 'src/shaders/black-hole.frag',
+      'ante.effects.ice-freeze': 'src/shaders/ice-freeze.frag',
     },
   })],
   test: {

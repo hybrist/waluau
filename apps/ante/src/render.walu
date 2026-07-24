@@ -129,6 +129,29 @@ function use_black_hole(graphics: Graphics, effects: EffectShaders, selected: bo
     return aspect_ok and selected_ok and colored_ok
 end
 
+-- The freeze shell quad hangs past the card so icicles can grow outside it.
+const FREEZE_MARGIN_X: f64 = 10.0
+const FREEZE_MARGIN_TOP: f64 = 12.0
+const FREEZE_MARGIN_BOTTOM: f64 = 32.0
+
+function use_ice_freeze(graphics: Graphics, effects: EffectShaders, freeze: f64): bool
+    local maybe_shader: graphics_module.Shader? = effects.ice_freeze
+    if maybe_shader == nil then return false end
+    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
+    if not graphics:use_shader(shader) then return false end
+    local quad_w: f64 = CARD_W + FREEZE_MARGIN_X * 2.0
+    local quad_h: f64 = CARD_H + FREEZE_MARGIN_TOP + FREEZE_MARGIN_BOTTOM
+    local aspect_ok: bool = graphics:set_uniform_float("u_aspect", CARD_W / CARD_H)
+    local freeze_ok: bool = graphics:set_uniform_float("u_freeze", freeze)
+    local rect_ok: bool = graphics:set_uniform_vec4(
+        "u_rect",
+        FREEZE_MARGIN_X / quad_w,
+        FREEZE_MARGIN_TOP / quad_h,
+        (FREEZE_MARGIN_X + CARD_W) / quad_w,
+        (FREEZE_MARGIN_TOP + CARD_H) / quad_h)
+    return aspect_ok and freeze_ok and rect_ok
+end
+
 function stop_effect(graphics: Graphics): unit
     graphics:use_default_shader()
 end
@@ -1175,9 +1198,11 @@ function draw_fireball_card(
     end
 end
 
--- Freeze Ray leaves the card readable under a translucent shell. Four corner
--- plates advance toward the centre independently, then hold as thick frost,
--- branching cracks, and icicles that breathe between two cool highlights.
+-- Freeze Ray leaves the card readable under a translucent shell. The ice
+-- shader grows noise-driven frost from the edges inward, holds as faceted
+-- chunks with bright cracks, and hangs icicles past the card border. The
+-- vector overlay below survives only as the fallback while the shader or its
+-- noise texture is unavailable.
 function draw_freeze_card(
     graphics: Graphics,
     effects: EffectShaders,
@@ -1196,6 +1221,26 @@ function draw_freeze_card(
         graphics, effects, card_back, card, x, y,
         selected, focused, false, colored, known)
     local ice: f64 = ease_out_quint(formation)
+    -- Track the lift draw_card applies to a selected card so the shell stays
+    -- glued to the face it freezes.
+    local top: f64 = y
+    if selected then top -= 10.0 end
+    local maybe_noise: graphics_module.Texture? = effects.noise_texture
+    if maybe_noise ~= nil then
+        local noise: graphics_module.Texture = maybe_noise::graphics_module.Texture
+        if use_ice_freeze(graphics, effects, ice) then
+            graphics:set_color("#ffffffff")
+            graphics:draw_sprite(
+                noise,
+                x - FREEZE_MARGIN_X, top - FREEZE_MARGIN_TOP,
+                CARD_W + FREEZE_MARGIN_X * 2.0,
+                CARD_H + FREEZE_MARGIN_TOP + FREEZE_MARGIN_BOTTOM,
+                0.0, 0.0, noise.width::f64, noise.height::f64)
+            stop_effect(graphics)
+            return
+        end
+    end
+    y = top
     local corner_w: f64 = 6.0 + 47.0 * ice
     local corner_h: f64 = 7.0 + 58.0 * ice
     graphics:set_color("#7dd3fc55")
