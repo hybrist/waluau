@@ -102,15 +102,12 @@ void main() {
         // Margins: icicles below, stubby frost teeth above, faint halo beside.
         float settle = smoothstep(0.45, 1.0, freeze);
         if (p.y >= 1.0 && p.x > 0.0 && p.x < 1.0) {
-            // A frozen lip runs along the card's bottom edge; icicles hang
-            // from it so they read as growth rather than floating teeth.
+            // A straight frozen lip closes the card's bottom edge cleanly.
             float drop = p.y - 1.0;
-            vec2 spike = icicle(q.x + 0.013, drop, settle, 8.0, 0.235);
             float lip = (1.0 - smoothstep(0.012, 0.035, drop)) * settle;
             float melt_glint = 0.5 + 0.5 * sin(u_time * 2.3 + q.x * 21.0);
-            color = mix(shell_blue, frost_white,
-                max(spike.y, lip * 0.55) + melt_glint * 0.18);
-            alpha = max(spike.x * 0.92, lip * 0.8);
+            color = mix(shell_blue, frost_white, lip * 0.55 + melt_glint * 0.18);
+            alpha = lip * 0.8;
         } else if (p.y <= 0.0 && p.x > 0.0 && p.x < 1.0) {
             // Two tooth pitches overlap so the rime ridge stays irregular.
             vec2 spike = icicle(q.x + 0.47, -p.y, settle, 23.0, 0.055);

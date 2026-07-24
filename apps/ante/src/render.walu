@@ -132,7 +132,7 @@ end
 -- The freeze shell quad hangs past the card so icicles can grow outside it.
 const FREEZE_MARGIN_X: f64 = 10.0
 const FREEZE_MARGIN_TOP: f64 = 12.0
-const FREEZE_MARGIN_BOTTOM: f64 = 32.0
+const FREEZE_MARGIN_BOTTOM: f64 = 10.0
 
 function use_ice_freeze(graphics: Graphics, effects: EffectShaders, freeze: f64): bool
     local maybe_shader: graphics_module.Shader? = effects.ice_freeze
@@ -1592,9 +1592,6 @@ function draw_power_launch(graphics: Graphics, kind: i32, clock: f64): unit
     if impact > 0.0 and impact < 1.0 then
         graphics:set_color(power_color(kind))
         graphics:set_line_width(3.0 * (1.0 - impact) + 0.7)
-        draw_disintegration_ring(
-            graphics, POWER_TARGET_X, POWER_TARGET_Y,
-            10.0 + ease_out_quint(impact) * 82.0)
         for ray = 0::i32, 7::i32 do
             local angle: f64 = (ray::f64) * math.pi * 0.25
             local length: f64 = 18.0 + impact * 42.0
