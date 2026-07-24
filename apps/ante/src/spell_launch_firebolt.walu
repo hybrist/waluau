@@ -1,0 +1,73 @@
+-- Firebolt's carrier and impact. Changes to ember shape, shader use, or burst
+-- timing stay in this module and cannot conflict with the other spells.
+local engine = require("waluau:engine")
+local effect_shaders = require("./effect_shaders")
+local burn_particles = require("./burn_particles")
+local spell_cast = require("./spell_cast")
+
+type Graphics = engine.Graphics
+type EffectShaders = effect_shaders.EffectShaders
+
+function draw(graphics: Graphics, effects: EffectShaders, cast: spell_cast.Cast): unit
+    if cast.progress < 1.0 then
+        local head: spell_cast.Point = spell_cast.at(cast, cast.progress)
+        local embers_ok: bool = burn_particles.use(graphics, effects, 913, true)
+        if not embers_ok then
+            burn_particles.stop(graphics)
+        end
+        for ember = 0::i32, 10::i32 do
+            local t: f64 = cast.progress - (ember::f64) * 0.032
+            if t > 0.0 then
+                local at: spell_cast.Point = spell_cast.at(cast, t)
+                local half: f64 = 5.5 - (ember::f64) * 0.35
+                burn_particles.draw(
+                    graphics,
+                    at.x - half * 0.4,
+                    at.y + (ember::f64) * 1.25,
+                    half * 3.6,
+                    half * 2.0,
+                    -0.55,
+                    "#f97316b0",
+                    embers_ok
+                )
+            end
+        end
+        burn_particles.draw(graphics, head.x, head.y, 34.0, 22.0, -0.55, "#ef4444", embers_ok)
+        burn_particles.draw(graphics, head.x + 3.0, head.y, 20.0, 10.0, -0.55, "#fff7d6", embers_ok)
+        if embers_ok then
+            burn_particles.stop(graphics)
+        end
+    end
+
+    if cast.impact > 0.0 and cast.impact < 1.0 then
+        local sparks_ok: bool = burn_particles.use(graphics, effects, 1049, true)
+        if not sparks_ok then
+            burn_particles.stop(graphics)
+        end
+        for spark = 0::i32, 13::i32 do
+            local angle: f64 = (spark::f64) * math.pi * 2.0 / 14.0 + burn_particles.hash(
+                spark + 119,
+                2.0
+            ) * 0.18
+            local inner: f64 = 8.0 + cast.impact * 18.0
+            local outer: f64 = inner + 12.0 + burn_particles.hash(spark + 119, 3.0) * 28.0
+            local width: f64 = 3.0 + (1.0 - cast.impact) * 4.5
+            local middle: f64 = (inner + outer) * 0.5
+            burn_particles.draw(
+                graphics,
+                cast.target.x + math.cos(angle) * middle,
+                cast.target.y + math.sin(angle) * middle,
+                outer - inner,
+                width,
+                angle,
+                "#fb923c" .. burn_particles.alpha(cast.impact),
+                sparks_ok
+            )
+        end
+        if sparks_ok then
+            burn_particles.stop(graphics)
+        end
+    end
+end
+
+return { draw = draw }

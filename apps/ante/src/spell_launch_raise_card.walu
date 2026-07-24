@@ -1,0 +1,28 @@
+-- Raise Card's carrier and impact.
+local engine = require("waluau:engine")
+local effect_shaders = require("./effect_shaders")
+local spell_cast = require("./spell_cast")
+
+type Graphics = engine.Graphics
+type EffectShaders = effect_shaders.EffectShaders
+
+function draw(graphics: Graphics, effects: EffectShaders, cast: spell_cast.Cast): unit
+    if cast.progress < 1.0 then
+        local head: spell_cast.Point = spell_cast.at(cast, cast.progress)
+        graphics:set_color("#12091ddd")
+        graphics:fill_circle(head.x, head.y, 18.0)
+        spell_cast.draw_ellipse(graphics, head.x, head.y, 22.0, 10.0, "#a3e635", 1.7)
+        for mote = 0::i32, 5::i32 do
+            local angle: f64 = cast.clock * 5.0 + (mote::f64) * 1.05
+            graphics:set_color("#d9f99d")
+            graphics:fill_circle(
+                head.x + math.cos(angle) * 24.0,
+                head.y + math.sin(angle) * 12.0,
+                2.0
+            )
+        end
+    end
+    spell_cast.draw_radial_impact(graphics, cast, "#a3e635")
+end
+
+return { draw = draw }

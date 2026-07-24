@@ -1,0 +1,104 @@
+-- Geometry shared by every spell carrier. Target selection changes this one
+-- cast record; individual spell modules only decide how their own travel and
+-- impact look.
+local engine = require("waluau:engine")
+
+type Graphics = engine.Graphics
+type Point = { x: f64, y: f64 }
+type Cast = { clock: f64, progress: f64, impact: f64, origin: Point, target: Point }
+
+const TRAVEL_SECONDS: f64 = 0.62
+const IMPACT_SECONDS: f64 = 0.34
+const ORIGIN_X: f64 = 30.0
+const ORIGIN_Y: f64 = 548.0
+
+function clamp(value: f64): f64
+    if value < 0.0 then
+        return 0.0
+    end
+    if value > 1.0 then
+        return 1.0
+    end
+    return value
+end
+
+function new(clock: f64, target_x: f64, target_y: f64): Cast
+    return {
+        clock = clock,
+        progress = clamp(clock / TRAVEL_SECONDS),
+        impact = (clock - TRAVEL_SECONDS) / IMPACT_SECONDS,
+        origin = { x = ORIGIN_X, y = ORIGIN_Y },
+        target = { x = target_x, y = target_y }
+    }
+end
+
+function at(cast: Cast, progress: f64): Point
+    local inverse: f64 = 1.0 - progress
+    local control_x: f64 = cast.origin.x + (cast.target.x - cast.origin.x) * 0.315
+    local control_y: f64 = cast.target.y - 34.0
+    return {
+        x = inverse * inverse * cast.origin.x + 2.0 * inverse * progress * control_x + progress * progress * cast.target.x,
+        y = inverse * inverse * cast.origin.y + 2.0 * inverse * progress * control_y + progress * progress * cast.target.y
+    }
+end
+
+function draw_ring(graphics: Graphics, x: f64, y: f64, radius: f64): unit
+    graphics:begin_path()
+    for step = 0::i32, 32::i32 do
+        local angle: f64 = (step::f64) * math.pi * 2.0 / 32.0
+        local px: f64 = x + math.cos(angle) * radius
+        local py: f64 = y + math.sin(angle) * radius
+        if step == 0 then
+            graphics:move_to(px, py)
+        else
+            graphics:line_to(px, py)
+        end
+    end
+    graphics:close_path()
+    graphics:stroke()
+end
+
+function draw_ellipse(
+    graphics: Graphics,
+    x: f64,
+    y: f64,
+    radius_x: f64,
+    radius_y: f64,
+    color: string,
+    width: f64
+): unit
+    graphics:push()
+    graphics:translate(x, y)
+    graphics:scale(radius_x / 32.0, radius_y / 32.0)
+    graphics:set_color(color)
+    graphics:set_line_width(width)
+    draw_ring(graphics, 0.0, 0.0, 32.0)
+    graphics:pop()
+end
+
+function draw_radial_impact(graphics: Graphics, cast: Cast, color: string): unit
+    local impact: f64 = cast.impact
+    if impact <= 0.0 or impact >= 1.0 then
+        return
+    end
+    graphics:set_color(color)
+    graphics:set_line_width(3.0 * (1.0 - impact) + 0.7)
+    for ray = 0::i32, 7::i32 do
+        local angle: f64 = (ray::f64) * math.pi * 0.25
+        local length: f64 = 18.0 + impact * 42.0
+        graphics:line(
+            cast.target.x + math.cos(angle) * 9.0,
+            cast.target.y + math.sin(angle) * 9.0,
+            cast.target.x + math.cos(angle) * length,
+            cast.target.y + math.sin(angle) * length
+        )
+    end
+end
+
+return {
+    travel_seconds = TRAVEL_SECONDS,
+    new = new,
+    at = at,
+    draw_ellipse = draw_ellipse,
+    draw_radial_impact = draw_radial_impact
+}

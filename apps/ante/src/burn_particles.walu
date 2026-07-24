@@ -1,0 +1,83 @@
+-- Shared shader-backed ash and ember primitives. Card destruction and the
+-- Firebolt carrier both use this module, so shader binding and deterministic
+-- particle shapes have one implementation without coupling either caller to
+-- the other's choreography.
+local engine = require("waluau:engine")
+local graphics_module = require("waluau:engine/graphics")
+local effect_shaders = require("./effect_shaders")
+
+type Graphics = engine.Graphics
+type EffectShaders = effect_shaders.EffectShaders
+
+function use(graphics: Graphics, effects: EffectShaders, seed: i32, ember: bool): bool
+    local maybe_shader: graphics_module.Shader? = effects.card_burn.shader
+    if maybe_shader == nil then
+        return false
+    end
+    local shader: graphics_module.Shader = maybe_shader::graphics_module.Shader
+    if not graphics:use_shader(shader) then
+        return false
+    end
+    local kind: f64 = 0.0
+    if ember then
+        kind = 1.0
+    end
+    local progress_ok: bool = graphics:set_uniform_float("u_progress", kind)
+    local seed_ok: bool = graphics:set_uniform_float("u_seed", seed::f64)
+    local aspect_ok: bool = graphics:set_uniform_float("u_aspect", 1.0)
+    local mode_ok: bool = graphics:set_uniform_float("u_particle_mode", 1.0)
+    return progress_ok and seed_ok and aspect_ok and mode_ok
+end
+
+function stop(graphics: Graphics): unit
+    graphics:use_default_shader()
+end
+
+-- A stable little hash keeps every fragment's path lively without consuming
+-- gameplay randomness or changing from frame to frame.
+function hash(id: i32, channel: f64): f64
+    local wave: f64 = math.sin((id::f64) * 12.9898 + channel * 78.233) * 43758.5453
+    return wave - math.floor(wave)
+end
+
+function alpha(progress: f64): string
+    if progress < 0.42 then
+        return "ff"
+    end
+    if progress < 0.68 then
+        return "c0"
+    end
+    if progress < 0.84 then
+        return "78"
+    end
+    return "30"
+end
+
+-- Particle quads are only carriers for the burn shader: its noisy alpha mask
+-- cuts every side away before the fleck reaches the screen. The ellipse is a
+-- shader-less fallback, so an optional-program failure never exposes a square
+-- or a triangle in the fire.
+function draw(
+    graphics: Graphics,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    rotation: f64,
+    color: string,
+    shader_ok: bool
+): unit
+    graphics:push()
+    graphics:translate(x, y)
+    graphics:rotate(rotation)
+    graphics:set_color(color)
+    if shader_ok then
+        graphics:fill_rectangle(-width * 0.5, -height * 0.5, width, height)
+    else
+        graphics:scale(width, height)
+        graphics:fill_circle(0.0, 0.0, 0.5)
+    end
+    graphics:pop()
+end
+
+return { use = use, stop = stop, hash = hash, alpha = alpha, draw = draw }

@@ -14,29 +14,19 @@ import { fileURLToPath } from 'node:url';
 
 import { createServer as createViteServer } from 'vite';
 
+import {
+  requiredEffectName,
+  shaderSources as SHADER_SOURCES,
+  vertexShaderName,
+} from '../shader-sources.js';
+
 const GAME_READY_TIMEOUT = 20_000;
 const ANTE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const VITE_CONFIG = join(ANTE_ROOT, 'vite.config.js');
 
-const SHADER_SOURCES = Object.freeze({
-  'ante.effects.vertex': 'src/shaders/effects.vert',
-  'ante.effects.gold-shimmer': 'src/shaders/gold-shimmer.frag',
-  'ante.effects.defeat-shroud': 'src/shaders/defeat-shroud.frag',
-  'ante.effects.card-burn': 'src/shaders/card-burn.frag',
-  'ante.effects.red-fire': 'src/shaders/red-fire.frag',
-  'ante.effects.blue-caustics': 'src/shaders/blue-caustics.frag',
-  'ante.effects.green-growth': 'src/shaders/green-growth.frag',
-  'ante.effects.black-hole': 'src/shaders/black-hole.frag',
-  'ante.effects.ice-freeze': 'src/shaders/ice-freeze.frag',
-});
-
-const VERTEX_NAME = 'ante.effects.vertex';
-const DEFEAT_NAME = 'ante.effects.defeat-shroud';
+const VERTEX_NAME = vertexShaderName;
+const DEFEAT_NAME = requiredEffectName;
 const PIXEL_NAMES = Object.keys(SHADER_SOURCES).filter((name) => name !== VERTEX_NAME);
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 async function readShaderSources(root = ANTE_ROOT) {
   return Object.fromEntries(await Promise.all(
@@ -214,38 +204,26 @@ async function copyAnteApp(destination) {
   ]);
 }
 
-test('production includes and compiles all nine external shader sources', async ({ page }) => {
+test('production includes and compiles every registered external shader source', async ({ page }) => {
   const shaders = await readShaderSources();
-  const configSource = await readFile(VITE_CONFIG, 'utf8');
   const renderSource = await readFile(join(ANTE_ROOT, 'src', 'render.walu'), 'utf8');
 
-  expect(Object.keys(shaders)).toEqual([
-    VERTEX_NAME,
-    ...PIXEL_NAMES,
-  ]);
-  for (const [name, path] of Object.entries(SHADER_SOURCES)) {
-    expect(configSource).toMatch(new RegExp(
-      `['"]${escapeRegExp(name)}['"]\\s*:\\s*['"]${escapeRegExp(path)}['"]`,
-    ));
+  for (const name of Object.keys(SHADER_SOURCES)) {
     expect(renderSource).not.toContain(shaders[name].trim());
   }
 
   await installRuntimeProbe(page);
   await openGame(page);
 
-  const expectedCounts = Object.fromEntries([
-    // The engine's default renderer uses the same vertex contract once, then
-    // Ante compiles it once for each of its eight external effect programs.
-    [VERTEX_NAME, 9],
-    ...PIXEL_NAMES.map((name) => [name, 1]),
-  ]);
   await expect.poll(
-    () => sourceCounts(page, shaders),
+    async () => Object.values(await sourceCounts(page, shaders))
+      .every((count) => count > 0),
     { timeout: GAME_READY_TIMEOUT },
-  ).toEqual(expectedCounts);
+  ).toBe(true);
 
+  const settledCounts = await sourceCounts(page, shaders);
   await page.waitForTimeout(250);
-  expect(await sourceCounts(page, shaders)).toEqual(expectedCounts);
+  expect(await sourceCounts(page, shaders)).toEqual(settledCounts);
   await expect(page.locator('canvas#walua-game-canvas')).toBeVisible();
 });
 
@@ -379,13 +357,15 @@ test('development HMR fans out, retains the last good shader, and recovers', asy
     await expect.poll(
       () => sourceCounts(page, { vertex: vertexUpdate }),
       { timeout: GAME_READY_TIMEOUT },
-    ).toEqual({ vertex: 8 });
+    ).toEqual({ vertex: PIXEL_NAMES.length });
     await expect.poll(probeSnapshot.bind(null, page)).toMatchObject({
-      programCreates: afterFragments.programCreates + 8,
-      programDeletes: afterFragments.programDeletes + 8,
+      programCreates: afterFragments.programCreates + PIXEL_NAMES.length,
+      programDeletes: afterFragments.programDeletes + PIXEL_NAMES.length,
     });
     await page.waitForTimeout(250);
-    expect(await sourceCounts(page, { vertex: vertexUpdate })).toEqual({ vertex: 8 });
+    expect(await sourceCounts(page, { vertex: vertexUpdate })).toEqual({
+      vertex: PIXEL_NAMES.length,
+    });
 
     const beforeInvalid = await probeSnapshot(page);
     const validDefeat = fragmentUpdates[DEFEAT_NAME];

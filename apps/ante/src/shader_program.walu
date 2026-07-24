@@ -1,0 +1,87 @@
+-- One independently managed fragment program behind a small lifecycle
+-- interface. The effect registry coordinates programs as data instead of
+-- duplicating poll, rebuild, diagnostic, and release branches per shader.
+local engine = require("waluau:engine")
+local graphics_module = require("waluau:engine/graphics")
+local shader_sources = require("waluau:engine/shader_sources")
+
+type Graphics = engine.Graphics
+type Source = shader_sources.Source
+type State = {
+    label: string,
+    required: bool,
+    source: Source,
+    text: string,
+    ready: bool,
+    error: string,
+    shader: graphics_module.Shader?
+}
+
+function new(name: string, label: string, required: bool): State
+    return {
+        label = label,
+        required = required,
+        source = shader_sources.open(name),
+        text = "",
+        ready = false,
+        error = "",
+        shader = nil
+    }
+end
+
+-- Consume one source revision and report whether this program must rebuild.
+function poll(state: State): bool
+    local update: shader_sources.SourceUpdate = state.source:poll()
+    if not update.changed then
+        return false
+    end
+    if update.ok then
+        state.text = update.source
+        state.ready = true
+        state.error = ""
+    else
+        state.ready = false
+        state.error = state.label .. " " .. update.error.code .. ": " .. update.error.message
+    end
+    return true
+end
+
+function rebuild(
+    state: State,
+    graphics: Graphics,
+    vertex_text: string
+): graphics_module.ShaderResult
+    if state.shader == nil then
+        return graphics:create_shader(vertex_text, state.text)
+    end
+    return graphics:replace_shader(state.shader::graphics_module.Shader, vertex_text, state.text)
+end
+
+function refresh(
+    state: State,
+    graphics: Graphics,
+    vertex_text: string,
+    vertex_changed: bool,
+    source_changed: bool
+): unit
+    if not state.ready or (not vertex_changed and not source_changed) then
+        return
+    end
+    local result: graphics_module.ShaderResult = rebuild(state, graphics, vertex_text)
+    if result.ok then
+        state.shader = result.shader
+        state.error = ""
+    else
+        state.error = state.label .. " " .. result.error.code .. ": " .. result.error.message
+    end
+end
+
+function release(state: State, graphics: Graphics): unit
+    local shader: graphics_module.Shader? = state.shader
+    if shader ~= nil then
+        graphics:release_shader(shader::graphics_module.Shader)
+    end
+    state.shader = nil
+end
+
+return { new = new, poll = poll, refresh = refresh, release = release }

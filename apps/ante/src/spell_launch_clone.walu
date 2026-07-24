@@ -1,0 +1,33 @@
+-- Clone's carrier and impact.
+local engine = require("waluau:engine")
+local effect_shaders = require("./effect_shaders")
+local spell_cast = require("./spell_cast")
+
+type Graphics = engine.Graphics
+type EffectShaders = effect_shaders.EffectShaders
+
+function draw(graphics: Graphics, effects: EffectShaders, cast: spell_cast.Cast): unit
+    if cast.progress < 1.0 then
+        local head: spell_cast.Point = spell_cast.at(cast, cast.progress)
+        for spore = 0::i32, 7::i32 do
+            local t: f64 = cast.progress - (spore::f64) * 0.045
+            if t > 0.0 then
+                local at: spell_cast.Point = spell_cast.at(cast, t)
+                graphics:set_color("#86efac99")
+                graphics:fill_circle(
+                    at.x + math.sin((spore::f64) * 2.3) * 7.0,
+                    at.y,
+                    2.0 + (spore % 3)::f64
+                )
+            end
+        end
+        graphics:set_color("#dcfce7")
+        graphics:fill_circle(head.x - 5.0, head.y, 7.0)
+        graphics:fill_circle(head.x + 5.0, head.y, 7.0)
+        graphics:set_color("#4ade80")
+        graphics:fill_circle(head.x, head.y, 8.0)
+    end
+    spell_cast.draw_radial_impact(graphics, cast, "#4ade80")
+end
+
+return { draw = draw }

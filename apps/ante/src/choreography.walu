@@ -14,6 +14,7 @@ type State = {
     anim_clock: f64,
     anim_total: f64,
     anim_kind: i32,
+    reveal_clock: f64,
     power_kind: i32,
     power_clock: f64,
     power_target: i32,
@@ -30,7 +31,6 @@ type Interaction = {
     swap_wards: {i32},
     modal: i32,
     revealing: bool,
-    reveal_clock: f64,
     casting: bool
 }
 
@@ -60,6 +60,9 @@ const SHIFT_STEP: f64 = 0.05
 const REVEAL_FLIP_SECONDS: f64 = 0.55
 const REVEAL_FIRST_DELAY: f64 = 0.2
 const REVEAL_SECOND_DELAY: f64 = 0.585
+-- Presentation owns the complete reveal duration: the losing cards must
+-- ignite, char, and crumble before flow may advance to cleanup.
+const REVEAL_SECONDS: f64 = 3.45
 const FLIP_SOUND_LEAD_SECONDS: f64 = 0.14
 const SNAPSHOT_SCHEMA: string = "ante-presentation-v3"
 const SNAPSHOT_COLLECTION_LIMIT: i32 = 256
@@ -71,6 +74,7 @@ function new(): State
         anim_clock = 0.0,
         anim_total = 0.0,
         anim_kind = ANIM_NONE,
+        reveal_clock = 0.0,
         power_kind = 0,
         power_clock = 0.0,
         power_target = 0,
@@ -105,6 +109,7 @@ function reset(state: State): unit
     state.anim_clock = fresh.anim_clock
     state.anim_total = fresh.anim_total
     state.anim_kind = fresh.anim_kind
+    state.reveal_clock = fresh.reveal_clock
     state.power_kind = fresh.power_kind
     state.power_clock = fresh.power_clock
     state.power_target = fresh.power_target
@@ -190,6 +195,25 @@ function reveal_flip_cues(previous: f64, current: f64): i32
     if crossed(previous, current, first) then cues += 1 end
     if crossed(previous, current, second) then cues += 1 end
     return cues
+end
+
+function begin_reveal(state: State): unit
+    state.reveal_clock = 0.0
+end
+
+function update_reveal(state: State, dt: f64): i32
+    local previous: f64 = state.reveal_clock
+    state.reveal_clock += dt
+    if state.reveal_clock >= REVEAL_SECONDS then state.reveal_clock = REVEAL_SECONDS end
+    return reveal_flip_cues(previous, state.reveal_clock)
+end
+
+function finish_reveal(state: State): unit
+    state.reveal_clock = REVEAL_SECONDS
+end
+
+function reveal_finished(state: State): bool
+    return state.reveal_clock >= REVEAL_SECONDS
 end
 
 -- The board row a side's hand occupies: owner 1 is the player's fan, -1 the
@@ -547,6 +571,7 @@ end
 
 function append_snapshot(parts: {string}, state: State): unit
     snapshot_data.append_f64s(parts, state.fan_parts)
+    snapshot_data.append_f64(parts, state.reveal_clock)
     snapshot_data.append_i32(parts, state.power_kind)
     snapshot_data.append_f64(parts, state.power_clock)
     snapshot_data.append_i32(parts, state.power_target)
@@ -567,6 +592,7 @@ end
 function restore_snapshot(reader: snapshot_data.Reader): State
     local state: State = new()
     state.fan_parts = reader:next_f64s()
+    state.reveal_clock = reader:next_f64()
     state.power_kind = reader:next_i32()
     state.power_clock = reader:next_f64()
     state.power_target = reader:next_i32()
@@ -599,31 +625,37 @@ function draw(
     interaction: Interaction,
     card_back: graphics_module.Texture?
 ): unit
-    render.draw(
-        graphics,
-        effects,
-        view,
-        interaction.hand_focus,
-        state.fan_parts,
-        interaction.ward_cursor,
-        interaction.cursor_area,
-        interaction.play_picks,
-        interaction.swap_hand,
-        interaction.swap_wards,
-        interaction.modal,
-        interaction.revealing,
-        interaction.reveal_clock,
-        state.anims,
-        state.anim_clock,
-        card_back,
-        state.discards,
-        state.computer_won,
-        state.player_won,
-        state.power_kind,
-        state.power_clock,
-        state.power_target,
-        interaction.casting
-    )
+    render.draw(graphics, effects, {
+        view = view,
+        interaction = {
+            hand_focus = interaction.hand_focus,
+            ward_cursor = interaction.ward_cursor,
+            cursor_area = interaction.cursor_area,
+            play_picks = interaction.play_picks,
+            swap_hand = interaction.swap_hand,
+            swap_wards = interaction.swap_wards,
+            modal = interaction.modal,
+            revealing = interaction.revealing,
+            casting = interaction.casting,
+        },
+        motion = {
+            fan_parts = state.fan_parts,
+            reveal_clock = state.reveal_clock,
+            anims = state.anims,
+            anim_clock = state.anim_clock,
+        },
+        piles = {
+            discards = state.discards,
+            computer_won = state.computer_won,
+            player_won = state.player_won,
+        },
+        spell = {
+            kind = state.power_kind,
+            clock = state.power_clock,
+            target = state.power_target,
+        },
+        card_back = card_back,
+    })
 end
 
 function hit_hand(state: State, at: render.Point): i32
@@ -637,6 +669,10 @@ return {
     is_animating = is_animating,
     update = update,
     update_fan = update_fan,
+    begin_reveal = begin_reveal,
+    update_reveal = update_reveal,
+    finish_reveal = finish_reveal,
+    reveal_finished = reveal_finished,
     apply_power = apply_power,
     update_power = update_power,
     apply_hand_order = apply_hand_order,
