@@ -421,6 +421,7 @@ fn engine_module_name(specifier: &str) -> Option<&str> {
         "waluau:engine/time" | "waluau:engine/v1/time" => Some("time"),
         "waluau:engine/font" | "waluau:engine/v1/font" => Some("font"),
         "waluau:engine/hot" | "waluau:engine/v1/hot" => Some("hot"),
+        "waluau:engine/particles" | "waluau:engine/v1/particles" => Some("particles"),
         "waluau:engine/shader_sources" | "waluau:engine/v1/shader_sources" => {
             Some("shader_sources")
         }
@@ -453,6 +454,7 @@ fn engine_module_source(module: &str) -> Option<&'static str> {
         "time" => Some(include_str!("../../../engine/time.walu")),
         "font" => Some(include_str!("../../../engine/font.walu")),
         "hot" => Some(include_str!("../../../engine/hot.walu")),
+        "particles" => Some(include_str!("../../../engine/particles.walu")),
         "shader_sources" => Some(include_str!("../../../engine/shader_sources.walu")),
         _ => None,
     }

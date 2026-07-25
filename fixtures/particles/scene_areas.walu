@@ -1,0 +1,145 @@
+-- Emission-area gallery: the same emitter configuration under every area
+-- distribution, side by side, while the shared area angle slowly rotates.
+-- The border shapes launch their particles away from the emitter center
+-- (area-relative direction), which is how ring explosions and shield
+-- shimmer effects are usually built.
+
+local particles = require("../../engine/particles")
+local graphics_module = require("../../engine/graphics")
+
+local TITLE <const>: string = "Emission Areas"
+local BLURB <const>: string = "All six spawn distributions with a rotating area angle. Click to flash-fill them."
+
+local KIND_COUNT <const>: i32 = 6
+
+type Scene = {
+    width: f64,
+    height: f64,
+    emitters: {particles.ParticleSystem},
+    angle: f64
+}
+
+function kind_name(index: i32): string
+    if index == 0 then return "none" end
+    if index == 1 then return "uniform" end
+    if index == 2 then return "normal" end
+    if index == 3 then return "ellipse" end
+    if index == 4 then return "borderellipse" end
+    return "borderrectangle"
+end
+
+-- The border distributions get an outward launch so the shape reads as a
+-- ring; the filled ones stay still so the density profile reads instead.
+function kind_relative(index: i32): bool
+    return index >= 4
+end
+
+function cell_x(self: Scene, index: i32): f64
+    return self.width * (0.18 + 0.32 * ((index % 3)::f64))
+end
+
+function cell_y(self: Scene, index: i32): f64
+    if index < 3 then
+        return self.height * 0.32
+    end
+    return self.height * 0.72
+end
+
+function Scene.new(width: f64, height: f64): Scene
+    local emitters: {particles.ParticleSystem} = {}
+    for index = 0::i32, KIND_COUNT - 1 do
+        local emitter = particles.new(500)
+        emitter:set_emission_rate(220.0)
+        emitter:set_particle_lifetime(0.35, 0.7)
+        emitter:set_sizes({ 2.2, 1.2 })
+        emitter:set_size_variation(0.3)
+        if kind_relative(index) then
+            emitter:set_speed(14.0, 30.0)
+            emitter:set_spread(0.3)
+        else
+            emitter:set_speed(0.0, 3.0)
+            emitter:set_spread(math.pi * 2.0)
+        end
+        if index % 3 == 0 then
+            emitter:set_colors({ particles.hex("#7ce4ffff"), particles.hex("#7ce4ff00") })
+        elseif index % 3 == 1 then
+            emitter:set_colors({ particles.hex("#ffd75eff"), particles.hex("#ffd75e00") })
+        else
+            emitter:set_colors({ particles.hex("#ff9bf2ff"), particles.hex("#ff9bf200") })
+        end
+        emitter:start()
+        table.insert(emitters, emitter)
+    end
+    local scene: Scene = { width = width, height = height, emitters = emitters, angle = 0.0 }
+    for index = 0::i32, KIND_COUNT - 1 do
+        emitters[index]:set_position(cell_x(scene, index), cell_y(scene, index))
+    end
+    return scene
+end
+
+function Scene:update(dt: f64, mouse_x: f64, mouse_y: f64, mouse_down: bool): unit
+    self.angle += dt * 0.5
+    for index = 0::i32, KIND_COUNT - 1 do
+        local emitter: particles.ParticleSystem = self.emitters[index]
+        -- Re-issuing the area every frame animates the rotation angle; every
+        -- other parameter of the call stays fixed.
+        emitter:set_emission_area(kind_name(index), 42.0, 20.0, self.angle, kind_relative(index))
+        emitter:update(dt)
+    end
+end
+
+function Scene:draw(graphics: graphics_module.Graphics): unit
+    graphics:set_blend_mode("add")
+    for index = 0::i32, KIND_COUNT - 1 do
+        self.emitters[index]:draw(graphics)
+    end
+    graphics:set_blend_mode("alpha")
+    graphics:set_color("#94a3b8")
+    graphics:set_font("10px monospace")
+    for index = 0::i32, KIND_COUNT - 1 do
+        graphics:print_aligned(
+            kind_name(index),
+            cell_x(self, index),
+            cell_y(self, index) + 44.0,
+            "center"
+        )
+    end
+end
+
+function Scene:pressed(x: f64, y: f64): unit
+    for index = 0::i32, KIND_COUNT - 1 do
+        self.emitters[index]:emit(120)
+    end
+end
+
+function Scene:toggle(): unit
+    for index = 0::i32, KIND_COUNT - 1 do
+        local emitter: particles.ParticleSystem = self.emitters[index]
+        if emitter:is_stopped() then
+            emitter:start()
+        else
+            emitter:stop()
+        end
+    end
+end
+
+function Scene:reset(): unit
+    for index = 0::i32, KIND_COUNT - 1 do
+        self.emitters[index]:reset()
+        self.emitters[index]:start()
+    end
+end
+
+function Scene:count(): i32
+    local total: i32 = 0
+    for index = 0::i32, KIND_COUNT - 1 do
+        total += self.emitters[index]:get_count()
+    end
+    return total
+end
+
+return {
+    new = Scene.new,
+    TITLE = TITLE,
+    BLURB = BLURB,
+}

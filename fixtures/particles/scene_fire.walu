@@ -1,0 +1,111 @@
+-- Torch flame demo: layered fire and smoke systems. Shows color and size
+-- tracks over particle lifetime, gaussian emission areas, additive blending
+-- for the flame, and move_to trails as the torch follows the pointer.
+
+local particles = require("../../engine/particles")
+local graphics_module = require("../../engine/graphics")
+
+local TITLE <const>: string = "Flame & Smoke"
+local BLURB <const>: string = "Color/size tracks, gaussian area, additive fire. Move the mouse; click for a burst."
+
+type Scene = {
+    width: f64,
+    height: f64,
+    fire: particles.ParticleSystem,
+    smoke: particles.ParticleSystem
+}
+
+function Scene.new(width: f64, height: f64): Scene
+    local fire = particles.new(600)
+    fire:set_emission_rate(160.0)
+    fire:set_particle_lifetime(0.35, 0.9)
+    fire:set_direction(-math.pi * 0.5)
+    fire:set_spread(0.55)
+    fire:set_speed(30.0, 80.0)
+    fire:set_emission_area("normal", 6.0, 2.0, 0.0, false)
+    fire:set_linear_acceleration(-6.0, -40.0, 6.0, -70.0)
+    fire:set_sizes({ 9.0, 5.0, 1.5 })
+    fire:set_size_variation(0.4)
+    fire:set_colors({
+        particles.hex("#fff7c0ff"),
+        particles.hex("#ffb93eff"),
+        particles.hex("#ff5a1fb0"),
+        particles.hex("#96161600"),
+    })
+    fire:set_position(width * 0.5, height * 0.72)
+    fire:start()
+
+    local smoke = particles.new(300)
+    smoke:set_emission_rate(36.0)
+    smoke:set_particle_lifetime(1.2, 2.6)
+    smoke:set_direction(-math.pi * 0.5)
+    smoke:set_spread(0.7)
+    smoke:set_speed(14.0, 32.0)
+    smoke:set_emission_area("normal", 4.0, 2.0, 0.0, false)
+    smoke:set_linear_acceleration(-8.0, -12.0, 8.0, -26.0)
+    smoke:set_linear_damping(0.4, 1.0)
+    smoke:set_sizes({ 6.0, 14.0, 24.0 })
+    smoke:set_size_variation(0.5)
+    smoke:set_rotation(0.0, math.pi)
+    smoke:set_spin(-0.7, 0.7)
+    smoke:set_spin_variation(1.0)
+    smoke:set_colors({
+        particles.rgba(0.62, 0.6, 0.58, 0.0),
+        particles.rgba(0.5, 0.48, 0.47, 0.3),
+        particles.rgba(0.35, 0.34, 0.34, 0.0),
+    })
+    smoke:set_position(width * 0.5, height * 0.68)
+    smoke:start()
+
+    return { width = width, height = height, fire = fire, smoke = smoke }
+end
+
+function Scene:update(dt: f64, mouse_x: f64, mouse_y: f64, mouse_down: bool): unit
+    -- move_to (rather than set_position) smears emission along the pointer's
+    -- path, so a fast flick leaves an unbroken ribbon of flame.
+    if mouse_x > 0.0 and mouse_y > 0.0 and mouse_x < self.width and mouse_y < self.height then
+        self.fire:move_to(mouse_x, mouse_y)
+        self.smoke:move_to(mouse_x, mouse_y + 4.0)
+    end
+    self.fire:update(dt)
+    self.smoke:update(dt)
+end
+
+function Scene:draw(graphics: graphics_module.Graphics): unit
+    self.smoke:draw(graphics)
+    graphics:set_blend_mode("add")
+    self.fire:draw(graphics)
+    graphics:set_blend_mode("alpha")
+end
+
+function Scene:pressed(x: f64, y: f64): unit
+    -- A click puffs a burst of extra flame at the torch.
+    self.fire:emit(80)
+end
+
+function Scene:toggle(): unit
+    if self.fire:is_stopped() then
+        self.fire:start()
+        self.smoke:start()
+    else
+        self.fire:stop()
+        self.smoke:stop()
+    end
+end
+
+function Scene:reset(): unit
+    self.fire:reset()
+    self.smoke:reset()
+    self.fire:start()
+    self.smoke:start()
+end
+
+function Scene:count(): i32
+    return self.fire:get_count() + self.smoke:get_count()
+end
+
+return {
+    new = Scene.new,
+    TITLE = TITLE,
+    BLURB = BLURB,
+}

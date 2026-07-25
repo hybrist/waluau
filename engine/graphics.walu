@@ -513,6 +513,15 @@ function Graphics:set_color(color: string): unit
     end
 end
 
+-- Numeric variant of set_color for callers that compute colors per draw
+-- (particle systems, tweens); channels are 0.0..1.0 and are not clamped.
+function Graphics:set_color_rgba(red: f64, green: f64, blue: f64, alpha: f64): unit
+    self.red = red
+    self.green = green
+    self.blue = blue
+    self.alpha = alpha
+end
+
 function Graphics:set_line_width(width: f64): unit
     self.line_width = width
 end

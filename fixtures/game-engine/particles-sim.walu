@@ -1,0 +1,133 @@
+-- Behavioral assertions for the particle system that need no canvas: spawn
+-- accounting, emitter lifecycle, rate integration, buffer limits, and the
+-- configuration surface. Rendering is covered by particles.walu.
+
+local particles = require("../../engine/particles")
+
+math.randomseed(7.0)
+
+-- Color helpers.
+local red = particles.hex("#ff0000ff")
+assert(red.red > 0.99 and red.green < 0.01 and red.blue < 0.01 and red.alpha > 0.99)
+local translucent = particles.hex("#00ff0080")
+assert(translucent.green > 0.99 and translucent.alpha > 0.49 and translucent.alpha < 0.52)
+local built = particles.rgba(0.25, 0.5, 0.75, 1.0)
+assert(built.blue == 0.75)
+
+local ps = particles.new(32)
+assert(ps:get_buffer_size() == 32)
+assert(ps:get_count() == 0)
+assert(ps:is_empty())
+assert(ps:is_stopped())
+assert(not ps:is_active())
+
+-- The full configuration surface accepts values without a canvas.
+ps:set_position(10.0, 20.0)
+ps:set_emission_rate(10.0)
+ps:set_particle_lifetime(1.0, 1.0)
+ps:set_emission_area("uniform", 4.0, 4.0, 0.5, false)
+ps:set_direction(0.0)
+ps:set_spread(0.2)
+ps:set_speed(5.0, 9.0)
+ps:set_linear_acceleration(-1.0, 2.0, 1.0, 4.0)
+ps:set_radial_acceleration(-2.0, 2.0)
+ps:set_tangential_acceleration(1.0, 3.0)
+ps:set_linear_damping(0.0, 0.5)
+ps:set_sizes({ 2.0, 4.0, 1.0 })
+ps:set_size_variation(0.5)
+ps:set_rotation(0.0, math.pi)
+ps:set_spin(-1.0, 1.0)
+ps:set_spin_variation(0.5)
+ps:set_colors({ red, translucent, built })
+ps:set_offset(1.0, 1.0)
+ps:set_relative_rotation(true)
+ps:set_insert_mode("random")
+ps:set_insert_mode("sideways")
+assert(ps:get_insert_mode() == "random")
+
+local min_life: f64, max_life: f64 = ps:get_particle_lifetime()
+assert(min_life == 1.0 and max_life == 1.0)
+local min_speed: f64, max_speed: f64 = ps:get_speed()
+assert(min_speed == 5.0 and max_speed == 9.0)
+local px: f64, py: f64 = ps:get_position()
+assert(px == 10.0 and py == 20.0)
+assert(ps:get_emission_rate() == 10.0)
+assert(ps:get_emission_area() == "uniform")
+assert(ps:has_relative_rotation())
+assert(ps:get_size_variation() == 0.5)
+
+-- A stopped system never emits on its own, but emit() bursts always work.
+ps:update(1.0)
+assert(ps:get_count() == 0)
+ps:emit(5)
+assert(ps:get_count() == 5)
+
+-- Rate integration: 10 particles per second while running. The burst from
+-- above had exactly one second of lifetime, so this same update retires it.
+ps:start()
+assert(ps:is_active())
+ps:update(1.0)
+assert(ps:get_count() == 10)
+
+-- Pausing halts emission while existing particles keep aging out; the
+-- 1-second lifetime from above expires during the paused update.
+ps:pause()
+assert(ps:is_paused())
+assert(not ps:is_active())
+ps:update(1.5)
+assert(ps:get_count() == 0)
+
+-- start() clears the pause and emission resumes.
+ps:start()
+ps:update(0.5)
+assert(ps:get_count() == 5)
+
+-- The buffer caps live particles; shrinking drops the newest first.
+ps:emit(1000)
+assert(ps:get_count() == 32)
+assert(ps:is_full())
+ps:set_buffer_size(4)
+assert(ps:get_count() == 4)
+assert(ps:get_buffer_size() == 4)
+ps:set_buffer_size(64)
+
+-- reset() empties the pool without touching the running state.
+ps:reset()
+assert(ps:get_count() == 0)
+assert(ps:is_active())
+
+-- A finite emitter lifetime stops the system after exactly that much
+-- emission time: 0.5 seconds at 100/s yields 50 particles, then stops.
+local timed = particles.new(256)
+timed:set_emission_rate(100.0)
+timed:set_particle_lifetime(60.0, 60.0)
+timed:set_emitter_lifetime(0.5)
+timed:start()
+timed:update(1.0)
+assert(timed:get_count() == 50)
+assert(timed:is_stopped())
+timed:update(1.0)
+assert(timed:get_count() == 50)
+
+-- start() rewinds the emitter clock for another 0.5 seconds.
+timed:start()
+timed:update(0.25)
+assert(timed:get_count() == 75)
+assert(timed:is_active())
+timed:update(1.0)
+assert(timed:get_count() == 100)
+assert(timed:is_stopped())
+
+-- Insert modes place fresh spawns at both ends of the draw order without
+-- corrupting the pool.
+local ordered = particles.new(16)
+ordered:set_particle_lifetime(60.0, 60.0)
+ordered:set_insert_mode("bottom")
+ordered:emit(8)
+ordered:set_insert_mode("top")
+ordered:emit(8)
+assert(ordered:get_count() == 16)
+ordered:update(0.1)
+assert(ordered:get_count() == 16)
+
+print("particle system simulation ok")

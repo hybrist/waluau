@@ -11,7 +11,7 @@ type Session = browser.Session
 type Input = input_module.Input
 type Graphics = graphics_module.Graphics
 
-local VERSION <const>: string = "1.2.0"
+local VERSION <const>: string = "1.3.0"
 
 return {
     VERSION = VERSION,

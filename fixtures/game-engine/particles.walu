@@ -1,0 +1,78 @@
+-- Conformance fixture for particle rendering: an untextured particle drawn
+-- through the color track and a textured particle backed by a render-target
+-- atlas, both deterministic so the harness can read exact pixels.
+
+local engine = require("../../engine/browser")
+local input_module = require("../../engine/input")
+local graphics_module = require("../../engine/graphics")
+local particles = require("../../engine/particles")
+
+function install_fixture(): unit
+    -- A motionless opaque red 24x24 square centered at (60, 60).
+    local square = particles.new(8)
+    square:set_particle_lifetime(600.0, 600.0)
+    square:set_speed(0.0, 0.0)
+    square:set_sizes({ 24.0 })
+    square:set_colors({ particles.hex("#ff0000ff") })
+    square:set_position(60.0, 60.0)
+    square:emit(1)
+
+    -- A motionless textured particle centered at (200, 60); the texture is a
+    -- solid green block painted into a render target at startup.
+    local sprite = particles.new(8)
+    sprite:set_particle_lifetime(600.0, 600.0)
+    sprite:set_speed(0.0, 0.0)
+    sprite:set_sizes({ 1.0 })
+    sprite:set_colors({ particles.rgba(1.0, 1.0, 1.0, 1.0) })
+    sprite:set_position(200.0, 60.0)
+    sprite:emit(1)
+
+    local texture_ready: bool = false
+
+    local function load(): unit
+    end
+
+    local function update(dt: f64, input: input_module.Input): unit
+        square:update(dt)
+        sprite:update(dt)
+    end
+
+    local function draw(graphics: graphics_module.Graphics, alpha: f64): unit
+        if not texture_ready then
+            local result = graphics:create_render_target(32, 32)
+            if result.ok then
+                graphics:set_render_target(result.target)
+                graphics:clear("#00ff00ff")
+                graphics:set_screen_target()
+                sprite:set_render_target_texture(result.target)
+            end
+            texture_ready = true
+        end
+        graphics:clear("#000000")
+        square:draw(graphics)
+        sprite:draw(graphics)
+    end
+
+    local function keypressed(key: string): unit
+    end
+
+    engine.start({
+        title = "Particle rendering fixture",
+        width = 320,
+        height = 200,
+        update_hz = 60.0,
+        max_frame_seconds = 0.25,
+        background = "#000000",
+    }, {
+        load = load,
+        update = update,
+        draw = draw,
+        keypressed = keypressed,
+        keyreleased = nil,
+        mousepressed = nil,
+        mousereleased = nil,
+        mousemoved = nil,
+    })
+end
+
+install_fixture()

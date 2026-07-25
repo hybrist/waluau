@@ -1,0 +1,104 @@
+-- Fountain demo: gravity via linear acceleration, damping, a narrow spread
+-- cone, and live reconfiguration - holding the mouse button bends the jet
+-- toward the pointer by rewriting the acceleration range every update.
+
+local particles = require("../../engine/particles")
+local graphics_module = require("../../engine/graphics")
+
+local TITLE <const>: string = "Fountain"
+local BLURB <const>: string = "Gravity, damping, velocity-aligned droplets. Hold the button to bend the jet."
+
+type Scene = {
+    width: f64,
+    height: f64,
+    water: particles.ParticleSystem,
+    mist: particles.ParticleSystem
+}
+
+function Scene.new(width: f64, height: f64): Scene
+    local water = particles.new(1200)
+    water:set_emission_rate(420.0)
+    water:set_particle_lifetime(1.2, 1.9)
+    water:set_direction(-math.pi * 0.5)
+    water:set_spread(0.3)
+    water:set_speed(230.0, 300.0)
+    water:set_linear_acceleration(0.0, 420.0, 0.0, 420.0)
+    water:set_linear_damping(0.05, 0.25)
+    water:set_sizes({ 3.2, 2.4, 1.2 })
+    water:set_size_variation(0.4)
+    water:set_relative_rotation(true)
+    water:set_colors({
+        particles.hex("#e8fbffff"),
+        particles.hex("#7cd4ffe0"),
+        particles.hex("#2f7fd800"),
+    })
+    water:set_position(width * 0.5, height - 12.0)
+    water:start()
+
+    -- A soft alpha-blended mist hangs where droplets land.
+    local mist = particles.new(200)
+    mist:set_emission_rate(50.0)
+    mist:set_particle_lifetime(0.8, 1.6)
+    mist:set_direction(-math.pi * 0.5)
+    mist:set_spread(math.pi)
+    mist:set_speed(4.0, 18.0)
+    mist:set_emission_area("uniform", 60.0, 4.0, 0.0, false)
+    mist:set_sizes({ 8.0, 16.0 })
+    mist:set_size_variation(0.5)
+    mist:set_colors({
+        particles.rgba(0.75, 0.9, 1.0, 0.0),
+        particles.rgba(0.75, 0.9, 1.0, 0.14),
+        particles.rgba(0.75, 0.9, 1.0, 0.0),
+    })
+    mist:set_position(width * 0.5, height - 8.0)
+    mist:start()
+
+    return { width = width, height = height, water = water, mist = mist }
+end
+
+function Scene:update(dt: f64, mouse_x: f64, mouse_y: f64, mouse_down: bool): unit
+    -- Setter calls are cheap enough to run per frame, so input can steer a
+    -- live system: holding the button adds a sideways pull toward the mouse.
+    local pull: f64 = 0.0
+    if mouse_down then
+        pull = (mouse_x - self.width * 0.5) * 1.4
+    end
+    self.water:set_linear_acceleration(pull, 420.0, pull, 420.0)
+    self.water:update(dt)
+    self.mist:update(dt)
+end
+
+function Scene:draw(graphics: graphics_module.Graphics): unit
+    self.mist:draw(graphics)
+    self.water:draw(graphics)
+end
+
+function Scene:pressed(x: f64, y: f64): unit
+end
+
+function Scene:toggle(): unit
+    if self.water:is_stopped() then
+        self.water:start()
+        self.mist:start()
+    else
+        self.water:stop()
+        self.mist:stop()
+    end
+end
+
+function Scene:reset(): unit
+    self.water:reset()
+    self.mist:reset()
+    self.water:start()
+    self.mist:start()
+end
+
+function Scene:count(): i32
+    return self.water:get_count() + self.mist:get_count()
+end
+
+return {
+    new = Scene.new,
+    TITLE = TITLE,
+    BLURB = BLURB,
+}

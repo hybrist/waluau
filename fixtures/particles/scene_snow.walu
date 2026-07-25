@@ -1,0 +1,83 @@
+-- Snow demo: a wide uniform emission area above the screen, long particle
+-- lifetimes, per-flake spin with full variation, and the "bottom" insert
+-- mode so fresh flakes appear behind the ones already falling. The mouse
+-- position sets the wind.
+
+local particles = require("../../engine/particles")
+local graphics_module = require("../../engine/graphics")
+
+local TITLE <const>: string = "Snowfall"
+local BLURB <const>: string = "Wide uniform area, spinning flakes, bottom insert mode. Mouse steers the wind."
+
+type Scene = {
+    width: f64,
+    height: f64,
+    snow: particles.ParticleSystem
+}
+
+function Scene.new(width: f64, height: f64): Scene
+    local snow = particles.new(900)
+    snow:set_emission_rate(90.0)
+    snow:set_particle_lifetime(7.0, 11.0)
+    snow:set_direction(math.pi * 0.5)
+    snow:set_spread(0.25)
+    snow:set_speed(22.0, 46.0)
+    snow:set_emission_area("uniform", width * 0.55, 6.0, 0.0, false)
+    snow:set_linear_damping(0.1, 0.4)
+    snow:set_sizes({ 2.0, 4.5, 3.0 })
+    snow:set_size_variation(0.7)
+    snow:set_rotation(0.0, math.pi)
+    snow:set_spin(-1.6, 1.6)
+    snow:set_spin_variation(1.0)
+    snow:set_insert_mode("bottom")
+    snow:set_colors({
+        particles.rgba(1.0, 1.0, 1.0, 0.0),
+        particles.rgba(0.92, 0.96, 1.0, 0.9),
+        particles.rgba(0.85, 0.92, 1.0, 0.75),
+        particles.rgba(0.85, 0.92, 1.0, 0.0),
+    })
+    snow:set_position(width * 0.5, -10.0)
+    snow:start()
+    return { width = width, height = height, snow = snow }
+end
+
+function Scene:update(dt: f64, mouse_x: f64, mouse_y: f64, mouse_down: bool): unit
+    -- Wind: the pointer's horizontal offset from center becomes a shared
+    -- sideways acceleration, stronger while the button is held.
+    local wind: f64 = (mouse_x - self.width * 0.5) * 0.12
+    if mouse_down then
+        wind *= 4.0
+    end
+    self.snow:set_linear_acceleration(wind - 6.0, 4.0, wind + 6.0, 10.0)
+    self.snow:update(dt)
+end
+
+function Scene:draw(graphics: graphics_module.Graphics): unit
+    self.snow:draw(graphics)
+end
+
+function Scene:pressed(x: f64, y: f64): unit
+end
+
+function Scene:toggle(): unit
+    if self.snow:is_stopped() then
+        self.snow:start()
+    else
+        self.snow:stop()
+    end
+end
+
+function Scene:reset(): unit
+    self.snow:reset()
+    self.snow:start()
+end
+
+function Scene:count(): i32
+    return self.snow:get_count()
+end
+
+return {
+    new = Scene.new,
+    TITLE = TITLE,
+    BLURB = BLURB,
+}

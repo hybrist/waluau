@@ -17,12 +17,15 @@ import gameEngineTextAlignment from '../../../fixtures/game-engine/text-alignmen
 import gameEngineGraphicsPaths from '../../../fixtures/game-engine/graphics-paths.walu?raw';
 import stableEngineProject from '../../../examples/game-project/main.walu?raw';
 import gameEngineGpuShaders from '../../../fixtures/game-engine/gpu-shaders.walu?raw';
+import gameEngineParticlesSim from '../../../fixtures/game-engine/particles-sim.walu?raw';
+import gameEngineParticlesFixture from '../../../fixtures/game-engine/particles.walu?raw';
 import gameEngineShaderSources from '../../../fixtures/game-engine/shader-sources.walu?raw';
 import gameEngineGpuResources from '../../../fixtures/game-engine/gpu-resources.walu?raw';
 import gameEngineGpuFontResources from '../../../fixtures/game-engine/gpu-font-resources.walu?raw';
 import pokerCardBack from '../../../apps/ante/assets/card-back.svg?raw';
 import pokerFontUrl from '../../../apps/ante/assets/Cinzel-Bold.ttf?url';
 import gameEngineBrowser from '../../../engine/browser.walu?raw';
+import gameEngineParticles from '../../../engine/particles.walu?raw';
 import gameEngineGraphics from '../../../engine/graphics.walu?raw';
 import gameEngineFont from '../../../engine/font.walu?raw';
 import gameEngineInput from '../../../engine/input.walu?raw';
@@ -1075,6 +1078,57 @@ describe('browser conformance', () => {
       expect(hasColorNear(pixels, 60, 80, [64, 255, 64])).toBe(true);
       expect(hasColorNear(pixels, 180, 75, [64, 128, 255])).toBe(true);
       expect(hasColorNear(pixels, 310, 182, [255, 64, 255])).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('runs the particle system simulation assertions', async () => {
+    // The particles module pulls in graphics (and with it the DOM externs),
+    // so the DOM harness instantiates it; the fixture itself never renders.
+    const { cleanup } = await compileAndInstantiateWithDom(
+      {
+        '/fixtures/game-engine/particles-sim.walu': gameEngineParticlesSim,
+        '/engine/particles.walu': gameEngineParticles,
+        '/engine/graphics.walu': gameEngineGraphics,
+        '/engine/resources.walu': gameEngineResources,
+        '/engine/font.walu': gameEngineFont,
+      },
+      '/fixtures/game-engine/particles-sim.walu'
+    );
+    cleanup();
+  });
+
+  it('renders untextured and render-target-textured particles', async () => {
+    const { root, cleanup } = await compileAndInstantiateWithDom(
+      {
+        '/fixtures/game-engine/particles.walu': gameEngineParticlesFixture,
+        '/engine/browser.walu': gameEngineBrowser,
+        '/engine/particles.walu': gameEngineParticles,
+        '/engine/graphics.walu': gameEngineGraphics,
+        '/engine/resources.walu': gameEngineResources,
+        '/engine/font.walu': gameEngineFont,
+        '/engine/input.walu': gameEngineInput,
+        '/engine/time.walu': gameEngineTime,
+      },
+      '/fixtures/game-engine/particles.walu'
+    );
+    try {
+      const canvas = root.querySelector('#walua-game-canvas');
+      expect(canvas).not.toBeNull();
+      const gl = canvas.getContext('webgl2');
+      const squarePixel = new Uint8Array(4);
+      const spritePixel = new Uint8Array(4);
+      await expect.poll(() => {
+        gl.readPixels(60, 200 - 1 - 60, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, squarePixel);
+        gl.readPixels(200, 200 - 1 - 60, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, spritePixel);
+        return squarePixel[0];
+      }, { timeout: 10_000 }).toBeGreaterThan(200);
+      // The untextured particle takes its color from the color track...
+      expect(squarePixel[1]).toBeLessThan(60);
+      // ...and the textured one samples the green render-target atlas.
+      expect(spritePixel[1]).toBeGreaterThan(200);
+      expect(spritePixel[0]).toBeLessThan(60);
     } finally {
       cleanup();
     }

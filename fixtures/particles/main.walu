@@ -1,0 +1,190 @@
+-- Particle system showcase. Each scene exercises a different slice of
+-- waluau:engine/particles - lifetime color/size tracks, emission areas,
+-- radial/tangential acceleration, damping, spin, insert modes, emit()
+-- bursts, move_to trails, and render-target textures with quad animation.
+--
+-- Controls: Left/Right (or 1-6) switch scenes, Space stops/starts the
+-- emitters, R resets the active scene, and the mouse drives whatever the
+-- scene header says it drives.
+
+local engine = require("../../engine/browser")
+local input_module = require("../../engine/input")
+local graphics_module = require("../../engine/graphics")
+local scene_fire = require("./scene_fire")
+local scene_fountain = require("./scene_fountain")
+local scene_fireworks = require("./scene_fireworks")
+local scene_snow = require("./scene_snow")
+local scene_galaxy = require("./scene_galaxy")
+local scene_areas = require("./scene_areas")
+
+local WIDTH <const>: f64 = 640.0
+local HEIGHT <const>: f64 = 360.0
+local SCENE_COUNT <const>: i32 = 6
+
+function install_demo(): unit
+    local fire = scene_fire.new(WIDTH, HEIGHT)
+    local fountain = scene_fountain.new(WIDTH, HEIGHT)
+    local fireworks = scene_fireworks.new(WIDTH, HEIGHT)
+    local snow = scene_snow.new(WIDTH, HEIGHT)
+    local galaxy = scene_galaxy.new(WIDTH, HEIGHT)
+    local areas = scene_areas.new(WIDTH, HEIGHT)
+
+    local active: i32 = 0
+    local mouse_x: f64 = -1.0
+    local mouse_y: f64 = -1.0
+    local mouse_down: bool = false
+
+    local function scene_title(index: i32): string
+        if index == 0 then return scene_fire.TITLE end
+        if index == 1 then return scene_fountain.TITLE end
+        if index == 2 then return scene_fireworks.TITLE end
+        if index == 3 then return scene_snow.TITLE end
+        if index == 4 then return scene_galaxy.TITLE end
+        return scene_areas.TITLE
+    end
+
+    local function scene_blurb(index: i32): string
+        if index == 0 then return scene_fire.BLURB end
+        if index == 1 then return scene_fountain.BLURB end
+        if index == 2 then return scene_fireworks.BLURB end
+        if index == 3 then return scene_snow.BLURB end
+        if index == 4 then return scene_galaxy.BLURB end
+        return scene_areas.BLURB
+    end
+
+    local function scene_count(index: i32): i32
+        if index == 0 then return fire:count() end
+        if index == 1 then return fountain:count() end
+        if index == 2 then return fireworks:count() end
+        if index == 3 then return snow:count() end
+        if index == 4 then return galaxy:count() end
+        return areas:count()
+    end
+
+    local function scene_update(index: i32, dt: f64): unit
+        if index == 0 then fire:update(dt, mouse_x, mouse_y, mouse_down)
+        elseif index == 1 then fountain:update(dt, mouse_x, mouse_y, mouse_down)
+        elseif index == 2 then fireworks:update(dt, mouse_x, mouse_y, mouse_down)
+        elseif index == 3 then snow:update(dt, mouse_x, mouse_y, mouse_down)
+        elseif index == 4 then galaxy:update(dt, mouse_x, mouse_y, mouse_down)
+        else areas:update(dt, mouse_x, mouse_y, mouse_down) end
+    end
+
+    local function scene_draw(index: i32, graphics: graphics_module.Graphics): unit
+        if index == 0 then fire:draw(graphics)
+        elseif index == 1 then fountain:draw(graphics)
+        elseif index == 2 then fireworks:draw(graphics)
+        elseif index == 3 then snow:draw(graphics)
+        elseif index == 4 then galaxy:draw(graphics)
+        else areas:draw(graphics) end
+    end
+
+    local function scene_pressed(index: i32, x: f64, y: f64): unit
+        if index == 0 then fire:pressed(x, y)
+        elseif index == 1 then fountain:pressed(x, y)
+        elseif index == 2 then fireworks:pressed(x, y)
+        elseif index == 3 then snow:pressed(x, y)
+        elseif index == 4 then galaxy:pressed(x, y)
+        else areas:pressed(x, y) end
+    end
+
+    local function scene_toggle(index: i32): unit
+        if index == 0 then fire:toggle()
+        elseif index == 1 then fountain:toggle()
+        elseif index == 2 then fireworks:toggle()
+        elseif index == 3 then snow:toggle()
+        elseif index == 4 then galaxy:toggle()
+        else areas:toggle() end
+    end
+
+    local function scene_reset(index: i32): unit
+        if index == 0 then fire:reset()
+        elseif index == 1 then fountain:reset()
+        elseif index == 2 then fireworks:reset()
+        elseif index == 3 then snow:reset()
+        elseif index == 4 then galaxy:reset()
+        else areas:reset() end
+    end
+
+    local function switch_to(index: i32): unit
+        active = (index + SCENE_COUNT) % SCENE_COUNT
+        scene_reset(active)
+    end
+
+    local function load(): unit
+    end
+
+    local function update(dt: f64, input: input_module.Input): unit
+        mouse_x = input.mouse_x
+        mouse_y = input.mouse_y
+        mouse_down = input:is_mouse_down(1)
+        scene_update(active, dt)
+    end
+
+    local function draw(graphics: graphics_module.Graphics, alpha: f64): unit
+        graphics:clear("#0b1020")
+        scene_draw(active, graphics)
+
+        graphics:set_color("#f8fafc")
+        graphics:set_font("14px monospace")
+        graphics:print(
+            tostring(active + 1) .. "/" .. tostring(SCENE_COUNT) .. "  " .. scene_title(active),
+            10.0, 20.0
+        )
+        graphics:set_color("#94a3b8")
+        graphics:set_font("10px monospace")
+        graphics:print(scene_blurb(active), 10.0, 36.0)
+        graphics:print(
+            "Left/Right switch   Space stop/start   R reset   particles: "
+                .. tostring(scene_count(active)),
+            10.0, HEIGHT - 8.0
+        )
+    end
+
+    local function keypressed(key: string): unit
+        if key == "ArrowRight" then
+            switch_to(active + 1)
+        elseif key == "ArrowLeft" then
+            switch_to(active - 1)
+        elseif key == "1" then switch_to(0)
+        elseif key == "2" then switch_to(1)
+        elseif key == "3" then switch_to(2)
+        elseif key == "4" then switch_to(3)
+        elseif key == "5" then switch_to(4)
+        elseif key == "6" then switch_to(5)
+        elseif key == " " then
+            scene_toggle(active)
+        elseif key == "r" then
+            scene_reset(active)
+        end
+    end
+
+    local function keyreleased(key: string): unit
+    end
+
+    local function mousepressed(x: f64, y: f64, button: i32): unit
+        if button == 1 then
+            scene_pressed(active, x, y)
+        end
+    end
+
+    engine.start({
+        title = "Waluau Particle System Demos",
+        width = 640,
+        height = 360,
+        update_hz = 60.0,
+        max_frame_seconds = 0.25,
+        background = "#0b1020",
+    }, {
+        load = load,
+        update = update,
+        draw = draw,
+        keypressed = keypressed,
+        keyreleased = keyreleased,
+        mousepressed = mousepressed,
+        mousereleased = nil,
+        mousemoved = nil,
+    })
+end
+
+install_demo()

@@ -1,0 +1,946 @@
+-- Host-independent particle system modeled on the LÖVE (love2d)
+-- ParticleSystem. A ParticleSystem owns an emitter (position, rate, lifetime,
+-- emission area) and a bounded pool of live particles; update(dt) advances
+-- both with the same fixed-step dt the game loop already uses, and
+-- draw(graphics) renders every live particle through the batched Graphics
+-- facade, so a full system costs one texture bind and a handful of draw
+-- calls per frame.
+--
+-- Particles are simulated in emitter space: each one samples its launch
+-- direction, speed, accelerations, damping, lifetime, size track, spin and
+-- rotation once at spawn, then integrates. Sizes and colors are stage
+-- tracks (up to any number of stops) interpolated over each particle's
+-- lifetime, matching love2d's setSizes/setColors behavior including the
+-- per-particle size-variation window.
+--
+-- Rendering supports three looks:
+--   * untextured (default): a 1x1 logical-pixel square scaled by the size
+--     track, so sizes read directly as pixel dimensions
+--   * textured: any Graphics Texture, scaled by the size track
+--   * quads: sub-regions of the texture played back over each particle's
+--     lifetime (sprite-sheet animation), like love2d's setQuads
+--
+-- The module never touches the DOM, so it is usable from headless tests.
+
+local graphics_module = require("./graphics")
+
+-- One color stop of the lifetime color track, channels in 0.0..1.0.
+type Color = { red: f64, green: f64, blue: f64, alpha: f64 }
+
+-- A texture sub-region in texel coordinates (top-left origin), the
+-- equivalent of a love2d Quad.
+type Quad = { x: f64, y: f64, width: f64, height: f64 }
+
+type Particle = {
+    life: f64,
+    lifetime: f64,
+    x: f64,
+    y: f64,
+    vx: f64,
+    vy: f64,
+    -- The emitter position this particle was born at; radial and tangential
+    -- acceleration are computed against it every step.
+    origin_x: f64,
+    origin_y: f64,
+    accel_x: f64,
+    accel_y: f64,
+    radial: f64,
+    tangential: f64,
+    damping: f64,
+    -- Per-particle window into the size track (love2d size variation).
+    size_offset: f64,
+    size_span: f64,
+    rotation: f64,
+    spin_start: f64,
+    spin_end: f64
+}
+
+type ParticleSystem = {
+    buffer_size: i32,
+    particles: {Particle},
+    running: bool,
+    paused: bool,
+    x: f64,
+    y: f64,
+    prev_x: f64,
+    prev_y: f64,
+    emission_rate: f64,
+    emit_counter: f64,
+    -- <= 0.0 emits forever; otherwise seconds of emission per start().
+    emitter_lifetime: f64,
+    emitter_life: f64,
+    life_min: f64,
+    life_max: f64,
+    -- "none" | "uniform" | "normal" | "ellipse" | "borderellipse" |
+    -- "borderrectangle"
+    area_kind: string,
+    area_dx: f64,
+    area_dy: f64,
+    area_angle: f64,
+    area_relative: bool,
+    direction: f64,
+    spread: f64,
+    speed_min: f64,
+    speed_max: f64,
+    accel_min_x: f64,
+    accel_min_y: f64,
+    accel_max_x: f64,
+    accel_max_y: f64,
+    radial_min: f64,
+    radial_max: f64,
+    tangential_min: f64,
+    tangential_max: f64,
+    damping_min: f64,
+    damping_max: f64,
+    sizes: {f64},
+    size_variation: f64,
+    rotation_min: f64,
+    rotation_max: f64,
+    spin_start: f64,
+    spin_end: f64,
+    spin_variation: f64,
+    colors: {Color},
+    offset_x: f64,
+    offset_y: f64,
+    -- With the default offset the anchor tracks the texture (or unit quad)
+    -- center even when the texture changes later.
+    default_offset: bool,
+    relative_rotation: bool,
+    -- "top" | "bottom" | "random"
+    insert_mode: string,
+    has_texture: bool,
+    texture: graphics_module.Texture,
+    -- Render-target textures store their top row at v=1; sprites need the
+    -- flip Graphics already applies for draw_render_target.
+    texture_flipped: bool,
+    quads: {Quad}
+}
+
+function clamp01(value: f64): f64
+    if value < 0.0 then return 0.0 end
+    if value > 1.0 then return 1.0 end
+    return value
+end
+
+function random_range(low: f64, high: f64): f64
+    return low + (high - low) * math.random()
+end
+
+-- Approximate standard-normal sample (Irwin-Hall sum of 12 uniforms). The
+-- builtin math surface has no log, so Box-Muller is unavailable; this stays
+-- within ~0.2% of a true gaussian over +-3 sigma, plenty for emission areas.
+function random_normal(stddev: f64): f64
+    local sum: f64 = 0.0
+    for _ = 1::i32, 12::i32 do
+        sum += math.random()
+    end
+    return (sum - 6.0) * stddev
+end
+
+-- Minimax polynomial for atan on |z| <= 1; max error ~1e-5 rad, far below
+-- one visible degree of particle rotation.
+function atan_unit(z: f64): f64
+    local z2: f64 = z * z
+    return z * (0.99997726 + z2 * (-0.33262347 + z2 * (0.19354346
+        + z2 * (-0.11643287 + z2 * (0.05265332 + z2 * -0.01172120)))))
+end
+
+function approx_atan(z: f64): f64
+    if z > 1.0 then return math.pi * 0.5 - atan_unit(1.0 / z) end
+    if z < -1.0 then return -math.pi * 0.5 - atan_unit(1.0 / z) end
+    return atan_unit(z)
+end
+
+-- Full-quadrant atan2. The builtin math surface has no inverse trig, and
+-- particle features (area-relative launch directions, velocity-relative
+-- rotation) need the angle of a vector.
+function approx_atan2(y: f64, x: f64): f64
+    if x > 0.0 then return approx_atan(y / x) end
+    if x < 0.0 then
+        if y >= 0.0 then return approx_atan(y / x) + math.pi end
+        return approx_atan(y / x) - math.pi
+    end
+    if y > 0.0 then return math.pi * 0.5 end
+    if y < 0.0 then return -math.pi * 0.5 end
+    return 0.0
+end
+
+function hex_digit(code: i32): i32
+    if code >= 48 and code <= 57 then
+        return code - 48
+    elseif code >= 97 and code <= 102 then
+        return code - 87
+    elseif code >= 65 and code <= 70 then
+        return code - 55
+    end
+    return 0
+end
+
+function hex_channel(color: string, index: i32): f64
+    local high: i32 = string.byte(color, index)
+    local low: i32 = string.byte(color, index + 1)
+    return ((hex_digit(high) * 16 + hex_digit(low))::f64) / 255.0
+end
+
+function rgba(red: f64, green: f64, blue: f64, alpha: f64): Color
+    return { red = red, green = green, blue = blue, alpha = alpha }
+end
+
+-- Accepts "#rrggbb" and "#rrggbbaa" like Graphics:set_color.
+function hex(color: string): Color
+    if #color == 7 or #color == 9 then
+        local alpha: f64 = 1.0
+        if #color == 9 then alpha = hex_channel(color, 8) end
+        return {
+            red = hex_channel(color, 2),
+            green = hex_channel(color, 4),
+            blue = hex_channel(color, 6),
+            alpha = alpha,
+        }
+    end
+    return { red = 1.0, green = 1.0, blue = 1.0, alpha = 1.0 }
+end
+
+-- Evaluate a stage track (sizes) at normalized age t in 0..1.
+function sample_track(values: {f64}, t: f64): f64
+    local count: i32 = #values
+    if count == 0 then return 1.0 end
+    if count == 1 then return values[0] end
+    local position: f64 = clamp01(t) * ((count - 1)::f64)
+    local index: i32 = math.floor(position)::i32
+    if index >= count - 1 then index = count - 2 end
+    local fraction: f64 = position - (index::f64)
+    return values[index] + (values[index + 1] - values[index]) * fraction
+end
+
+function empty_texture(): graphics_module.Texture
+    return { handle = 0, width = 0, height = 0, released = true }
+end
+
+function ParticleSystem.new(buffer_size: i32): ParticleSystem
+    if buffer_size < 1 then buffer_size = 1 end
+    return {
+        buffer_size = buffer_size,
+        particles = {},
+        running = false,
+        paused = false,
+        x = 0.0,
+        y = 0.0,
+        prev_x = 0.0,
+        prev_y = 0.0,
+        emission_rate = 0.0,
+        emit_counter = 0.0,
+        emitter_lifetime = -1.0,
+        emitter_life = -1.0,
+        life_min = 1.0,
+        life_max = 1.0,
+        area_kind = "none",
+        area_dx = 0.0,
+        area_dy = 0.0,
+        area_angle = 0.0,
+        area_relative = false,
+        direction = 0.0,
+        spread = 0.0,
+        speed_min = 0.0,
+        speed_max = 0.0,
+        accel_min_x = 0.0,
+        accel_min_y = 0.0,
+        accel_max_x = 0.0,
+        accel_max_y = 0.0,
+        radial_min = 0.0,
+        radial_max = 0.0,
+        tangential_min = 0.0,
+        tangential_max = 0.0,
+        damping_min = 0.0,
+        damping_max = 0.0,
+        sizes = { 1.0 },
+        size_variation = 0.0,
+        rotation_min = 0.0,
+        rotation_max = 0.0,
+        spin_start = 0.0,
+        spin_end = 0.0,
+        spin_variation = 0.0,
+        colors = { { red = 1.0, green = 1.0, blue = 1.0, alpha = 1.0 } },
+        offset_x = 0.0,
+        offset_y = 0.0,
+        default_offset = true,
+        relative_rotation = false,
+        insert_mode = "top",
+        has_texture = false,
+        texture = empty_texture(),
+        texture_flipped = false,
+        quads = {},
+    }
+end
+
+-- ---------------------------------------------------------------------------
+-- Emitter configuration
+
+-- Teleports the emitter; interpolated emission does not smear across the
+-- jump (see move_to for the smearing variant).
+function ParticleSystem:set_position(x: f64, y: f64): unit
+    self.x = x
+    self.y = y
+    self.prev_x = x
+    self.prev_y = y
+end
+
+function ParticleSystem:get_position(): f64, f64
+    return self.x, self.y
+end
+
+-- Moves the emitter and spreads the particles spawned by the next update
+-- evenly along the path, so fast-moving emitters leave a solid trail
+-- instead of clumps (love2d moveTo semantics).
+function ParticleSystem:move_to(x: f64, y: f64): unit
+    self.x = x
+    self.y = y
+end
+
+-- Particles emitted per second while the emitter is active.
+function ParticleSystem:set_emission_rate(rate: f64): unit
+    if rate < 0.0 then rate = 0.0 end
+    self.emission_rate = rate
+end
+
+function ParticleSystem:get_emission_rate(): f64
+    return self.emission_rate
+end
+
+-- Seconds the emitter keeps emitting after start(); pass a value <= 0 to
+-- emit forever.
+function ParticleSystem:set_emitter_lifetime(seconds: f64): unit
+    self.emitter_lifetime = seconds
+    self.emitter_life = seconds
+end
+
+function ParticleSystem:get_emitter_lifetime(): f64
+    return self.emitter_lifetime
+end
+
+function ParticleSystem:set_particle_lifetime(min: f64, max: f64): unit
+    if min < 0.0 then min = 0.0 end
+    if max < min then max = min end
+    self.life_min = min
+    self.life_max = max
+end
+
+function ParticleSystem:get_particle_lifetime(): f64, f64
+    return self.life_min, self.life_max
+end
+
+-- Spawn-position distribution around the emitter. kind selects the shape:
+--   "none"            exactly at the emitter
+--   "uniform"         uniform in the rectangle of half-extents dx, dy
+--   "normal"          gaussian with standard deviations dx, dy
+--   "ellipse"         uniform inside the ellipse with radii dx, dy
+--   "borderellipse"   on the edge of that ellipse
+--   "borderrectangle" on the edge of the uniform rectangle
+-- angle rotates the whole area; relative launches each particle away from
+-- the emitter center (plus the configured direction) instead of using the
+-- direction alone.
+function ParticleSystem:set_emission_area(kind: string, dx: f64, dy: f64, angle: f64, relative: bool): unit
+    self.area_kind = kind
+    self.area_dx = dx
+    self.area_dy = dy
+    self.area_angle = angle
+    self.area_relative = relative
+end
+
+function ParticleSystem:get_emission_area(): string
+    return self.area_kind
+end
+
+-- Base launch direction in radians (0 points along +x, pi/2 along +y which
+-- is down in screen space).
+function ParticleSystem:set_direction(radians: f64): unit
+    self.direction = radians
+end
+
+function ParticleSystem:get_direction(): f64
+    return self.direction
+end
+
+-- Total angular jitter around the direction; a spread of 2*pi sprays in
+-- every direction.
+function ParticleSystem:set_spread(radians: f64): unit
+    self.spread = radians
+end
+
+function ParticleSystem:get_spread(): f64
+    return self.spread
+end
+
+function ParticleSystem:set_speed(min: f64, max: f64): unit
+    if max < min then max = min end
+    self.speed_min = min
+    self.speed_max = max
+end
+
+function ParticleSystem:get_speed(): f64, f64
+    return self.speed_min, self.speed_max
+end
+
+-- Constant acceleration sampled per particle between the two corners;
+-- (0, gravity) with equal corners is plain gravity.
+function ParticleSystem:set_linear_acceleration(min_x: f64, min_y: f64, max_x: f64, max_y: f64): unit
+    self.accel_min_x = min_x
+    self.accel_min_y = min_y
+    self.accel_max_x = max_x
+    self.accel_max_y = max_y
+end
+
+-- Acceleration along the line from each particle's spawn origin: positive
+-- pushes outward, negative pulls back in.
+function ParticleSystem:set_radial_acceleration(min: f64, max: f64): unit
+    self.radial_min = min
+    self.radial_max = max
+end
+
+-- Acceleration perpendicular to the radial direction; nonzero values swirl
+-- particles around their origin.
+function ParticleSystem:set_tangential_acceleration(min: f64, max: f64): unit
+    self.tangential_min = min
+    self.tangential_max = max
+end
+
+-- Velocity damping factor per second (air resistance).
+function ParticleSystem:set_linear_damping(min: f64, max: f64): unit
+    self.damping_min = min
+    self.damping_max = max
+end
+
+-- Size track over each particle's lifetime. Untextured particles read the
+-- values as pixel side lengths; textured particles read them as texture
+-- scale factors (love2d semantics).
+function ParticleSystem:set_sizes(sizes: {f64}): unit
+    self.sizes = sizes
+end
+
+function ParticleSystem:get_sizes(): {f64}
+    return self.sizes
+end
+
+-- 0 disables variation; 1 gives every particle a fully random window into
+-- the size track (love2d setSizeVariation).
+function ParticleSystem:set_size_variation(variation: f64): unit
+    self.size_variation = clamp01(variation)
+end
+
+function ParticleSystem:get_size_variation(): f64
+    return self.size_variation
+end
+
+-- Initial sprite angle sampled uniformly between min and max.
+function ParticleSystem:set_rotation(min: f64, max: f64): unit
+    self.rotation_min = min
+    self.rotation_max = max
+end
+
+function ParticleSystem:get_rotation(): f64, f64
+    return self.rotation_min, self.rotation_max
+end
+
+-- Angular velocity interpolated from start_spin at birth to end_spin at
+-- death (radians per second).
+function ParticleSystem:set_spin(start_spin: f64, end_spin: f64): unit
+    self.spin_start = start_spin
+    self.spin_end = end_spin
+end
+
+function ParticleSystem:get_spin(): f64, f64
+    return self.spin_start, self.spin_end
+end
+
+function ParticleSystem:set_spin_variation(variation: f64): unit
+    self.spin_variation = clamp01(variation)
+end
+
+function ParticleSystem:get_spin_variation(): f64
+    return self.spin_variation
+end
+
+-- Color track over each particle's lifetime; build stops with the module's
+-- rgba(...) and hex("#rrggbbaa") helpers.
+function ParticleSystem:set_colors(colors: {Color}): unit
+    self.colors = colors
+end
+
+function ParticleSystem:get_colors(): {Color}
+    return self.colors
+end
+
+-- Anchor point of the particle image. Textured particles measure it in
+-- texel coordinates of the texture (or quad); untextured particles use the
+-- 0..1 unit square. Defaults to the center.
+function ParticleSystem:set_offset(x: f64, y: f64): unit
+    self.offset_x = x
+    self.offset_y = y
+    self.default_offset = false
+end
+
+function ParticleSystem:clear_offset(): unit
+    self.default_offset = true
+end
+
+-- When enabled each particle's sprite angle tracks its velocity direction
+-- (plus its sampled rotation), like love2d setRelativeRotation.
+function ParticleSystem:set_relative_rotation(enabled: bool): unit
+    self.relative_rotation = enabled
+end
+
+function ParticleSystem:has_relative_rotation(): bool
+    return self.relative_rotation
+end
+
+-- Where new particles enter the draw order: "top" draws them over older
+-- ones, "bottom" underneath, "random" shuffles them in.
+function ParticleSystem:set_insert_mode(mode: string): unit
+    if mode == "top" or mode == "bottom" or mode == "random" then
+        self.insert_mode = mode
+    end
+end
+
+function ParticleSystem:get_insert_mode(): string
+    return self.insert_mode
+end
+
+function ParticleSystem:set_texture(texture: graphics_module.Texture): unit
+    self.has_texture = true
+    self.texture = texture
+    self.texture_flipped = false
+end
+
+-- Renders particles with the contents of an offscreen render target, so a
+-- game can paint its own particle image at startup without shipping an
+-- asset. Render-target textures are stored bottom-up; this keeps them
+-- upright.
+function ParticleSystem:set_render_target_texture(target: graphics_module.RenderTarget): unit
+    self.has_texture = true
+    self.texture = {
+        handle = target.handle,
+        width = target.width,
+        height = target.height,
+        released = target.released,
+    }
+    self.texture_flipped = true
+end
+
+-- Returns to untextured pixel-square particles.
+function ParticleSystem:clear_texture(): unit
+    self.has_texture = false
+    self.texture = empty_texture()
+    self.texture_flipped = false
+end
+
+-- Sprite-sheet animation: each particle plays the quads in order across its
+-- lifetime. An empty list draws the whole texture.
+function ParticleSystem:set_quads(quads: {Quad}): unit
+    self.quads = quads
+end
+
+function ParticleSystem:get_quads(): {Quad}
+    return self.quads
+end
+
+-- ---------------------------------------------------------------------------
+-- Lifecycle
+
+function ParticleSystem:start(): unit
+    self.running = true
+    self.paused = false
+    self.emitter_life = self.emitter_lifetime
+end
+
+function ParticleSystem:stop(): unit
+    self.running = false
+    self.emit_counter = 0.0
+    self.emitter_life = self.emitter_lifetime
+end
+
+function ParticleSystem:pause(): unit
+    if self.running then self.paused = true end
+end
+
+function ParticleSystem:is_active(): bool
+    return self.running and not self.paused
+end
+
+function ParticleSystem:is_paused(): bool
+    return self.paused
+end
+
+function ParticleSystem:is_stopped(): bool
+    return not self.running
+end
+
+-- Kills every live particle and rewinds the emitter clock.
+function ParticleSystem:reset(): unit
+    self.particles = {}
+    self.emit_counter = 0.0
+    self.emitter_life = self.emitter_lifetime
+end
+
+function ParticleSystem:get_count(): i32
+    return #self.particles
+end
+
+function ParticleSystem:get_buffer_size(): i32
+    return self.buffer_size
+end
+
+-- Shrinking below the live count drops the newest particles first.
+function ParticleSystem:set_buffer_size(size: i32): unit
+    if size < 1 then size = 1 end
+    self.buffer_size = size
+    while #self.particles > size do
+        table.remove(self.particles)
+    end
+end
+
+function ParticleSystem:is_empty(): bool
+    return #self.particles == 0
+end
+
+function ParticleSystem:is_full(): bool
+    return #self.particles >= self.buffer_size
+end
+
+-- ---------------------------------------------------------------------------
+-- Simulation
+
+function spawn_particle(self: ParticleSystem, emit_x: f64, emit_y: f64): unit
+    if #self.particles >= self.buffer_size then return end
+
+    -- Sample a spawn offset from the emission area in area-local space.
+    local kind: string = self.area_kind
+    local offset_x: f64 = 0.0
+    local offset_y: f64 = 0.0
+    if kind == "uniform" then
+        offset_x = (math.random() * 2.0 - 1.0) * self.area_dx
+        offset_y = (math.random() * 2.0 - 1.0) * self.area_dy
+    elseif kind == "normal" then
+        offset_x = random_normal(self.area_dx)
+        offset_y = random_normal(self.area_dy)
+    elseif kind == "ellipse" then
+        local theta: f64 = math.random() * math.pi * 2.0
+        local radius: f64 = math.sqrt(math.random())
+        offset_x = math.cos(theta) * radius * self.area_dx
+        offset_y = math.sin(theta) * radius * self.area_dy
+    elseif kind == "borderellipse" then
+        local theta: f64 = math.random() * math.pi * 2.0
+        offset_x = math.cos(theta) * self.area_dx
+        offset_y = math.sin(theta) * self.area_dy
+    elseif kind == "borderrectangle" then
+        -- Pick a point on the rectangle outline, edges weighted by length
+        -- so corners do not clump.
+        local width: f64 = self.area_dx * 2.0
+        local height: f64 = self.area_dy * 2.0
+        local along: f64 = math.random() * (width + height) * 2.0
+        if along < width then
+            offset_x = along - self.area_dx
+            offset_y = -self.area_dy
+        elseif along < width + height then
+            offset_x = self.area_dx
+            offset_y = along - width - self.area_dy
+        elseif along < width * 2.0 + height then
+            offset_x = along - width - height - self.area_dx
+            offset_y = self.area_dy
+        else
+            offset_x = -self.area_dx
+            offset_y = along - width * 2.0 - height - self.area_dy
+        end
+    end
+    if self.area_angle ~= 0.0 then
+        local cos: f64 = math.cos(self.area_angle)
+        local sin: f64 = math.sin(self.area_angle)
+        local rotated_x: f64 = offset_x * cos - offset_y * sin
+        local rotated_y: f64 = offset_x * sin + offset_y * cos
+        offset_x = rotated_x
+        offset_y = rotated_y
+    end
+
+    -- Area-relative emission launches away from the emitter center; the
+    -- configured direction is still added so games can bias or swirl the
+    -- outward flow.
+    local base_direction: f64 = self.direction
+    if self.area_relative and (offset_x ~= 0.0 or offset_y ~= 0.0) then
+        base_direction = approx_atan2(offset_y, offset_x) + self.direction
+    end
+    local angle: f64 = base_direction + (math.random() - 0.5) * self.spread
+    local speed: f64 = random_range(self.speed_min, self.speed_max)
+
+    local lifetime: f64 = random_range(self.life_min, self.life_max)
+    if lifetime <= 0.0 then return end
+
+    -- Per-particle window into the size track (love2d's size variation):
+    -- the window starts at a random offset and may end early, so every
+    -- particle traverses a different slice of the configured sizes.
+    local size_offset: f64 = 0.0
+    local size_span: f64 = 1.0
+    if self.size_variation > 0.0 then
+        size_offset = math.random() * self.size_variation
+        size_span = 1.0 - math.random() * self.size_variation - size_offset
+    end
+
+    local spin_jitter: f64 = self.spin_variation
+    local spin_start: f64 = self.spin_start
+        + (self.spin_end - self.spin_start) * math.random() * spin_jitter
+    local spin_end: f64 = self.spin_end
+        + (self.spin_start - self.spin_end) * math.random() * spin_jitter
+
+    local particle: Particle = {
+        life = lifetime,
+        lifetime = lifetime,
+        x = emit_x + offset_x,
+        y = emit_y + offset_y,
+        vx = math.cos(angle) * speed,
+        vy = math.sin(angle) * speed,
+        origin_x = emit_x,
+        origin_y = emit_y,
+        accel_x = random_range(self.accel_min_x, self.accel_max_x),
+        accel_y = random_range(self.accel_min_y, self.accel_max_y),
+        radial = random_range(self.radial_min, self.radial_max),
+        tangential = random_range(self.tangential_min, self.tangential_max),
+        damping = random_range(self.damping_min, self.damping_max),
+        size_offset = size_offset,
+        size_span = size_span,
+        rotation = random_range(self.rotation_min, self.rotation_max),
+        spin_start = spin_start,
+        spin_end = spin_end,
+    }
+
+    if self.insert_mode == "bottom" then
+        table.insert(self.particles, 0, particle)
+    elseif self.insert_mode == "random" then
+        table.insert(self.particles, math.random(#self.particles + 1) - 1, particle)
+    else
+        table.insert(self.particles, particle)
+    end
+end
+
+-- Spawns count particles immediately at the current emitter position,
+-- regardless of whether the emitter is running (love2d emit). Spawns stop
+-- silently once the buffer is full.
+function ParticleSystem:emit(count: i32): unit
+    for _ = 1::i32, count do
+        spawn_particle(self, self.x, self.y)
+    end
+end
+
+function ParticleSystem:update(dt: f64): unit
+    if dt <= 0.0 then return end
+
+    -- Advance live particles first so a particle emitted this frame renders
+    -- its birth state for one frame, then compact survivors in place to
+    -- preserve draw order without per-death shifts.
+    local count: i32 = #self.particles
+    local write: i32 = 0
+    for read = 0::i32, count - 1 do
+        local particle: Particle = self.particles[read]
+        particle.life -= dt
+        if particle.life > 0.0 then
+            local dx: f64 = particle.x - particle.origin_x
+            local dy: f64 = particle.y - particle.origin_y
+            local distance: f64 = math.sqrt(dx * dx + dy * dy)
+            local radial_x: f64 = 0.0
+            local radial_y: f64 = 0.0
+            if distance > 0.0001 then
+                radial_x = dx / distance
+                radial_y = dy / distance
+            end
+            local accel_x: f64 = particle.accel_x
+                + radial_x * particle.radial
+                - radial_y * particle.tangential
+            local accel_y: f64 = particle.accel_y
+                + radial_y * particle.radial
+                + radial_x * particle.tangential
+            particle.vx += accel_x * dt
+            particle.vy += accel_y * dt
+            if particle.damping ~= 0.0 then
+                local factor: f64 = 1.0 / (1.0 + particle.damping * dt)
+                particle.vx *= factor
+                particle.vy *= factor
+            end
+            particle.x += particle.vx * dt
+            particle.y += particle.vy * dt
+
+            local age: f64 = 1.0 - particle.life / particle.lifetime
+            local spin: f64 = particle.spin_start
+                + (particle.spin_end - particle.spin_start) * age
+            particle.rotation += spin * dt
+
+            if write ~= read then
+                self.particles[write] = particle
+            end
+            write += 1
+        end
+    end
+    for _ = write, count - 1 do
+        table.remove(self.particles)
+    end
+
+    -- Emit along the emitter's motion since the previous update so moving
+    -- emitters paint continuous trails.
+    if self.running and not self.paused and self.emission_rate > 0.0 then
+        local emit_seconds: f64 = dt
+        if self.emitter_lifetime > 0.0 then
+            if self.emitter_life <= 0.0 then
+                emit_seconds = 0.0
+            elseif self.emitter_life < dt then
+                emit_seconds = self.emitter_life
+            end
+            self.emitter_life -= dt
+            if self.emitter_life <= 0.0 then
+                self.running = false
+            end
+        end
+        self.emit_counter += self.emission_rate * emit_seconds
+        local spawn_count: i32 = math.floor(self.emit_counter)::i32
+        if spawn_count > 0 then
+            self.emit_counter -= spawn_count::f64
+            for index = 1::i32, spawn_count do
+                local fraction: f64 = (index::f64) / (spawn_count::f64)
+                spawn_particle(
+                    self,
+                    self.prev_x + (self.x - self.prev_x) * fraction,
+                    self.prev_y + (self.y - self.prev_y) * fraction
+                )
+            end
+        end
+    end
+
+    self.prev_x = self.x
+    self.prev_y = self.y
+end
+
+-- ---------------------------------------------------------------------------
+-- Rendering
+
+function draw_particle(self: ParticleSystem, graphics: graphics_module.Graphics, particle: Particle): unit
+    local age: f64 = clamp01(1.0 - particle.life / particle.lifetime)
+
+    -- Color track: locate the surrounding stops once, then blend channels.
+    local colors: {Color} = self.colors
+    local stop_count: i32 = #colors
+    local red: f64 = 1.0
+    local green: f64 = 1.0
+    local blue: f64 = 1.0
+    local alpha: f64 = 1.0
+    if stop_count == 1 then
+        local only: Color = colors[0]
+        red = only.red
+        green = only.green
+        blue = only.blue
+        alpha = only.alpha
+    elseif stop_count > 1 then
+        local position: f64 = age * ((stop_count - 1)::f64)
+        local index: i32 = math.floor(position)::i32
+        if index >= stop_count - 1 then index = stop_count - 2 end
+        local fraction: f64 = position - (index::f64)
+        local from: Color = colors[index]
+        local to: Color = colors[index + 1]
+        red = from.red + (to.red - from.red) * fraction
+        green = from.green + (to.green - from.green) * fraction
+        blue = from.blue + (to.blue - from.blue) * fraction
+        alpha = from.alpha + (to.alpha - from.alpha) * fraction
+    end
+    graphics:set_color_rgba(red, green, blue, alpha)
+
+    local size: f64 = sample_track(
+        self.sizes,
+        particle.size_offset + age * particle.size_span
+    )
+
+    local angle: f64 = particle.rotation
+    if self.relative_rotation then
+        angle += approx_atan2(particle.vy, particle.vx)
+    end
+
+    if self.has_texture and not self.texture.released then
+        -- Whole texture unless a quad animation is configured.
+        local source_x: f64 = 0.0
+        local source_y: f64 = 0.0
+        local source_width: f64 = self.texture.width::f64
+        local source_height: f64 = self.texture.height::f64
+        local quad_count: i32 = #self.quads
+        if quad_count > 0 then
+            local quad_index: i32 = math.floor(age * (quad_count::f64))::i32
+            if quad_index >= quad_count then quad_index = quad_count - 1 end
+            local quad: Quad = self.quads[quad_index]
+            source_x = quad.x
+            source_y = quad.y
+            source_width = quad.width
+            source_height = quad.height
+        end
+        local anchor_x: f64 = source_width * 0.5
+        local anchor_y: f64 = source_height * 0.5
+        if not self.default_offset then
+            anchor_x = self.offset_x
+            anchor_y = self.offset_y
+        end
+        graphics:push()
+        graphics:translate(particle.x, particle.y)
+        if angle ~= 0.0 then graphics:rotate(angle) end
+        graphics:draw_sprite_region(
+            self.texture,
+            -anchor_x * size,
+            -anchor_y * size,
+            source_width * size,
+            source_height * size,
+            source_x,
+            source_y,
+            source_width,
+            source_height,
+            self.texture_flipped
+        )
+        graphics:pop()
+    else
+        -- Untextured particles are size x size logical-pixel squares.
+        local anchor_x: f64 = 0.5
+        local anchor_y: f64 = 0.5
+        if not self.default_offset then
+            anchor_x = self.offset_x
+            anchor_y = self.offset_y
+        end
+        if angle ~= 0.0 then
+            graphics:push()
+            graphics:translate(particle.x, particle.y)
+            graphics:rotate(angle)
+            graphics:fill_rectangle(-anchor_x * size, -anchor_y * size, size, size)
+            graphics:pop()
+        else
+            graphics:fill_rectangle(
+                particle.x - anchor_x * size,
+                particle.y - anchor_y * size,
+                size,
+                size
+            )
+        end
+    end
+end
+
+-- Draws every live particle with the current blend mode and transform.
+-- Particle order already encodes the insert mode, so drawing front-to-back
+-- through the array is always correct.
+function ParticleSystem:draw(graphics: graphics_module.Graphics): unit
+    local count: i32 = #self.particles
+    for index = 0::i32, count - 1 do
+        draw_particle(self, graphics, self.particles[index])
+    end
+end
+
+-- Draws the whole system displaced by (x, y) without disturbing its
+-- simulation-space coordinates, the equivalent of love.graphics.draw(ps, x, y).
+function ParticleSystem:draw_at(graphics: graphics_module.Graphics, x: f64, y: f64): unit
+    graphics:push()
+    graphics:translate(x, y)
+    self:draw(graphics)
+    graphics:pop()
+end
+
+return {
+    new = ParticleSystem.new,
+    rgba = rgba,
+    hex = hex,
+}

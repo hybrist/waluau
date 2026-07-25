@@ -50,7 +50,7 @@ The compiler embeds the engine sources. `waluau:engine` selects the current
 stable major version and `waluau:engine/v1` pins major version 1. Both expose
 the same aggregate facade:
 
-- `VERSION`: the semantic API version (`1.2.0`)
+- `VERSION`: the semantic API version (`1.3.0`)
 - `start`: the browser lifecycle entry point
 - `Config`, `Game`, `Session`, `Input`, and `Graphics`: canonical public types
 
@@ -69,6 +69,7 @@ Subsystem modules remain supported for focused and host-independent programs:
 | `waluau:engine/time` | `waluau:engine/v1/time` | deterministic fixed-step clock |
 | `waluau:engine/browser` | `waluau:engine/v1/browser` | browser lifecycle adapter |
 | `waluau:engine/hot` | `waluau:engine/v1/hot` | development snapshot/restore registration |
+| `waluau:engine/particles` | `waluau:engine/v1/particles` | love2d-style particle systems |
 | `waluau:engine/shader_sources` | `waluau:engine/v1/shader_sources` | revisioned external shader source polling |
 
 Relative imports remain valid for engine development, but applications should
@@ -131,6 +132,56 @@ browser lifecycle registrations and mounted root owned by that run. Development
 hot replacement uses `Session.suspend()` through a game's
 `waluau:engine/hot` dispose closure; it releases the callbacks while keeping
 the last frame mounted until the replacement presents its first frame.
+
+## Particle systems
+
+[`particles.walu`](particles.walu) provides a love2d-style particle system
+(`waluau:engine/particles`). A `ParticleSystem` owns an emitter and a bounded
+pool of particles; games call `update(dt)` from their fixed-step update and
+`draw(graphics)` (or `draw_at(graphics, x, y)`) from their draw callback.
+Everything renders through the batched Graphics facade.
+
+```walu
+local particles = require("waluau:engine/particles")
+
+local flame = particles.new(600)
+flame:set_emission_rate(160.0)
+flame:set_particle_lifetime(0.4, 0.9)
+flame:set_direction(-math.pi * 0.5)
+flame:set_spread(0.5)
+flame:set_speed(30.0, 80.0)
+flame:set_emission_area("normal", 6.0, 2.0, 0.0, false)
+flame:set_sizes({ 9.0, 5.0, 1.5 })
+flame:set_colors({ particles.hex("#fff7c0ff"), particles.hex("#ff5a1f00") })
+flame:start()
+```
+
+The configuration surface mirrors love2d's ParticleSystem: emission rate and
+`emit(count)` bursts, particle lifetime ranges, emission areas (`uniform`,
+`normal`, `ellipse`, `borderellipse`, `borderrectangle`, each with a rotation
+angle and optional area-relative launch directions), direction and spread,
+speed, linear/radial/tangential acceleration, linear damping, size and color
+stage tracks with per-particle size variation, rotation, spin with variation,
+velocity-relative rotation, draw offsets, and `top`/`bottom`/`random` insert
+modes. Lifecycle control uses `start`/`stop`/`pause`/`reset` plus
+`is_active`/`is_paused`/`is_stopped`, and the particle pool is bounded by
+`set_buffer_size`. `set_position` teleports the emitter while `move_to`
+spreads the next update's spawns along the movement path.
+
+Untextured particles draw as squares whose size track reads in logical
+pixels. `set_texture` scales a loaded texture through the same track,
+`set_render_target_texture` accepts an offscreen render target (so games can
+paint a particle image at startup without shipping an asset), and
+`set_quads` plays texture sub-regions across each particle's lifetime for
+sprite-sheet animation. Color stops come from `particles.rgba(...)` or
+`particles.hex("#rrggbbaa")`.
+
+[`fixtures/particles/`](../fixtures/particles/) is a six-scene showcase
+(flame and smoke, fountain, fireworks, snowfall, a render-target-textured
+galaxy, and an emission-area gallery) reachable in the playground as the
+"Particle System Demos" preset.
+[`fixtures/game-engine/particles-sim.walu`](../fixtures/game-engine/particles-sim.walu)
+asserts the emitter lifecycle and spawn accounting without a browser.
 
 ## Porting a simple game
 

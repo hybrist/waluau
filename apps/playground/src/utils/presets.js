@@ -26,6 +26,12 @@ const gameEngineFixtures = import.meta.glob('../../../../fixtures/game-engine/*.
   import: 'default'
 });
 
+const particlesFixtures = import.meta.glob('../../../../fixtures/particles/*.walu', {
+  eager: true,
+  query: '?raw',
+  import: 'default'
+});
+
 const gameEngineModules = import.meta.glob('../../../../engine/*.walu', {
   eager: true,
   query: '?raw',
@@ -196,6 +202,24 @@ export const SNAKE_PRESET = {
   entryFile: '/fixtures/snake/main.walu'
 };
 
+export const PARTICLES_PRESET = {
+  key: 'particle-demos',
+  label: 'Particle System Demos',
+  files: {
+    ...Object.entries(gameEngineModules).reduce((acc, [path, source]) => {
+      const filename = path.split('/').pop();
+      acc[`/engine/${filename}`] = source;
+      return acc;
+    }, {}),
+    ...Object.entries(particlesFixtures).reduce((acc, [path, source]) => {
+      const filename = path.split('/').pop();
+      acc[`/fixtures/particles/${filename}`] = source;
+      return acc;
+    }, {})
+  },
+  entryFile: '/fixtures/particles/main.walu'
+};
+
 export const GAME_ENGINE_PRESET = {
   key: 'game-engine',
   label: '2D Game Engine',
@@ -217,7 +241,7 @@ export const GAME_ENGINE_PRESET = {
 // Shared with the standalone /output/poker-tricks page.
 export const POKER_TRICKS_PRESET = POKER_TRICKS_EXAMPLE;
 
-export const PRESETS = [...SINGLE_PRESETS, MULTI_PRESET, DOM_PRESET, KANBAN_PRESET, POKER_TRICKS_PRESET, SNAKE_PRESET, GAME_ENGINE_PRESET, ...CONFORMANCE_PRESETS].sort((left, right) =>
+export const PRESETS = [...SINGLE_PRESETS, MULTI_PRESET, DOM_PRESET, KANBAN_PRESET, POKER_TRICKS_PRESET, SNAKE_PRESET, GAME_ENGINE_PRESET, PARTICLES_PRESET, ...CONFORMANCE_PRESETS].sort((left, right) =>
   left.label.localeCompare(right.label)
 );
 

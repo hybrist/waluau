@@ -1,0 +1,145 @@
+-- Fireworks demo: one-shot bursts with emit(), no continuous emission at
+-- all. Damping shapes each shell into a sphere, gravity drags the embers
+-- down, and the "random" insert mode keeps overlapping shells from popping
+-- in front of one another. Click to launch; idle shells self-launch.
+
+local particles = require("../../engine/particles")
+local graphics_module = require("../../engine/graphics")
+
+local TITLE <const>: string = "Fireworks"
+local BLURB <const>: string = "Pure emit() bursts: damping spheres, gravity, random insert mode. Click to launch."
+
+local SHELL_COUNT <const>: i32 = 5
+
+type Scene = {
+    width: f64,
+    height: f64,
+    shells: {particles.ParticleSystem},
+    next_shell: i32,
+    next_palette: i32,
+    auto_timer: f64
+}
+
+function configure_shell(): particles.ParticleSystem
+    local shell = particles.new(420)
+    shell:set_emission_rate(0.0)
+    shell:set_particle_lifetime(0.7, 2.1)
+    shell:set_direction(0.0)
+    shell:set_spread(math.pi * 2.0)
+    shell:set_speed(30.0, 330.0)
+    shell:set_linear_acceleration(0.0, 80.0, 0.0, 110.0)
+    shell:set_linear_damping(1.4, 2.4)
+    shell:set_sizes({ 3.0, 2.4, 1.4, 0.0 })
+    shell:set_size_variation(0.5)
+    shell:set_insert_mode("random")
+    return shell
+end
+
+function palette(index: i32): {particles.Color}
+    local pick: i32 = index % 4
+    if pick == 0 then
+        return {
+            particles.hex("#ffffffff"),
+            particles.hex("#ffd75eff"),
+            particles.hex("#ff8a3cc0"),
+            particles.hex("#57130a00"),
+        }
+    elseif pick == 1 then
+        return {
+            particles.hex("#ffffffff"),
+            particles.hex("#7ce4ffff"),
+            particles.hex("#3d7dffc0"),
+            particles.hex("#0a115700"),
+        }
+    elseif pick == 2 then
+        return {
+            particles.hex("#ffffffff"),
+            particles.hex("#8effa1ff"),
+            particles.hex("#2fbf6cc0"),
+            particles.hex("#0a301800"),
+        }
+    end
+    return {
+        particles.hex("#ffffffff"),
+        particles.hex("#ff9bf2ff"),
+        particles.hex("#c04dd8c0"),
+        particles.hex("#2a0a3000"),
+    }
+end
+
+function Scene.new(width: f64, height: f64): Scene
+    local shells: {particles.ParticleSystem} = {}
+    for _ = 1::i32, SHELL_COUNT do
+        table.insert(shells, configure_shell())
+    end
+    return {
+        width = width,
+        height = height,
+        shells = shells,
+        next_shell = 0,
+        next_palette = 0,
+        auto_timer = 0.6,
+    }
+end
+
+function launch(self: Scene, x: f64, y: f64): unit
+    local shell: particles.ParticleSystem = self.shells[self.next_shell]
+    self.next_shell = (self.next_shell + 1) % SHELL_COUNT
+    shell:set_position(x, y)
+    shell:set_colors(palette(self.next_palette))
+    self.next_palette += 1
+    shell:emit(240 + math.random(120))
+end
+
+function Scene:update(dt: f64, mouse_x: f64, mouse_y: f64, mouse_down: bool): unit
+    for index = 0::i32, SHELL_COUNT - 1 do
+        self.shells[index]:update(dt)
+    end
+    self.auto_timer -= dt
+    if self.auto_timer <= 0.0 then
+        self.auto_timer = 1.1 + math.random() * 1.2
+        launch(
+            self,
+            self.width * 0.15 + math.random() * self.width * 0.7,
+            self.height * 0.12 + math.random() * self.height * 0.45
+        )
+    end
+end
+
+function Scene:draw(graphics: graphics_module.Graphics): unit
+    graphics:set_blend_mode("add")
+    for index = 0::i32, SHELL_COUNT - 1 do
+        self.shells[index]:draw(graphics)
+    end
+    graphics:set_blend_mode("alpha")
+end
+
+function Scene:pressed(x: f64, y: f64): unit
+    launch(self, x, y)
+end
+
+function Scene:toggle(): unit
+    -- Fireworks have no continuous emitter; a toggle just clears the sky.
+    self:reset()
+end
+
+function Scene:reset(): unit
+    for index = 0::i32, SHELL_COUNT - 1 do
+        self.shells[index]:reset()
+    end
+    self.auto_timer = 0.6
+end
+
+function Scene:count(): i32
+    local total: i32 = 0
+    for index = 0::i32, SHELL_COUNT - 1 do
+        total += self.shells[index]:get_count()
+    end
+    return total
+end
+
+return {
+    new = Scene.new,
+    TITLE = TITLE,
+    BLURB = BLURB,
+}

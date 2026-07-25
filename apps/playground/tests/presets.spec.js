@@ -191,6 +191,10 @@ test.describe('preset selector', () => {
   });
 
   test('file search finds the Arcane Heist entry and loads the preset', async ({ page }) => {
+    // Loading Arcane Heist compiles the game and feeds every engine module
+    // through the in-browser language server, which grows with the engine
+    // itself; give the default budget the standard slow-test multiplier.
+    test.slow();
     await page.getByRole('button', { name: 'Search (Cmd+P)' }).click();
     await page.locator('.search-input-field').fill('poker-tricks');
 

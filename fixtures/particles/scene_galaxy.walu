@@ -1,0 +1,145 @@
+-- Galaxy demo: textured particles without shipping an asset. At scene start
+-- the demo paints a two-frame sprite atlas (a soft glow and a four-point
+-- spark) into an offscreen render target, hands it to the particle system
+-- with set_render_target_texture, and animates between the frames with
+-- set_quads. The emitter orbits the screen center with move_to while
+-- tangential acceleration swirls everything it leaves behind.
+
+local particles = require("../../engine/particles")
+local graphics_module = require("../../engine/graphics")
+
+local TITLE <const>: string = "Galaxy"
+local BLURB <const>: string = "Render-target sprite atlas, quad animation, tangential swirl, orbiting move_to."
+
+local CELL <const>: f64 = 48.0
+
+type Scene = {
+    width: f64,
+    height: f64,
+    dust: particles.ParticleSystem,
+    texture_ready: bool,
+    orbit: f64
+}
+
+function Scene.new(width: f64, height: f64): Scene
+    local dust = particles.new(1400)
+    dust:set_emission_rate(320.0)
+    dust:set_particle_lifetime(1.4, 3.2)
+    dust:set_direction(0.0)
+    dust:set_spread(math.pi * 2.0)
+    dust:set_speed(6.0, 26.0)
+    -- Tangential acceleration bends paths around each particle's spawn
+    -- point; the slight inward radial pull tightens the spiral over time.
+    dust:set_tangential_acceleration(70.0, 130.0)
+    dust:set_radial_acceleration(-40.0, -14.0)
+    dust:set_linear_damping(0.2, 0.6)
+    dust:set_sizes({ 0.15, 0.45, 0.1 })
+    dust:set_size_variation(0.6)
+    dust:set_rotation(0.0, math.pi)
+    dust:set_spin(-2.4, 2.4)
+    dust:set_spin_variation(1.0)
+    dust:set_colors({
+        particles.hex("#aef4ffff"),
+        particles.hex("#7cb6ffd8"),
+        particles.hex("#b06affa0"),
+        particles.hex("#2a0a5700"),
+    })
+    dust:set_position(width * 0.5, height * 0.5)
+    dust:start()
+    return {
+        width = width,
+        height = height,
+        dust = dust,
+        texture_ready = false,
+        orbit = 0.0,
+    }
+end
+
+-- Paints the sprite atlas once. Frame 0 is a soft radial glow built from
+-- concentric translucent circles; frame 1 is a four-point spark.
+function build_texture(self: Scene, graphics: graphics_module.Graphics): unit
+    local result = graphics:create_render_target(96, 48)
+    if not result.ok then
+        return
+    end
+    local target: graphics_module.RenderTarget = result.target
+    graphics:set_render_target(target)
+    graphics:clear("#00000000")
+
+    local glow_center_x: f64 = CELL * 0.5
+    local center_y: f64 = CELL * 0.5
+    for step = 0::i32, 15::i32 do
+        local fade: f64 = (step::f64) / 15.0
+        graphics:set_color_rgba(1.0, 1.0, 1.0, 0.028 + fade * 0.05)
+        graphics:fill_circle(glow_center_x, center_y, 21.0 * (1.0 - fade) + 1.5)
+    end
+
+    local spark_center_x: f64 = CELL * 1.5
+    graphics:push()
+    graphics:translate(spark_center_x, center_y)
+    graphics:set_color_rgba(1.0, 1.0, 1.0, 0.9)
+    graphics:fill_rectangle(-20.0, -1.5, 40.0, 3.0)
+    graphics:fill_rectangle(-1.5, -20.0, 3.0, 40.0)
+    graphics:rotate(math.pi * 0.25)
+    graphics:set_color_rgba(1.0, 1.0, 1.0, 0.45)
+    graphics:fill_rectangle(-12.0, -1.0, 24.0, 2.0)
+    graphics:fill_rectangle(-1.0, -12.0, 2.0, 24.0)
+    graphics:pop()
+    graphics:set_color_rgba(1.0, 1.0, 1.0, 1.0)
+    graphics:fill_circle(spark_center_x, center_y, 3.0)
+
+    graphics:set_screen_target()
+    self.dust:set_render_target_texture(target)
+    self.dust:set_quads({
+        { x = 0.0, y = 0.0, width = CELL, height = CELL },
+        { x = CELL, y = 0.0, width = CELL, height = CELL },
+    })
+end
+
+function Scene:update(dt: f64, mouse_x: f64, mouse_y: f64, mouse_down: bool): unit
+    self.orbit += dt * 1.1
+    self.dust:move_to(
+        self.width * 0.5 + math.cos(self.orbit) * 110.0,
+        self.height * 0.5 + math.sin(self.orbit * 1.6) * 70.0
+    )
+    self.dust:update(dt)
+end
+
+function Scene:draw(graphics: graphics_module.Graphics): unit
+    -- The atlas needs a Graphics handle, which update() never sees; paint it
+    -- lazily on the first frame instead.
+    if not self.texture_ready then
+        build_texture(self, graphics)
+        self.texture_ready = true
+    end
+    graphics:set_blend_mode("add")
+    self.dust:draw(graphics)
+    graphics:set_blend_mode("alpha")
+end
+
+function Scene:pressed(x: f64, y: f64): unit
+    self.dust:emit(150)
+end
+
+function Scene:toggle(): unit
+    if self.dust:is_stopped() then
+        self.dust:start()
+    else
+        self.dust:stop()
+    end
+end
+
+function Scene:reset(): unit
+    self.dust:reset()
+    self.dust:start()
+end
+
+function Scene:count(): i32
+    return self.dust:get_count()
+end
+
+return {
+    new = Scene.new,
+    TITLE = TITLE,
+    BLURB = BLURB,
+}

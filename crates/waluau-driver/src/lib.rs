@@ -1741,6 +1741,30 @@ mod tests {
     }
 
     #[test]
+    fn compiles_pinned_engine_particles_subsystem_package() {
+        let project = tempdir().expect("temp project should exist");
+        let entry = project.path().join("main.walu");
+        fs::write(
+            &entry,
+            r##"
+                local particles = require("waluau:engine/v1/particles")
+
+                local ps: particles.ParticleSystem = particles.new(64)
+                ps:set_emission_rate(30.0)
+                ps:set_particle_lifetime(0.5, 1.5)
+                ps:set_colors({ particles.hex("#ff8800ff"), particles.rgba(1.0, 0.0, 0.0, 0.0) })
+                ps:start()
+                ps:update(0.1)
+                ps:emit(5)
+                assert(ps:get_count() > 0)
+            "##,
+        )
+        .expect("external particles subsystem project should write");
+
+        super::compile_file(&entry).expect("versioned particles subsystem import should compile");
+    }
+
+    #[test]
     fn compiles_pinned_engine_audio_subsystem_package() {
         let project = tempdir().expect("temp project should exist");
         let entry = project.path().join("main.walu");
