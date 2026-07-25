@@ -133,6 +133,7 @@ export default function App() {
             <span className="pulse-dot"></span>
             <span className="status-text">
               {displayStatus === 'loading' && 'Loading Compiler...'}
+              {displayStatus === 'analyzing' && 'Analyzing...'}
               {displayStatus === 'ready' && 'Ready'}
               {displayStatus === 'success' && 'Compilation Succeeded'}
               {displayStatus === 'error' && 'Compilation Failed'}

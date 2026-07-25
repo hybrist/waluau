@@ -218,7 +218,16 @@ fn compile_sources(
     let program = link::link_programs(files, entry_path)?;
     let typed_program =
         waluau_hir::type_check_and_infer(&program).map_err(|e| e.render_for_playground())?;
-    let module = waluau_ir::build(&typed_program).map_err(|e| e.render_for_playground())?;
+    compile_typed_program(&typed_program)
+}
+
+/// Lower and emit a program that has already been linked and typechecked.
+///
+/// The worker-facing project analysis path reuses the typed program for
+/// compilation, so successful projects are never parsed or typechecked twice
+/// just to produce diagnostics and Wasm output.
+fn compile_typed_program(typed_program: &waluau_ast::Program) -> Result<CompileResult, String> {
+    let module = waluau_ir::build(typed_program).map_err(|e| e.render_for_playground())?;
     let requires_wasm_gc = module_requires_wasm_gc(&module);
 
     let mut ir_dump = String::new();
@@ -269,47 +278,7 @@ fn compile_source(source: &str) -> Result<CompileResult, String> {
 
     let typed_program =
         waluau_hir::type_check_and_infer(&program).map_err(|e| e.render_for_playground())?;
-    let module = waluau_ir::build(&typed_program).map_err(|e| e.render_for_playground())?;
-    let requires_wasm_gc = module_requires_wasm_gc(&module);
-
-    let mut ir_dump = String::new();
-    for function in &module.functions {
-        ir_dump.push_str(&function.dump());
-        ir_dump.push('\n');
-    }
-
-    let emit_res = waluau_codegen_wasm::emit(&module).map_err(|e| e.to_string())?;
-    let wat = wasmprinter::print_bytes(&emit_res.wasm).map_err(|e| e.to_string())?;
-    let js_glue = waluau_codegen_wasm::generate_js_glue("program.wasm", &emit_res);
-    let required_imports = required_imports_json(&emit_res.required_imports);
-
-    let mut signatures = std::collections::HashMap::new();
-    for function in &module.functions {
-        if !function.name.starts_with("__waluau_") {
-            let params = function
-                .params
-                .iter()
-                .map(|(_, ty)| to_type_json(ty, &emit_res.record_type_indices))
-                .collect();
-            let returns = get_returns_json(&function.return_type, &emit_res.record_type_indices);
-            signatures.insert(
-                function.name.clone(),
-                FunctionSignatureJson { params, returns },
-            );
-        }
-    }
-
-    Ok(CompileResult {
-        ir: ir_dump,
-        wat,
-        wasm: emit_res.wasm,
-        js_glue,
-        required_imports,
-        bytes_constants: emit_res.bytes_constants,
-        requires_wasm_gc,
-        signatures,
-        tag_ids: module.tag_ids.clone(),
-    })
+    compile_typed_program(&typed_program)
 }
 
 fn module_requires_wasm_gc(module: &waluau_ir::Module) -> bool {

@@ -96,6 +96,36 @@ impl<B: AnalysisBackend> LspServer<B> {
         self.shutdown_requested
     }
 
+    /// Replace the complete set of live documents without running diagnostics.
+    ///
+    /// Browser hosts use this batched path when a project snapshot changes.
+    /// The host can analyze and compile that snapshot once through a combined
+    /// pipeline, while this server retains the current text for hover,
+    /// definition, completion, and formatting requests. Unchanged overlays are
+    /// left alone so adapters with their own caches do not discard them.
+    pub fn replace_documents(&mut self, documents: HashMap<PathBuf, String>) {
+        for path in self.open_documents.keys() {
+            if !documents.contains_key(path) {
+                self.backend.remove_overlay(path);
+            }
+        }
+        for (path, text) in &documents {
+            if self.open_documents.get(path) != Some(text) {
+                self.backend.set_overlay(path, text);
+            }
+        }
+        self.open_documents = documents;
+    }
+
+    /// Update one live document without publishing diagnostics. Position-based
+    /// browser requests use this to see the exact Monaco buffer that triggered
+    /// the request, even before the next project analysis snapshot completes.
+    pub fn update_document(&mut self, path: PathBuf, text: String) {
+        if self.open_documents.get(&path) != Some(&text) {
+            self.upsert_document(path, text);
+        }
+    }
+
     /// Handle one incoming JSON-RPC message; returns any outgoing messages
     /// (the response, if the input was a request, plus notifications such as
     /// `textDocument/publishDiagnostics`).

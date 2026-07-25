@@ -6,7 +6,7 @@ import {
   usesDomImports,
   classifyWasmModuleError,
 } from '../utils/wasm.js';
-import { loadWaluauWasm } from '../utils/waluauWasmModule.js';
+import { getWaluauCompilerClient } from '../utils/waluauCompilerClient.js';
 
 const REPL_PATH = '/repl.walu';
 
@@ -38,7 +38,7 @@ export default function useWaluauRepl() {
   const [cells, setCells] = useState([]); // { input, output: string[], error, ok, isSeed? }
   const [busy, setBusy] = useState(false);
 
-  const compileMultiRef = useRef(null);
+  const compilerClientRef = useRef(null);
   const acceptedRef = useRef([]); // accepted cell sources (compile + run cleanly)
   const prevLogCountRef = useRef(0); // total prints produced by the last good run
   const baseFilesRef = useRef({}); // editor file snapshot seeding the session
@@ -46,19 +46,18 @@ export default function useWaluauRepl() {
   const autoSeedDoneRef = useRef(false); // first-open auto-seed guard
 
   useEffect(() => {
-    let cancelled = false;
-    loadWaluauWasm()
-      .then((module) => {
-        if (cancelled) return;
-        compileMultiRef.current = module.compile_multi;
-        setReady(true);
+    let active = true;
+    const client = getWaluauCompilerClient();
+    compilerClientRef.current = client;
+    client.initialize()
+      .then(() => {
+        if (active) setReady(true);
       })
       .catch((err) => {
-        if (cancelled) return;
-        setLoadError(`Failed to load WASM compiler: ${err.message}`);
+        if (active) setLoadError(`Failed to start compiler worker: ${err.message}`);
       });
     return () => {
-      cancelled = true;
+      active = false;
     };
   }, []);
 
@@ -76,12 +75,12 @@ export default function useWaluauRepl() {
   // Compile, instantiate, and execute a program, capturing every print call.
   // Never throws.
   const runProgram = useCallback(async (filesMap, entry) => {
-    const compileMulti = compileMultiRef.current;
-    if (!compileMulti) return { ok: false, error: 'Compiler not ready' };
+    const compilerClient = compilerClientRef.current;
+    if (!compilerClient) return { ok: false, error: 'Compiler not ready' };
 
     let result;
     try {
-      result = compileMulti(filesMap, entry);
+      result = await compilerClient.compileProject(filesMap, entry);
     } catch (err) {
       return { ok: false, error: stringifyError(err) };
     }
@@ -130,7 +129,7 @@ export default function useWaluauRepl() {
 
   const evaluate = useCallback(async (rawInput) => {
     const input = rawInput.replace(/\s+$/, '');
-    if (!input.trim() || !compileMultiRef.current) return;
+    if (!input.trim() || !compilerClientRef.current) return;
 
     setBusy(true);
     try {
@@ -153,7 +152,7 @@ export default function useWaluauRepl() {
   // snapshots the file map, runs the script once to surface its output, and
   // establishes the print baseline so later cells show only their own output.
   const seed = useCallback(async (editorFiles, entryPath) => {
-    if (!compileMultiRef.current) return;
+    if (!compilerClientRef.current) return;
     const entry = entryPath ?? REPL_PATH;
     const label = `loaded editor script (${entry.replace(/^\//, '')})`;
 

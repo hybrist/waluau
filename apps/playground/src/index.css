@@ -148,12 +148,14 @@ body,
 }
 
 .status-badge.loading .pulse-dot { background-color: var(--status-loading); }
+.status-badge.analyzing .pulse-dot { background-color: var(--status-loading); }
 .status-badge.ready .pulse-dot { background-color: var(--status-ready); }
 .status-badge.success .pulse-dot { background-color: var(--status-success); }
 .status-badge.error .pulse-dot { background-color: var(--status-error); }
 
 .status-badge.ready .pulse-dot::after,
 .status-badge.success .pulse-dot::after,
+.status-badge.analyzing .pulse-dot::after,
 .status-badge.loading .pulse-dot::after {
   content: '';
   position: absolute;
