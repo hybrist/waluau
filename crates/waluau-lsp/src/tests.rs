@@ -1,8 +1,69 @@
-use std::path::Path;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use serde_json::{Value, json};
 
-use super::LspServer;
+use super::{AnalysisBackend, BackendAnalysis, LspServer};
+
+#[derive(Default)]
+struct BackendCalls {
+    overlays_set: Vec<PathBuf>,
+    overlays_removed: Vec<PathBuf>,
+    roots_analyzed: Vec<PathBuf>,
+}
+
+struct CountingBackend(Rc<RefCell<BackendCalls>>);
+
+impl AnalysisBackend for CountingBackend {
+    fn set_overlay(&mut self, path: &Path, _content: &str) {
+        self.0.borrow_mut().overlays_set.push(path.to_path_buf());
+    }
+
+    fn remove_overlay(&mut self, path: &Path) {
+        self.0
+            .borrow_mut()
+            .overlays_removed
+            .push(path.to_path_buf());
+    }
+
+    fn analyze_root(&mut self, root: &Path) -> BackendAnalysis {
+        self.0.borrow_mut().roots_analyzed.push(root.to_path_buf());
+        BackendAnalysis {
+            diagnostics: Vec::new(),
+        }
+    }
+}
+
+#[test]
+fn batched_document_replacement_does_not_analyze_or_reset_unchanged_overlays() {
+    let calls = Rc::new(RefCell::new(BackendCalls::default()));
+    let mut server = LspServer::with_backend(CountingBackend(Rc::clone(&calls)));
+    server.replace_documents(HashMap::from([
+        (PathBuf::from("/main.walu"), "local x = 1".to_string()),
+        (PathBuf::from("/lib.walu"), "return 1".to_string()),
+    ]));
+    server.replace_documents(HashMap::from([
+        (PathBuf::from("/main.walu"), "local x = 2".to_string()),
+        (PathBuf::from("/new.walu"), "return 2".to_string()),
+    ]));
+
+    let calls = calls.borrow();
+    assert_eq!(calls.roots_analyzed, Vec::<PathBuf>::new());
+    assert_eq!(calls.overlays_set.len(), 4);
+    assert_eq!(
+        calls
+            .overlays_set
+            .iter()
+            .filter(|path| path.as_path() == Path::new("/main.walu"))
+            .count(),
+        2
+    );
+    assert!(calls.overlays_set.contains(&PathBuf::from("/lib.walu")));
+    assert!(calls.overlays_set.contains(&PathBuf::from("/new.walu")));
+    assert_eq!(calls.overlays_removed, vec![PathBuf::from("/lib.walu")]);
+}
 
 fn open(server: &mut LspServer, path: &Path, text: &str) -> Vec<Value> {
     send(

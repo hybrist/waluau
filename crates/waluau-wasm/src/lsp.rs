@@ -1,19 +1,48 @@
 //! Client-side language server for the playground editor.
 //!
 //! [`WaluauLanguageServer`] wraps the transport-agnostic [`waluau_lsp`] core
-//! with an in-memory analysis backend: the playground opens each virtual file
-//! (`file:///main.walu`, `file:///lib.walu`, ...) over the LSP document
-//! lifecycle, and diagnostics come back as `textDocument/publishDiagnostics`
-//! notifications — no server round-trip involved.
+//! with an in-memory analysis backend. The browser replaces the full virtual
+//! project in one batch, then uses JSON-RPC for position-based language
+//! features. Compilation and diagnostics share one linked, typed program so
+//! project updates do not repeat front-end analysis.
 
-use std::collections::HashMap;
-use std::path::Path;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
+use serde::Serialize;
 use waluau_diagnostics::Diagnostic;
 use waluau_lsp::{AnalysisBackend, BackendAnalysis, LspServer};
 use wasm_bindgen::prelude::*;
 
-use crate::link;
+use crate::{CompileResult, compile_typed_program, link};
+
+#[derive(Serialize)]
+struct ProjectPosition {
+    line: u32,
+    character: u32,
+}
+
+#[derive(Serialize)]
+struct ProjectRange {
+    start: ProjectPosition,
+    end: ProjectPosition,
+}
+
+#[derive(Serialize)]
+struct ProjectDiagnostic {
+    range: ProjectRange,
+    severity: u8,
+    source: &'static str,
+    message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectAnalysis {
+    output: Option<CompileResult>,
+    error_msg: String,
+    diagnostics: BTreeMap<String, Vec<ProjectDiagnostic>>,
+}
 
 #[derive(Default)]
 struct PlaygroundBackend {
@@ -95,13 +124,203 @@ impl WaluauLanguageServer {
     pub fn handle_message(&mut self, message: &str) -> Vec<String> {
         self.inner.handle_message(message)
     }
+
+    /// Replace the complete browser project and analyze it once.
+    ///
+    /// This is deliberately a combined operation: linking and type inference
+    /// produce both structured editor diagnostics and the typed program used
+    /// for code generation. Successful projects therefore do not repeat the
+    /// compiler's most expensive front-end work in a separate LSP pass.
+    #[wasm_bindgen(js_name = analyzeProject)]
+    pub fn analyze_project(
+        &mut self,
+        files: JsValue,
+        entry_path: &str,
+    ) -> Result<JsValue, JsValue> {
+        let files: HashMap<String, String> = serde_wasm_bindgen::from_value(files)
+            .map_err(|error| JsValue::from_str(&format!("failed to parse files map: {error}")))?;
+        self.inner.replace_documents(
+            files
+                .iter()
+                .map(|(path, source)| (PathBuf::from(path), source.clone()))
+                .collect(),
+        );
+        serde_wasm_bindgen::to_value(&analyze_project_sources(&files, entry_path))
+            .map_err(|error| JsValue::from_str(&error.to_string()))
+    }
+
+    /// Synchronize the live editor buffer used by a position request without
+    /// starting a whole-project diagnostics pass.
+    #[wasm_bindgen(js_name = updateDocument)]
+    pub fn update_document(&mut self, path: &str, text: String) {
+        self.inner.update_document(PathBuf::from(path), text);
+    }
+}
+
+fn analyze_project_sources(files: &HashMap<String, String>, entry_path: &str) -> ProjectAnalysis {
+    let entry_path = normalized_project_path(entry_path);
+    let mut roots = vec![entry_path.clone()];
+    let mut remaining = files
+        .keys()
+        .map(|path| normalized_project_path(path))
+        .filter(|path| path != &entry_path)
+        .collect::<Vec<_>>();
+    remaining.sort();
+    remaining.dedup();
+    roots.extend(remaining);
+
+    let mut covered_files = HashSet::new();
+    let mut sources = BTreeMap::new();
+    let mut all_diagnostics = Vec::new();
+    let mut output = None;
+    let mut error_msg = String::new();
+
+    for (index, root) in roots.into_iter().enumerate() {
+        let is_entry = index == 0;
+        if !is_entry && covered_files.contains(&root) {
+            continue;
+        }
+        let (program, parse_diagnostics) = match link::link_programs_collect(files, &root) {
+            Ok(outcome) => outcome,
+            Err(message) => {
+                let diagnostic = Diagnostic::new(message).with_file_path(&root);
+                if is_entry {
+                    error_msg = diagnostic.render_for_playground();
+                }
+                covered_files.insert(root);
+                all_diagnostics.push(diagnostic);
+                continue;
+            }
+        };
+        covered_files.extend(
+            program
+                .sources
+                .keys()
+                .map(|path| normalized_project_path(path)),
+        );
+        sources.extend(program.sources.clone());
+
+        if !parse_diagnostics.is_empty() {
+            let diagnostics = parse_diagnostics
+                .into_iter()
+                .map(|error| resolve_source(error, &program))
+                .collect::<Vec<_>>();
+            if is_entry {
+                error_msg = diagnostics
+                    .first()
+                    .map(Diagnostic::render_for_playground)
+                    .unwrap_or_default();
+            }
+            all_diagnostics.extend(diagnostics);
+            continue;
+        }
+
+        match waluau_hir::type_check_and_infer_collect(&program) {
+            Ok(typed_program) if is_entry => match compile_typed_program(&typed_program) {
+                Ok(compiled) => output = Some(compiled),
+                Err(error) => error_msg = error,
+            },
+            Ok(_) => {}
+            Err(errors) => {
+                let diagnostics = errors
+                    .into_iter()
+                    .map(|error| resolve_source(error, &program))
+                    .collect::<Vec<_>>();
+                if is_entry {
+                    error_msg = diagnostics
+                        .first()
+                        .map(Diagnostic::render_for_playground)
+                        .unwrap_or_default();
+                }
+                all_diagnostics.extend(diagnostics);
+            }
+        }
+    }
+
+    ProjectAnalysis {
+        output,
+        error_msg,
+        diagnostics: diagnostics_by_uri(all_diagnostics, &sources, &entry_path),
+    }
+}
+
+fn normalized_project_path(path: &str) -> String {
+    let mut normalized = link::clean_path(path);
+    if !normalized.ends_with(".walu") && Path::new(&normalized).extension().is_none() {
+        normalized.push_str(".walu");
+    }
+    normalized
+}
+
+fn diagnostics_by_uri(
+    diagnostics: Vec<Diagnostic>,
+    sources: &BTreeMap<String, String>,
+    entry_path: &str,
+) -> BTreeMap<String, Vec<ProjectDiagnostic>> {
+    let mut by_uri = BTreeMap::<String, Vec<ProjectDiagnostic>>::new();
+    for diagnostic in diagnostics {
+        let file = diagnostic.file_path().unwrap_or(entry_path);
+        let source = sources.get(file);
+        let (start, end) = diagnostic
+            .span()
+            .and_then(|span| {
+                let source = source?;
+                Some((
+                    source_position(source, span.start as usize),
+                    source_position(source, span.end as usize),
+                ))
+            })
+            .unwrap_or((
+                ProjectPosition {
+                    line: 0,
+                    character: 0,
+                },
+                ProjectPosition {
+                    line: 0,
+                    character: 0,
+                },
+            ));
+        by_uri
+            .entry(format!("file://{file}"))
+            .or_default()
+            .push(ProjectDiagnostic {
+                range: ProjectRange { start, end },
+                severity: match diagnostic.severity() {
+                    waluau_diagnostics::Severity::Error => 1,
+                    waluau_diagnostics::Severity::Warning => 2,
+                },
+                source: "waluau",
+                message: diagnostic.to_string(),
+            });
+    }
+    by_uri
+}
+
+fn source_position(source: &str, byte_offset: usize) -> ProjectPosition {
+    let clamped = byte_offset.min(source.len());
+    let mut line = 0u32;
+    let mut character = 0u32;
+    for (index, ch) in source.char_indices() {
+        if index >= clamped {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            character = 0;
+        } else {
+            character += ch.len_utf16() as u32;
+        }
+    }
+    ProjectPosition { line, character }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use serde_json::{Value, json};
 
-    use super::WaluauLanguageServer;
+    use super::{WaluauLanguageServer, analyze_project_sources};
 
     fn send(server: &mut WaluauLanguageServer, message: Value) -> Vec<Value> {
         server
@@ -131,6 +350,75 @@ mod tests {
                 .then(|| message["params"]["diagnostics"].as_array())
                 .flatten()
         })
+    }
+
+    #[test]
+    fn combined_project_analysis_compiles_without_a_second_diagnostics_pass() {
+        let analysis = analyze_project_sources(
+            &HashMap::from([(
+                "/main.walu".to_string(),
+                "function answer(): i32\n    return 42\nend\n".to_string(),
+            )]),
+            "/main.walu",
+        );
+
+        assert!(analysis.output.is_some());
+        assert!(analysis.error_msg.is_empty());
+        assert!(analysis.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn combined_project_analysis_returns_all_structured_type_errors() {
+        let analysis = analyze_project_sources(
+            &HashMap::from([(
+                "/main.walu".to_string(),
+                "function first(x: i32): bool\n    return x\nend\nfunction second(x: i32): i32\n    if x then\n        return x\n    end\n    return x\nend\n".to_string(),
+            )]),
+            "/main.walu",
+        );
+
+        assert!(analysis.output.is_none());
+        assert!(!analysis.error_msg.is_empty());
+        let diagnostics = analysis
+            .diagnostics
+            .get("file:///main.walu")
+            .expect("entry diagnostics");
+        assert_eq!(diagnostics.len(), 2);
+        assert_eq!(diagnostics[0].source, "waluau");
+    }
+
+    #[test]
+    fn combined_project_analysis_checks_only_uncovered_extra_roots() {
+        let analysis = analyze_project_sources(
+            &HashMap::from([
+                (
+                    "/main.walu".to_string(),
+                    "local imported_answer = require(\"./lib\")\nfunction answer(): i32\n    return imported_answer()\nend\n"
+                        .to_string(),
+                ),
+                (
+                    "/lib.walu".to_string(),
+                    "function answer(): i32\n    return 42\nend\nreturn answer\n".to_string(),
+                ),
+                (
+                    "/scratch.walu".to_string(),
+                    "function broken(value: i32): bool\n    return value\nend\n".to_string(),
+                ),
+            ]),
+            "/main.walu",
+        );
+
+        assert!(
+            analysis.output.is_some(),
+            "entry graph should still compile"
+        );
+        assert!(analysis.error_msg.is_empty());
+        let diagnostics = analysis
+            .diagnostics
+            .get("file:///scratch.walu")
+            .expect("unreferenced file diagnostics");
+        assert_eq!(diagnostics.len(), 1);
+        assert!(!analysis.diagnostics.contains_key("file:///lib.walu"));
     }
 
     #[test]

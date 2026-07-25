@@ -276,7 +276,7 @@ export default function useMonacoEditor({ files, entryFile, exportsList, outputW
   }, [monacoInstance, editorInstance]);
 
   // Language features (hover, go-to-definition, completion) served by the
-  // client-side language server through synchronous JSON-RPC requests. The
+  // worker-owned language server through asynchronous JSON-RPC requests. The
   // LSP speaks the same virtual paths the document-sync effect opened, so a
   // model's path is mapped back to its files-map key before each request.
   useEffect(() => {
@@ -313,8 +313,8 @@ export default function useMonacoEditor({ files, entryFile, exportsList, outputW
     });
 
     const hoverProvider = monacoInstance.languages.registerHoverProvider('waluau', {
-      provideHover(model, position) {
-        const result = sendLspRequest('textDocument/hover', positionParams(model, position), liveDocument(model));
+      async provideHover(model, position) {
+        const result = await sendLspRequest('textDocument/hover', positionParams(model, position), liveDocument(model));
         if (!result?.contents?.value) return null;
         return {
           contents: [{ value: result.contents.value }],
@@ -324,8 +324,8 @@ export default function useMonacoEditor({ files, entryFile, exportsList, outputW
     });
 
     const definitionProvider = monacoInstance.languages.registerDefinitionProvider('waluau', {
-      provideDefinition(model, position) {
-        const result = sendLspRequest('textDocument/definition', positionParams(model, position), liveDocument(model));
+      async provideDefinition(model, position) {
+        const result = await sendLspRequest('textDocument/definition', positionParams(model, position), liveDocument(model));
         if (!result?.uri || !result.range) return null;
         const target = modelForLspUri(result.uri);
         if (!target) return null;
@@ -348,8 +348,8 @@ export default function useMonacoEditor({ files, entryFile, exportsList, outputW
     };
     const completionProvider = monacoInstance.languages.registerCompletionItemProvider('waluau', {
       triggerCharacters: ['.', ':'],
-      provideCompletionItems(model, position) {
-        const result = sendLspRequest('textDocument/completion', positionParams(model, position), liveDocument(model));
+      async provideCompletionItems(model, position) {
+        const result = await sendLspRequest('textDocument/completion', positionParams(model, position), liveDocument(model));
         if (!Array.isArray(result)) return { suggestions: [] };
         const word = model.getWordUntilPosition(position);
         const range = {

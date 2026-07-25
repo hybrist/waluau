@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   WALUAU_STRING_CONSTANTS_MODULE,
   WALUAU_MAIN_EXPORT,
@@ -11,13 +11,14 @@ import {
   cleanupDomEventListeners,
   cancelPendingAnimationFrames,
 } from '../utils/wasm.js';
-import { loadWaluauWasm } from '../utils/waluauWasmModule.js';
+import { getWaluauCompilerClient } from '../utils/waluauCompilerClient.js';
 
 export default function useWaluauCompiler({ files, entryFile, assetManifest = null }) {
-  const [status, setStatus] = useState('loading'); // 'loading', 'ready', 'success', 'error'
+  const [status, setStatus] = useState('loading'); // 'loading', 'analyzing', 'ready', 'success', 'error'
   const [loadErrorMsg, setLoadErrorMsg] = useState('');
-  const [compilerReady, setCompilerReady] = useState(false);
-  const [compileSource, setCompileSource] = useState(null);
+  const [output, setOutput] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
+  const [diagnostics, setDiagnostics] = useState(null);
   const [runInstance, setRunInstance] = useState(null);
   const [runError, setRunError] = useState(null);
   const [exportsList, setExportsList] = useState([]);
@@ -30,9 +31,8 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
   const [domMountVersion, setDomMountVersion] = useState(0);
   const domOutputRootRef = useRef(null);
   const autoExecutionRef = useRef(new Map());
-  const languageServerRef = useRef(null);
-  // Documents synced to the language server: path -> { version, text }.
-  const syncedDocumentsRef = useRef(new Map());
+  const compilerClientRef = useRef(null);
+  const completedAnalysisRef = useRef(false);
 
   const setDomOutputRoot = useCallback((node) => {
     if (domOutputRootRef.current === node) return;
@@ -46,207 +46,63 @@ export default function useWaluauCompiler({ files, entryFile, assetManifest = nu
     setAutoRunEnabled(enabled);
   }, []);
 
-  // Load compiler module
+  // The worker owns both the compiler and language-server Wasm objects. One
+  // combined request links and typechecks each snapshot once, returning both
+  // compiler output and structured diagnostics. The client coalesces rapid
+  // edits while an older snapshot is still running.
   useEffect(() => {
-    let cancelled = false;
+    let active = true;
+    const client = compilerClientRef.current ?? getWaluauCompilerClient();
+    compilerClientRef.current = client;
+    setStatus(completedAnalysisRef.current ? 'analyzing' : 'loading');
 
-    loadWaluauWasm()
-      .then((module) => {
-        if (cancelled) {
-          return;
-        }
-        setCompileSource(() => module.compile_multi);
-        try {
-          if (typeof module.WaluauLanguageServer === 'function') {
-            languageServerRef.current = new module.WaluauLanguageServer();
-          }
-        } catch (error) {
-          console.warn('Waluau language server unavailable:', error);
-          languageServerRef.current = null;
-        }
-        setCompilerReady(true);
-        setStatus('ready');
+    client.analyzeProject(files, entryFile)
+      .then((result) => {
+        if (!active || result == null) return;
+        completedAnalysisRef.current = true;
+        setOutput(result.output ?? '');
+        setErrorMsg(result.errorMsg ?? '');
+        setDiagnostics(
+          result.diagnostics instanceof Map
+            ? result.diagnostics
+            : new Map(Object.entries(result.diagnostics ?? {})),
+        );
+        setStatus(result.errorMsg ? 'error' : result.output ? 'success' : 'ready');
         setLoadErrorMsg('');
       })
       .catch((err) => {
-        if (cancelled) {
-          return;
-        }
-        console.error('WASM load error:', err);
+        if (!active) return;
+        console.error('Compiler worker error:', err);
+        const message = `Compiler worker failed: ${err.message}`;
         setStatus('error');
-        setLoadErrorMsg(`Failed to load WASM compiler: ${err.message}`);
+        setLoadErrorMsg(message);
+        setErrorMsg(message);
+        setOutput('');
+        setDiagnostics(null);
       });
 
     return () => {
-      cancelled = true;
+      active = false;
     };
-  }, []);
+  }, [files, entryFile]);
 
-  // Run compilation
-  const compilation = useMemo(() => {
-    if (!compilerReady || !compileSource) {
-      return {
-        output: '',
-        errorMsg: status === 'error' ? loadErrorMsg : '',
-      };
-    }
-
-    try {
-      const parsed = compileSource(files, entryFile);
-      return {
-        output: parsed,
-        errorMsg: '',
-      };
-    } catch (err) {
-      const message = typeof err === 'string' ? err : err?.message || String(err);
-      return {
-        output: '',
-        errorMsg: message,
-      };
-    }
-  }, [files, entryFile, compileSource, compilerReady, loadErrorMsg, status]);
-
-  // Client-side language server: sync changed documents over the LSP
-  // lifecycle and collect per-file publishDiagnostics. Null until the wasm
-  // module provides the language server (markers then fall back to errorMsg).
-  // Runs in an effect (not render) because it mutates the server and refs.
-  const [diagnostics, setDiagnostics] = useState(null);
-  useEffect(() => {
-    const server = languageServerRef.current;
-    if (!server || !compilerReady) return;
-    // Diagnostics are an enhancement: if the language server throws (e.g. a
-    // trapped wasm instance), disable it and fall back to the errorMsg
-    // marker path rather than letting the effect crash the app.
-    try {
-      const collected = new Map();
-      let sentAny = false;
-      const send = (message) => {
-        sentAny = true;
-        for (const outgoing of server.handleMessage(JSON.stringify(message))) {
-          const parsed = JSON.parse(outgoing);
-          if (parsed.method === 'textDocument/publishDiagnostics') {
-            collected.set(parsed.params.uri, parsed.params.diagnostics);
-          }
-        }
-      };
-      const synced = syncedDocumentsRef.current;
-      for (const path of [...synced.keys()]) {
-        if (!(path in files)) {
-          synced.delete(path);
-          send({
-            jsonrpc: '2.0',
-            method: 'textDocument/didClose',
-            params: { textDocument: { uri: `file://${path}` } },
-          });
-        }
-      }
-      for (const [path, text] of Object.entries(files)) {
-        const uri = `file://${path}`;
-        const known = synced.get(path);
-        if (known == null) {
-          synced.set(path, { version: 1, text });
-          send({
-            jsonrpc: '2.0',
-            method: 'textDocument/didOpen',
-            params: { textDocument: { uri, languageId: 'waluau', version: 1, text } },
-          });
-        } else if (known.text !== text) {
-          const version = known.version + 1;
-          synced.set(path, { version, text });
-          send({
-            jsonrpc: '2.0',
-            method: 'textDocument/didChange',
-            params: {
-              textDocument: { uri, version },
-              contentChanges: [{ text }],
-            },
-          });
-        }
-      }
-      // Each server response batch reflects the complete diagnostic state;
-      // when nothing changed (effect re-ran for another reason), keep the
-      // last state.
-      if (sentAny) setDiagnostics(collected);
-    } catch (error) {
-      console.warn('Waluau language server disabled after error:', error);
-      languageServerRef.current = null;
-      syncedDocumentsRef.current.clear();
-      setDiagnostics(null);
-    }
-  }, [files, compilerReady]);
-
-  // Synchronous JSON-RPC request against the client-side language server
-  // (hover, definition, completion). Returns the parsed `result` or null.
-  //
-  // Position requests race ahead of the React-effect document sync: Monaco
-  // asks for completions on the very keystroke that inserted the trigger
-  // character, before the files state round-trips. Callers therefore pass
-  // the live buffer as `document` and it is synced (through the same
-  // version bookkeeping the effect uses) before the request is sent.
-  const lspRequestIdRef = useRef(1000);
+  // Monaco accepts promises from language providers, so position requests can
+  // cross the worker seam without blocking the UI. The live document keeps a
+  // request current when it races ahead of React's files-state update.
   const sendLspRequest = useCallback((method, params, document = null) => {
-    const server = languageServerRef.current;
-    if (!server) return null;
-    try {
-      if (document != null) {
-        const synced = syncedDocumentsRef.current;
-        const known = synced.get(document.path);
-        const uri = `file://${document.path}`;
-        let outgoing = null;
-        if (known == null) {
-          synced.set(document.path, { version: 1, text: document.text });
-          outgoing = server.handleMessage(JSON.stringify({
-            jsonrpc: '2.0',
-            method: 'textDocument/didOpen',
-            params: { textDocument: { uri, languageId: 'waluau', version: 1, text: document.text } },
-          }));
-        } else if (known.text !== document.text) {
-          const version = known.version + 1;
-          synced.set(document.path, { version, text: document.text });
-          outgoing = server.handleMessage(JSON.stringify({
-            jsonrpc: '2.0',
-            method: 'textDocument/didChange',
-            params: { textDocument: { uri, version }, contentChanges: [{ text: document.text }] },
-          }));
-        }
-        // The sync response carries the complete diagnostic state; keep the
-        // markers fresh instead of dropping it.
-        if (outgoing != null) {
-          const collected = new Map();
-          for (const message of outgoing) {
-            const parsed = JSON.parse(message);
-            if (parsed.method === 'textDocument/publishDiagnostics') {
-              collected.set(parsed.params.uri, parsed.params.diagnostics);
-            }
-          }
-          setDiagnostics(collected);
-        }
-      }
-      const id = ++lspRequestIdRef.current;
-      const outgoing = server.handleMessage(JSON.stringify({ jsonrpc: '2.0', id, method, params }));
-      for (const message of outgoing) {
-        const parsed = JSON.parse(message);
-        if (parsed.id === id) return parsed.result ?? null;
-      }
-    } catch (error) {
+    const client = compilerClientRef.current;
+    if (!client) return Promise.resolve(null);
+    return client.lspRequest(method, params, document).catch((error) => {
       console.warn('Waluau language server request failed:', error);
-    }
-    return null;
+      return null;
+    });
   }, []);
 
-  const output = compilation.output;
-  const errorMsg = compilation.errorMsg;
   const outputIr = typeof output === 'object' ? output.ir : '';
   const outputWat = typeof output === 'object' ? output.wat : '';
   const outputWasmBytes = typeof output === 'object' ? output.wasm : null;
   const requiresWasmGc = typeof output === 'object' ? Boolean(output.requiresWasmGc) : false;
-  const displayStatus = compilerReady
-    ? errorMsg
-      ? 'error'
-      : output
-        ? 'success'
-        : 'ready'
-    : status;
+  const displayStatus = status;
 
   // Sync runInstance, exportsList, inputs and results when Wasm changes
   useEffect(() => {

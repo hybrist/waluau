@@ -13,6 +13,15 @@ pnpm dev
 
 The dev server uses a Vite plugin that builds the Rust compiler crate and runs `wasm-bindgen` before serving. Rust source changes trigger an automatic rebuild and full reload.
 
+## Compiler worker
+
+The editor, REPL, and language features share a dedicated module worker that
+owns the `waluau-wasm` compiler and language-server session. Project snapshots
+are analyzed asynchronously off the browser's main thread. The combined
+analysis call links and typechecks each reachable module graph once, reuses the
+typed entry program for code generation, and checks only uncovered files as
+additional roots. Rapid edits are coalesced to the latest pending snapshot.
+
 ## Production build
 
 From the repository root:
