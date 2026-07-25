@@ -50,9 +50,12 @@ The compiler embeds the engine sources. `waluau:engine` selects the current
 stable major version and `waluau:engine/v1` pins major version 1. Both expose
 the same aggregate facade:
 
-- `VERSION`: the semantic API version (`1.2.0`)
+- `VERSION`: the semantic API version (`1.3.0`)
 - `start`: the browser lifecycle entry point
-- `Config`, `Game`, `Session`, `Input`, and `Graphics`: canonical public types
+- `Config`, `Game`, `Session`, `Input`, `Graphics`, and `ParticleSystem`:
+  canonical public types
+- `new_particle_system`, `particle_color`, `particle_hex`, and `particle_quad`:
+  particle constructors
 
 Aggregate type exports are identity-preserving aliases. For example,
 `engine.Input`, `input.Input`, and the `Input` accepted inside the browser
@@ -64,6 +67,7 @@ Subsystem modules remain supported for focused and host-independent programs:
 | --- | --- | --- |
 | `waluau:engine/input` | `waluau:engine/v1/input` | keyboard state and `Input` |
 | `waluau:engine/graphics` | `waluau:engine/v1/graphics` | GPU drawing and `Graphics` |
+| `waluau:engine/particles` | `waluau:engine/v1/particles` | pooled particle emitters and `ParticleSystem` |
 | `waluau:engine/resources` | `waluau:engine/v1/resources` | packaged resource loading and handles |
 | `waluau:engine/audio` | `waluau:engine/v1/audio` | decoded effects, streamed music, and playback control |
 | `waluau:engine/time` | `waluau:engine/v1/time` | deterministic fixed-step clock |
@@ -90,6 +94,17 @@ The same backend uploads decoded image resources as textures, batches atlas
 sprites by texture, and can render into and composite offscreen targets.
 Loaded font resources become batched glyph atlases and keep the bitmap font as
 a safe fallback.
+
+Colors can be set numerically with `set_color_rgba` when a color is computed
+rather than written down, `fill_quad` fills an arbitrary quadrilateral (which
+is how rotated particles and beams reach the batch without a transform push),
+and `texture_from_render_target` views a target's color storage as a sampleable
+texture — that view carries `flip_v`, so sprites drawn from it keep the same
+orientation as `draw_render_target`. `set_blend_mode` records the accepted mode
+in `Graphics.blend_mode`, so an effect can restore whatever the caller had
+selected. Binding a render target unbinds the sampler texture first: a
+framebuffer whose own texture is still readable is a feedback loop, and WebGL
+drops those draws.
 
 Custom shaders consume any subset of the renderer's standard vertex attributes:
 `a_position`, `a_color`, `a_uv`, and `a_textured`. The engine supplies
@@ -131,6 +146,64 @@ browser lifecycle registrations and mounted root owned by that run. Development
 hot replacement uses `Session.suspend()` through a game's
 `waluau:engine/hot` dispose closure; it releases the callbacks while keeping
 the last frame mounted until the replacement presents its first frame.
+
+## Particle systems
+
+[`particles.walu`](particles.walu) is a buffered emitter with LÖVE's
+`ParticleSystem` semantics, so tuning ported from a Love2D game means the same
+thing here:
+
+```walu
+local particles = require("waluau:engine/particles")
+
+local fire: particles.ParticleSystem = particles.new(600)
+fire:set_position(160.0, 200.0)
+fire:set_emission_rate(240.0)
+fire:set_particle_lifetime(0.45, 1.25)
+fire:set_direction(-math.pi * 0.5)
+fire:set_spread(0.65)
+fire:set_speed(50.0, 130.0)
+fire:set_linear_acceleration(-24.0, -90.0, 24.0, -30.0)
+fire:set_sizes({ 0.55, 1.35, 0.9, 0.1 })
+fire:set_colors_hex({ "#fff6cc", "#ffc247", "#f4621e", "#3b0a0400" })
+fire:set_blend_mode("add")
+
+-- In update: fire:update(dt)
+-- In draw:   fire:draw(graphics, 0.0, 0.0)
+```
+
+The emitter supports emission rate and emitter lifetime, `start`/`stop`/
+`pause`/`reset`/`emit`, direction and spread, speed, linear, radial and
+tangential acceleration, linear damping, size and color curves with size
+variation, rotation, spin with spin variation, relative rotation, insert order
+(`top`, `bottom`, `random`), spawn areas (`none`, `uniform`, `normal`,
+`ellipse`, `borderellipse`, `borderrectangle`, each with a rotation angle and
+optional outward aiming), `set_position` versus `move_to`, textures with
+animated quads, and `clone`.
+
+Three things differ from Love2D on purpose:
+
+- **The buffer is a pool.** Every particle record is allocated when the buffer
+  size is chosen and recycled after that, so a long-running emitter never grows
+  its memory footprint. A full buffer drops new emissions, as in Love2D.
+- **A texture is optional.** `set_draw_mode` selects `circle`, `square`,
+  `point`, `spark` (a streak drawn along the velocity), or `texture`, so a
+  system is useful before a game has any art. `set_shape_size` gives untextured
+  particles their pixel size at scale 1.0.
+- **Randomness is per system.** `set_seed` makes an emitter reproducible, and
+  emitting never disturbs the `math.random` stream gameplay code draws from.
+
+`draw` restores the caller's color and blend mode, so a system never leaks its
+own state into the rest of the frame. `particle_x`, `particle_size`,
+`particle_angle`, `particle_color_alpha` and their siblings expose live
+particles in draw order for games that would rather render them themselves.
+
+[`fixtures/particles/`](../fixtures/particles/) is the gallery: eight scenes
+(fire, fountain, explosions, smoke, weather, vortex, a pointer-following comet
+and a sprite atlas built at runtime into a render target) selected with the
+number keys, plus [`sim.walu`](../fixtures/particles/sim.walu), which checks
+emission timing, forces, curves and spawn areas without a canvas. The gallery
+is the "Particle System" preset in the playground.
 
 ## Porting a simple game
 
@@ -244,6 +317,8 @@ The long-term public surface should remain small and subsystem-oriented:
 - `graphics`: windows/canvases, colors, transforms, shapes, text, images,
   atlases, sprite batches, meshes, render targets, blend/depth/stencil state,
   shaders and capability queries
+- `particles`: pooled emitters, spawn areas, forces, size/color curves and
+  textured or shape-drawn particles
 - `audio`: decoded/streamed sources, playback state, buses and spatial audio
 - `filesystem`: packaged assets, save data and platform-safe paths
 - `physics`: optional 2D collision and rigid-body integration

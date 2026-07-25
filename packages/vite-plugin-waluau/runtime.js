@@ -1430,6 +1430,13 @@ export function createGameServicesHost(options = {}) {
       gl.bindTexture(gl.TEXTURE_2D, entry.texture);
       return true;
     },
+    // Drawing into a framebuffer whose color texture is still bound to a
+    // sampler unit is a feedback loop, which WebGL rejects outright. The
+    // renderer drops the binding before it targets a framebuffer.
+    game_gpu_texture_unbind: (gl) => {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+    },
     game_gpu_target_bind: (gl, handle) => {
       const entry = gpuEntryFor(handle);
       if (!entry?.ok || entry.kind !== 'render-target' || entry.gl !== gl) return false;
@@ -2193,6 +2200,8 @@ export function buildWaluauImports(wasmModule, initLogger, options = {}) {
     },
     'math.cos': Math.cos,
     'math.sin': Math.sin,
+    // Lua/C argument order: the vertical component comes first.
+    'math.atan2': (y, x) => Math.atan2(y, x),
     'math.min': Math.min,
     'math.max': Math.max,
     'math.copysign': (magnitude, sign) => {

@@ -1,0 +1,329 @@
+-- Host-independent checks for the particle system: pooling, emission timing,
+-- forces, curves, spawn areas and emitter lifecycle. Nothing here draws, so
+-- the whole file runs without a canvas.
+
+local particles = require("../../engine/particles")
+
+type ParticleSystem = particles.ParticleSystem
+
+local function close(value: f64, expected: f64, tolerance: f64): bool
+    return math.abs(value - expected) < tolerance
+end
+
+-- A system that fires one particle per second to the right, with no forces.
+local function plain_system(buffer: i32): ParticleSystem
+    local system: ParticleSystem = particles.new(buffer)
+    system:set_seed(7)
+    system:set_particle_lifetime(1.0, 1.0)
+    system:set_speed(100.0, 100.0)
+    system:set_direction(0.0)
+    system:set_spread(0.0)
+    return system
+end
+
+-- Emission is bounded by the buffer, and dead particles return to it.
+local system: ParticleSystem = plain_system(4)
+assert(system:buffer_size() == 4)
+assert(system:count() == 0)
+assert(not system:is_full())
+system:emit(10)
+assert(system:count() == 4)
+assert(system:is_full())
+system:update(2.0)
+assert(system:count() == 0)
+assert(not system:is_full())
+system:emit(3)
+assert(system:count() == 3)
+
+-- Zero speed with a zero-length spread means a particle stays put; a
+-- rightward direction moves it along +x only.
+local straight: ParticleSystem = plain_system(8)
+straight:set_position(50.0, 20.0)
+straight:emit(1)
+straight:update(0.5)
+assert(close(straight:particle_x(0), 100.0, 0.001))
+assert(close(straight:particle_y(0), 20.0, 0.001))
+assert(close(straight:particle_progress(0), 0.5, 0.001))
+
+-- Emission rate: one second of updates at 20 Hz emits about twenty
+-- particles, no matter how the second is sliced.
+local metered: ParticleSystem = plain_system(256)
+metered:set_particle_lifetime(10.0, 10.0)
+metered:set_emission_rate(20.0)
+for _ = 1, 60 do
+    metered:update(1.0 / 60.0)
+end
+assert(metered:count() >= 19 and metered:count() <= 21)
+
+-- Emitting is unaffected by how coarse the steps are.
+local coarse: ParticleSystem = plain_system(256)
+coarse:set_particle_lifetime(10.0, 10.0)
+coarse:set_emission_rate(20.0)
+coarse:update(0.5)
+coarse:update(0.5)
+assert(coarse:count() >= 19 and coarse:count() <= 21)
+
+-- Constant acceleration integrates like gravity: after one second at
+-- 100 px/s^2 the particle has fallen about half of that.
+local falling: ParticleSystem = plain_system(8)
+falling:set_speed(0.0, 0.0)
+falling:set_particle_lifetime(4.0, 4.0)
+falling:set_linear_acceleration(0.0, 100.0, 0.0, 100.0)
+falling:set_position(0.0, 0.0)
+falling:emit(1)
+for _ = 1, 100 do
+    falling:update(0.01)
+end
+assert(close(falling:particle_velocity_y(0), 100.0, 1.0))
+assert(close(falling:particle_y(0), 50.0, 2.0))
+
+-- Damping bleeds speed away without changing direction.
+local damped: ParticleSystem = plain_system(8)
+damped:set_particle_lifetime(4.0, 4.0)
+damped:set_linear_damping(2.0, 2.0)
+damped:emit(1)
+damped:update(0.5)
+assert(damped:particle_velocity_x(0) < 100.0)
+assert(damped:particle_velocity_x(0) > 0.0)
+assert(close(damped:particle_velocity_y(0), 0.0, 0.001))
+
+-- Radial acceleration pushes along the line from the spawn point outward;
+-- tangential acceleration turns motion perpendicular to it. Both are
+-- measured from the spawn point, so they only take hold once the particle
+-- has moved away from it.
+local radial: ParticleSystem = plain_system(8)
+radial:set_particle_lifetime(4.0, 4.0)
+radial:set_radial_acceleration(200.0, 200.0)
+radial:emit(1)
+for _ = 1, 50 do
+    radial:update(0.01)
+end
+assert(radial:particle_velocity_x(0) > 150.0)
+assert(close(radial:particle_velocity_y(0), 0.0, 0.001))
+
+local orbiting: ParticleSystem = plain_system(8)
+orbiting:set_particle_lifetime(4.0, 4.0)
+orbiting:set_tangential_acceleration(200.0, 200.0)
+orbiting:emit(1)
+for _ = 1, 50 do
+    orbiting:update(0.01)
+end
+assert(orbiting:particle_velocity_y(0) > 50.0)
+
+-- The size curve is sampled across a particle's life.
+local growing: ParticleSystem = plain_system(8)
+growing:set_particle_lifetime(2.0, 2.0)
+growing:set_sizes({ 1.0, 3.0 })
+growing:emit(1)
+assert(close(growing:particle_size(0), 1.0, 0.001))
+growing:update(1.0)
+assert(close(growing:particle_size(0), 2.0, 0.01))
+
+-- So is the color curve, alpha included.
+local fading: ParticleSystem = plain_system(8)
+fading:set_particle_lifetime(2.0, 2.0)
+fading:set_colors_hex({ "#ff0000", "#0000ff00" })
+fading:emit(1)
+assert(close(fading:particle_color_red(0), 1.0, 0.001))
+assert(close(fading:particle_color_alpha(0), 1.0, 0.001))
+fading:update(1.0)
+assert(close(fading:particle_color_red(0), 0.5, 0.02))
+assert(close(fading:particle_color_blue(0), 0.5, 0.02))
+assert(close(fading:particle_color_alpha(0), 0.5, 0.02))
+
+-- Spin turns a particle over its life; relative rotation adds the direction
+-- of travel, so a particle heading straight up faces up.
+local spinning: ParticleSystem = plain_system(8)
+spinning:set_particle_lifetime(4.0, 4.0)
+spinning:set_spin(2.0, 2.0)
+spinning:emit(1)
+spinning:update(0.5)
+assert(close(spinning:particle_angle(0), 1.0, 0.001))
+
+local aligned: ParticleSystem = plain_system(8)
+aligned:set_particle_lifetime(4.0, 4.0)
+aligned:set_direction(-math.pi * 0.5)
+aligned:set_relative_rotation(true)
+aligned:emit(1)
+assert(close(aligned:particle_angle(0), -math.pi * 0.5, 0.001))
+
+-- Spawn areas scatter particles around the emitter. A uniform box keeps
+-- every particle inside its half-extents; "none" puts them all at the point.
+local scattered: ParticleSystem = plain_system(64)
+scattered:set_particle_lifetime(4.0, 4.0)
+scattered:set_position(100.0, 100.0)
+assert(scattered:set_emission_area("uniform", 10.0, 4.0, 0.0, false))
+scattered:emit(50)
+local spread_seen: bool = false
+for index = 0, scattered:count() - 1 do
+    local dx: f64 = scattered:particle_x(index) - 100.0
+    local dy: f64 = scattered:particle_y(index) - 100.0
+    assert(math.abs(dx) <= 10.0)
+    assert(math.abs(dy) <= 4.0)
+    if math.abs(dx) > 1.0 then
+        spread_seen = true
+    end
+end
+assert(spread_seen)
+
+-- A border ellipse puts every particle on the rim.
+local ring: ParticleSystem = plain_system(64)
+ring:set_particle_lifetime(4.0, 4.0)
+ring:set_position(0.0, 0.0)
+assert(ring:set_emission_area("borderellipse", 20.0, 20.0, 0.0, false))
+ring:emit(20)
+for index = 0, ring:count() - 1 do
+    local x: f64 = ring:particle_x(index)
+    local y: f64 = ring:particle_y(index)
+    assert(close(math.sqrt(x * x + y * y), 20.0, 0.001))
+end
+
+-- Directed emission aims each particle away from the emitter centre, so a
+-- ring of particles flies outward instead of all sharing one direction.
+local burst: ParticleSystem = plain_system(64)
+burst:set_particle_lifetime(4.0, 4.0)
+burst:set_position(0.0, 0.0)
+assert(burst:set_emission_area("borderellipse", 10.0, 10.0, 0.0, true))
+burst:emit(8)
+for index = 0, burst:count() - 1 do
+    local x: f64 = burst:particle_x(index)
+    local y: f64 = burst:particle_y(index)
+    local vx: f64 = burst:particle_velocity_x(index)
+    local vy: f64 = burst:particle_velocity_y(index)
+    -- Velocity points the same way as the offset from the centre.
+    assert(x * vx + y * vy > 0.0)
+end
+
+-- An unknown distribution or draw mode is reported rather than guessed at.
+local rejects: ParticleSystem = plain_system(4)
+assert(not rejects:set_emission_area("hexagon", 1.0, 1.0, 0.0, false))
+assert(not rejects:set_draw_mode("triangle"))
+assert(not rejects:set_insert_mode("middle"))
+assert(not rejects:set_blend_mode("screen"))
+assert(rejects:set_draw_mode("spark"))
+assert(rejects:set_insert_mode("bottom"))
+assert(rejects:set_blend_mode("add"))
+
+-- Emitter lifetime stops the emitter on its own; stop, start, pause and
+-- reset move between the three states.
+local timed: ParticleSystem = plain_system(64)
+timed:set_particle_lifetime(4.0, 4.0)
+timed:set_emitter_lifetime(0.5)
+timed:set_emission_rate(20.0)
+assert(timed:is_active())
+timed:update(0.25)
+local mid_count: i32 = timed:count()
+assert(mid_count > 0)
+timed:update(0.5)
+assert(not timed:is_active())
+assert(timed:is_stopped())
+local final_count: i32 = timed:count()
+timed:update(0.5)
+-- A stopped emitter adds nothing, but its particles keep living.
+assert(timed:count() == final_count)
+timed:start()
+timed:update(0.25)
+assert(timed:count() > final_count)
+
+local paused: ParticleSystem = plain_system(64)
+paused:set_particle_lifetime(4.0, 4.0)
+paused:set_emitter_lifetime(2.0)
+paused:set_emission_rate(20.0)
+paused:update(0.5)
+paused:pause()
+assert(paused:is_paused())
+assert(not paused:is_stopped())
+paused:stop()
+assert(paused:is_stopped())
+
+-- Reset clears live particles and returns them to the pool.
+local cleared: ParticleSystem = plain_system(16)
+cleared:set_particle_lifetime(4.0, 4.0)
+cleared:emit(16)
+assert(cleared:is_full())
+cleared:reset()
+assert(cleared:count() == 0)
+assert(not cleared:is_full())
+cleared:emit(16)
+assert(cleared:count() == 16)
+
+-- move_to spreads a fast emitter's particles along the path it travelled,
+-- while set_position teleports and leaves no trail.
+local trail: ParticleSystem = plain_system(64)
+trail:set_particle_lifetime(4.0, 4.0)
+trail:set_speed(0.0, 0.0)
+trail:set_emission_rate(50.0)
+trail:set_position(0.0, 0.0)
+trail:update(0.02)
+trail:move_to(100.0, 0.0)
+trail:update(0.2)
+local minimum_x: f64 = 1000.0
+local maximum_x: f64 = -1000.0
+for index = 0, trail:count() - 1 do
+    local x: f64 = trail:particle_x(index)
+    if x < minimum_x then
+        minimum_x = x
+    end
+    if x > maximum_x then
+        maximum_x = x
+    end
+end
+assert(maximum_x - minimum_x > 10.0)
+
+-- The same seed and the same calls produce the same particles; a different
+-- seed does not.
+local function seeded_positions(seed: i32): f64
+    local seeded: ParticleSystem = particles.new(16)
+    seeded:set_seed(seed)
+    seeded:set_particle_lifetime(4.0, 4.0)
+    seeded:set_speed(10.0, 100.0)
+    seeded:set_spread(math.pi * 2.0)
+    seeded:emit(8)
+    seeded:update(0.1)
+    local total: f64 = 0.0
+    for index = 0, seeded:count() - 1 do
+        total += seeded:particle_x(index) * 3.0 + seeded:particle_y(index)
+    end
+    return total
+end
+
+assert(seeded_positions(11) == seeded_positions(11))
+assert(seeded_positions(11) ~= seeded_positions(12))
+
+-- A clone carries the settings and the live particles, and then runs on its
+-- own without touching the original.
+local source: ParticleSystem = plain_system(32)
+source:set_particle_lifetime(4.0, 4.0)
+source:set_emission_rate(10.0)
+source:emit(5)
+local copy: ParticleSystem = source:clone()
+assert(copy:count() == 5)
+assert(copy:buffer_size() == 32)
+assert(close(copy:particle_x(0), source:particle_x(0), 0.000001))
+copy:update(0.5)
+assert(copy:particle_x(0) ~= source:particle_x(0))
+
+-- Insert order decides what draws in front: "bottom" puts the newest
+-- particle first in the list, "top" puts it last.
+local ordered: ParticleSystem = plain_system(8)
+ordered:set_particle_lifetime(4.0, 4.0)
+ordered:set_position(0.0, 0.0)
+ordered:emit(1)
+ordered:set_position(500.0, 0.0)
+assert(ordered:set_insert_mode("bottom"))
+ordered:emit(1)
+assert(close(ordered:particle_x(0), 500.0, 0.001))
+assert(close(ordered:particle_x(1), 0.0, 0.001))
+
+-- Out-of-range reads answer zero instead of trapping.
+assert(ordered:particle_x(-1) == 0.0)
+assert(ordered:particle_x(99) == 0.0)
+assert(ordered:particle_size(99) == 0.0)
+
+-- A zero-size buffer is legal and simply never holds a particle.
+local empty: ParticleSystem = particles.new(0)
+empty:set_emission_rate(100.0)
+empty:emit(5)
+empty:update(1.0)
+assert(empty:count() == 0)
+assert(empty:is_full())

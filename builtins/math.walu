@@ -28,6 +28,12 @@ declare function math.cos(x: f64): f64
 declare function math.sin(x: f32): f32
 declare function math.sin(x: f64): f64
 
+-- Signed angle of the vector (x, y) in radians, in (-pi, pi]. The argument
+-- order follows Lua's and C's `atan2(y, x)`, so a vector's own components
+-- read left to right as they are stored.
+declare function math.atan2(y: f32, x: f32): f32
+declare function math.atan2(y: f64, x: f64): f64
+
 declare function math.min(a: f32, b: f32): f32
 declare function math.min(a: f64, b: f64): f64
 declare function math.max(a: f32, b: f32): f32

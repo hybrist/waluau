@@ -356,6 +356,54 @@ test.describe('DOM Output in Run tab', () => {
     await expect.poll(signature).not.toBe(initial);
   });
 
+  test('runs the particle gallery preset and switches between its scenes', async ({ page }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await page.getByRole('button', { name: 'Particle System' }).click();
+    await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+      timeout: COMPILER_READY_TIMEOUT,
+    });
+
+    const outputFrame = page.frameLocator('.dom-output-frame');
+    await expect(outputFrame.locator('h1')).toHaveText('Waluau Particles');
+    const canvas = outputFrame.locator('canvas#walua-game-canvas');
+
+    // Warm particle counts: the campfire is additive and orange, so a lit
+    // frame has plenty of pixels where red leads blue by a wide margin.
+    const warmPixels = () =>
+      canvas.evaluate((node) => {
+        const gl = node.getContext('webgl2');
+        const data = new Uint8Array(node.width * node.height * 4);
+        gl.readPixels(0, 0, node.width, node.height, gl.RGBA, gl.UNSIGNED_BYTE, data);
+        let lit = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          if (data[i] > 120 && data[i] > data[i + 2] + 40) lit += 1;
+        }
+        return lit;
+      });
+
+    await expect.poll(warmPixels, { timeout: COMPILER_READY_TIMEOUT }).toBeGreaterThan(200);
+
+    // Scene 8 draws its particles from a sprite atlas rendered into a render
+    // target at runtime, so cool pixels there prove the whole texture path.
+    await canvas.click();
+    await page.keyboard.press('8');
+    const coolPixels = () =>
+      canvas.evaluate((node) => {
+        const gl = node.getContext('webgl2');
+        const data = new Uint8Array(node.width * node.height * 4);
+        gl.readPixels(0, 0, node.width, node.height, gl.RGBA, gl.UNSIGNED_BYTE, data);
+        let lit = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          if (data[i + 2] > 140 && data[i + 1] > 100) lit += 1;
+        }
+        return lit;
+      });
+    await expect.poll(coolPixels, { timeout: COMPILER_READY_TIMEOUT }).toBeGreaterThan(100);
+
+    expect(pageErrors).toEqual([]);
+  });
+
   test('runs Waluau click and input callbacks from DOM Output events', async ({ page }) => {
     await page.locator('.code-textarea').fill(DOM_EVENT_CALLBACK_SAMPLE);
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
