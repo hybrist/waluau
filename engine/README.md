@@ -4,25 +4,19 @@ This directory defines the first usable slice of a 2D game engine written in
 Waluau. It is intentionally smaller than LÖVE; the subsystem boundaries are
 meant to hold as more of LÖVE's surface arrives behind them.
 
-The engine runs in a browser: Wasm GC for logic, the DOM for hosting, the GPU
-for drawing. See [`docs/platform-target.md`](../docs/platform-target.md) for the
+The engine runs in a browser: Wasm GC for logic, the DOM for hosting, WebGL2 for
+drawing. See [`docs/platform-target.md`](../docs/platform-target.md) for the
 target and its non-goals.
 
 Games depend on the engine facade while `browser.walu` alone owns DOM setup,
 event registration, and `requestAnimationFrame`. Drawing is GPU-backed:
 `graphics.walu` batches every shape and text call into one interleaved vertex
-stream (clip-space position plus color per vertex) and draws it with a single
-draw call per flush. Text uses either the built-in 5x7 bitmap font or a loaded
-custom font rasterized once into a GPU glyph atlas; both render as colored
-quads. The push/pop transform stack is applied CPU-side while vertices are
-emitted. The fixed-step clock and keyboard state are DOM-free, so they run in a
-headless test without a canvas.
-
-> **Renderer migration.** `graphics.walu` submits through WebGL2 today. WebGPU
-> is the target, and the WebGL2 path is transitional debt tracked under
-> `waluau-o0td` — not a supported backend. The GLSL shader surface described
-> below moves with it. Do not widen the WebGL surface, and do not add code that
-> works across both.
+stream (clip-space position plus color per vertex) and draws it through WebGL2
+with a single draw call per flush. Text uses either the built-in 5x7 bitmap font
+or a loaded custom font rasterized once into a GPU glyph atlas; both render as
+colored quads. The push/pop transform stack is applied CPU-side while vertices
+are emitted. The fixed-step clock and keyboard state are DOM-free, so they run
+in a headless test without a canvas.
 
 ## Initial API
 
@@ -96,13 +90,14 @@ of those calls renders on the GPU: lines are thin quads, circles are
 triangle fans, and `print` renders uppercased bitmap-font glyphs as quads,
 so a frame batches into very few draw calls.
 
-`Graphics` also exposes `supports(name)`, game-provided `Shader` resources, and
-`alpha`, `add`, and `multiply` blend modes. Shader creation accepts vertex and
-pixel GLSL, returns structured compile/link diagnostics, and has explicit
-lifetime; binding a released shader is rejected predictably. The renderer
-uploads decoded image resources as textures, batches atlas sprites by texture,
-and can render into and composite offscreen targets. Loaded font resources
-become batched glyph atlases and keep the bitmap font as a safe fallback.
+The WebGL2 renderer also exposes `supports(name)`, game-provided `Shader`
+resources, and `alpha`, `add`, and `multiply` blend modes. Shader creation
+accepts vertex and pixel GLSL, returns structured compile/link diagnostics, and
+has explicit lifetime; binding a released shader is rejected predictably. The
+same renderer uploads decoded image resources as textures, batches atlas sprites
+by texture, and can render into and composite offscreen targets. Loaded font
+resources become batched glyph atlases and keep the bitmap font as a safe
+fallback.
 
 Colors can be set numerically with `set_color_rgba` when a color is computed
 rather than written down, `fill_quad` fills an arbitrary quadrilateral (which
@@ -339,9 +334,9 @@ The long-term public surface should remain small and subsystem-oriented:
 
 The API describes resources and commands rather than exposing DOM objects. That
 is what keeps game code out of the host: a game says "draw this sprite", not
-"bind this buffer". It is not a portability layer — WebGPU is free to show
+"bind this buffer". It is not a portability layer — WebGL2 is free to show
 through wherever hiding it would cost performance, and the interface should be
-designed around what WebGPU does well.
+designed around what WebGL2 does well.
 
 ## Capabilities required for a complete engine
 
@@ -352,24 +347,22 @@ Reaching LÖVE-like usability requires these architectural capabilities:
 | --- | --- | --- |
 | Distribution | Stable package/virtual-module imports, API versioning and a standard project layout are available | Generated sibling JavaScript glue and typed fingerprinted asset manifests are available |
 | Resources | Opaque host handles, nullable callbacks and host byte transfer are available | Async text/bytes/image/font/audio handles, decoded-image GPU upload, explicit lifetime, structured failures, and production packaging are available; caching remains |
-| GPU graphics | Typed buffers, numeric/vector data, shader and uniform-friendly APIs | Geometry submission, texture/sprite/glyph batching, render targets, game-provided shader compilation, structured diagnostics, uniforms, and explicit shader lifetime are available on WebGL2; the WebGPU migration owns pipelines, bind groups, storage buffers and compute |
+| GPU graphics | Typed buffers, numeric/vector data, shader and uniform-friendly APIs | WebGL2 geometry, texture/sprite/glyph batching, render targets, game-provided vertex/pixel shader compilation, structured diagnostics, uniforms, and explicit shader lifetime are available |
 | Input | Extensible event/value representation without a closed hard-coded record | Keyboard normalization, pointer/touch/gamepad polling, focus and fullscreen handling |
 | Audio | Optional readiness callbacks and richer source state | Decoded effects and streamed music are available; buses, effects and richer mixing remain |
 | Files | Stable project/package layout | Packaged fetch plus namespaced text/byte saves are available; larger-capacity save storage remains |
 | Tooling | Source locations and protected error propagation across host callbacks | Project runner, asset pipeline, hot reload, debugger/profiler and distributable packaging |
-| Performance | Predictable allocation, reusable buffers, broader numeric/vector operations | GPU-resident simulation state, batched and indirect submission, off-main-thread work, frame/memory profiling |
+| Performance | Predictable allocation, reusable buffers, broader numeric/vector operations | Batched submission, instancing, off-main-thread work where available, frame/memory profiling |
 
 Several prerequisites already have repository issues, including 3D/GPU canvas
 access (`waluau-9tvw`), generated JavaScript/Wasm glue (`waluau-884g`), dynamic
 extern values (`waluau-lxdd`), host container marshalling (`waluau-utyc`), and
 host-boundary error catching (`waluau-uvfk`). Engine-specific follow-ups cover
 the stable package surface (`waluau-tpil`), GPU-backed renderer (`waluau-vt3k`),
-and asset/audio/save services (`waluau-mi1t`). The WebGPU migration is tracked
-under `waluau-o0td`. Beads remains the authoritative source for priorities and
-completion status.
+and asset/audio/save services (`waluau-mi1t`). Beads remains the authoritative
+source for priorities and completion status.
 
 The renderer draws colored geometry, loaded textures, bitmap or custom-font
-glyphs, atlas sprite batches, and render targets, and games can compile and bind
-their own vertex/pixel programs on that same batched stream. Submission runs
-through WebGL2 using the extern surface from `waluau-9tvw` until the WebGPU
-migration lands.
+glyphs, atlas sprite batches, and render targets through WebGL2, using the
+extern surface from `waluau-9tvw`. Games can compile and bind their own
+vertex/pixel programs on that same batched stream.

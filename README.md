@@ -12,25 +12,17 @@ it, and a 2D game engine written in Waluau itself.
   data structures live in the Wasm module.
 - **The DOM** is the host interface. Browser APIs reach Waluau through generated
   externs (`externs/`), not through a hand-written portability layer.
-- **WebGPU** is the graphics and parallel-compute target. Rendering, and
-  workloads such as large particle simulations where GPU execution gives
-  material leverage, belong on the GPU.
+- **WebGL2** is how the engine draws. It is a DOM API like any other, used
+  directly rather than behind a renderer abstraction.
 
 Explicit non-goals: native or server-side execution, native engine adapters
-(resources, audio, filesystem, mixer), WebGL and Canvas 2D as engine rendering
-paths, and renderer or backend portability of any kind. Do not add an
-abstraction whose only justification is a platform this project does not ship.
-
-`engine/graphics.walu` still renders through WebGL2. That is transitional debt,
-tracked under `waluau-o0td`, not a supported second backend.
-
-WebGL and Canvas 2D *do* appear in `externs/` and in `conformance/dom_*.walu`.
-That is deliberate: those files test the DOM extern bridge itself (typed-array
-views, spec enum constants, host-side readback), and the DOM is a target.
+(resources, audio, filesystem, mixer), and renderer or backend portability of
+any kind. Do not add an abstraction whose only justification is a platform this
+project does not ship, and do not lay groundwork for a graphics API this project
+has not decided to adopt.
 
 See [`docs/platform-target.md`](docs/platform-target.md) for the full decision:
-supported baseline, CPU-versus-GPU placement, compatibility policy, and how
-GPU-resident behavior is tested deterministically.
+supported baseline, non-goals, seam rule, and testing strategy.
 
 ## Layout
 

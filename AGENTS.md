@@ -4,25 +4,22 @@ This project uses **bd** (beads) for issue tracking. Run `bd prime` for full wor
 
 ## Platform target (hard constraint)
 
-**Waluau targets Wasm GC in web browsers. The DOM is the host interface. WebGPU is the graphics and parallel-compute target.** There is one target, not a first target. The full decision — baseline, workload placement, testing strategy — is [`docs/platform-target.md`](docs/platform-target.md); read it before designing anything that touches the engine or the host boundary.
+**Waluau targets Wasm GC in web browsers. The DOM is the host interface. The engine draws with WebGL2.** There is one target, not a first target, and the repository documents what it supports rather than what it might support later. The full decision is [`docs/platform-target.md`](docs/platform-target.md); read it before designing anything that touches the engine or the host boundary.
 
 Do not write, and do not leave in place:
 
 - ❌ Native, server-side, or non-browser runtime targets for compiled programs
 - ❌ Native engine adapters (resources, audio, filesystem, mixer, save data)
-- ❌ WebGL or Canvas 2D as an engine rendering path, fallback, or compatibility tier
 - ❌ Abstractions whose only justification is a platform this project does not ship, including "this interface will survive other backends"
+- ❌ A rendering interface whose purpose is to hide WebGL2, or any code, wording, or scheduled work that prepares for a different graphics API
 - ❌ The words "backend-neutral", "host-independent", or "platform-neutral". If a module avoids the DOM, say **DOM-free** and say what that buys (a headless test without a canvas)
-- ❌ CPU-per-element work for workloads that belong in a compute pass — a large particle system does not tessellate vertices on the CPU and upload them each frame
 
 Legitimate, and not exceptions to the above:
 
-- ✅ Broad DOM coverage in `externs/` and `conformance/dom_*.walu`, including WebGL and Canvas 2D. Those test the DOM extern bridge, and the DOM is a target
+- ✅ `engine/graphics.walu` using WebGL2 directly, including where WebGL2 shows through the `Graphics` API
+- ✅ Broad DOM coverage in `externs/` and `conformance/dom_*.walu`, including WebGL and Canvas 2D. Those test the DOM extern bridge, and the DOM is the host interface
 - ✅ `engine/browser.walu` owning DOM setup, events, and `requestAnimationFrame` so that game code never imports DOM externs
 - ✅ The native Rust compiler and CLI — that is build tooling, not a runtime target
-- ✅ Explicitly labeled test/inspection seams, including CPU-readable mirrors of GPU state, as long as they are not the path a shipping frame takes
-
-`engine/graphics.walu` still renders through WebGL2. That is migration debt tracked under `waluau-o0td` — do not widen it, and do not build anything to work across both renderers.
 
 If a task seems to require one of the ❌ items, stop and raise it instead of adding the abstraction.
 

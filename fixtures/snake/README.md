@@ -21,7 +21,7 @@ It is available in the playground as the "Snake Game" preset and covered by
 ## Building
 
 ```bash
-# Browser entry (the engine needs a DOM and a GPU canvas):
+# Browser entry (the engine needs a DOM and a WebGL2 context):
 cargo run -p waluau-cli -- fixtures/snake/main.walu -o snake.wasm
 
 # Headless rules check (runs entirely at wasm instantiation via asserts):
@@ -30,7 +30,7 @@ cargo run -p waluau-cli -- fixtures/snake/sim.walu -o sim.wasm
 
 Both entries compile today. `sim.walu` traps on any rules regression, so it can
 be executed in any wasm host that provides the standard `waluau` imports and
-JS string-builtin constants. `main.walu` additionally needs the DOM and GPU
+JS string-builtin constants. `main.walu` additionally needs the DOM and WebGL2
 surface that `engine/browser.walu` and `engine/graphics.walu` use internally.
 
 The port currently uses a deterministic seed because the engine does not yet
