@@ -323,7 +323,7 @@ test.describe('DOM Output in Run tab', () => {
     });
 
     const outputFrame = page.frameLocator('.dom-output-frame');
-    await expect(outputFrame.locator('h1')).toHaveText('Walua 2D Engine (WebGL2)');
+    await expect(outputFrame.locator('h1')).toHaveText('Walua 2D Engine');
     const canvas = outputFrame.locator('canvas#walua-game-canvas');
     await expect.poll(() =>
       canvas.evaluate((node) => ({

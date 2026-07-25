@@ -1,18 +1,28 @@
 # Walua 2D engine
 
 This directory defines the first usable slice of a 2D game engine written in
-Waluau. It is intentionally smaller than LÖVE, but its boundaries are intended
-to survive the addition of more complete backends and subsystems.
+Waluau. It is intentionally smaller than LÖVE; the subsystem boundaries are
+meant to hold as more of LÖVE's surface arrives behind them.
 
-The browser is the first platform. Games depend on the engine facade while
-`browser.walu` alone owns DOM setup, event registration, and
-`requestAnimationFrame`. Drawing is GPU-backed: `graphics.walu` batches every
-shape and text call into one interleaved vertex stream (clip-space position
-plus color per vertex) and draws it through WebGL2 with a single draw call
-per flush. Text uses either the built-in 5x7 bitmap font or a loaded custom
-font rasterized once into a GPU glyph atlas; both render as colored quads.
-The push/pop transform stack is applied CPU-side while vertices are emitted.
-The fixed-step clock and keyboard state are host-independent.
+The engine runs in a browser: Wasm GC for logic, the DOM for hosting, the GPU
+for drawing. See [`docs/platform-target.md`](../docs/platform-target.md) for the
+target and its non-goals.
+
+Games depend on the engine facade while `browser.walu` alone owns DOM setup,
+event registration, and `requestAnimationFrame`. Drawing is GPU-backed:
+`graphics.walu` batches every shape and text call into one interleaved vertex
+stream (clip-space position plus color per vertex) and draws it with a single
+draw call per flush. Text uses either the built-in 5x7 bitmap font or a loaded
+custom font rasterized once into a GPU glyph atlas; both render as colored
+quads. The push/pop transform stack is applied CPU-side while vertices are
+emitted. The fixed-step clock and keyboard state are DOM-free, so they run in a
+headless test without a canvas.
+
+> **Renderer migration.** `graphics.walu` submits through WebGL2 today. WebGPU
+> is the target, and the WebGL2 path is transitional debt tracked under
+> `waluau-o0td` — not a supported backend. The GLSL shader surface described
+> below moves with it. Do not widen the WebGL surface, and do not add code that
+> works across both.
 
 ## Initial API
 
@@ -58,10 +68,10 @@ the same aggregate facade:
   particle constructors
 
 Aggregate type exports are identity-preserving aliases. For example,
-`engine.Input`, `input.Input`, and the `Input` accepted inside the browser
-adapter all resolve to the same linked type declaration.
+`engine.Input`, `input.Input`, and the `Input` accepted inside `browser.walu`
+all resolve to the same linked type declaration.
 
-Subsystem modules remain supported for focused and host-independent programs:
+Subsystem modules remain supported for focused programs, including DOM-free ones:
 
 | Current-major import | Pinned import | Surface |
 | --- | --- | --- |
@@ -71,7 +81,7 @@ Subsystem modules remain supported for focused and host-independent programs:
 | `waluau:engine/resources` | `waluau:engine/v1/resources` | packaged resource loading and handles |
 | `waluau:engine/audio` | `waluau:engine/v1/audio` | decoded effects, streamed music, and playback control |
 | `waluau:engine/time` | `waluau:engine/v1/time` | deterministic fixed-step clock |
-| `waluau:engine/browser` | `waluau:engine/v1/browser` | browser lifecycle adapter |
+| `waluau:engine/browser` | `waluau:engine/v1/browser` | DOM setup, input events, and the animation loop |
 | `waluau:engine/hot` | `waluau:engine/v1/hot` | development snapshot/restore registration |
 | `waluau:engine/shader_sources` | `waluau:engine/v1/shader_sources` | revisioned external shader source polling |
 
@@ -86,14 +96,13 @@ of those calls renders on the GPU: lines are thin quads, circles are
 triangle fans, and `print` renders uppercased bitmap-font glyphs as quads,
 so a frame batches into very few draw calls.
 
-The WebGL backend also exposes `supports(name)`, game-provided `Shader`
-resources, and `alpha`, `add`, and `multiply` blend modes. Shader creation
-accepts vertex and pixel GLSL, returns structured compile/link diagnostics,
-and has explicit lifetime; binding a released shader is rejected predictably.
-The same backend uploads decoded image resources as textures, batches atlas
-sprites by texture, and can render into and composite offscreen targets.
-Loaded font resources become batched glyph atlases and keep the bitmap font as
-a safe fallback.
+`Graphics` also exposes `supports(name)`, game-provided `Shader` resources, and
+`alpha`, `add`, and `multiply` blend modes. Shader creation accepts vertex and
+pixel GLSL, returns structured compile/link diagnostics, and has explicit
+lifetime; binding a released shader is rejected predictably. The renderer
+uploads decoded image resources as textures, batches atlas sprites by texture,
+and can render into and composite offscreen targets. Loaded font resources
+become batched glyph atlases and keep the bitmap font as a safe fallback.
 
 Colors can be set numerically with `set_color_rgba` when a color is computed
 rather than written down, `fill_quad` fills an arbitrary quadrilateral (which
@@ -266,8 +275,10 @@ Packaged assets and save data are deliberately separate:
   cannot start, so games can surface or otherwise handle a playback failure
   explicitly.
 - `save.read_*/write_*/delete` use logical slot names in a versioned,
-  per-game namespace. They are asynchronous even though the browser adapter
-  uses local storage, preserving the API for future native atomic file I/O.
+  per-game namespace. Slots are names rather than paths because a browser has
+  no filesystem for a game to address, and the calls are asynchronous so a
+  larger-capacity backing store than local storage can replace it without
+  touching game source.
 
 Host promises always resolve to either a ready handle or a structured failure;
 raw fetch, decode, storage, and device exceptions do not cross into game code.
@@ -281,8 +292,9 @@ Every successful load owns one handle. Call `resources.release` when it is no
 longer needed; release is idempotent and closes image objects, unregisters font
 faces, stops decoded sources, and detaches streams. This first slice has no
 implicit cache. [`fixtures/game-engine/resources.walu`](../fixtures/game-engine/resources.walu)
-is the backend-neutral contract sample for image/font/audio readiness, safe
-failure, and save reload behavior.
+is the contract sample for image/font/audio readiness, safe failure, and save
+reload behavior, written entirely against the service API rather than DOM
+externs.
 
 `Graphics:texture_from_resource` copies a ready image into GPU storage without
 fetching or decoding it again. The decoded source may therefore be released as
@@ -305,29 +317,31 @@ glue exports the logical-path manifest and an import-meta-relative base URL;
 the browser host maps logical requests to emitted URLs and rejects undeclared
 or wrongly typed requests. Save namespaces never consult this manifest. See
 [`examples/game-project`](../examples/game-project/) for the complete layout
-and build command. A native resource adapter remains a separate follow-up.
+and build command.
 
 ## Intended API surface
 
 The long-term public surface should remain small and subsystem-oriented:
 
 - `engine`: lifecycle, configuration, quit/restart, errors, version/features
-- `time`: fixed/variable timing, timer, sleep where a platform permits it
+- `time`: fixed/variable timing and timers
 - `input`: keyboard, pointer, touch, gamepad, text entry, focus
-- `graphics`: windows/canvases, colors, transforms, shapes, text, images,
+- `graphics`: canvas configuration, colors, transforms, shapes, text, images,
   atlases, sprite batches, meshes, render targets, blend/depth/stencil state,
   shaders and capability queries
 - `particles`: pooled emitters, spawn areas, forces, size/color curves and
   textured or shape-drawn particles
 - `audio`: decoded/streamed sources, playback state, buses and spatial audio
-- `filesystem`: packaged assets, save data and platform-safe paths
+- `filesystem`: packaged assets and save data under logical names
 - `physics`: optional 2D collision and rigid-body integration
 - `math`: vectors, matrices, rectangles, interpolation, noise and randomness
-- `system`: OS/display information, clipboard, URLs and diagnostics
+- `system`: display information, clipboard, URLs and diagnostics
 
-The API should describe resources and commands rather than expose browser DOM
-objects. That permits Canvas 2D, WebGL/WebGPU, and future native renderers to
-share game-facing concepts even where their performance characteristics differ.
+The API describes resources and commands rather than exposing DOM objects. That
+is what keeps game code out of the host: a game says "draw this sprite", not
+"bind this buffer". It is not a portability layer — WebGPU is free to show
+through wherever hiding it would cost performance, and the interface should be
+designed around what WebGPU does well.
 
 ## Capabilities required for a complete engine
 
@@ -337,23 +351,25 @@ Reaching LÖVE-like usability requires these architectural capabilities:
 | Area | Waluau/language requirement | Platform/runtime requirement |
 | --- | --- | --- |
 | Distribution | Stable package/virtual-module imports, API versioning and a standard project layout are available | Generated sibling JavaScript glue and typed fingerprinted asset manifests are available |
-| Resources | Backend-neutral opaque handles, nullable callbacks and host byte transfer are available | Browser async text/bytes/image/font/audio handles, decoded-image GPU upload, explicit lifetime, structured failures, and production packaging are available; caching and native adapters remain |
-| GPU graphics | Typed buffers, numeric/vector data, shader and uniform-friendly APIs | WebGL2 geometry, texture/sprite/glyph batching, render targets, game-provided vertex/pixel shader compilation, structured diagnostics, uniforms, and explicit shader lifetime are available |
+| Resources | Opaque host handles, nullable callbacks and host byte transfer are available | Async text/bytes/image/font/audio handles, decoded-image GPU upload, explicit lifetime, structured failures, and production packaging are available; caching remains |
+| GPU graphics | Typed buffers, numeric/vector data, shader and uniform-friendly APIs | Geometry submission, texture/sprite/glyph batching, render targets, game-provided shader compilation, structured diagnostics, uniforms, and explicit shader lifetime are available on WebGL2; the WebGPU migration owns pipelines, bind groups, storage buffers and compute |
 | Input | Extensible event/value representation without a closed hard-coded record | Keyboard normalization, pointer/touch/gamepad polling, focus and fullscreen handling |
-| Audio | Optional readiness callbacks and richer source state | Browser decoded effects and streamed music; native mixer, buses, effects and device lifecycle remain |
-| Files | Stable project/package layout | Browser packaged fetch plus namespaced text/byte saves; desktop paths and atomic native save adapter remain |
+| Audio | Optional readiness callbacks and richer source state | Decoded effects and streamed music are available; buses, effects and richer mixing remain |
+| Files | Stable project/package layout | Packaged fetch plus namespaced text/byte saves are available; larger-capacity save storage remains |
 | Tooling | Source locations and protected error propagation across host callbacks | Project runner, asset pipeline, hot reload, debugger/profiler and distributable packaging |
-| Performance | Predictable allocation, reusable buffers, broader numeric/vector operations | Batched submission, off-main-thread work where available, frame/memory profiling |
+| Performance | Predictable allocation, reusable buffers, broader numeric/vector operations | GPU-resident simulation state, batched and indirect submission, off-main-thread work, frame/memory profiling |
 
 Several prerequisites already have repository issues, including 3D/GPU canvas
 access (`waluau-9tvw`), generated JavaScript/Wasm glue (`waluau-884g`), dynamic
 extern values (`waluau-lxdd`), host container marshalling (`waluau-utyc`), and
 host-boundary error catching (`waluau-uvfk`). Engine-specific follow-ups cover
 the stable package surface (`waluau-tpil`), GPU-backed renderer (`waluau-vt3k`),
-and asset/audio/save services (`waluau-mi1t`). Beads remains the authoritative
-source for priorities and completion status.
+and asset/audio/save services (`waluau-mi1t`). The WebGPU migration is tracked
+under `waluau-o0td`. Beads remains the authoritative source for priorities and
+completion status.
 
 The renderer draws colored geometry, loaded textures, bitmap or custom-font
-glyphs, atlas sprite batches, and render targets through WebGL2 today, using
-the extern surface from `waluau-9tvw`. Games can compile and bind their own
-vertex/pixel programs on that same batched stream.
+glyphs, atlas sprite batches, and render targets, and games can compile and bind
+their own vertex/pixel programs on that same batched stream. Submission runs
+through WebGL2 using the extern surface from `waluau-9tvw` until the WebGPU
+migration lands.

@@ -1,5 +1,6 @@
 -- Snake hosted by the 2D game engine. Game code owns only rules and drawing;
--- the engine owns the DOM, WebGL canvas, input events, and fixed-step loop.
+-- the engine owns the DOM, the GPU canvas, input events, and the fixed-step
+-- loop.
 
 local engine = require("../../engine/browser")
 local input_module = require("../../engine/input")

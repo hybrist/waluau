@@ -1,6 +1,6 @@
 -- Particle gallery: eight scenes built from the engine's particle system,
 -- switched with the number keys. Game code here never touches the DOM — the
--- browser adapter owns the canvas, and every effect is emitter configuration.
+-- engine owns the canvas, and every effect is emitter configuration.
 
 local engine = require("../../engine/browser")
 local input_module = require("../../engine/input")

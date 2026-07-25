@@ -1,4 +1,4 @@
--- Browser conformance fixture for backend-neutral Graphics paths. It covers
+-- Browser conformance fixture for the Graphics path API. It covers
 -- transformed closed paths, quadratic and cubic curves, multiple subpaths,
 -- and a stroke large enough to cross the renderer's implicit batch flush.
 

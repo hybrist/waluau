@@ -1,6 +1,7 @@
--- Mutable save-data namespace. Slots are logical names, not filesystem paths,
--- and are kept completely separate from packaged read-only asset lookup. All
--- operations are async so a future native host may use atomic file I/O without
+-- Mutable save-data namespace. Slots are logical names because a browser gives
+-- a game no filesystem to address, and they are kept completely separate from
+-- packaged read-only asset lookup. All operations are async: local storage
+-- backs them today, and a larger-capacity store can replace it without
 -- changing game source.
 
 local resources = require("./resources")

@@ -35,6 +35,8 @@ Look for the originating spec, in this order:
 
 Anything in the repo that documents how code should be written, such as `CODING_STANDARDS.md` or `CONTRIBUTING.md`.
 
+`AGENTS.md` and `docs/platform-target.md` are always standards sources here, and the **platform target is a hard violation, not a judgement call**. Reject in the diff: a new WebGL or Canvas 2D engine rendering path, a fallback renderer, a native/non-browser runtime target or engine adapter, an abstraction justified only by a platform this project does not ship (including the words "backend-neutral", "host-independent", or "platform-neutral"), a WebGPU test that skips instead of failing when no device is available, and CPU-per-element geometry or upload for a workload that belongs in a compute pass. Broad DOM coverage in `externs/` and `conformance/dom_*.walu` is not a violation.
+
 On top of whatever the repo documents, the Standards axis always carries the **smell baseline** below — a fixed set of Fowler code smells (_Refactoring_, ch.3) that applies even when a repo documents nothing. Two rules bind it:
 
 - **The repo overrides.** A documented repo standard always wins; where it endorses something the baseline would flag, suppress the smell.

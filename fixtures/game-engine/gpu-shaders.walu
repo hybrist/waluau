@@ -1,4 +1,4 @@
--- Conformance fixture for game-provided WebGL vertex/pixel shaders.
+-- Conformance fixture for game-provided vertex/pixel shaders.
 local engine = require("../../engine/browser")
 local graphics_module = require("../../engine/graphics")
 local input_module = require("../../engine/input")

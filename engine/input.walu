@@ -1,6 +1,7 @@
--- Small keyboard and mouse state machine. It is deliberately string-keyed so
--- game code sees the same names on every backend ("ArrowLeft", "a", "Space",
--- ...). Mouse buttons use the Love2D-style numbering the platform adapter
+-- Small keyboard and mouse state machine. It is deliberately string-keyed
+-- rather than a closed enum, so a game can query any key the DOM reports
+-- ("ArrowLeft", "a", "Space", ...) without an engine change. Mouse buttons use
+-- the Love2D-style numbering browser.walu
 -- feeds in: 1 = left, 2 = right, 3 = middle.
 
 type Button = { key: string, down: bool, pressed: bool, released: bool }
