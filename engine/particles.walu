@@ -1,0 +1,1324 @@
+-- Buffered 2D particle system.
+--
+-- The emitter follows LÖVE's ParticleSystem semantics — emission rate and
+-- emitter lifetime, spawn areas, direction/spread, speed, linear, radial and
+-- tangential acceleration, damping, size and color curves, rotation and spin,
+-- textures with animated quads, insert order — so a game ported from Love2D
+-- keeps its tuning. Three things differ deliberately:
+--
+--   * The buffer is a pool. Every particle record is allocated when the
+--     buffer size is chosen and recycled forever after, so a system that has
+--     run for an hour has the same memory footprint as one that just started.
+--   * A texture is optional. Circles, squares, points and velocity-aligned
+--     sparks draw straight from the batched renderer, so a system is useful
+--     before a game has any art.
+--   * Randomness is per system, from a Lehmer (`minstd`) sequence rather than
+--     the shared `math.random` stream: two systems seeded alike produce
+--     identical output, and emitting never shifts the sequence gameplay code
+--     is drawing from.
+
+local graphics_module = require("./graphics")
+
+type Graphics = graphics_module.Graphics
+
+-- Channels run 0.0..1.0, the same range the renderer sends to the GPU.
+type Color = { red: f64, green: f64, blue: f64, alpha: f64 }
+-- A source rectangle in texture pixels. A quad list is walked across a
+-- particle's life, which is how sprite-sheet animation works.
+type Quad = { x: f64, y: f64, width: f64, height: f64 }
+
+-- One pooled particle. Records are reused, so every field is overwritten on
+-- spawn and nothing here is allowed to mean "unset".
+type Particle = {
+    x: f64,
+    y: f64,
+    velocity_x: f64,
+    velocity_y: f64,
+    -- Emitter position at spawn: radial and tangential acceleration are
+    -- measured from where the particle came from, not from where the emitter
+    -- has since moved to.
+    origin_x: f64,
+    origin_y: f64,
+    acceleration_x: f64,
+    acceleration_y: f64,
+    radial_acceleration: f64,
+    tangential_acceleration: f64,
+    damping: f64,
+    life: f64,
+    lifetime: f64,
+    -- `rotation` is the spun angle; `angle` adds the velocity direction when
+    -- relative rotation is on, and is what drawing uses.
+    rotation: f64,
+    angle: f64,
+    spin_start: f64,
+    spin_end: f64,
+    size_offset: f64,
+    size_interval: f64
+}
+
+type ParticleSystem = {
+    alive: {Particle},
+    free: {Particle},
+    capacity: i32,
+
+    active: bool,
+    emitter_lifetime: f64,
+    life: f64,
+    emit_counter: f64,
+    emission_rate: f64,
+
+    x: f64,
+    y: f64,
+    previous_x: f64,
+    previous_y: f64,
+
+    life_min: f64,
+    life_max: f64,
+    direction: f64,
+    spread: f64,
+    speed_min: f64,
+    speed_max: f64,
+    acceleration_min_x: f64,
+    acceleration_min_y: f64,
+    acceleration_max_x: f64,
+    acceleration_max_y: f64,
+    radial_min: f64,
+    radial_max: f64,
+    tangential_min: f64,
+    tangential_max: f64,
+    damping_min: f64,
+    damping_max: f64,
+
+    sizes: {f64},
+    size_variation: f64,
+    rotation_min: f64,
+    rotation_max: f64,
+    spin_start: f64,
+    spin_end: f64,
+    spin_variation: f64,
+    relative_rotation: bool,
+    colors: {Color},
+
+    offset_x: f64,
+    offset_y: f64,
+    offset_auto: bool,
+    insert_mode: i32,
+
+    area_distribution: i32,
+    area_x: f64,
+    area_y: f64,
+    area_angle: f64,
+    area_directed: bool,
+
+    texture: graphics_module.Texture?,
+    quads: {Quad},
+    shape_width: f64,
+    shape_height: f64,
+    draw_mode: i32,
+    blend_mode: string,
+
+    rng: f64
+}
+
+const INSERT_TOP: i32 = 0
+const INSERT_BOTTOM: i32 = 1
+const INSERT_RANDOM: i32 = 2
+
+const AREA_NONE: i32 = 0
+const AREA_UNIFORM: i32 = 1
+const AREA_NORMAL: i32 = 2
+const AREA_ELLIPSE: i32 = 3
+const AREA_BORDER_ELLIPSE: i32 = 4
+const AREA_BORDER_RECTANGLE: i32 = 5
+
+const DRAW_CIRCLE: i32 = 0
+const DRAW_SQUARE: i32 = 1
+const DRAW_POINT: i32 = 2
+const DRAW_SPARK: i32 = 3
+const DRAW_TEXTURE: i32 = 4
+
+const TAU: f64 = 6.283185307179586
+-- Lehmer generator constants (`minstd_rand`): the product stays under 2^53,
+-- so every step is exact in f64 and the sequence is reproducible anywhere.
+const RANDOM_MODULUS: f64 = 2147483647.0
+const RANDOM_MULTIPLIER: f64 = 16807.0
+-- Four uniform samples average into a bell whose standard deviation is
+-- sqrt(1/12 * 4) = 0.5773; scaling by its reciprocal gives unit deviation.
+const NORMAL_SCALE: f64 = 1.7320508075688772
+
+function color(red: f64, green: f64, blue: f64, alpha: f64): Color
+    return { red = red, green = green, blue = blue, alpha = alpha }
+end
+
+function hex_digit(code: i32): i32
+    if code >= 48 and code <= 57 then
+        return code - 48
+    elseif code >= 97 and code <= 102 then
+        return code - 87
+    elseif code >= 65 and code <= 70 then
+        return code - 55
+    end
+    return 0
+end
+
+function hex_channel(value: string, index: i32): f64
+    local high: i32 = string.byte(value, index)
+    local low: i32 = string.byte(value, index + 1)
+    return ((hex_digit(high) * 16 + hex_digit(low))::f64) / 255.0
+end
+
+-- Accepts "#rrggbb" and "#rrggbbaa" so color lists can be written the same
+-- way as every other color in the engine. Anything else is opaque white.
+function hex(value: string): Color
+    if #value ~= 7 and #value ~= 9 then
+        return { red = 1.0, green = 1.0, blue = 1.0, alpha = 1.0 }
+    end
+    local alpha: f64 = 1.0
+    if #value == 9 then
+        alpha = hex_channel(value, 8)
+    end
+    return {
+        red = hex_channel(value, 2),
+        green = hex_channel(value, 4),
+        blue = hex_channel(value, 6),
+        alpha = alpha,
+    }
+end
+
+function quad(x: f64, y: f64, width: f64, height: f64): Quad
+    return { x = x, y = y, width = width, height = height }
+end
+
+function new_particle(): Particle
+    return {
+        x = 0.0,
+        y = 0.0,
+        velocity_x = 0.0,
+        velocity_y = 0.0,
+        origin_x = 0.0,
+        origin_y = 0.0,
+        acceleration_x = 0.0,
+        acceleration_y = 0.0,
+        radial_acceleration = 0.0,
+        tangential_acceleration = 0.0,
+        damping = 0.0,
+        life = 0.0,
+        lifetime = 1.0,
+        rotation = 0.0,
+        angle = 0.0,
+        spin_start = 0.0,
+        spin_end = 0.0,
+        size_offset = 0.0,
+        size_interval = 1.0,
+    }
+end
+
+function ParticleSystem.new(buffer_size: i32): ParticleSystem
+    local system: ParticleSystem = {
+        alive = {},
+        free = {},
+        capacity = 0,
+
+        active = true,
+        emitter_lifetime = -1.0,
+        life = -1.0,
+        emit_counter = 0.0,
+        emission_rate = 0.0,
+
+        x = 0.0,
+        y = 0.0,
+        previous_x = 0.0,
+        previous_y = 0.0,
+
+        life_min = 1.0,
+        life_max = 1.0,
+        direction = 0.0,
+        spread = 0.0,
+        speed_min = 0.0,
+        speed_max = 0.0,
+        acceleration_min_x = 0.0,
+        acceleration_min_y = 0.0,
+        acceleration_max_x = 0.0,
+        acceleration_max_y = 0.0,
+        radial_min = 0.0,
+        radial_max = 0.0,
+        tangential_min = 0.0,
+        tangential_max = 0.0,
+        damping_min = 0.0,
+        damping_max = 0.0,
+
+        sizes = { 1.0 },
+        size_variation = 0.0,
+        rotation_min = 0.0,
+        rotation_max = 0.0,
+        spin_start = 0.0,
+        spin_end = 0.0,
+        spin_variation = 0.0,
+        relative_rotation = false,
+        colors = { { red = 1.0, green = 1.0, blue = 1.0, alpha = 1.0 } },
+
+        offset_x = 4.0,
+        offset_y = 4.0,
+        offset_auto = true,
+        insert_mode = INSERT_TOP,
+
+        area_distribution = AREA_NONE,
+        area_x = 0.0,
+        area_y = 0.0,
+        area_angle = 0.0,
+        area_directed = false,
+
+        texture = nil,
+        quads = {},
+        shape_width = 8.0,
+        shape_height = 8.0,
+        draw_mode = DRAW_CIRCLE,
+        blend_mode = "alpha",
+
+        rng = 1.0,
+    }
+    system:set_buffer_size(buffer_size)
+    return system
+end
+
+-- Deterministic uniform sample in [0, 1).
+function ParticleSystem:random(): f64
+    local state: f64 = self.rng * RANDOM_MULTIPLIER
+    state = state - math.floor(state / RANDOM_MODULUS) * RANDOM_MODULUS
+    if state < 1.0 then
+        state = 1.0
+    end
+    self.rng = state
+    return (state - 1.0) / (RANDOM_MODULUS - 1.0)
+end
+
+function ParticleSystem:random_range(low: f64, high: f64): f64
+    if high <= low then
+        return low
+    end
+    return low + (high - low) * self:random()
+end
+
+-- Approximately normal, centred on zero. Box-Muller needs a logarithm the
+-- math builtins do not expose, so this sums four uniforms instead; the shape
+-- is indistinguishable once it is scattering particles.
+function ParticleSystem:random_normal(deviation: f64): f64
+    local sum: f64 = self:random() + self:random() + self:random() + self:random()
+    return (sum - 2.0) * NORMAL_SCALE * deviation
+end
+
+-- Seeds the per-system sequence. Systems that share a seed and receive the
+-- same calls produce the same particles, which is what makes a replay or a
+-- test reproducible.
+function ParticleSystem:set_seed(seed: i32): unit
+    local value: f64 = math.floor(math.abs(seed::f64))
+    value = value - math.floor(value / (RANDOM_MODULUS - 1.0)) * (RANDOM_MODULUS - 1.0)
+    self.rng = value + 1.0
+end
+
+-- Reallocates the pool. Like Love2D this discards every live particle: the
+-- buffer is the system's entire particle storage.
+function ParticleSystem:set_buffer_size(size: i32): unit
+    local wanted: i32 = size
+    if wanted < 0 then
+        wanted = 0
+    end
+    self.alive = {}
+    self.free = {}
+    for _ = 1, wanted do
+        table.insert(self.free, new_particle())
+    end
+    self.capacity = wanted
+end
+
+function ParticleSystem:buffer_size(): i32
+    return self.capacity
+end
+
+function ParticleSystem:count(): i32
+    return #self.alive
+end
+
+function ParticleSystem:is_full(): bool
+    return #self.free == 0
+end
+
+function ParticleSystem:is_active(): bool
+    return self.active
+end
+
+-- Paused and stopped are both "not emitting"; the emitter clock tells them
+-- apart, exactly as in Love2D.
+function ParticleSystem:is_paused(): bool
+    return not self.active and self.life < self.emitter_lifetime
+end
+
+function ParticleSystem:is_stopped(): bool
+    return not self.active and self.life >= self.emitter_lifetime
+end
+
+function ParticleSystem:start(): unit
+    self.active = true
+end
+
+-- Stops emission and rewinds the emitter clock. Live particles finish their
+-- lives; use reset to clear them immediately.
+function ParticleSystem:stop(): unit
+    self.active = false
+    self.life = self.emitter_lifetime
+    self.emit_counter = 0.0
+end
+
+-- Stops emission but keeps the emitter clock, so a later start continues the
+-- lifetime where it left off.
+function ParticleSystem:pause(): unit
+    self.active = false
+end
+
+function ParticleSystem:reset(): unit
+    while #self.alive > 0 do
+        table.insert(self.free, table.remove(self.alive))
+    end
+    self.life = self.emitter_lifetime
+    self.emit_counter = 0.0
+end
+
+function ParticleSystem:set_emission_rate(rate: f64): unit
+    if rate < 0.0 then
+        self.emission_rate = 0.0
+    else
+        self.emission_rate = rate
+    end
+end
+
+-- Seconds of emission before the emitter stops itself. Negative means the
+-- emitter runs until something stops it.
+function ParticleSystem:set_emitter_lifetime(seconds: f64): unit
+    self.emitter_lifetime = seconds
+    self.life = seconds
+end
+
+function ParticleSystem:set_particle_lifetime(minimum: f64, maximum: f64): unit
+    self.life_min = minimum
+    if maximum < minimum then
+        self.life_max = minimum
+    else
+        self.life_max = maximum
+    end
+end
+
+-- Teleports the emitter: particles emitted after this appear at the new place
+-- with no trail from the old one.
+function ParticleSystem:set_position(x: f64, y: f64): unit
+    self.x = x
+    self.y = y
+    self.previous_x = x
+    self.previous_y = y
+end
+
+-- Moves the emitter with continuity. Particles emitted during the next update
+-- are spread along the path travelled since the previous one, so a fast
+-- emitter leaves a stroke instead of dotted clumps.
+function ParticleSystem:move_to(x: f64, y: f64): unit
+    self.x = x
+    self.y = y
+end
+
+function ParticleSystem:position_x(): f64
+    return self.x
+end
+
+function ParticleSystem:position_y(): f64
+    return self.y
+end
+
+function ParticleSystem:set_direction(radians: f64): unit
+    self.direction = radians
+end
+
+-- Full width of the emission cone, centred on the direction.
+function ParticleSystem:set_spread(radians: f64): unit
+    self.spread = radians
+end
+
+function ParticleSystem:set_speed(minimum: f64, maximum: f64): unit
+    self.speed_min = minimum
+    self.speed_max = maximum
+end
+
+-- Constant per-particle acceleration, picked component-wise between the two
+-- corners. Gravity is `set_linear_acceleration(0, g, 0, g)`.
+function ParticleSystem:set_linear_acceleration(min_x: f64, min_y: f64, max_x: f64, max_y: f64): unit
+    self.acceleration_min_x = min_x
+    self.acceleration_min_y = min_y
+    self.acceleration_max_x = max_x
+    self.acceleration_max_y = max_y
+end
+
+-- Acceleration along the line from the spawn point outward; negative values
+-- pull particles back toward it.
+function ParticleSystem:set_radial_acceleration(minimum: f64, maximum: f64): unit
+    self.radial_min = minimum
+    self.radial_max = maximum
+end
+
+-- Acceleration perpendicular to that line, which makes particles orbit.
+function ParticleSystem:set_tangential_acceleration(minimum: f64, maximum: f64): unit
+    self.tangential_min = minimum
+    self.tangential_max = maximum
+end
+
+-- Velocity decay per second. Higher values settle particles faster.
+function ParticleSystem:set_linear_damping(minimum: f64, maximum: f64): unit
+    self.damping_min = minimum
+    self.damping_max = maximum
+end
+
+function ParticleSystem:refresh_offset(): unit
+    if not self.offset_auto then
+        return
+    end
+    local width: f64 = self.shape_width
+    local height: f64 = self.shape_height
+    local maybe_texture: graphics_module.Texture? = self.texture
+    if maybe_texture ~= nil then
+        local texture: graphics_module.Texture = maybe_texture::graphics_module.Texture
+        width = texture.width::f64
+        height = texture.height::f64
+        if #self.quads > 0 then
+            local first: Quad = self.quads[0]
+            width = first.width
+            height = first.height
+        end
+    end
+    self.offset_x = width * 0.5
+    self.offset_y = height * 0.5
+end
+
+-- Scale factors sampled across a particle's life. A single entry keeps the
+-- size constant; more entries interpolate between them.
+function ParticleSystem:set_sizes(sizes: {f64}): unit
+    local copied: {f64} = {}
+    for value in sizes do
+        table.insert(copied, value)
+    end
+    if #copied == 0 then
+        table.insert(copied, 1.0)
+    end
+    self.sizes = copied
+end
+
+-- Randomizes where on the size curve each particle starts and ends, in 0..1.
+function ParticleSystem:set_size_variation(variation: f64): unit
+    local value: f64 = variation
+    if value < 0.0 then
+        value = 0.0
+    elseif value > 1.0 then
+        value = 1.0
+    end
+    self.size_variation = value
+end
+
+function ParticleSystem:set_rotation(minimum: f64, maximum: f64): unit
+    self.rotation_min = minimum
+    self.rotation_max = maximum
+end
+
+-- Angular velocity at the start and end of a particle's life; it interpolates
+-- in between, so `set_spin(8, 0)` spins down as the particle fades.
+function ParticleSystem:set_spin(start_radians: f64, end_radians: f64): unit
+    self.spin_start = start_radians
+    self.spin_end = end_radians
+end
+
+function ParticleSystem:set_spin_variation(variation: f64): unit
+    self.spin_variation = variation
+end
+
+-- Adds the particle's direction of travel to its drawn angle, which is what
+-- makes streaks, leaves and arrows point where they are going.
+function ParticleSystem:set_relative_rotation(enabled: bool): unit
+    self.relative_rotation = enabled
+end
+
+-- Colors sampled across a particle's life, multiplied into whatever the
+-- particle draws.
+function ParticleSystem:set_colors(colors: {Color}): unit
+    local copied: {Color} = {}
+    for value in colors do
+        table.insert(copied, {
+            red = value.red,
+            green = value.green,
+            blue = value.blue,
+            alpha = value.alpha,
+        })
+    end
+    if #copied == 0 then
+        table.insert(copied, { red = 1.0, green = 1.0, blue = 1.0, alpha = 1.0 })
+    end
+    self.colors = copied
+end
+
+-- The same curve written as engine hex strings: `{"#fff7ae", "#f9731600"}`.
+function ParticleSystem:set_colors_hex(values: {string}): unit
+    local copied: {Color} = {}
+    for value in values do
+        table.insert(copied, hex(value))
+    end
+    self:set_colors(copied)
+end
+
+-- Rotation and scaling origin, in texture pixels (or shape pixels without a
+-- texture). Defaults to the centre and returns there via reset_offset.
+function ParticleSystem:set_offset(x: f64, y: f64): unit
+    self.offset_x = x
+    self.offset_y = y
+    self.offset_auto = false
+end
+
+function ParticleSystem:reset_offset(): unit
+    self.offset_auto = true
+    self:refresh_offset()
+end
+
+-- Where new particles land in draw order: "top" (default, newest in front),
+-- "bottom" (newest behind), or "random".
+function ParticleSystem:set_insert_mode(mode: string): bool
+    if mode == "top" then
+        self.insert_mode = INSERT_TOP
+    elseif mode == "bottom" then
+        self.insert_mode = INSERT_BOTTOM
+    elseif mode == "random" then
+        self.insert_mode = INSERT_RANDOM
+    else
+        return false
+    end
+    return true
+end
+
+-- Shape of the region particles spawn in, around the emitter position.
+-- Distributions: "none", "uniform", "normal", "ellipse", "borderellipse",
+-- "borderrectangle". `dx`/`dy` are half-extents (or standard deviations for
+-- "normal"), `angle` rotates the region, and `directed` aims each particle
+-- away from the emitter centre instead of along the configured direction.
+function ParticleSystem:set_emission_area(distribution: string, dx: f64, dy: f64, angle: f64, directed: bool): bool
+    if distribution == "none" then
+        self.area_distribution = AREA_NONE
+    elseif distribution == "uniform" then
+        self.area_distribution = AREA_UNIFORM
+    elseif distribution == "normal" then
+        self.area_distribution = AREA_NORMAL
+    elseif distribution == "ellipse" then
+        self.area_distribution = AREA_ELLIPSE
+    elseif distribution == "borderellipse" then
+        self.area_distribution = AREA_BORDER_ELLIPSE
+    elseif distribution == "borderrectangle" then
+        self.area_distribution = AREA_BORDER_RECTANGLE
+    else
+        return false
+    end
+    self.area_x = dx
+    self.area_y = dy
+    self.area_angle = angle
+    self.area_directed = directed
+    return true
+end
+
+-- Draws particles as sprites from this texture. Selects texture drawing; a
+-- later set_draw_mode still wins.
+function ParticleSystem:set_texture(texture: graphics_module.Texture): unit
+    self.texture = texture
+    self.draw_mode = DRAW_TEXTURE
+    self:refresh_offset()
+end
+
+function ParticleSystem:clear_texture(): unit
+    self.texture = nil
+    self.quads = {}
+    if self.draw_mode == DRAW_TEXTURE then
+        self.draw_mode = DRAW_CIRCLE
+    end
+    self:refresh_offset()
+end
+
+-- Animation frames inside the texture, walked in order across a particle's
+-- life. An empty list draws the whole texture.
+function ParticleSystem:set_quads(quads: {Quad}): unit
+    local copied: {Quad} = {}
+    for value in quads do
+        table.insert(copied, { x = value.x, y = value.y, width = value.width, height = value.height })
+    end
+    self.quads = copied
+    self:refresh_offset()
+end
+
+-- Pixel size of a particle at scale 1.0 when no texture is set.
+function ParticleSystem:set_shape_size(width: f64, height: f64): unit
+    self.shape_width = width
+    self.shape_height = height
+    self:refresh_offset()
+end
+
+-- "circle", "square", "point", "spark" (a streak along the velocity), or
+-- "texture".
+function ParticleSystem:set_draw_mode(mode: string): bool
+    if mode == "circle" then
+        self.draw_mode = DRAW_CIRCLE
+    elseif mode == "square" then
+        self.draw_mode = DRAW_SQUARE
+    elseif mode == "point" then
+        self.draw_mode = DRAW_POINT
+    elseif mode == "spark" then
+        self.draw_mode = DRAW_SPARK
+    elseif mode == "texture" then
+        self.draw_mode = DRAW_TEXTURE
+    else
+        return false
+    end
+    return true
+end
+
+-- Blend mode used while the system draws; the caller's mode is restored
+-- afterwards. "add" is what makes fire and magic glow.
+function ParticleSystem:set_blend_mode(mode: string): bool
+    if mode ~= "alpha" and mode ~= "add" and mode ~= "multiply" then
+        return false
+    end
+    self.blend_mode = mode
+    return true
+end
+
+-- Love2D's spin/size variation: a value between the two bounds, spread by the
+-- variation factor and centred on the first one.
+function variation_between(inner: f64, outer: f64, variation: f64, sample: f64): f64
+    local low: f64 = inner - (outer * 0.5) * variation
+    local high: f64 = inner + (outer * 0.5) * variation
+    return low + (high - low) * sample
+end
+
+function ParticleSystem:insert_particle(particle: Particle): unit
+    if self.insert_mode == INSERT_BOTTOM then
+        table.insert(self.alive, 0, particle)
+    elseif self.insert_mode == INSERT_RANDOM then
+        local slots: i32 = #self.alive + 1
+        local position: i32 = math.floor(self:random() * (slots::f64))::i32
+        if position >= slots then
+            position = slots - 1
+        end
+        table.insert(self.alive, position, particle)
+    else
+        table.insert(self.alive, particle)
+    end
+end
+
+-- Samples the emission area, returning an offset from the emitter position.
+function ParticleSystem:sample_area(): (f64, f64)
+    local offset_x: f64 = 0.0
+    local offset_y: f64 = 0.0
+    if self.area_distribution == AREA_UNIFORM then
+        offset_x = self:random_range(-self.area_x, self.area_x)
+        offset_y = self:random_range(-self.area_y, self.area_y)
+    elseif self.area_distribution == AREA_NORMAL then
+        offset_x = self:random_normal(self.area_x)
+        offset_y = self:random_normal(self.area_y)
+    elseif self.area_distribution == AREA_ELLIPSE then
+        local angle: f64 = self:random() * TAU
+        -- The square root spreads samples evenly over the area instead of
+        -- crowding them at the centre.
+        local radius: f64 = math.sqrt(self:random())
+        offset_x = math.cos(angle) * self.area_x * radius
+        offset_y = math.sin(angle) * self.area_y * radius
+    elseif self.area_distribution == AREA_BORDER_ELLIPSE then
+        local angle: f64 = self:random() * TAU
+        offset_x = math.cos(angle) * self.area_x
+        offset_y = math.sin(angle) * self.area_y
+    elseif self.area_distribution == AREA_BORDER_RECTANGLE then
+        local width: f64 = self.area_x * 2.0
+        local height: f64 = self.area_y * 2.0
+        local walk: f64 = self:random() * (width + height) * 2.0
+        if walk < width then
+            offset_x = walk - self.area_x
+            offset_y = -self.area_y
+        elseif walk < width + height then
+            offset_x = self.area_x
+            offset_y = walk - width - self.area_y
+        elseif walk < width * 2.0 + height then
+            offset_x = walk - width - height - self.area_x
+            offset_y = self.area_y
+        else
+            offset_x = -self.area_x
+            offset_y = walk - width * 2.0 - height - self.area_y
+        end
+    end
+    if self.area_angle ~= 0.0 then
+        local cosine: f64 = math.cos(self.area_angle)
+        local sine: f64 = math.sin(self.area_angle)
+        local rotated_x: f64 = offset_x * cosine - offset_y * sine
+        offset_y = offset_x * sine + offset_y * cosine
+        offset_x = rotated_x
+    end
+    return offset_x, offset_y
+end
+
+-- `part` places the particle along the emitter's motion since the previous
+-- update: 1.0 is the current position, 0.0 the previous one.
+function ParticleSystem:spawn(part: f64): unit
+    if #self.free == 0 then
+        return
+    end
+    local particle: Particle = table.remove(self.free)
+
+    local emitter_x: f64 = self.previous_x + (self.x - self.previous_x) * part
+    local emitter_y: f64 = self.previous_y + (self.y - self.previous_y) * part
+    -- A multi-value binding does not carry its annotations into overload
+    -- resolution yet, so the samples are copied into plain locals first.
+    local sampled_x: f64, sampled_y: f64 = self:sample_area()
+    local offset_x: f64 = sampled_x
+    local offset_y: f64 = sampled_y
+
+    particle.x = emitter_x + offset_x
+    particle.y = emitter_y + offset_y
+    particle.origin_x = emitter_x
+    particle.origin_y = emitter_y
+
+    local life: f64 = self:random_range(self.life_min, self.life_max)
+    if life <= 0.0 then
+        life = 0.000001
+    end
+    particle.life = life
+    particle.lifetime = life
+
+    local direction: f64 = self.direction
+    if self.area_directed and (offset_x ~= 0.0 or offset_y ~= 0.0) then
+        direction = math.atan2(offset_y, offset_x)
+    end
+    local heading: f64 = self:random_range(direction - self.spread * 0.5, direction + self.spread * 0.5)
+    local speed: f64 = self:random_range(self.speed_min, self.speed_max)
+    particle.velocity_x = math.cos(heading) * speed
+    particle.velocity_y = math.sin(heading) * speed
+
+    particle.acceleration_x = self:random_range(self.acceleration_min_x, self.acceleration_max_x)
+    particle.acceleration_y = self:random_range(self.acceleration_min_y, self.acceleration_max_y)
+    particle.radial_acceleration = self:random_range(self.radial_min, self.radial_max)
+    particle.tangential_acceleration = self:random_range(self.tangential_min, self.tangential_max)
+    particle.damping = self:random_range(self.damping_min, self.damping_max)
+
+    -- Size variation shifts where on the size curve this particle starts and
+    -- how far along it travels, which is how Love2D keeps a varied crowd
+    -- following one shared curve.
+    particle.size_offset = self:random() * self.size_variation
+    particle.size_interval = (1.0 - self:random() * self.size_variation) - particle.size_offset
+
+    particle.rotation = self:random_range(self.rotation_min, self.rotation_max)
+    particle.angle = particle.rotation
+    if self.relative_rotation then
+        particle.angle += math.atan2(particle.velocity_y, particle.velocity_x)
+    end
+    particle.spin_start = variation_between(self.spin_start, self.spin_end, self.spin_variation, self:random())
+    particle.spin_end = variation_between(self.spin_end, self.spin_start, self.spin_variation, self:random())
+
+    self:insert_particle(particle)
+end
+
+-- Emits immediately, ignoring the emission rate. A full buffer silently drops
+-- the excess, like Love2D.
+function ParticleSystem:emit(count: i32): unit
+    for _ = 1, count do
+        if #self.free == 0 then
+            return
+        end
+        self:spawn(1.0)
+    end
+end
+
+function advance_particle(particle: Particle, dt: f64, relative_rotation: bool): unit
+    local radial_x: f64 = particle.x - particle.origin_x
+    local radial_y: f64 = particle.y - particle.origin_y
+    local distance: f64 = math.sqrt(radial_x * radial_x + radial_y * radial_y)
+    if distance > 0.0 then
+        radial_x = radial_x / distance
+        radial_y = radial_y / distance
+    else
+        radial_x = 0.0
+        radial_y = 0.0
+    end
+
+    local acceleration_x: f64 = radial_x * particle.radial_acceleration
+    local acceleration_y: f64 = radial_y * particle.radial_acceleration
+    -- The tangent is the radial direction turned a quarter turn.
+    acceleration_x -= radial_y * particle.tangential_acceleration
+    acceleration_y += radial_x * particle.tangential_acceleration
+    acceleration_x += particle.acceleration_x
+    acceleration_y += particle.acceleration_y
+
+    particle.velocity_x += acceleration_x * dt
+    particle.velocity_y += acceleration_y * dt
+    local damping: f64 = 1.0 / (1.0 + particle.damping * dt)
+    particle.velocity_x = particle.velocity_x * damping
+    particle.velocity_y = particle.velocity_y * damping
+
+    particle.x += particle.velocity_x * dt
+    particle.y += particle.velocity_y * dt
+
+    local t: f64 = 1.0 - particle.life / particle.lifetime
+    particle.rotation += (particle.spin_start * (1.0 - t) + particle.spin_end * t) * dt
+    particle.angle = particle.rotation
+    if relative_rotation then
+        particle.angle += math.atan2(particle.velocity_y, particle.velocity_x)
+    end
+end
+
+-- Advances every live particle and emits whatever the rate owes for `dt`.
+function ParticleSystem:update(dt: f64): unit
+    if dt <= 0.0 then
+        return
+    end
+
+    local index: i32 = 0
+    while index < #self.alive do
+        local particle: Particle = self.alive[index]
+        particle.life -= dt
+        if particle.life <= 0.0 then
+            table.remove(self.alive, index)
+            table.insert(self.free, particle)
+        else
+            advance_particle(particle, dt, self.relative_rotation)
+            index += 1
+        end
+    end
+
+    if self.active and self.emission_rate > 0.0 then
+        local interval: f64 = 1.0 / self.emission_rate
+        self.emit_counter += dt
+        local total: f64 = self.emit_counter - interval
+        local remaining: f64 = self.emit_counter
+        -- One spawn per interval owed, newest first, spread back along the
+        -- emitter's path. The buffer bounds the loop. A step that lands
+        -- exactly on the interval still owes a particle, which matters when
+        -- the update rate divides the emission rate evenly.
+        local budget: i32 = self.capacity
+        while remaining >= interval and budget > 0 and #self.free > 0 do
+            local part: f64 = 1.0
+            if total > 0.0 then
+                part = 1.0 - (self.emit_counter - remaining) / total
+            end
+            self:spawn(part)
+            remaining -= interval
+            budget -= 1
+        end
+        self.emit_counter = self.emit_counter - math.floor(self.emit_counter / interval) * interval
+    end
+
+    if self.active then
+        self.life -= dt
+        if self.emitter_lifetime >= 0.0 and self.life < 0.0 then
+            self:stop()
+        end
+    end
+
+    self.previous_x = self.x
+    self.previous_y = self.y
+end
+
+-- Size and color curves are sampled the same way: walk the list with the
+-- particle's progress and interpolate between the two neighbouring entries.
+function size_at(sizes: {f64}, particle: Particle, t: f64): f64
+    local last: i32 = #sizes - 1
+    local position: f64 = (particle.size_offset + t * particle.size_interval) * (last::f64)
+    if position < 0.0 then
+        position = 0.0
+    elseif position > last::f64 then
+        position = last::f64
+    end
+    local index: i32 = math.floor(position)::i32
+    if index >= last then
+        return sizes[last]
+    end
+    local blend: f64 = position - (index::f64)
+    return sizes[index] * (1.0 - blend) + sizes[index + 1] * blend
+end
+
+function color_at(colors: {Color}, t: f64): (f64, f64, f64, f64)
+    local last: i32 = #colors - 1
+    local position: f64 = t * (last::f64)
+    if position < 0.0 then
+        position = 0.0
+    elseif position > last::f64 then
+        position = last::f64
+    end
+    local index: i32 = math.floor(position)::i32
+    if index >= last then
+        local final: Color = colors[last]
+        return final.red, final.green, final.blue, final.alpha
+    end
+    local blend: f64 = position - (index::f64)
+    local from: Color = colors[index]
+    local to: Color = colors[index + 1]
+    return
+        from.red * (1.0 - blend) + to.red * blend,
+        from.green * (1.0 - blend) + to.green * blend,
+        from.blue * (1.0 - blend) + to.blue * blend,
+        from.alpha * (1.0 - blend) + to.alpha * blend
+end
+
+-- Emits one rotated rectangle in local particle space: the rectangle spans
+-- (-origin) to (size - origin) before rotation, which is the same convention
+-- sprites use.
+function draw_rotated_rectangle(
+    graphics: Graphics,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    origin_x: f64,
+    origin_y: f64,
+    angle: f64
+): unit
+    local cosine: f64 = math.cos(angle)
+    local sine: f64 = math.sin(angle)
+    local left: f64 = -origin_x
+    local top: f64 = -origin_y
+    local right: f64 = left + width
+    local bottom: f64 = top + height
+    graphics:fill_quad(
+        x + left * cosine - top * sine, y + left * sine + top * cosine,
+        x + right * cosine - top * sine, y + right * sine + top * cosine,
+        x + right * cosine - bottom * sine, y + right * sine + bottom * cosine,
+        x + left * cosine - bottom * sine, y + left * sine + bottom * cosine
+    )
+end
+
+-- Sprite pass. The texture arrives already narrowed out of its nullable
+-- field, so the per-particle path has no texture branch left in it.
+function ParticleSystem:draw_sprites(graphics: Graphics, x: f64, y: f64, texture: graphics_module.Texture): unit
+    local frames: i32 = #self.quads
+    local base_width: f64 = texture.width::f64
+    local base_height: f64 = texture.height::f64
+    local source_x: f64 = 0.0
+    local source_y: f64 = 0.0
+    local source_width: f64 = base_width
+    local source_height: f64 = base_height
+    if frames > 0 then
+        local first: Quad = self.quads[0]
+        base_width = first.width
+        base_height = first.height
+    end
+
+    for particle in self.alive do
+        local t: f64 = 1.0 - particle.life / particle.lifetime
+        local size: f64 = size_at(self.sizes, particle, t)
+        local red: f64, green: f64, blue: f64, alpha: f64 = color_at(self.colors, t)
+        graphics:set_color_rgba(red, green, blue, alpha)
+
+        local width: f64 = base_width * size
+        local height: f64 = base_height * size
+        if frames > 0 then
+            -- Animation walks the quad list across the particle's life.
+            local frame: i32 = math.floor(t * (frames::f64))::i32
+            if frame < 0 then
+                frame = 0
+            elseif frame >= frames then
+                frame = frames - 1
+            end
+            local region: Quad = self.quads[frame]
+            source_x = region.x
+            source_y = region.y
+            source_width = region.width
+            source_height = region.height
+            width = region.width * size
+            height = region.height * size
+        end
+
+        local origin_x: f64 = self.offset_x * size
+        local origin_y: f64 = self.offset_y * size
+        local particle_x: f64 = particle.x + x
+        local particle_y: f64 = particle.y + y
+        if particle.angle == 0.0 then
+            graphics:draw_sprite(
+                texture, particle_x - origin_x, particle_y - origin_y, width, height,
+                source_x, source_y, source_width, source_height
+            )
+        else
+            graphics:push()
+            graphics:translate(particle_x, particle_y)
+            graphics:rotate(particle.angle)
+            graphics:draw_sprite(
+                texture, -origin_x, -origin_y, width, height,
+                source_x, source_y, source_width, source_height
+            )
+            graphics:pop()
+        end
+    end
+end
+
+-- Shape pass: the same transform as the sprite pass, drawn from the
+-- renderer's own primitives so a system needs no art to be useful.
+function ParticleSystem:draw_shapes(graphics: Graphics, x: f64, y: f64): unit
+    local base_width: f64 = self.shape_width
+    local base_height: f64 = self.shape_height
+
+    for particle in self.alive do
+        local t: f64 = 1.0 - particle.life / particle.lifetime
+        local size: f64 = size_at(self.sizes, particle, t)
+        local red: f64, green: f64, blue: f64, alpha: f64 = color_at(self.colors, t)
+        graphics:set_color_rgba(red, green, blue, alpha)
+
+        local width: f64 = base_width * size
+        local height: f64 = base_height * size
+        local origin_x: f64 = self.offset_x * size
+        local origin_y: f64 = self.offset_y * size
+        local particle_x: f64 = particle.x + x
+        local particle_y: f64 = particle.y + y
+
+        if self.draw_mode == DRAW_POINT then
+            graphics:fill_rectangle(particle_x - origin_x, particle_y - origin_y, width, height)
+        elseif self.draw_mode == DRAW_SQUARE then
+            draw_rotated_rectangle(graphics, particle_x, particle_y, width, height, origin_x, origin_y, particle.angle)
+        elseif self.draw_mode == DRAW_SPARK then
+            -- A streak trailing the particle: `width` is its length and
+            -- `height` its thickness, both aimed along the velocity.
+            local speed: f64 = math.sqrt(
+                particle.velocity_x * particle.velocity_x + particle.velocity_y * particle.velocity_y
+            )
+            if speed > 0.0 then
+                local dir_x: f64 = particle.velocity_x / speed
+                local dir_y: f64 = particle.velocity_y / speed
+                local half: f64 = height * 0.5
+                local tail_x: f64 = particle_x - dir_x * width
+                local tail_y: f64 = particle_y - dir_y * width
+                graphics:fill_quad(
+                    particle_x - dir_y * half, particle_y + dir_x * half,
+                    particle_x + dir_y * half, particle_y - dir_x * half,
+                    tail_x + dir_y * half, tail_y - dir_x * half,
+                    tail_x - dir_y * half, tail_y + dir_x * half
+                )
+            else
+                graphics:fill_circle(particle_x, particle_y, height * 0.5)
+            end
+        else
+            -- Circles ignore rotation: a rotated disc is the same disc.
+            graphics:fill_circle(
+                particle_x + width * 0.5 - origin_x,
+                particle_y + height * 0.5 - origin_y,
+                width * 0.5
+            )
+        end
+    end
+end
+
+-- Draws every live particle, oldest to newest, translated by (x, y). Color
+-- and blend state are restored, so a system never leaks its own settings into
+-- whatever the game draws next.
+function ParticleSystem:draw(graphics: Graphics, x: f64, y: f64): unit
+    if #self.alive == 0 then
+        return
+    end
+
+    local previous_red: f64 = graphics.red
+    local previous_green: f64 = graphics.green
+    local previous_blue: f64 = graphics.blue
+    local previous_alpha: f64 = graphics.alpha
+    local previous_blend: string = graphics.blend_mode
+    local blend_changed: bool = false
+    if self.blend_mode ~= previous_blend then
+        blend_changed = graphics:set_blend_mode(self.blend_mode)
+    end
+
+    local maybe_texture: graphics_module.Texture? = self.texture
+    local drawn: bool = false
+    if maybe_texture ~= nil then
+        local texture: graphics_module.Texture = maybe_texture::graphics_module.Texture
+        if self.draw_mode == DRAW_TEXTURE then
+            self:draw_sprites(graphics, x, y, texture)
+            drawn = true
+        end
+    end
+    if not drawn then
+        self:draw_shapes(graphics, x, y)
+    end
+
+    if blend_changed then
+        graphics:set_blend_mode(previous_blend)
+    end
+    graphics:set_color_rgba(previous_red, previous_green, previous_blue, previous_alpha)
+end
+
+-- Read-only access to live particles, in draw order (0 is drawn first). A
+-- game that wants its own renderer — trails between particles, shadows, a
+-- shader per particle — reads the state here instead of calling draw. Every
+-- accessor answers 0.0 for an index outside the live range.
+function ParticleSystem:particle_x(index: i32): f64
+    if index < 0 or index >= #self.alive then
+        return 0.0
+    end
+    return self.alive[index].x
+end
+
+function ParticleSystem:particle_y(index: i32): f64
+    if index < 0 or index >= #self.alive then
+        return 0.0
+    end
+    return self.alive[index].y
+end
+
+function ParticleSystem:particle_velocity_x(index: i32): f64
+    if index < 0 or index >= #self.alive then
+        return 0.0
+    end
+    return self.alive[index].velocity_x
+end
+
+function ParticleSystem:particle_velocity_y(index: i32): f64
+    if index < 0 or index >= #self.alive then
+        return 0.0
+    end
+    return self.alive[index].velocity_y
+end
+
+-- The drawn angle, which includes the direction of travel when relative
+-- rotation is on.
+function ParticleSystem:particle_angle(index: i32): f64
+    if index < 0 or index >= #self.alive then
+        return 0.0
+    end
+    return self.alive[index].angle
+end
+
+-- How far through its life the particle is, from 0.0 at birth to 1.0.
+function ParticleSystem:particle_progress(index: i32): f64
+    if index < 0 or index >= #self.alive then
+        return 0.0
+    end
+    local particle: Particle = self.alive[index]
+    return 1.0 - particle.life / particle.lifetime
+end
+
+function ParticleSystem:particle_life(index: i32): f64
+    if index < 0 or index >= #self.alive then
+        return 0.0
+    end
+    return self.alive[index].life
+end
+
+-- The size curve sampled for this particle right now, including its own
+-- size variation.
+function ParticleSystem:particle_size(index: i32): f64
+    if index < 0 or index >= #self.alive then
+        return 0.0
+    end
+    local particle: Particle = self.alive[index]
+    return size_at(self.sizes, particle, 1.0 - particle.life / particle.lifetime)
+end
+
+function ParticleSystem:particle_color_red(index: i32): f64
+    local red: f64, green: f64, blue: f64, alpha: f64 = color_at(self.colors, self:particle_progress(index))
+    return red
+end
+
+function ParticleSystem:particle_color_green(index: i32): f64
+    local red: f64, green: f64, blue: f64, alpha: f64 = color_at(self.colors, self:particle_progress(index))
+    return green
+end
+
+function ParticleSystem:particle_color_blue(index: i32): f64
+    local red: f64, green: f64, blue: f64, alpha: f64 = color_at(self.colors, self:particle_progress(index))
+    return blue
+end
+
+function ParticleSystem:particle_color_alpha(index: i32): f64
+    local red: f64, green: f64, blue: f64, alpha: f64 = color_at(self.colors, self:particle_progress(index))
+    return alpha
+end
+
+-- An independent system with the same settings, the same live particles and
+-- its own pool. The copy continues the source's random sequence rather than
+-- repeating it, so cloned emitters do not draw the same pattern twice.
+function ParticleSystem:clone(): ParticleSystem
+    local copy: ParticleSystem = ParticleSystem.new(self.capacity)
+
+    copy.active = self.active
+    copy.emitter_lifetime = self.emitter_lifetime
+    copy.life = self.life
+    copy.emit_counter = self.emit_counter
+    copy.emission_rate = self.emission_rate
+    copy.x = self.x
+    copy.y = self.y
+    copy.previous_x = self.previous_x
+    copy.previous_y = self.previous_y
+    copy.life_min = self.life_min
+    copy.life_max = self.life_max
+    copy.direction = self.direction
+    copy.spread = self.spread
+    copy.speed_min = self.speed_min
+    copy.speed_max = self.speed_max
+    copy.acceleration_min_x = self.acceleration_min_x
+    copy.acceleration_min_y = self.acceleration_min_y
+    copy.acceleration_max_x = self.acceleration_max_x
+    copy.acceleration_max_y = self.acceleration_max_y
+    copy.radial_min = self.radial_min
+    copy.radial_max = self.radial_max
+    copy.tangential_min = self.tangential_min
+    copy.tangential_max = self.tangential_max
+    copy.damping_min = self.damping_min
+    copy.damping_max = self.damping_max
+    copy:set_sizes(self.sizes)
+    copy.size_variation = self.size_variation
+    copy.rotation_min = self.rotation_min
+    copy.rotation_max = self.rotation_max
+    copy.spin_start = self.spin_start
+    copy.spin_end = self.spin_end
+    copy.spin_variation = self.spin_variation
+    copy.relative_rotation = self.relative_rotation
+    copy:set_colors(self.colors)
+    copy.offset_x = self.offset_x
+    copy.offset_y = self.offset_y
+    copy.offset_auto = self.offset_auto
+    copy.insert_mode = self.insert_mode
+    copy.area_distribution = self.area_distribution
+    copy.area_x = self.area_x
+    copy.area_y = self.area_y
+    copy.area_angle = self.area_angle
+    copy.area_directed = self.area_directed
+    copy.texture = self.texture
+    copy:set_quads(self.quads)
+    copy.shape_width = self.shape_width
+    copy.shape_height = self.shape_height
+    copy.draw_mode = self.draw_mode
+    copy.blend_mode = self.blend_mode
+    copy.rng = self:random() * (RANDOM_MODULUS - 2.0) + 1.0
+
+    for particle in self.alive do
+        if #copy.free > 0 then
+            local target: Particle = table.remove(copy.free)
+            target.x = particle.x
+            target.y = particle.y
+            target.velocity_x = particle.velocity_x
+            target.velocity_y = particle.velocity_y
+            target.origin_x = particle.origin_x
+            target.origin_y = particle.origin_y
+            target.acceleration_x = particle.acceleration_x
+            target.acceleration_y = particle.acceleration_y
+            target.radial_acceleration = particle.radial_acceleration
+            target.tangential_acceleration = particle.tangential_acceleration
+            target.damping = particle.damping
+            target.life = particle.life
+            target.lifetime = particle.lifetime
+            target.rotation = particle.rotation
+            target.angle = particle.angle
+            target.spin_start = particle.spin_start
+            target.spin_end = particle.spin_end
+            target.size_offset = particle.size_offset
+            target.size_interval = particle.size_interval
+            table.insert(copy.alive, target)
+        end
+    end
+
+    return copy
+end
+
+return {
+    new = ParticleSystem.new,
+    color = color,
+    hex = hex,
+    quad = quad,
+}

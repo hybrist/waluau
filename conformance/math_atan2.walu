@@ -1,0 +1,40 @@
+-- math.atan2(y, x) is the signed angle of the vector (x, y) in radians. The
+-- argument order follows Lua and C, and the result covers all four quadrants
+-- in (-pi, pi] rather than the half-plane a single-argument arctangent sees.
+
+local function close(value: f64, expected: f64): bool
+    return math.abs(value - expected) < 0.000001
+end
+
+-- Axis directions pin the quadrant convention.
+assert(close(math.atan2(0.0, 1.0), 0.0))
+assert(close(math.atan2(1.0, 0.0), math.pi * 0.5))
+assert(close(math.atan2(0.0, -1.0), math.pi))
+assert(close(math.atan2(-1.0, 0.0), -math.pi * 0.5))
+
+-- Diagonals land on the eighth turns, including the two negative quadrants a
+-- plain y/x ratio cannot distinguish.
+assert(close(math.atan2(1.0, 1.0), math.pi * 0.25))
+assert(close(math.atan2(1.0, -1.0), math.pi * 0.75))
+assert(close(math.atan2(-1.0, -1.0), -math.pi * 0.75))
+assert(close(math.atan2(-1.0, 1.0), -math.pi * 0.25))
+
+-- The angle depends on direction, not magnitude.
+assert(close(math.atan2(3.0, 3.0), math.atan2(50.0, 50.0)))
+
+-- Round-tripping through cos/sin reproduces the original direction.
+local angle: f64 = math.atan2(2.0, -5.0)
+local length: f64 = math.sqrt(2.0 * 2.0 + 5.0 * 5.0)
+assert(close(math.cos(angle) * length, -5.0))
+assert(close(math.sin(angle) * length, 2.0))
+
+-- The f32 overload is selected from f32 arguments and keeps single precision.
+local narrow: f32 = math.atan2(1.0::f32, 1.0::f32)
+assert(math.abs((narrow::f64) - math.pi * 0.25) < 0.0001)
+
+-- Integer arguments widen into the f64 overload.
+function slope_angle(rise: i32, run: i32): f64
+    return math.atan2(rise, run)
+end
+
+assert(close(slope_angle(1, 1), math.pi * 0.25))

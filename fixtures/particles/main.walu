@@ -1,0 +1,141 @@
+-- Particle gallery: eight scenes built from the engine's particle system,
+-- switched with the number keys. Game code here never touches the DOM — the
+-- browser adapter owns the canvas, and every effect is emitter configuration.
+
+local engine = require("../../engine/browser")
+local input_module = require("../../engine/input")
+local graphics_module = require("../../engine/graphics")
+local scenes = require("./scenes")
+
+type Scene = scenes.Scene
+
+const WIDTH: f64 = 960.0
+const HEIGHT: f64 = 540.0
+
+type Gallery = {
+    scenes: {Scene},
+    index: i32,
+    emitting: bool,
+    -- Smoothed particle count, so the readout does not flicker every frame.
+    shown_count: f64
+}
+
+function install_gallery(): unit
+    local gallery: Gallery = { scenes = {}, index = 0, emitting = true, shown_count = 0.0 }
+
+    local function current(): Scene
+        return gallery.scenes[gallery.index]
+    end
+
+    local function show(index: i32): unit
+        local wanted: i32 = index
+        if wanted < 0 then
+            wanted = scenes.scene_count - 1
+        elseif wanted >= scenes.scene_count then
+            wanted = 0
+        end
+        gallery.index = wanted
+        gallery.emitting = true
+        local scene: Scene = current()
+        scene:restart()
+    end
+
+    local function load(): unit
+        -- Every scene is built once and kept: switching is instant and the
+        -- particle pools are allocated exactly once.
+        for kind = 0, scenes.scene_count - 1 do
+            table.insert(gallery.scenes, scenes.build(kind))
+        end
+        show(0)
+    end
+
+    local function update(dt: f64, input: input_module.Input): unit
+        -- The pointer is fed in from the move and press callbacks, not polled:
+        -- a scene should know whether the pointer has ever been used, and the
+        -- input record starts at the origin either way.
+        local scene: Scene = current()
+        scene:update(dt)
+        gallery.shown_count += ((scene:count()::f64) - gallery.shown_count) * 0.2
+    end
+
+    local function draw(graphics: graphics_module.Graphics, alpha: f64): unit
+        local scene: Scene = current()
+        graphics:clear(scene.background)
+        scene:draw(graphics)
+
+        graphics:set_color("#f8fafc")
+        graphics:set_font("18px monospace")
+        graphics:print(tostring(gallery.index + 1) .. ". " .. scene.name, 16.0, 30.0)
+        graphics:set_font("12px monospace")
+        graphics:set_color("#94a3b8")
+        graphics:print(scene.hint, 16.0, 50.0)
+
+        local status: string = "particles " .. tostring(math.floor(gallery.shown_count + 0.5)::i32)
+        if not gallery.emitting then
+            status = status .. "  (emitters paused)"
+        end
+        graphics:print(status, 16.0, HEIGHT - 34.0)
+        graphics:print("1-8 scene   arrows switch   space burst   p pause   r restart", 16.0, HEIGHT - 16.0)
+    end
+
+    local function keypressed(key: string): unit
+        if key == "ArrowRight" or key == "d" then
+            show(gallery.index + 1)
+        elseif key == "ArrowLeft" or key == "a" then
+            show(gallery.index - 1)
+        elseif key == "r" then
+            current():restart()
+        elseif key == "p" then
+            gallery.emitting = not gallery.emitting
+            current():set_emitting(gallery.emitting)
+        elseif key == " " or key == "Space" then
+            local scene: Scene = current()
+            if scene.kind == scenes.burst_kind then
+                scene:blast(scene.pointer_x, scene.pointer_y)
+            end
+        elseif #key == 1 then
+            local code: i32 = string.byte(key, 1)
+            -- "1" selects the first scene.
+            local digit: i32 = code - 49
+            if digit >= 0 and digit < scenes.scene_count then
+                show(digit)
+            end
+        end
+    end
+
+    local function keyreleased(key: string): unit
+        -- Every control acts on the press; nothing is held down.
+    end
+
+    local function mousepressed(x: f64, y: f64, button: i32): unit
+        local scene: Scene = current()
+        scene:pointer_moved(x, y)
+        if scene.kind == scenes.burst_kind then
+            scene:blast(x, y)
+        end
+    end
+
+    local function mousemoved(x: f64, y: f64, dx: f64, dy: f64): unit
+        current():pointer_moved(x, y)
+    end
+
+    engine.start({
+        title = "Waluau Particles",
+        width = WIDTH::u32,
+        height = HEIGHT::u32,
+        update_hz = 60.0,
+        max_frame_seconds = 0.25,
+        background = "#05070f",
+    }, {
+        load = load,
+        update = update,
+        draw = draw,
+        keypressed = keypressed,
+        keyreleased = keyreleased,
+        mousepressed = mousepressed,
+        mousereleased = nil,
+        mousemoved = mousemoved,
+    })
+end
+
+install_gallery()

@@ -1666,6 +1666,18 @@ mod tests {
     }
 
     #[test]
+    fn compiles_particle_gallery_fixture() {
+        super::compile_file(&fixture_path("particles/main.walu"))
+            .expect("particle gallery fixture should compile");
+    }
+
+    #[test]
+    fn compiles_particle_headless_simulation() {
+        super::compile_file(&fixture_path("particles/sim.walu"))
+            .expect("headless particle simulation should compile");
+    }
+
+    #[test]
     fn compiles_2d_game_engine_headless_simulation() {
         super::compile_file(&fixture_path("game-engine/sim.walu"))
             .expect("headless game engine simulation should compile");
@@ -1738,6 +1750,31 @@ mod tests {
         .expect("external subsystem project should write");
 
         super::compile_file(&entry).expect("versioned subsystem import should compile");
+    }
+
+    #[test]
+    fn compiles_pinned_engine_particle_subsystem_package() {
+        let project = tempdir().expect("temp project should exist");
+        let entry = project.path().join("main.walu");
+        fs::write(
+            &entry,
+            r#"
+                local engine = require("waluau:engine")
+                local particles = require("waluau:engine/v1/particles")
+
+                local system: particles.ParticleSystem = particles.new(8)
+                system:set_particle_lifetime(1.0, 1.0)
+                system:emit(3)
+                assert(system:count() == 3)
+
+                -- The aggregate facade re-exports the same linked type.
+                local shared: engine.ParticleSystem = system
+                assert(shared:buffer_size() == 8)
+            "#,
+        )
+        .expect("external particle subsystem project should write");
+
+        super::compile_file(&entry).expect("versioned particle subsystem import should compile");
     }
 
     #[test]

@@ -32,6 +32,10 @@ import gameEngineAudio from '../../../engine/audio.walu?raw';
 import gameEngineSave from '../../../engine/save.walu?raw';
 import gameEngineShaderSourcesModule from '../../../engine/shader_sources.walu?raw';
 import gameEngineResourceSample from '../../../fixtures/game-engine/resources.walu?raw';
+import gameEngineParticles from '../../../engine/particles.walu?raw';
+import particleSim from '../../../fixtures/particles/sim.walu?raw';
+import particleGallery from '../../../fixtures/particles/main.walu?raw';
+import particleScenes from '../../../fixtures/particles/scenes.walu?raw';
 import { createWaluauShaderSourceHost } from '../../../packages/vite-plugin-waluau/shaders.js';
 import transitiveAwaitStateMain from '../../../fixtures/coroutine-await-state/main.walu?raw';
 import transitiveAwaitStateWorker from '../../../fixtures/coroutine-await-state/worker.walu?raw';
@@ -1305,6 +1309,77 @@ describe('browser conformance', () => {
       },
       '/fixtures/game-engine/sim.walu'
     );
+  });
+
+  it('runs the particle system simulation without a canvas', async () => {
+    await compileAndInstantiate(
+      {
+        '/fixtures/particles/sim.walu': particleSim,
+        '/engine/particles.walu': gameEngineParticles,
+        '/engine/graphics.walu': gameEngineGraphics,
+        '/engine/resources.walu': gameEngineResources,
+        '/engine/font.walu': gameEngineFont,
+      },
+      '/fixtures/particles/sim.walu'
+    );
+  });
+
+  it('renders the particle gallery, including its render-target sprite atlas', async () => {
+    const { root, cleanup } = await compileAndInstantiateWithDom(
+      {
+        '/fixtures/particles/main.walu': particleGallery,
+        '/fixtures/particles/scenes.walu': particleScenes,
+        '/engine/browser.walu': gameEngineBrowser,
+        '/engine/graphics.walu': gameEngineGraphics,
+        '/engine/particles.walu': gameEngineParticles,
+        '/engine/resources.walu': gameEngineResources,
+        '/engine/font.walu': gameEngineFont,
+        '/engine/input.walu': gameEngineInput,
+        '/engine/time.walu': gameEngineTime,
+      },
+      '/fixtures/particles/main.walu'
+    );
+
+    try {
+      const canvas = root.querySelector('#walua-game-canvas');
+      expect(canvas).not.toBeNull();
+      expect(canvas.width).toBe(960);
+      expect(canvas.height).toBe(540);
+      const gl = canvas.getContext('webgl2');
+      expect(gl).not.toBeNull();
+
+      const litPixels = () => {
+        const pixels = new Uint8Array(canvas.width * canvas.height * 4);
+        gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        // The campfire is additive and warm, so count pixels well above the
+        // scene's near-black background.
+        let lit = 0;
+        for (let i = 0; i < pixels.length; i += 4) {
+          if (pixels[i] > 120 && pixels[i] > pixels[i + 2] + 40) lit += 1;
+        }
+        return lit;
+      };
+
+      // The first scene emits continuously; give the loop a few frames.
+      await expect.poll(litPixels, { timeout: 10_000 }).toBeGreaterThan(200);
+
+      // Scene 8 draws particles from an atlas built into a render target,
+      // which only produces pixels if the whole texture path works.
+      root.ownerDocument.dispatchEvent(new root.ownerDocument.defaultView.KeyboardEvent('keydown', { key: '8' }));
+
+      const spritePixels = () => {
+        const pixels = new Uint8Array(canvas.width * canvas.height * 4);
+        gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        let lit = 0;
+        for (let i = 0; i < pixels.length; i += 4) {
+          if (pixels[i + 2] > 140 && pixels[i + 1] > 100) lit += 1;
+        }
+        return lit;
+      };
+      await expect.poll(spritePixels, { timeout: 10_000 }).toBeGreaterThan(100);
+    } finally {
+      cleanup();
+    }
   });
 
   it('runs the backend-neutral resource, audio and save-data contract sample', async () => {

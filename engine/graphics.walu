@@ -31,6 +31,7 @@ declare function game_gpu_font_base_size(handle: i32): i32
 declare function game_gpu_font_advance(handle: i32): i32
 declare function game_gpu_font_glyph_advance(handle: i32, index: i32): i32
 declare function game_gpu_texture_bind(gl: WebGL2RenderingContext, handle: i32): bool
+declare function game_gpu_texture_unbind(gl: WebGL2RenderingContext): unit
 declare function game_gpu_target_bind(gl: WebGL2RenderingContext, handle: i32): bool
 declare function game_gpu_screen_bind(gl: WebGL2RenderingContext): unit
 declare function game_gpu_resource_release(handle: i32): unit
@@ -122,10 +123,14 @@ type Graphics = {
     path_start_x: f64,
     path_start_y: f64,
     current_texture: i32,
-    current_target: i32
+    current_target: i32,
+    blend_mode: string
 }
 
-type Texture = { handle: i32, width: i32, height: i32, released: bool }
+-- `flip_v` marks storage whose first row is the logical bottom, which is how
+-- framebuffer color attachments are laid out. Textures uploaded from decoded
+-- images keep the DOM convention and leave it false.
+type Texture = { handle: i32, width: i32, height: i32, released: bool, flip_v: bool }
 type TextureResult = { ok: bool, texture: Texture, error: GraphicsError }
 type Font = {
     handle: i32,
@@ -385,7 +390,8 @@ void main() {
         path_start_x = 0.0,
         path_start_y = 0.0,
         current_texture = 0,
-        current_target = 0
+        current_target = 0,
+        blend_mode = "alpha"
     }
 end
 
@@ -511,6 +517,15 @@ function Graphics:set_color(color: string): unit
         self.alpha = 1.0
         if #color == 9 then self.alpha = channel(color, 8) end
     end
+end
+
+-- Numeric channels in 0.0..1.0. Effects that compute a color per primitive —
+-- particles, gradients, fades — use this instead of formatting hex strings.
+function Graphics:set_color_rgba(red: f64, green: f64, blue: f64, alpha: f64): unit
+    self.red = red
+    self.green = green
+    self.blue = blue
+    self.alpha = alpha
 end
 
 function Graphics:set_line_width(width: f64): unit
@@ -716,7 +731,7 @@ function Graphics:texture_from_resource(resource: resources.Resource): TextureRe
     if not game_gpu_resource_ok(handle) then
         return {
             ok = false,
-            texture = { handle = handle, width = 0, height = 0, released = true },
+            texture = { handle = handle, width = 0, height = 0, released = true, flip_v = false },
             error = gpu_error(handle),
         }
     end
@@ -727,6 +742,7 @@ function Graphics:texture_from_resource(resource: resources.Resource): TextureRe
             width = game_gpu_resource_width(handle),
             height = game_gpu_resource_height(handle),
             released = false,
+            flip_v = false,
         },
         error = { code = "", message = "" },
     }
@@ -803,6 +819,19 @@ function Graphics:create_render_target(width: i32, height: i32): RenderTargetRes
     }
 end
 
+-- Views a render target's color storage as a sprite texture so effects can
+-- sample what they just drew. The view shares the target's GPU storage and
+-- lifetime: release the target, never the view.
+function Graphics:texture_from_render_target(target: RenderTarget): Texture
+    return {
+        handle = target.handle,
+        width = target.width,
+        height = target.height,
+        released = target.released,
+        flip_v = true,
+    }
+end
+
 function Graphics:release_texture(texture: Texture): unit
     if self.current_texture == texture.handle then self:flush() end
     if not texture.released then game_gpu_resource_release(texture.handle) end
@@ -834,7 +863,7 @@ function Graphics:bind_sprite_texture(handle: i32): bool
     return true
 end
 
-function Graphics:draw_sprite_region(texture: Texture, x: f64, y: f64, width: f64, height: f64, source_x: f64, source_y: f64, source_width: f64, source_height: f64, render_target: bool): bool
+function Graphics:draw_sprite_region(texture: Texture, x: f64, y: f64, width: f64, height: f64, source_x: f64, source_y: f64, source_width: f64, source_height: f64): bool
     if texture.released or texture.width <= 0 or texture.height <= 0 then return false end
     if not self:bind_sprite_texture(texture.handle) then return false end
     self:ensure_capacity(6)
@@ -844,7 +873,7 @@ function Graphics:draw_sprite_region(texture: Texture, x: f64, y: f64, width: f6
     local v2: f64 = (source_y + source_height) / (texture.height::f64)
     -- Decoded DOM images store their first row at v=0, while framebuffer
     -- textures store logical top at v=1.
-    if render_target then
+    if texture.flip_v then
         v1 = 1.0 - v1
         v2 = 1.0 - v2
     end
@@ -860,7 +889,7 @@ end
 -- Source coordinates select an atlas region in top-left logical pixels.
 -- Consecutive sprites using the same texture remain in one vertex batch.
 function Graphics:draw_sprite(texture: Texture, x: f64, y: f64, width: f64, height: f64, source_x: f64, source_y: f64, source_width: f64, source_height: f64): bool
-    return self:draw_sprite_region(texture, x, y, width, height, source_x, source_y, source_width, source_height, false)
+    return self:draw_sprite_region(texture, x, y, width, height, source_x, source_y, source_width, source_height)
 end
 
 function Graphics:draw_image(texture: Texture, x: f64, y: f64): bool
@@ -874,6 +903,12 @@ function Graphics:set_render_target(target: RenderTarget): bool
     if target.released then return false end
     self:flush()
     if not game_gpu_target_bind(self.gl, target.handle) then return false end
+    -- Creating a target leaves its own color texture bound to the sampler
+    -- unit, and drawing into a framebuffer that is simultaneously readable is
+    -- a feedback loop: WebGL rejects the draw and the target stays empty.
+    -- Dropping the binding here makes the first draw into a fresh target work
+    -- like every later one.
+    game_gpu_texture_unbind(self.gl)
     self.current_target = target.handle
     self.current_texture = 0
     self.draw_width = target.width::f64
@@ -892,11 +927,13 @@ end
 
 function Graphics:draw_render_target(target: RenderTarget, x: f64, y: f64, width: f64, height: f64): bool
     if target.released or self.current_target == target.handle then return false end
-    local texture: Texture = { handle = target.handle, width = target.width, height = target.height, released = false }
-    return self:draw_sprite_region(texture, x, y, width, height, 0.0, 0.0, target.width::f64, target.height::f64, true)
+    local texture: Texture = self:texture_from_render_target(target)
+    return self:draw_sprite_region(texture, x, y, width, height, 0.0, 0.0, target.width::f64, target.height::f64)
 end
 
--- State changes flush first so one batch always has one blend equation.
+-- State changes flush first so one batch always has one blend equation. The
+-- accepted mode is remembered in `blend_mode`, so an effect that needs its own
+-- blending can restore whatever the caller had selected.
 function Graphics:set_blend_mode(mode: string): bool
     self:flush()
     if mode == "alpha" then
@@ -908,6 +945,7 @@ function Graphics:set_blend_mode(mode: string): bool
     else
         return false
     end
+    self.blend_mode = mode
     return true
 end
 
@@ -921,6 +959,12 @@ end
 
 function Graphics:fill_rectangle(x: f64, y: f64, width: f64, height: f64): unit
     self:emit_rectangle(x, y, width, height)
+end
+
+-- Corners in drawing order. Rotated quads (sprites, particles, beams) reach
+-- the same batch as every other filled primitive without a transform push.
+function Graphics:fill_quad(x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64, x4: f64, y4: f64): unit
+    self:emit_quad(x1, y1, x2, y2, x3, y3, x4, y4)
 end
 
 function Graphics:stroke_rectangle(x: f64, y: f64, width: f64, height: f64): unit
@@ -1194,6 +1238,7 @@ function Graphics:print_custom(text: string, x: f64, y: f64): bool
         width = self.custom_font_width,
         height = self.custom_font_height,
         released = false,
+        flip_v = false,
     }
     for index = 1::i32, #text do
         local code: i32 = string.byte(text, index)
@@ -1209,8 +1254,7 @@ function Graphics:print_custom(text: string, x: f64, y: f64): bool
                 (column * self.custom_font_cell_width)::f64,
                 (row * self.custom_font_cell_height)::f64,
                 self.custom_font_cell_width::f64,
-                self.custom_font_cell_height::f64,
-                false
+                self.custom_font_cell_height::f64
             ) then return false end
         end
         local glyph_advance: i32 = self:custom_glyph_advance(code)

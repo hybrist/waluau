@@ -1,0 +1,662 @@
+-- The scenes behind the particle gallery. Each one is a small recipe for the
+-- same engine: what differs between fire, rain and a magic vortex is entirely
+-- in how the emitters are configured, not in the code that runs them.
+
+local particles = require("../../engine/particles")
+local graphics_module = require("../../engine/graphics")
+
+type ParticleSystem = particles.ParticleSystem
+type Graphics = graphics_module.Graphics
+
+const WIDTH: f64 = 960.0
+const HEIGHT: f64 = 540.0
+
+const SCENE_FIRE: i32 = 0
+const SCENE_FOUNTAIN: i32 = 1
+const SCENE_BURST: i32 = 2
+const SCENE_SMOKE: i32 = 3
+const SCENE_WEATHER: i32 = 4
+const SCENE_VORTEX: i32 = 5
+const SCENE_TRAIL: i32 = 6
+const SCENE_SPRITES: i32 = 7
+const SCENE_COUNT: i32 = 8
+
+-- Frames in the procedurally built spark atlas.
+const SPRITE_FRAMES: i32 = 4
+const SPRITE_CELL: f64 = 32.0
+
+type Scene = {
+    kind: i32,
+    name: string,
+    hint: string,
+    background: string,
+    systems: {ParticleSystem},
+    -- Seconds since the scene was selected: the scripted motion below runs
+    -- off this rather than wall-clock time, so every visit looks the same.
+    clock: f64,
+    burst_timer: f64,
+    pointer_x: f64,
+    pointer_y: f64,
+    pointer_seen: bool,
+    -- The sprite scene builds its atlas the first time it draws, because a
+    -- render target needs the renderer and load() runs before there is one.
+    texture: graphics_module.Texture?,
+    target: graphics_module.RenderTarget?,
+    texture_failed: bool
+}
+
+function fire_scene(): Scene
+    local flames: ParticleSystem = particles.new(700)
+    flames:set_seed(1)
+    flames:set_position(WIDTH * 0.5, HEIGHT * 0.78)
+    flames:set_emission_rate(240.0)
+    flames:set_particle_lifetime(0.45, 1.25)
+    flames:set_direction(-math.pi * 0.5)
+    flames:set_spread(0.65)
+    flames:set_speed(50.0, 130.0)
+    -- Hot gas keeps accelerating upward, and drifts a little sideways.
+    flames:set_linear_acceleration(-24.0, -90.0, 24.0, -30.0)
+    flames:set_emission_area("uniform", 26.0, 6.0, 0.0, false)
+    flames:set_sizes({ 0.55, 1.35, 0.9, 0.1 })
+    flames:set_size_variation(0.7)
+    flames:set_colors_hex({ "#fff6cc", "#ffc247", "#f4621e", "#8a1f0bcc", "#3b0a0400" })
+    flames:set_shape_size(18.0, 18.0)
+    flames:set_draw_mode("circle")
+    flames:set_blend_mode("add")
+
+    -- Embers ride the same column but live longer, travel further and swirl.
+    local embers: ParticleSystem = particles.new(220)
+    embers:set_seed(2)
+    embers:set_position(WIDTH * 0.5, HEIGHT * 0.76)
+    embers:set_emission_rate(26.0)
+    embers:set_particle_lifetime(1.2, 2.6)
+    embers:set_direction(-math.pi * 0.5)
+    embers:set_spread(1.1)
+    embers:set_speed(60.0, 150.0)
+    embers:set_linear_acceleration(-20.0, -50.0, 20.0, -14.0)
+    embers:set_tangential_acceleration(-40.0, 40.0)
+    embers:set_linear_damping(0.4, 0.9)
+    embers:set_emission_area("uniform", 34.0, 8.0, 0.0, false)
+    embers:set_sizes({ 0.5, 0.35, 0.0 })
+    embers:set_colors_hex({ "#fff1b8", "#ff9d3c", "#ff4d0d00" })
+    embers:set_shape_size(10.0, 10.0)
+    embers:set_draw_mode("circle")
+    embers:set_blend_mode("add")
+
+    return {
+        kind = SCENE_FIRE,
+        name = "Campfire",
+        hint = "Additive blending, color and size curves over a particle life",
+        background = "#120b16",
+        systems = { flames, embers },
+        clock = 0.0,
+        burst_timer = 0.0,
+        pointer_x = WIDTH * 0.5,
+        pointer_y = HEIGHT * 0.5,
+        pointer_seen = false,
+        texture = nil,
+        target = nil,
+        texture_failed = false,
+    }
+end
+
+function fountain_scene(): Scene
+    local water: ParticleSystem = particles.new(900)
+    water:set_seed(3)
+    water:set_position(WIDTH * 0.5, HEIGHT * 0.82)
+    water:set_emission_rate(400.0)
+    water:set_particle_lifetime(1.1, 1.9)
+    water:set_direction(-math.pi * 0.5)
+    water:set_spread(0.42)
+    water:set_speed(300.0, 420.0)
+    -- Gravity is just a constant linear acceleration.
+    water:set_linear_acceleration(0.0, 520.0, 0.0, 520.0)
+    water:set_linear_damping(0.05, 0.25)
+    water:set_emission_area("uniform", 5.0, 2.0, 0.0, false)
+    water:set_sizes({ 0.75, 0.5, 0.2 })
+    water:set_size_variation(0.5)
+    water:set_colors_hex({ "#eaf6ff", "#7dd3fc", "#2563ebcc", "#1e3a8a00" })
+    water:set_shape_size(9.0, 9.0)
+    water:set_draw_mode("circle")
+
+    -- A fine mist hangs where the jet breaks up.
+    local mist: ParticleSystem = particles.new(300)
+    mist:set_seed(4)
+    mist:set_position(WIDTH * 0.5, HEIGHT * 0.42)
+    mist:set_emission_rate(60.0)
+    mist:set_particle_lifetime(0.8, 1.8)
+    mist:set_speed(10.0, 40.0)
+    mist:set_spread(math.pi * 2.0)
+    mist:set_linear_acceleration(0.0, 60.0, 0.0, 110.0)
+    mist:set_emission_area("normal", 26.0, 16.0, 0.0, false)
+    mist:set_sizes({ 0.4, 1.1 })
+    mist:set_colors_hex({ "#e0f2ff00", "#bae6fd88", "#93c5fd00" })
+    mist:set_shape_size(12.0, 12.0)
+    mist:set_draw_mode("circle")
+    mist:set_blend_mode("add")
+
+    return {
+        kind = SCENE_FOUNTAIN,
+        name = "Fountain",
+        hint = "Gravity, damping and a normal-distribution spawn area",
+        background = "#071021",
+        systems = { water, mist },
+        clock = 0.0,
+        burst_timer = 0.0,
+        pointer_x = WIDTH * 0.5,
+        pointer_y = HEIGHT * 0.5,
+        pointer_seen = false,
+        texture = nil,
+        target = nil,
+        texture_failed = false,
+    }
+end
+
+function burst_scene(): Scene
+    -- Sparks fly outward from the rim of a small circle, so the blast starts
+    -- as a ring rather than a point.
+    local sparks: ParticleSystem = particles.new(500)
+    sparks:set_seed(5)
+    sparks:set_emission_rate(0.0)
+    sparks:set_particle_lifetime(0.35, 0.95)
+    sparks:set_speed(220.0, 620.0)
+    sparks:set_linear_acceleration(0.0, 240.0, 0.0, 420.0)
+    sparks:set_linear_damping(1.2, 2.4)
+    sparks:set_emission_area("borderellipse", 12.0, 12.0, 0.0, true)
+    sparks:set_sizes({ 1.0, 0.6, 0.0 })
+    sparks:set_colors_hex({ "#fffbe6", "#ffd166", "#ff6b3500" })
+    sparks:set_shape_size(16.0, 3.0)
+    sparks:set_draw_mode("spark")
+    sparks:set_blend_mode("add")
+
+    -- Debris tumbles: squares with spin, thrown wide and pulled down.
+    local debris: ParticleSystem = particles.new(220)
+    debris:set_seed(6)
+    debris:set_emission_rate(0.0)
+    debris:set_particle_lifetime(0.9, 1.8)
+    debris:set_speed(120.0, 340.0)
+    debris:set_spread(math.pi * 2.0)
+    debris:set_linear_acceleration(0.0, 560.0, 0.0, 700.0)
+    debris:set_rotation(0.0, math.pi * 2.0)
+    debris:set_spin(-9.0, 9.0)
+    debris:set_spin_variation(1.0)
+    debris:set_sizes({ 0.9, 0.7, 0.4 })
+    debris:set_size_variation(0.8)
+    debris:set_colors_hex({ "#f8fafc", "#94a3b8", "#47556900" })
+    debris:set_shape_size(8.0, 8.0)
+    debris:set_draw_mode("square")
+
+    -- The smoke ball is emitted from an area, expands and fades.
+    local smoke: ParticleSystem = particles.new(200)
+    smoke:set_seed(7)
+    smoke:set_emission_rate(0.0)
+    smoke:set_particle_lifetime(0.8, 1.9)
+    smoke:set_speed(20.0, 90.0)
+    smoke:set_spread(math.pi * 2.0)
+    smoke:set_linear_acceleration(0.0, -50.0, 0.0, -14.0)
+    smoke:set_emission_area("ellipse", 18.0, 18.0, 0.0, false)
+    smoke:set_sizes({ 0.6, 2.4 })
+    smoke:set_size_variation(0.6)
+    smoke:set_colors_hex({ "#e2e8f0aa", "#64748b55", "#33415500" })
+    smoke:set_shape_size(22.0, 22.0)
+    smoke:set_draw_mode("circle")
+
+    return {
+        kind = SCENE_BURST,
+        name = "Explosions",
+        hint = "Click anywhere or press space - rim emission plus tumbling debris",
+        background = "#0b0f1a",
+        systems = { smoke, debris, sparks },
+        clock = 0.0,
+        burst_timer = 1.0,
+        pointer_x = WIDTH * 0.5,
+        pointer_y = HEIGHT * 0.5,
+        pointer_seen = false,
+        texture = nil,
+        target = nil,
+        texture_failed = false,
+    }
+end
+
+function smoke_scene(): Scene
+    local plume: ParticleSystem = particles.new(420)
+    plume:set_seed(8)
+    plume:set_position(WIDTH * 0.5, HEIGHT * 0.8)
+    plume:set_emission_rate(70.0)
+    plume:set_particle_lifetime(2.4, 4.2)
+    plume:set_direction(-math.pi * 0.5)
+    plume:set_spread(0.5)
+    plume:set_speed(30.0, 70.0)
+    plume:set_linear_acceleration(-14.0, -26.0, 30.0, -8.0)
+    plume:set_linear_damping(0.3, 0.7)
+    plume:set_emission_area("normal", 9.0, 5.0, 0.0, false)
+    plume:set_sizes({ 0.35, 1.4, 2.6 })
+    plume:set_size_variation(0.65)
+    plume:set_rotation(0.0, math.pi * 2.0)
+    -- Spin starts brisk and settles, which reads as the plume slowing down.
+    plume:set_spin(1.4, 0.15)
+    plume:set_spin_variation(1.0)
+    plume:set_colors_hex({ "#5f6b7a00", "#8d99aa99", "#c3ccd955", "#e2e8f000" })
+    plume:set_shape_size(26.0, 26.0)
+    plume:set_draw_mode("square")
+    plume:set_insert_mode("bottom")
+
+    return {
+        kind = SCENE_SMOKE,
+        name = "Smoke plume",
+        hint = "Rotation and spin over life, size growth, bottom insert order",
+        background = "#161a20",
+        systems = { plume },
+        clock = 0.0,
+        burst_timer = 0.0,
+        pointer_x = WIDTH * 0.5,
+        pointer_y = HEIGHT * 0.5,
+        pointer_seen = false,
+        texture = nil,
+        target = nil,
+        texture_failed = false,
+    }
+end
+
+function weather_scene(): Scene
+    local snow: ParticleSystem = particles.new(700)
+    snow:set_seed(9)
+    snow:set_position(WIDTH * 0.5, -20.0)
+    snow:set_emission_rate(160.0)
+    snow:set_particle_lifetime(5.0, 7.0)
+    snow:set_direction(math.pi * 0.5)
+    snow:set_spread(0.3)
+    snow:set_speed(30.0, 70.0)
+    -- A steady sideways breeze, plus damping so flakes drift rather than dive.
+    snow:set_linear_acceleration(-30.0, 20.0, 60.0, 45.0)
+    snow:set_linear_damping(0.5, 1.4)
+    snow:set_emission_area("uniform", WIDTH * 0.55, 6.0, 0.0, false)
+    snow:set_sizes({ 0.5, 0.5, 0.2 })
+    snow:set_size_variation(0.9)
+    snow:set_colors_hex({ "#ffffff00", "#f8fafcff", "#e2e8f0ff", "#e2e8f000" })
+    snow:set_shape_size(7.0, 7.0)
+    snow:set_draw_mode("circle")
+
+    -- Rain is the same idea aimed harder: streaks drawn along their velocity.
+    local rain: ParticleSystem = particles.new(500)
+    rain:set_seed(10)
+    rain:set_position(WIDTH * 0.5, -20.0)
+    rain:set_emission_rate(220.0)
+    rain:set_particle_lifetime(1.4, 1.9)
+    rain:set_direction(math.pi * 0.42)
+    rain:set_spread(0.05)
+    rain:set_speed(520.0, 700.0)
+    rain:set_linear_acceleration(0.0, 400.0, 0.0, 400.0)
+    rain:set_emission_area("uniform", WIDTH * 0.6, 4.0, 0.0, false)
+    rain:set_sizes({ 1.0 })
+    rain:set_colors_hex({ "#93c5fd88", "#bfdbfe55" })
+    rain:set_shape_size(26.0, 1.6)
+    rain:set_draw_mode("spark")
+
+    return {
+        kind = SCENE_WEATHER,
+        name = "Weather",
+        hint = "Wide spawn strips, wind, and velocity aligned rain streaks",
+        background = "#0e131c",
+        systems = { snow, rain },
+        clock = 0.0,
+        burst_timer = 0.0,
+        pointer_x = WIDTH * 0.5,
+        pointer_y = HEIGHT * 0.5,
+        pointer_seen = false,
+        texture = nil,
+        target = nil,
+        texture_failed = false,
+    }
+end
+
+function vortex_scene(): Scene
+    -- Tangential acceleration makes particles orbit their spawn point; the
+    -- negative radial term keeps pulling them back toward it.
+    local swirl: ParticleSystem = particles.new(900)
+    swirl:set_seed(11)
+    swirl:set_position(WIDTH * 0.5, HEIGHT * 0.5)
+    swirl:set_emission_rate(300.0)
+    swirl:set_particle_lifetime(1.6, 3.0)
+    swirl:set_speed(10.0, 40.0)
+    swirl:set_spread(math.pi * 2.0)
+    swirl:set_radial_acceleration(-120.0, -40.0)
+    swirl:set_tangential_acceleration(160.0, 320.0)
+    swirl:set_linear_damping(0.2, 0.6)
+    swirl:set_emission_area("borderellipse", 150.0, 150.0, 0.0, false)
+    swirl:set_sizes({ 0.2, 0.9, 0.1 })
+    swirl:set_size_variation(0.7)
+    swirl:set_colors_hex({ "#a855f700", "#e879f9", "#67e8f9", "#22d3ee00" })
+    swirl:set_shape_size(9.0, 9.0)
+    swirl:set_draw_mode("circle")
+    swirl:set_blend_mode("add")
+    swirl:set_insert_mode("random")
+
+    -- A slower counter-rotating halo, drawn as streaks.
+    local halo: ParticleSystem = particles.new(300)
+    halo:set_seed(12)
+    halo:set_position(WIDTH * 0.5, HEIGHT * 0.5)
+    halo:set_emission_rate(70.0)
+    halo:set_particle_lifetime(2.4, 3.6)
+    halo:set_speed(5.0, 20.0)
+    halo:set_spread(math.pi * 2.0)
+    halo:set_radial_acceleration(-30.0, 10.0)
+    halo:set_tangential_acceleration(-150.0, -90.0)
+    halo:set_emission_area("ellipse", 220.0, 220.0, 0.0, false)
+    halo:set_sizes({ 0.0, 1.0, 0.0 })
+    halo:set_colors_hex({ "#38bdf800", "#c7d2fe99", "#818cf800" })
+    halo:set_shape_size(20.0, 2.4)
+    halo:set_draw_mode("spark")
+    halo:set_blend_mode("add")
+
+    return {
+        kind = SCENE_VORTEX,
+        name = "Vortex",
+        hint = "Radial and tangential acceleration, random insert order",
+        background = "#0a0713",
+        systems = { swirl, halo },
+        clock = 0.0,
+        burst_timer = 0.0,
+        pointer_x = WIDTH * 0.5,
+        pointer_y = HEIGHT * 0.5,
+        pointer_seen = false,
+        texture = nil,
+        target = nil,
+        texture_failed = false,
+    }
+end
+
+function trail_scene(): Scene
+    local comet: ParticleSystem = particles.new(600)
+    comet:set_seed(13)
+    comet:set_emission_rate(320.0)
+    comet:set_particle_lifetime(0.35, 0.9)
+    comet:set_speed(10.0, 90.0)
+    comet:set_spread(math.pi * 2.0)
+    comet:set_linear_damping(2.0, 4.0)
+    comet:set_sizes({ 1.0, 0.4, 0.0 })
+    comet:set_size_variation(0.5)
+    comet:set_colors_hex({ "#fef9c3", "#fb923c", "#db277700" })
+    comet:set_shape_size(12.0, 12.0)
+    comet:set_draw_mode("circle")
+    comet:set_blend_mode("add")
+
+    local streaks: ParticleSystem = particles.new(300)
+    streaks:set_seed(14)
+    streaks:set_emission_rate(90.0)
+    streaks:set_particle_lifetime(0.5, 1.1)
+    streaks:set_speed(60.0, 200.0)
+    streaks:set_spread(math.pi * 2.0)
+    streaks:set_linear_damping(1.0, 3.0)
+    streaks:set_relative_rotation(true)
+    streaks:set_sizes({ 1.2, 0.2 })
+    streaks:set_colors_hex({ "#fde68a", "#f9731600" })
+    streaks:set_shape_size(22.0, 2.0)
+    streaks:set_draw_mode("spark")
+    streaks:set_blend_mode("add")
+
+    return {
+        kind = SCENE_TRAIL,
+        name = "Comet trail",
+        hint = "Move the mouse: a moving emitter fills the gap between updates",
+        background = "#05070f",
+        systems = { comet, streaks },
+        clock = 0.0,
+        burst_timer = 0.0,
+        pointer_x = WIDTH * 0.5,
+        pointer_y = HEIGHT * 0.5,
+        pointer_seen = false,
+        texture = nil,
+        target = nil,
+        texture_failed = false,
+    }
+end
+
+function sprite_scene(): Scene
+    -- The texture and its animation frames are attached on the first draw,
+    -- once the renderer exists.
+    local sparkles: ParticleSystem = particles.new(400)
+    sparkles:set_seed(15)
+    sparkles:set_position(WIDTH * 0.5, HEIGHT * 0.55)
+    sparkles:set_emission_rate(90.0)
+    sparkles:set_particle_lifetime(1.2, 2.4)
+    sparkles:set_speed(40.0, 150.0)
+    sparkles:set_spread(math.pi * 2.0)
+    sparkles:set_linear_damping(0.8, 1.6)
+    sparkles:set_emission_area("ellipse", 120.0, 70.0, 0.0, false)
+    sparkles:set_sizes({ 0.5, 1.6, 0.7 })
+    sparkles:set_size_variation(0.7)
+    sparkles:set_rotation(0.0, math.pi * 2.0)
+    sparkles:set_spin(-3.0, 3.0)
+    sparkles:set_spin_variation(1.0)
+    sparkles:set_colors_hex({ "#ffffff", "#a5f3fc", "#c084fc", "#7c3aed00" })
+    sparkles:set_shape_size(SPRITE_CELL, SPRITE_CELL)
+    sparkles:set_blend_mode("add")
+
+    return {
+        kind = SCENE_SPRITES,
+        name = "Sprite atlas",
+        hint = "Textured particles animating through atlas frames, with spin",
+        background = "#0b0a1c",
+        systems = { sparkles },
+        clock = 0.0,
+        burst_timer = 0.0,
+        pointer_x = WIDTH * 0.5,
+        pointer_y = HEIGHT * 0.5,
+        pointer_seen = false,
+        texture = nil,
+        target = nil,
+        texture_failed = false,
+    }
+end
+
+function build(kind: i32): Scene
+    if kind == SCENE_FOUNTAIN then
+        return fountain_scene()
+    elseif kind == SCENE_BURST then
+        return burst_scene()
+    elseif kind == SCENE_SMOKE then
+        return smoke_scene()
+    elseif kind == SCENE_WEATHER then
+        return weather_scene()
+    elseif kind == SCENE_VORTEX then
+        return vortex_scene()
+    elseif kind == SCENE_TRAIL then
+        return trail_scene()
+    elseif kind == SCENE_SPRITES then
+        return sprite_scene()
+    end
+    return fire_scene()
+end
+
+function Scene:count(): i32
+    local total: i32 = 0
+    for system in self.systems do
+        total += system:count()
+    end
+    return total
+end
+
+-- Fires one explosion. Each system contributes its own part of the same
+-- event from the same place.
+function Scene:blast(x: f64, y: f64): unit
+    for system in self.systems do
+        system:set_position(x, y)
+    end
+    self.systems[0]:emit(26)
+    self.systems[1]:emit(30)
+    self.systems[2]:emit(90)
+end
+
+-- Clears live particles and rewinds the scripted motion, so a scene looks
+-- the same every time it is selected.
+function Scene:restart(): unit
+    self.clock = 0.0
+    self.burst_timer = 0.0
+    for system in self.systems do
+        system:reset()
+        system:start()
+    end
+    if self.kind == SCENE_BURST then
+        self.burst_timer = 0.6
+    end
+end
+
+function Scene:set_emitting(emitting: bool): unit
+    for system in self.systems do
+        if emitting then
+            system:start()
+        else
+            system:pause()
+        end
+    end
+end
+
+function Scene:pointer_moved(x: f64, y: f64): unit
+    self.pointer_x = x
+    self.pointer_y = y
+    self.pointer_seen = true
+end
+
+-- Scenes that animate their emitters do it here; the rest simply advance.
+function Scene:update(dt: f64): unit
+    self.clock += dt
+
+    if self.kind == SCENE_BURST then
+        self.burst_timer -= dt
+        if self.burst_timer <= 0.0 then
+            -- Scripted blasts keep the scene alive without any input.
+            local x: f64 = WIDTH * 0.5 + math.cos(self.clock * 1.7) * WIDTH * 0.28
+            local y: f64 = HEIGHT * 0.5 + math.sin(self.clock * 2.3) * HEIGHT * 0.22
+            self:blast(x, y)
+            self.burst_timer = 1.15
+        end
+    elseif self.kind == SCENE_SMOKE then
+        -- A wandering chimney: move_to, so the plume stays connected.
+        local x: f64 = WIDTH * 0.5 + math.sin(self.clock * 0.35) * 190.0
+        self.systems[0]:move_to(x, HEIGHT * 0.8)
+    elseif self.kind == SCENE_TRAIL then
+        local x: f64 = self.pointer_x
+        local y: f64 = self.pointer_y
+        if not self.pointer_seen then
+            -- Until the pointer arrives, fly a figure-eight so the scene is
+            -- never still.
+            x = WIDTH * 0.5 + math.sin(self.clock * 1.1) * 330.0
+            y = HEIGHT * 0.5 + math.sin(self.clock * 2.2) * 150.0
+        end
+        for system in self.systems do
+            system:move_to(x, y)
+        end
+    elseif self.kind == SCENE_VORTEX then
+        -- Drifting the emitter shows radial forces staying anchored to where
+        -- each particle was born.
+        local x: f64 = WIDTH * 0.5 + math.cos(self.clock * 0.5) * 70.0
+        local y: f64 = HEIGHT * 0.5 + math.sin(self.clock * 0.7) * 40.0
+        for system in self.systems do
+            system:move_to(x, y)
+        end
+    end
+
+    for system in self.systems do
+        system:update(dt)
+    end
+end
+
+-- Draws four frames of a soft spark into a render target and hands the
+-- result to the emitter as a texture with one quad per frame. Nothing is
+-- fetched or decoded: the atlas is drawn with the same primitives the rest
+-- of the gallery uses.
+function Scene:build_atlas(graphics: Graphics): unit
+    self.texture_failed = true
+    local result: graphics_module.RenderTargetResult =
+        graphics:create_render_target((SPRITE_CELL * (SPRITE_FRAMES::f64))::i32, SPRITE_CELL::i32)
+    if not result.ok then
+        return
+    end
+    local target: graphics_module.RenderTarget = result.target
+    if not graphics:set_render_target(target) then
+        graphics:release_render_target(target)
+        return
+    end
+
+    graphics:clear("#00000000")
+    graphics:set_blend_mode("add")
+    local half: f64 = SPRITE_CELL * 0.5
+    for frame = 0, SPRITE_FRAMES - 1 do
+        local center_x: f64 = (frame::f64) * SPRITE_CELL + half
+        -- Each frame is a soft core with a ring that expands and thins, so
+        -- playing the frames in order reads as a twinkle.
+        local ring: f64 = 4.0 + (frame::f64) * 3.4
+        local layers: i32 = 6
+        for layer = 0, layers - 1 do
+            local spread: f64 = (layer::f64) / ((layers - 1)::f64)
+            graphics:set_color_rgba(1.0, 1.0, 1.0, 0.08 * (1.0 - spread * 0.7))
+            graphics:fill_circle(center_x, half, 3.0 + spread * ring)
+        end
+        graphics:set_color_rgba(1.0, 1.0, 1.0, 0.85 - (frame::f64) * 0.16)
+        graphics:fill_circle(center_x, half, 3.6 - (frame::f64) * 0.5)
+        -- Four short spikes make the shape read as a spark rather than a dot.
+        local spike: f64 = ring * 1.15
+        graphics:set_color_rgba(1.0, 1.0, 1.0, 0.5 - (frame::f64) * 0.1)
+        graphics:fill_quad(
+            center_x - spike, half, center_x, half - 1.4,
+            center_x + spike, half, center_x, half + 1.4
+        )
+        graphics:fill_quad(
+            center_x, half - spike, center_x + 1.4, half,
+            center_x, half + spike, center_x - 1.4, half
+        )
+    end
+    graphics:set_blend_mode("alpha")
+    graphics:set_screen_target()
+
+    local texture: graphics_module.Texture = graphics:texture_from_render_target(target)
+    local frames: {particles.Quad} = {}
+    for frame = 0, SPRITE_FRAMES - 1 do
+        table.insert(frames, particles.quad((frame::f64) * SPRITE_CELL, 0.0, SPRITE_CELL, SPRITE_CELL))
+    end
+    local sparkles: ParticleSystem = self.systems[0]
+    sparkles:set_texture(texture)
+    sparkles:set_quads(frames)
+
+    self.target = target
+    self.texture = texture
+    self.texture_failed = false
+end
+
+function Scene:draw(graphics: Graphics): unit
+    if self.kind == SCENE_SPRITES and self.texture == nil and not self.texture_failed then
+        self:build_atlas(graphics)
+    end
+
+    -- A little scenery so the particles have something to sit in.
+    if self.kind == SCENE_FIRE then
+        graphics:set_color("#3b2a1a")
+        graphics:fill_rectangle(WIDTH * 0.5 - 70.0, HEIGHT * 0.78, 140.0, 12.0)
+        graphics:set_color("#241a12")
+        graphics:fill_rectangle(WIDTH * 0.5 - 96.0, HEIGHT * 0.78 + 12.0, 192.0, 8.0)
+    elseif self.kind == SCENE_FOUNTAIN then
+        graphics:set_color("#0f2540")
+        graphics:fill_rectangle(0.0, HEIGHT * 0.86, WIDTH, HEIGHT * 0.14)
+        graphics:set_color("#14304f")
+        graphics:fill_rectangle(WIDTH * 0.5 - 60.0, HEIGHT * 0.82, 120.0, 24.0)
+    elseif self.kind == SCENE_SMOKE then
+        graphics:set_color("#20242c")
+        graphics:fill_rectangle(WIDTH * 0.5 - 240.0, HEIGHT * 0.86, 480.0, 10.0)
+    elseif self.kind == SCENE_WEATHER then
+        graphics:set_color("#131b28")
+        graphics:fill_rectangle(0.0, HEIGHT * 0.88, WIDTH, HEIGHT * 0.12)
+    end
+
+    for system in self.systems do
+        system:draw(graphics, 0.0, 0.0)
+    end
+end
+
+return {
+    build = build,
+    scene_count = SCENE_COUNT,
+    width = WIDTH,
+    height = HEIGHT,
+    burst_kind = SCENE_BURST,
+}
