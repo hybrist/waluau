@@ -1,0 +1,82 @@
+local engine = require("waluau:engine")
+local particles = require("waluau:engine/particles")
+
+type ParticleSystem = particles.ParticleSystem
+
+local water: ParticleSystem = particles.new(420)
+local sparks: ParticleSystem = particles.new(180)
+
+local function load(): unit
+    water:set_seed(101)
+    water:set_position(240.0, 235.0)
+    water:set_emission_rate(190.0)
+    water:set_particle_lifetime(1.2, 2.0)
+    water:set_direction(-math.pi * 0.5)
+    water:set_spread(0.42)
+    water:set_speed(150.0, 245.0)
+    water:set_linear_acceleration(0.0, 185.0, 0.0, 235.0)
+    water:set_linear_damping(0.0, 0.25)
+    water:set_emission_area("uniform", 12.0, 1.0, 0.0, false)
+    water:set_sizes({ 3.5, 2.5, 1.0 })
+    water:set_size_variation(0.35)
+    water:set_colors({
+        particles.color(0.55, 0.95, 1.0, 0.95),
+        particles.color(0.1, 0.45, 1.0, 0.75),
+        particles.color(0.05, 0.2, 0.8, 0.0),
+    })
+    water:start()
+
+    sparks:set_seed(303)
+    sparks:set_position(240.0, 235.0)
+    sparks:set_particle_lifetime(0.5, 1.1)
+    sparks:set_direction(-math.pi * 0.5)
+    sparks:set_spread(1.8)
+    sparks:set_speed(90.0, 260.0)
+    sparks:set_linear_acceleration(0.0, 150.0, 0.0, 220.0)
+    sparks:set_sizes({ 5.0, 2.0, 0.0 })
+    sparks:set_colors({
+        particles.color(1.0, 1.0, 0.7, 1.0),
+        particles.color(0.1, 0.75, 1.0, 0.7),
+        particles.color(0.0, 0.2, 1.0, 0.0),
+    })
+end
+
+local function update(dt: f64, input: engine.Input): unit
+    local x: f64 = input.mouse_x
+    local y: f64 = input.mouse_y
+    if x > 0.0 and y > 0.0 then
+        water:move_to(x, y)
+        sparks:move_to(x, y)
+    end
+    water:update(dt)
+    sparks:update(dt)
+end
+
+local function draw(graphics: engine.Graphics, alpha: f64): unit
+    graphics:clear("#06162b")
+    graphics:set_color("#123158")
+    graphics:fill_rectangle(0.0, 235.0, 480.0, 35.0)
+    graphics:set_blend_mode("add")
+    water:draw(graphics)
+    sparks:draw(graphics)
+    graphics:set_blend_mode("alpha")
+    graphics:set_color("#e6fbff")
+    graphics:set_font("16px monospace")
+    graphics:print("MOVE THE POINTER", 14.0, 24.0)
+    graphics:set_color("#85b9db")
+    graphics:set_font("10px monospace")
+    graphics:print("SPACE: BURST   R: RESET", 14.0, 42.0)
+end
+
+local function keypressed(key: string): unit
+    if key == "Space" then sparks:emit(120) end
+    if key == "r" then water:reset() sparks:reset() water:start() end
+end
+
+engine.start({
+    title = "Particles: Interactive Fountain", width = 480, height = 270,
+    update_hz = 60.0, max_frame_seconds = 0.25, background = "#06162b",
+}, {
+    load = load, update = update, draw = draw, keypressed = keypressed,
+    keyreleased = nil, mousepressed = nil, mousereleased = nil, mousemoved = nil,
+})

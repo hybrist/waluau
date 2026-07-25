@@ -1,0 +1,786 @@
+-- Deterministic, host-independent 2D particle simulation with a LÖVE-style
+-- emitter interface. A ParticleSystem owns bounded live storage and all
+-- configuration; update can be tested without a browser, while draw and
+-- draw_texture adapt the same particles to the engine Graphics stream.
+
+local graphics_module = require("./graphics")
+
+type Color = { red: f64, green: f64, blue: f64, alpha: f64 }
+type Quad = {
+    source_x: f64,
+    source_y: f64,
+    source_width: f64,
+    source_height: f64,
+    width: f64,
+    height: f64
+}
+type Particle = {
+    x: f64,
+    y: f64,
+    vx: f64,
+    vy: f64,
+    linear_x: f64,
+    linear_y: f64,
+    radial: f64,
+    tangential: f64,
+    damping: f64,
+    age: f64,
+    lifetime: f64,
+    rotation: f64,
+    spin_start: f64,
+    spin_end: f64,
+    spin_scale: f64,
+    size_scale: f64,
+    variant: i32
+}
+
+type ParticleSnapshot = {
+    x: f64,
+    y: f64,
+    vx: f64,
+    vy: f64,
+    age: f64,
+    lifetime: f64,
+    rotation: f64,
+    size: f64,
+    red: f64,
+    green: f64,
+    blue: f64,
+    alpha: f64
+}
+
+type ParticleSystem = {
+    particles: {Particle},
+    capacity: i32,
+    active: bool,
+    paused: bool,
+    emission_rate: f64,
+    emission_accumulator: f64,
+    emitter_lifetime: f64,
+    emitter_age: f64,
+    particle_lifetime_min: f64,
+    particle_lifetime_max: f64,
+    x: f64,
+    y: f64,
+    previous_x: f64,
+    previous_y: f64,
+    direction: f64,
+    spread: f64,
+    speed_min: f64,
+    speed_max: f64,
+    linear_x_min: f64,
+    linear_y_min: f64,
+    linear_x_max: f64,
+    linear_y_max: f64,
+    radial_min: f64,
+    radial_max: f64,
+    tangential_min: f64,
+    tangential_max: f64,
+    damping_min: f64,
+    damping_max: f64,
+    area_distribution: string,
+    area_dx: f64,
+    area_dy: f64,
+    area_angle: f64,
+    area_direction_relative: bool,
+    sizes: {f64},
+    size_variation: f64,
+    colors: {Color},
+    quads: {Quad},
+    quad_mode: string,
+    rotation_min: f64,
+    rotation_max: f64,
+    spin_min: f64,
+    spin_max: f64,
+    spin_variation: f64,
+    relative_rotation: bool,
+    offset_x: f64,
+    offset_y: f64,
+    insertion_mode: string,
+    shape: string,
+    random_state: i32
+}
+
+local TWO_PI <const>: f64 = 6.283185307179586
+
+function clamp(value: f64, minimum: f64, maximum: f64): f64
+    return math.max(minimum, math.min(maximum, value))
+end
+
+function lerp(a: f64, b: f64, t: f64): f64
+    return a + (b - a) * t
+end
+
+function square_root(value: f64): f64
+    return math.sqrt(value)
+end
+
+function color(red: f64, green: f64, blue: f64, alpha: f64): Color
+    return {
+        red = clamp(red, 0.0, 1.0),
+        green = clamp(green, 0.0, 1.0),
+        blue = clamp(blue, 0.0, 1.0),
+        alpha = clamp(alpha, 0.0, 1.0),
+    }
+end
+
+function quad(source_x: f64, source_y: f64, source_width: f64, source_height: f64, width: f64, height: f64): Quad
+    assert(source_width > 0.0 and source_height > 0.0 and width > 0.0 and height > 0.0)
+    return {
+        source_x = source_x,
+        source_y = source_y,
+        source_width = source_width,
+        source_height = source_height,
+        width = width,
+        height = height,
+    }
+end
+
+function copy_color(value: Color): Color
+    return { red = value.red, green = value.green, blue = value.blue, alpha = value.alpha }
+end
+
+function copy_colors(values: {Color}): {Color}
+    local result: {Color} = {}
+    for value in values do table.insert(result, copy_color(value)) end
+    return result
+end
+
+function copy_numbers(values: {f64}): {f64}
+    local result: {f64} = {}
+    for value in values do table.insert(result, value) end
+    return result
+end
+
+function copy_quads(values: {Quad}): {Quad}
+    local result: {Quad} = {}
+    for value in values do
+        table.insert(result, quad(
+            value.source_x, value.source_y, value.source_width, value.source_height,
+            value.width, value.height
+        ))
+    end
+    return result
+end
+
+function ParticleSystem.new(capacity: i32): ParticleSystem
+    assert(capacity > 0)
+    return {
+        particles = {},
+        capacity = capacity,
+        active = false,
+        paused = false,
+        emission_rate = 0.0,
+        emission_accumulator = 0.0,
+        emitter_lifetime = -1.0,
+        emitter_age = 0.0,
+        particle_lifetime_min = 1.0,
+        particle_lifetime_max = 1.0,
+        x = 0.0,
+        y = 0.0,
+        previous_x = 0.0,
+        previous_y = 0.0,
+        direction = 0.0,
+        spread = 0.0,
+        speed_min = 0.0,
+        speed_max = 0.0,
+        linear_x_min = 0.0,
+        linear_y_min = 0.0,
+        linear_x_max = 0.0,
+        linear_y_max = 0.0,
+        radial_min = 0.0,
+        radial_max = 0.0,
+        tangential_min = 0.0,
+        tangential_max = 0.0,
+        damping_min = 0.0,
+        damping_max = 0.0,
+        area_distribution = "none",
+        area_dx = 0.0,
+        area_dy = 0.0,
+        area_angle = 0.0,
+        area_direction_relative = false,
+        sizes = { 1.0 },
+        size_variation = 0.0,
+        colors = { color(1.0, 1.0, 1.0, 1.0) },
+        quads = {},
+        quad_mode = "lifetime",
+        rotation_min = 0.0,
+        rotation_max = 0.0,
+        spin_min = 0.0,
+        spin_max = 0.0,
+        spin_variation = 0.0,
+        relative_rotation = false,
+        offset_x = 0.5,
+        offset_y = 0.5,
+        insertion_mode = "top",
+        shape = "circle",
+        random_state = 1,
+    }
+end
+
+-- A small sine hash gives each system an isolated reproducible stream without
+-- consuming gameplay's global math.random sequence.
+function ParticleSystem:random(): f64
+    self.random_state += 1
+    local wave: f64 = math.sin((self.random_state::f64) * 12.9898) * 43758.5453123
+    return wave - math.floor(wave)
+end
+
+function ParticleSystem:between(minimum: f64, maximum: f64): f64
+    return minimum + (maximum - minimum) * self:random()
+end
+
+function ParticleSystem:set_seed(seed: i32): unit
+    self.random_state = seed
+end
+
+function ParticleSystem:set_buffer_size(capacity: i32): unit
+    assert(capacity > 0)
+    self.capacity = capacity
+    while #self.particles > capacity do table.remove(self.particles, 0) end
+end
+
+function ParticleSystem:set_emission_rate(particles_per_second: f64): unit
+    assert(particles_per_second >= 0.0)
+    self.emission_rate = particles_per_second
+end
+
+function ParticleSystem:set_emitter_lifetime(seconds: f64): unit
+    self.emitter_lifetime = seconds
+end
+
+function ParticleSystem:set_particle_lifetime(minimum: f64, maximum: f64): unit
+    assert(minimum > 0.0 and maximum >= minimum)
+    self.particle_lifetime_min = minimum
+    self.particle_lifetime_max = maximum
+end
+
+function ParticleSystem:set_position(x: f64, y: f64): unit
+    self.x = x
+    self.y = y
+    self.previous_x = x
+    self.previous_y = y
+end
+
+function ParticleSystem:move_to(x: f64, y: f64): unit
+    self.previous_x = self.x
+    self.previous_y = self.y
+    self.x = x
+    self.y = y
+end
+
+function ParticleSystem:move(dx: f64, dy: f64): unit
+    self.previous_x = self.x
+    self.previous_y = self.y
+    self.x += dx
+    self.y += dy
+end
+
+function ParticleSystem:set_direction(radians: f64): unit self.direction = radians end
+function ParticleSystem:set_spread(radians: f64): unit self.spread = math.abs(radians) end
+
+function ParticleSystem:set_speed(minimum: f64, maximum: f64): unit
+    assert(maximum >= minimum)
+    self.speed_min = minimum
+    self.speed_max = maximum
+end
+
+function ParticleSystem:set_linear_acceleration(min_x: f64, min_y: f64, max_x: f64, max_y: f64): unit
+    assert(max_x >= min_x and max_y >= min_y)
+    self.linear_x_min = min_x
+    self.linear_y_min = min_y
+    self.linear_x_max = max_x
+    self.linear_y_max = max_y
+end
+
+function ParticleSystem:set_radial_acceleration(minimum: f64, maximum: f64): unit
+    assert(maximum >= minimum)
+    self.radial_min = minimum
+    self.radial_max = maximum
+end
+
+function ParticleSystem:set_tangential_acceleration(minimum: f64, maximum: f64): unit
+    assert(maximum >= minimum)
+    self.tangential_min = minimum
+    self.tangential_max = maximum
+end
+
+function ParticleSystem:set_linear_damping(minimum: f64, maximum: f64): unit
+    assert(minimum >= 0.0 and maximum >= minimum)
+    self.damping_min = minimum
+    self.damping_max = maximum
+end
+
+function valid_distribution(distribution: string): bool
+    return distribution == "none" or distribution == "uniform" or distribution == "normal"
+        or distribution == "ellipse" or distribution == "borderellipse"
+        or distribution == "borderrectangle"
+end
+
+function ParticleSystem:set_emission_area(distribution: string, dx: f64, dy: f64, angle: f64, direction_relative: bool): unit
+    assert(valid_distribution(distribution))
+    assert(dx >= 0.0 and dy >= 0.0)
+    self.area_distribution = distribution
+    self.area_dx = dx
+    self.area_dy = dy
+    self.area_angle = angle
+    self.area_direction_relative = direction_relative
+end
+
+function ParticleSystem:set_sizes(values: {f64}): unit
+    assert(#values > 0)
+    for value in values do assert(value >= 0.0) end
+    self.sizes = copy_numbers(values)
+end
+
+function ParticleSystem:set_size_variation(variation: f64): unit
+    self.size_variation = clamp(variation, 0.0, 1.0)
+end
+
+function ParticleSystem:set_colors(values: {Color}): unit
+    assert(#values > 0)
+    self.colors = copy_colors(values)
+end
+
+-- Empty quads restore whole-texture drawing. Lifetime mode matches LÖVE's
+-- animated-sprite behavior; random mode gives each particle a seeded stable
+-- atlas choice for effects such as varied debris or confetti.
+function ParticleSystem:set_quads(values: {Quad}): unit
+    self.quads = copy_quads(values)
+end
+
+function ParticleSystem:set_quad_mode(mode: string): unit
+    assert(mode == "lifetime" or mode == "random")
+    self.quad_mode = mode
+end
+
+function ParticleSystem:set_rotation(minimum: f64, maximum: f64): unit
+    assert(maximum >= minimum)
+    self.rotation_min = minimum
+    self.rotation_max = maximum
+end
+
+function ParticleSystem:set_spin(minimum: f64, maximum: f64): unit
+    assert(maximum >= minimum)
+    self.spin_min = minimum
+    self.spin_max = maximum
+end
+
+function ParticleSystem:set_spin_variation(variation: f64): unit
+    self.spin_variation = clamp(variation, 0.0, 1.0)
+end
+
+function ParticleSystem:set_relative_rotation(relative: bool): unit self.relative_rotation = relative end
+function ParticleSystem:set_offset(x: f64, y: f64): unit self.offset_x = x self.offset_y = y end
+
+function ParticleSystem:set_insert_mode(mode: string): unit
+    assert(mode == "top" or mode == "bottom" or mode == "random")
+    self.insertion_mode = mode
+end
+
+function ParticleSystem:set_shape(shape: string): unit
+    assert(shape == "circle" or shape == "square")
+    self.shape = shape
+end
+
+function ParticleSystem:start(): unit
+    self.active = true
+    self.paused = false
+    self.emitter_age = 0.0
+end
+
+function ParticleSystem:stop(): unit
+    self.active = false
+    self.paused = false
+    self.emitter_age = 0.0
+    self.emission_accumulator = 0.0
+end
+
+function ParticleSystem:pause(): unit
+    if self.active then self.paused = true end
+end
+
+function ParticleSystem:resume(): unit
+    if self.active then self.paused = false end
+end
+
+function ParticleSystem:reset(): unit
+    self.particles = {}
+    self.emission_accumulator = 0.0
+    self.emitter_age = 0.0
+end
+
+function ParticleSystem:count(): i32 return #self.particles end
+function ParticleSystem:is_active(): bool return self.active end
+function ParticleSystem:is_paused(): bool return self.paused end
+function ParticleSystem:is_complete(): bool return not self.active and #self.particles == 0 end
+
+function curve_value(values: {f64}, progress: f64): f64
+    if #values == 1 then return values[0] end
+    local scaled: f64 = clamp(progress, 0.0, 1.0) * ((#values - 1)::f64)
+    local index: i32 = math.floor(scaled)::i32
+    if index >= #values - 1 then return values[#values - 1] end
+    return lerp(values[index], values[index + 1], scaled - (index::f64))
+end
+
+function curve_color(values: {Color}, progress: f64): Color
+    if #values == 1 then return values[0] end
+    local scaled: f64 = clamp(progress, 0.0, 1.0) * ((#values - 1)::f64)
+    local index: i32 = math.floor(scaled)::i32
+    if index >= #values - 1 then return values[#values - 1] end
+    local from: Color = values[index]
+    local to: Color = values[index + 1]
+    local amount: f64 = scaled - (index::f64)
+    return color(
+        lerp(from.red, to.red, amount),
+        lerp(from.green, to.green, amount),
+        lerp(from.blue, to.blue, amount),
+        lerp(from.alpha, to.alpha, amount)
+    )
+end
+
+function normal_sample(system: ParticleSystem): f64
+    -- Sum-of-uniforms approximation: centered, bell-shaped, and bounded so
+    -- a configured area can never produce an unbounded outlier.
+    local total: f64 = 0.0
+    for _ = 1, 6 do total += system:random() end
+    return (total - 3.0) / 3.0
+end
+
+function emission_offset(system: ParticleSystem): (f64, f64)
+    local distribution: string = system.area_distribution
+    if distribution == "none" then return 0.0, 0.0 end
+    local x: f64 = 0.0
+    local y: f64 = 0.0
+    if distribution == "uniform" then
+        x = system:between(-system.area_dx, system.area_dx)
+        y = system:between(-system.area_dy, system.area_dy)
+    elseif distribution == "normal" then
+        x = normal_sample(system) * system.area_dx
+        y = normal_sample(system) * system.area_dy
+    elseif distribution == "ellipse" or distribution == "borderellipse" then
+        local radius: f64 = 1.0
+        if distribution == "ellipse" then
+            local sample: f64 = system:random()
+            radius = square_root(sample)
+        end
+        local angle: f64 = system:random() * TWO_PI
+        x = math.cos(angle) * system.area_dx * radius
+        y = math.sin(angle) * system.area_dy * radius
+    else
+        local perimeter: f64 = system.area_dx * 2.0 + system.area_dy * 2.0
+        if perimeter <= 0.0 then return 0.0, 0.0 end
+        local at: f64 = system:random() * perimeter
+        if at < system.area_dx then
+            x = -system.area_dx + at * 2.0
+            y = -system.area_dy
+        elseif at < system.area_dx + system.area_dy then
+            x = system.area_dx
+            y = -system.area_dy + (at - system.area_dx) * 2.0
+        elseif at < system.area_dx * 2.0 + system.area_dy then
+            x = system.area_dx - (at - system.area_dx - system.area_dy) * 2.0
+            y = system.area_dy
+        else
+            x = -system.area_dx
+            y = system.area_dy - (at - system.area_dx * 2.0 - system.area_dy) * 2.0
+        end
+    end
+    local cos: f64 = math.cos(system.area_angle)
+    local sin: f64 = math.sin(system.area_angle)
+    return x * cos - y * sin, x * sin + y * cos
+end
+
+function ParticleSystem:spawn(): unit
+    if #self.particles >= self.capacity then return end
+    local offset_x: f64, offset_y: f64 = emission_offset(self)
+    local angle: f64 = self.direction + self:between(-self.spread * 0.5, self.spread * 0.5)
+    local direction_x: f64 = math.cos(angle)
+    local direction_y: f64 = math.sin(angle)
+    if self.area_direction_relative then
+        local length: f64 = square_root(offset_x * offset_x + offset_y * offset_y)
+        if length > 0.000001 then
+            local radial_x: f64 = offset_x / length
+            local radial_y: f64 = offset_y / length
+            local local_x: f64 = direction_x
+            local local_y: f64 = direction_y
+            direction_x = radial_x * local_x - radial_y * local_y
+            direction_y = radial_y * local_x + radial_x * local_y
+        end
+    end
+    local speed: f64 = self:between(self.speed_min, self.speed_max)
+    local particle: Particle = {
+        x = self.x + offset_x,
+        y = self.y + offset_y,
+        vx = direction_x * speed,
+        vy = direction_y * speed,
+        linear_x = self:between(self.linear_x_min, self.linear_x_max),
+        linear_y = self:between(self.linear_y_min, self.linear_y_max),
+        radial = self:between(self.radial_min, self.radial_max),
+        tangential = self:between(self.tangential_min, self.tangential_max),
+        damping = self:between(self.damping_min, self.damping_max),
+        age = 0.0,
+        lifetime = self:between(self.particle_lifetime_min, self.particle_lifetime_max),
+        rotation = self:between(self.rotation_min, self.rotation_max),
+        spin_start = self:between(self.spin_min, self.spin_max),
+        spin_end = self:between(self.spin_min, self.spin_max),
+        spin_scale = 1.0 - self.spin_variation + self:random() * self.spin_variation,
+        size_scale = 1.0 - self.size_variation + self:random() * self.size_variation,
+        variant = -1,
+    }
+    if #self.quads > 0 then
+        particle.variant = math.floor(self:random() * (#self.quads::f64))::i32
+    end
+    if self.insertion_mode == "bottom" then
+        table.insert(self.particles, 0, particle)
+    else
+        table.insert(self.particles, particle)
+        if self.insertion_mode == "random" and #self.particles > 1 then
+            local last: i32 = #self.particles - 1
+            local target: i32 = math.floor(self:random() * (#self.particles::f64))::i32
+            local displaced: Particle = self.particles[target]
+            self.particles[target] = particle
+            self.particles[last] = displaced
+        end
+    end
+end
+
+function ParticleSystem:emit(count: i32): unit
+    if count <= 0 then return end
+    local available: i32 = self.capacity - #self.particles
+    local amount: i32 = math.min(count::f64, available::f64)::i32
+    for _ = 1, amount do self:spawn() end
+end
+
+function ParticleSystem:update(dt: f64): unit
+    if dt <= 0.0 then return end
+    if self.active and not self.paused then
+        local emitting_seconds: f64 = dt
+        if self.emitter_lifetime >= 0.0 then
+            local remaining: f64 = self.emitter_lifetime - self.emitter_age
+            if remaining <= 0.0 then
+                emitting_seconds = 0.0
+                self.active = false
+            elseif emitting_seconds >= remaining then
+                emitting_seconds = remaining
+                self.active = false
+            end
+            self.emitter_age += dt
+        end
+        self.emission_accumulator += self.emission_rate * emitting_seconds
+        local requested: i32 = math.floor(self.emission_accumulator)::i32
+        self.emission_accumulator -= requested::f64
+        local target_x: f64 = self.x
+        local target_y: f64 = self.y
+        local available: i32 = self.capacity - #self.particles
+        local amount: i32 = math.min(requested::f64, available::f64)::i32
+        for emitted = 1::i32, amount do
+            local along: f64 = (emitted::f64) / (amount::f64)
+            self.x = lerp(self.previous_x, target_x, along)
+            self.y = lerp(self.previous_y, target_y, along)
+            self:spawn()
+        end
+        self.x = target_x
+        self.y = target_y
+    end
+    self.previous_x = self.x
+    self.previous_y = self.y
+
+    local index: i32 = #self.particles - 1
+    while index >= 0 do
+        local particle: Particle = self.particles[index]
+        particle.age += dt
+        if particle.age >= particle.lifetime then
+            table.remove(self.particles, index)
+        else
+            local radial_x: f64 = 0.0
+            local radial_y: f64 = 0.0
+            local dx: f64 = particle.x - self.x
+            local dy: f64 = particle.y - self.y
+            local distance: f64 = square_root(dx * dx + dy * dy)
+            if distance > 0.000001 then
+                radial_x = dx / distance
+                radial_y = dy / distance
+            end
+            local accel_x: f64 = particle.linear_x + radial_x * particle.radial - radial_y * particle.tangential
+            local accel_y: f64 = particle.linear_y + radial_y * particle.radial + radial_x * particle.tangential
+            particle.vx += accel_x * dt
+            particle.vy += accel_y * dt
+            local damping: f64 = 1.0 / (1.0 + particle.damping * dt)
+            particle.vx *= damping
+            particle.vy *= damping
+            particle.x += particle.vx * dt
+            particle.y += particle.vy * dt
+            local progress: f64 = particle.age / particle.lifetime
+            local spin: f64 = lerp(particle.spin_start, particle.spin_end, progress) * particle.spin_scale
+            particle.rotation += spin * dt
+        end
+        index -= 1
+    end
+end
+
+function ParticleSystem:snapshot(index: i32): ParticleSnapshot
+    assert(index >= 0 and index < #self.particles)
+    local particle: Particle = self.particles[index]
+    local progress: f64 = particle.age / particle.lifetime
+    local tint: Color = curve_color(self.colors, progress)
+    return {
+        x = particle.x,
+        y = particle.y,
+        vx = particle.vx,
+        vy = particle.vy,
+        age = particle.age,
+        lifetime = particle.lifetime,
+        rotation = particle.rotation,
+        size = curve_value(self.sizes, progress) * particle.size_scale,
+        red = tint.red,
+        green = tint.green,
+        blue = tint.blue,
+        alpha = tint.alpha,
+    }
+end
+
+function ParticleSystem:draw(graphics: graphics_module.Graphics): unit
+    for index = 0::i32, #self.particles - 1 do
+        local particle: ParticleSnapshot = self:snapshot(index)
+        graphics:set_color_rgba(particle.red, particle.green, particle.blue, particle.alpha)
+        graphics:push()
+        graphics:translate(particle.x, particle.y)
+        graphics:rotate(particle.rotation)
+        if self.relative_rotation then
+            local speed: f64 = square_root(particle.vx * particle.vx + particle.vy * particle.vy)
+            if speed > 0.000001 then
+                local direction_x: f64 = particle.vx / speed
+                local direction_y: f64 = particle.vy / speed
+                graphics:apply_transform(direction_x, direction_y, -direction_y, direction_x, 0.0, 0.0)
+            end
+        end
+        if self.shape == "square" then
+            graphics:fill_rectangle(
+                -self.offset_x * particle.size,
+                -self.offset_y * particle.size,
+                particle.size,
+                particle.size
+            )
+        else
+            graphics:fill_circle(
+                (0.5 - self.offset_x) * particle.size,
+                (0.5 - self.offset_y) * particle.size,
+                particle.size * 0.5
+            )
+        end
+        graphics:pop()
+    end
+end
+
+function ParticleSystem:draw_texture(
+    graphics: graphics_module.Graphics,
+    texture: graphics_module.Texture
+): unit
+    for index = 0::i32, #self.particles - 1 do
+        local live: Particle = self.particles[index]
+        local particle: ParticleSnapshot = self:snapshot(index)
+        local source_x: f64 = 0.0
+        local source_y: f64 = 0.0
+        local source_width: f64 = texture.width::f64
+        local source_height: f64 = texture.height::f64
+        local width: f64 = source_width
+        local height: f64 = source_height
+        if #self.quads > 0 then
+            local variant: i32 = 0
+            if self.quad_mode == "random" then
+                variant = live.variant
+                if variant < 0 then variant = index % #self.quads end
+            else
+                local progress: f64 = live.age / live.lifetime
+                variant = math.floor(progress * (#self.quads::f64))::i32
+                if variant >= #self.quads then variant = #self.quads - 1 end
+            end
+            local selected: Quad = self.quads[variant % #self.quads]
+            source_x = selected.source_x
+            source_y = selected.source_y
+            source_width = selected.source_width
+            source_height = selected.source_height
+            width = selected.width
+            height = selected.height
+        end
+        graphics:set_color_rgba(particle.red, particle.green, particle.blue, particle.alpha)
+        graphics:push()
+        graphics:translate(particle.x, particle.y)
+        graphics:rotate(particle.rotation)
+        if self.relative_rotation then
+            local speed: f64 = square_root(particle.vx * particle.vx + particle.vy * particle.vy)
+            if speed > 0.000001 then
+                local direction_x: f64 = particle.vx / speed
+                local direction_y: f64 = particle.vy / speed
+                graphics:apply_transform(direction_x, direction_y, -direction_y, direction_x, 0.0, 0.0)
+            end
+        end
+        graphics:scale(particle.size, particle.size)
+        graphics:draw_sprite(
+            texture,
+            -self.offset_x * width,
+            -self.offset_y * height,
+            width,
+            height,
+            source_x,
+            source_y,
+            source_width,
+            source_height
+        )
+        graphics:pop()
+    end
+end
+
+function ParticleSystem:clone(): ParticleSystem
+    local result: ParticleSystem = ParticleSystem.new(self.capacity)
+    result.emission_rate = self.emission_rate
+    result.emitter_lifetime = self.emitter_lifetime
+    result.particle_lifetime_min = self.particle_lifetime_min
+    result.particle_lifetime_max = self.particle_lifetime_max
+    result.x = self.x
+    result.y = self.y
+    result.previous_x = self.previous_x
+    result.previous_y = self.previous_y
+    result.direction = self.direction
+    result.spread = self.spread
+    result.speed_min = self.speed_min
+    result.speed_max = self.speed_max
+    result.linear_x_min = self.linear_x_min
+    result.linear_y_min = self.linear_y_min
+    result.linear_x_max = self.linear_x_max
+    result.linear_y_max = self.linear_y_max
+    result.radial_min = self.radial_min
+    result.radial_max = self.radial_max
+    result.tangential_min = self.tangential_min
+    result.tangential_max = self.tangential_max
+    result.damping_min = self.damping_min
+    result.damping_max = self.damping_max
+    result.area_distribution = self.area_distribution
+    result.area_dx = self.area_dx
+    result.area_dy = self.area_dy
+    result.area_angle = self.area_angle
+    result.area_direction_relative = self.area_direction_relative
+    result.sizes = copy_numbers(self.sizes)
+    result.size_variation = self.size_variation
+    result.colors = copy_colors(self.colors)
+    result.quads = copy_quads(self.quads)
+    result.quad_mode = self.quad_mode
+    result.rotation_min = self.rotation_min
+    result.rotation_max = self.rotation_max
+    result.spin_min = self.spin_min
+    result.spin_max = self.spin_max
+    result.spin_variation = self.spin_variation
+    result.relative_rotation = self.relative_rotation
+    result.offset_x = self.offset_x
+    result.offset_y = self.offset_y
+    result.insertion_mode = self.insertion_mode
+    result.shape = self.shape
+    result.random_state = self.random_state
+    return result
+end
+
+return {
+    new = ParticleSystem.new,
+    color = color,
+    quad = quad,
+}

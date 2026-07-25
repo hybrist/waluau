@@ -1,0 +1,80 @@
+local engine = require("waluau:engine")
+local particles = require("waluau:engine/particles")
+
+type ParticleSystem = particles.ParticleSystem
+
+local flames: ParticleSystem = particles.new(260)
+local smoke: ParticleSystem = particles.new(120)
+
+local function load(): unit
+    flames:set_seed(11)
+    flames:set_position(240.0, 245.0)
+    flames:set_emission_rate(150.0)
+    flames:set_particle_lifetime(0.45, 1.15)
+    flames:set_direction(-math.pi * 0.5)
+    flames:set_spread(0.75)
+    flames:set_speed(45.0, 135.0)
+    flames:set_linear_acceleration(-18.0, -35.0, 18.0, -5.0)
+    flames:set_linear_damping(0.3, 1.2)
+    flames:set_emission_area("normal", 34.0, 5.0, 0.0, false)
+    flames:set_sizes({ 3.0, 14.0, 8.0, 0.0 })
+    flames:set_size_variation(0.45)
+    flames:set_colors({
+        particles.color(1.0, 0.95, 0.45, 0.95),
+        particles.color(1.0, 0.3, 0.03, 0.85),
+        particles.color(0.35, 0.02, 0.01, 0.0),
+    })
+    flames:start()
+
+    smoke:set_seed(29)
+    smoke:set_position(240.0, 230.0)
+    smoke:set_emission_rate(28.0)
+    smoke:set_particle_lifetime(1.6, 3.2)
+    smoke:set_direction(-math.pi * 0.5)
+    smoke:set_spread(0.48)
+    smoke:set_speed(14.0, 40.0)
+    smoke:set_linear_acceleration(-7.0, -10.0, 7.0, -2.0)
+    smoke:set_linear_damping(0.2, 0.8)
+    smoke:set_emission_area("normal", 22.0, 4.0, 0.0, false)
+    smoke:set_sizes({ 8.0, 24.0, 42.0 })
+    smoke:set_size_variation(0.5)
+    smoke:set_colors({
+        particles.color(0.18, 0.16, 0.18, 0.38),
+        particles.color(0.32, 0.3, 0.34, 0.2),
+        particles.color(0.45, 0.46, 0.5, 0.0),
+    })
+    smoke:start()
+end
+
+local function update(dt: f64, input: engine.Input): unit
+    flames:update(dt)
+    smoke:update(dt)
+end
+
+local function draw(graphics: engine.Graphics, alpha: f64): unit
+    graphics:clear("#09060b")
+    graphics:set_blend_mode("alpha")
+    smoke:draw(graphics)
+    graphics:set_blend_mode("add")
+    flames:draw(graphics)
+    graphics:set_blend_mode("alpha")
+    graphics:set_color("#fff4dd")
+    graphics:set_font("18px monospace")
+    graphics:print_aligned("FIRE + SMOKE", 240.0, 28.0, "center")
+    graphics:set_color("#b7a9ba")
+    graphics:set_font("10px monospace")
+    graphics:print_aligned("COLOR / SIZE CURVES - BLEND MODES - DAMPING", 240.0, 46.0, "center")
+end
+
+local function keypressed(key: string): unit
+    if key == "Space" then flames:emit(90) end
+    if key == "r" then flames:reset() smoke:reset() flames:start() smoke:start() end
+end
+
+engine.start({
+    title = "Particles: Fire and Smoke", width = 480, height = 270,
+    update_hz = 60.0, max_frame_seconds = 0.25, background = "#09060b",
+}, {
+    load = load, update = update, draw = draw, keypressed = keypressed,
+    keyreleased = nil, mousepressed = nil, mousereleased = nil, mousemoved = nil,
+})

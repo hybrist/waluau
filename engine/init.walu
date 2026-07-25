@@ -4,16 +4,23 @@
 local browser = require("waluau:engine/v1/browser")
 local input_module = require("waluau:engine/v1/input")
 local graphics_module = require("waluau:engine/v1/graphics")
+local particles_module = require("waluau:engine/v1/particles")
 
 type Config = browser.Config
 type Game = browser.Game
 type Session = browser.Session
 type Input = input_module.Input
 type Graphics = graphics_module.Graphics
+type ParticleSystem = particles_module.ParticleSystem
+type ParticleColor = particles_module.Color
+type ParticleQuad = particles_module.Quad
 
-local VERSION <const>: string = "1.2.0"
+local VERSION <const>: string = "1.3.0"
 
 return {
     VERSION = VERSION,
     start = browser.start,
+    new_particle_system = particles_module.new,
+    particle_color = particles_module.color,
+    particle_quad = particles_module.quad,
 }

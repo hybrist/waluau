@@ -50,7 +50,7 @@ The compiler embeds the engine sources. `waluau:engine` selects the current
 stable major version and `waluau:engine/v1` pins major version 1. Both expose
 the same aggregate facade:
 
-- `VERSION`: the semantic API version (`1.2.0`)
+- `VERSION`: the semantic API version (`1.3.0`)
 - `start`: the browser lifecycle entry point
 - `Config`, `Game`, `Session`, `Input`, and `Graphics`: canonical public types
 
@@ -64,6 +64,7 @@ Subsystem modules remain supported for focused and host-independent programs:
 | --- | --- | --- |
 | `waluau:engine/input` | `waluau:engine/v1/input` | keyboard state and `Input` |
 | `waluau:engine/graphics` | `waluau:engine/v1/graphics` | GPU drawing and `Graphics` |
+| `waluau:engine/particles` | `waluau:engine/v1/particles` | deterministic particle simulation and rendering |
 | `waluau:engine/resources` | `waluau:engine/v1/resources` | packaged resource loading and handles |
 | `waluau:engine/audio` | `waluau:engine/v1/audio` | decoded effects, streamed music, and playback control |
 | `waluau:engine/time` | `waluau:engine/v1/time` | deterministic fixed-step clock |
@@ -81,6 +82,69 @@ text, and a push/pop transform stack with translate/rotate/scale. Every one
 of those calls renders on the GPU: lines are thin quads, circles are
 triangle fans, and `print` renders uppercased bitmap-font glyphs as quads,
 so a frame batches into very few draw calls.
+
+## Particle systems
+
+`waluau:engine/particles` is a DOM-free particle simulation with bounded live
+storage and a LÖVE-style emitter interface. The aggregate facade also exports
+`engine.new_particle_system` and `engine.particle_color`. Randomness is local
+to each system and seedable, so effects never perturb gameplay randomness and
+tests can reproduce every spawn.
+
+```walu
+local engine = require("waluau:engine")
+local particles = require("waluau:engine/particles")
+
+local fire: particles.ParticleSystem = particles.new(500)
+fire:set_seed(42)
+fire:set_position(320.0, 300.0)
+fire:set_emission_rate(180.0)
+fire:set_particle_lifetime(0.4, 1.2)
+fire:set_direction(-math.pi * 0.5)
+fire:set_spread(0.7)
+fire:set_speed(40.0, 130.0)
+fire:set_linear_acceleration(-15.0, -30.0, 15.0, 0.0)
+fire:set_linear_damping(0.2, 1.0)
+fire:set_emission_area("normal", 30.0, 4.0, 0.0, false)
+fire:set_sizes({ 3.0, 14.0, 7.0, 0.0 })
+fire:set_colors({
+    particles.color(1.0, 0.95, 0.4, 1.0),
+    particles.color(1.0, 0.2, 0.0, 0.8),
+    particles.color(0.2, 0.0, 0.0, 0.0),
+})
+fire:start()
+
+-- fixed update
+fire:update(dt)
+
+-- draw; additive blending is optional
+graphics:set_blend_mode("add")
+fire:draw(graphics)
+graphics:set_blend_mode("alpha")
+```
+
+The interface covers continuous emission and `emit(count)` bursts; finite or
+infinite emitter lifetimes; ranged particle lifetimes; position, teleporting
+`set_position`, path-emitting `move_to`, direction and spread; ranged speed,
+linear/radial/tangential acceleration, and damping; `none`, `uniform`,
+`normal`, `ellipse`, `borderellipse`, and `borderrectangle` emission areas;
+arbitrary size and RGBA color curves; size variation; rotation, spin curves,
+spin variation, and velocity-relative rotation; origin offsets; circle/square
+primitive particles; `top`, `bottom`, and `random` insertion modes; buffer
+resizing; local seeds; cloning; start/stop/pause/resume/reset; live counts and
+completion state; animated or seeded-random texture-atlas quads; and immutable
+per-particle snapshots. All configuration fields are also readable directly,
+which provides the equivalent of LÖVE's getter family without duplicating the
+setter surface.
+
+`draw_texture(graphics, texture)` renders the same simulation from a whole
+texture. Call `set_quads({ particles.quad(source_x, source_y, source_width,
+source_height, draw_width, draw_height), ... })` to animate across atlas
+regions over each particle's lifetime, matching LÖVE. Use
+`set_quad_mode("random")` to assign each spawned particle a stable seeded
+region instead. Configure `set_offset` in normalized sprite coordinates
+(`0.5, 0.5` is the centered default). `draw` needs no assets and uses
+`set_shape("circle")` or `set_shape("square")`.
 
 The WebGL backend also exposes `supports(name)`, game-provided `Shader`
 resources, and `alpha`, `add`, and `multiply` blend modes. Shader creation

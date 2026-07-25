@@ -26,6 +26,12 @@ const gameEngineFixtures = import.meta.glob('../../../../fixtures/game-engine/*.
   import: 'default'
 });
 
+const particleFixtures = import.meta.glob('../../../../fixtures/particles/*.walu', {
+  eager: true,
+  query: '?raw',
+  import: 'default'
+});
+
 const gameEngineModules = import.meta.glob('../../../../engine/*.walu', {
   eager: true,
   query: '?raw',
@@ -49,7 +55,7 @@ const conformanceIncludeModules = import.meta.glob('../../../../{builtins,extern
   import: 'default'
 });
 
-export { fixtureModules, moduleFixtures, snakeFixtures, gameEngineFixtures, pokerTricksFixtures, conformanceModules };
+export { fixtureModules, moduleFixtures, snakeFixtures, gameEngineFixtures, particleFixtures, pokerTricksFixtures, conformanceModules };
 
 export function filesForConformancePreset(filename, source) {
   const files = {
@@ -214,10 +220,27 @@ export const GAME_ENGINE_PRESET = {
   entryFile: '/fixtures/game-engine/main.walu'
 };
 
+const PARTICLE_LABELS = {
+  fire: 'Particles: Fire & Smoke',
+  fountain: 'Particles: Interactive Fountain',
+  galaxy: 'Particles: Orbital Field'
+};
+
+export const PARTICLE_PRESETS = Object.entries(particleFixtures).map(([path, source]) => {
+  const filename = path.split('/').pop();
+  const key = filename.replace(/\.walu$/, '');
+  return {
+    key: `particles-${key}`,
+    label: PARTICLE_LABELS[key],
+    files: { [`/fixtures/particles/${filename}`]: source },
+    entryFile: `/fixtures/particles/${filename}`
+  };
+});
+
 // Shared with the standalone /output/poker-tricks page.
 export const POKER_TRICKS_PRESET = POKER_TRICKS_EXAMPLE;
 
-export const PRESETS = [...SINGLE_PRESETS, MULTI_PRESET, DOM_PRESET, KANBAN_PRESET, POKER_TRICKS_PRESET, SNAKE_PRESET, GAME_ENGINE_PRESET, ...CONFORMANCE_PRESETS].sort((left, right) =>
+export const PRESETS = [...SINGLE_PRESETS, MULTI_PRESET, DOM_PRESET, KANBAN_PRESET, POKER_TRICKS_PRESET, SNAKE_PRESET, GAME_ENGINE_PRESET, ...PARTICLE_PRESETS, ...CONFORMANCE_PRESETS].sort((left, right) =>
   left.label.localeCompare(right.label)
 );
 

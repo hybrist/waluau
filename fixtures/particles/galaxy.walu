@@ -1,0 +1,71 @@
+local engine = require("waluau:engine")
+local particles = require("waluau:engine/particles")
+
+type ParticleSystem = particles.ParticleSystem
+
+local clockwise: ParticleSystem = particles.new(260)
+local counter: ParticleSystem = particles.new(220)
+
+local function configure(system: ParticleSystem, seed: i32): unit
+    system:set_seed(seed)
+    system:set_position(240.0, 135.0)
+    system:set_emission_rate(85.0)
+    system:set_particle_lifetime(2.5, 5.0)
+    system:set_direction(math.pi * 0.5)
+    system:set_spread(0.28)
+    system:set_speed(18.0, 55.0)
+    system:set_linear_damping(0.05, 0.25)
+    system:set_emission_area("borderellipse", 75.0, 34.0, -0.28, true)
+    system:set_sizes({ 1.0, 4.5, 2.0, 0.0 })
+    system:set_size_variation(0.8)
+    system:set_colors({
+        particles.color(0.75, 0.95, 1.0, 0.0),
+        particles.color(0.35, 0.7, 1.0, 0.9),
+        particles.color(0.75, 0.35, 1.0, 0.55),
+        particles.color(1.0, 0.2, 0.55, 0.0),
+    })
+    system:start()
+end
+
+local function load(): unit
+    configure(clockwise, 808)
+    clockwise:set_radial_acceleration(-16.0, 4.0)
+    clockwise:set_tangential_acceleration(24.0, 42.0)
+    configure(counter, 909)
+    counter:set_emission_area("borderellipse", 48.0, 20.0, 0.35, true)
+    counter:set_radial_acceleration(-6.0, 16.0)
+    counter:set_tangential_acceleration(-50.0, -28.0)
+end
+
+local function update(dt: f64, input: engine.Input): unit
+    clockwise:update(dt)
+    counter:update(dt)
+end
+
+local function draw(graphics: engine.Graphics, alpha: f64): unit
+    graphics:clear("#03030d")
+    graphics:set_blend_mode("add")
+    clockwise:draw(graphics)
+    counter:draw(graphics)
+    graphics:set_color("#ffffff")
+    graphics:fill_circle(240.0, 135.0, 7.0)
+    graphics:set_blend_mode("alpha")
+    graphics:set_color("#ddd8ff")
+    graphics:set_font("16px monospace")
+    graphics:print_aligned("ORBITAL FIELD", 240.0, 24.0, "center")
+    graphics:set_color("#8f8ab4")
+    graphics:set_font("10px monospace")
+    graphics:print_aligned("RADIAL + TANGENTIAL ACCELERATION - ELLIPSE EMISSION", 240.0, 42.0, "center")
+end
+
+local function keypressed(key: string): unit
+    if key == "Space" then clockwise:emit(100) counter:emit(80) end
+end
+
+engine.start({
+    title = "Particles: Orbital Field", width = 480, height = 270,
+    update_hz = 60.0, max_frame_seconds = 0.25, background = "#03030d",
+}, {
+    load = load, update = update, draw = draw, keypressed = keypressed,
+    keyreleased = nil, mousepressed = nil, mousereleased = nil, mousemoved = nil,
+})

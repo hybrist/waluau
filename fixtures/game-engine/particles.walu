@@ -1,0 +1,87 @@
+-- Headless contract coverage for the public particle-system seam.
+
+local particles = require("waluau:engine/particles")
+
+local first = particles.new(3)
+first:set_seed(42)
+first:set_position(10.0, 20.0)
+first:set_particle_lifetime(2.0, 2.0)
+first:set_speed(10.0, 10.0)
+first:set_direction(0.0)
+first:set_linear_acceleration(0.0, 4.0, 0.0, 4.0)
+first:set_linear_damping(1.0, 1.0)
+first:set_sizes({ 2.0, 6.0, 0.0 })
+first:set_colors({
+    particles.color(1.0, 0.5, 0.0, 1.0),
+    particles.color(0.0, 0.0, 1.0, 0.0),
+})
+first:set_quads({
+    particles.quad(0.0, 0.0, 8.0, 8.0, 12.0, 12.0),
+    particles.quad(8.0, 0.0, 8.0, 8.0, 16.0, 10.0),
+})
+first:set_quad_mode("random")
+first:set_rotation(0.25, 0.25)
+first:set_spin(2.0, 2.0)
+first:emit(5)
+assert(first:count() == 3)
+
+local clone = first:clone()
+assert(clone:count() == 0)
+assert(clone.quad_mode == "random" and #clone.quads == 2)
+clone:emit(1)
+local cloned = clone:snapshot(0)
+assert(cloned.x == 10.0 and cloned.y == 20.0)
+assert(cloned.vx > 9.99 and math.abs(cloned.vy) < 0.001)
+
+first:update(0.5)
+local sample = first:snapshot(0)
+assert(sample.age == 0.5)
+assert(sample.x > 13.0 and sample.x < 14.0)
+assert(sample.y > 20.5 and sample.y < 21.0)
+assert(sample.size > 3.9 and sample.size < 4.1)
+assert(sample.red > 0.74 and sample.red < 0.76)
+assert(sample.blue > 0.24 and sample.blue < 0.26)
+assert(sample.alpha > 0.74 and sample.alpha < 0.76)
+assert(sample.rotation > 1.24 and sample.rotation < 1.26)
+
+first:update(1.5)
+assert(first:count() == 0)
+
+local rate = particles.new(10)
+rate:set_seed(7)
+rate:set_emission_rate(4.0)
+rate:set_emitter_lifetime(0.5)
+rate:set_particle_lifetime(3.0, 3.0)
+rate:start()
+rate:update(0.25)
+assert(rate:count() == 1)
+rate:pause()
+rate:update(0.25)
+assert(rate:count() == 1 and rate:is_paused())
+rate:resume()
+rate:update(0.25)
+assert(rate:count() == 2)
+rate:update(1.0)
+assert(not rate:is_active())
+
+local area = particles.new(16)
+area:set_seed(99)
+area:set_position(50.0, 50.0)
+area:set_emission_area("ellipse", 10.0, 5.0, 0.0, true)
+area:set_particle_lifetime(1.0, 1.0)
+area:set_speed(20.0, 20.0)
+area:emit(16)
+for index = 0::i32, area:count() - 1 do
+    local point = area:snapshot(index)
+    local normalized = ((point.x - 50.0) * (point.x - 50.0)) / 100.0
+        + ((point.y - 50.0) * (point.y - 50.0)) / 25.0
+    assert(normalized <= 1.0001)
+    -- Direction-relative ellipse particles move away from the emitter.
+    assert((point.x - 50.0) * point.vx + (point.y - 50.0) * point.vy >= 0.0)
+end
+
+area:set_buffer_size(4)
+assert(area:count() == 4)
+area:reset()
+area:stop()
+assert(area:is_complete())

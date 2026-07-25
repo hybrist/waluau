@@ -1672,6 +1672,12 @@ mod tests {
     }
 
     #[test]
+    fn compiles_particle_system_contract() {
+        super::compile_file(&fixture_path("game-engine/particles.walu"))
+            .expect("particle-system simulation contract should compile");
+    }
+
+    #[test]
     fn compiles_2d_game_engine_resource_services_contract() {
         super::compile_file(&fixture_path("game-engine/resources.walu"))
             .expect("resource, audio and save-data contract should compile");
@@ -1757,6 +1763,27 @@ mod tests {
         .expect("external audio subsystem project should write");
 
         super::compile_file(&entry).expect("versioned audio subsystem import should compile");
+    }
+
+    #[test]
+    fn compiles_pinned_engine_particle_subsystem_package() {
+        let project = tempdir().expect("temp project should exist");
+        let entry = project.path().join("main.walu");
+        fs::write(
+            &entry,
+            r#"
+                local particles = require("waluau:engine/v1/particles")
+
+                local emitter: particles.ParticleSystem = particles.new(32)
+                emitter:set_particle_lifetime(1.0, 2.0)
+                emitter:set_colors({ particles.color(1.0, 0.5, 0.0, 1.0) })
+                emitter:emit(3)
+                assert(emitter:count() == 3)
+            "#,
+        )
+        .expect("external particle subsystem project should write");
+
+        super::compile_file(&entry).expect("versioned particle subsystem import should compile");
     }
 
     #[test]

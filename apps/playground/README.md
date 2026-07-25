@@ -36,6 +36,15 @@ always exercise the checked-out sources instead of a stale, ignored `dist`
 directory. Set `PLAYWRIGHT_SKIP_BUILD=1` only when the same workflow has already
 completed a successful production build, as the playground CI job does.
 
+## Particle demos
+
+The Examples bar includes three runnable particle showcases: **Fire & Smoke**,
+**Interactive Fountain**, and **Orbital Field**. They can also be opened
+directly with `?example=particles-fire`, `?example=particles-fountain`, and
+`?example=particles-galaxy`. Together they demonstrate continuous and burst
+emission, moving emitters, color/size curves, emission distributions, gravity,
+damping, radial/tangential forces, local seeds, and additive blending.
+
 ## Vercel
 
 The repository includes a root-level [`vercel.json`](../../vercel.json) so Vercel can deploy the playground directly from the monorepo root:

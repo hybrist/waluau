@@ -422,6 +422,24 @@ mod tests {
     }
 
     #[test]
+    fn compile_multi_embeds_particle_subsystem() {
+        let files = HashMap::from([(
+            "/main.walu".to_string(),
+            r#"
+                local particles = require("waluau:engine/particles")
+                local emitter: particles.ParticleSystem = particles.new(8)
+                emitter:set_particle_lifetime(1.0, 1.0)
+                emitter:emit(2)
+                assert(emitter:count() == 2)
+            "#
+            .to_string(),
+        )]);
+
+        compile_sources(&files, "/main.walu")
+            .expect("browser compiler should resolve the embedded particle subsystem");
+    }
+
+    #[test]
     fn compile_success_ir_contains_function_name() {
         let source = "function greet(x: i32): i32\n    return x\nend";
         let result = compile_source(source).expect("compile should succeed");

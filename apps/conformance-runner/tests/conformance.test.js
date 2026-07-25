@@ -12,6 +12,7 @@ import {
   failureMatchesExpected,
 } from '../../../tools/conformance/includes.js';
 import gameEngineSim from '../../../fixtures/game-engine/sim.walu?raw';
+import gameEngineParticles from '../../../fixtures/game-engine/particles.walu?raw';
 import gameEngineMain from '../../../fixtures/game-engine/main.walu?raw';
 import gameEngineTextAlignment from '../../../fixtures/game-engine/text-alignment.walu?raw';
 import gameEngineGraphicsPaths from '../../../fixtures/game-engine/graphics-paths.walu?raw';
@@ -1304,6 +1305,13 @@ describe('browser conformance', () => {
         '/engine/time.walu': gameEngineTime,
       },
       '/fixtures/game-engine/sim.walu'
+    );
+  });
+
+  it('runs the deterministic particle-system lifecycle and physics contract', async () => {
+    await compileAndInstantiate(
+      { '/fixtures/game-engine/particles.walu': gameEngineParticles },
+      '/fixtures/game-engine/particles.walu'
     );
   });
 

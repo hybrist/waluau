@@ -513,6 +513,16 @@ function Graphics:set_color(color: string): unit
     end
 end
 
+-- Sets the drawing color without converting numeric particle/color data back
+-- through a hex string. Channels are clamped so simulation overshoot cannot
+-- leak invalid values into the shared vertex stream.
+function Graphics:set_color_rgba(red: f64, green: f64, blue: f64, alpha: f64): unit
+    self.red = math.max(0.0, math.min(1.0, red))
+    self.green = math.max(0.0, math.min(1.0, green))
+    self.blue = math.max(0.0, math.min(1.0, blue))
+    self.alpha = math.max(0.0, math.min(1.0, alpha))
+end
+
 function Graphics:set_line_width(width: f64): unit
     self.line_width = width
 end
@@ -699,6 +709,7 @@ function Graphics:supports(capability: string): bool
         or capability == "custom-fonts"
         or capability == "paths"
         or capability == "text-alignment"
+        or capability == "particles"
 end
 
 function gpu_error(handle: i32): GraphicsError

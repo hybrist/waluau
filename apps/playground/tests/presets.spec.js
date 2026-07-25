@@ -20,6 +20,23 @@ test.describe('preset selector', () => {
     }
   });
 
+  test('particle demos are selectable, compile, and expose runnable canvases', async ({ page }) => {
+    const labels = [
+      'Particles: Fire & Smoke',
+      'Particles: Interactive Fountain',
+      'Particles: Orbital Field',
+    ];
+    for (const label of labels) {
+      await page.getByRole('button', { name: label, exact: true }).click();
+      await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
+        timeout: COMPILER_READY_TIMEOUT,
+      });
+    }
+
+    await page.getByRole('button', { name: 'Run', exact: true }).click();
+    await expect(page.frameLocator('iframe').locator('#walua-game-canvas')).toBeVisible();
+  });
+
   test('clicking Fib loads fibonacci source into the editor', async ({ page }) => {
     await page.getByRole('button', { name: 'Fib' }).click();
     await expect(page.locator('.code-textarea')).toContainText('function fib');

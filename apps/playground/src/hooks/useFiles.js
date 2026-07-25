@@ -5,6 +5,7 @@ import {
   pokerTricksFixtures,
   snakeFixtures,
   gameEngineFixtures,
+  particleFixtures,
   conformanceModules,
   filesForConformancePreset,
   MULTI_PRESET,
@@ -12,6 +13,7 @@ import {
   POKER_TRICKS_PRESET,
   SNAKE_PRESET,
   GAME_ENGINE_PRESET,
+  PARTICLE_PRESETS,
   DEFAULT_PRESET,
   PRESETS
 } from '../utils/presets.js';
@@ -213,7 +215,24 @@ export default function useFiles() {
       });
     }
 
-    // 5. Arcane Heist fixture files
+    // 5. Particle demos
+    for (const [path, source] of Object.entries(particleFixtures)) {
+      const filename = path.split('/').pop();
+      const key = filename.replace(/\.walu$/, '');
+      const preset = PARTICLE_PRESETS.find((candidate) => candidate.key === `particles-${key}`);
+      items.push({
+        type: 'fixture',
+        path,
+        name: `particles/${filename}`,
+        source,
+        category: 'Demo',
+        onSelect: () => {
+          selectPreset(preset);
+        }
+      });
+    }
+
+    // 6. Arcane Heist fixture files
     for (const [path, source] of Object.entries(pokerTricksFixtures)) {
       const filename = path.slice('/fixtures/poker-tricks/'.length);
       items.push({
@@ -229,7 +248,7 @@ export default function useFiles() {
       });
     }
 
-    // 6. 2D game engine fixture files
+    // 7. 2D game engine fixture files
     for (const [path, source] of Object.entries(gameEngineFixtures)) {
       const filename = path.split('/').pop();
       items.push({
