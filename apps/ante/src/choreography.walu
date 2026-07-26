@@ -15,9 +15,17 @@ type State = {
     anim_total: f64,
     anim_kind: i32,
     reveal_clock: f64,
+    -- Whether this reveal has a losing pair to burn at all. A stalemate leaves
+    -- both pairs standing, so the ash emitters stay shut rather than shedding
+    -- flakes nothing will ever draw.
+    reveal_burns: bool,
     power_kind: i32,
     power_clock: f64,
     power_target: i32,
+    -- Live ash. These are simulations, not settings: they hold the flakes
+    -- currently in the air, which is why they are advanced every tick beside
+    -- the clocks that release them and are never written to a snapshot.
+    ash: render.CardAsh,
     discards: {game.Card},
     computer_won: {game.Card},
     player_won: {game.Card}
@@ -65,6 +73,9 @@ const REVEAL_SECOND_DELAY: f64 = 0.585
 -- ignite, char, and crumble before flow may advance to cleanup.
 const REVEAL_SECONDS: f64 = 3.45
 const FLIP_SOUND_LEAD_SECONDS: f64 = 0.14
+-- A burn reading below zero means nothing is burning: an ash emitter goes
+-- quiet on it, while the flakes already in the air keep falling.
+const NOT_BURNING: f64 = -1.0
 const SNAPSHOT_SCHEMA: string = "ante-presentation-v4"
 const SNAPSHOT_COLLECTION_LIMIT: i32 = 256
 
@@ -76,9 +87,11 @@ function new(): State
         anim_total = 0.0,
         anim_kind = ANIM_NONE,
         reveal_clock = 0.0,
+        reveal_burns = false,
         power_kind = 0,
         power_clock = 0.0,
         power_target = 0,
+        ash = render.new_card_ash(),
         discards = {},
         computer_won = {},
         player_won = {},
@@ -111,9 +124,11 @@ function reset(state: State): unit
     state.anim_total = fresh.anim_total
     state.anim_kind = fresh.anim_kind
     state.reveal_clock = fresh.reveal_clock
+    state.reveal_burns = fresh.reveal_burns
     state.power_kind = fresh.power_kind
     state.power_clock = fresh.power_clock
     state.power_target = fresh.power_target
+    state.ash = fresh.ash
     state.discards = fresh.discards
     state.computer_won = fresh.computer_won
     state.player_won = fresh.player_won
@@ -129,14 +144,38 @@ function apply_power(state: State, kind: i32, target: i32): unit
     state.power_kind = kind
     state.power_clock = 0.0
     state.power_target = target
+    -- A new condition starts its ward's burn from nothing; whatever the last
+    -- one left in the air belongs to a card that is no longer there.
+    state.ash.ward_sheet:reset()
+    state.ash.ward_fall:reset()
+end
+
+-- Both of a burning ward's falls run off one reading of its burn.
+function tick_ward_ash(state: State, progress: f64, dt: f64): unit
+    render.step_reveal_ash(state.ash.ward_sheet, progress, dt)
+    render.step_ward_ash(state.ash.ward_fall, progress, dt)
 end
 
 -- Advance a spell condition and return the ward whose Firebolt has just
 -- finished burning, or -1 when no rules mutation is due this frame. Clearing
 -- the condition at that boundary lets the replacement card render intact.
+--
+-- The ash tick is deliberately outside that decision. It reads the clock this
+-- function has already advanced and never touches power_kind, power_clock, or
+-- the returned ward, so the rules boundary fires on exactly the frame it
+-- always did — a visual emitter must not be able to move when a card is
+-- replaced.
 function update_power(state: State, dt: f64): i32
-    if state.power_kind == 0 then return -1 end
+    if state.power_kind == 0 then
+        tick_ward_ash(state, NOT_BURNING, dt)
+        return -1
+    end
     state.power_clock += dt
+    local burning: f64 = NOT_BURNING
+    if state.power_kind == game.spell_firebolt then
+        burning = render.fireball_formation(state.power_clock)
+    end
+    tick_ward_ash(state, burning, dt)
     if state.power_kind == game.spell_firebolt
         and render.firebolt_burn_finished(state.power_clock)
     then
@@ -216,14 +255,25 @@ function reveal_flip_cues(previous: f64, current: f64): i32
     return cues
 end
 
-function begin_reveal(state: State): unit
+-- `burns` says whether this reveal ends with a losing pair coming apart. A
+-- stalemate does not, and its emitters stay shut for the whole reveal.
+function begin_reveal(state: State, burns: bool): unit
     state.reveal_clock = 0.0
+    state.reveal_burns = burns
+    state.ash.reveal_first:reset()
+    state.ash.reveal_second:reset()
 end
 
 function update_reveal(state: State, dt: f64): i32
     local previous: f64 = state.reveal_clock
     state.reveal_clock += dt
     if state.reveal_clock >= REVEAL_SECONDS then state.reveal_clock = REVEAL_SECONDS end
+    local burning: f64 = NOT_BURNING
+    if state.reveal_burns then
+        burning = render.loss_burn_progress(state.reveal_clock)
+    end
+    render.step_reveal_ash(state.ash.reveal_first, burning, dt)
+    render.step_reveal_ash(state.ash.reveal_second, burning, dt)
     return reveal_flip_cues(previous, state.reveal_clock)
 end
 
@@ -731,6 +781,7 @@ function draw(
             clock = state.power_clock,
             target = state.power_target,
         },
+        ash = state.ash,
         card_back = card_back,
     })
 end

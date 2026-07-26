@@ -478,6 +478,22 @@ function Graphics:emit_quad(x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64
     self:emit_vertex(x4, y4)
 end
 
+-- The same split, with the 0..1 corner coordinates emit_rectangle gives its
+-- own corners. A shader that shapes an upright rectangle out of `v_uv` then
+-- shapes a rotated quad identically, which is what lets a particle carry a
+-- generated mask instead of showing its four sides. These are interpolation
+-- coordinates and not a texture lookup: `textured` stays zero, so nothing here
+-- samples an image.
+function Graphics:emit_quad_uv(x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64, x4: f64, y4: f64): unit
+    self:ensure_capacity(6)
+    self:emit_vertex_data(x1, y1, 0.0, 0.0, 0.0)
+    self:emit_vertex_data(x2, y2, 1.0, 0.0, 0.0)
+    self:emit_vertex_data(x3, y3, 1.0, 1.0, 0.0)
+    self:emit_vertex_data(x1, y1, 0.0, 0.0, 0.0)
+    self:emit_vertex_data(x3, y3, 1.0, 1.0, 0.0)
+    self:emit_vertex_data(x4, y4, 0.0, 1.0, 0.0)
+end
+
 function Graphics:emit_rectangle(x: f64, y: f64, width: f64, height: f64): unit
     self:ensure_capacity(6)
     self:emit_vertex_data(x, y, 0.0, 0.0, 0.0)
@@ -961,9 +977,11 @@ function Graphics:fill_rectangle(x: f64, y: f64, width: f64, height: f64): unit
 end
 
 -- Corners in drawing order. Rotated quads (sprites, particles, beams) reach
--- the same batch as every other filled primitive without a transform push.
+-- the same batch as every other filled primitive without a transform push, and
+-- carry the same 0..1 corner coordinates a rectangle does, so a shader shapes
+-- one the way it shapes the other.
 function Graphics:fill_quad(x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64, x4: f64, y4: f64): unit
-    self:emit_quad(x1, y1, x2, y2, x3, y3, x4, y4)
+    self:emit_quad_uv(x1, y1, x2, y2, x3, y3, x4, y4)
 end
 
 function Graphics:stroke_rectangle(x: f64, y: f64, width: f64, height: f64): unit

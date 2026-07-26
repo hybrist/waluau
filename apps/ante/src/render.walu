@@ -3,6 +3,7 @@
 
 local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
+local particles = require("waluau:engine/particles")
 local effect_shaders = require("./effect_shaders")
 local burn_particles = require("./burn_particles")
 local spell_cast = require("./spell_cast")
@@ -230,6 +231,23 @@ const SHIMMER_MARGIN: f64 = 64.0
 const LOSS_DISINTEGRATE_SECONDS: f64 = 1.42
 const LOSS_ASH_FLECKS: i32 = 28
 
+-- Half the card's diagonal, in card pixels; top-level constants require
+-- literal initializers, so sqrt(52^2 + 64^2) is written out. The card-burn
+-- shader normalises its radial field by exactly this distance, so a front
+-- reading of 1.0 stands at the corners.
+const CARD_HALF_DIAGONAL: f64 = 82.4621
+-- Progress readings between which the losing sheet sheds ash, and the flakes
+-- per second released over that span. The window is the third of the burn's
+-- three beats; the rate is the old fleck count spread across it.
+const LOSS_ASH_START: f64 = 0.56
+const LOSS_ASH_END: f64 = 0.95
+const LOSS_ASH_RATE: f64 = 50.0
+-- The departing ward's own, larger flakes: released later, from a front that
+-- is already past the card's edges, and falling further.
+const WARD_ASH_START: f64 = 0.64
+const WARD_ASH_END: f64 = 0.97
+const WARD_ASH_RATE: f64 = 44.0
+
 -- The three outcomes a resolved breach can have. The help legend draws the
 -- same orbs from these, so a colour only ever means one thing on screen.
 const ORB_ROBBERS_EDGE: string = "#cffafe"
@@ -377,12 +395,30 @@ type SpellPresentation = {
     clock: f64,
     target: i32
 }
+-- Ash is a simulation rather than a reconstruction: these emitters live in the
+-- presentation state, are advanced once per tick beside the clock that drives
+-- the burn, and are drawn wherever the card they came off is standing. Their
+-- coordinates are card-local — the emitter sits at the card's centre — so a
+-- relic burning inside the fan's rotation sheds along the card's own down,
+-- exactly as the reconstruction did. A reveal burns a pair, which is why there
+-- are two; the ward Fireball is eating sheds a sheet fall and a coarser
+-- departing one on top of it.
+type CardAsh = {
+    reveal_first: particles.ParticleSystem,
+    reveal_second: particles.ParticleSystem,
+    ward_sheet: particles.ParticleSystem,
+    ward_fall: particles.ParticleSystem
+}
 type Frame = {
     view: game.View,
     interaction: Interaction,
     motion: Motion,
     piles: Piles,
     spell: SpellPresentation,
+    -- Live emitters, not a description of them: the ash a burning card has
+    -- already shed is simulation state the frame reads, and the same state the
+    -- update tick advanced.
+    ash: CardAsh,
     card_back: graphics_module.Texture?
 }
 
@@ -1078,52 +1114,161 @@ function capture_card_face(graphics: Graphics, effects: EffectShaders, card_back
     return target
 end
 
--- Once the black sheet loses cohesion, porous soft-edged flakes peel from
--- positions across the original face. Each has a different ignition delay,
--- sideways draft, tumble, and strictly downward fall, so there is no residual
--- tile grid or moment where the ash appears to hover.
-function draw_burn_ash(graphics: Graphics, effects: EffectShaders, x: f64, y: f64, progress: f64, seed: i32): unit
-    if progress < 0.56 or progress >= 0.995 then return end
-    local particles_ok: bool = burn_particles.use(
-        graphics, effects, seed + 401, false)
-    if not particles_ok then stop_effect(graphics) end
-    for fleck = 0::i32, LOSS_ASH_FLECKS - 1 do
-        local id: i32 = seed * 59 + fleck
-        local local_x: f64 = (burn_particles.hash(id, 4.0) - 0.5) * (CARD_W - 10.0)
-        local local_y: f64 = (burn_particles.hash(id, 5.0) - 0.5) * (CARD_H - 10.0)
-        local nx: f64 = local_x / (CARD_W * 0.5)
-        local ny: f64 = local_y / (CARD_H * 0.5)
-        local distance: f64 = math.sqrt(nx * nx + ny * ny)
-        if distance > 1.0 then distance = 1.0 end
-        local delay: f64 = 0.56 + distance * 0.18 + burn_particles.hash(id, 6.0) * 0.10
-        local ash_progress: f64 = (progress - delay) / (1.0 - delay)
-        if ash_progress > 0.0 then
-            if ash_progress > 1.0 then ash_progress = 1.0 end
-            local travel: f64 = ease_out_quint(ash_progress)
-            local draft: f64 = (burn_particles.hash(id, 7.0) - 0.5) * 52.0
-            local fall: f64 = ash_progress
-                * (5.0 + burn_particles.hash(id, 8.0) * 8.0)
-                + ash_progress * ash_progress
-                * (56.0 + burn_particles.hash(id, 9.0) * 62.0)
-            local fleck_x: f64 = x + CARD_W * 0.5 + local_x + draft * travel
-            local fleck_y: f64 = y + CARD_H * 0.5 + local_y + fall
-            local width: f64 = 1.4 + burn_particles.hash(id, 10.0) * 3.8
-            local height: f64 = 2.4 + burn_particles.hash(id, 11.0) * 7.2
-            local scale: f64 = 1.0 - ash_progress * 0.72
-            local color: string = "#292524"
-            if fleck % 7 == 0 then color = "#9a3412"
-            elseif fleck % 3 == 0 then color = "#78716c" end
-            burn_particles.draw(
-                graphics, fleck_x, fleck_y,
-                width * 2.0 * scale, height * 2.0 * scale,
-                (burn_particles.hash(id, 12.0) - 0.5) * 9.0 * travel,
-                color .. burn_particles.alpha(ash_progress), particles_ok)
-        end
+-- How far the losing pair has burned, read off the reveal clock alone. The
+-- update tick steers the ash emitters from this and the resolution board draws
+-- the sheet from it, so the flakes and the front they leave never disagree.
+function loss_burn_progress(reveal_clock: f64): f64
+    local progress: f64 = (reveal_clock - WIN_GLOW_START) / LOSS_DISINTEGRATE_SECONDS
+    if progress < 0.0 then return 0.0 end
+    if progress > 1.0 then return 1.0 end
+    return progress
+end
+
+function smooth_step(edge0: f64, edge1: f64, value: f64): f64
+    local t: f64 = (value - edge0) / (edge1 - edge0)
+    if t < 0.0 then t = 0.0 elseif t > 1.0 then t = 1.0 end
+    return t * t * (3.0 - 2.0 * t)
+end
+
+-- Where the shader's hole front stands, in card pixels from the centre. This
+-- mirrors card-burn.frag's hole_front exactly, because the ash has to leave
+-- from the boundary the card is actually being eaten along. A reading past the
+-- card's own half-extents means the front has cleared that edge.
+function burn_front_radius(progress: f64): f64
+    return (-0.24 + smooth_step(0.11, 0.97, progress) * 1.54) * CARD_HALF_DIAGONAL
+end
+
+-- The ash source tracks the burn front. Flakes are born on the ring the shader
+-- is cutting along and aimed outward from it, so they peel off the advancing
+-- char boundary instead of leaving from anywhere on a sheet that is still
+-- intact. Once the front has passed an edge there is no paper out there to
+-- shed, so the ring flattens against the card's own bounds.
+function aim_ash_at_front(system: particles.ParticleSystem, progress: f64): unit
+    local radius: f64 = burn_front_radius(progress)
+    local ring_x: f64 = radius
+    local ring_y: f64 = radius
+    local limit_x: f64 = CARD_W * 0.5 - 4.0
+    local limit_y: f64 = CARD_H * 0.5 - 4.0
+    if ring_x > limit_x then ring_x = limit_x end
+    if ring_y > limit_y then ring_y = limit_y end
+    system:set_emission_area("borderellipse", ring_x, ring_y, 0.0, true)
+end
+
+-- Porous soft-edged flakes off the losing sheet. Each takes its own tint off
+-- the soot-to-ash band, its own sideways rock, its own tumble, and its own
+-- fall, so there is no residual tile grid or moment where the ash hovers.
+function new_reveal_ash(seed: i32): particles.ParticleSystem
+    local system: particles.ParticleSystem = particles.new(LOSS_ASH_FLECKS + 14)
+    system:set_seed(seed)
+    system:set_particle_lifetime(0.34, 0.60)
+    -- Speed is the crumble away from the front; gravity is what actually
+    -- carries a flake down, and light damping keeps the burst from reading as
+    -- an explosion.
+    system:set_speed(12.0, 38.0)
+    system:set_spread(1.15)
+    system:set_linear_acceleration(-38.0, 380.0, 38.0, 920.0)
+    system:set_linear_damping(0.15, 0.6)
+    system:set_sway_amplitude(1.5, 4.5)
+    system:set_sway_frequency(1.1, 2.2)
+    system:set_sizes({ 1.0, 0.86, 0.5, 0.0 })
+    system:set_size_variation(0.75)
+    system:set_rotation(0.0, math.pi * 2.0)
+    system:set_spin(-5.4, 5.4)
+    system:set_spin_variation(1.0)
+    -- The same three inks the reconstruction picked between, now a band each
+    -- flake takes its own place on.
+    system:set_colors_hex({ "#292524", "#9a3412", "#78716c" })
+    system:set_color_variation(0.9)
+    system:set_shape_size(7.0, 12.0)
+    return system
+end
+
+-- The ward Fireball is eating sheds a second, coarser fall on top of the
+-- sheet ash: bigger pieces, released later, drifting wider and further.
+function new_ward_ash(seed: i32): particles.ParticleSystem
+    local system: particles.ParticleSystem = particles.new(38)
+    system:set_seed(seed)
+    system:set_particle_lifetime(0.40, 0.78)
+    system:set_speed(16.0, 48.0)
+    system:set_spread(1.3)
+    system:set_linear_acceleration(-54.0, 420.0, 54.0, 1040.0)
+    system:set_linear_damping(0.15, 0.55)
+    system:set_sway_amplitude(2.0, 6.0)
+    system:set_sway_frequency(1.2, 2.4)
+    system:set_sizes({ 1.0, 0.82, 0.46, 0.0 })
+    system:set_size_variation(0.8)
+    system:set_rotation(0.0, math.pi * 2.0)
+    system:set_spin(-4.2, 4.2)
+    system:set_spin_variation(1.0)
+    system:set_colors_hex({ "#44403c", "#9a3412", "#78716c" })
+    system:set_color_variation(0.9)
+    system:set_shape_size(11.0, 15.0)
+    return system
+end
+
+function new_card_ash(): CardAsh
+    return {
+        reveal_first = new_reveal_ash(401),
+        reveal_second = new_reveal_ash(929),
+        ward_sheet = new_reveal_ash(613),
+        ward_fall = new_ward_ash(607),
+    }
+end
+
+-- One tick of a sheet emitter. A progress outside the release window — which
+-- includes the negative reading that means nothing is burning at all — leaves
+-- the emitter quiet while whatever it already shed finishes falling.
+function step_ash(
+    system: particles.ParticleSystem,
+    progress: f64,
+    start: f64,
+    finish: f64,
+    rate: f64,
+    dt: f64
+): unit
+    if progress >= start and progress < finish then
+        aim_ash_at_front(system, progress)
+        system:set_emission_rate(rate)
+    else
+        system:set_emission_rate(0.0)
     end
+    system:update(dt)
+end
+
+function step_reveal_ash(system: particles.ParticleSystem, progress: f64, dt: f64): unit
+    step_ash(system, progress, LOSS_ASH_START, LOSS_ASH_END, LOSS_ASH_RATE, dt)
+end
+
+function step_ward_ash(system: particles.ParticleSystem, progress: f64, dt: f64): unit
+    step_ash(system, progress, WARD_ASH_START, WARD_ASH_END, WARD_ASH_RATE, dt)
+end
+
+-- Particle quads are only carriers for the burn shader: its noisy alpha mask
+-- cuts every side away before a flake reaches the screen, and each quad rides
+-- its own rotation, so a square draw mode never shows a square. The ellipse
+-- fallback is what an optional-program failure falls back to, so a missing
+-- shader never exposes a rectangle in the fire.
+function draw_card_ash(
+    graphics: Graphics,
+    effects: EffectShaders,
+    system: particles.ParticleSystem,
+    x: f64,
+    y: f64,
+    seed: i32
+): unit
+    if system:count() == 0 then return end
+    local particles_ok: bool = burn_particles.use(graphics, effects, seed, false)
+    if particles_ok then
+        system:set_draw_mode("square")
+    else
+        stop_effect(graphics)
+        system:set_draw_mode("circle")
+    end
+    system:draw(graphics, x + CARD_W * 0.5, y + CARD_H * 0.5)
     if particles_ok then stop_effect(graphics) end
 end
 
-function draw_captured_burn(graphics: Graphics, effects: EffectShaders, target: graphics_module.RenderTarget, x: f64, y: f64, progress: f64, seed: i32, suit: i32): unit
+function draw_captured_burn(graphics: Graphics, effects: EffectShaders, target: graphics_module.RenderTarget, x: f64, y: f64, progress: f64, seed: i32, suit: i32, ash: particles.ParticleSystem): unit
     local shader_ok: bool = use_card_burn(
         graphics, effects, progress, seed, suit)
     if shader_ok then
@@ -1139,47 +1284,60 @@ function draw_captured_burn(graphics: Graphics, effects: EffectShaders, target: 
             graphics:draw_render_target(target, x, y, CARD_W, CARD_H)
         end
     end
-    draw_burn_ash(graphics, effects, x, y, progress, seed)
+    draw_card_ash(graphics, effects, ash, x, y, seed + 401)
 end
 
-function draw_disintegrating_card(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, x: f64, y: f64, selected: bool, progress: f64, seed: i32): unit
+function draw_disintegrating_card(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, x: f64, y: f64, selected: bool, progress: f64, seed: i32, ash: particles.ParticleSystem): unit
     if progress <= 0.0 then
         draw_card(graphics, effects, card_back, card, x, y, selected, false, false, false, false)
         return
     end
-    if progress >= 1.0 then return end
+    local selected_offset: f64 = 0.0
+    if selected then selected_offset = -10.0 end
+    -- The sheet is gone well before its last flakes have landed, so the ash
+    -- outlives the card it came off instead of being cut with it.
+    if progress >= 1.0 then
+        draw_card_ash(
+            graphics, effects, ash, x, y + selected_offset, seed + 401)
+        return
+    end
     local target: graphics_module.RenderTarget? = capture_card_face(
         graphics, effects, card_back, card, false, false)
     if target == nil then
         if progress < 0.68 then
             draw_card(graphics, effects, card_back, card, x, y, selected, false, false, false, false)
         end
+        draw_card_ash(
+            graphics, effects, ash, x, y + selected_offset, seed + 401)
         return
     end
-    local selected_offset: f64 = 0.0
-    if selected then selected_offset = -10.0 end
     local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
     draw_captured_burn(
         graphics, effects, captured,
-        x, y + selected_offset, progress, seed, card.suit)
+        x, y + selected_offset, progress, seed, card.suit, ash)
     graphics:release_render_target(captured)
 end
 
-function draw_hand_disintegration(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, index: i32, part: f64, count: i32, progress: f64, seed: i32): unit
+function draw_hand_disintegration(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, index: i32, part: f64, count: i32, progress: f64, seed: i32, ash: particles.ParticleSystem): unit
+    local slot: Point = hand_pos_at(index, part, count)
     local target: graphics_module.RenderTarget? = capture_card_face(
         graphics, effects, card_back, card, false, false)
-    if target == nil then return end
-    local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
-    local slot: Point = hand_pos_at(index, part, count)
     graphics:push()
     graphics:translate(slot.x + CARD_W * 0.5, slot.y + CARD_H * 0.5)
     graphics:rotate(hand_angle_at(index, part, count))
-    draw_captured_burn(
-        graphics, effects, captured,
-        -(CARD_W * 0.5), -(CARD_H * 0.5) - 10.0,
-        progress, seed, card.suit)
+    if target == nil then
+        draw_card_ash(
+            graphics, effects, ash,
+            -(CARD_W * 0.5), -(CARD_H * 0.5) - 10.0, seed + 401)
+    else
+        local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
+        draw_captured_burn(
+            graphics, effects, captured,
+            -(CARD_W * 0.5), -(CARD_H * 0.5) - 10.0,
+            progress, seed, card.suit, ash)
+        graphics:release_render_target(captured)
+    end
     graphics:pop()
-    graphics:release_render_target(captured)
 end
 
 function clamp_power_progress(value: f64): f64
@@ -1257,78 +1415,11 @@ function draw_scaled_power_card(
     graphics:pop()
 end
 
-function draw_departing_card_ash(
-    graphics: Graphics,
-    effects: EffectShaders,
-    x: f64,
-    y: f64,
-    progress: f64,
-    seed: i32,
-    clock: f64
-): unit
-    if progress < 0.64 then return end
-    local ash_clock: f64 = clock - (
-        spell_cast.travel_seconds + FIREBALL_BURN_SECONDS)
-    local after_burn: f64 = 0.0
-    if ash_clock > 0.0 then
-        after_burn = ash_clock / FIREBALL_ASH_FADE_SECONDS
-    end
-    if after_burn >= 1.0 then return end
-
-    -- These late flakes continue the same outward crumble instead of forming
-    -- a pile. Their origins cover the card face, their stagger follows the
-    -- centre-out burn, and gravity begins as soon as each flake is released.
-    -- At full burn they are already partway through their fall; after_burn
-    -- merely carries that uninterrupted motion through its final fade.
-    local particles_ok: bool = burn_particles.use(
-        graphics, effects, seed + 607, false)
-    if not particles_ok then stop_effect(graphics) end
-    for piece = 0::i32, 23::i32 do
-        local id: i32 = seed * 43 + piece
-        local local_x: f64 = (burn_particles.hash(id, 1.0) - 0.5) * (CARD_W - 12.0)
-        local local_y: f64 = (burn_particles.hash(id, 4.0) - 0.5) * (CARD_H - 14.0)
-        local nx: f64 = local_x / (CARD_W * 0.5)
-        local ny: f64 = local_y / (CARD_H * 0.5)
-        local distance: f64 = math.sqrt(nx * nx + ny * ny)
-        if distance > 1.0 then distance = 1.0 end
-        local release: f64 = 0.64 + distance * 0.17
-            + burn_particles.hash(id, 8.0) * 0.08
-        local burn_motion: f64 = (progress - release) / (1.0 - release)
-        if burn_motion > 1.0 then burn_motion = 1.0 end
-        if burn_motion > 0.0 then
-            local motion: f64 = burn_motion * 0.34 + after_burn * 0.66
-            if motion > 1.0 then motion = 1.0 end
-            local travel: f64 = ease_out_quint(motion)
-            local drift: f64 = (burn_particles.hash(id, 6.0) - 0.5) * 68.0
-            local flutter: f64 = math.sin(
-                motion * math.pi * 3.0 + burn_particles.hash(id, 12.0) * 6.0)
-                * (2.0 + burn_particles.hash(id, 7.0) * 4.0) * motion
-            local fall: f64 = motion
-                * (7.0 + burn_particles.hash(id, 9.0) * 11.0)
-                + motion * motion
-                * (82.0 + burn_particles.hash(id, 10.0) * 78.0)
-            local px: f64 = x + CARD_W * 0.5 + local_x
-                + drift * travel + flutter
-            local py: f64 = y + CARD_H * 0.5 + local_y + fall
-            local width: f64 = 2.2 + burn_particles.hash(id, 2.0) * 6.2
-            local height: f64 = 2.5 + burn_particles.hash(id, 3.0) * 8.5
-            local scale: f64 = 1.0 - motion * 0.82
-            local color: string = "#44403c"
-            if piece % 5 == 0 then color = "#78716c"
-            elseif piece % 7 == 0 then color = "#9a3412" end
-            burn_particles.draw(
-                graphics, px, py,
-                width * 2.0 * scale, height * 2.0 * scale,
-                (burn_particles.hash(id, 5.0) - 0.5) * 7.0 * travel,
-                color .. burn_particles.alpha(motion), particles_ok)
-        end
-    end
-    if particles_ok then stop_effect(graphics) end
-end
-
 -- Fireball now burns the rendered card itself: a small centre ignition grows
 -- through a noisy ember/char boundary, holes open behind it, and the remaining
 -- black sheet sheds into ash that catches a draft, falls away, and disappears.
+-- Two falls overlap: the sheet ash every burning card sheds, and a coarser
+-- departing fall of larger pieces released later off the same front.
 function draw_fireball_card(
     graphics: Graphics,
     effects: EffectShaders,
@@ -1341,7 +1432,7 @@ function draw_fireball_card(
     colored: bool,
     known: bool,
     formation: f64,
-    clock: f64
+    ash: CardAsh
 ): unit
     local selected_offset: f64 = 0.0
     if selected then selected_offset = -10.0 end
@@ -1355,17 +1446,16 @@ function draw_fireball_card(
                 graphics, effects, card_back, card, x, y,
                 selected, focused, false, colored, known)
         end
-        draw_departing_card_ash(
-            graphics, effects, x, top, formation, seed, clock)
-        return
+        draw_card_ash(
+            graphics, effects, ash.ward_sheet, x, top, seed + 401)
+    else
+        local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
+        draw_captured_burn(
+            graphics, effects, captured,
+            x, top, formation, seed, card.suit, ash.ward_sheet)
+        graphics:release_render_target(captured)
     end
-    local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
-    draw_captured_burn(
-        graphics, effects, captured,
-        x, top, formation, seed, card.suit)
-    graphics:release_render_target(captured)
-    draw_departing_card_ash(
-        graphics, effects, x, top, formation, seed, clock)
+    draw_card_ash(graphics, effects, ash.ward_fall, x, top, seed + 607)
 end
 
 -- Freeze Ray leaves the card readable under a translucent shell. The ice
@@ -1632,7 +1722,8 @@ function draw_powered_card(
     colored: bool,
     known: bool,
     power_kind: i32,
-    power_clock: f64
+    power_clock: f64,
+    ash: CardAsh
 ): unit
     local formation: f64 = power_formation(power_clock)
     if power_kind == POWER_FIREBALL then
@@ -1645,7 +1736,7 @@ function draw_powered_card(
     elseif power_kind == POWER_FIREBALL then
         draw_fireball_card(
             graphics, effects, card_back, card, x, y,
-            selected, focused, colored, known, formation, power_clock)
+            selected, focused, colored, known, formation, ash)
     elseif power_kind == POWER_FREEZE then
         draw_freeze_card(
             graphics, effects, card_back, card, x, y,
@@ -1730,9 +1821,7 @@ function draw_resolution_board(
         if glow_time > 1.0 then glow_time = 1.0 end
         glow = ease_out_quint(glow_time)
         lift_progress = ease_out_back(glow_time)
-        loss_progress = (reveal_clock - WIN_GLOW_START) / LOSS_DISINTEGRATE_SECONDS
-        if loss_progress < 0.0 then loss_progress = 0.0 end
-        if loss_progress > 1.0 then loss_progress = 1.0 end
+        loss_progress = loss_burn_progress(reveal_clock)
     end
     -- The won piles are settled here — this trick joins its winner's pile only
     -- once play advances and the scoop carries it there. The losing pair,
@@ -1756,7 +1845,7 @@ function draw_resolution_board(
         if i == trick.computer_first then
             if trick.winner >= 0 or fly0 <= 0.0 then
                 if trick.winner > 0 and loss_progress > 0.0 then
-                    draw_disintegrating_card(graphics, effects, card_back, trick.computer_cards[0], slot.x, slot.y, false, loss_progress, 11)
+                    draw_disintegrating_card(graphics, effects, card_back, trick.computer_cards[0], slot.x, slot.y, false, loss_progress, 11, frame.ash.reveal_first)
                 else
                     draw_flipping_card(graphics, effects, card_back, trick.computer_cards[0], slot.x, slot.y, reveal_clock, 0.2, trick.winner < 0 and scoring[3])
                 end
@@ -1764,7 +1853,7 @@ function draw_resolution_board(
         elseif i == trick.computer_second then
             if trick.winner >= 0 or fly1 <= 0.0 then
                 if trick.winner > 0 and loss_progress > 0.0 then
-                    draw_disintegrating_card(graphics, effects, card_back, trick.computer_cards[1], slot.x, slot.y, false, loss_progress, 29)
+                    draw_disintegrating_card(graphics, effects, card_back, trick.computer_cards[1], slot.x, slot.y, false, loss_progress, 29, frame.ash.reveal_second)
                 else
                     draw_flipping_card(graphics, effects, card_back, trick.computer_cards[1], slot.x, slot.y, reveal_clock, 0.2 + FLIP_SECONDS * 0.7, trick.winner < 0 and scoring[4])
                 end
@@ -1786,7 +1875,7 @@ function draw_resolution_board(
                     graphics, effects, card_back, trick.middle[i],
                     slot.x, slot.y, false, false, false,
                     trick.winner ~= 0 and scoring[i], false,
-                    power_kind, power_clock)
+                    power_kind, power_clock, frame.ash)
             else
                 draw_card(graphics, effects, card_back, trick.middle[i], slot.x, slot.y, false, false, false, trick.winner ~= 0 and scoring[i], false)
             end
@@ -1803,7 +1892,7 @@ function draw_resolution_board(
         if i == trick.player_first then
             if trick.winner <= 0 or fly0 <= 0.0 then
                 if trick.winner < 0 and loss_progress > 0.0 then
-                    draw_hand_disintegration(graphics, effects, card_back, trick.player_cards[0], i, fan_parts[i], hand_count, loss_progress, 47)
+                    draw_hand_disintegration(graphics, effects, card_back, trick.player_cards[0], i, fan_parts[i], hand_count, loss_progress, 47, frame.ash.reveal_first)
                 else
                     draw_hand_card(graphics, effects, card_back, trick.player_cards[0], i, fan_parts[i], hand_count, true, false, trick.winner > 0 and scoring[3], false)
                 end
@@ -1811,7 +1900,7 @@ function draw_resolution_board(
         elseif i == trick.player_second then
             if trick.winner <= 0 or fly1 <= 0.0 then
                 if trick.winner < 0 and loss_progress > 0.0 then
-                    draw_hand_disintegration(graphics, effects, card_back, trick.player_cards[1], i, fan_parts[i], hand_count, loss_progress, 71)
+                    draw_hand_disintegration(graphics, effects, card_back, trick.player_cards[1], i, fan_parts[i], hand_count, loss_progress, 71, frame.ash.reveal_second)
                 else
                     draw_hand_card(graphics, effects, card_back, trick.player_cards[1], i, fan_parts[i], hand_count, true, false, trick.winner > 0 and scoring[4], false)
                 end
@@ -1841,7 +1930,7 @@ function draw_resolution_board(
                 draw_powered_card(
                     graphics, effects, card_back, trick.middle[i],
                     slot.x, slot.y, false, false, false,
-                    scoring[i], false, power_kind, power_clock)
+                    scoring[i], false, power_kind, power_clock, frame.ash)
             else
                 draw_card(graphics, effects, card_back, trick.middle[i], slot.x, slot.y, false, false, false, scoring[i], false)
             end
@@ -1946,7 +2035,7 @@ function draw_playfield(graphics: Graphics, effects: EffectShaders, frame: Frame
                     graphics, effects, card_back, state.middle[i],
                     slot.x, slot.y,
                     selected, focused, false, false, false,
-                    power_kind, power_clock)
+                    power_kind, power_clock, frame.ash)
             else
                 draw_card(graphics, effects, card_back, state.middle[i], slot.x, slot.y, selected, focused, false, false, false)
             end
@@ -2174,4 +2263,13 @@ return {
     ease_in_out_cubic = EASE_IN_OUT_CUBIC,
     ease_out_back = EASE_OUT_BACK,
     firebolt_burn_finished = firebolt_burn_finished,
+    -- The ash emitters and the two readings that steer them. Choreography owns
+    -- the systems and ticks them; this module owns their tuning and how far
+    -- along each burn is, so the flakes always leave from the front the shader
+    -- is actually cutting.
+    new_card_ash = new_card_ash,
+    loss_burn_progress = loss_burn_progress,
+    step_reveal_ash = step_reveal_ash,
+    step_ward_ash = step_ward_ash,
+    fireball_formation = fireball_formation,
 }
