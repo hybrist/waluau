@@ -23,7 +23,7 @@ const ORIGIN_X: f64 = 30.0
 const ORIGIN_Y: f64 = 548.0
 -- Sparks thrown by one landing. Every spell throws the same number; only the
 -- ink changes.
-const BURST_SPARKS: i32 = 26
+const BURST_SPARKS: i32 = 34
 
 function clamp(value: f64): f64
     if value < 0.0 then
@@ -98,18 +98,25 @@ function new_burst(seed: i32): particles.ParticleSystem
     local system: particles.ParticleSystem = particles.new(BURST_SPARKS + 6)
     system:set_seed(seed)
     system:set_emission_rate(0.0)
-    system:set_particle_lifetime(0.16, 0.46)
-    system:set_speed(120.0, 430.0)
+    -- The window is roughly the one the fixed rays advanced over, so the
+    -- landing still reads as a beat rather than a flicker — but a spark now
+    -- spends it on its own schedule.
+    system:set_particle_lifetime(0.22, 0.62)
+    system:set_speed(150.0, 520.0)
     system:set_spread(math.pi * 2.0)
     -- Sparks are thrown, not fired: damping is what turns each throw into its
     -- own reach, and a little weight keeps the burst from reading as a wheel.
-    system:set_linear_damping(3.4, 7.0)
+    system:set_linear_damping(2.6, 5.2)
     system:set_linear_acceleration(0.0, 90.0, 0.0, 340.0)
     system:set_emission_area("borderellipse", 7.0, 7.0, 0.0, false)
     system:set_sizes({ 1.0, 0.72, 0.0 })
     system:set_size_variation(0.7)
     system:set_relative_rotation(true)
-    system:set_shape_size(21.0, 5.0)
+    system:set_shape_size(34.0, 7.0)
+    -- The strike is light: the sparks add to whatever they cross rather than
+    -- painting over it, which is what keeps them legible on a frosted or a
+    -- burning card alike.
+    system:set_blend_mode("add")
     return system
 end
 

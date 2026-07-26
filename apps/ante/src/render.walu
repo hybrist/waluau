@@ -252,8 +252,8 @@ const WARD_ASH_RATE: f64 = 44.0
 -- climbing out, then a trickle for as long as it stands. A raise is a
 -- persistent condition, so the aperture keeps breathing rather than leaving a
 -- ring of motes hanging in the air where the climb happened to stop.
-const GRAVE_DUST_RISING_RATE: f64 = 58.0
-const GRAVE_DUST_IDLE_RATE: f64 = 7.0
+const GRAVE_DUST_RISING_RATE: f64 = 72.0
+const GRAVE_DUST_IDLE_RATE: f64 = 13.0
 -- A formation reading below zero means no ward is raised: the aperture is shut
 -- and whatever it last threw finishes settling.
 const NO_GRAVE: f64 = -1.0
@@ -1408,21 +1408,24 @@ function new_grave_dust(): particles.ParticleSystem
     local system: particles.ParticleSystem = particles.new(150)
     system:set_seed(541)
     system:set_emission_rate(0.0)
-    system:set_particle_lifetime(0.85, 2.10)
-    system:set_speed(6.0, 34.0)
-    -- Thrown up and out of the hole rather than in every direction.
+    system:set_particle_lifetime(0.90, 2.20)
+    system:set_speed(10.0, 44.0)
+    -- Thrown up and out of the hole rather than in every direction. The climb
+    -- has to carry a mote across the card's own lower third: the button row is
+    -- drawn over the slot's bottom edge, so dust that only hangs at the
+    -- aperture is dust nobody sees.
     system:set_direction(-math.pi * 0.5)
-    system:set_spread(math.pi * 1.15)
-    system:set_emission_area("ellipse", 44.0, 5.0, 0.0, false)
-    system:set_linear_acceleration(-8.0, -30.0, 8.0, 12.0)
-    system:set_linear_damping(1.1, 2.6)
+    system:set_spread(math.pi * 1.05)
+    system:set_emission_area("ellipse", 40.0, 4.0, 0.0, false)
+    system:set_linear_acceleration(-10.0, -52.0, 10.0, -14.0)
+    system:set_linear_damping(0.5, 1.4)
     system:set_sway_amplitude(1.2, 4.0)
     system:set_sway_frequency(0.25, 0.7)
     system:set_sizes({ 0.65, 1.0, 0.0 })
     system:set_size_variation(0.8)
-    system:set_colors_hex({ "#9a9866aa", "#71704b88", "#4b4a2f00" })
+    system:set_colors_hex({ "#c2bf8ecc", "#71704b99", "#4b4a2f00" })
     system:set_color_variation(0.8)
-    system:set_shape_size(3.4, 3.4)
+    system:set_shape_size(3.8, 3.8)
     system:set_draw_mode("circle")
     return system
 end
@@ -1740,7 +1743,7 @@ function draw_raise_card(
     -- climb: the eight motes this replaced were a pure function of formation,
     -- so they stopped dead the moment the ward finished rising and the ring
     -- they froze in hung there for the rest of the heist.
-    dust:draw(graphics, center_x, y + CARD_H + 4.0)
+    dust:draw(graphics, center_x, y + CARD_H - 2.0)
 end
 
 -- Growth is literal cell division: the one full-size ward pinches into two
