@@ -1950,7 +1950,12 @@ function draw_playfield(graphics: Graphics, effects: EffectShaders, frame: Frame
         text_centered(graphics, "FEINT: BIND MATCHING RELICS + WARDS", WIDTH * 0.5, 252.0, 11, "#fbbf24")
         -- Mirrors main.walu's submit rule so the capsule only lights up when
         -- a commit would actually be accepted.
-        local balanced: bool = #swap_hand == #swap_wards and #swap_hand <= state.player_points
+        local available: bool = true
+        for ward in swap_wards do
+            if state.frozen_middle[ward] then available = false end
+        end
+        local balanced: bool = available
+            and #swap_hand == #swap_wards and #swap_hand <= state.player_points
         draw_button(graphics, "COMMIT FEINT", commit_left(true), COMMIT_W, balanced)
         draw_button(graphics, "PASS", pass_left(), PASS_W, true)
     elseif #play_picks == 2 then

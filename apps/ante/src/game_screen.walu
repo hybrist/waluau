@@ -108,6 +108,9 @@ function submit_swap(state: State): unit
     end
     flow.clear_picks(ui)
     if outcome ~= nil then
+        if state.rules:spell_kind() == game.spell_freeze_ray then
+            choreography.apply_power(state.presentation, 0, 0)
+        end
         choreography.feint(outcome::game.FeintOutcome, state.presentation)
     end
 end
@@ -116,7 +119,7 @@ end
 -- mana only when they accept the cast, so a cancelled or unaffordable attempt
 -- costs nothing; targeting mode ends either way.
 function confirm_cast(state: State, ward: i32): unit
-    if state.rules:cast_spell() then
+    if state.rules:cast_spell(ward) then
         choreography.apply_power(
             state.presentation, state.rules:spell_kind(), ward)
     end
@@ -219,7 +222,7 @@ function keypressed(state: State, key: string): i32
         if rules:feint_open() then
             if ui.cursor_area == flow.cursor_hand then
                 flow.toggle(ui.swap_hand, ui.hand_cursor, 3)
-            else
+            elseif not rules:is_frozen(ui.ward_cursor) then
                 flow.toggle(ui.swap_wards, ui.ward_cursor, 3)
             end
         else
@@ -311,7 +314,7 @@ function mousepressed(state: State, x: f64, y: f64, button: i32): unit
         if ward >= 0 then
             ui.cursor_area = flow.cursor_wards
             ui.ward_cursor = ward
-            flow.toggle(ui.swap_wards, ward, 3)
+            if not rules:is_frozen(ward) then flow.toggle(ui.swap_wards, ward, 3) end
             return
         end
         if render.hit_pass(at) then
