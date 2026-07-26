@@ -1,0 +1,142 @@
+-- DOM-free generation and animation state for the city behind the menu. The
+-- generated street coordinates serve both drawing and the thief streak, so the
+-- moving light can only travel along an actual road. Its private random stream
+-- keeps animation timing from changing the heist's deck shuffle.
+
+type Building = {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    tone: i32,
+    detail: i32
+}
+type State = {
+    vertical_streets: {f64},
+    horizontal_streets: {f64},
+    buildings: {Building},
+    rng: f64,
+    streak_clock: f64,
+    streak_duration: f64,
+    streak_horizontal: bool,
+    streak_street: f64,
+    streak_forward: bool,
+    streak_suit: i32
+}
+
+const WIDTH: f64 = 960.0
+const HEIGHT: f64 = 600.0
+const STREET_WIDTH: f64 = 20.0
+const RANDOM_MODULUS: f64 = 2147483647.0
+const RANDOM_MULTIPLIER: f64 = 16807.0
+
+function random(state: State): f64
+    local next: f64 = state.rng * RANDOM_MULTIPLIER
+    next = next - math.floor(next / RANDOM_MODULUS) * RANDOM_MODULUS
+    if next < 1.0 then next = 1.0 end
+    state.rng = next
+    return (next - 1.0) / (RANDOM_MODULUS - 1.0)
+end
+
+function random_range(state: State, low: f64, high: f64): f64
+    return low + (high - low) * random(state)
+end
+
+function random_index(state: State, count: i32): i32
+    if count <= 1 then return 0 end
+    return math.floor(random(state) * (count::f64))::i32
+end
+
+function fill_streets(state: State, streets: {f64}, limit: f64, low: f64, high: f64): unit
+    table.insert(streets, 0.0)
+    local position: f64 = random_range(state, low * 0.55, high * 0.55)
+    while position < limit - low * 0.55 do
+        table.insert(streets, position)
+        position += random_range(state, low, high)
+    end
+    table.insert(streets, limit)
+end
+
+function generate(state: State): unit
+    state.vertical_streets = {}
+    state.horizontal_streets = {}
+    state.buildings = {}
+    fill_streets(state, state.vertical_streets, WIDTH, 108.0, 168.0)
+    fill_streets(state, state.horizontal_streets, HEIGHT, 82.0, 132.0)
+
+    for column = 0::i32, #state.vertical_streets - 2 do
+        local left: f64 = state.vertical_streets[column] + STREET_WIDTH * 0.5
+        local right: f64 = state.vertical_streets[column + 1] - STREET_WIDTH * 0.5
+        for row = 0::i32, #state.horizontal_streets - 2 do
+            local top: f64 = state.horizontal_streets[row] + STREET_WIDTH * 0.5
+            local bottom: f64 = state.horizontal_streets[row + 1] - STREET_WIDTH * 0.5
+            local inset_x: f64 = random_range(state, 5.0, 12.0)
+            local inset_y: f64 = random_range(state, 5.0, 11.0)
+            table.insert(state.buildings, {
+                x = left + inset_x,
+                y = top + inset_y,
+                width = right - left - inset_x * 2.0,
+                height = bottom - top - inset_y * 2.0,
+                tone = random_index(state, 4),
+                detail = random_index(state, 3),
+            })
+        end
+    end
+end
+
+function choose_streak(state: State, wait: bool): unit
+    state.streak_horizontal = random(state) < 0.5
+    if state.streak_horizontal then
+        state.streak_street = state.horizontal_streets[
+            1 + random_index(state, #state.horizontal_streets - 2)]
+    else
+        state.streak_street = state.vertical_streets[
+            1 + random_index(state, #state.vertical_streets - 2)]
+    end
+    state.streak_forward = random(state) < 0.5
+    state.streak_suit = random_index(state, 4)
+    state.streak_duration = random_range(state, 0.62, 0.88)
+    if wait then
+        state.streak_clock = -random_range(state, 1.8, 4.8)
+    else
+        state.streak_clock = -0.75
+    end
+end
+
+function new(seed: i32): State
+    local value: f64 = math.floor(math.abs(seed::f64))
+    value = value - math.floor(value / (RANDOM_MODULUS - 1.0)) * (RANDOM_MODULUS - 1.0)
+    local state: State = {
+        vertical_streets = {},
+        horizontal_streets = {},
+        buildings = {},
+        rng = value + 1.0,
+        streak_clock = 0.0,
+        streak_duration = 0.75,
+        streak_horizontal = true,
+        streak_street = 0.0,
+        streak_forward = true,
+        streak_suit = 0,
+    }
+    generate(state)
+    choose_streak(state, false)
+    return state
+end
+
+function regenerate(state: State): unit
+    generate(state)
+    choose_streak(state, false)
+end
+
+function update(state: State, dt: f64): unit
+    state.streak_clock += dt
+    if state.streak_clock > state.streak_duration then
+        choose_streak(state, true)
+    end
+end
+
+return {
+    new = new,
+    regenerate = regenerate,
+    update = update,
+}
