@@ -1204,6 +1204,18 @@ function firebolt_burn_finished(clock: f64): bool
     return fireball_formation(clock) >= 1.0
 end
 
+-- The clock reading at which every spell has finished arriving: the carrier
+-- has landed, the impact rays are spent, the formation is full, and the last
+-- of Fireball's ash has fallen. Fireball is the slowest of the four, so its
+-- end is the settled reading for all of them. Past this point the clock only
+-- feeds the endless idle motions — breathing membranes, circling grave-flies —
+-- that have no finish to wait for.
+function power_settled_clock(): f64
+    return spell_cast.travel_seconds
+        + FIREBALL_BURN_SECONDS
+        + FIREBALL_ASH_FADE_SECONDS
+end
+
 function draw_power_ellipse(
     graphics: Graphics,
     x: f64,
@@ -2123,6 +2135,9 @@ return {
     -- The spell vocabulary the menu's selection list shares with the board.
     spell_name = spell_name,
     power_color = power_color,
+    -- Where a spell's clock reads once its formation is complete and the ward
+    -- holds the pose the condition leaves behind.
+    power_settled_clock = power_settled_clock,
     panel = panel,
     text_centered = text_centered,
     point = point,
