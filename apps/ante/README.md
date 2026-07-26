@@ -29,7 +29,10 @@ After the reveal flips, the winner's two cards fly out of their row and flank
 the three wards, completing the five-card formation in the middle of the
 board; a single golden halo then ignites around the whole set while the losing
 pair ignites at its centre, chars through along a ragged ember front, and
-crumbles into drifting ash. That halo remains gold
+crumbles into drifting ash. When play advances, those ashes gather at the
+neutral pile and the two burned faces reform there instead of returning to
+their old hand slots. Firebolt uses the same reappearance for the ward it
+destroys. That halo remains gold
 when the player wins; when the Arch Mage holds the wards, contracting crimson
 seals, sinking ash, and encroaching shadow smother the formation instead. The
 game's own vertex/pixel shaders keep both result fields moving off the live

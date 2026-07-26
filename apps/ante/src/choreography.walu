@@ -68,6 +68,8 @@ const SWAP_PLACE_SECONDS: f64 = 0.5
 const SCOOP_GATHER_SECONDS: f64 = 0.3
 const SCOOP_HOLD_SECONDS: f64 = 0.12
 const SCOOP_CARRY_SECONDS: f64 = 0.4
+const ASH_REAPPEAR_SECONDS: f64 = 0.58
+const ASH_REAPPEAR_STEP: f64 = 0.18
 const SHIFT_SECONDS: f64 = 0.45
 const SHIFT_STEP: f64 = 0.05
 
@@ -366,6 +368,7 @@ function push_deal(anims: {render.Anim}, card: game.Card, kind: i32, index: i32,
         card = card,
         faces = faces,
         known = false,
+        effect = render.anim_effect_move,
         from = render.slot_pos(render.slot_deck, 0),
         to = render.slot_pos_at(kind, index, count),
         angle0 = 0.0,
@@ -397,6 +400,8 @@ function firebolt_resolved(
     local finish: f64 = push_deal(
         anims, replacement, render.slot_middle, target,
         live_hand_count(state), render.faces_flip_up, 0.0)
+    local ash_finish: f64 = push_ash_reappearance(anims, discarded, 0.0)
+    if ash_finish > finish then finish = ash_finish end
     begin_anims(state, anims, finish, ANIM_FIREBOLT_REPLACE)
 end
 
@@ -425,6 +430,7 @@ function push_scoop(anims: {render.Anim}, card: game.Card, from: render.Point, g
         card = card,
         faces = render.faces_up,
         known = false,
+        effect = render.anim_effect_move,
         from = from,
         to = gather,
         angle0 = 0.0,
@@ -441,6 +447,7 @@ function push_scoop(anims: {render.Anim}, card: game.Card, from: render.Point, g
         card = card,
         faces = render.faces_up,
         known = false,
+        effect = render.anim_effect_move,
         from = gather,
         to = render.slot_pos(dest_kind, 0),
         angle0 = 0.0,
@@ -455,14 +462,43 @@ function push_scoop(anims: {render.Anim}, card: game.Card, from: render.Point, g
     })
 end
 
--- The losing pair burns off the slots it was played from, which belong to the
--- pre-breach row layout the reveal was drawn in — hence the explicit count.
-function push_burn_pair(anims: {render.Anim}, first_card: game.Card, second_card: game.Card, kind: i32, first_index: i32, second_index: i32, count: i32): unit
+function push_scoop_pair(anims: {render.Anim}, first_card: game.Card, second_card: game.Card, kind: i32, first_index: i32, second_index: i32, count: i32): unit
     local a: render.Point = render.slot_pos_at(kind, first_index, count)
     local b: render.Point = render.slot_pos_at(kind, second_index, count)
     local gather: render.Point = render.midpoint(a, b)
     push_scoop(anims, first_card, a, gather, render.slot_aside)
     push_scoop(anims, second_card, b, gather, render.slot_aside)
+end
+
+-- A burned card has no intact journey left to make. Its next visible form is
+-- rebuilt directly on the neutral pile, and marking that pile as its
+-- destination keeps the ledger copy hidden until the reconstruction lands.
+function push_ash_reappearance(anims: {render.Anim}, card: game.Card, start: f64): f64
+    local finish: f64 = start + ASH_REAPPEAR_SECONDS
+    local pile: render.Point = render.slot_pos(render.slot_aside, 0)
+    table.insert(anims, {
+        card = card,
+        faces = render.faces_up,
+        known = false,
+        effect = render.anim_effect_ash_reappear,
+        from = pile,
+        to = pile,
+        angle0 = 0.0,
+        angle1 = 0.0,
+        easing = render.ease_in_out_cubic,
+        start = start,
+        duration = ASH_REAPPEAR_SECONDS,
+        appear = start,
+        vanish = finish,
+        dest_kind = render.slot_aside,
+        dest_index = 0,
+    })
+    return finish
+end
+
+function push_ash_pair(anims: {render.Anim}, first_card: game.Card, second_card: game.Card): f64
+    push_ash_reappearance(anims, first_card, 0.0)
+    return push_ash_reappearance(anims, second_card, ASH_REAPPEAR_STEP)
 end
 
 -- Slide each surviving card from its slot in the pre-breach layout to its
@@ -493,6 +529,7 @@ function push_hand_shifts(anims: {render.Anim}, view: game.View, trick: game.Tri
                     card = card,
                     faces = faces,
                     known = known,
+                    effect = render.anim_effect_move,
                     from = from,
                     to = to,
                     angle0 = slot_tilt_at(kind, old_index, old_count),
@@ -529,6 +566,7 @@ function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: Stat
     local new_count: i32 = #view.player_hand
     state.fan_parts = closed_fan_parts(new_count)
     local anims: {render.Anim} = {}
+    local ash_finish: f64 = 0.0
     local row_center: render.Point = render.midpoint(render.row_left(), render.row_right())
     if trick.winner ~= 0 then
         local winner: game.TrickSide = game.trick_side(trick, trick.winner)
@@ -549,7 +587,7 @@ function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: Stat
         push_scoop(anims, winner.cards[1], render.row_right(), row_center, won_kind)
         table.insert(won, winner.cards[0])
         table.insert(won, winner.cards[1])
-        push_burn_pair(anims, loser.cards[0], loser.cards[1], hand_slot_kind(-trick.winner), loser.first, loser.second, old_count)
+        ash_finish = push_ash_pair(anims, loser.cards[0], loser.cards[1])
     else
         for i = 0::i32, 2::i32 do
             if not trick.frozen_middle[i] then
@@ -557,8 +595,8 @@ function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: Stat
                 table.insert(state.discards, trick.middle[i])
             end
         end
-        push_burn_pair(anims, trick.player_cards[0], trick.player_cards[1], render.slot_player, trick.player_first, trick.player_second, old_count)
-        push_burn_pair(anims, trick.computer_cards[0], trick.computer_cards[1], render.slot_computer, trick.computer_first, trick.computer_second, old_count)
+        push_scoop_pair(anims, trick.player_cards[0], trick.player_cards[1], render.slot_player, trick.player_first, trick.player_second, old_count)
+        push_scoop_pair(anims, trick.computer_cards[0], trick.computer_cards[1], render.slot_computer, trick.computer_first, trick.computer_second, old_count)
         table.insert(state.discards, trick.player_cards[0])
         table.insert(state.discards, trick.player_cards[1])
         table.insert(state.discards, trick.computer_cards[0])
@@ -567,6 +605,7 @@ function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: Stat
     local finish: f64 = push_hand_shifts(anims, view, trick, 1, SCOOP_GATHER_SECONDS)
     local computer_finish: f64 = push_hand_shifts(anims, view, trick, -1, SCOOP_GATHER_SECONDS)
     if computer_finish > finish then finish = computer_finish end
+    if ash_finish > finish then finish = ash_finish end
     local start: f64 = SCOOP_GATHER_SECONDS + SCOOP_HOLD_SECONDS + SCOOP_CARRY_SECONDS + 0.1
     -- Matching sizes mean the spent pair was replaced off the deck; a boss
     -- battle's hands shrink instead, and there is nothing to deal.
@@ -626,6 +665,7 @@ function feint(outcome: game.FeintOutcome, state: State): unit
             card = outgoing,
             faces = leave_faces,
             known = false,
+            effect = render.anim_effect_move,
             from = leave,
             to = hover,
             angle0 = leave_angle,
@@ -642,6 +682,7 @@ function feint(outcome: game.FeintOutcome, state: State): unit
             card = outgoing,
             faces = settle_faces,
             known = false,
+            effect = render.anim_effect_move,
             from = hover,
             to = mid,
             angle0 = 0.0,
@@ -658,6 +699,7 @@ function feint(outcome: game.FeintOutcome, state: State): unit
             card = incoming,
             faces = render.faces_up,
             known = true,
+            effect = render.anim_effect_move,
             from = mid,
             to = render.slot_pos(render.slot_aside, k),
             angle0 = 0.0,
@@ -674,6 +716,7 @@ function feint(outcome: game.FeintOutcome, state: State): unit
             card = incoming,
             faces = return_faces,
             known = true,
+            effect = render.anim_effect_move,
             from = render.slot_pos(render.slot_aside, k),
             to = land,
             angle0 = 0.0,
