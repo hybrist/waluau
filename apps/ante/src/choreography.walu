@@ -118,9 +118,9 @@ function reset(state: State): unit
     state.player_won = fresh.player_won
 end
 
--- Spell effects are presentation-only: kinds 1-4 replace the prior condition
--- on the targeted ward and restart the launch toward it; kind zero clears the
--- condition entirely.
+-- Spell treatments mirror the rules-owned gameplay state: kinds 1-4 replace
+-- the prior visible condition and restart the launch toward it; kind zero
+-- clears the condition entirely.
 function apply_power(state: State, kind: i32, target: i32): unit
     if kind < 0 or kind > 4 then return end
     if target < 0 or target > 2 then return end
@@ -398,6 +398,7 @@ function record_burned_losers(state: State, trick: game.Trick): unit
 end
 
 function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: State): unit
+    if state.power_kind == game.spell_freeze_ray then apply_power(state, 0, 0) end
     -- The trick records the pre-breach hands; the live view holds the settled
     -- ones. In a boss battle those layouts differ (the rows narrow by two
     -- cards), so departure legs read the trick's layout while landings and
@@ -417,8 +418,10 @@ function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: Stat
             won = state.player_won
         end
         for i = 0::i32, 2::i32 do
-            push_scoop(anims, trick.middle[i], render.slot_pos(render.slot_middle, i), row_center, won_kind)
-            table.insert(won, trick.middle[i])
+            if not trick.frozen_middle[i] then
+                push_scoop(anims, trick.middle[i], render.slot_pos(render.slot_middle, i), row_center, won_kind)
+                table.insert(won, trick.middle[i])
+            end
         end
         push_scoop(anims, winner.cards[0], render.row_left(), row_center, won_kind)
         push_scoop(anims, winner.cards[1], render.row_right(), row_center, won_kind)
@@ -427,8 +430,10 @@ function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: Stat
         push_burn_pair(anims, loser.cards[0], loser.cards[1], hand_slot_kind(-trick.winner), loser.first, loser.second, old_count)
     else
         for i = 0::i32, 2::i32 do
-            push_scoop(anims, trick.middle[i], render.slot_pos(render.slot_middle, i), row_center, render.slot_aside)
-            table.insert(state.discards, trick.middle[i])
+            if not trick.frozen_middle[i] then
+                push_scoop(anims, trick.middle[i], render.slot_pos(render.slot_middle, i), row_center, render.slot_aside)
+                table.insert(state.discards, trick.middle[i])
+            end
         end
         push_burn_pair(anims, trick.player_cards[0], trick.player_cards[1], render.slot_player, trick.player_first, trick.player_second, old_count)
         push_burn_pair(anims, trick.computer_cards[0], trick.computer_cards[1], render.slot_computer, trick.computer_first, trick.computer_second, old_count)
@@ -452,8 +457,10 @@ function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: Stat
         end
     end
     for i = 0::i32, 2::i32 do
-        finish = push_deal(anims, view.middle[i], render.slot_middle, i, new_count, render.faces_flip_up, start)
-        start += DEAL_STEP
+        if not trick.frozen_middle[i] then
+            finish = push_deal(anims, view.middle[i], render.slot_middle, i, new_count, render.faces_flip_up, start)
+            start += DEAL_STEP
+        end
     end
     begin_anims(state, anims, finish, ANIM_DEAL)
 end
