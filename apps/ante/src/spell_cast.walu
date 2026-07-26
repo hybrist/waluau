@@ -9,7 +9,10 @@ local burn_particles = require("./burn_particles")
 type Graphics = engine.Graphics
 type EffectShaders = effect_shaders.EffectShaders
 type Point = { x: f64, y: f64 }
-type Cast = { clock: f64, progress: f64, impact: f64, origin: Point, target: Point }
+-- `impact` is gone with the rays it keyed. A landing is now one emission and a
+-- crowd of sparks living out their own lifetimes, so nothing reads a scalar
+-- saying how far through the impact the whole burst is.
+type Cast = { clock: f64, progress: f64, origin: Point, target: Point }
 -- The live particles a cast owns. These are simulations rather than settings:
 -- they hold the sparks and embers currently in the air, so they are advanced
 -- once per tick beside the clock that released them and are never written to a
@@ -18,12 +21,14 @@ type Cast = { clock: f64, progress: f64, impact: f64, origin: Point, target: Poi
 type Sparks = { trail: particles.ParticleSystem, burst: particles.ParticleSystem }
 
 const TRAVEL_SECONDS: f64 = 0.62
-const IMPACT_SECONDS: f64 = 0.34
 const ORIGIN_X: f64 = 30.0
 const ORIGIN_Y: f64 = 548.0
 -- Sparks thrown by one landing. Every spell throws the same number; only the
 -- ink changes.
 const BURST_SPARKS: i32 = 34
+-- The noise seed the burn shader shapes a spark with. It is the seed the
+-- Firebolt burst has always used, and it is unrelated to the emitter's own RNG.
+const BURST_SHADER_SEED: i32 = 1049
 
 function clamp(value: f64): f64
     if value < 0.0 then
@@ -39,7 +44,6 @@ function new(clock: f64, target_x: f64, target_y: f64): Cast
     return {
         clock = clock,
         progress = clamp(clock / TRAVEL_SECONDS),
-        impact = (clock - TRAVEL_SECONDS) / IMPACT_SECONDS,
         origin = { x = ORIGIN_X, y = ORIGIN_Y },
         target = { x = target_x, y = target_y }
     }
@@ -154,7 +158,8 @@ function draw_burst(
     if system:count() == 0 then
         return
     end
-    local shader_ok: bool = burn_particles.use(graphics, effects, 1049, ember)
+    local shader_ok: bool = burn_particles.use(
+        graphics, effects, BURST_SHADER_SEED, ember)
     if not shader_ok then
         burn_particles.stop(graphics)
     end

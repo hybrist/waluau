@@ -48,7 +48,7 @@ end
 -- The emitters a cast owns, built with each spell's own tuning. Only one spell
 -- is ever in flight, so one set serves all four.
 function new_sparks(): spell_cast.Sparks
-    return { trail = firebolt.new_trail(), burst = spell_cast.new_burst(1049) }
+    return { trail = firebolt.new_trail(), burst = spell_cast.new_burst(769) }
 end
 
 -- The advancing half of the seam draw() is the drawing half of. Sparks and
