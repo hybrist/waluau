@@ -1,5 +1,6 @@
--- Browser platform adapter: owns DOM setup, keyboard events and the animation
--- loop. This is the only engine module that decides how a game is hosted.
+-- The engine's DOM host: owns canvas setup, keyboard events and the animation
+-- loop. This module and graphics.walu are the only ones that import DOM
+-- externs, which is what keeps game code free of them.
 
 local input_module = require("./input")
 local graphics_module = require("./graphics")

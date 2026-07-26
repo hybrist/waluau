@@ -1382,7 +1382,7 @@ describe('browser conformance', () => {
     }
   });
 
-  it('runs the backend-neutral resource, audio and save-data contract sample', async () => {
+  it('runs the resource, audio and save-data contract sample', async () => {
     let completed = 0;
     const asyncErrors = [];
     await compileAndInstantiate(

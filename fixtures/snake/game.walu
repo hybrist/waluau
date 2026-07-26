@@ -1,5 +1,5 @@
 -- Core snake rules: grid state, movement, food, and collisions. No DOM or
--- canvas access in this module so the logic stays host-independent.
+-- canvas access in this module, so the rules can be exercised headlessly.
 
 -- The state record alias; render.walu imports it as `game.State`.
 type State = { cols: i32, rows: i32, snake: {{ x: i32, y: i32 }}, dir: { x: i32, y: i32 }, next_dir: { x: i32, y: i32 }, food: { x: i32, y: i32 }, score: i32, alive: bool }

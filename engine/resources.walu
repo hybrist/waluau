@@ -1,10 +1,11 @@
--- Backend-neutral packaged resource API. The browser host implements these
--- imports with fetch/decode services; a native host can implement the same ABI
--- with an application bundle. Loads are asynchronous and always resolve to a
--- handle, including failures, so games receive structured errors instead of
--- raw host promise rejections. The caller owns the await and then passes the
--- handle to finish_*; this keeps suspension explicit until transitive async
--- wrappers can preserve caller continuations and aggregate locals reliably.
+-- Packaged resource API. Game code loads assets through these imports instead
+-- of touching DOM externs, so a rules or simulation module never depends on
+-- fetch, decoding, or a canvas. The host implements them with fetch/decode
+-- services. Loads are asynchronous and always resolve to a handle, including
+-- failures, so games receive structured errors instead of raw host promise
+-- rejections. The caller owns the await and then passes the handle to
+-- finish_*; this keeps suspension explicit until transitive async wrappers can
+-- preserve caller continuations and aggregate locals reliably.
 
 type Resource = { handle: i32, kind: string, path: string }
 type ResourceError = { code: string, message: string, path: string }

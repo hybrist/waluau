@@ -1,4 +1,4 @@
--- Host-independent heist flow. Keyboard and mouse are adapters at this seam;
+-- DOM-free heist flow. Keyboard and mouse arrive as plain intents here;
 -- phase ordering, action acceptance, focus, pending binds, and development
 -- snapshot ownership live here.
 

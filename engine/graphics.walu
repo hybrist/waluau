@@ -1,14 +1,13 @@
 -- GPU-backed drawing facade behind the same Graphics API games already use.
--- Everything renders through WebGL2: shapes and text become colored
--- triangles in one interleaved vertex stream (clip-space x/y, color, UV, and
--- a textured flag) that is uploaded and drawn in a single draw call per
--- flush. Games may compile and bind their own vertex/pixel shader programs;
--- program and uniform changes flush so every queued batch keeps the state it
--- was emitted under. The platform adapter advances the standard u_time
--- uniform once per frame via set_time. Text uses either the built-in
--- bitmap font from font.walu or a custom font resource uploaded as a GPU
--- atlas, and the push/pop transform stack is applied CPU-side while vertices
--- are emitted.
+-- Everything renders through WebGL2: shapes and text become colored triangles
+-- in one interleaved vertex stream (clip-space x/y, color, UV, and a textured
+-- flag) that is uploaded and drawn in a single draw call per flush. Games may
+-- compile and bind their own vertex/pixel shader programs; program and uniform
+-- changes flush so every queued batch keeps the state it was emitted under.
+-- browser.walu advances the standard u_time uniform once per frame via
+-- set_time. Text uses either the built-in bitmap font from font.walu or a
+-- custom font resource uploaded as a GPU atlas, and the push/pop transform
+-- stack is applied CPU-side while vertices are emitted.
 
 local window = require("dom:window")
 local font = require("./font")
@@ -422,7 +421,7 @@ function Graphics:flush(): unit
     self.used = 0
 end
 
--- Called by the platform adapter once per animation frame after draw().
+-- Called by browser.walu once per animation frame after draw().
 function Graphics:present(): unit
     self:flush()
 end

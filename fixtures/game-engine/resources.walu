@@ -1,6 +1,6 @@
--- Contract sample for the engine's backend-neutral resource services. Browser
--- conformance supplies deterministic decoders/storage; an ordinary game uses
--- the same module API and never imports DOM externs.
+-- Contract sample for the engine's resource services. Browser conformance
+-- supplies deterministic decoders/storage; an ordinary game uses the same
+-- module API and never imports DOM externs.
 
 local resources = require("../../engine/resources")
 local audio = require("../../engine/audio")

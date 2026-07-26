@@ -1,5 +1,5 @@
--- Engine Graphics rendering for Snake. This module is platform-independent:
--- rectangles, circles, and text are submitted to the engine's GPU renderer.
+-- Engine Graphics rendering for Snake. This module never touches the DOM:
+-- rectangles, circles, and text are submitted to the engine's WebGL2 renderer.
 
 local graphics_module = require("../../engine/graphics")
 local game = require("./game")

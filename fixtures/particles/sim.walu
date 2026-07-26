@@ -1,4 +1,4 @@
--- Host-independent checks for the particle system: pooling, emission timing,
+-- DOM-free checks for the particle system: pooling, emission timing,
 -- forces, curves, spawn areas and emitter lifecycle. Nothing here draws, so
 -- the whole file runs without a canvas.
 

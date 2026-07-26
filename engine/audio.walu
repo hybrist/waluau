@@ -1,6 +1,7 @@
--- Backend-neutral decoded and streaming audio resources. Loading is safe to
--- start before a browser user gesture; play() reports whether playback could
--- be started, allowing a game to retry from its next input callback.
+-- Decoded and streaming audio resources, reached through host imports so game
+-- code never touches Web Audio directly. Loading is safe to start before a user
+-- gesture; play() reports whether playback could be started, allowing a game to
+-- retry from its next input callback.
 
 local resources = require("./resources")
 

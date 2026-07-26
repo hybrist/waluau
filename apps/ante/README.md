@@ -111,8 +111,8 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `main.walu` | Thin engine adapter that owns the session and routes callbacks to the live screen. |
 | `menu.walu` | The pre-game menu screen: presentation plus begin-gesture interpretation. |
 | `game_screen.walu` | The heist screen: rules/flow/choreography wiring and its input adapters. |
-| `game.walu` | Host-independent rules, AI, commands, outcomes, and read-only presentation view. |
-| `flow.walu` | Host-independent input gating, focus, modal, selection, and reveal phase transitions. |
+| `game.walu` | DOM-free rules, AI, commands, outcomes, and read-only presentation view. |
+| `flow.walu` | DOM-free input gating, focus, modal, selection, and reveal phase transitions. |
 | `choreography.walu` | Domain-level deal, feint, breach, fan, pile, reveal timing, and animation choreography. |
 | `render.walu` | Playfield/modal drawing behind a single nested frame interface. |
 | `spell_cast.walu` | Target-aware spell trajectory and shared impact geometry. |
@@ -153,9 +153,9 @@ immediately after the GPU copies succeed; GPU resources retain their own
 explicit lifetime.
 
 Card turns use the packaged [`assets/card-flip.wav`](assets/card-flip.wav),
-decoded through the engine's backend-neutral sound-effect service. Playback is
-triggered shortly before each animated card crosses edge-on, compensating for
-browser and device output latency. Because the effect is part of the intended
+decoded through the engine's sound-effect service. Playback is triggered
+shortly before each animated card crosses edge-on, compensating for browser and
+device output latency. Because the effect is part of the intended
 presentation, an undeclared, missing, undecodable, or
 unplayable sound stops the fixture on a diagnostic canvas showing the asset
 path, stable error code, and host message.
