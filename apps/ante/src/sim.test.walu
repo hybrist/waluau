@@ -713,4 +713,33 @@ describe("Arcane Heist spell casting", function()
         expect(#state.deck):toBe(deck_size - 6)
         expect(state:is_frozen(1)):toBe(false)
     end)
+
+    it("replaces a Firebolt target from the deck and returns the burned card", function()
+        math.randomseed(61)
+        local state = game.new(false, game.spell_firebolt)
+        local deck_before: i32 = #state.deck
+        local burned: game.Card = state.middle[1]
+        local replacement: game.Card = state.deck[deck_before - 1]
+
+        local discarded: game.Card? = state:resolve_firebolt(1)
+
+        expect(discarded == nil):toBe(false)
+        if discarded ~= nil then
+            expect((discarded::game.Card).rank):toBe(burned.rank)
+            expect((discarded::game.Card).suit):toBe(burned.suit)
+        end
+        expect(state.middle[1].rank):toBe(replacement.rank)
+        expect(state.middle[1].suit):toBe(replacement.suit)
+        expect(#state.deck):toBe(deck_before - 1)
+    end)
+
+    it("leaves the board unchanged for invalid Firebolt targets", function()
+        math.randomseed(63)
+        local state = game.new(false, game.spell_firebolt)
+        local before: string = game.snapshot(state)
+
+        expect(state:resolve_firebolt(-1) == nil):toBe(true)
+        expect(state:resolve_firebolt(3) == nil):toBe(true)
+        expect(game.snapshot(state)):toBe(before)
+    end)
 end)

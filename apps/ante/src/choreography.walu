@@ -37,6 +37,7 @@ type Interaction = {
 const ANIM_NONE: i32 = 0
 const ANIM_DEAL: i32 = 1
 const ANIM_SWAP: i32 = 2
+const ANIM_FIREBOLT_REPLACE: i32 = 3
 
 -- TODO(waluau-language): Nominal enums would make render's slot, face, and
 -- easing ids non-interchangeable instead of structurally identical i32s.
@@ -120,7 +121,8 @@ end
 
 -- Spell treatments mirror the rules-owned gameplay state: kinds 1-4 replace
 -- the prior visible condition and restart the launch toward it; kind zero
--- clears the condition entirely.
+-- clears the condition entirely. update_power reports a timed rules transition
+-- when Firebolt's visual burn lands.
 function apply_power(state: State, kind: i32, target: i32): unit
     if kind < 0 or kind > 4 then return end
     if target < 0 or target > 2 then return end
@@ -129,9 +131,26 @@ function apply_power(state: State, kind: i32, target: i32): unit
     state.power_target = target
 end
 
-function update_power(state: State, dt: f64): unit
-    if state.power_kind == 0 then return end
+-- Advance a spell condition and return the ward whose Firebolt has just
+-- finished burning, or -1 when no rules mutation is due this frame. Clearing
+-- the condition at that boundary lets the replacement card render intact.
+function update_power(state: State, dt: f64): i32
+    if state.power_kind == 0 then return -1 end
     state.power_clock += dt
+    if state.power_kind == game.spell_firebolt
+        and render.firebolt_burn_finished(state.power_clock)
+    then
+        local target: i32 = state.power_target
+        state.power_kind = 0
+        state.power_clock = 0.0
+        return target
+    end
+    return -1
+end
+
+function firebolt_pending(state: State): bool
+    return state.power_kind == game.spell_firebolt
+        or state.anim_kind == ANIM_FIREBOLT_REPLACE
 end
 
 function apply_hand_order(state: State, order: {i32}): unit
@@ -276,6 +295,25 @@ function push_deal(anims: {render.Anim}, card: game.Card, kind: i32, index: i32,
         dest_index = index,
     })
     return finish
+end
+
+-- Once Firebolt's old ward is fully gone, expose the rules result as one
+-- coordinated presentation beat: the burned card joins the neutral pile,
+-- while its replacement flies from the sealed deck into the empty ward slot.
+-- The live middle already contains replacement; the animation's destination
+-- mark keeps that settled copy hidden until this card lands.
+function firebolt_resolved(
+    state: State,
+    discarded: game.Card,
+    replacement: game.Card,
+    target: i32
+): unit
+    table.insert(state.discards, discarded)
+    local anims: {render.Anim} = {}
+    local finish: f64 = push_deal(
+        anims, replacement, render.slot_middle, target,
+        live_hand_count(state), render.faces_flip_up, 0.0)
+    begin_anims(state, anims, finish, ANIM_FIREBOLT_REPLACE)
 end
 
 function opening_deal(view: game.View, state: State): unit
@@ -682,6 +720,8 @@ return {
     reveal_finished = reveal_finished,
     apply_power = apply_power,
     update_power = update_power,
+    firebolt_pending = firebolt_pending,
+    firebolt_resolved = firebolt_resolved,
     apply_hand_order = apply_hand_order,
     reveal_flip_cues = reveal_flip_cues,
     opening_deal = opening_deal,

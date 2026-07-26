@@ -1198,6 +1198,12 @@ function fireball_formation(clock: f64): f64
         (clock - spell_cast.travel_seconds) / FIREBALL_BURN_SECONDS)
 end
 
+-- Choreography uses the renderer's own completion boundary to commit the
+-- Firebolt result on the first frame where the old card is fully burned away.
+function firebolt_burn_finished(clock: f64): bool
+    return fireball_formation(clock) >= 1.0
+end
+
 function draw_power_ellipse(
     graphics: Graphics,
     x: f64,
@@ -2152,4 +2158,5 @@ return {
     ease_in_cubic = EASE_IN_CUBIC,
     ease_in_out_cubic = EASE_IN_OUT_CUBIC,
     ease_out_back = EASE_OUT_BACK,
+    firebolt_burn_finished = firebolt_burn_finished,
 }
