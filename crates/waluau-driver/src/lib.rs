@@ -111,17 +111,78 @@ fn compile_program(
     wasm_file_name: &str,
     assets: &BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>,
 ) -> Result<CompileArtifacts, Vec<Diagnostic>> {
-    let mut typed_program =
-        waluau_hir::type_check_and_infer_collect(&program).map_err(|errors| {
-            errors
-                .into_iter()
-                .map(|error| resolve_diagnostic_source(error, &program))
-                .collect::<Vec<_>>()
-        })?;
-    waluau_ast::resolve_symbols(&mut typed_program).map_err(|error| vec![error])?;
-    let ir = waluau_ir::build(&typed_program).map_err(|error| vec![error])?;
-    let emitted = waluau_codegen_wasm::emit(&ir).map_err(|error| vec![error])?;
+    compile_program_with_cache(program, wasm_file_name, assets, None, None, None)
+}
+
+fn compile_program_with_cache(
+    program: waluau_ast::Program,
+    wasm_file_name: &str,
+    assets: &BTreeMap<String, waluau_codegen_wasm::GeneratedAsset>,
+    hir_cache: Option<&mut waluau_hir::TypeCheckCache>,
+    ir_cache: Option<&mut waluau_ir::BuildCache>,
+    wasm_cache: Option<&mut waluau_codegen_wasm::EmitCache>,
+) -> Result<CompileArtifacts, Vec<Diagnostic>> {
+    let started = std::time::Instant::now();
+    let owned_typed;
+    let changed_functions;
+    let typed_program = match hir_cache {
+        Some(cache) => {
+            let (typed, changed) = waluau_hir::type_check_and_infer_collect_cached(&program, cache)
+                .map_err(|errors| {
+                    errors
+                        .into_iter()
+                        .map(|error| resolve_diagnostic_source(error, &program))
+                        .collect::<Vec<_>>()
+                })?;
+            changed_functions = changed;
+            typed
+        }
+        None => {
+            owned_typed = waluau_hir::type_check_and_infer_collect(&program);
+            changed_functions = &[];
+            owned_typed
+                .as_ref()
+                .map_err(Clone::clone)
+                .map_err(|errors| {
+                    errors
+                        .into_iter()
+                        .map(|error| resolve_diagnostic_source(error, &program))
+                        .collect::<Vec<_>>()
+                })?
+        }
+    };
+    let typed = started.elapsed();
+    let resolved = started.elapsed();
+    let owned_ir;
+    let ir = match ir_cache {
+        Some(cache) => {
+            waluau_ir::build_cached_with_changes(typed_program, cache, changed_functions)
+                .map_err(|error| vec![error])?
+        }
+        None => {
+            owned_ir = waluau_ir::build(typed_program).map_err(|error| vec![error])?;
+            &owned_ir
+        }
+    };
+    let lowered = started.elapsed();
+    let emitted = match wasm_cache {
+        Some(cache) => waluau_codegen_wasm::emit_cached(ir, cache),
+        None => waluau_codegen_wasm::emit(ir),
+    }
+    .map_err(|error| vec![error])?;
+    let emitted_at = started.elapsed();
     let js = waluau_codegen_wasm::generate_js_glue_with_assets(wasm_file_name, &emitted, assets);
+    if std::env::var_os("WALUAU_TIMINGS").is_some() {
+        eprintln!(
+            "waluau timings: hir={:?} symbols={:?} ir={:?} wasm={:?} js={:?} total={:?}",
+            typed,
+            resolved - typed,
+            lowered - resolved,
+            emitted_at - lowered,
+            started.elapsed() - emitted_at,
+            started.elapsed(),
+        );
+    }
     Ok(CompileArtifacts {
         wasm: emitted.wasm,
         js,

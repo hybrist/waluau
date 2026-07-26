@@ -41,6 +41,29 @@ fn property_getter_name(base: &str, property: &str) -> String {
     format!("{base}.get/{property}")
 }
 
+/// The nominal type followed by its Web IDL inheritance chain, nearest first.
+/// Looking up members through these names avoids scanning every declared DOM
+/// signature for each field or method expression.
+pub(super) fn nominal_type_names(mut ty: &Type) -> Vec<&str> {
+    let mut names = Vec::new();
+    while let Type::Opaque { name, ty: inner } = ty {
+        names.push(name.as_str());
+        let Type::ExternSubtype(parent) = inner.as_ref() else {
+            break;
+        };
+        ty = parent;
+    }
+    names
+}
+
+pub(super) fn is_record_like(ty: &Type) -> bool {
+    match ty {
+        Type::Record(_) => true,
+        Type::Opaque { ty, .. } | Type::Nullable(ty) => is_record_like(ty),
+        _ => false,
+    }
+}
+
 fn record_fields(ty: &Type) -> Option<&BTreeMap<String, Type>> {
     match ty {
         Type::Record(fields) => Some(fields),
@@ -147,10 +170,29 @@ pub(super) fn resolve_operator_overload(
     let Some(receiver_ty) = operands.first() else {
         return Ok(None);
     };
-    let exact_receiver_name = match receiver_ty {
-        Type::Opaque { name, .. } => Some(method_signature_name(name, method)),
-        _ => None,
-    };
+    let nominal_names = nominal_type_names(receiver_ty);
+    for type_name in &nominal_names {
+        let candidate_name = method_signature_name(type_name, method);
+        let Some(FnSignature::Mono {
+            params,
+            return_type,
+            ..
+        }) = fn_signatures.get(&candidate_name)
+        else {
+            continue;
+        };
+        if params.len() == operands.len()
+            && params
+                .iter()
+                .zip(operands.iter())
+                .all(|(expected, actual)| method_receiver_matches(expected, actual))
+        {
+            return Ok(Some((candidate_name, return_type.clone())));
+        }
+    }
+    let exact_receiver_name = nominal_names
+        .first()
+        .map(|name| method_signature_name(name, method));
     let suffix = format!(".{method}");
     let mut matches = fn_signatures
         .iter()
@@ -214,10 +256,7 @@ pub(super) fn resolved_type_method_name(
     name: &str,
     fn_signatures: &HashMap<String, FnSignature>,
 ) -> Option<String> {
-    if let Type::Opaque {
-        name: type_name, ..
-    } = receiver_ty
-    {
+    for type_name in nominal_type_names(receiver_ty) {
         let method_name = method_signature_name(type_name, name);
         if fn_signatures.contains_key(&method_name) {
             return Some(method_name);
@@ -414,14 +453,18 @@ pub(super) fn resolved_type_property_getter_name(
     name: &str,
     fn_signatures: &HashMap<String, FnSignature>,
 ) -> Option<String> {
-    if let Type::Opaque {
-        name: type_name, ..
-    } = receiver_ty
-    {
+    for type_name in nominal_type_names(receiver_ty) {
         let getter_name = property_getter_name(type_name, name);
         if fn_signatures.contains_key(&getter_name) {
             return Some(getter_name);
         }
+    }
+
+    // Ordinary record fields are lowered directly. Scanning every declared
+    // DOM getter cannot produce a valid match for them and was quadratic in
+    // the number of extern declarations.
+    if is_record_like(receiver_ty) {
+        return None;
     }
 
     let suffix = format!(".get/{name}");

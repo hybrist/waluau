@@ -456,6 +456,51 @@ impl<'a> Monomorphizer<'a> {
         Ok(specialized_program)
     }
 
+    /// Rewrite one non-generic function and any generic specializations that
+    /// its body requests. Incremental lowering uses this only when the
+    /// surrounding declarations and every generic template are unchanged.
+    pub(crate) fn run_function(
+        &mut self,
+        function: &AstFunction,
+    ) -> Result<Vec<AstFunction>, Diagnostic> {
+        debug_assert!(function.type_params.is_empty());
+        let mut functions = vec![self.rewrite_function(function, &HashMap::new(), None)?];
+        while let Some(key) = self.pending.pop() {
+            let template = self
+                .generic_functions
+                .get(&key.generic_symbol_id)
+                .copied()
+                .ok_or_else(|| {
+                    Diagnostic::new(format!(
+                        "missing generic function with symbol ID {:?} during monomorphization",
+                        key.generic_symbol_id
+                    ))
+                })?;
+            let specialized_name = self
+                .specialized_names
+                .get(&key)
+                .cloned()
+                .expect("specialization key should have a generated name");
+            let subst = template
+                .type_params
+                .iter()
+                .cloned()
+                .zip(key.type_args.iter().cloned())
+                .collect::<HashMap<_, _>>();
+            let active = ActiveSpecialization {
+                generic_symbol_id: key.generic_symbol_id,
+                type_args: key.type_args.clone(),
+            };
+            functions.push(self.rewrite_function_with_name(
+                template,
+                waluau_ast::FunctionName::Simple(specialized_name),
+                &subst,
+                Some(&active),
+            )?);
+        }
+        Ok(functions)
+    }
+
     fn rewrite_function(
         &mut self,
         function: &AstFunction,

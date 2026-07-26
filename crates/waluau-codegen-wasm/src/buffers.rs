@@ -42,7 +42,7 @@ pub(crate) const fn element_size_log2(kind: TypedArrayKind) -> i32 {
 /// Linear-memory usage of a module: whether any typed-array instruction is
 /// present, and the deduplicated passive data segments backing `BufferConst`
 /// instructions (in first-seen order).
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct BufferPlan {
     pub(crate) uses_memory: bool,
     pub(crate) data_segments: Vec<Vec<u8>>,

@@ -4,7 +4,9 @@ use waluau_ast::{AssignOp, Expr, Function, NumericType, Rebindability, Stmt, Typ
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
 use super::builtins::{ASSERT, PCALL};
-use super::expressions::{builtin_name, infer_expr, infer_expr_list};
+use super::expressions::{
+    builtin_name, infer_expr, infer_expr_list, is_record_like, nominal_type_names,
+};
 use super::numeric::{infer_numeric_for_loop_type, is_extern_subtype_of};
 use super::signatures::{
     FnSignature, active_type_param_set, generic_diagnostic, inference_diagnostic,
@@ -483,14 +485,15 @@ pub(super) fn resolved_type_property_setter_name(
     name: &str,
     fn_signatures: &HashMap<String, FnSignature>,
 ) -> Option<String> {
-    if let Type::Opaque {
-        name: type_name, ..
-    } = receiver_ty
-    {
+    for type_name in nominal_type_names(receiver_ty) {
         let setter_name = property_setter_name(type_name, name);
         if fn_signatures.contains_key(&setter_name) {
             return Some(setter_name);
         }
+    }
+
+    if is_record_like(receiver_ty) {
+        return None;
     }
 
     let suffix = format!(".set/{name}");

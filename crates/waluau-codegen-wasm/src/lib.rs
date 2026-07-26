@@ -9,7 +9,7 @@ use waluau_ir::{
 };
 use wasm_encoder::{
     AbstractHeapType, BlockType, Catch, CodeSection, ConstExpr, CustomSection, ElementSection,
-    Elements, EntityType, ExportKind, ExportSection, FieldType, Function, FunctionSection,
+    Elements, Encode, EntityType, ExportKind, ExportSection, FieldType, Function, FunctionSection,
     GlobalSection, HeapType, ImportSection, Instruction, Module as WasmModule, RefType,
     StorageType, TableSection, TableType, TagKind, TagSection, TagType, TypeSection, ValType,
 };
@@ -282,7 +282,7 @@ fn needs_closure_gc_types(module: &Module, declared_imports: &[&DeclaredImport])
     false
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct EmitResult {
     pub wasm: Vec<u8>,
     pub record_type_indices: HashMap<String, u32>,
@@ -291,6 +291,49 @@ pub struct EmitResult {
     pub required_imports: Vec<RequiredImport>,
     /// Byte literals in the same order used by the `bytes_literal` host ABI.
     pub bytes_constants: Vec<Vec<u8>>,
+}
+
+#[derive(Default)]
+pub struct EmitCache {
+    module: Option<Module>,
+    context: Option<IncrementalEmitContext>,
+    image: Option<CodeImage>,
+    record_type_indices: HashMap<String, u32>,
+    required_imports: Vec<RequiredImport>,
+    bytes_constants: Vec<Vec<u8>>,
+    last_incremental: bool,
+}
+
+impl EmitCache {
+    pub fn last_emit_was_incremental(&self) -> bool {
+        self.last_incremental
+    }
+}
+
+#[derive(Clone)]
+struct IncrementalEmitContext {
+    signatures: HashMap<String, FunctionSignature>,
+    signature_registry: SignatureRegistry,
+    array_registry: ArrayTypeRegistry,
+    string_constants: Vec<String>,
+    bytes_constants: Vec<Vec<u8>>,
+    user_type_base: u32,
+    coroutine_plan: CoroutinePlan,
+    coroutine_body_wrapper_type: Option<u32>,
+    coroutine_push_frame_func: Option<u32>,
+    closure_wrapper_slots: HashMap<String, u32>,
+    import_map: host::HostImportMap,
+    declared_import_indices: HashMap<SymbolId, u32>,
+    import_func_count: u32,
+    buffer_plan: BufferPlan,
+    buffer_alloc_func: Option<u32>,
+}
+
+#[derive(Clone)]
+struct CodeImage {
+    prefix: Vec<u8>,
+    bodies: Vec<Vec<u8>>,
+    suffix: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -617,6 +660,20 @@ fn used_declared_imports(module: &Module) -> Vec<&DeclaredImport> {
 }
 
 pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
+    emit_inner(module, None)
+}
+
+pub fn emit_cached(module: &Module, cache: &mut EmitCache) -> Result<EmitResult, Diagnostic> {
+    cache.last_incremental = false;
+    if let Some(emitted) = try_emit_incremental(module, cache)? {
+        cache.last_incremental = true;
+        return Ok(emitted);
+    }
+    emit_inner(module, Some(cache))
+}
+
+fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResult, Diagnostic> {
+    let started = std::time::Instant::now();
     let declared_imports = used_declared_imports(module);
     let array_types = collect_array_types(module);
     let record_types = collect_record_types(module);
@@ -1576,25 +1633,63 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
                 import_func_count + index as u32,
             );
         }
-        codes.function(&emit_function(
-            function,
-            &signatures,
-            &signature_registry,
-            &array_registry,
-            &string_constants,
-            &bytes_constants,
-            user_type_base,
-            &coroutine_plan,
-            coroutine_body_wrapper_type,
-            coroutine_push_frame_func,
-            &closure_wrapper_slots,
-            &import_map,
-            &declared_import_indices,
-            import_func_count,
-            &buffer_plan,
-            buffer_alloc_func,
-        )?);
     }
+    let setup_at = started.elapsed();
+    let workers = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZeroUsize::get)
+        .min(module.functions.len().max(1));
+    let chunk_size = module.functions.len().max(1).div_ceil(workers);
+    let emitted_functions = std::thread::scope(|scope| {
+        let handles = module
+            .functions
+            .chunks(chunk_size)
+            .map(|chunk| {
+                let signatures = &signatures;
+                let signature_registry = &signature_registry;
+                let array_registry = &array_registry;
+                let string_constants = &string_constants;
+                let bytes_constants = &bytes_constants;
+                let coroutine_plan = &coroutine_plan;
+                let closure_wrapper_slots = &closure_wrapper_slots;
+                let import_map = &import_map;
+                let declared_import_indices = &declared_import_indices;
+                let buffer_plan = &buffer_plan;
+                scope.spawn(move || {
+                    chunk
+                        .iter()
+                        .map(|function| {
+                            emit_function(
+                                function,
+                                signatures,
+                                signature_registry,
+                                array_registry,
+                                string_constants,
+                                bytes_constants,
+                                user_type_base,
+                                coroutine_plan,
+                                coroutine_body_wrapper_type,
+                                coroutine_push_frame_func,
+                                closure_wrapper_slots,
+                                import_map,
+                                declared_import_indices,
+                                import_func_count,
+                                buffer_plan,
+                                buffer_alloc_func,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().expect("Wasm emission worker panicked"))
+            .collect::<Vec<_>>()
+    });
+    for emitted in emitted_functions {
+        codes.function(&emitted?);
+    }
+    let user_functions_at = started.elapsed();
     if let Some(start) = start_thunk {
         let thunk_sig_index = signature_registry.get(&[], &Type::Unit).unwrap();
         functions.function(user_type_base + thunk_sig_index);
@@ -1907,20 +2002,250 @@ pub fn emit(module: &Module) -> Result<EmitResult, Diagnostic> {
         data: Cow::Owned(host::encode_bytes_constants_section(&bytes_constants)),
     });
 
+    let assembled_at = started.elapsed();
     let bytes = wasm.finish();
+    let encoded_at = started.elapsed();
     let features = WasmFeatures::all();
     Validator::new_with_features(features)
         .validate_all(&bytes)
         .map_err(|err| Diagnostic::new(format!("emitted invalid wasm: {err}")))?;
+    if std::env::var_os("WALUAU_TIMINGS").is_some() {
+        eprintln!(
+            "waluau wasm timings: setup={:?} user-functions={:?} helpers+sections={:?} encode={:?} validate={:?}",
+            setup_at,
+            user_functions_at - setup_at,
+            assembled_at - user_functions_at,
+            encoded_at - assembled_at,
+            started.elapsed() - encoded_at,
+        );
+    }
 
     let record_type_indices = array_registry.record_indices.clone();
 
-    Ok(EmitResult {
+    let result = EmitResult {
         wasm: bytes,
         record_type_indices,
         required_imports,
         bytes_constants,
-    })
+    };
+    if let Some(cache) = cache {
+        cache.module = Some(module.clone());
+        cache.context = Some(IncrementalEmitContext {
+            signatures,
+            signature_registry,
+            array_registry,
+            string_constants,
+            bytes_constants: result.bytes_constants.clone(),
+            user_type_base,
+            coroutine_plan,
+            coroutine_body_wrapper_type,
+            coroutine_push_frame_func,
+            closure_wrapper_slots,
+            import_map,
+            declared_import_indices,
+            import_func_count,
+            buffer_plan,
+            buffer_alloc_func,
+        });
+        cache.image = Some(split_code_image(&result.wasm)?);
+        cache.record_type_indices = result.record_type_indices.clone();
+        cache.required_imports = result.required_imports.clone();
+        cache.bytes_constants = result.bytes_constants.clone();
+    }
+    Ok(result)
+}
+
+fn numeric_literal_only_change(current: &IrFunction, previous: &IrFunction) -> bool {
+    let mut normalized = current.clone();
+    let mut changed = false;
+    for (block_id, block) in &mut normalized.blocks {
+        let Some(previous_block) = previous.blocks.get(block_id) else {
+            return false;
+        };
+        if block.instructions.len() != previous_block.instructions.len() {
+            return false;
+        }
+        for ((value, instruction), (previous_value, previous_instruction)) in block
+            .instructions
+            .iter_mut()
+            .zip(&previous_block.instructions)
+        {
+            if value != previous_value {
+                return false;
+            }
+            if let (
+                IrInstruction::Number { ty, literal },
+                IrInstruction::Number {
+                    ty: previous_ty,
+                    literal: previous_literal,
+                },
+            ) = (instruction, previous_instruction)
+                && ty == previous_ty
+            {
+                changed |= literal != previous_literal;
+                *literal = previous_literal.clone();
+            }
+        }
+    }
+    changed && normalized == *previous
+}
+
+fn try_emit_incremental(
+    module: &Module,
+    cache: &mut EmitCache,
+) -> Result<Option<EmitResult>, Diagnostic> {
+    let started = std::time::Instant::now();
+    let (Some(previous), Some(context)) = (&cache.module, &cache.context) else {
+        return Ok(None);
+    };
+    if cache.image.is_none() {
+        return Ok(None);
+    }
+    if module.declared_imports != previous.declared_imports
+        || module.start != previous.start
+        || module.tag_ids != previous.tag_ids
+        || module.functions.len() != previous.functions.len()
+    {
+        return Ok(None);
+    }
+    let changed = module
+        .functions
+        .iter()
+        .zip(&previous.functions)
+        .enumerate()
+        .filter_map(|(index, (current, previous))| (current != previous).then_some(index))
+        .collect::<Vec<_>>();
+    if changed.len() != 1 {
+        return Ok(None);
+    }
+    let index = changed[0];
+    let function = &module.functions[index];
+    let previous_function = &previous.functions[index];
+    if function.name != previous_function.name
+        || function.params != previous_function.params
+        || function.return_type != previous_function.return_type
+        || !numeric_literal_only_change(function, previous_function)
+    {
+        return Ok(None);
+    }
+
+    let emitted = emit_function(
+        function,
+        &context.signatures,
+        &context.signature_registry,
+        &context.array_registry,
+        &context.string_constants,
+        &context.bytes_constants,
+        context.user_type_base,
+        &context.coroutine_plan,
+        context.coroutine_body_wrapper_type,
+        context.coroutine_push_frame_func,
+        &context.closure_wrapper_slots,
+        &context.import_map,
+        &context.declared_import_indices,
+        context.import_func_count,
+        &context.buffer_plan,
+        context.buffer_alloc_func,
+    )?;
+    let mut updated_image = cache.image.take().expect("cached Wasm code image");
+    updated_image.bodies[index] = emitted.into_raw_body();
+    let wasm = updated_image.encode();
+    Validator::new_with_features(WasmFeatures::all())
+        .validate_all(&wasm)
+        .map_err(|err| Diagnostic::new(format!("incrementally emitted invalid wasm: {err}")))?;
+    cache.module.as_mut().expect("cached module").functions[index] = function.clone();
+    cache.image = Some(updated_image);
+    if std::env::var_os("WALUAU_TIMINGS").is_some() {
+        eprintln!("waluau wasm timings: incremental={:?}", started.elapsed());
+    }
+    Ok(Some(EmitResult {
+        wasm,
+        record_type_indices: cache.record_type_indices.clone(),
+        required_imports: cache.required_imports.clone(),
+        bytes_constants: cache.bytes_constants.clone(),
+    }))
+}
+
+impl CodeImage {
+    fn encode(&self) -> Vec<u8> {
+        let mut code = CodeSection::new();
+        for body in &self.bodies {
+            code.raw(body);
+        }
+        let mut wasm = Vec::with_capacity(
+            self.prefix.len()
+                + self.suffix.len()
+                + self.bodies.iter().map(Vec::len).sum::<usize>()
+                + 16,
+        );
+        wasm.extend_from_slice(&self.prefix);
+        wasm.push(10);
+        code.encode(&mut wasm);
+        wasm.extend_from_slice(&self.suffix);
+        wasm
+    }
+}
+
+fn read_u32_leb(bytes: &[u8], cursor: &mut usize) -> Result<u32, Diagnostic> {
+    let mut result = 0u32;
+    let mut shift = 0;
+    loop {
+        let byte = *bytes
+            .get(*cursor)
+            .ok_or_else(|| Diagnostic::new("truncated Wasm while reading code cache"))?;
+        *cursor += 1;
+        result |= u32::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return Ok(result);
+        }
+        shift += 7;
+        if shift >= 35 {
+            return Err(Diagnostic::new("invalid u32 LEB in emitted Wasm"));
+        }
+    }
+}
+
+fn split_code_image(wasm: &[u8]) -> Result<CodeImage, Diagnostic> {
+    if wasm.len() < 8 {
+        return Err(Diagnostic::new("emitted Wasm is missing its header"));
+    }
+    let mut cursor = 8;
+    while cursor < wasm.len() {
+        let section_start = cursor;
+        let id = wasm[cursor];
+        cursor += 1;
+        let payload_len = read_u32_leb(wasm, &mut cursor)? as usize;
+        let payload_start = cursor;
+        let section_end = payload_start
+            .checked_add(payload_len)
+            .filter(|end| *end <= wasm.len())
+            .ok_or_else(|| Diagnostic::new("truncated section in emitted Wasm"))?;
+        if id == 10 {
+            let count = read_u32_leb(wasm, &mut cursor)? as usize;
+            let mut bodies = Vec::with_capacity(count);
+            for _ in 0..count {
+                let body_len = read_u32_leb(wasm, &mut cursor)? as usize;
+                let body_end = cursor
+                    .checked_add(body_len)
+                    .filter(|end| *end <= section_end)
+                    .ok_or_else(|| Diagnostic::new("truncated function body in emitted Wasm"))?;
+                bodies.push(wasm[cursor..body_end].to_vec());
+                cursor = body_end;
+            }
+            if cursor != section_end {
+                return Err(Diagnostic::new(
+                    "unexpected trailing bytes in Wasm code section",
+                ));
+            }
+            return Ok(CodeImage {
+                prefix: wasm[..section_start].to_vec(),
+                bodies,
+                suffix: wasm[section_end..].to_vec(),
+            });
+        }
+        cursor = section_end;
+    }
+    Err(Diagnostic::new("emitted Wasm has no code section"))
 }
 
 fn should_export_function(name: &str) -> bool {

@@ -2152,9 +2152,40 @@ fn resolve_expr_implicit_self(
 fn annotate_resolved_extern_members(
     program: &mut Program,
     fn_signatures: &HashMap<String, FnSignature>,
+    reusable: &[bool],
 ) -> Result<(), Diagnostic> {
-    for function in &mut program.functions {
-        annotate_function_resolved_members(function, fn_signatures)?;
+    let workers = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZeroUsize::get)
+        .min(program.functions.len().max(1));
+    let chunk_size = program.functions.len().max(1).div_ceil(workers);
+    let results = std::thread::scope(|scope| {
+        let handles = program
+            .functions
+            .chunks_mut(chunk_size)
+            .zip(reusable.chunks(chunk_size))
+            .map(|(chunk, reusable)| {
+                scope.spawn(move || {
+                    chunk
+                        .iter_mut()
+                        .zip(reusable)
+                        .map(|(function, reusable)| {
+                            if *reusable {
+                                Ok(())
+                            } else {
+                                annotate_function_resolved_members(function, fn_signatures)
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().expect("HIR member worker panicked"))
+            .collect::<Vec<_>>()
+    });
+    for result in results {
+        result?;
     }
     if let Some(export) = &mut program.export {
         annotate_expr_resolved_members(export, &HashMap::new(), fn_signatures, &HashSet::new())?;
@@ -3005,14 +3036,79 @@ pub fn type_check_and_infer(program: &Program) -> Result<Program, Diagnostic> {
     type_check_and_infer_collect(program).map_err(|mut errors| errors.remove(0))
 }
 
+#[derive(Default)]
+pub struct TypeCheckCache {
+    prepared: Option<Program>,
+    typed: Option<Program>,
+    reused_functions: usize,
+    changed_functions: Vec<usize>,
+}
+
+impl TypeCheckCache {
+    pub fn reused_function_count(&self) -> usize {
+        self.reused_functions
+    }
+
+    pub fn changed_functions(&self) -> &[usize] {
+        &self.changed_functions
+    }
+}
+
+fn incremental_context_matches(current: &Program, previous: &Program) -> bool {
+    current.declared_imports == previous.declared_imports
+        && current.declared_constants == previous.declared_constants
+        && current.type_declarations == previous.type_declarations
+        && current.top_level == previous.top_level
+        && current.export == previous.export
+        && current.entry_file_path == previous.entry_file_path
+        && current.functions.len() == previous.functions.len()
+        && current
+            .functions
+            .iter()
+            .zip(&previous.functions)
+            .all(|(current, previous)| {
+                current.name == previous.name
+                    && current.type_params == previous.type_params
+                    && current.params == previous.params
+                    && current.vararg == previous.vararg
+                    && current.return_type == previous.return_type
+                    && current.file_path == previous.file_path
+            })
+}
+
 /// Type check, collecting a diagnostic per independently-failing function or
 /// statement instead of stopping at the first. Whole-program phases (type
 /// resolution, desugaring, signature construction) remain fail-fast; the
 /// per-function inference and checking passes collect and continue.
 pub fn type_check_and_infer_collect(program: &Program) -> Result<Program, Vec<Diagnostic>> {
+    type_check_and_infer_collect_inner(program, None).map(|(typed, _)| typed)
+}
+
+pub fn type_check_and_infer_collect_cached<'a>(
+    program: &Program,
+    cache: &'a mut TypeCheckCache,
+) -> Result<(&'a Program, &'a [usize]), Vec<Diagnostic>> {
+    let (typed, prepared) = type_check_and_infer_collect_inner(program, Some(cache))?;
+    if let Some(prepared) = prepared {
+        cache.prepared = Some(prepared);
+    }
+    cache.typed = Some(typed);
+    Ok((
+        cache.typed.as_ref().expect("cached typed program"),
+        &cache.changed_functions,
+    ))
+}
+
+fn type_check_and_infer_collect_inner(
+    program: &Program,
+    mut cache: Option<&mut TypeCheckCache>,
+) -> Result<(Program, Option<Program>), Vec<Diagnostic>> {
+    let started = std::time::Instant::now();
     let mut typed = desugar_method_declarations(program).map_err(|error| vec![error])?;
     desugar_implicit_top_level_declarations(&mut typed);
+    let desugared_at = started.elapsed();
     resolve_program_types(&mut typed).map_err(|error| vec![error])?;
+    let types_at = started.elapsed();
     let overload_sets =
         disambiguate_declared_import_overloads(&mut typed).map_err(|error| vec![error])?;
     fill_gsub_replacement_annotations(&mut typed);
@@ -3035,6 +3131,56 @@ pub fn type_check_and_infer_collect(program: &Program) -> Result<Program, Vec<Di
             file_path: typed.entry_file_path.clone(),
         });
     }
+
+    let mut prepared = None;
+    let mut reusable = vec![false; typed.functions.len()];
+    let reusable_from_cache = cache.as_deref().and_then(|cache| {
+        let previous_prepared = cache.prepared.as_ref()?;
+        let previous_typed = cache.typed.as_ref()?;
+        if !incremental_context_matches(&typed, previous_prepared) {
+            return None;
+        }
+        let reusable = typed
+            .functions
+            .iter()
+            .zip(&previous_prepared.functions)
+            .map(|(current, previous)| current == previous)
+            .collect::<Vec<_>>();
+        typed
+            .functions
+            .iter()
+            .zip(&previous_prepared.functions)
+            .all(|(current, previous)| current == previous || current.return_type.is_some())
+            .then_some((reusable, previous_typed.functions.len()))
+    });
+    if let Some((cached_reusable, cached_function_count)) = reusable_from_cache
+        && cached_function_count == typed.functions.len()
+    {
+        reusable = cached_reusable;
+        let cache = cache.as_deref_mut().expect("HIR cache");
+        let mut cached_typed = cache.typed.take().expect("cached typed program");
+        let previous_prepared = cache.prepared.as_mut().expect("cached prepared program");
+        for (index, is_reusable) in reusable.iter().copied().enumerate() {
+            if !is_reusable {
+                previous_prepared.functions[index] = typed.functions[index].clone();
+                cached_typed.functions[index] = typed.functions[index].clone();
+            }
+        }
+        previous_prepared.sources = typed.sources.clone();
+        cached_typed.sources = typed.sources.clone();
+        typed = cached_typed;
+    } else if cache.is_some() {
+        prepared = Some(typed.clone());
+    }
+    if let Some(cache) = cache {
+        cache.reused_functions = reusable.iter().filter(|reused| **reused).count();
+        cache.changed_functions = reusable
+            .iter()
+            .enumerate()
+            .filter_map(|(index, reused)| (!reused).then_some(index))
+            .collect();
+    }
+    let reused_at = started.elapsed();
 
     let mut fn_signatures: HashMap<String, FnSignature> = HashMap::new();
     for declared in &typed.declared_imports {
@@ -3192,39 +3338,129 @@ pub fn type_check_and_infer_collect(program: &Program) -> Result<Program, Vec<Di
         }
     }
 
-    for function in &typed.functions {
-        if errored_functions.contains(&function.name.to_string()) {
-            continue;
-        }
-        errors.extend(
-            statements::check_function_collect(function, &fn_signatures, &HashSet::new())
-                .into_iter()
-                .map(|error| error.with_file_path_if_missing(function.file_path.clone())),
-        );
-    }
+    let prepared_at = started.elapsed();
+
+    let workers = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZeroUsize::get)
+        .min(typed.functions.len().max(1));
+    let chunk_size = typed.functions.len().max(1).div_ceil(workers);
+    let checked_errors = std::thread::scope(|scope| {
+        let handles = typed
+            .functions
+            .chunks(chunk_size)
+            .zip(reusable.chunks(chunk_size))
+            .map(|(chunk, reusable)| {
+                let errored_functions = &errored_functions;
+                let fn_signatures = &fn_signatures;
+                scope.spawn(move || {
+                    let mut diagnostics = Vec::new();
+                    for (function, reusable) in chunk.iter().zip(reusable) {
+                        if *reusable {
+                            continue;
+                        }
+                        if errored_functions.contains(&function.name.to_string()) {
+                            continue;
+                        }
+                        diagnostics.extend(
+                            statements::check_function_collect(
+                                function,
+                                fn_signatures,
+                                &HashSet::new(),
+                            )
+                            .into_iter()
+                            .map(|error| {
+                                error.with_file_path_if_missing(function.file_path.clone())
+                            }),
+                        );
+                    }
+                    diagnostics
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().expect("HIR checking worker panicked"))
+            .collect::<Vec<_>>()
+    });
+    errors.extend(checked_errors);
     if !errors.is_empty() {
         return Err(errors);
     }
 
-    for function in &mut typed.functions {
-        let mut scope = function
-            .params
-            .iter()
-            .map(|param| {
-                (
-                    param.name.clone(),
-                    binding_for(param.ty.clone(), Rebindability::Const),
-                )
+    let checked = started.elapsed();
+
+    let inferred_results = std::thread::scope(|scope| {
+        let handles = typed
+            .functions
+            .chunks_mut(chunk_size)
+            .zip(reusable.chunks(chunk_size))
+            .map(|(chunk, reusable)| {
+                let fn_signatures = &fn_signatures;
+                scope.spawn(move || {
+                    chunk
+                        .iter_mut()
+                        .zip(reusable)
+                        .map(|(function, reusable)| {
+                            if *reusable {
+                                return Ok(());
+                            }
+                            let mut vars = function
+                                .params
+                                .iter()
+                                .map(|param| {
+                                    (
+                                        param.name.clone(),
+                                        binding_for(param.ty.clone(), Rebindability::Const),
+                                    )
+                                })
+                                .collect::<HashMap<_, _>>();
+                            let active = active_type_param_set(&function.type_params);
+                            annotate_inferred_stmt_locals(
+                                &mut function.body,
+                                &mut vars,
+                                fn_signatures,
+                                &active,
+                            )
+                            .map_err(|error| {
+                                error.with_file_path_if_missing(function.file_path.clone())
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
             })
-            .collect::<HashMap<_, _>>();
-        let active = active_type_param_set(&function.type_params);
-        annotate_inferred_stmt_locals(&mut function.body, &mut scope, &fn_signatures, &active)
-            .map_err(|error| vec![error.with_file_path_if_missing(function.file_path.clone())])?;
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().expect("HIR inference worker panicked"))
+            .collect::<Vec<_>>()
+    });
+    for result in inferred_results {
+        result.map_err(|error| vec![error])?;
     }
 
-    annotate_resolved_extern_members(&mut typed, &fn_signatures).map_err(|error| vec![error])?;
+    let inferred = started.elapsed();
 
-    Ok(typed)
+    annotate_resolved_extern_members(&mut typed, &fn_signatures, &reusable)
+        .map_err(|error| vec![error])?;
+
+    if std::env::var_os("WALUAU_TIMINGS").is_some() {
+        eprintln!(
+            "waluau hir timings: prepare={:?} check={:?} inferred={:?} members={:?}",
+            prepared_at,
+            checked - prepared_at,
+            inferred - checked,
+            started.elapsed() - inferred,
+        );
+        eprintln!(
+            "waluau hir prepare detail: desugar={:?} types={:?} clone+reuse={:?} signatures={:?}",
+            desugared_at,
+            types_at - desugared_at,
+            reused_at - types_at,
+            prepared_at - reused_at,
+        );
+    }
+
+    Ok((typed, prepared))
 }
 
 #[cfg(test)]
