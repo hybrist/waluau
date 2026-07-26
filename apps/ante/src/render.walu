@@ -248,6 +248,16 @@ const WARD_ASH_START: f64 = 0.64
 const WARD_ASH_END: f64 = 0.97
 const WARD_ASH_RATE: f64 = 44.0
 
+-- Grave dust, in motes per second: thrown while the raised ward is still
+-- climbing out, then a trickle for as long as it stands. A raise is a
+-- persistent condition, so the aperture keeps breathing rather than leaving a
+-- ring of motes hanging in the air where the climb happened to stop.
+const GRAVE_DUST_RISING_RATE: f64 = 72.0
+const GRAVE_DUST_IDLE_RATE: f64 = 13.0
+-- A formation reading below zero means no ward is raised: the aperture is shut
+-- and whatever it last threw finishes settling.
+const NO_GRAVE: f64 = -1.0
+
 -- The three outcomes a resolved breach can have. The help legend draws the
 -- same orbs from these, so a colour only ever means one thing on screen.
 const ORB_ROBBERS_EDGE: string = "#cffafe"
@@ -409,6 +419,15 @@ type CardAsh = {
     ward_sheet: particles.ParticleSystem,
     ward_fall: particles.ParticleSystem
 }
+-- Everything a spell has in the air. `sparks` is the cast's own — the carrier's
+-- trail and the burst its landing threw — and belongs to the spell modules
+-- behind the launch seam. The grave dust is not a cast at all: it is the ward
+-- Raise Card left standing, shedding off the aperture it climbed out of for as
+-- long as the condition holds.
+type SpellParticles = {
+    sparks: spell_cast.Sparks,
+    grave_dust: particles.ParticleSystem
+}
 type Frame = {
     view: game.View,
     interaction: Interaction,
@@ -419,6 +438,7 @@ type Frame = {
     -- already shed is simulation state the frame reads, and the same state the
     -- update tick advanced.
     ash: CardAsh,
+    spells: SpellParticles,
     card_back: graphics_module.Texture?
 }
 
@@ -1380,6 +1400,81 @@ function power_settled_clock(): f64
         + FIREBALL_ASH_FADE_SECONDS
 end
 
+-- Dry earth off the mouth the raised ward climbs out of. Motes are born across
+-- the aperture, lift on the draught coming up out of it, wander, and settle
+-- out. Emitter coordinates are local to the aperture, so the same emitter draws
+-- correctly at whichever slot is raised.
+function new_grave_dust(): particles.ParticleSystem
+    local system: particles.ParticleSystem = particles.new(150)
+    system:set_seed(541)
+    system:set_emission_rate(0.0)
+    system:set_particle_lifetime(0.90, 2.20)
+    system:set_speed(10.0, 44.0)
+    -- Thrown up and out of the hole rather than in every direction. The climb
+    -- has to carry a mote across the card's own lower third: the button row is
+    -- drawn over the slot's bottom edge, so dust that only hangs at the
+    -- aperture is dust nobody sees.
+    system:set_direction(-math.pi * 0.5)
+    system:set_spread(math.pi * 1.05)
+    system:set_emission_area("ellipse", 40.0, 4.0, 0.0, false)
+    system:set_linear_acceleration(-10.0, -52.0, 10.0, -14.0)
+    system:set_linear_damping(0.5, 1.4)
+    system:set_sway_amplitude(1.2, 4.0)
+    system:set_sway_frequency(0.25, 0.7)
+    system:set_sizes({ 0.65, 1.0, 0.0 })
+    system:set_size_variation(0.8)
+    system:set_colors_hex({ "#c2bf8ecc", "#71704b99", "#4b4a2f00" })
+    system:set_color_variation(0.8)
+    system:set_shape_size(3.8, 3.8)
+    system:set_draw_mode("circle")
+    return system
+end
+
+-- One tick of the grave. The climb throws dust; a standing ward only trickles.
+function step_grave_dust(
+    system: particles.ParticleSystem,
+    formation: f64,
+    dt: f64
+): unit
+    if formation < 0.0 then
+        system:set_emission_rate(0.0)
+    elseif formation < 1.0 then
+        system:set_emission_rate(GRAVE_DUST_RISING_RATE)
+    else
+        system:set_emission_rate(GRAVE_DUST_IDLE_RATE)
+    end
+    system:update(dt)
+end
+
+function new_spell_particles(): SpellParticles
+    return {
+        sparks = spell_launch.new_sparks(),
+        grave_dust = new_grave_dust(),
+    }
+end
+
+-- One tick of everything a spell has in the air. The launch seam is given the
+-- target in board coordinates, which is the only thing the spell modules cannot
+-- work out for themselves; the grave reads the same formation the raised ward
+-- is drawn from.
+function step_spell_particles(
+    spells: SpellParticles,
+    kind: i32,
+    clock: f64,
+    target: i32,
+    dt: f64
+): unit
+    local slot: Point = slot_pos(SLOT_MIDDLE, target)
+    spell_launch.step(
+        spells.sparks, kind, clock, dt,
+        slot.x + CARD_W * 0.5, slot.y + CARD_H * 0.5)
+    local grave: f64 = NO_GRAVE
+    if kind == POWER_RAISE then
+        grave = power_formation(clock)
+    end
+    step_grave_dust(spells.grave_dust, grave, dt)
+end
+
 function draw_power_ellipse(
     graphics: Graphics,
     x: f64,
@@ -1621,7 +1716,8 @@ function draw_raise_card(
     colored: bool,
     known: bool,
     formation: f64,
-    clock: f64
+    clock: f64,
+    dust: particles.ParticleSystem
 ): unit
     local rise: f64 = ease_out_back(formation)
     local center_x: f64 = x + CARD_W * 0.5
@@ -1643,15 +1739,11 @@ function draw_raise_card(
         graphics, -CARD_W * 0.5, -CARD_H * 0.5,
         formation, clock)
     graphics:pop()
-    for dust = 0::i32, 7::i32 do
-        local spread: f64 = (burn_particles.hash(dust + 54, 1.0) - 0.5) * 100.0
-        graphics:set_color("#71704b88")
-        graphics:fill_circle(
-            center_x + spread * formation,
-            y + CARD_H + 4.0
-                - burn_particles.hash(dust + 54, 2.0) * 30.0 * formation,
-            1.0 + burn_particles.hash(dust + 54, 3.0) * 2.5)
-    end
+    -- The dust is drawn where the aperture is, but it is not a function of the
+    -- climb: the eight motes this replaced were a pure function of formation,
+    -- so they stopped dead the moment the ward finished rising and the ring
+    -- they froze in hung there for the rest of the heist.
+    dust:draw(graphics, center_x, y + CARD_H - 2.0)
 end
 
 -- Growth is literal cell division: the one full-size ward pinches into two
@@ -1729,7 +1821,8 @@ function draw_powered_card(
     known: bool,
     power_kind: i32,
     power_clock: f64,
-    ash: CardAsh
+    ash: CardAsh,
+    dust: particles.ParticleSystem
 ): unit
     local formation: f64 = power_formation(power_clock)
     if power_kind == POWER_FIREBALL then
@@ -1750,7 +1843,7 @@ function draw_powered_card(
     elseif power_kind == POWER_RAISE then
         draw_raise_card(
             graphics, effects, card_back, card, x, y,
-            selected, focused, colored, known, formation, power_clock)
+            selected, focused, colored, known, formation, power_clock, dust)
     elseif power_kind == POWER_GROWTH then
         draw_growth_card(
             graphics, effects, card_back, card, x, y,
@@ -1767,12 +1860,13 @@ function draw_spell_launch(
     effects: EffectShaders,
     kind: i32,
     clock: f64,
-    target: i32
+    target: i32,
+    sparks: spell_cast.Sparks
 ): unit
     local slot: Point = slot_pos(SLOT_MIDDLE, target)
     spell_launch.draw(
         graphics, effects, kind, clock,
-        slot.x + CARD_W * 0.5, slot.y + CARD_H * 0.5)
+        slot.x + CARD_W * 0.5, slot.y + CARD_H * 0.5, sparks)
 end
 
 function trick_scoring(trick: game.Trick): {bool}
@@ -1881,7 +1975,7 @@ function draw_resolution_board(
                     graphics, effects, card_back, trick.middle[i],
                     slot.x, slot.y, false, false, false,
                     trick.winner ~= 0 and scoring[i], false,
-                    power_kind, power_clock, frame.ash)
+                    power_kind, power_clock, frame.ash, frame.spells.grave_dust)
             else
                 draw_card(graphics, effects, card_back, trick.middle[i], slot.x, slot.y, false, false, false, trick.winner ~= 0 and scoring[i], false)
             end
@@ -1936,7 +2030,8 @@ function draw_resolution_board(
                 draw_powered_card(
                     graphics, effects, card_back, trick.middle[i],
                     slot.x, slot.y, false, false, false,
-                    scoring[i], false, power_kind, power_clock, frame.ash)
+                    scoring[i], false, power_kind, power_clock,
+                    frame.ash, frame.spells.grave_dust)
             else
                 draw_card(graphics, effects, card_back, trick.middle[i], slot.x, slot.y, false, false, false, scoring[i], false)
             end
@@ -1966,7 +2061,8 @@ function draw_resolution_board(
     end
     if foreground then graphics:pop() end
     draw_spell_launch(
-        graphics, effects, power_kind, power_clock, frame.spell.target)
+        graphics, effects, power_kind, power_clock, frame.spell.target,
+        frame.spells.sparks)
 end
 
 -- One relic of the fan, unless a card bound for that slot is still in flight.
@@ -2041,7 +2137,7 @@ function draw_playfield(graphics: Graphics, effects: EffectShaders, frame: Frame
                     graphics, effects, card_back, state.middle[i],
                     slot.x, slot.y,
                     selected, focused, false, false, false,
-                    power_kind, power_clock, frame.ash)
+                    power_kind, power_clock, frame.ash, frame.spells.grave_dust)
             else
                 draw_card(graphics, effects, card_back, state.middle[i], slot.x, slot.y, selected, focused, false, false, false)
             end
@@ -2085,7 +2181,8 @@ function draw_playfield(graphics: Graphics, effects: EffectShaders, frame: Frame
     draw_footer(graphics, state)
     draw_anims(graphics, effects, card_back, anims, anim_clock)
     draw_spell_launch(
-        graphics, effects, power_kind, power_clock, frame.spell.target)
+        graphics, effects, power_kind, power_clock, frame.spell.target,
+        frame.spells.sparks)
 end
 
 function modal_shell(graphics: Graphics, title: string, subtitle: string): unit
@@ -2279,4 +2376,9 @@ return {
     step_reveal_ash = step_reveal_ash,
     step_ward_ash = step_ward_ash,
     fireball_formation = fireball_formation,
+    -- A spell's own emitters, on the same terms: choreography holds them and
+    -- ticks them, and everything about how they look, where the carrier is, and
+    -- where the board puts the target lives on this side.
+    new_spell_particles = new_spell_particles,
+    step_spell_particles = step_spell_particles,
 }

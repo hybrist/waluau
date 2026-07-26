@@ -2,15 +2,33 @@
 -- cast record; individual spell modules only decide how their own travel and
 -- impact look.
 local engine = require("waluau:engine")
+local particles = require("waluau:engine/particles")
+local effect_shaders = require("./effect_shaders")
+local burn_particles = require("./burn_particles")
 
 type Graphics = engine.Graphics
+type EffectShaders = effect_shaders.EffectShaders
 type Point = { x: f64, y: f64 }
-type Cast = { clock: f64, progress: f64, impact: f64, origin: Point, target: Point }
+-- `impact` is gone with the rays it keyed. A landing is now one emission and a
+-- crowd of sparks living out their own lifetimes, so nothing reads a scalar
+-- saying how far through the impact the whole burst is.
+type Cast = { clock: f64, progress: f64, origin: Point, target: Point }
+-- The live particles a cast owns. These are simulations rather than settings:
+-- they hold the sparks and embers currently in the air, so they are advanced
+-- once per tick beside the clock that released them and are never written to a
+-- snapshot. The burst is shared by all four spells because only one spell is
+-- ever in flight; the trail belongs to the one carrier that leaves one.
+type Sparks = { trail: particles.ParticleSystem, burst: particles.ParticleSystem }
 
 const TRAVEL_SECONDS: f64 = 0.62
-const IMPACT_SECONDS: f64 = 0.34
 const ORIGIN_X: f64 = 30.0
 const ORIGIN_Y: f64 = 548.0
+-- Sparks thrown by one landing. Every spell throws the same number; only the
+-- ink changes.
+const BURST_SPARKS: i32 = 34
+-- The noise seed the burn shader shapes a spark with. It is the seed the
+-- Firebolt burst has always used, and it is unrelated to the emitter's own RNG.
+const BURST_SHADER_SEED: i32 = 1049
 
 function clamp(value: f64): f64
     if value < 0.0 then
@@ -26,7 +44,6 @@ function new(clock: f64, target_x: f64, target_y: f64): Cast
     return {
         clock = clock,
         progress = clamp(clock / TRAVEL_SECONDS),
-        impact = (clock - TRAVEL_SECONDS) / IMPACT_SECONDS,
         origin = { x = ORIGIN_X, y = ORIGIN_Y },
         target = { x = target_x, y = target_y }
     }
@@ -76,22 +93,80 @@ function draw_ellipse(
     graphics:pop()
 end
 
-function draw_radial_impact(graphics: Graphics, cast: Cast, color: string): unit
-    local impact: f64 = cast.impact
-    if impact <= 0.0 or impact >= 1.0 then
+-- One landing throws one burst. Sparks leave the rim of a small ring in every
+-- direction, each with its own speed, length of life and place on the ink
+-- curve, and radial damping stops them where their own throw ran out. The rays
+-- this replaced were eight fixed spokes advancing and fading together off a
+-- single impact reading, which is why every spell's landing looked the same.
+function new_burst(seed: i32): particles.ParticleSystem
+    local system: particles.ParticleSystem = particles.new(BURST_SPARKS + 6)
+    system:set_seed(seed)
+    system:set_emission_rate(0.0)
+    -- The window is roughly the one the fixed rays advanced over, so the
+    -- landing still reads as a beat rather than a flicker — but a spark now
+    -- spends it on its own schedule.
+    system:set_particle_lifetime(0.22, 0.62)
+    system:set_speed(150.0, 520.0)
+    system:set_spread(math.pi * 2.0)
+    -- Sparks are thrown, not fired: damping is what turns each throw into its
+    -- own reach, and a little weight keeps the burst from reading as a wheel.
+    system:set_linear_damping(2.6, 5.2)
+    system:set_linear_acceleration(0.0, 90.0, 0.0, 340.0)
+    system:set_emission_area("borderellipse", 7.0, 7.0, 0.0, false)
+    system:set_sizes({ 1.0, 0.72, 0.0 })
+    system:set_size_variation(0.7)
+    system:set_relative_rotation(true)
+    system:set_shape_size(34.0, 7.0)
+    -- The strike is light: the sparks add to whatever they cross rather than
+    -- painting over it, which is what keeps them legible on a frosted or a
+    -- burning card alike.
+    system:set_blend_mode("add")
+    return system
+end
+
+-- `arriving` is true on the one frame a carrier crosses into its target. Every
+-- other frame only advances what is already in the air.
+function step_burst(
+    system: particles.ParticleSystem,
+    arriving: bool,
+    x: f64,
+    y: f64,
+    color: string,
+    dt: f64
+): unit
+    if arriving then
+        -- White at the strike, the caster's own ink through the throw, gone at
+        -- the end. Each spark walks its own stretch of that band.
+        system:set_colors_hex({ "#ffffff", color, color .. "00" })
+        system:set_color_variation(0.55)
+        system:set_position(x, y)
+        system:emit(BURST_SPARKS)
+    end
+    system:update(dt)
+end
+
+-- The burn shader's particle branch tears every quad into a soft shard, so a
+-- spark never shows the rectangle it is drawn from. `ember` asks for its hot
+-- core, which belongs to fire and not to ice, rot, or growth. A missing
+-- optional program falls back to plain streaks rather than to nothing.
+function draw_burst(
+    graphics: Graphics,
+    effects: EffectShaders,
+    system: particles.ParticleSystem,
+    ember: bool
+): unit
+    if system:count() == 0 then
         return
     end
-    graphics:set_color(color)
-    graphics:set_line_width(3.0 * (1.0 - impact) + 0.7)
-    for ray = 0::i32, 7::i32 do
-        local angle: f64 = (ray::f64) * math.pi * 0.25
-        local length: f64 = 18.0 + impact * 42.0
-        graphics:line(
-            cast.target.x + math.cos(angle) * 9.0,
-            cast.target.y + math.sin(angle) * 9.0,
-            cast.target.x + math.cos(angle) * length,
-            cast.target.y + math.sin(angle) * length
-        )
+    local shader_ok: bool = burn_particles.use(
+        graphics, effects, BURST_SHADER_SEED, ember)
+    if not shader_ok then
+        burn_particles.stop(graphics)
+    end
+    system:set_draw_mode("spark")
+    system:draw(graphics, 0.0, 0.0)
+    if shader_ok then
+        burn_particles.stop(graphics)
     end
 end
 
@@ -100,5 +175,7 @@ return {
     new = new,
     at = at,
     draw_ellipse = draw_ellipse,
-    draw_radial_impact = draw_radial_impact
+    new_burst = new_burst,
+    step_burst = step_burst,
+    draw_burst = draw_burst
 }

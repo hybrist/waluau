@@ -22,7 +22,6 @@ function draw(graphics: Graphics, effects: EffectShaders, cast: spell_cast.Cast)
             )
         end
     end
-    spell_cast.draw_radial_impact(graphics, cast, "#a3e635")
 end
 
 return { draw = draw }

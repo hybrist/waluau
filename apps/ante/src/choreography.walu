@@ -26,6 +26,11 @@ type State = {
     -- currently in the air, which is why they are advanced every tick beside
     -- the clocks that release them and are never written to a snapshot.
     ash: render.CardAsh,
+    -- The same again for what a spell has in the air: the carrier's trail, the
+    -- burst its landing threw, and the dust off a raised ward's grave. Live
+    -- simulations, ticked beside the clock that releases them, never
+    -- snapshotted.
+    spells: render.SpellParticles,
     discards: {game.Card},
     computer_won: {game.Card},
     player_won: {game.Card}
@@ -92,6 +97,7 @@ function new(): State
         power_clock = 0.0,
         power_target = 0,
         ash = render.new_card_ash(),
+        spells = render.new_spell_particles(),
         discards = {},
         computer_won = {},
         player_won = {},
@@ -129,6 +135,7 @@ function reset(state: State): unit
     state.power_clock = fresh.power_clock
     state.power_target = fresh.power_target
     state.ash = fresh.ash
+    state.spells = fresh.spells
     state.discards = fresh.discards
     state.computer_won = fresh.computer_won
     state.player_won = fresh.player_won
@@ -145,9 +152,14 @@ function apply_power(state: State, kind: i32, target: i32): unit
     state.power_clock = 0.0
     state.power_target = target
     -- A new condition starts its ward's burn from nothing; whatever the last
-    -- one left in the air belongs to a card that is no longer there.
+    -- one left in the air belongs to a card that is no longer there. The same
+    -- holds for the last cast's trail and burst, and for the dust off a grave
+    -- that is no longer open.
     state.ash.ward_sheet:reset()
     state.ash.ward_fall:reset()
+    state.spells.sparks.trail:reset()
+    state.spells.sparks.burst:reset()
+    state.spells.grave_dust:reset()
 end
 
 -- Both of a burning ward's falls run off one reading of its burn.
@@ -160,14 +172,15 @@ end
 -- finished burning, or -1 when no rules mutation is due this frame. Clearing
 -- the condition at that boundary lets the replacement card render intact.
 --
--- The ash tick is deliberately outside that decision. It reads the clock this
--- function has already advanced and never touches power_kind, power_clock, or
--- the returned ward, so the rules boundary fires on exactly the frame it
--- always did — a visual emitter must not be able to move when a card is
--- replaced.
+-- The particle ticks are deliberately outside that decision. They read the
+-- clock this function has already advanced and never touch power_kind,
+-- power_clock, or the returned ward, so the rules boundary fires on exactly the
+-- frame it always did — a visual emitter must not be able to move when a card
+-- is replaced.
 function update_power(state: State, dt: f64): i32
     if state.power_kind == 0 then
         tick_ward_ash(state, NOT_BURNING, dt)
+        render.step_spell_particles(state.spells, 0, 0.0, state.power_target, dt)
         return -1
     end
     state.power_clock += dt
@@ -176,6 +189,8 @@ function update_power(state: State, dt: f64): i32
         burning = render.fireball_formation(state.power_clock)
     end
     tick_ward_ash(state, burning, dt)
+    render.step_spell_particles(
+        state.spells, state.power_kind, state.power_clock, state.power_target, dt)
     if state.power_kind == game.spell_firebolt
         and render.firebolt_burn_finished(state.power_clock)
     then
@@ -782,6 +797,7 @@ function draw(
             target = state.power_target,
         },
         ash = state.ash,
+        spells = state.spells,
         card_back = card_back,
     })
 end

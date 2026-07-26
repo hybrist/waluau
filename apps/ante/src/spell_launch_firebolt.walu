@@ -1,6 +1,7 @@
 -- Firebolt's carrier and impact. Changes to ember shape, shader use, or burst
 -- timing stay in this module and cannot conflict with the other spells.
 local engine = require("waluau:engine")
+local particles = require("waluau:engine/particles")
 local effect_shaders = require("./effect_shaders")
 local burn_particles = require("./burn_particles")
 local spell_cast = require("./spell_cast")
@@ -8,66 +9,99 @@ local spell_cast = require("./spell_cast")
 type Graphics = engine.Graphics
 type EffectShaders = effect_shaders.EffectShaders
 
-function draw(graphics: Graphics, effects: EffectShaders, cast: spell_cast.Cast): unit
-    if cast.progress < 1.0 then
+-- Embers per second while the bolt is in the air. The emitter is moved rather
+-- than teleported, so this rate is spread along the path travelled since the
+-- last update and the trail stays a stroke instead of a row of clumps.
+const TRAIL_RATE: f64 = 210.0
+-- A flight reading below zero means no bolt is in the air. The emitter goes
+-- quiet on it while the embers it already shed finish burning out.
+const NOT_FLYING: f64 = -1.0
+
+-- Embers the bolt sheds behind it. They leave the flame at their own speed,
+-- lift on the draft the bolt drags, slow, and go out — so the trail lags the
+-- head, spreads as it ages, and outlives the landing instead of being a rigid
+-- string of quads pinned to the flight path.
+function new_trail(): particles.ParticleSystem
+    local system: particles.ParticleSystem = particles.new(240)
+    system:set_seed(913)
+    system:set_emission_rate(0.0)
+    system:set_particle_lifetime(0.20, 0.52)
+    system:set_speed(8.0, 46.0)
+    system:set_spread(math.pi * 2.0)
+    -- Hot air rises and the ember is losing its throw the whole way.
+    system:set_linear_acceleration(-26.0, -150.0, 26.0, -34.0)
+    system:set_linear_damping(2.6, 5.2)
+    system:set_sizes({ 1.0, 0.78, 0.34, 0.0 })
+    system:set_size_variation(0.72)
+    system:set_rotation(0.0, math.pi * 2.0)
+    system:set_spin(-3.4, 3.4)
+    system:set_spin_variation(1.0)
+    system:set_colors_hex({ "#fff3c4", "#f97316", "#7f1d1d00" })
+    system:set_color_variation(0.85)
+    system:set_shape_size(15.0, 9.0)
+    system:set_blend_mode("add")
+    return system
+end
+
+-- One tick of the trail. `flight` is the carrier's progress, or NOT_FLYING
+-- when there is no bolt; `launching` is the first tick of a cast, where the
+-- emitter has to be placed rather than dragged so the new bolt does not stroke
+-- embers across the board from wherever the last one died.
+function step_trail(
+    system: particles.ParticleSystem,
+    flight: f64,
+    head_x: f64,
+    head_y: f64,
+    launching: bool,
+    dt: f64
+): unit
+    if flight >= 0.0 and flight < 1.0 then
+        if launching then
+            system:set_position(head_x, head_y)
+        else
+            system:move_to(head_x, head_y)
+        end
+        system:set_emission_rate(TRAIL_RATE)
+    else
+        system:set_emission_rate(0.0)
+    end
+    system:update(dt)
+end
+
+function draw(
+    graphics: Graphics,
+    effects: EffectShaders,
+    cast: spell_cast.Cast,
+    trail: particles.ParticleSystem
+): unit
+    -- The trail is drawn whatever the carrier is doing: its last embers are
+    -- still burning after the head has landed, and cutting them with the head
+    -- is exactly what the reconstruction could not avoid.
+    local flying: bool = cast.progress < 1.0
+    if not flying and trail:count() == 0 then
+        return
+    end
+    local embers_ok: bool = burn_particles.use(graphics, effects, 913, true)
+    if not embers_ok then
+        burn_particles.stop(graphics)
+    end
+    if trail:count() > 0 then
+        trail:set_draw_mode("square")
+        trail:draw(graphics, 0.0, 0.0)
+    end
+    if flying then
         local head: spell_cast.Point = spell_cast.at(cast, cast.progress)
-        local embers_ok: bool = burn_particles.use(graphics, effects, 913, true)
-        if not embers_ok then
-            burn_particles.stop(graphics)
-        end
-        for ember = 0::i32, 10::i32 do
-            local t: f64 = cast.progress - (ember::f64) * 0.032
-            if t > 0.0 then
-                local at: spell_cast.Point = spell_cast.at(cast, t)
-                local half: f64 = 5.5 - (ember::f64) * 0.35
-                burn_particles.draw(
-                    graphics,
-                    at.x - half * 0.4,
-                    at.y + (ember::f64) * 1.25,
-                    half * 3.6,
-                    half * 2.0,
-                    -0.55,
-                    "#f97316b0",
-                    embers_ok
-                )
-            end
-        end
         burn_particles.draw(graphics, head.x, head.y, 34.0, 22.0, -0.55, "#ef4444", embers_ok)
         burn_particles.draw(graphics, head.x + 3.0, head.y, 20.0, 10.0, -0.55, "#fff7d6", embers_ok)
-        if embers_ok then
-            burn_particles.stop(graphics)
-        end
     end
-
-    if cast.impact > 0.0 and cast.impact < 1.0 then
-        local sparks_ok: bool = burn_particles.use(graphics, effects, 1049, true)
-        if not sparks_ok then
-            burn_particles.stop(graphics)
-        end
-        for spark = 0::i32, 13::i32 do
-            local angle: f64 = (spark::f64) * math.pi * 2.0 / 14.0 + burn_particles.hash(
-                spark + 119,
-                2.0
-            ) * 0.18
-            local inner: f64 = 8.0 + cast.impact * 18.0
-            local outer: f64 = inner + 12.0 + burn_particles.hash(spark + 119, 3.0) * 28.0
-            local width: f64 = 3.0 + (1.0 - cast.impact) * 4.5
-            local middle: f64 = (inner + outer) * 0.5
-            burn_particles.draw(
-                graphics,
-                cast.target.x + math.cos(angle) * middle,
-                cast.target.y + math.sin(angle) * middle,
-                outer - inner,
-                width,
-                angle,
-                "#fb923c" .. burn_particles.alpha(cast.impact),
-                sparks_ok
-            )
-        end
-        if sparks_ok then
-            burn_particles.stop(graphics)
-        end
+    if embers_ok then
+        burn_particles.stop(graphics)
     end
 end
 
-return { draw = draw }
+return {
+    not_flying = NOT_FLYING,
+    new_trail = new_trail,
+    step_trail = step_trail,
+    draw = draw
+}
