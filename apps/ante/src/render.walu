@@ -1320,8 +1320,14 @@ end
 
 function draw_hand_disintegration(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, index: i32, part: f64, count: i32, progress: f64, seed: i32, ash: particles.ParticleSystem): unit
     local slot: Point = hand_pos_at(index, part, count)
-    local target: graphics_module.RenderTarget? = capture_card_face(
-        graphics, effects, card_back, card, false, false)
+    -- Past full burn there is no sheet left to capture, only the last flakes
+    -- falling — and they fall inside the relic's own tilt, the way they did
+    -- while it was still there.
+    local target: graphics_module.RenderTarget? = nil
+    if progress < 1.0 then
+        target = capture_card_face(
+            graphics, effects, card_back, card, false, false)
+    end
     graphics:push()
     graphics:translate(slot.x + CARD_W * 0.5, slot.y + CARD_H * 0.5)
     graphics:rotate(hand_angle_at(index, part, count))
