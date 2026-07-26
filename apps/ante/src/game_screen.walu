@@ -58,7 +58,14 @@ function update(state: State, dt: f64): i32
     local presentation: choreography.State = state.presentation
     local animating: bool = choreography.is_animating(presentation)
     choreography.update_fan(presentation, flow.fan_focus(ui, animating), dt)
-    choreography.update_power(presentation, dt)
+    local burned_ward: i32 = choreography.update_power(presentation, dt)
+    if burned_ward >= 0 then
+        local discarded: game.Card? = state.rules:resolve_firebolt(burned_ward)
+        if discarded ~= nil then
+            choreography.record_firebolt_discard(
+                presentation, discarded::game.Card)
+        end
+    end
     if ui.revealing then
         return choreography.update_reveal(presentation, dt)
     end
@@ -166,6 +173,11 @@ function keypressed(state: State, key: string): i32
     local rules: game.State = state.rules
     local presentation: choreography.State = state.presentation
     if key == "m" or key == "M" then return ACTION_EXIT end
+    -- Keep the struck ward stable until Firebolt's burn commits its discard
+    -- and replacement. Other spell conditions are persistent and do not lock
+    -- the board, but advancing the turn during this one-shot effect could make
+    -- its target name a newly dealt ward instead of the card the bolt hit.
+    if choreography.firebolt_pending(presentation) then return ACTION_NONE end
     if key == "1" then
         if ui.modal ~= flow.modal_none or ui.revealing or rules:is_finished() then
             return ACTION_NONE
@@ -280,6 +292,7 @@ end
 
 function mousepressed(state: State, x: f64, y: f64, button: i32): unit
     if button ~= 1 then return end
+    if choreography.firebolt_pending(state.presentation) then return end
     if consume_gate(state, flow.command_primary) then return end
 
     local ui: flow.State = state.ui

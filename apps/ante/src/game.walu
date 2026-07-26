@@ -67,8 +67,9 @@ const MAX_ROUNDS: i32 = 5
 const ARCH_MAGE_WINS_TO_END: i32 = 3
 const HAND_SIZE: i32 = 5
 const BOSS_HAND_SIZE: i32 = 11
--- The four starting spells, in menu order. The rules own gameplay state such
--- as frozen wards; presentation owns their launch and card treatments.
+-- The four starting spells, in menu order. Presentation owns their launch and
+-- card treatments; rules own gameplay state such as frozen wards and Firebolt
+-- replacing a destroyed ward.
 const SPELL_FIREBOLT: i32 = 1
 const SPELL_FREEZE_RAY: i32 = 2
 const SPELL_RAISE_CARD: i32 = 3
@@ -901,6 +902,18 @@ function State:cast_spell(ward: i32): bool
     self.player_points -= SPELL_COST
     if self.spell == SPELL_FREEZE_RAY then self.frozen_middle[ward] = true end
     return true
+end
+
+-- Finish Firebolt's board effect after presentation has burned the targeted
+-- ward away. The discarded card is returned to the screen choreography,
+-- which owns the neutral discard-pile ledger; the replacement is immediately
+-- part of the live rules state and comes off the same sealed deck as a deal.
+function State:resolve_firebolt(target: i32): Card?
+    if self.finished or self.spell ~= SPELL_FIREBOLT then return nil end
+    if target < 0 or target >= #self.middle or #self.deck == 0 then return nil end
+    local discarded: Card = self.middle[target]
+    self.middle[target] = draw(self.deck)
+    return discarded
 end
 
 function State:last_trick(): Trick?

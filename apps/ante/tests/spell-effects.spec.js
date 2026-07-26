@@ -19,12 +19,16 @@ test('casts the chosen spell at a targeted ward for mana', async ({ page }) => {
   await page.keyboard.press('Escape');
   await expect.poll(() => frameSignature(canvas)).toBe(baseline);
 
-  // Aiming at the middle ward and confirming launches the persistent burn
-  // effect there and deducts 5 mana, so the board never returns to baseline.
+  // Aiming at the middle ward and confirming burns it. Once the burn finishes,
+  // the replacement, discard pile, deck count, and spent mana settle to a new
+  // still frame rather than leaving the old persistent burn running forever.
   await page.keyboard.press('1');
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('Enter');
-  await page.waitForTimeout(1_500);
-  expect(await frameSignature(canvas)).not.toBe(baseline);
+  await page.waitForTimeout(2_500);
+  const resolved = await frameSignature(canvas);
+  expect(resolved).not.toBe(baseline);
+  await page.waitForTimeout(300);
+  expect(await frameSignature(canvas)).toBe(resolved);
   expect(pageErrors).toEqual([]);
 });

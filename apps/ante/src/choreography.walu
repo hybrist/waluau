@@ -120,7 +120,8 @@ end
 
 -- Spell treatments mirror the rules-owned gameplay state: kinds 1-4 replace
 -- the prior visible condition and restart the launch toward it; kind zero
--- clears the condition entirely.
+-- clears the condition entirely. update_power reports a timed rules transition
+-- when Firebolt's visual burn lands.
 function apply_power(state: State, kind: i32, target: i32): unit
     if kind < 0 or kind > 4 then return end
     if target < 0 or target > 2 then return end
@@ -129,9 +130,29 @@ function apply_power(state: State, kind: i32, target: i32): unit
     state.power_target = target
 end
 
-function update_power(state: State, dt: f64): unit
-    if state.power_kind == 0 then return end
+-- Advance a spell condition and return the ward whose Firebolt has just
+-- finished burning, or -1 when no rules mutation is due this frame. Clearing
+-- the condition at that boundary lets the replacement card render intact.
+function update_power(state: State, dt: f64): i32
+    if state.power_kind == 0 then return -1 end
     state.power_clock += dt
+    if state.power_kind == game.spell_firebolt
+        and render.firebolt_burn_finished(state.power_clock)
+    then
+        local target: i32 = state.power_target
+        state.power_kind = 0
+        state.power_clock = 0.0
+        return target
+    end
+    return -1
+end
+
+function firebolt_pending(state: State): bool
+    return state.power_kind == game.spell_firebolt
+end
+
+function record_firebolt_discard(state: State, card: game.Card): unit
+    table.insert(state.discards, card)
 end
 
 function apply_hand_order(state: State, order: {i32}): unit
@@ -682,6 +703,8 @@ return {
     reveal_finished = reveal_finished,
     apply_power = apply_power,
     update_power = update_power,
+    firebolt_pending = firebolt_pending,
+    record_firebolt_discard = record_firebolt_discard,
     apply_hand_order = apply_hand_order,
     reveal_flip_cues = reveal_flip_cues,
     opening_deal = opening_deal,
