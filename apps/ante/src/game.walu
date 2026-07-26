@@ -27,7 +27,8 @@ type Trick = { round: i32, middle: {Card}, frozen_middle: {bool}, player_hand: {
 -- breach and the fifth breach is fought from a three-card hand.
 -- `spell` is the starting spell the robbers chose before the heist (one of the
 -- SPELL_* kinds); `player_points` is their mana, both the wager stake and the
--- resource each cast burns.
+-- resource each cast burns. Mana is dealt in rather than fixed, so a run can
+-- hand one vault what the previous one left standing.
 type State = { deck: {Card}, player_hand: {HandSlot}, computer_hand: {HandSlot}, middle: {Card}, frozen_middle: {bool}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool, boss: bool, spell: i32 }
 type View = {
     deck_count: i32,
@@ -67,6 +68,9 @@ const MAX_ROUNDS: i32 = 5
 const ARCH_MAGE_WINS_TO_END: i32 = 3
 const HAND_SIZE: i32 = 5
 const BOSS_HAND_SIZE: i32 = 11
+-- The mana a heist is fought with when nothing carried into it. A run hands
+-- the next vault whatever the last one left standing instead.
+const STARTING_MANA: i32 = 10
 -- The four starting spells, in menu order. Presentation owns their launch and
 -- card treatments; rules own gameplay state such as frozen wards and Firebolt
 -- replacing a destroyed ward.
@@ -802,7 +806,7 @@ function restore(snapshot_value: string): State?
     return restored
 end
 
-function new(boss: bool, spell: i32): State
+function new(boss: bool, spell: i32, mana: i32): State
     local deck: {Card} = make_deck()
     shuffle(deck)
     local state: State = {
@@ -813,7 +817,7 @@ function new(boss: bool, spell: i32): State
         frozen_middle = { false, false, false },
         history = {},
         round = 1,
-        player_points = 10,
+        player_points = mana,
         player_tricks = 0,
         computer_tricks = 0,
         last_player_value = 0,
@@ -861,6 +865,21 @@ end
 
 function State:is_finished(): bool
     return self.finished
+end
+
+-- The verdict of a finished heist, asked the same way of live rules and of a
+-- board view: the Arch Mage ends the heist by holding three wards, and any
+-- other finish means the vault opened.
+function held_by_arch_mage(computer_tricks: i32): bool
+    return computer_tricks >= ARCH_MAGE_WINS_TO_END
+end
+
+function State:is_victory(): bool
+    return self.finished and not held_by_arch_mage(self.computer_tricks)
+end
+
+function view_cleared(view: View): bool
+    return view.finished and not held_by_arch_mage(view.computer_tricks)
 end
 
 function State:is_boss(): bool
@@ -954,11 +973,12 @@ function view_side(view: View, owner: i32): {HandSlot}
     return view.computer_hand
 end
 
--- Start over as the given variant: the mode and starting spell are arguments
--- rather than carried-over fields so a restart can also be a mode or spell
--- switch from the menu.
-function State:reset(boss: bool, spell: i32): unit
-    local fresh: State = new(boss, spell)
+-- Start over as the given variant: the mode, starting spell, and opening mana
+-- are arguments rather than carried-over fields so the next deal can also be a
+-- mode or spell switch from the menu, or the next vault of a run fought with
+-- the mana the last one left.
+function State:reset(boss: bool, spell: i32, mana: i32): unit
+    local fresh: State = new(boss, spell, mana)
     self.boss = fresh.boss
     self.spell = fresh.spell
     self.deck = fresh.deck
@@ -1099,6 +1119,7 @@ end
 return {
     new = new,
     view = view,
+    view_cleared = view_cleared,
     view_side = view_side,
     trick_side = trick_side,
     hand_cards = hand_cards,
@@ -1122,4 +1143,5 @@ return {
     spell_raise_card = SPELL_RAISE_CARD,
     spell_clone = SPELL_CLONE,
     spell_cost = SPELL_COST,
+    starting_mana = STARTING_MANA,
 }

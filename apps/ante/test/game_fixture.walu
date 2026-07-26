@@ -54,6 +54,13 @@ function set_player_points(state: game.State, points: i32): unit
     state.player_points = points
 end
 
+-- Force a finished heist holding the given number of wards for the Arch Mage,
+-- so run-level tests reach a verdict without playing five breaches out.
+function finish(state: game.State, computer_tricks: i32): unit
+    state.finished = true
+    state.computer_tricks = computer_tricks
+end
+
 function set_swap_trace(
     state: game.State,
     hand_indices: {i32},
@@ -69,4 +76,5 @@ return {
     arrange_player = arrange_player,
     set_player_points = set_player_points,
     set_swap_trace = set_swap_trace,
+    finish = finish,
 }

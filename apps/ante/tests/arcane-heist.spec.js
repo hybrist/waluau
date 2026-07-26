@@ -29,7 +29,7 @@ function countMenuTitleInk(canvas) {
   });
 }
 
-test('boots to a menu with new game, boss battle, and how to play options', async ({ page }) => {
+test('boots to a menu with new run, boss rush, and how to play options', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const canvas = await openGame(page);
@@ -38,7 +38,7 @@ test('boots to a menu with new game, boss battle, and how to play options', asyn
     .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
     .toBeGreaterThan(300);
 
-  // HOW TO PLAY (below NEW GAME and BOSS BATTLE) opens the shared help modal,
+  // HOW TO PLAY (below NEW RUN and BOSS RUSH) opens the shared help modal,
   // which covers the title band; Escape returns to the option list.
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('ArrowDown');
@@ -51,8 +51,8 @@ test('boots to a menu with new game, boss battle, and how to play options', asyn
     .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
     .toBeGreaterThan(300);
 
-  // Clicking the NEW GAME option opens the starting-spell list; the same
-  // top-row spot now names FIREBOLT, and clicking it starts the heist. M
+  // Clicking the NEW RUN option opens the starting-spell list; the same
+  // top-row spot now names FIREBOLT, and clicking it starts the run. M
   // returns to the menu.
   const box = await canvas.boundingBox();
   await page.mouse.click(box.x + box.width * (480 / 960), box.y + box.height * (356 / 600));
@@ -67,14 +67,14 @@ test('boots to a menu with new game, boss battle, and how to play options', asyn
   expect(pageErrors).toEqual([]);
 });
 
-test('starts a boss battle from its menu option', async ({ page }) => {
+test('starts a boss rush from its menu option', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const canvas = await openGame(page);
 
-  // BOSS BATTLE sits directly under NEW GAME; Enter on it opens the spell
-  // list, and a second Enter deals the eleven-card variant, whose board
-  // still shows the sealed draw pile.
+  // BOSS RUSH sits directly under NEW RUN; Enter on it opens the spell list,
+  // and a second Enter deals the first vault as the eleven-card variant,
+  // whose board still shows the sealed draw pile.
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
   await page.keyboard.press('Enter');
@@ -213,6 +213,110 @@ test('stops on the fatal audio diagnostic when the flip sound cannot load', asyn
   await expect
     .poll(countFatalPanelInk, { timeout: GAME_READY_TIMEOUT })
     .toBeGreaterThan(5000);
+});
+
+// Amber ink in the PASS capsule, which is drawn for exactly as long as the
+// feint is open. It is how these tests tell the two halves of a breach apart
+// without reaching into game state. Only the capsule's right half is sampled:
+// the breach phase writes its own amber prompt across the band, and that
+// prompt stops short of where the capsule ends.
+function countPassInk(canvas) {
+  return canvas.evaluate((node) => {
+    const gl = node.getContext('webgl2');
+    const left = Math.round(node.width * 0.612);
+    const width = Math.round(node.width * 0.042);
+    // readPixels counts up from the bottom; the capsule sits at 412..438 of
+    // the 600-tall board.
+    const bottom = Math.round(node.height * 0.27);
+    const height = Math.round(node.height * 0.044);
+    const pixels = new Uint8Array(width * height * 4);
+    gl.readPixels(left, bottom, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    let count = 0;
+    for (let index = 0; index < pixels.length; index += 4) {
+      if (
+        Math.abs(pixels[index] - 251) <= 40
+        && Math.abs(pixels[index + 1] - 191) <= 40
+        && Math.abs(pixels[index + 2] - 36) <= 60
+      ) count += 1;
+    }
+    return count;
+  });
+}
+
+const PRESS_MS = 200;
+const REVEAL_MS = 600;
+const CLEANUP_MS = 1600;
+
+// Two consecutive identical frames: the board has finished whatever it was
+// animating and the next press will mean what it says rather than being spent
+// skipping ahead.
+async function settleBoard(canvas) {
+  let previous = -1;
+  await expect
+    .poll(async () => {
+      const current = await frameSignature(canvas);
+      const stable = current === previous;
+      previous = current;
+      return stable;
+    }, { timeout: GAME_READY_TIMEOUT })
+    .toBe(true);
+}
+
+// One breach played to its end: pass the feint, bind two relics, commit them,
+// cut the reveal short, and clear it. The last press either refills for the
+// next breach or raises the vault's verdict, depending on whether that breach
+// ended the heist.
+//
+// Presses land only between animations, so passing keeps asking until the
+// capsule is gone; a P that arrives mid-animation is spent skipping it, and
+// one that arrives after the feint closed does nothing.
+async function playBreach(page, canvas) {
+  await expect
+    .poll(async () => {
+      await page.keyboard.press('p');
+      await page.waitForTimeout(PRESS_MS);
+      return countPassInk(canvas);
+    }, { timeout: GAME_READY_TIMEOUT })
+    .toBeLessThan(10);
+
+  await settleBoard(canvas);
+  await page.keyboard.press('Space');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Space');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(REVEAL_MS);
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(REVEAL_MS);
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(CLEANUP_MS);
+}
+
+test('carries the run into the next vault once this one is settled', async ({ page }) => {
+  test.slow();
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  const canvas = await openGame(page);
+
+  await beginHeist(page, canvas);
+
+  // The verdict modal replaces the playfield, so the sealed draw pile stops
+  // being drawn: no card-back ink means this vault has been settled, whether
+  // the robbers took it or the Arch Mage held it.
+  for (let breach = 1; breach <= 8; breach += 1) {
+    if (await countCardBackInk(canvas) < 10) break;
+    await playBreach(page, canvas);
+  }
+  await expect
+    .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
+    .toBeLessThan(10);
+
+  // A settled vault is a moment in the run rather than the end of play: the
+  // next press deals the vault the run moved to, sealed draw pile and all.
+  await page.keyboard.press('Enter');
+  await expect
+    .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
+    .toBeGreaterThan(40);
+  expect(pageErrors).toEqual([]);
 });
 
 test('plays a complete Arcane Heist game through the 2D engine', async ({ page }) => {

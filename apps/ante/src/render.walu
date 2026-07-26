@@ -393,6 +393,17 @@ type Interaction = {
     revealing: bool,
     casting: bool
 }
+-- The run behind the live board, as the renderer needs it: which vault of the
+-- sequence this is, how many the robbers have already taken, whether this one
+-- and the next are boss battles, and the mana the run carried in. Read-only —
+-- the run module owns every one of these.
+type RunView = {
+    vault: i32,
+    cleared: i32,
+    boss: bool,
+    next_is_boss: bool,
+    carried_mana: i32
+}
 type Motion = {
     fan_parts: {f64},
     reveal_clock: f64,
@@ -434,6 +445,7 @@ type SpellParticles = {
 }
 type Frame = {
     view: game.View,
+    run: RunView,
     interaction: Interaction,
     motion: Motion,
     piles: Piles,
@@ -1111,8 +1123,26 @@ function draw_round_orbs(graphics: Graphics, state: game.View): unit
     end
 end
 
-function draw_hud(graphics: Graphics, state: game.View): unit
+-- The run marker under the title: which vault of the sequence the robbers are
+-- standing in, how many they have already taken, and whether this is one of
+-- the boss battles the run lands on every third vault. Boss vaults wear the
+-- warning ink so the shrinking fan is never a surprise.
+function draw_run_marker(graphics: Graphics, run: RunView): unit
+    -- Spaces rather than a dash: the vault font has no em dash glyph, so a
+    -- separator written as one renders as a gap anyway.
+    local label: string = "VAULT " .. tostring(run.vault)
+    local ink: string = "#155e75"
+    if run.boss then
+        label = label .. "   BOSS"
+        ink = "#b45309"
+    end
+    text(graphics, label .. "   CLEARED " .. tostring(run.cleared),
+        32.0, 64.0, 9, ink)
+end
+
+function draw_hud(graphics: Graphics, state: game.View, run: RunView): unit
     text(graphics, "ARCANE HEIST", 32.0, 47.0, 22, "#fbbf24")
+    draw_run_marker(graphics, run)
     draw_round_orbs(graphics, state)
     local score: string = tostring(state.player_points)
     graphics:set_font("22px monospace")
@@ -2000,7 +2030,7 @@ function draw_resolution_board(
     -- trick's layout even though a boss battle's live hands have already
     -- shrunk underneath it.
     local hand_count: i32 = #trick.player_hand
-    draw_hud(graphics, state)
+    draw_hud(graphics, state, frame.run)
     draw_deck(graphics, effects, card_back, state.deck_count)
     local scoring: {bool} = trick_scoring(trick)
     -- Flight progress for the winner's two cards; a stalemate has no winner,
@@ -2203,7 +2233,7 @@ function draw_playfield(graphics: Graphics, effects: EffectShaders, frame: Frame
         draw_resolution_board(graphics, effects, frame)
         return
     end
-    draw_hud(graphics, state)
+    draw_hud(graphics, state, frame.run)
     draw_deck(graphics, effects, card_back, state.deck_count)
     draw_piles(graphics, effects,
         discards, pile_landed(discards, anims, anim_clock, SLOT_ASIDE),
@@ -2299,8 +2329,10 @@ end
 
 function draw_help(graphics: Graphics, effects: EffectShaders): unit
     -- "Three ward holds" read as though a stalemate counted; only breaches the
-    -- Arch Mage actually wins end the run early.
-    modal_shell(graphics, "THE JOB", "SURVIVE FIVE BREACHES. THREE ARCH MAGE WINS END THE HEIST")
+    -- Arch Mage actually wins end the vault early.
+    modal_shell(
+        graphics, "THE JOB",
+        "SURVIVE FIVE BREACHES PER VAULT. THREE ARCH MAGE WINS END THE RUN")
     -- Four equal school tiles form one row centred on the modal. Each dark
     -- field uses that school's live shader before its ordinary sigil and name
     -- are drawn on top, so the help legend demonstrates both halves of the
@@ -2338,7 +2370,7 @@ function draw_help(graphics: Graphics, effects: EffectShaders): unit
     text(graphics, "EACH CARD RISKS 1 MANA. PRESS P TO PASS.", 126.0, 318.0, 11, "#d4d4d8")
     text(graphics, "2. BREACH", 126.0, 356.0, 16, "#67e8f9")
     text(graphics, "BIND 2 RELICS. THE STRONGEST FIVE-SIGIL FORMATION WINS.", 126.0, 382.0, 11, "#d4d4d8")
-    text(graphics, "LATER BREACHES ARE WORTH MORE MANA.", 126.0, 404.0, 11, "#d4d4d8")
+    text(graphics, "LATER BREACHES ARE WORTH MORE MANA. IT CARRIES TO THE NEXT VAULT.", 126.0, 404.0, 11, "#d4d4d8")
     draw_orb(graphics, 133.0, 436.0, ORB_ROBBERS_EDGE, ORB_ROBBERS_FILL, true)
     text(graphics, "WIN", 148.0, 440.0, 11, "#d4d4d8")
     draw_orb(graphics, 225.0, 436.0, ORB_ARCH_MAGE_EDGE, ORB_ARCH_MAGE_FILL, true)
@@ -2368,18 +2400,35 @@ function draw_history(graphics: Graphics, state: game.View): unit
     end
 end
 
-function draw_final(graphics: Graphics, state: game.View): unit
-    local title: string = "THE VAULT IS YOURS"
-    local subtitle: string = "FIVE BREACHES COMPLETE"
-    if state.computer_tricks >= 3 then
-        title = "THE ARCH MAGE PREVAILS"
-        subtitle = "THREE WARDS HELD. THE HEIST IS OVER"
+-- The verdict of the vault just fought, read as a moment in the run. Taking it
+-- is an intermission — the mana on the table is the stake the next vault opens
+-- with — while losing it is where the whole run stops.
+function draw_final(graphics: Graphics, state: game.View, run: RunView): unit
+    local cleared: bool = game.view_cleared(state)
+    if not cleared then
+        modal_shell(
+            graphics, "THE RUN ENDS",
+            "THE ARCH MAGE HELD VAULT " .. tostring(run.vault)
+                .. ". THE CARRIED MANA GOES WITH IT")
+        text_centered(graphics, "VAULTS TAKEN", WIDTH * 0.5, 250.0, 18, "#67e8f9")
+        text_centered(graphics, tostring(run.cleared), WIDTH * 0.5, 325.0, 44, "#f8fafc")
+    else
+        modal_shell(
+            graphics, "VAULT " .. tostring(run.vault) .. " IS YOURS",
+            "FIVE BREACHES COMPLETE. THE RUN GOES ON")
+        text_centered(graphics, "MANA CARRIED ON", WIDTH * 0.5, 250.0, 18, "#67e8f9")
+        text_centered(graphics, tostring(state.player_points), WIDTH * 0.5, 325.0, 44, "#f8fafc")
     end
-    modal_shell(graphics, title, subtitle)
-    text_centered(graphics, "MANA STOLEN", WIDTH * 0.5, 250.0, 18, "#67e8f9")
-    text_centered(graphics, tostring(state.player_points), WIDTH * 0.5, 325.0, 44, "#f8fafc")
     text_centered(graphics, "BREACHES WON " .. tostring(state.player_tricks) .. " / 5", WIDTH * 0.5, 376.0, 13, "#d4d4d8")
-    text_centered(graphics, "R OR CLICK RESTARTS   H OPENS THE LEDGER   M RETURNS TO MENU", WIDTH * 0.5, 482.0, 12, "#fbbf24")
+    if cleared then
+        local ahead: string = "NEXT: VAULT " .. tostring(run.vault + 1)
+        if run.next_is_boss then ahead = ahead .. "   BOSS BATTLE" end
+        text_centered(graphics, ahead, WIDTH * 0.5, 424.0, 13, "#fbbf24")
+        text_centered(graphics, "ENTER OR CLICK ENTERS IT   H OPENS THE LEDGER", WIDTH * 0.5, 482.0, 12, "#fbbf24")
+    else
+        text_centered(graphics, "ENTER OR CLICK STARTS A NEW RUN   H OPENS THE LEDGER", WIDTH * 0.5, 482.0, 12, "#fbbf24")
+    end
+    text_centered(graphics, "R RESTARTS THE RUN   M RETURNS TO MENU", WIDTH * 0.5, 508.0, 12, "#8a8a92")
 end
 
 function draw(graphics: Graphics, effects: EffectShaders, frame: Frame): unit
@@ -2392,11 +2441,11 @@ function draw(graphics: Graphics, effects: EffectShaders, frame: Frame): unit
     if not state.finished or revealing then
         draw_playfield(graphics, effects, frame)
     else
-        draw_hud(graphics, state)
+        draw_hud(graphics, state, frame.run)
     end
     if modal == MODAL_HISTORY then draw_history(graphics, state)
     elseif modal == MODAL_HELP then draw_help(graphics, effects)
-    elseif modal == MODAL_FINAL then draw_final(graphics, state) end
+    elseif modal == MODAL_FINAL then draw_final(graphics, state, frame.run) end
 end
 
 function draw_shader_error(graphics: Graphics, detail: string): unit

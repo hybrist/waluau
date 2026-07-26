@@ -10,7 +10,9 @@ local game_screen = require("./game_screen")
 local snapshot_data = require("./snapshot")
 local presentation_resources = require("./presentation_resources")
 
-const HOT_SNAPSHOT_SCHEMA: string = "ante-hmr-v2"
+const HOT_SNAPSHOT_SCHEMA: string = "ante-hmr-v3"
+-- The live screen marker plus the heist screen's four sections.
+const HOT_SNAPSHOT_SECTIONS: i32 = 5
 
 const SCREEN_MENU: i32 = 0
 const SCREEN_GAME: i32 = 1
@@ -35,17 +37,18 @@ function install_arcane_heist(): unit
     end
 
     -- The begin gesture doubles as the browser audio unlock. No reseed: the
-    -- host seeds math.random per instance, so each heist deals a different
-    -- shuffle. sim.test.walu pins its own seeds. `boss` is the menu's choice
-    -- between the standard five-card heist and the boss battle variant;
-    -- `spell` is the starting spell picked on the menu's second list.
-    local function begin_heist(boss: bool, spell: i32): unit
+    -- host seeds math.random per instance, so each run deals a different
+    -- shuffle. sim.test.walu pins its own seeds. `rush` is the menu's choice
+    -- between the standard run — where every third vault is a boss battle —
+    -- and the boss rush, where every vault is; `spell` is the starting spell
+    -- picked on the menu's second list and carried for the whole run.
+    local function begin_run(rush: bool, spell: i32): unit
         if not presentation_resources.unlock_audio(assets) then return end
-        game_screen.reset(heist, boss, spell)
+        game_screen.reset(heist, rush, spell)
         screen = SCREEN_GAME
     end
 
-    local function leave_heist(): unit
+    local function leave_run(): unit
         menu.reset(menu_state)
         screen = SCREEN_MENU
     end
@@ -71,9 +74,9 @@ function install_arcane_heist(): unit
 
     local function menu_action(action: i32): unit
         if action == menu.action_start then
-            begin_heist(false, menu.selected_spell(menu_state))
-        elseif action == menu.action_start_boss then
-            begin_heist(true, menu.selected_spell(menu_state))
+            begin_run(false, menu.selected_spell(menu_state))
+        elseif action == menu.action_boss_rush then
+            begin_run(true, menu.selected_spell(menu_state))
         end
     end
 
@@ -84,7 +87,7 @@ function install_arcane_heist(): unit
             return
         end
         if game_screen.keypressed(heist, key) == game_screen.action_exit then
-            leave_heist()
+            leave_run()
         end
     end
 
@@ -126,18 +129,15 @@ function install_arcane_heist(): unit
 
     hot.register({
         snapshot = function(): string
-            local sections: {string} = game_screen.snapshot(heist)
-            return snapshot_data.frame4(
-                HOT_SNAPSHOT_SCHEMA,
-                tostring(screen),
-                sections[0],
-                sections[1],
-                sections[2]
-            )
+            local sections: {string} = { tostring(screen) }
+            for section in game_screen.snapshot(heist) do
+                table.insert(sections, section)
+            end
+            return snapshot_data.frame(HOT_SNAPSHOT_SCHEMA, sections)
         end,
         restore = function(snapshot_value: string): bool
-            local sections: {string}? = snapshot_data.unframe4(
-                snapshot_value, HOT_SNAPSHOT_SCHEMA)
+            local sections: {string}? = snapshot_data.unframe(
+                snapshot_value, HOT_SNAPSHOT_SCHEMA, HOT_SNAPSHOT_SECTIONS)
             if sections == nil then return false end
             local payloads: {string} = sections::{string}
             local screen_token: f64? = tonumber(payloads[0])
@@ -147,7 +147,7 @@ function install_arcane_heist(): unit
                 return false
             end
             local restored: game_screen.State? = game_screen.restore(
-                payloads[1], payloads[2], payloads[3])
+                payloads[1], payloads[2], payloads[3], payloads[4])
             if restored == nil then return false end
             heist = restored::game_screen.State
             menu.reset(menu_state)

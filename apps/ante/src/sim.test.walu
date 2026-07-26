@@ -4,6 +4,7 @@ require("waluau:vitest")
 
 local game = require("./game")
 local game_fixture = require("../test/game_fixture")
+local run = require("./run")
 local flow = require("./flow")
 local snapshot_data = require("./snapshot")
 
@@ -117,7 +118,7 @@ end)
 describe("Arcane Heist swaps", function()
     it("exchanges a winning proposal once without consuming the deck", function()
         math.randomseed(7)
-        local state = game.new(false, 1)
+        local state = game.new(false, 1, game.starting_mana)
         game_fixture.arrange_arch_mage(
             state,
             { card(10, 0), card(11, 0), card(12, 0) },
@@ -176,7 +177,7 @@ describe("Arcane Heist swaps", function()
 
     it("re-packs watched marks with the hand after a trick", function()
         math.randomseed(46)
-        local state = game.new(false, 1)
+        local state = game.new(false, 1, game.starting_mana)
         game_fixture.arrange_arch_mage(
             state,
             { card(10, 0), card(11, 0), card(12, 0) },
@@ -209,7 +210,7 @@ describe("Arcane Heist swaps", function()
 
     it("sorts relics and watched marks without mutating the deal", function()
         math.randomseed(48)
-        local state = game.new(false, 1)
+        local state = game.new(false, 1, game.starting_mana)
         game_fixture.arrange_player(
             state,
             { card(3, 2), card(14, 1), card(3, 1), card(9, 2), card(14, 3) },
@@ -264,7 +265,7 @@ describe("Arcane Heist swaps", function()
     end)
 
     it("uses proposed cards as the wager and rejects unaffordable proposals", function()
-        local two_card_state = game.new(false, 1)
+        local two_card_state = game.new(false, 1, game.starting_mana)
         game_fixture.arrange_arch_mage(
             two_card_state,
             { card(10, 0), card(11, 0), card(12, 0) },
@@ -275,7 +276,7 @@ describe("Arcane Heist swaps", function()
         expect(two_card_state.player_points):toBe(8)
         expect(two_card_state.pot):toBe(2)
 
-        local unaffordable_state = game.new(false, 1)
+        local unaffordable_state = game.new(false, 1, game.starting_mana)
         game_fixture.set_player_points(unaffordable_state, 1)
         unaffordable_state:resolve_swap({ 0, 1 }, { 0, 1 })
         expect(unaffordable_state.swap_open):toBe(true)
@@ -283,7 +284,7 @@ describe("Arcane Heist swaps", function()
     end)
 
     it("lets the Arch Mage make an unrestricted three-card feint", function()
-        local state = game.new(false, 1)
+        local state = game.new(false, 1, game.starting_mana)
         game_fixture.arrange_arch_mage(
             state,
             { card(2, 1), card(4, 2), card(6, 3) },
@@ -320,7 +321,7 @@ end)
 describe("Arcane Heist development snapshots", function()
     it("round-trips the complete rules state and rejects incompatible data", function()
         math.randomseed(49)
-        local state: game.State = game.new(false, 1)
+        local state: game.State = game.new(false, 1, game.starting_mana)
         state:resolve_swap({ 0 }, { 1 })
         force_player_win(state)
         state:play(0, 1)
@@ -344,29 +345,39 @@ describe("Arcane Heist development snapshots", function()
         expect(game.restore(encoded .. ",unexpected") == nil):toBe(true)
     end)
 
-    it("frames screen, rules, flow, and presentation payloads atomically", function()
-        local rules: game.State = game.new(false, 1)
+    it("frames screen, run, rules, flow, and presentation payloads atomically", function()
+        local run_state: run.State = run.new(game.spell_clone, false)
+        local rules: game.State = game.new(false, 1, game.starting_mana)
         local ui: flow.State = flow.new()
         ui.modal = flow.modal_help
 
         local encoded_flow: string = flow.snapshot(ui)
-        local framed: string = snapshot_data.frame4(
-            "ante-test-frame", "1", game.snapshot(rules), encoded_flow, "presentation")
-        local sections: {string}? = snapshot_data.unframe4(framed, "ante-test-frame")
+        local framed: string = snapshot_data.frame("ante-test-frame", {
+            "1",
+            run.snapshot(run_state),
+            game.snapshot(rules),
+            encoded_flow,
+            "presentation",
+        })
+        local sections: {string}? = snapshot_data.unframe(framed, "ante-test-frame", 5)
         expect(sections == nil):toBe(false)
         if sections ~= nil then
             local payloads: {string} = sections
             expect(payloads[0]):toBe("1")
-            local restored_rules: game.State? = game.restore(payloads[1])
-            local restored_ui: flow.State? = flow.restore(payloads[2])
+            local restored_run: run.State? = run.restore(payloads[1])
+            local restored_rules: game.State? = game.restore(payloads[2])
+            local restored_ui: flow.State? = flow.restore(payloads[3])
+            expect(restored_run == nil):toBe(false)
             expect(restored_rules == nil):toBe(false)
             expect(restored_ui == nil):toBe(false)
-            expect(payloads[3]):toBe("presentation")
+            expect(payloads[4]):toBe("presentation")
+            if restored_run ~= nil then expect(restored_run.spell):toBe(game.spell_clone) end
             if restored_ui ~= nil then expect(restored_ui.modal):toBe(flow.modal_help) end
         end
 
-        expect(snapshot_data.unframe4(framed, "wrong-schema") == nil):toBe(true)
-        expect(snapshot_data.unframe4(framed .. "|extra", "ante-test-frame") == nil):toBe(true)
+        expect(snapshot_data.unframe(framed, "wrong-schema", 5) == nil):toBe(true)
+        expect(snapshot_data.unframe(framed, "ante-test-frame", 4) == nil):toBe(true)
+        expect(snapshot_data.unframe(framed .. "|extra", "ante-test-frame", 5) == nil):toBe(true)
     end)
 end)
 
@@ -405,7 +416,7 @@ end)
 describe("Arcane Heist game flow", function()
     it("plays all five rounds after three player wins", function()
         math.randomseed(42)
-        local state = game.new(false, 1)
+        local state = game.new(false, 1, game.starting_mana)
         expect(#state.deck):toBe(39)
         expect(#state.middle):toBe(3)
         expect(state.player_points):toBe(10)
@@ -458,7 +469,7 @@ describe("Arcane Heist game flow", function()
 
     it("ends immediately on the Arch Mage's third win", function()
         math.randomseed(43)
-        local state = game.new(false, 1)
+        local state = game.new(false, 1, game.starting_mana)
         for expected_round = FIRST_ROUND, 3 do
             state:resolve_swap({}, {})
             force_computer_win(state)
@@ -478,7 +489,7 @@ describe("Arcane Heist game flow", function()
 
     it("keeps a stalemate open and refunds its wager", function()
         math.randomseed(44)
-        local state = game.new(false, 1)
+        local state = game.new(false, 1, game.starting_mana)
         state:resolve_swap({}, {})
         force_stalemate(state)
         local points: i32 = state.player_points
@@ -495,7 +506,7 @@ describe("Arcane Heist game flow", function()
 
     it("does not count a stalemate as a third Arch Mage hold", function()
         math.randomseed(45)
-        local state = game.new(false, 1)
+        local state = game.new(false, 1, game.starting_mana)
         for _ = 1, 2 do
             state:resolve_swap({}, {})
             force_computer_win(state)
@@ -530,7 +541,7 @@ end
 describe("Arcane Heist boss battle", function()
     it("deals eleven relics and never replaces a spent one", function()
         math.randomseed(50)
-        local state = game.new(true, 1)
+        local state = game.new(true, 1, game.starting_mana)
         expect(state.boss):toBe(true)
         expect(#state.deck):toBe(27)
         expect(#state.player_hand):toBe(11)
@@ -572,7 +583,7 @@ describe("Arcane Heist boss battle", function()
 
     it("keeps the standard game's five-card deal and replacements", function()
         math.randomseed(52)
-        local state = game.new(false, 1)
+        local state = game.new(false, 1, game.starting_mana)
         expect(state.boss):toBe(false)
         state:resolve_swap({}, {})
         force_player_win(state)
@@ -602,7 +613,7 @@ describe("Arcane Heist boss battle", function()
 
     it("round-trips the variant through development snapshots", function()
         math.randomseed(51)
-        local state = game.new(true, 1)
+        local state = game.new(true, 1, game.starting_mana)
         local encoded: string = game.snapshot(state)
         local restored: game.State? = game.restore(encoded)
         expect(restored == nil):toBe(false)
@@ -612,7 +623,7 @@ describe("Arcane Heist boss battle", function()
             expect(game.snapshot(restored)):toBe(encoded)
         end
 
-        local standard: game.State = game.new(false, 1)
+        local standard: game.State = game.new(false, 1, game.starting_mana)
         local restored_standard: game.State? = game.restore(game.snapshot(standard))
         expect(restored_standard == nil):toBe(false)
         if restored_standard ~= nil then
@@ -620,24 +631,26 @@ describe("Arcane Heist boss battle", function()
         end
     end)
 
-    it("restarts as the variant and spell the reset asks for", function()
+    it("restarts as the variant, spell, and mana the reset asks for", function()
         math.randomseed(53)
-        local state = game.new(false, game.spell_firebolt)
-        state:reset(true, game.spell_clone)
+        local state = game.new(false, game.spell_firebolt, game.starting_mana)
+        state:reset(true, game.spell_clone, 23)
         expect(state:is_boss()):toBe(true)
         expect(state:hand_size()):toBe(11)
         expect(state:spell_kind()):toBe(game.spell_clone)
-        state:reset(false, game.spell_freeze_ray)
+        expect(state:mana()):toBe(23)
+        state:reset(false, game.spell_freeze_ray, game.starting_mana)
         expect(state:is_boss()):toBe(false)
         expect(state:hand_size()):toBe(5)
         expect(state:spell_kind()):toBe(game.spell_freeze_ray)
+        expect(state:mana()):toBe(game.starting_mana)
     end)
 end)
 
 describe("Arcane Heist spell casting", function()
     it("charges five mana per accepted cast and refuses the rest", function()
         math.randomseed(57)
-        local state = game.new(false, game.spell_raise_card)
+        local state = game.new(false, game.spell_raise_card, game.starting_mana)
         expect(state:spell_kind()):toBe(game.spell_raise_card)
         expect(state:mana()):toBe(10)
         expect(state:can_cast()):toBe(true)
@@ -654,7 +667,7 @@ describe("Arcane Heist spell casting", function()
 
     it("keeps the chosen spell through development snapshots", function()
         math.randomseed(59)
-        local state = game.new(false, game.spell_freeze_ray)
+        local state = game.new(false, game.spell_freeze_ray, game.starting_mana)
         state:cast_spell(2)
         local restored: game.State? = game.restore(game.snapshot(state))
         expect(restored == nil):toBe(false)
@@ -665,7 +678,7 @@ describe("Arcane Heist spell casting", function()
     end)
 
     it("keeps frozen wards out of both sides' feints and thaws after resolution", function()
-        local state = game.new(false, game.spell_freeze_ray)
+        local state = game.new(false, game.spell_freeze_ray, game.starting_mana)
         game_fixture.arrange_arch_mage(
             state,
             { card(2, 1), card(4, 2), card(6, 3) },
@@ -691,7 +704,7 @@ describe("Arcane Heist spell casting", function()
 
     it("retains a ward frozen after the feint for exactly one more round", function()
         math.randomseed(61)
-        local state = game.new(false, game.spell_freeze_ray)
+        local state = game.new(false, game.spell_freeze_ray, game.starting_mana)
         state:resolve_swap({}, {})
         local retained = state.middle[1]
         local replaced_left = state.middle[0]
@@ -716,7 +729,7 @@ describe("Arcane Heist spell casting", function()
 
     it("replaces a Firebolt target from the deck and returns the burned card", function()
         math.randomseed(61)
-        local state = game.new(false, game.spell_firebolt)
+        local state = game.new(false, game.spell_firebolt, game.starting_mana)
         local deck_before: i32 = #state.deck
         local burned: game.Card = state.middle[1]
         local replacement: game.Card = state.deck[deck_before - 1]
@@ -735,7 +748,7 @@ describe("Arcane Heist spell casting", function()
 
     it("leaves the board unchanged for invalid Firebolt targets", function()
         math.randomseed(63)
-        local state = game.new(false, game.spell_firebolt)
+        local state = game.new(false, game.spell_firebolt, game.starting_mana)
         local before: string = game.snapshot(state)
 
         expect(state:resolve_firebolt(-1) == nil):toBe(true)

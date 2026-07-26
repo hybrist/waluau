@@ -4,9 +4,11 @@
 -- means (audio unlock, fresh deal, screen switch), so this module stays free
 -- of resource and rules concerns.
 --
--- Picking NEW GAME or BOSS BATTLE leads to a second list: the starting spell
--- the robbers bring on the job. Only confirming a spell emits a start action,
--- so the entry module always receives a complete mode-plus-spell choice.
+-- Picking NEW RUN or BOSS RUSH leads to a second list: the starting spell the
+-- robbers bring on the job. Only confirming a spell emits a start action, so
+-- the entry module always receives a complete mode-plus-spell choice. Both
+-- entries start a run — a sequence of vaults sharing one mana pool; they
+-- differ only in how often a vault is fought as a boss battle.
 
 local engine = require("waluau:engine")
 local render = require("./render")
@@ -18,22 +20,22 @@ type State = {
     cursor: i32,
     help_open: bool,
     stage: i32,
-    boss_choice: bool,
+    rush_choice: bool,
     spell_cursor: i32,
     city: menu_city.State
 }
 
 const ACTION_NONE: i32 = 0
 const ACTION_START: i32 = 1
-const ACTION_START_BOSS: i32 = 2
+const ACTION_START_RUSH: i32 = 2
 
 const WIDTH: f64 = 960.0
 
 const STAGE_MAIN: i32 = 0
 const STAGE_SPELL: i32 = 1
 
-const ITEM_NEW_GAME: i32 = 0
-const ITEM_BOSS_BATTLE: i32 = 1
+const ITEM_NEW_RUN: i32 = 0
+const ITEM_BOSS_RUSH: i32 = 1
 const ITEM_HOW_TO_PLAY: i32 = 2
 const ITEM_COUNT: i32 = 3
 const SPELL_COUNT: i32 = 4
@@ -46,10 +48,10 @@ const ITEM_PITCH: f64 = 60.0
 function new(): State
     return {
         clock = 0.0,
-        cursor = ITEM_NEW_GAME,
+        cursor = ITEM_NEW_RUN,
         help_open = false,
         stage = STAGE_MAIN,
-        boss_choice = false,
+        rush_choice = false,
         spell_cursor = 0,
         city = menu_city.new(math.random(2147483646)),
     }
@@ -57,10 +59,10 @@ end
 
 function reset(state: State): unit
     state.clock = 0.0
-    state.cursor = ITEM_NEW_GAME
+    state.cursor = ITEM_NEW_RUN
     state.help_open = false
     state.stage = STAGE_MAIN
-    state.boss_choice = false
+    state.rush_choice = false
     state.spell_cursor = 0
     menu_city.regenerate(state.city)
 end
@@ -94,13 +96,13 @@ function stage_item_count(state: State): i32
     return ITEM_COUNT
 end
 
--- Starting a heist — standard or boss battle — first routes through the
+-- Starting a run — standard cadence or boss rush — first routes through the
 -- spell list; HOW TO PLAY is presentation the menu can satisfy itself with
 -- the shared help modal.
 function activate(state: State, item: i32): i32
-    if item == ITEM_NEW_GAME or item == ITEM_BOSS_BATTLE then
+    if item == ITEM_NEW_RUN or item == ITEM_BOSS_RUSH then
         state.stage = STAGE_SPELL
-        state.boss_choice = item == ITEM_BOSS_BATTLE
+        state.rush_choice = item == ITEM_BOSS_RUSH
         -- The shared cursor now points into the spell list; keep it on the
         -- remembered spell so the halo and the eventual pick agree.
         state.cursor = state.spell_cursor
@@ -111,7 +113,7 @@ function activate(state: State, item: i32): i32
 end
 
 function start_action(state: State): i32
-    if state.boss_choice then return ACTION_START_BOSS end
+    if state.rush_choice then return ACTION_START_RUSH end
     return ACTION_START
 end
 
@@ -135,11 +137,13 @@ function draw_item(state: State, graphics: engine.Graphics, index: i32, label: s
 end
 
 function draw_spell_stage(state: State, graphics: engine.Graphics): unit
-    local mode: string = "NEW GAME"
-    if state.boss_choice then mode = "BOSS BATTLE" end
+    -- The pick lasts the whole run, not one vault, and the mana it burns is
+    -- the same pool the next vault inherits.
+    local mode: string = "NEW RUN"
+    if state.rush_choice then mode = "BOSS RUSH" end
     render.text_centered(graphics, "CHOOSE A STARTING SPELL", WIDTH * 0.5, 212.0, 30, "#fbbf24")
     render.text_centered(
-        graphics, mode .. " — EVERY CAST COSTS 5 MANA",
+        graphics, mode .. "   CARRIED ALL RUN, EVERY CAST COSTS 5 MANA",
         WIDTH * 0.5, 252.0, 12, "#d4d4d8")
     for spell = 0::i32, SPELL_COUNT - 1 do
         local kind: i32 = spell + 1
@@ -155,7 +159,7 @@ function draw_spell_stage(state: State, graphics: engine.Graphics): unit
 end
 
 -- `ready` reports whether the required flip sound has finished loading. The
--- menu accepts NEW GAME either way — the heist screen already waits for its
+-- menu accepts NEW RUN either way — the heist screen already waits for its
 -- resources — but says so instead of promising a start that visibly stalls.
 function draw(state: State, graphics: engine.Graphics, effects: render.EffectShaders, ready: bool): unit
     menu_city_render.draw(state.city, graphics, render.school_color(state.city.streak_suit))
@@ -169,7 +173,7 @@ function draw(state: State, graphics: engine.Graphics, effects: render.EffectSha
     end
     render.text_centered(graphics, "ARCANE HEIST", WIDTH * 0.5, 212.0, 52, "#fbbf24")
     render.text_centered(
-        graphics, "FIVE BREACHES STAND BETWEEN THE ROBBERS AND THE VAULT",
+        graphics, "VAULT AFTER VAULT ON ONE POOL OF MANA. FIVE BREACHES EACH",
         WIDTH * 0.5, 252.0, 12, "#d4d4d8")
     -- The four schools of magic as small mana motes under the title, in the
     -- same colours the footer legend uses in the vault.
@@ -178,14 +182,19 @@ function draw(state: State, graphics: engine.Graphics, effects: render.EffectSha
         graphics:fill_circle(WIDTH * 0.5 - 54.0 + (i::f64) * 36.0, 282.0, 6.0)
     end
 
-    draw_item(state, graphics, ITEM_NEW_GAME, "NEW GAME", "#8a8a92")
-    -- The boss battle deals eleven relics and never replaces a spent one;
-    -- the label carries the stakes without needing its own help screen.
-    draw_item(state, graphics, ITEM_BOSS_BATTLE, "BOSS BATTLE", "#8a8a92")
+    draw_item(state, graphics, ITEM_NEW_RUN, "NEW RUN", "#8a8a92")
+    -- A boss battle deals eleven relics and never replaces a spent one. The
+    -- standard run reaches one every third vault; the rush is nothing else.
+    -- Both labels carry the stakes without needing their own help screen.
+    draw_item(state, graphics, ITEM_BOSS_RUSH, "BOSS RUSH", "#8a8a92")
     draw_item(state, graphics, ITEM_HOW_TO_PLAY, "HOW TO PLAY", "#8a8a92")
-    if state.cursor == ITEM_BOSS_BATTLE then
+    if state.cursor == ITEM_NEW_RUN then
         render.text_centered(
-            graphics, "ELEVEN RELICS. NO REPLACEMENTS. THE FAN ONLY SHRINKS",
+            graphics, "EVERY THIRD VAULT IS A BOSS BATTLE. MANA CARRIES OVER",
+            WIDTH * 0.5, 502.0, 10, "#fbbf24")
+    elseif state.cursor == ITEM_BOSS_RUSH then
+        render.text_centered(
+            graphics, "EVERY VAULT A BOSS. ELEVEN RELICS, NO REPLACEMENTS",
             WIDTH * 0.5, 502.0, 10, "#fbbf24")
     elseif not ready then
         render.text_centered(
@@ -196,7 +205,7 @@ function draw(state: State, graphics: engine.Graphics, effects: render.EffectSha
         graphics, "ARROWS MOVE   ENTER OR CLICK SELECTS",
         WIDTH * 0.5, 524.0, 11, "#a1a1aa")
     render.text_centered(
-        graphics, "IN THE VAULT: ? HELP   H LEDGER   R RESTART   M MENU",
+        graphics, "IN THE VAULT: ? HELP   H LEDGER   R RESTART RUN   M MENU",
         WIDTH * 0.5, 548.0, 10, "#8a8a92")
 end
 
@@ -210,8 +219,8 @@ function keypressed(state: State, key: string): i32
     if state.stage == STAGE_SPELL then
         if key == "Escape" then
             state.stage = STAGE_MAIN
-            state.cursor = ITEM_NEW_GAME
-            if state.boss_choice then state.cursor = ITEM_BOSS_BATTLE end
+            state.cursor = ITEM_NEW_RUN
+            if state.rush_choice then state.cursor = ITEM_BOSS_RUSH end
             return ACTION_NONE
         end
         if key == "ArrowUp" or key == "w" or key == "W" then
@@ -284,5 +293,5 @@ return {
     selected_spell = selected_spell,
     action_none = ACTION_NONE,
     action_start = ACTION_START,
-    action_start_boss = ACTION_START_BOSS,
+    action_boss_rush = ACTION_START_RUSH,
 }
