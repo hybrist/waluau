@@ -19,7 +19,8 @@ const SCENE_WEATHER: i32 = 4
 const SCENE_VORTEX: i32 = 5
 const SCENE_TRAIL: i32 = 6
 const SCENE_SPRITES: i32 = 7
-const SCENE_COUNT: i32 = 8
+const SCENE_ASH: i32 = 8
+const SCENE_COUNT: i32 = 9
 
 -- Frames in the procedurally built spark atlas.
 const SPRITE_FRAMES: i32 = 4
@@ -450,6 +451,78 @@ function sprite_scene(): Scene
     }
 end
 
+function ash_scene(): Scene
+    -- Ash off a fire below the frame. Two settings carry the whole scene:
+    -- every flake rocks on its own phase as it settles, and every flake takes
+    -- its own ink off the soot-to-ash curve instead of the whole fall
+    -- changing tone together. Neither is expressible with the three
+    -- accelerations and a shared color curve.
+    local flakes: ParticleSystem = particles.new(600)
+    flakes:set_seed(16)
+    flakes:set_position(WIDTH * 0.5, -20.0)
+    flakes:set_emission_rate(90.0)
+    flakes:set_particle_lifetime(5.0, 8.0)
+    flakes:set_direction(math.pi * 0.5)
+    flakes:set_spread(0.25)
+    flakes:set_speed(40.0, 90.0)
+    flakes:set_linear_acceleration(-6.0, 16.0, 10.0, 42.0)
+    flakes:set_linear_damping(0.2, 0.6)
+    flakes:set_emission_area("uniform", WIDTH * 0.52, 6.0, 0.0, false)
+    -- Small flakes rock quickly, big ones swing wide and slow.
+    flakes:set_sway_amplitude(6.0, 30.0)
+    flakes:set_sway_frequency(0.2, 0.8)
+    flakes:set_sizes({ 0.9, 1.0, 0.7, 0.0 })
+    flakes:set_size_variation(0.8)
+    flakes:set_rotation(0.0, math.pi * 2.0)
+    flakes:set_spin(-1.4, 1.4)
+    flakes:set_spin_variation(1.0)
+    -- Soot through to bright ash: with variation the fall is a crowd of
+    -- different flakes, without it every flake at the same age is one tone.
+    flakes:set_colors_hex({ "#292524", "#57534e", "#a8a29e" })
+    flakes:set_color_variation(1.0)
+    flakes:set_shape_size(7.0, 10.0)
+    flakes:set_draw_mode("square")
+
+    -- Embers float back up through the fall on their own warm curve, swaying
+    -- wider and faster because there is less of them to move.
+    local embers: ParticleSystem = particles.new(180)
+    embers:set_seed(17)
+    embers:set_position(WIDTH * 0.5, HEIGHT + 20.0)
+    embers:set_emission_rate(26.0)
+    embers:set_particle_lifetime(2.6, 4.4)
+    embers:set_direction(-math.pi * 0.5)
+    embers:set_spread(0.35)
+    embers:set_speed(50.0, 110.0)
+    embers:set_linear_acceleration(-8.0, -26.0, 8.0, -6.0)
+    embers:set_linear_damping(0.5, 1.0)
+    embers:set_emission_area("uniform", WIDTH * 0.4, 8.0, 0.0, false)
+    embers:set_sway_amplitude(10.0, 34.0)
+    embers:set_sway_frequency(0.5, 1.4)
+    embers:set_sizes({ 0.0, 0.9, 0.6, 0.0 })
+    embers:set_size_variation(0.5)
+    embers:set_colors_hex({ "#fde68a", "#fb923c", "#dc2626" })
+    embers:set_color_variation(0.85)
+    embers:set_shape_size(9.0, 9.0)
+    embers:set_draw_mode("circle")
+    embers:set_blend_mode("add")
+
+    return {
+        kind = SCENE_ASH,
+        name = "Ash fall",
+        hint = "Sway with a phase per particle, and per-particle color variation",
+        background = "#0d0b0a",
+        systems = { flakes, embers },
+        clock = 0.0,
+        burst_timer = 0.0,
+        pointer_x = WIDTH * 0.5,
+        pointer_y = HEIGHT * 0.5,
+        pointer_seen = false,
+        texture = nil,
+        target = nil,
+        texture_failed = false,
+    }
+end
+
 function build(kind: i32): Scene
     if kind == SCENE_FOUNTAIN then
         return fountain_scene()
@@ -465,6 +538,8 @@ function build(kind: i32): Scene
         return trail_scene()
     elseif kind == SCENE_SPRITES then
         return sprite_scene()
+    elseif kind == SCENE_ASH then
+        return ash_scene()
     end
     return fire_scene()
 end
@@ -646,6 +721,13 @@ function Scene:draw(graphics: Graphics): unit
     elseif self.kind == SCENE_WEATHER then
         graphics:set_color("#131b28")
         graphics:fill_rectangle(0.0, HEIGHT * 0.88, WIDTH, HEIGHT * 0.12)
+    elseif self.kind == SCENE_ASH then
+        -- The fire the embers rise from is below the frame; only its glow on
+        -- the ground shows.
+        graphics:set_color("#1c1917")
+        graphics:fill_rectangle(0.0, HEIGHT * 0.9, WIDTH, HEIGHT * 0.1)
+        graphics:set_color("#7c2d12")
+        graphics:fill_rectangle(0.0, HEIGHT * 0.9, WIDTH, 3.0)
     end
 
     for system in self.systems do

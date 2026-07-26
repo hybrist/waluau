@@ -62,6 +62,12 @@ and the rank and school show through while the engraving stays crisp. Cards
 drawn off the pile are secret again, and a ward on the board is public anyway,
 so neither is ever marked.
 
+Freeze Ray locks its targeted ward out of feints for both the player and the
+Arch Mage. A ward frozen after the feint stays in its board slot when the
+breach resolves while the other wards rotate, then thaws for the next round.
+The freeze also thaws as soon as a feint resolves, so each cast affects only
+the current transition.
+
 The player's relics are held as an overlapping, tilted fan. Relics keep the
 order they were dealt in until C or V regroups them by school or by rank —
 the eye marks, cursor, and any pending binds follow their relics to the new

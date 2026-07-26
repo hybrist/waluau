@@ -16,6 +16,13 @@
 --     the shared `math.random` stream: two systems seeded alike produce
 --     identical output, and emitting never shifts the sequence gameplay code
 --     is drawing from.
+--
+-- Two things are additions rather than differences, because Love2D has no
+-- equivalent to port: `set_color_variation` gives each particle its own place
+-- on the color curve, the way size variation already does for sizes, and
+-- `set_sway_amplitude`/`set_sway_frequency` rock a particle from side to side
+-- on its own phase — falling ash, drifting snow, a wobbling smoke column —
+-- which no combination of the three accelerations produces.
 
 local graphics_module = require("./graphics")
 
@@ -53,7 +60,16 @@ type Particle = {
     spin_start: f64,
     spin_end: f64,
     size_offset: f64,
-    size_interval: f64
+    size_interval: f64,
+    color_offset: f64,
+    color_interval: f64,
+    -- Sideways rocking. `sway_offset` is the displacement already folded into
+    -- `x`, so each step applies only the difference and the particle's
+    -- position stays the single source of truth.
+    sway_amplitude: f64,
+    sway_frequency: f64,
+    sway_phase: f64,
+    sway_offset: f64
 }
 
 type ParticleSystem = {
@@ -88,6 +104,10 @@ type ParticleSystem = {
     tangential_max: f64,
     damping_min: f64,
     damping_max: f64,
+    sway_amplitude_min: f64,
+    sway_amplitude_max: f64,
+    sway_frequency_min: f64,
+    sway_frequency_max: f64,
 
     sizes: {f64},
     size_variation: f64,
@@ -98,6 +118,7 @@ type ParticleSystem = {
     spin_variation: f64,
     relative_rotation: bool,
     colors: {Color},
+    color_variation: f64,
 
     offset_x: f64,
     offset_y: f64,
@@ -210,6 +231,12 @@ function new_particle(): Particle
         spin_end = 0.0,
         size_offset = 0.0,
         size_interval = 1.0,
+        color_offset = 0.0,
+        color_interval = 1.0,
+        sway_amplitude = 0.0,
+        sway_frequency = 0.0,
+        sway_phase = 0.0,
+        sway_offset = 0.0,
     }
 end
 
@@ -246,6 +273,11 @@ function ParticleSystem.new(buffer_size: i32): ParticleSystem
         tangential_max = 0.0,
         damping_min = 0.0,
         damping_max = 0.0,
+        sway_amplitude_min = 0.0,
+        sway_amplitude_max = 0.0,
+        -- One rock per second, so setting an amplitude alone already sways.
+        sway_frequency_min = 1.0,
+        sway_frequency_max = 1.0,
 
         sizes = { 1.0 },
         size_variation = 0.0,
@@ -256,6 +288,7 @@ function ParticleSystem.new(buffer_size: i32): ParticleSystem
         spin_variation = 0.0,
         relative_rotation = false,
         colors = { { red = 1.0, green = 1.0, blue = 1.0, alpha = 1.0 } },
+        color_variation = 0.0,
 
         offset_x = 4.0,
         offset_y = 4.0,
@@ -474,6 +507,23 @@ function ParticleSystem:set_linear_damping(minimum: f64, maximum: f64): unit
     self.damping_max = maximum
 end
 
+-- Rocking along the x axis, in pixels, on top of whatever the particle's
+-- velocity is doing. Every particle picks its own phase at spawn, so a drift
+-- of ash rocks as a crowd of individuals rather than in step. Zero — the
+-- default — is no sway at all. The rock is a displacement, not an
+-- acceleration: it leaves the velocity alone, so damping still settles a
+-- falling flake and a spark still points where it is travelling.
+function ParticleSystem:set_sway_amplitude(minimum: f64, maximum: f64): unit
+    self.sway_amplitude_min = minimum
+    self.sway_amplitude_max = maximum
+end
+
+-- Rocks per second. The default is one, so an amplitude on its own sways.
+function ParticleSystem:set_sway_frequency(minimum: f64, maximum: f64): unit
+    self.sway_frequency_min = minimum
+    self.sway_frequency_max = maximum
+end
+
 function ParticleSystem:refresh_offset(): unit
     if not self.offset_auto then
         return
@@ -557,6 +607,20 @@ function ParticleSystem:set_colors(colors: {Color}): unit
         table.insert(copied, { red = 1.0, green = 1.0, blue = 1.0, alpha = 1.0 })
     end
     self.colors = copied
+end
+
+-- Randomizes where on the color curve each particle starts and ends, in 0..1,
+-- exactly as size variation does for the size curve. Without it every
+-- particle of the same age draws the same color; with it a curve of three
+-- inks becomes a crowd of flakes with their own tints.
+function ParticleSystem:set_color_variation(variation: f64): unit
+    local value: f64 = variation
+    if value < 0.0 then
+        value = 0.0
+    elseif value > 1.0 then
+        value = 1.0
+    end
+    self.color_variation = value
 end
 
 -- The same curve written as engine hex strings: `{"#fff7ae", "#f9731600"}`.
@@ -803,11 +867,22 @@ function ParticleSystem:spawn(part: f64): unit
     particle.tangential_acceleration = self:random_range(self.tangential_min, self.tangential_max)
     particle.damping = self:random_range(self.damping_min, self.damping_max)
 
+    particle.sway_amplitude = self:random_range(self.sway_amplitude_min, self.sway_amplitude_max)
+    particle.sway_frequency = self:random_range(self.sway_frequency_min, self.sway_frequency_max)
+    -- The phase is what keeps a drift from rocking in unison.
+    particle.sway_phase = self:random() * TAU
+    -- Measuring the rock from its value at birth puts the particle exactly
+    -- where it was spawned, whatever phase it drew.
+    particle.sway_offset = math.sin(particle.sway_phase) * particle.sway_amplitude
+
     -- Size variation shifts where on the size curve this particle starts and
     -- how far along it travels, which is how Love2D keeps a varied crowd
     -- following one shared curve.
     particle.size_offset = self:random() * self.size_variation
     particle.size_interval = (1.0 - self:random() * self.size_variation) - particle.size_offset
+    -- Color variation is the same idea on the color curve.
+    particle.color_offset = self:random() * self.color_variation
+    particle.color_interval = (1.0 - self:random() * self.color_variation) - particle.color_offset
 
     particle.rotation = self:random_range(self.rotation_min, self.rotation_max)
     particle.angle = particle.rotation
@@ -859,6 +934,16 @@ function advance_particle(particle: Particle, dt: f64, relative_rotation: bool):
 
     particle.x += particle.velocity_x * dt
     particle.y += particle.velocity_y * dt
+
+    -- The sway is a displacement the particle carries, so only the change
+    -- since the previous step is added; the velocity never learns about it.
+    if particle.sway_amplitude ~= 0.0 then
+        local age: f64 = particle.lifetime - particle.life
+        local rock: f64 =
+            math.sin(particle.sway_phase + TAU * particle.sway_frequency * age) * particle.sway_amplitude
+        particle.x += rock - particle.sway_offset
+        particle.sway_offset = rock
+    end
 
     local t: f64 = 1.0 - particle.life / particle.lifetime
     particle.rotation += (particle.spin_start * (1.0 - t) + particle.spin_end * t) * dt
@@ -938,9 +1023,9 @@ function size_at(sizes: {f64}, particle: Particle, t: f64): f64
     return sizes[index] * (1.0 - blend) + sizes[index + 1] * blend
 end
 
-function color_at(colors: {Color}, t: f64): (f64, f64, f64, f64)
+function color_at(colors: {Color}, particle: Particle, t: f64): (f64, f64, f64, f64)
     local last: i32 = #colors - 1
-    local position: f64 = t * (last::f64)
+    local position: f64 = (particle.color_offset + t * particle.color_interval) * (last::f64)
     if position < 0.0 then
         position = 0.0
     elseif position > last::f64 then
@@ -1007,7 +1092,7 @@ function ParticleSystem:draw_sprites(graphics: Graphics, x: f64, y: f64, texture
     for particle in self.alive do
         local t: f64 = 1.0 - particle.life / particle.lifetime
         local size: f64 = size_at(self.sizes, particle, t)
-        local red: f64, green: f64, blue: f64, alpha: f64 = color_at(self.colors, t)
+        local red: f64, green: f64, blue: f64, alpha: f64 = color_at(self.colors, particle, t)
         graphics:set_color_rgba(red, green, blue, alpha)
 
         local width: f64 = base_width * size
@@ -1060,7 +1145,7 @@ function ParticleSystem:draw_shapes(graphics: Graphics, x: f64, y: f64): unit
     for particle in self.alive do
         local t: f64 = 1.0 - particle.life / particle.lifetime
         local size: f64 = size_at(self.sizes, particle, t)
-        local red: f64, green: f64, blue: f64, alpha: f64 = color_at(self.colors, t)
+        local red: f64, green: f64, blue: f64, alpha: f64 = color_at(self.colors, particle, t)
         graphics:set_color_rgba(red, green, blue, alpha)
 
         local width: f64 = base_width * size
@@ -1210,23 +1295,45 @@ function ParticleSystem:particle_size(index: i32): f64
     return size_at(self.sizes, particle, 1.0 - particle.life / particle.lifetime)
 end
 
+-- The color curve sampled for this particle right now, including its own
+-- color variation.
 function ParticleSystem:particle_color_red(index: i32): f64
-    local red: f64, green: f64, blue: f64, alpha: f64 = color_at(self.colors, self:particle_progress(index))
+    if index < 0 or index >= #self.alive then
+        return 0.0
+    end
+    local particle: Particle = self.alive[index]
+    local red: f64, green: f64, blue: f64, alpha: f64 =
+        color_at(self.colors, particle, 1.0 - particle.life / particle.lifetime)
     return red
 end
 
 function ParticleSystem:particle_color_green(index: i32): f64
-    local red: f64, green: f64, blue: f64, alpha: f64 = color_at(self.colors, self:particle_progress(index))
+    if index < 0 or index >= #self.alive then
+        return 0.0
+    end
+    local particle: Particle = self.alive[index]
+    local red: f64, green: f64, blue: f64, alpha: f64 =
+        color_at(self.colors, particle, 1.0 - particle.life / particle.lifetime)
     return green
 end
 
 function ParticleSystem:particle_color_blue(index: i32): f64
-    local red: f64, green: f64, blue: f64, alpha: f64 = color_at(self.colors, self:particle_progress(index))
+    if index < 0 or index >= #self.alive then
+        return 0.0
+    end
+    local particle: Particle = self.alive[index]
+    local red: f64, green: f64, blue: f64, alpha: f64 =
+        color_at(self.colors, particle, 1.0 - particle.life / particle.lifetime)
     return blue
 end
 
 function ParticleSystem:particle_color_alpha(index: i32): f64
-    local red: f64, green: f64, blue: f64, alpha: f64 = color_at(self.colors, self:particle_progress(index))
+    if index < 0 or index >= #self.alive then
+        return 0.0
+    end
+    local particle: Particle = self.alive[index]
+    local red: f64, green: f64, blue: f64, alpha: f64 =
+        color_at(self.colors, particle, 1.0 - particle.life / particle.lifetime)
     return alpha
 end
 
@@ -1261,6 +1368,10 @@ function ParticleSystem:clone(): ParticleSystem
     copy.tangential_max = self.tangential_max
     copy.damping_min = self.damping_min
     copy.damping_max = self.damping_max
+    copy.sway_amplitude_min = self.sway_amplitude_min
+    copy.sway_amplitude_max = self.sway_amplitude_max
+    copy.sway_frequency_min = self.sway_frequency_min
+    copy.sway_frequency_max = self.sway_frequency_max
     copy:set_sizes(self.sizes)
     copy.size_variation = self.size_variation
     copy.rotation_min = self.rotation_min
@@ -1270,6 +1381,7 @@ function ParticleSystem:clone(): ParticleSystem
     copy.spin_variation = self.spin_variation
     copy.relative_rotation = self.relative_rotation
     copy:set_colors(self.colors)
+    copy.color_variation = self.color_variation
     copy.offset_x = self.offset_x
     copy.offset_y = self.offset_y
     copy.offset_auto = self.offset_auto
@@ -1309,6 +1421,12 @@ function ParticleSystem:clone(): ParticleSystem
             target.spin_end = particle.spin_end
             target.size_offset = particle.size_offset
             target.size_interval = particle.size_interval
+            target.color_offset = particle.color_offset
+            target.color_interval = particle.color_interval
+            target.sway_amplitude = particle.sway_amplitude
+            target.sway_frequency = particle.sway_frequency
+            target.sway_phase = particle.sway_phase
+            target.sway_offset = particle.sway_offset
             table.insert(copy.alive, target)
         end
     end

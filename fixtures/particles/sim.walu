@@ -110,6 +110,68 @@ for _ = 1, 50 do
 end
 assert(orbiting:particle_velocity_y(0) > 50.0)
 
+-- Sway rocks a particle sideways without touching its velocity. Over one
+-- full cycle it swings well clear of its path and comes back to it.
+local rocking: ParticleSystem = plain_system(8)
+rocking:set_particle_lifetime(4.0, 4.0)
+rocking:set_speed(0.0, 0.0)
+rocking:set_position(0.0, 0.0)
+rocking:set_sway_amplitude(20.0, 20.0)
+rocking:set_sway_frequency(1.0, 1.0)
+rocking:emit(1)
+local swing_low: f64 = 0.0
+local swing_high: f64 = 0.0
+for _ = 1, 100 do
+    rocking:update(0.01)
+    local x: f64 = rocking:particle_x(0)
+    if x < swing_low then
+        swing_low = x
+    end
+    if x > swing_high then
+        swing_high = x
+    end
+end
+assert(swing_high - swing_low > 10.0)
+-- The rock is bounded by twice the amplitude, and never becomes velocity.
+assert(swing_high - swing_low <= 40.001)
+assert(close(rocking:particle_velocity_x(0), 0.0, 0.000001))
+assert(close(rocking:particle_y(0), 0.0, 0.000001))
+-- One second is one cycle at 1 Hz, so the particle is back where it started.
+assert(close(rocking:particle_x(0), 0.0, 0.001))
+
+-- Each particle draws its own phase, so a drift rocks as a crowd rather than
+-- in step: particles born together at the same place separate.
+local drifting: ParticleSystem = plain_system(32)
+drifting:set_particle_lifetime(4.0, 4.0)
+drifting:set_speed(0.0, 0.0)
+drifting:set_position(0.0, 0.0)
+drifting:set_sway_amplitude(15.0, 15.0)
+drifting:set_sway_frequency(0.5, 0.5)
+drifting:emit(12)
+drifting:update(0.4)
+local phase_low: f64 = 1000.0
+local phase_high: f64 = -1000.0
+for index = 0, drifting:count() - 1 do
+    local x: f64 = drifting:particle_x(index)
+    if x < phase_low then
+        phase_low = x
+    end
+    if x > phase_high then
+        phase_high = x
+    end
+end
+assert(phase_high - phase_low > 5.0)
+
+-- Without an amplitude nothing sways, whatever the frequency says.
+local still: ParticleSystem = plain_system(8)
+still:set_particle_lifetime(4.0, 4.0)
+still:set_speed(0.0, 0.0)
+still:set_position(0.0, 0.0)
+still:set_sway_frequency(4.0, 4.0)
+still:emit(1)
+still:update(0.3)
+assert(close(still:particle_x(0), 0.0, 0.000001))
+
 -- The size curve is sampled across a particle's life.
 local growing: ParticleSystem = plain_system(8)
 growing:set_particle_lifetime(2.0, 2.0)
@@ -130,6 +192,100 @@ fading:update(1.0)
 assert(close(fading:particle_color_red(0), 0.5, 0.02))
 assert(close(fading:particle_color_blue(0), 0.5, 0.02))
 assert(close(fading:particle_color_alpha(0), 0.5, 0.02))
+
+-- Without color variation the curve is a pure function of age: every
+-- particle emitted together draws exactly the same color.
+local uniform_ink: ParticleSystem = plain_system(16)
+uniform_ink:set_particle_lifetime(4.0, 4.0)
+uniform_ink:set_colors_hex({ "#000000", "#ffffff" })
+uniform_ink:emit(8)
+uniform_ink:update(0.5)
+for index = 0, uniform_ink:count() - 1 do
+    assert(uniform_ink:particle_color_red(index) == uniform_ink:particle_color_red(0))
+end
+
+-- With it each particle takes its own place on the curve, the way size
+-- variation already works, and stays inside the curve's own range.
+local inks: ParticleSystem = plain_system(64)
+inks:set_particle_lifetime(4.0, 4.0)
+inks:set_colors_hex({ "#000000", "#ffffff" })
+inks:set_color_variation(1.0)
+inks:emit(24)
+inks:update(0.5)
+local ink_low: f64 = 2.0
+local ink_high: f64 = -1.0
+for index = 0, inks:count() - 1 do
+    local red: f64 = inks:particle_color_red(index)
+    assert(red >= 0.0 and red <= 1.0)
+    if red < ink_low then
+        ink_low = red
+    end
+    if red > ink_high then
+        ink_high = red
+    end
+end
+assert(ink_high - ink_low > 0.2)
+
+-- Color variation is drawn from the system's own sequence, so the same seed
+-- still produces the same crowd and a different seed does not.
+local function seeded_inks(seed: i32): f64
+    local tinted: ParticleSystem = particles.new(16)
+    tinted:set_seed(seed)
+    tinted:set_particle_lifetime(4.0, 4.0)
+    tinted:set_colors_hex({ "#000000", "#ffffff" })
+    tinted:set_color_variation(1.0)
+    tinted:emit(8)
+    tinted:update(0.5)
+    local total: f64 = 0.0
+    for index = 0, tinted:count() - 1 do
+        total += tinted:particle_color_red(index) * ((index + 1)::f64)
+    end
+    return total
+end
+
+assert(seeded_inks(21) == seeded_inks(21))
+assert(seeded_inks(21) ~= seeded_inks(22))
+
+-- Sway comes from the same sequence, and a clone carries both the settings
+-- and each live particle's phase and place on the color curve.
+local function seeded_sway(seed: i32): f64
+    local blown: ParticleSystem = particles.new(16)
+    blown:set_seed(seed)
+    blown:set_particle_lifetime(4.0, 4.0)
+    blown:set_speed(0.0, 0.0)
+    blown:set_sway_amplitude(4.0, 18.0)
+    blown:set_sway_frequency(0.5, 2.0)
+    blown:emit(8)
+    blown:update(0.3)
+    local total: f64 = 0.0
+    for index = 0, blown:count() - 1 do
+        total += blown:particle_x(index) * ((index + 1)::f64)
+    end
+    return total
+end
+
+assert(seeded_sway(31) == seeded_sway(31))
+assert(seeded_sway(31) ~= seeded_sway(32))
+
+local varied: ParticleSystem = plain_system(16)
+varied:set_particle_lifetime(4.0, 4.0)
+varied:set_speed(0.0, 0.0)
+varied:set_colors_hex({ "#000000", "#ffffff" })
+varied:set_color_variation(1.0)
+varied:set_sway_amplitude(12.0, 12.0)
+varied:emit(6)
+varied:update(0.2)
+local varied_copy: ParticleSystem = varied:clone()
+for index = 0, varied:count() - 1 do
+    assert(close(varied_copy:particle_color_red(index), varied:particle_color_red(index), 0.000001))
+    assert(close(varied_copy:particle_x(index), varied:particle_x(index), 0.000001))
+end
+varied_copy:update(0.2)
+varied:update(0.2)
+for index = 0, varied:count() - 1 do
+    -- The copied phase keeps the rock in step with the original.
+    assert(close(varied_copy:particle_x(index), varied:particle_x(index), 0.000001))
+end
 
 -- Spin turns a particle over its life; relative rotation adds the direction
 -- of travel, so a particle heading straight up faces up.
@@ -319,6 +475,8 @@ assert(close(ordered:particle_x(1), 0.0, 0.001))
 assert(ordered:particle_x(-1) == 0.0)
 assert(ordered:particle_x(99) == 0.0)
 assert(ordered:particle_size(99) == 0.0)
+assert(ordered:particle_color_red(99) == 0.0)
+assert(ordered:particle_color_alpha(-1) == 0.0)
 
 -- A zero-size buffer is legal and simply never holds a particle.
 local empty: ParticleSystem = particles.new(0)

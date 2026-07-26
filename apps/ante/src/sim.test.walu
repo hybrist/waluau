@@ -641,24 +641,105 @@ describe("Arcane Heist spell casting", function()
         expect(state:spell_kind()):toBe(game.spell_raise_card)
         expect(state:mana()):toBe(10)
         expect(state:can_cast()):toBe(true)
-        expect(state:cast_spell()):toBe(true)
+        expect(state:cast_spell(0)):toBe(true)
         expect(state:mana()):toBe(5)
-        expect(state:cast_spell()):toBe(true)
+        expect(state:cast_spell(1)):toBe(true)
         expect(state:mana()):toBe(0)
         -- The third cast is unaffordable: nothing is charged and the caller
         -- hears a refusal instead of a launch.
         expect(state:can_cast()):toBe(false)
-        expect(state:cast_spell()):toBe(false)
+        expect(state:cast_spell(2)):toBe(false)
         expect(state:mana()):toBe(0)
     end)
 
     it("keeps the chosen spell through development snapshots", function()
         math.randomseed(59)
         local state = game.new(false, game.spell_freeze_ray)
+        state:cast_spell(2)
         local restored: game.State? = game.restore(game.snapshot(state))
         expect(restored == nil):toBe(false)
         if restored ~= nil then
             expect(restored:spell_kind()):toBe(game.spell_freeze_ray)
+            expect(restored:is_frozen(2)):toBe(true)
         end
+    end)
+
+    it("keeps frozen wards out of both sides' feints and thaws after resolution", function()
+        local state = game.new(false, game.spell_freeze_ray)
+        game_fixture.arrange_arch_mage(
+            state,
+            { card(2, 1), card(4, 2), card(6, 3) },
+            { card(10, 0), card(11, 0), card(12, 0), card(13, 0), card(14, 0) }
+        )
+        expect(state:cast_spell(0)):toBe(true)
+        expect(state:is_frozen(0)):toBe(true)
+
+        -- A player proposal that names the frozen ward does not resolve the
+        -- feint or clear the condition.
+        expect(state:resolve_swap({ 0 }, { 0 }) == nil):toBe(true)
+        expect(state:feint_open()):toBe(true)
+        expect(state:is_frozen(0)):toBe(true)
+
+        local outcome: game.FeintOutcome? = state:resolve_swap({}, {})
+        assert(outcome ~= nil)
+        local resolved: game.FeintOutcome = outcome::game.FeintOutcome
+        expect(#resolved.middle_indices):toBe(2)
+        for ward in resolved.middle_indices do expect(ward == 0):toBe(false) end
+        expect(state:is_frozen(0)):toBe(false)
+        expect(state:feint_open()):toBe(false)
+    end)
+
+    it("retains a ward frozen after the feint for exactly one more round", function()
+        math.randomseed(61)
+        local state = game.new(false, game.spell_freeze_ray)
+        state:resolve_swap({}, {})
+        local retained = state.middle[1]
+        local replaced_left = state.middle[0]
+        local replaced_right = state.middle[2]
+        local deck_size: i32 = #state.deck
+
+        expect(state:cast_spell(1)):toBe(true)
+        local trick: game.Trick? = state:play(0, 1)
+        assert(trick ~= nil)
+        local resolved: game.Trick = trick::game.Trick
+
+        expect(resolved.frozen_middle[0]):toBe(false)
+        expect(resolved.frozen_middle[1]):toBe(true)
+        expect(resolved.frozen_middle[2]):toBe(false)
+        expect(state.middle[1].rank):toBe(retained.rank)
+        expect(state.middle[1].suit):toBe(retained.suit)
+        expect(state.middle[0].rank == replaced_left.rank and state.middle[0].suit == replaced_left.suit):toBe(false)
+        expect(state.middle[2].rank == replaced_right.rank and state.middle[2].suit == replaced_right.suit):toBe(false)
+        expect(#state.deck):toBe(deck_size - 6)
+        expect(state:is_frozen(1)):toBe(false)
+    end)
+
+    it("replaces a Firebolt target from the deck and returns the burned card", function()
+        math.randomseed(61)
+        local state = game.new(false, game.spell_firebolt)
+        local deck_before: i32 = #state.deck
+        local burned: game.Card = state.middle[1]
+        local replacement: game.Card = state.deck[deck_before - 1]
+
+        local discarded: game.Card? = state:resolve_firebolt(1)
+
+        expect(discarded == nil):toBe(false)
+        if discarded ~= nil then
+            expect((discarded::game.Card).rank):toBe(burned.rank)
+            expect((discarded::game.Card).suit):toBe(burned.suit)
+        end
+        expect(state.middle[1].rank):toBe(replacement.rank)
+        expect(state.middle[1].suit):toBe(replacement.suit)
+        expect(#state.deck):toBe(deck_before - 1)
+    end)
+
+    it("leaves the board unchanged for invalid Firebolt targets", function()
+        math.randomseed(63)
+        local state = game.new(false, game.spell_firebolt)
+        local before: string = game.snapshot(state)
+
+        expect(state:resolve_firebolt(-1) == nil):toBe(true)
+        expect(state:resolve_firebolt(3) == nil):toBe(true)
+        expect(game.snapshot(state)):toBe(before)
     end)
 end)
