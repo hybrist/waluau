@@ -178,8 +178,9 @@ fire:set_blend_mode("add")
 
 The emitter supports emission rate and emitter lifetime, `start`/`stop`/
 `pause`/`reset`/`emit`, direction and spread, speed, linear, radial and
-tangential acceleration, linear damping, size and color curves with size
-variation, rotation, spin with spin variation, relative rotation, insert order
+tangential acceleration, linear damping, a sideways sway, size and color curves
+with size and color variation, rotation, spin with spin variation, relative
+rotation, insert order
 (`top`, `bottom`, `random`), spawn areas (`none`, `uniform`, `normal`,
 `ellipse`, `borderellipse`, `borderrectangle`, each with a rotation angle and
 optional outward aiming), `set_position` versus `move_to`, textures with
@@ -197,17 +198,39 @@ Three things differ from Love2D on purpose:
 - **Randomness is per system.** `set_seed` makes an emitter reproducible, and
   emitting never disturbs the `math.random` stream gameplay code draws from.
 
+Two more are additions rather than differences, because Love2D has nothing to
+port here:
+
+- **`set_color_variation(variation)`** does for the color curve what
+  `set_size_variation` does for sizes: each particle picks its own start and
+  end on the curve at spawn, in `0..1`. Without it `color_at` is a pure
+  function of age and every particle alive at the same age draws the same
+  color; with it, `{"#292524", "#9a3412", "#78716c"}` at variation `1.0` is a
+  crowd of flakes with their own tints rather than a fall that changes color
+  together.
+- **`set_sway_amplitude(minimum, maximum)`** and
+  **`set_sway_frequency(minimum, maximum)`** rock a particle along the x axis,
+  in pixels, at rocks per second, with a phase drawn per particle so a drift
+  never rocks in unison. The three accelerations cannot do this — tangential
+  acceleration gives a spiral, not a rock. Amplitude defaults to zero (no
+  sway) and frequency to one, so an amplitude on its own already sways. The
+  rock is a displacement, not a force: it leaves the velocity alone, so
+  damping still settles a falling flake and a `spark` still points along its
+  travel. Falling ash, drifting snow, a wobbling smoke column and floating
+  embers are all this plus gravity.
+
 `draw` restores the caller's color and blend mode, so a system never leaks its
 own state into the rest of the frame. `particle_x`, `particle_size`,
 `particle_angle`, `particle_color_alpha` and their siblings expose live
 particles in draw order for games that would rather render them themselves.
 
-[`fixtures/particles/`](../fixtures/particles/) is the gallery: eight scenes
-(fire, fountain, explosions, smoke, weather, vortex, a pointer-following comet
-and a sprite atlas built at runtime into a render target) selected with the
-number keys, plus [`sim.walu`](../fixtures/particles/sim.walu), which checks
-emission timing, forces, curves and spawn areas without a canvas. The gallery
-is the "Particle System" preset in the playground.
+[`fixtures/particles/`](../fixtures/particles/) is the gallery: nine scenes
+(fire, fountain, explosions, smoke, weather, vortex, a pointer-following comet,
+a sprite atlas built at runtime into a render target, and an ash fall of
+swaying flakes each with their own ink) selected with the number keys, plus
+[`sim.walu`](../fixtures/particles/sim.walu), which checks emission timing,
+forces, curves and spawn areas without a canvas. The gallery is the
+"Particle System" preset in the playground.
 
 ## Porting a simple game
 

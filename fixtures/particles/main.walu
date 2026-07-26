@@ -1,4 +1,4 @@
--- Particle gallery: eight scenes built from the engine's particle system,
+-- Particle gallery: nine scenes built from the engine's particle system,
 -- switched with the number keys. Game code here never touches the DOM — the
 -- engine owns the canvas, and every effect is emitter configuration.
 
@@ -75,7 +75,7 @@ function install_gallery(): unit
             status = status .. "  (emitters paused)"
         end
         graphics:print(status, 16.0, HEIGHT - 34.0)
-        graphics:print("1-8 scene   arrows switch   space burst   p pause   r restart", 16.0, HEIGHT - 16.0)
+        graphics:print("1-9 scene   arrows switch   space burst   p pause   r restart", 16.0, HEIGHT - 16.0)
     end
 
     local function keypressed(key: string): unit

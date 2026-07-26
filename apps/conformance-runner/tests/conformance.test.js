@@ -1377,6 +1377,12 @@ describe('browser conformance', () => {
         return lit;
       };
       await expect.poll(spritePixels, { timeout: 10_000 }).toBeGreaterThan(100);
+
+      // Scene 9 is the ash fall, which is built entirely from the sway force
+      // and per-particle color variation. Its embers rise additively out of
+      // the bottom of an almost black frame.
+      root.ownerDocument.dispatchEvent(new root.ownerDocument.defaultView.KeyboardEvent('keydown', { key: '9' }));
+      await expect.poll(litPixels, { timeout: 10_000 }).toBeGreaterThan(100);
     } finally {
       cleanup();
     }
