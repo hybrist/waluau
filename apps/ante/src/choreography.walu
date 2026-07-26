@@ -64,7 +64,7 @@ const REVEAL_SECOND_DELAY: f64 = 0.585
 -- ignite, char, and crumble before flow may advance to cleanup.
 const REVEAL_SECONDS: f64 = 3.45
 const FLIP_SOUND_LEAD_SECONDS: f64 = 0.14
-const SNAPSHOT_SCHEMA: string = "ante-presentation-v3"
+const SNAPSHOT_SCHEMA: string = "ante-presentation-v4"
 const SNAPSHOT_COLLECTION_LIMIT: i32 = 256
 
 function new(): State
@@ -210,6 +210,17 @@ end
 
 function finish_reveal(state: State): unit
     state.reveal_clock = REVEAL_SECONDS
+end
+
+-- The counterpart to finish_reveal for a spell: jump the launch to the reading
+-- where the formation has completed and only the condition's idle motion is
+-- left. A cleared ward has no clock to settle, so it keeps the resting zero.
+function finish_power(state: State): unit
+    if state.power_kind == 0 then
+        state.power_clock = 0.0
+        return
+    end
+    state.power_clock = render.power_settled_clock()
 end
 
 function reveal_finished(state: State): bool
@@ -569,11 +580,20 @@ function append_cards(parts: {string}, cards: {game.Card}): unit
     end
 end
 
+-- A development snapshot carries where the board *is*, never what it is in the
+-- middle of doing. Motion is settled on restore rather than resumed, which is
+-- what the queued animations have always done: they are not written here, and
+-- restore rebuilds them from new(). Serialising the clocks beside them only
+-- meant a reload could resume a card half-way through burning or a fan
+-- half-way through parting, which no development reload owes anyone.
+--
+-- What is written is state a reload cannot re-derive: the fan's row size (one
+-- resting offset per relic, so every fan loop and hit scan stays the right
+-- width for a boss battle's longer hand), the spell condition standing on a
+-- ward, and the three pile ledgers.
 function append_snapshot(parts: {string}, state: State): unit
-    snapshot_data.append_f64s(parts, state.fan_parts)
-    snapshot_data.append_f64(parts, state.reveal_clock)
+    snapshot_data.append_i32(parts, #state.fan_parts)
     snapshot_data.append_i32(parts, state.power_kind)
-    snapshot_data.append_f64(parts, state.power_clock)
     snapshot_data.append_i32(parts, state.power_target)
     append_cards(parts, state.discards)
     append_cards(parts, state.computer_won)
@@ -591,14 +611,18 @@ end
 
 function restore_snapshot(reader: snapshot_data.Reader): State
     local state: State = new()
-    state.fan_parts = reader:next_f64s()
-    state.reveal_clock = reader:next_f64()
+    state.fan_parts = closed_fan_parts(reader:next_length())
     state.power_kind = reader:next_i32()
-    state.power_clock = reader:next_f64()
     state.power_target = reader:next_i32()
     state.discards = next_cards(reader)
     state.computer_won = next_cards(reader)
     state.player_won = next_cards(reader)
+    -- The reveal comes back finished rather than mid-burn. The trick it shows
+    -- was already resolved by the rules before the reveal began, and the flow
+    -- gate still waits for the player to advance out of it, so this settles a
+    -- transition without advancing the heist.
+    finish_reveal(state)
+    finish_power(state)
     return state
 end
 
