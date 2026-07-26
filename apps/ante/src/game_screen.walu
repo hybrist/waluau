@@ -141,9 +141,12 @@ function submit_breach(state: State): unit
     if #ui.play_picks ~= 2 then return end
     local trick: game.Trick? = state.rules:play(ui.play_picks[0], ui.play_picks[1])
     if trick == nil then return end
-    choreography.record_burned_losers(state.presentation, trick::game.Trick)
+    local resolved: game.Trick = trick::game.Trick
+    choreography.record_burned_losers(state.presentation, resolved)
     flow.begin_reveal(ui)
-    choreography.begin_reveal(state.presentation)
+    -- A stalemate leaves both pairs standing, so this reveal has no pair to
+    -- burn and its ash never starts.
+    choreography.begin_reveal(state.presentation, resolved.winner ~= 0)
 end
 
 function consume_gate(state: State, command: i32): bool
