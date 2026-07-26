@@ -1,3 +1,31 @@
+struct CompilerTimer {
+    #[cfg(not(target_family = "wasm"))]
+    started: std::time::Instant,
+}
+
+impl CompilerTimer {
+    fn start() -> Self {
+        Self {
+            #[cfg(not(target_family = "wasm"))]
+            started: std::time::Instant::now(),
+        }
+    }
+
+    fn elapsed(&self) -> std::time::Duration {
+        #[cfg(not(target_family = "wasm"))]
+        return self.started.elapsed();
+        #[cfg(target_family = "wasm")]
+        return std::time::Duration::ZERO;
+    }
+
+    fn enabled() -> bool {
+        #[cfg(not(target_family = "wasm"))]
+        return std::env::var_os("WALUAU_TIMINGS").is_some();
+        #[cfg(target_family = "wasm")]
+        return false;
+    }
+}
+
 #[derive(Default)]
 pub struct BuildCache {
     resolved: Option<Program>,
@@ -41,7 +69,7 @@ fn build_inner(
     mut cache: Option<&mut BuildCache>,
     changed_hint: Option<&[usize]>,
 ) -> Result<Module, Diagnostic> {
-    let started = std::time::Instant::now();
+    let started = CompilerTimer::start();
     let hinted_index = changed_hint
         .and_then(|changed| changed.first().copied())
         .filter(|index| {
@@ -95,7 +123,7 @@ fn build_inner(
         cached.erased = Some(erased);
         cached.monomorphic = Some(monomorphic);
         cached.last_incremental = true;
-        if std::env::var_os("WALUAU_TIMINGS").is_some() {
+        if CompilerTimer::enabled() {
             eprintln!(
                 "waluau ir timings: symbols={:?} erase={:?} incremental={:?}",
                 resolved_at,
@@ -191,11 +219,29 @@ fn build_inner(
             )
         })
         .collect::<HashMap<_, _>>();
-    let workers = std::thread::available_parallelism()
-        .map_or(1, std::num::NonZeroUsize::get)
-        .min(monomorphic.functions.len().max(1));
-    let chunk_size = monomorphic.functions.len().max(1).div_ceil(workers);
+    #[cfg(target_family = "wasm")]
+    let lowered_functions = monomorphic
+        .functions
+        .iter()
+        .map(|function| {
+            build_function(
+                function,
+                &signatures,
+                &host_import_signatures,
+                &host_import_names,
+                &field_call_signatures,
+                &declared_constants,
+                &monomorphic.sources,
+                &tag_ids,
+            )
+        })
+        .collect::<Vec<_>>();
+    #[cfg(not(target_family = "wasm"))]
     let lowered_functions = std::thread::scope(|scope| {
+        let workers = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get)
+            .min(monomorphic.functions.len().max(1));
+        let chunk_size = monomorphic.functions.len().max(1).div_ceil(workers);
         let handles = monomorphic
             .functions
             .chunks(chunk_size)
@@ -251,7 +297,7 @@ fn build_inner(
         start,
         tag_ids,
     };
-    if std::env::var_os("WALUAU_TIMINGS").is_some() {
+    if CompilerTimer::enabled() {
         eprintln!(
             "waluau ir timings: symbols={:?} erase={:?} mono={:?} setup+lower={:?} finish={:?}",
             resolved_at,
@@ -302,7 +348,7 @@ fn try_build_incremental(
     cache: &mut BuildCache,
     changed_hint: Option<usize>,
 ) -> Result<Option<(Program, Module)>, Diagnostic> {
-    let started = std::time::Instant::now();
+    let started = CompilerTimer::start();
     let (Some(previous_monomorphic), Some(previous_module)) =
         (&cache.monomorphic, &cache.module)
     else {
@@ -445,7 +491,7 @@ fn try_build_incremental(
     module.functions[module_index] = lowered.into_iter().next().expect("one lowered function");
     let names = HashSet::from([name]);
     verify::verify_functions(&module, &names)?;
-    if std::env::var_os("WALUAU_TIMINGS").is_some() {
+    if CompilerTimer::enabled() {
         eprintln!(
             "waluau ir incremental detail: rewrite={:?} clone+symbols={:?} setup+lower={:?} clone+verify={:?}",
             rewritten_at,

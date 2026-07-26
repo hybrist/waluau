@@ -6,6 +6,34 @@ use waluau_ast::{
 };
 use waluau_diagnostics::{Diagnostic, DiagnosticCategory};
 
+struct CompilerTimer {
+    #[cfg(not(target_family = "wasm"))]
+    started: std::time::Instant,
+}
+
+impl CompilerTimer {
+    fn start() -> Self {
+        Self {
+            #[cfg(not(target_family = "wasm"))]
+            started: std::time::Instant::now(),
+        }
+    }
+
+    fn elapsed(&self) -> std::time::Duration {
+        #[cfg(not(target_family = "wasm"))]
+        return self.started.elapsed();
+        #[cfg(target_family = "wasm")]
+        return std::time::Duration::ZERO;
+    }
+
+    fn enabled() -> bool {
+        #[cfg(not(target_family = "wasm"))]
+        return std::env::var_os("WALUAU_TIMINGS").is_some();
+        #[cfg(target_family = "wasm")]
+        return false;
+    }
+}
+
 mod builtins;
 mod expressions;
 mod numeric;
@@ -2154,36 +2182,52 @@ fn annotate_resolved_extern_members(
     fn_signatures: &HashMap<String, FnSignature>,
     reusable: &[bool],
 ) -> Result<(), Diagnostic> {
-    let workers = std::thread::available_parallelism()
-        .map_or(1, std::num::NonZeroUsize::get)
-        .min(program.functions.len().max(1));
-    let chunk_size = program.functions.len().max(1).div_ceil(workers);
-    let results = std::thread::scope(|scope| {
-        let handles = program
-            .functions
-            .chunks_mut(chunk_size)
-            .zip(reusable.chunks(chunk_size))
-            .map(|(chunk, reusable)| {
-                scope.spawn(move || {
-                    chunk
-                        .iter_mut()
-                        .zip(reusable)
-                        .map(|(function, reusable)| {
-                            if *reusable {
-                                Ok(())
-                            } else {
-                                annotate_function_resolved_members(function, fn_signatures)
-                            }
-                        })
-                        .collect::<Vec<_>>()
+    #[cfg(target_family = "wasm")]
+    let results = program
+        .functions
+        .iter_mut()
+        .zip(reusable)
+        .map(|(function, reusable)| {
+            if *reusable {
+                Ok(())
+            } else {
+                annotate_function_resolved_members(function, fn_signatures)
+            }
+        })
+        .collect::<Vec<_>>();
+    #[cfg(not(target_family = "wasm"))]
+    let results = {
+        let workers = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get)
+            .min(program.functions.len().max(1));
+        let chunk_size = program.functions.len().max(1).div_ceil(workers);
+        std::thread::scope(|scope| {
+            let handles = program
+                .functions
+                .chunks_mut(chunk_size)
+                .zip(reusable.chunks(chunk_size))
+                .map(|(chunk, reusable)| {
+                    scope.spawn(move || {
+                        chunk
+                            .iter_mut()
+                            .zip(reusable)
+                            .map(|(function, reusable)| {
+                                if *reusable {
+                                    Ok(())
+                                } else {
+                                    annotate_function_resolved_members(function, fn_signatures)
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    })
                 })
-            })
-            .collect::<Vec<_>>();
-        handles
-            .into_iter()
-            .flat_map(|handle| handle.join().expect("HIR member worker panicked"))
-            .collect::<Vec<_>>()
-    });
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .flat_map(|handle| handle.join().expect("HIR member worker panicked"))
+                .collect::<Vec<_>>()
+        })
+    };
     for result in results {
         result?;
     }
@@ -3103,7 +3147,7 @@ fn type_check_and_infer_collect_inner(
     program: &Program,
     mut cache: Option<&mut TypeCheckCache>,
 ) -> Result<(Program, Option<Program>), Vec<Diagnostic>> {
-    let started = std::time::Instant::now();
+    let started = CompilerTimer::start();
     let mut typed = desugar_method_declarations(program).map_err(|error| vec![error])?;
     desugar_implicit_top_level_declarations(&mut typed);
     let desugared_at = started.elapsed();
@@ -3340,48 +3384,68 @@ fn type_check_and_infer_collect_inner(
 
     let prepared_at = started.elapsed();
 
-    let workers = std::thread::available_parallelism()
-        .map_or(1, std::num::NonZeroUsize::get)
-        .min(typed.functions.len().max(1));
-    let chunk_size = typed.functions.len().max(1).div_ceil(workers);
-    let checked_errors = std::thread::scope(|scope| {
-        let handles = typed
-            .functions
-            .chunks(chunk_size)
-            .zip(reusable.chunks(chunk_size))
-            .map(|(chunk, reusable)| {
-                let errored_functions = &errored_functions;
-                let fn_signatures = &fn_signatures;
-                scope.spawn(move || {
-                    let mut diagnostics = Vec::new();
-                    for (function, reusable) in chunk.iter().zip(reusable) {
-                        if *reusable {
-                            continue;
+    #[cfg(target_family = "wasm")]
+    let checked_errors = typed
+        .functions
+        .iter()
+        .zip(&reusable)
+        .flat_map(|(function, reusable)| {
+            if *reusable || errored_functions.contains(&function.name.to_string()) {
+                Vec::new()
+            } else {
+                statements::check_function_collect(function, &fn_signatures, &HashSet::new())
+                    .into_iter()
+                    .map(|error| error.with_file_path_if_missing(function.file_path.clone()))
+                    .collect()
+            }
+        })
+        .collect::<Vec<_>>();
+    #[cfg(not(target_family = "wasm"))]
+    let (checked_errors, chunk_size) = {
+        let workers = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get)
+            .min(typed.functions.len().max(1));
+        let chunk_size = typed.functions.len().max(1).div_ceil(workers);
+        let checked_errors = std::thread::scope(|scope| {
+            let handles = typed
+                .functions
+                .chunks(chunk_size)
+                .zip(reusable.chunks(chunk_size))
+                .map(|(chunk, reusable)| {
+                    let errored_functions = &errored_functions;
+                    let fn_signatures = &fn_signatures;
+                    scope.spawn(move || {
+                        let mut diagnostics = Vec::new();
+                        for (function, reusable) in chunk.iter().zip(reusable) {
+                            if *reusable {
+                                continue;
+                            }
+                            if errored_functions.contains(&function.name.to_string()) {
+                                continue;
+                            }
+                            diagnostics.extend(
+                                statements::check_function_collect(
+                                    function,
+                                    fn_signatures,
+                                    &HashSet::new(),
+                                )
+                                .into_iter()
+                                .map(|error| {
+                                    error.with_file_path_if_missing(function.file_path.clone())
+                                }),
+                            );
                         }
-                        if errored_functions.contains(&function.name.to_string()) {
-                            continue;
-                        }
-                        diagnostics.extend(
-                            statements::check_function_collect(
-                                function,
-                                fn_signatures,
-                                &HashSet::new(),
-                            )
-                            .into_iter()
-                            .map(|error| {
-                                error.with_file_path_if_missing(function.file_path.clone())
-                            }),
-                        );
-                    }
-                    diagnostics
+                        diagnostics
+                    })
                 })
-            })
-            .collect::<Vec<_>>();
-        handles
-            .into_iter()
-            .flat_map(|handle| handle.join().expect("HIR checking worker panicked"))
-            .collect::<Vec<_>>()
-    });
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .flat_map(|handle| handle.join().expect("HIR checking worker panicked"))
+                .collect::<Vec<_>>()
+        });
+        (checked_errors, chunk_size)
+    };
     errors.extend(checked_errors);
     if !errors.is_empty() {
         return Err(errors);
@@ -3389,6 +3453,31 @@ fn type_check_and_infer_collect_inner(
 
     let checked = started.elapsed();
 
+    #[cfg(target_family = "wasm")]
+    let inferred_results = typed
+        .functions
+        .iter_mut()
+        .zip(&reusable)
+        .map(|(function, reusable)| {
+            if *reusable {
+                return Ok(());
+            }
+            let mut vars = function
+                .params
+                .iter()
+                .map(|param| {
+                    (
+                        param.name.clone(),
+                        binding_for(param.ty.clone(), Rebindability::Const),
+                    )
+                })
+                .collect::<HashMap<_, _>>();
+            let active = active_type_param_set(&function.type_params);
+            annotate_inferred_stmt_locals(&mut function.body, &mut vars, &fn_signatures, &active)
+                .map_err(|error| error.with_file_path_if_missing(function.file_path.clone()))
+        })
+        .collect::<Vec<_>>();
+    #[cfg(not(target_family = "wasm"))]
     let inferred_results = std::thread::scope(|scope| {
         let handles = typed
             .functions
@@ -3443,7 +3532,7 @@ fn type_check_and_infer_collect_inner(
     annotate_resolved_extern_members(&mut typed, &fn_signatures, &reusable)
         .map_err(|error| vec![error])?;
 
-    if std::env::var_os("WALUAU_TIMINGS").is_some() {
+    if CompilerTimer::enabled() {
         eprintln!(
             "waluau hir timings: prepare={:?} check={:?} inferred={:?} members={:?}",
             prepared_at,

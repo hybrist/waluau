@@ -40,11 +40,19 @@ fn verify_matching(
             )
         })
         .collect();
-    let workers = std::thread::available_parallelism()
-        .map_or(1, std::num::NonZeroUsize::get)
-        .min(module.functions.len().max(1));
-    let chunk_size = module.functions.len().max(1).div_ceil(workers);
+    #[cfg(target_family = "wasm")]
+    let results = module
+        .functions
+        .iter()
+        .filter(|function| should_verify(function))
+        .map(|function| verify_function(function, &signatures, &host_signatures))
+        .collect::<Vec<_>>();
+    #[cfg(not(target_family = "wasm"))]
     let results = std::thread::scope(|scope| {
+        let workers = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get)
+            .min(module.functions.len().max(1));
+        let chunk_size = module.functions.len().max(1).div_ceil(workers);
         let handles = module
             .functions
             .chunks(chunk_size)

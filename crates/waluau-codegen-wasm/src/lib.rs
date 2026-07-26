@@ -15,6 +15,34 @@ use wasm_encoder::{
 };
 use wasmparser::{Validator, WasmFeatures};
 
+struct CompilerTimer {
+    #[cfg(not(target_family = "wasm"))]
+    started: std::time::Instant,
+}
+
+impl CompilerTimer {
+    fn start() -> Self {
+        Self {
+            #[cfg(not(target_family = "wasm"))]
+            started: std::time::Instant::now(),
+        }
+    }
+
+    fn elapsed(&self) -> std::time::Duration {
+        #[cfg(not(target_family = "wasm"))]
+        return self.started.elapsed();
+        #[cfg(target_family = "wasm")]
+        return std::time::Duration::ZERO;
+    }
+
+    fn enabled() -> bool {
+        #[cfg(not(target_family = "wasm"))]
+        return std::env::var_os("WALUAU_TIMINGS").is_some();
+        #[cfg(target_family = "wasm")]
+        return false;
+    }
+}
+
 mod arrays;
 mod buffers;
 mod coroutines;
@@ -673,7 +701,7 @@ pub fn emit_cached(module: &Module, cache: &mut EmitCache) -> Result<EmitResult,
 }
 
 fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResult, Diagnostic> {
-    let started = std::time::Instant::now();
+    let started = CompilerTimer::start();
     let declared_imports = used_declared_imports(module);
     let array_types = collect_array_types(module);
     let record_types = collect_record_types(module);
@@ -1635,11 +1663,37 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
         }
     }
     let setup_at = started.elapsed();
-    let workers = std::thread::available_parallelism()
-        .map_or(1, std::num::NonZeroUsize::get)
-        .min(module.functions.len().max(1));
-    let chunk_size = module.functions.len().max(1).div_ceil(workers);
+    #[cfg(target_family = "wasm")]
+    let emitted_functions = module
+        .functions
+        .iter()
+        .map(|function| {
+            emit_function(
+                function,
+                &signatures,
+                &signature_registry,
+                &array_registry,
+                &string_constants,
+                &bytes_constants,
+                user_type_base,
+                &coroutine_plan,
+                coroutine_body_wrapper_type,
+                coroutine_push_frame_func,
+                &closure_wrapper_slots,
+                &import_map,
+                &declared_import_indices,
+                import_func_count,
+                &buffer_plan,
+                buffer_alloc_func,
+            )
+        })
+        .collect::<Vec<_>>();
+    #[cfg(not(target_family = "wasm"))]
     let emitted_functions = std::thread::scope(|scope| {
+        let workers = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get)
+            .min(module.functions.len().max(1));
+        let chunk_size = module.functions.len().max(1).div_ceil(workers);
         let handles = module
             .functions
             .chunks(chunk_size)
@@ -2009,7 +2063,7 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
     Validator::new_with_features(features)
         .validate_all(&bytes)
         .map_err(|err| Diagnostic::new(format!("emitted invalid wasm: {err}")))?;
-    if std::env::var_os("WALUAU_TIMINGS").is_some() {
+    if CompilerTimer::enabled() {
         eprintln!(
             "waluau wasm timings: setup={:?} user-functions={:?} helpers+sections={:?} encode={:?} validate={:?}",
             setup_at,
@@ -2094,7 +2148,7 @@ fn try_emit_incremental(
     module: &Module,
     cache: &mut EmitCache,
 ) -> Result<Option<EmitResult>, Diagnostic> {
-    let started = std::time::Instant::now();
+    let started = CompilerTimer::start();
     let (Some(previous), Some(context)) = (&cache.module, &cache.context) else {
         return Ok(None);
     };
@@ -2155,7 +2209,7 @@ fn try_emit_incremental(
         .map_err(|err| Diagnostic::new(format!("incrementally emitted invalid wasm: {err}")))?;
     cache.module.as_mut().expect("cached module").functions[index] = function.clone();
     cache.image = Some(updated_image);
-    if std::env::var_os("WALUAU_TIMINGS").is_some() {
+    if CompilerTimer::enabled() {
         eprintln!("waluau wasm timings: incremental={:?}", started.elapsed());
     }
     Ok(Some(EmitResult {

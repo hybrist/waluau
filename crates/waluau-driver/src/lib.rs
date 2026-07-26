@@ -6,6 +6,34 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use waluau_diagnostics::Diagnostic;
 
+struct CompilerTimer {
+    #[cfg(not(target_family = "wasm"))]
+    started: std::time::Instant,
+}
+
+impl CompilerTimer {
+    fn start() -> Self {
+        Self {
+            #[cfg(not(target_family = "wasm"))]
+            started: std::time::Instant::now(),
+        }
+    }
+
+    fn elapsed(&self) -> std::time::Duration {
+        #[cfg(not(target_family = "wasm"))]
+        return self.started.elapsed();
+        #[cfg(target_family = "wasm")]
+        return std::time::Duration::ZERO;
+    }
+
+    fn enabled() -> bool {
+        #[cfg(not(target_family = "wasm"))]
+        return std::env::var_os("WALUAU_TIMINGS").is_some();
+        #[cfg(target_family = "wasm")]
+        return false;
+    }
+}
+
 mod fmt;
 mod link;
 pub mod session;
@@ -122,7 +150,7 @@ fn compile_program_with_cache(
     ir_cache: Option<&mut waluau_ir::BuildCache>,
     wasm_cache: Option<&mut waluau_codegen_wasm::EmitCache>,
 ) -> Result<CompileArtifacts, Vec<Diagnostic>> {
-    let started = std::time::Instant::now();
+    let started = CompilerTimer::start();
     let owned_typed;
     let changed_functions;
     let typed_program = match hir_cache {
@@ -172,7 +200,7 @@ fn compile_program_with_cache(
     .map_err(|error| vec![error])?;
     let emitted_at = started.elapsed();
     let js = waluau_codegen_wasm::generate_js_glue_with_assets(wasm_file_name, &emitted, assets);
-    if std::env::var_os("WALUAU_TIMINGS").is_some() {
+    if CompilerTimer::enabled() {
         eprintln!(
             "waluau timings: hir={:?} symbols={:?} ir={:?} wasm={:?} js={:?} total={:?}",
             typed,
