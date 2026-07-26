@@ -806,12 +806,14 @@ function draw(
     graphics: engine.Graphics,
     effects: render.EffectShaders,
     view: game.View,
+    run: render.RunView,
     state: State,
     interaction: Interaction,
     card_back: graphics_module.Texture?
 ): unit
     render.draw(graphics, effects, {
         view = view,
+        run = run,
         interaction = {
             hand_focus = interaction.hand_focus,
             ward_cursor = interaction.ward_cursor,

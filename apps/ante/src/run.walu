@@ -1,0 +1,117 @@
+-- DOM-free run state: the roguelike frame around the heist. A run is a
+-- sequence of vaults fought with one mana pool. Clearing a vault carries the
+-- mana that survived it into the next one; losing a vault ends the run, and
+-- the mana with it.
+--
+-- This module owns the shape of the sequence — which vault is live, how much
+-- mana it opens with, and which vaults are boss battles — and nothing about
+-- the heist inside a vault. Whether the live vault was won or lost is the
+-- rules module's answer, so nothing here duplicates it.
+
+local game = require("./game")
+local snapshot_data = require("./snapshot")
+
+-- `vault` is 1-based and counts every attempt in the sequence, cleared or
+-- live. `mana` is what the live vault was dealt, not what it has left: the
+-- rules spend from their own pool, and a cleared vault hands its remainder
+-- back here. `rush` is the boss-rush run, where every vault is a boss battle
+-- rather than every third.
+type State = { vault: i32, mana: i32, cleared: i32, spell: i32, rush: bool }
+
+-- Every third vault is the boss battle variant, so a run's cadence is two
+-- standard heists and then eleven relics with no replacements.
+const BOSS_EVERY: i32 = 3
+const SNAPSHOT_SCHEMA: string = "ante-run-v1"
+const SNAPSHOT_COLLECTION_LIMIT: i32 = 8
+
+-- `rush` starts the boss-rush run instead of the standard cadence; `spell` is
+-- the starting spell every vault of the run is fought with.
+function new(spell: i32, rush: bool): State
+    return {
+        vault = 1,
+        mana = game.starting_mana,
+        cleared = 0,
+        spell = spell,
+        rush = rush,
+    }
+end
+
+-- Whether the numbered vault is fought as a boss battle. Vault numbers are
+-- 1-based, so the third, sixth, and ninth vaults are the boss cadence.
+function boss_at(vault: i32, rush: bool): bool
+    if rush then return true end
+    return vault % BOSS_EVERY == 0
+end
+
+function State:boss(): bool
+    return boss_at(self.vault, self.rush)
+end
+
+function State:next_is_boss(): bool
+    return boss_at(self.vault + 1, self.rush)
+end
+
+-- The live vault has been fought to a verdict. Taking it advances the run and
+-- carries the mana that survived into the next vault; losing it ends the run,
+-- and what follows is the first vault of a fresh one — a vault the run already
+-- spent mana in is never fought twice.
+--
+-- The verdict is the rules module's answer, passed in rather than re-derived:
+-- what a finished heist decided is not this module's to decide again.
+function State:settle(cleared: bool, carried_mana: i32): unit
+    if not cleared then
+        self:restart(self.spell, self.rush)
+        return
+    end
+    self.cleared += 1
+    self.vault += 1
+    self.mana = carried_mana
+end
+
+function State:restart(spell: i32, rush: bool): unit
+    local fresh: State = new(spell, rush)
+    self.vault = fresh.vault
+    self.mana = fresh.mana
+    self.cleared = fresh.cleared
+    self.spell = spell
+    self.rush = rush
+end
+
+function snapshot(state: State): string
+    local parts: {string} = { SNAPSHOT_SCHEMA }
+    snapshot_data.append_i32(parts, state.vault)
+    snapshot_data.append_i32(parts, state.mana)
+    snapshot_data.append_i32(parts, state.cleared)
+    snapshot_data.append_i32(parts, state.spell)
+    snapshot_data.append_bool(parts, state.rush)
+    return table.concat(parts, ",")
+end
+
+function restore(snapshot_value: string): State?
+    local reader: snapshot_data.Reader = snapshot_data.reader(
+        snapshot_value, SNAPSHOT_COLLECTION_LIMIT)
+    if reader:next_string() ~= SNAPSHOT_SCHEMA then return nil end
+    local vault: i32 = reader:next_i32()
+    local mana: i32 = reader:next_i32()
+    local cleared: i32 = reader:next_i32()
+    local spell: i32 = reader:next_i32()
+    local rush: bool = reader:next_bool()
+    local restored: State = {
+        vault = vault,
+        mana = mana,
+        cleared = cleared,
+        spell = spell,
+        rush = rush,
+    }
+    if not reader:complete() then return nil end
+    if vault < 1 then return nil end
+    return restored
+end
+
+return {
+    new = new,
+    boss_at = boss_at,
+    snapshot = snapshot,
+    restore = restore,
+    boss_every = BOSS_EVERY,
+}

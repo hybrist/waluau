@@ -10,16 +10,25 @@ are relics, the shared board is the vault's wards, points are sparks, exchanges
 are feints, and each trick is a breach. Poker categories are presented as magical
 formations such as a bound pair, arcane sequence, and perfect convergence.
 The Arch Mage can commit any valid feint without a spark balance. Its third
-breach win ends the heist, while player wins never end the five-breach run early,
-leaving room to maximize the final spark score.
+breach win ends the heist, while player wins never end the five-breach vault
+early, leaving room to maximize the mana carried out of it.
 
-The menu also offers a boss battle: both sides are dealt eleven relics up
-front and spent pairs are never replaced from the draw pile, so the hands
+A vault is one heist inside a longer roguelike run. Clearing all five breaches
+opens the next vault, which is dealt with whatever mana survived the last one:
+the pool is the run's, not the vault's, and every cast spends from it for good.
+The Arch Mage holding three wards ends the whole run, carried mana included, and
+the next heist is the first vault of a fresh run rather than a retry. R restarts
+the run from vault one at any point, which is also why a settled vault is never
+left standing on the board.
+
+Every third vault of a run is a boss battle: both sides are dealt eleven relics
+up front and spent pairs are never replaced from the draw pile, so the hands
 shrink by two every breach and the fifth breach is fought from a three-card
-fan. Everything else — feints, wagers, scoring, and the five-breach run —
-matches the standard heist. Both hand rows lay themselves out for however
-many cards they hold, tightening their pitch (and the fan its tilt and arc)
-so an eleven-relic row still clears the deck and the three right-edge piles.
+fan. Everything else — feints, wagers, scoring, and the five breaches — matches
+a standard vault. The menu's BOSS RUSH starts a run made of nothing else. Both
+hand rows lay themselves out for however many cards they hold, tightening their
+pitch (and the fan its tilt and arc) so an eleven-relic row still clears the
+deck and the three right-edge piles.
 
 The browser entry imports only the engine facade and contains no DOM or canvas
 host calls. The menu, game, help, history, and final outcome all render inside
@@ -83,13 +92,15 @@ flat.
 
 ## Controls
 
-The app boots to a menu screen with NEW GAME and HOW TO PLAY options. Arrow
-keys (or hovering) move the selection, Enter/Space or a click on an option
-activates it, and ? jumps straight to help. Activating NEW GAME begins the
-heist — that gesture also unlocks browser audio — and M returns to the menu
-from the vault. The menu and the heist board are separate screen modules
+The app boots to a menu screen with NEW RUN, BOSS RUSH, and HOW TO PLAY
+options. Arrow keys (or hovering) move the selection, Enter/Space or a click on
+an option activates it, and ? jumps straight to help. Activating NEW RUN or
+BOSS RUSH picks a starting spell and then begins the run — that gesture also
+unlocks browser audio — and M returns to the menu from the vault, abandoning
+the run. The menu and the heist board are separate screen modules
 (`menu.walu` and `game_screen.walu`); `main.walu` only decides which one
-receives engine callbacks.
+receives engine callbacks. One heist screen spans a whole run, dealing each
+vault in place from the run state it owns.
 
 Keyboard (in the vault):
 
@@ -99,7 +110,9 @@ Keyboard (in the vault):
 - P passes during the feint phase.
 - C sorts the relic fan by school (color); V sorts it by rank.
 - 1 enters targeting for the spell chosen before the heist; arrows choose a ward, Enter casts, and Esc cancels.
-- H opens the breach ledger, ? opens help, and R restarts.
+- H opens the breach ledger, ? opens help, and R restarts the run.
+- On the vault's verdict, Enter, Space, or a click enters whatever the run
+  deals next: the following vault, or the first vault of a fresh run.
 - Enter, Space, or Esc skips a running deal or feint animation.
 
 Mouse (Love2D-style engine callbacks in logical canvas coordinates):
@@ -112,7 +125,8 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 - On-screen capsules commit a breach or feint or pass the feint; the commit
   capsule only lights up while the pending binds would be accepted.
 - A click advances or skips reveals and animations, closes the ledger and
-  help, restarts from the final screen, and the footer's "? HELP" opens help.
+  help, enters the next vault from the verdict screen, and the footer's
+  "? HELP" opens help.
 
 | File | Purpose |
 | --- | --- |
@@ -122,6 +136,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `menu_city.walu` | DOM-free procedural city generation, camera drift, and thief-route animation state. |
 | `menu_city_render.walu` | WebGL2 primitive drawing for the menu's panning city and colored street streak. |
 | `game_screen.walu` | The heist screen: rules/flow/choreography wiring and its input adapters. |
+| `run.walu` | DOM-free run state: the vault sequence, its boss cadence, and the mana carried between vaults. |
 | `game.walu` | DOM-free rules, AI, commands, outcomes, and read-only presentation view. |
 | `flow.walu` | DOM-free input gating, focus, modal, selection, and reveal phase transitions. |
 | `choreography.walu` | Domain-level deal, feint, breach, fan, pile, reveal timing, and animation choreography. |
@@ -137,6 +152,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `snapshot.walu` | Shared validated snapshot primitives and atomic payload framing. |
 | `test/game_fixture.walu` | Narrow mutable test adapter for deterministic rule arrangements. |
 | `sim.test.walu` | Deterministic Vitest assertions for rules, flow, snapshots, and full-game completion. |
+| `run.test.walu` | Deterministic Vitest assertions for the boss cadence, mana carryover, and where a run ends. |
 | `tests/game-driver.js` | Shared browser-test seam for booting a heist and observing rendered frames. |
 | `tests/spell-effects.spec.js` | Spell-presentation behavior isolated from menu and gameplay browser coverage. |
 | `waluau.assets.json` | Typed package manifest for the card back, vault font, and flip sound. |

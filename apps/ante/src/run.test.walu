@@ -1,0 +1,222 @@
+-- Deterministic, DOM-free checks for the roguelike run around Arcane Heist:
+-- the boss cadence, mana carrying between vaults, and where a run ends.
+
+require("waluau:vitest")
+
+local game = require("./game")
+local game_fixture = require("../test/game_fixture")
+local run = require("./run")
+local flow = require("./flow")
+
+-- One vault of a run, fought to a verdict and settled the way the heist screen
+-- settles it: the rules say whether the vault opened and what mana survived,
+-- and the run says what is dealt next. `arch_mage_wins` is how many wards the
+-- Arch Mage held, so three of them is a lost vault.
+local function settle_vault(
+    state: run.State, arch_mage_wins: i32, mana: i32
+): game.State
+    local rules: game.State = game.new(state:boss(), state.spell, state.mana)
+    game_fixture.set_player_points(rules, mana)
+    game_fixture.finish(rules, arch_mage_wins)
+    state:settle(rules:is_victory(), rules:mana())
+    return rules
+end
+
+-- Take the live vault leaving `mana` behind, the way five survived breaches do.
+local function clear_vault(state: run.State, mana: i32): unit
+    settle_vault(state, 0, mana)
+end
+
+describe("Arcane Heist run cadence", function()
+    it("makes every third vault a boss battle", function()
+        expect(run.boss_at(1, false)):toBe(false)
+        expect(run.boss_at(2, false)):toBe(false)
+        expect(run.boss_at(3, false)):toBe(true)
+        expect(run.boss_at(4, false)):toBe(false)
+        expect(run.boss_at(6, false)):toBe(true)
+        expect(run.boss_at(9, false)):toBe(true)
+    end)
+
+    it("makes every vault of a boss rush a boss battle", function()
+        expect(run.boss_at(1, true)):toBe(true)
+        expect(run.boss_at(2, true)):toBe(true)
+        expect(run.boss_at(3, true)):toBe(true)
+    end)
+
+    it("opens a run on the first vault with the starting mana", function()
+        local state: run.State = run.new(game.spell_clone, false)
+        expect(state.vault):toBe(1)
+        expect(state.cleared):toBe(0)
+        expect(state.mana):toBe(game.starting_mana)
+        expect(state.spell):toBe(game.spell_clone)
+        expect(state:boss()):toBe(false)
+        expect(state:next_is_boss()):toBe(false)
+    end)
+
+    it("carries a cleared vault's mana into the next one", function()
+        local state: run.State = run.new(game.spell_firebolt, false)
+        state:settle(true, 31)
+        expect(state.vault):toBe(2)
+        expect(state.cleared):toBe(1)
+        expect(state.mana):toBe(31)
+        expect(state:boss()):toBe(false)
+        -- The vault after this one is where the cadence lands, so the board can
+        -- warn about it while this one is still being fought.
+        expect(state:next_is_boss()):toBe(true)
+        state:settle(true, 18)
+        expect(state.vault):toBe(3)
+        expect(state.mana):toBe(18)
+        expect(state:boss()):toBe(true)
+    end)
+
+    it("ends the run on a lost vault, mana and all", function()
+        local state: run.State = run.new(game.spell_firebolt, false)
+        state:settle(true, 31)
+        -- A lost vault takes the carried mana with it: what follows is the
+        -- first vault of a fresh run, not a retry of the one that ended it.
+        state:settle(false, 31)
+        expect(state.vault):toBe(1)
+        expect(state.cleared):toBe(0)
+        expect(state.mana):toBe(game.starting_mana)
+        expect(state.spell):toBe(game.spell_firebolt)
+    end)
+
+    it("restarts a run at the first vault with a fresh pool", function()
+        local state: run.State = run.new(game.spell_firebolt, false)
+        state:settle(true, 31)
+        state:settle(true, 18)
+        state:restart(game.spell_freeze_ray, true)
+        expect(state.vault):toBe(1)
+        expect(state.cleared):toBe(0)
+        expect(state.mana):toBe(game.starting_mana)
+        expect(state.spell):toBe(game.spell_freeze_ray)
+        expect(state:boss()):toBe(true)
+    end)
+
+    it("round-trips run state through development snapshots", function()
+        local state: run.State = run.new(game.spell_raise_card, true)
+        state:settle(true, 27)
+        local encoded: string = run.snapshot(state)
+        local restored: run.State? = run.restore(encoded)
+        expect(restored == nil):toBe(false)
+        if restored ~= nil then
+            expect(restored.vault):toBe(2)
+            expect(restored.cleared):toBe(1)
+            expect(restored.mana):toBe(27)
+            expect(restored.spell):toBe(game.spell_raise_card)
+            expect(restored.rush):toBe(true)
+            expect(run.snapshot(restored)):toBe(encoded)
+        end
+
+        expect(run.restore("ante-run-v0,1,10,0,1,0") == nil):toBe(true)
+        expect(run.restore(encoded .. ",unexpected") == nil):toBe(true)
+    end)
+end)
+
+describe("Arcane Heist vault verdicts", function()
+    it("clears a vault the Arch Mage failed to hold three times", function()
+        math.randomseed(71)
+        local state: game.State = game.new(false, game.spell_firebolt, game.starting_mana)
+        expect(state:is_victory()):toBe(false)
+        game_fixture.finish(state, 2)
+        expect(state:is_victory()):toBe(true)
+        expect(game.view_cleared(game.view(state))):toBe(true)
+    end)
+
+    it("loses a vault the Arch Mage held three times", function()
+        math.randomseed(73)
+        local state: game.State = game.new(false, game.spell_firebolt, game.starting_mana)
+        game_fixture.finish(state, 3)
+        expect(state:is_victory()):toBe(false)
+        expect(game.view_cleared(game.view(state))):toBe(false)
+    end)
+
+    it("asks the run for what follows a verdict", function()
+        local keyboard: flow.State = flow.new()
+        local mouse: flow.State = flow.new()
+        keyboard.modal = flow.modal_final
+        mouse.modal = flow.modal_final
+        expect(flow.gate(keyboard, true, false, true, flow.command_advance))
+            :toBe(flow.result_advance)
+        expect(flow.gate(mouse, true, false, true, flow.command_primary))
+            :toBe(flow.result_advance)
+        -- The verdict stays up until the screen deals whatever comes next.
+        expect(keyboard.modal):toBe(flow.modal_final)
+        -- Restart is still its own answer: the whole run over again, rather
+        -- than whatever vault the run would have moved to.
+        expect(flow.gate(keyboard, true, false, true, flow.command_restart))
+            :toBe(flow.result_reset)
+        -- The ledger opens over the verdict, and closing it puts the verdict
+        -- back: a settled board is not somewhere a run can be left standing.
+        expect(flow.gate(mouse, true, false, true, flow.command_history))
+            :toBe(flow.result_consumed)
+        expect(mouse.modal):toBe(flow.modal_history)
+        expect(flow.gate(mouse, true, false, true, flow.command_history))
+            :toBe(flow.result_consumed)
+        expect(mouse.modal):toBe(flow.modal_final)
+        expect(flow.gate(mouse, true, false, true, flow.command_help))
+            :toBe(flow.result_consumed)
+        expect(flow.gate(mouse, true, false, true, flow.command_advance))
+            :toBe(flow.result_consumed)
+        expect(mouse.modal):toBe(flow.modal_final)
+    end)
+end)
+
+-- The heist screen deals each vault from the run the same way these do: the
+-- variant, spell, and opening mana are all the run's to say. What the screen
+-- adds on top is choreography, which needs a canvas and is covered by the
+-- app's browser suite instead.
+describe("Arcane Heist run progression", function()
+    it("deals the next vault with the mana the last one left", function()
+        math.randomseed(79)
+        local state: run.State = run.new(game.spell_firebolt, false)
+        local first: game.State = settle_vault(state, 0, 42)
+        expect(first:mana()):toBe(42)
+        expect(state.vault):toBe(2)
+        expect(state.cleared):toBe(1)
+
+        local second: game.State = game.new(state:boss(), state.spell, state.mana)
+        expect(second:mana()):toBe(42)
+        expect(second:is_boss()):toBe(false)
+        expect(second:is_finished()):toBe(false)
+        expect(second:spell_kind()):toBe(game.spell_firebolt)
+
+        clear_vault(state, 30)
+        expect(state.vault):toBe(3)
+        expect(state.cleared):toBe(2)
+        -- The third vault is the boss battle: eleven relics, no replacements.
+        local third: game.State = game.new(state:boss(), state.spell, state.mana)
+        expect(third:mana()):toBe(30)
+        expect(third:is_boss()):toBe(true)
+        expect(third:hand_size()):toBe(11)
+    end)
+
+    it("ends the run where the Arch Mage stops it", function()
+        math.randomseed(83)
+        local state: run.State = run.new(game.spell_clone, false)
+        clear_vault(state, 42)
+        local lost: game.State = settle_vault(state, 3, 42)
+        expect(lost:is_victory()):toBe(false)
+
+        expect(state.vault):toBe(1)
+        expect(state.cleared):toBe(0)
+        local fresh: game.State = game.new(state:boss(), state.spell, state.mana)
+        expect(fresh:mana()):toBe(game.starting_mana)
+        expect(fresh:spell_kind()):toBe(game.spell_clone)
+    end)
+
+    it("keeps every vault of a boss rush a boss battle", function()
+        math.randomseed(89)
+        local state: run.State = run.new(game.spell_freeze_ray, true)
+        local opening: game.State = settle_vault(state, 0, 25)
+        expect(opening:is_boss()):toBe(true)
+        expect(opening:hand_size()):toBe(11)
+
+        expect(state.vault):toBe(2)
+        expect(state:boss()):toBe(true)
+        expect(state:next_is_boss()):toBe(true)
+        local second: game.State = game.new(state:boss(), state.spell, state.mana)
+        expect(second:mana()):toBe(25)
+        expect(second:hand_size()):toBe(11)
+    end)
+end)

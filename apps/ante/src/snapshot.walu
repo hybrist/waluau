@@ -98,18 +98,25 @@ function Reader:complete(): bool
     return self.ok and self.index == #self.tokens
 end
 
--- Hot replacement has four independently versioned payloads: the live screen
--- marker plus the rules, flow, and presentation sections. Keeping framing here
+-- Hot replacement carries several independently versioned payloads: the live
+-- screen marker plus one section per state module. Keeping the framing here
 -- makes restore atomic without making any section understand the others'
 -- schemas.
-function frame4(schema: string, first: string, second: string, third: string, fourth: string): string
-    return schema .. "|" .. first .. "|" .. second .. "|" .. third .. "|" .. fourth
+function frame(schema: string, sections: {string}): string
+    local parts: {string} = { schema }
+    for section in sections do table.insert(parts, section) end
+    return table.concat(parts, "|")
 end
 
-function unframe4(value: string, schema: string): {string}?
+-- Sections only when the value carries exactly `count` of them under `schema`.
+-- A payload framed by a differently shaped build is a normal nil result, not an
+-- error: the sections it holds are not the ones this build would restore.
+function unframe(value: string, schema: string, count: i32): {string}?
     local sections: {string} = string.split(value, "|")
-    if #sections ~= 5 or sections[0] ~= schema then return nil end
-    return { sections[1], sections[2], sections[3], sections[4] }
+    if #sections ~= count + 1 or sections[0] ~= schema then return nil end
+    local payloads: {string} = {}
+    for index = 1::i32, count do table.insert(payloads, sections[index]) end
+    return payloads
 end
 
 return {
@@ -119,6 +126,6 @@ return {
     append_indices = append_indices,
     append_f64s = append_f64s,
     reader = reader,
-    frame4 = frame4,
-    unframe4 = unframe4,
+    frame = frame,
+    unframe = unframe,
 }

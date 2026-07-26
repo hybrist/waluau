@@ -1,17 +1,24 @@
--- The heist screen: the rules/flow/choreography triple behind the live board,
--- plus the keyboard and mouse adapters that drive it. The entry module only
--- routes engine callbacks here while this screen is active; audio unlock and
--- resource lifetime stay with the entry module, so by the time input reaches
--- this screen the browser gesture requirement is already satisfied.
+-- The heist screen: the run, the rules/flow/choreography triple behind the
+-- live board, plus the keyboard and mouse adapters that drive it. The entry
+-- module only routes engine callbacks here while this screen is active; audio
+-- unlock and resource lifetime stay with the entry module, so by the time
+-- input reaches this screen the browser gesture requirement is already
+-- satisfied.
+--
+-- One screen spans a whole run: clearing a vault deals the next one in place
+-- rather than handing control back to the entry module, so the run's carried
+-- mana never has to leave this screen.
 
 local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
 local game = require("./game")
+local run_module = require("./run")
 local render = require("./render")
 local choreography = require("./choreography")
 local flow = require("./flow")
 
 type State = {
+    run: run_module.State,
     rules: game.State,
     ui: flow.State,
     presentation: choreography.State
@@ -21,23 +28,54 @@ const ACTION_NONE: i32 = 0
 const ACTION_EXIT: i32 = 1
 
 function new(): State
+    local run: run_module.State = run_module.new(game.spell_firebolt, false)
     return {
-        rules = game.new(false, game.spell_firebolt),
+        run = run,
+        rules = game.new(run:boss(), run.spell, run.mana),
         ui = flow.new(),
         presentation = choreography.new(),
     }
 end
 
--- `boss` picks the variant the fresh heist is dealt as and `spell` the
--- starting spell it is fought with; the entry module passes the menu's
--- choices, and in-game restarts replay the current pair.
-function reset(state: State, boss: bool, spell: i32): unit
-    state.rules:reset(boss, spell)
+-- Deal the vault the run is currently on: its variant and opening mana are the
+-- run's to say, so nothing outside this screen decides what the next heist is
+-- dealt as.
+function deal_vault(state: State): unit
+    local run: run_module.State = state.run
+    state.rules:reset(run:boss(), run.spell, run.mana)
     flow.reset(state.ui)
     choreography.reset(state.presentation)
     -- The opening deal is already reflected in rules state; choreography
     -- reveals that settled result as the screen comes alive.
     choreography.opening_deal(game.view(state.rules), state.presentation)
+end
+
+-- Start a run at its first vault. `rush` is the boss-rush run and `spell` the
+-- starting spell every vault of it is fought with; the entry module passes the
+-- menu's choices, and an in-game restart replays the same pair from vault one.
+function reset(state: State, rush: bool, spell: i32): unit
+    state.run:restart(spell, rush)
+    deal_vault(state)
+end
+
+-- The live vault has been fought to a verdict and the player asked for what
+-- comes next. The run settles on which vault that is — the next one of this
+-- run, or the first of a fresh one — and this screen deals it.
+function advance_run(state: State): unit
+    state.run:settle(state.rules:is_victory(), state.rules:mana())
+    deal_vault(state)
+end
+
+-- What the renderer needs to know about the run behind the live board.
+function run_view(state: State): render.RunView
+    local run: run_module.State = state.run
+    return {
+        vault = run.vault,
+        cleared = run.cleared,
+        boss = run:boss(),
+        next_is_boss = run:next_is_boss(),
+        carried_mana = run.mana,
+    }
 end
 
 function key_command(key: string): i32
@@ -89,6 +127,7 @@ function draw(
         graphics,
         effects,
         game.view(state.rules),
+        run_view(state),
         state.presentation,
         {
             hand_focus = flow.fan_focus(
@@ -155,8 +194,12 @@ function consume_gate(state: State, command: i32): bool
         choreography.is_animating(state.presentation),
         choreography.reveal_finished(state.presentation), command)
     if result == flow.result_live then return false end
+    -- Restart is a run restart, not a redeal of the live vault: a vault the
+    -- run already paid mana into cannot be fought a second time.
     if result == flow.result_reset then
-        reset(state, state.rules:is_boss(), state.rules:spell_kind())
+        reset(state, state.run.rush, state.run.spell)
+    elseif result == flow.result_advance then
+        advance_run(state)
     elseif result == flow.result_refill then
         local trick: game.Trick? = state.rules:last_trick()
         if trick ~= nil then
@@ -348,10 +391,11 @@ function mousepressed(state: State, x: f64, y: f64, button: i32): unit
     end
 end
 
--- Three independently versioned development-snapshot payloads, in the same
+-- Four independently versioned development-snapshot payloads, in the same
 -- order restore expects them. The entry module owns the frame around them.
 function snapshot(state: State): {string}
     return {
+        run_module.snapshot(state.run),
         game.snapshot(state.rules),
         flow.snapshot(state.ui),
         choreography.snapshot(state.presentation),
@@ -359,17 +403,21 @@ function snapshot(state: State): {string}
 end
 
 function restore(
+    run_payload: string,
     rules_payload: string,
     ui_payload: string,
     presentation_payload: string
 ): State?
+    local run: run_module.State? = run_module.restore(run_payload)
     local rules: game.State? = game.restore(rules_payload)
     local ui: flow.State? = flow.restore(ui_payload)
     local presentation: choreography.State? = choreography.restore(presentation_payload)
+    if run == nil then return nil end
     if rules == nil then return nil end
     if ui == nil then return nil end
     if presentation == nil then return nil end
     return {
+        run = run::run_module.State,
         rules = rules::game.State,
         ui = ui::flow.State,
         presentation = presentation::choreography.State,
