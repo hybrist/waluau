@@ -20,12 +20,16 @@ test('casts the chosen spell at a targeted ward for mana', async ({ page }) => {
   await expect.poll(() => frameSignature(canvas)).toBe(baseline);
 
   // Aiming at the middle ward and confirming burns it. Once the burn finishes,
-  // the replacement, discard pile, deck count, and spent mana settle to a new
-  // still frame rather than leaving the old persistent burn running forever.
+  // the replacement visibly moves off the deck before the discard pile, deck
+  // count, ward, and spent mana settle to a new still frame.
   await page.keyboard.press('1');
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('Enter');
-  await page.waitForTimeout(2_500);
+  await page.waitForTimeout(2_300);
+  const drawing = await frameSignature(canvas);
+  await page.waitForTimeout(100);
+  expect(await frameSignature(canvas)).not.toBe(drawing);
+  await page.waitForTimeout(400);
   const resolved = await frameSignature(canvas);
   expect(resolved).not.toBe(baseline);
   await page.waitForTimeout(300);

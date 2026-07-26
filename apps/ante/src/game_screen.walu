@@ -62,8 +62,11 @@ function update(state: State, dt: f64): i32
     if burned_ward >= 0 then
         local discarded: game.Card? = state.rules:resolve_firebolt(burned_ward)
         if discarded ~= nil then
-            choreography.record_firebolt_discard(
-                presentation, discarded::game.Card)
+            choreography.firebolt_resolved(
+                presentation,
+                discarded::game.Card,
+                state.rules.middle[burned_ward],
+                burned_ward)
         end
     end
     if ui.revealing then
