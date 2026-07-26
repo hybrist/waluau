@@ -26,7 +26,6 @@ function draw(graphics: Graphics, effects: EffectShaders, cast: spell_cast.Cast)
         graphics:set_color("#ffffff")
         graphics:fill_circle(head.x, head.y, 6.0)
     end
-    spell_cast.draw_radial_impact(graphics, cast, "#38bdf8")
 end
 
 return { draw = draw }

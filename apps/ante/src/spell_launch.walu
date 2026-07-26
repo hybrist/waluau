@@ -45,17 +45,62 @@ function color(kind: i32): string
     return "#4ade80"
 end
 
+-- The emitters a cast owns, built with each spell's own tuning. Only one spell
+-- is ever in flight, so one set serves all four.
+function new_sparks(): spell_cast.Sparks
+    return { trail = firebolt.new_trail(), burst = spell_cast.new_burst(1049) }
+end
+
+-- The advancing half of the seam draw() is the drawing half of. Sparks and
+-- embers are simulation state, so they are stepped once per tick from the
+-- clock the condition owns rather than rebuilt from it at draw time. Only the
+-- landing and the carrier's own position are spell-specific; the caller
+-- supplies the target the same way it does for draw.
+function step(
+    sparks: spell_cast.Sparks,
+    kind: i32,
+    clock: f64,
+    dt: f64,
+    target_x: f64,
+    target_y: f64
+): unit
+    local previous: f64 = clock - dt
+    local flight: f64 = firebolt.not_flying
+    local head_x: f64 = 0.0
+    local head_y: f64 = 0.0
+    local arriving: bool = false
+    if kind ~= 0 then
+        local cast: spell_cast.Cast = spell_cast.new(clock, target_x, target_y)
+        -- The single frame the carrier crosses into its target. A restored
+        -- condition comes back already settled past this, so a hot reload
+        -- never replays a landing that has already happened.
+        arriving = previous < spell_cast.travel_seconds
+            and clock >= spell_cast.travel_seconds
+        if kind == FIREBOLT then
+            flight = cast.progress
+            local head: spell_cast.Point = spell_cast.at(cast, cast.progress)
+            head_x = head.x
+            head_y = head.y
+        end
+    end
+    spell_cast.step_burst(
+        sparks.burst, arriving, target_x, target_y, color(kind), dt)
+    firebolt.step_trail(
+        sparks.trail, flight, head_x, head_y, previous <= 0.0, dt)
+end
+
 function draw(
     graphics: Graphics,
     effects: EffectShaders,
     kind: i32,
     clock: f64,
     target_x: f64,
-    target_y: f64
+    target_y: f64,
+    sparks: spell_cast.Sparks
 ): unit
     local cast: spell_cast.Cast = spell_cast.new(clock, target_x, target_y)
     if kind == FIREBOLT then
-        firebolt.draw(graphics, effects, cast)
+        firebolt.draw(graphics, effects, cast, sparks.trail)
     elseif kind == FREEZE_RAY then
         freeze_ray.draw(graphics, effects, cast)
     elseif kind == RAISE_CARD then
@@ -63,6 +108,16 @@ function draw(
     elseif kind == CLONE then
         clone.draw(graphics, effects, cast)
     end
+    -- One burst for every spell, outside the dispatch because the sparks a
+    -- landing threw are still in the air after the carrier that threw them is
+    -- gone. Fire is the only one of the four that burns.
+    spell_cast.draw_burst(graphics, effects, sparks.burst, kind == FIREBOLT)
 end
 
-return { draw = draw, name = name, color = color }
+return {
+    draw = draw,
+    step = step,
+    new_sparks = new_sparks,
+    name = name,
+    color = color
+}
