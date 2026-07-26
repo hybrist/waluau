@@ -346,6 +346,8 @@ const EASE_OUT_QUINT: i32 = 0
 const EASE_IN_CUBIC: i32 = 1
 const EASE_IN_OUT_CUBIC: i32 = 2
 const EASE_OUT_BACK: i32 = 3
+const ANIM_EFFECT_MOVE: i32 = 0
+const ANIM_EFFECT_ASH_REAPPEAR: i32 = 1
 
 -- One leg of a card's journey across the board. The card renders at `from`
 -- until start, travels to `to` over duration, and only exists on screen
@@ -356,11 +358,13 @@ const EASE_OUT_BACK: i32 = 3
 -- slot empty until they vanish, so state that already changed is not revealed
 -- ahead of the animation. `known` matches the slot the card is headed for, so a
 -- ward crossing into a hand carries its eye the whole way rather than sprouting
--- one the instant it lands.
+-- one the instant it lands. Most legs move an intact card; an ash-reappearance
+-- leg stays at the discard anchor and rebuilds a burned card there instead.
 type Anim = {
     card: game.Card,
     faces: i32,
     known: bool,
+    effect: i32,
     from: Point,
     to: Point,
     angle0: f64,
@@ -921,6 +925,100 @@ function pile_landed(cards: {game.Card}, anims: {Anim}, clock: f64, dest_kind: i
     return #cards - pending
 end
 
+-- Ash which has already fallen is drawn back into the card's footprint before
+-- the reverse burn front seals it. This is deliberately clock-derived rather
+-- than a live particle system: a discard reappearance may be skipped, restored,
+-- or shared by Firebolt without adding another piece of snapshot state.
+function draw_reappearing_ash(
+    graphics: Graphics,
+    effects: EffectShaders,
+    x: f64,
+    y: f64,
+    progress: f64,
+    seed: i32
+): unit
+    if progress >= 1.0 then return end
+    local particles_ok: bool = burn_particles.use(
+        graphics, effects, seed + 809, false)
+    if not particles_ok then stop_effect(graphics) end
+    for fleck = 0::i32, LOSS_ASH_FLECKS - 1 do
+        local id: i32 = seed * 71 + fleck
+        local local_x: f64 = (burn_particles.hash(id, 1.0) - 0.5) * (CARD_W - 12.0)
+        local local_y: f64 = (burn_particles.hash(id, 2.0) - 0.5) * (CARD_H - 14.0)
+        local delay: f64 = burn_particles.hash(id, 3.0) * 0.16
+        local gather: f64 = (progress - delay) / (0.82 - delay)
+        if gather < 0.0 then gather = 0.0 elseif gather > 1.0 then gather = 1.0 end
+        gather = ease_in_out_cubic(gather)
+        local radial_x: f64 = local_x / (CARD_W * 0.5)
+        local radial_y: f64 = local_y / (CARD_H * 0.5)
+        local spread: f64 = 24.0 + burn_particles.hash(id, 4.0) * 48.0
+        local source_x: f64 = local_x
+            + radial_x * spread
+            + (burn_particles.hash(id, 5.0) - 0.5) * 36.0
+        local source_y: f64 = local_y
+            + 26.0 + burn_particles.hash(id, 6.0) * 74.0
+        local fleck_x: f64 = x + CARD_W * 0.5
+            + source_x + (local_x - source_x) * gather
+        local fleck_y: f64 = y + CARD_H * 0.5
+            + source_y + (local_y - source_y) * gather
+        local width: f64 = 1.5 + burn_particles.hash(id, 7.0) * 3.6
+        local height: f64 = 2.8 + burn_particles.hash(id, 8.0) * 6.8
+        local color: string = "#292524"
+        if fleck % 7 == 0 then color = "#9a3412"
+        elseif fleck % 3 == 0 then color = "#78716c" end
+        burn_particles.draw(
+            graphics, fleck_x, fleck_y,
+            width, height,
+            (burn_particles.hash(id, 9.0) - 0.5) * 8.0 * (1.0 - gather),
+            color .. burn_particles.alpha(progress), particles_ok)
+    end
+    if particles_ok then stop_effect(graphics) end
+end
+
+-- Rebuild one face-up public card at the discard anchor. Running the burn
+-- shader backwards preserves the exact ragged char/ember boundary of the
+-- destruction, while the converging flecks make the reversal read as ash
+-- becoming paper rather than an ordinary fade-in.
+function draw_ash_reappearance(
+    graphics: Graphics,
+    effects: EffectShaders,
+    card_back: graphics_module.Texture?,
+    card: game.Card,
+    x: f64,
+    y: f64,
+    progress: f64
+): unit
+    local seed: i32 = card.rank * 17 + card.suit * 97 + 317
+    draw_reappearing_ash(graphics, effects, x, y, progress, seed)
+    local sheet: f64 = smooth_step(0.08, 0.96, progress)
+    local burn_progress: f64 = 1.0 - sheet
+    local target: graphics_module.RenderTarget? = capture_card_face(
+        graphics, effects, card_back, card, false, false)
+    if target == nil then
+        if burn_progress < 0.68 then
+            draw_card(
+                graphics, effects, card_back, card,
+                x, y, false, false, false, false, false)
+        end
+        return
+    end
+    local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
+    local shader_ok: bool = use_card_burn(
+        graphics, effects, burn_progress, seed, card.suit)
+    if shader_ok then
+        graphics:set_color("#ffffffff")
+        graphics:draw_render_target(captured, x, y, CARD_W, CARD_H)
+        stop_effect(graphics)
+    else
+        stop_effect(graphics)
+        if burn_progress < 0.68 then
+            graphics:set_color("#ffffffff")
+            graphics:draw_render_target(captured, x, y, CARD_W, CARD_H)
+        end
+    end
+    graphics:release_render_target(captured)
+end
+
 -- A card mid-deal or mid-swap: eased travel between two board anchors with
 -- an optional mid-flight flip, turning to meet the tilt of wherever it lands
 -- and lifted slightly toward the viewer while it moves (matching the reveal
@@ -933,6 +1031,11 @@ function draw_anim_card(graphics: Graphics, effects: EffectShaders, card_back: g
     if t > 1.0 then t = 1.0 end
     local ease: f64 = ease_progress(t, anim.easing)
     local at: Point = lerp(anim.from, anim.to, ease)
+    if anim.effect == ANIM_EFFECT_ASH_REAPPEAR then
+        draw_ash_reappearance(
+            graphics, effects, card_back, anim.card, at.x, at.y, ease)
+        return
+    end
     local hidden: bool = anim.faces == FACES_DOWN
     local width_scale: f64 = 1.0
     local turn: f64 = ease_in_out_cubic(t)
@@ -1924,12 +2027,11 @@ function draw_resolution_board(
         loss_progress = loss_burn_progress(reveal_clock)
     end
     -- The won piles are settled here — this trick joins its winner's pile only
-    -- once play advances and the scoop carries it there. The losing pair,
-    -- though, is already logged to the burn pile: it lands on the pile at the
-    -- instant its disintegration completes, so the count ticks up exactly as
-    -- the embers wink out rather than before they have finished burning.
+    -- once play advances and the scoop carries it there. The losing pair is
+    -- already in the ledger too, but remains visibly absent until advancing
+    -- the result rebuilds both cards from ash directly on the neutral pile.
     local burn_landed: i32 = #discards
-    if trick.winner ~= 0 and loss_progress < 1.0 then burn_landed -= 2 end
+    if trick.winner ~= 0 then burn_landed -= 2 end
     draw_piles(graphics, effects, discards, burn_landed, computer_won, #computer_won, player_won, #player_won)
     if trick.winner > 0 then text_centered(graphics, "DEFENSE BREACHED +" .. tostring(trick.points), WIDTH * 0.5, 103.0, 14, "#67e8f9")
     elseif trick.winner < 0 then text_centered(graphics, "THE WARDS HOLD", WIDTH * 0.5, 103.0, 14, "#fca5a5")
@@ -2366,6 +2468,8 @@ return {
     ease_in_cubic = EASE_IN_CUBIC,
     ease_in_out_cubic = EASE_IN_OUT_CUBIC,
     ease_out_back = EASE_OUT_BACK,
+    anim_effect_move = ANIM_EFFECT_MOVE,
+    anim_effect_ash_reappear = ANIM_EFFECT_ASH_REAPPEAR,
     firebolt_burn_finished = firebolt_burn_finished,
     -- The ash emitters and the two readings that steer them. Choreography owns
     -- the systems and ticks them; this module owns their tuning and how far
