@@ -10,6 +10,8 @@
 
 local engine = require("waluau:engine")
 local render = require("./render")
+local menu_city = require("./menu_city")
+local menu_city_render = require("./menu_city_render")
 
 type State = {
     clock: f64,
@@ -17,7 +19,8 @@ type State = {
     help_open: bool,
     stage: i32,
     boss_choice: bool,
-    spell_cursor: i32
+    spell_cursor: i32,
+    city: menu_city.State
 }
 
 const ACTION_NONE: i32 = 0
@@ -48,6 +51,7 @@ function new(): State
         stage = STAGE_MAIN,
         boss_choice = false,
         spell_cursor = 0,
+        city = menu_city.new(math.random(2147483646)),
     }
 end
 
@@ -58,10 +62,12 @@ function reset(state: State): unit
     state.stage = STAGE_MAIN
     state.boss_choice = false
     state.spell_cursor = 0
+    menu_city.regenerate(state.city)
 end
 
 function update(state: State, dt: f64): unit
     state.clock += dt
+    menu_city.update(state.city, dt)
 end
 
 -- The starting spell the current selection names, as the rules' spell kind.
@@ -152,7 +158,7 @@ end
 -- menu accepts NEW GAME either way — the heist screen already waits for its
 -- resources — but says so instead of promising a start that visibly stalls.
 function draw(state: State, graphics: engine.Graphics, effects: render.EffectShaders, ready: bool): unit
-    render.draw_backdrop(graphics)
+    menu_city_render.draw(state.city, graphics, render.school_color(state.city.streak_suit))
     if state.help_open then
         render.draw_help(graphics, effects)
         return
@@ -167,9 +173,8 @@ function draw(state: State, graphics: engine.Graphics, effects: render.EffectSha
         WIDTH * 0.5, 252.0, 12, "#d4d4d8")
     -- The four schools of magic as small mana motes under the title, in the
     -- same colours the footer legend uses in the vault.
-    local school_inks: {string} = { "#ef4444", "#38bdf8", "#a855f7", "#4ade80" }
     for i = 0::i32, 3::i32 do
-        graphics:set_color(school_inks[i])
+        graphics:set_color(render.school_color(i))
         graphics:fill_circle(WIDTH * 0.5 - 54.0 + (i::f64) * 36.0, 282.0, 6.0)
     end
 

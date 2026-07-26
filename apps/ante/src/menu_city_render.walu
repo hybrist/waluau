@@ -1,0 +1,132 @@
+-- WebGL2 presentation for the DOM-free city model. Muted rooftops keep the
+-- option list readable; the one saturated feature is the passing thief streak.
+
+local engine = require("waluau:engine")
+local menu_city = require("./menu_city")
+
+type Graphics = engine.Graphics
+
+const WIDTH: f64 = 960.0
+const HEIGHT: f64 = 600.0
+const STREAK_LENGTH: f64 = 118.0
+
+function roof_tone(tone: i32): string
+    if tone == 0 then return "#151620" end
+    if tone == 1 then return "#191821" end
+    if tone == 2 then return "#131922" end
+    return "#1b1720"
+end
+
+function draw_rooftop(graphics: Graphics, building: menu_city.Building): unit
+    graphics:set_color("#07080d")
+    graphics:fill_rectangle(
+        building.x + 3.0, building.y + 4.0,
+        building.width, building.height)
+    graphics:set_color(roof_tone(building.tone))
+    graphics:fill_rectangle(
+        building.x, building.y, building.width, building.height)
+    graphics:set_color("#292b36")
+    graphics:set_line_width(1.0)
+    graphics:stroke_rectangle(
+        building.x, building.y, building.width, building.height)
+
+    local unit_x: f64 = building.x + building.width * 0.5 - 7.0
+    local unit_y: f64 = building.y + building.height * 0.5 - 5.0
+    if building.detail == 1 then unit_x = building.x + 9.0 end
+    if building.detail == 2 then unit_y = building.y + 9.0 end
+    graphics:set_color("#0d0f16")
+    graphics:fill_rectangle(unit_x, unit_y, 14.0, 10.0)
+    graphics:set_color("#30323d")
+    graphics:stroke_rectangle(unit_x, unit_y, 14.0, 10.0)
+end
+
+function draw_street_marks(graphics: Graphics, streets: {f64}, vertical: bool, limit: i32): unit
+    graphics:set_color("#252833")
+    graphics:set_line_width(1.0)
+    for street in streets do
+        if vertical then
+            for y = 8, limit - 8, 28 do
+                graphics:line(street, y::f64, street, (y + 10)::f64)
+            end
+        else
+            for x = 8, limit - 8, 28 do
+                graphics:line(x::f64, street, (x + 10)::f64, street)
+            end
+        end
+    end
+end
+
+function clamp(value: f64, low: f64, high: f64): f64
+    if value < low then return low end
+    if value > high then return high end
+    return value
+end
+
+function draw_streak(state: menu_city.State, graphics: Graphics, color: string): unit
+    if state.streak_clock < 0.0 or state.streak_clock > state.streak_duration then return end
+    local progress: f64 = state.streak_clock / state.streak_duration
+    local travel: f64 = menu_city.width + STREAK_LENGTH * 2.0
+    if not state.streak_horizontal then travel = menu_city.height + STREAK_LENGTH * 2.0 end
+    local head: f64 = -STREAK_LENGTH + travel * progress
+    local tail: f64 = head - STREAK_LENGTH
+    local limit: f64 = menu_city.width
+    if not state.streak_horizontal then limit = menu_city.height end
+    if not state.streak_forward then
+        head = limit - head
+        tail = limit - tail
+    end
+    head = clamp(head, 0.0, limit)
+    tail = clamp(tail, 0.0, limit)
+
+    graphics:set_blend_mode("add")
+    graphics:set_color(color .. "24")
+    graphics:set_line_width(16.0)
+    if state.streak_horizontal then
+        graphics:line(tail, state.streak_street, head, state.streak_street)
+    else
+        graphics:line(state.streak_street, tail, state.streak_street, head)
+    end
+    graphics:set_color(color .. "70")
+    graphics:set_line_width(6.0)
+    if state.streak_horizontal then
+        graphics:line(tail, state.streak_street, head, state.streak_street)
+    else
+        graphics:line(state.streak_street, tail, state.streak_street, head)
+    end
+    graphics:set_color("#ffffff")
+    graphics:fill_circle(
+        if state.streak_horizontal then head else state.streak_street,
+        if state.streak_horizontal then state.streak_street else head,
+        2.2)
+    graphics:set_blend_mode("alpha")
+end
+
+function draw(state: menu_city.State, graphics: Graphics, streak_color: string): unit
+    graphics:clear("#05060a")
+    graphics:set_color("#090b11")
+    graphics:fill_rectangle(0.0, 0.0, WIDTH, HEIGHT)
+    local camera_x: f64 = menu_city.camera_x(state)
+    local camera_y: f64 = menu_city.camera_y(state)
+
+    graphics:push()
+    graphics:translate(-camera_x, -camera_y)
+    graphics:set_color("#22242d")
+    for building in state.buildings do
+        graphics:fill_rectangle(
+            building.x - 5.0, building.y - 5.0,
+            building.width + 10.0, building.height + 10.0)
+    end
+    for building in state.buildings do draw_rooftop(graphics, building) end
+    draw_street_marks(graphics, state.vertical_streets, true, menu_city.height::i32)
+    draw_street_marks(graphics, state.horizontal_streets, false, menu_city.width::i32)
+    graphics:pop()
+
+    graphics:set_color("#05060a90")
+    graphics:fill_rectangle(0.0, 0.0, WIDTH, HEIGHT)
+    graphics:push()
+    graphics:translate(-camera_x, -camera_y)
+    draw_streak(state, graphics, streak_color)
+    graphics:pop()
+end
+
+return { draw = draw }

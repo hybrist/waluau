@@ -2223,13 +2223,14 @@ return {
     draw = draw,
     draw_shader_error = draw_shader_error,
     draw_audio_error = draw_audio_error,
-    -- The menu screen shares the vault's backdrop, panel chrome, centred
-    -- type, and help modal instead of restating the presentation vocabulary.
+    -- The menu screen shares the vault's panel chrome, centred type, and help
+    -- modal instead of restating the presentation vocabulary.
     draw_backdrop = draw_backdrop,
     draw_help = draw_help,
     -- The spell vocabulary the menu's selection list shares with the board.
     spell_name = spell_name,
     power_color = power_color,
+    school_color = school_color,
     -- Where a spell's clock reads once its formation is complete and the ward
     -- holds the pose the condition leaves behind.
     power_settled_clock = power_settled_clock,

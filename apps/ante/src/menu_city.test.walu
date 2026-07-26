@@ -1,0 +1,82 @@
+-- Deterministic, DOM-free checks for the generated menu city.
+
+require("waluau:vitest")
+
+local menu_city = require("./menu_city")
+
+function contains(streets: {f64}, coordinate: f64): bool
+    for street in streets do
+        if street == coordinate then return true end
+    end
+    return false
+end
+
+describe("menu city", function()
+    it("generates a stable irregular map from a seed", function()
+        local first: menu_city.State = menu_city.new(41)
+        local second: menu_city.State = menu_city.new(41)
+
+        expect(#first.vertical_streets):toBeGreaterThan(5)
+        expect(#first.horizontal_streets):toBeGreaterThan(5)
+        expect(first.vertical_streets[#first.vertical_streets - 1]):toBe(menu_city.width)
+        expect(first.horizontal_streets[#first.horizontal_streets - 1]):toBe(menu_city.height)
+        expect(#first.buildings):toBe(
+            (#first.vertical_streets - 1) * (#first.horizontal_streets - 1))
+        expect(#second.vertical_streets):toBe(#first.vertical_streets)
+        expect(#second.horizontal_streets):toBe(#first.horizontal_streets)
+        for index = 0::i32, #first.vertical_streets - 1 do
+            expect(second.vertical_streets[index]):toBe(first.vertical_streets[index])
+        end
+        for index = 0::i32, #first.horizontal_streets - 1 do
+            expect(second.horizontal_streets[index]):toBe(first.horizontal_streets[index])
+        end
+    end)
+
+    it("pans slowly within the generated map", function()
+        local city: menu_city.State = menu_city.new(52)
+        local start_x: f64 = menu_city.camera_x(city)
+        local start_y: f64 = menu_city.camera_y(city)
+        menu_city.update(city, 10.0)
+        local moved_x: f64 = menu_city.camera_x(city)
+        local moved_y: f64 = menu_city.camera_y(city)
+
+        expect(moved_x):toBeGreaterThan(start_x)
+        expect(moved_y):toBeGreaterThan(start_y)
+        expect(moved_x):toBeLessThanOrEqual(menu_city.width - 960.0)
+        expect(moved_y):toBeLessThanOrEqual(menu_city.height - 600.0)
+    end)
+
+    it("keeps every animated dash on a generated street", function()
+        local city: menu_city.State = menu_city.new(73)
+        if city.streak_horizontal then
+            expect(contains(city.horizontal_streets, city.streak_street)):toBe(true)
+        else
+            expect(contains(city.vertical_streets, city.streak_street)):toBe(true)
+        end
+        expect(city.streak_suit):toBeGreaterThanOrEqual(0)
+        expect(city.streak_suit):toBeLessThan(4)
+
+        -- Cross the first dash so the next randomized route is chosen.
+        menu_city.update(city, 2.0)
+        expect(city.streak_clock):toBeLessThan(0.0)
+        if city.streak_horizontal then
+            expect(contains(city.horizontal_streets, city.streak_street)):toBe(true)
+        else
+            expect(contains(city.vertical_streets, city.streak_street)):toBe(true)
+        end
+    end)
+
+    it("does not consume gameplay randomness while it animates", function()
+        math.randomseed(91)
+        local seed: i32 = math.random(2147483646)
+        local expected_next: i32 = math.random(2147483646)
+
+        math.randomseed(91)
+        local city: menu_city.State = menu_city.new(math.random(2147483646))
+        menu_city.update(city, 2.0)
+        menu_city.update(city, 9.0)
+        expect(math.random(2147483646)):toBe(expected_next)
+        -- Keep the sampled seed live so the compiler also pins its type.
+        expect(seed):toBeGreaterThan(0)
+    end)
+end)
