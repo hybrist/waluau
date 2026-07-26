@@ -40,16 +40,16 @@ function draw_rooftop(graphics: Graphics, building: menu_city.Building): unit
     graphics:stroke_rectangle(unit_x, unit_y, 14.0, 10.0)
 end
 
-function draw_street_marks(graphics: Graphics, streets: {f64}, vertical: bool): unit
+function draw_street_marks(graphics: Graphics, streets: {f64}, vertical: bool, limit: i32): unit
     graphics:set_color("#252833")
     graphics:set_line_width(1.0)
     for street in streets do
         if vertical then
-            for y = 8, 592, 28 do
+            for y = 8, limit - 8, 28 do
                 graphics:line(street, y::f64, street, (y + 10)::f64)
             end
         else
-            for x = 8, 952, 28 do
+            for x = 8, limit - 8, 28 do
                 graphics:line(x::f64, street, (x + 10)::f64, street)
             end
         end
@@ -65,12 +65,12 @@ end
 function draw_streak(state: menu_city.State, graphics: Graphics, color: string): unit
     if state.streak_clock < 0.0 or state.streak_clock > state.streak_duration then return end
     local progress: f64 = state.streak_clock / state.streak_duration
-    local travel: f64 = WIDTH + STREAK_LENGTH * 2.0
-    if not state.streak_horizontal then travel = HEIGHT + STREAK_LENGTH * 2.0 end
+    local travel: f64 = menu_city.width + STREAK_LENGTH * 2.0
+    if not state.streak_horizontal then travel = menu_city.height + STREAK_LENGTH * 2.0 end
     local head: f64 = -STREAK_LENGTH + travel * progress
     local tail: f64 = head - STREAK_LENGTH
-    local limit: f64 = WIDTH
-    if not state.streak_horizontal then limit = HEIGHT end
+    local limit: f64 = menu_city.width
+    if not state.streak_horizontal then limit = menu_city.height end
     if not state.streak_forward then
         head = limit - head
         tail = limit - tail
@@ -105,6 +105,11 @@ function draw(state: menu_city.State, graphics: Graphics, streak_color: string):
     graphics:clear("#05060a")
     graphics:set_color("#090b11")
     graphics:fill_rectangle(0.0, 0.0, WIDTH, HEIGHT)
+    local camera_x: f64 = menu_city.camera_x(state)
+    local camera_y: f64 = menu_city.camera_y(state)
+
+    graphics:push()
+    graphics:translate(-camera_x, -camera_y)
     graphics:set_color("#22242d")
     for building in state.buildings do
         graphics:fill_rectangle(
@@ -112,11 +117,16 @@ function draw(state: menu_city.State, graphics: Graphics, streak_color: string):
             building.width + 10.0, building.height + 10.0)
     end
     for building in state.buildings do draw_rooftop(graphics, building) end
-    draw_street_marks(graphics, state.vertical_streets, true)
-    draw_street_marks(graphics, state.horizontal_streets, false)
+    draw_street_marks(graphics, state.vertical_streets, true, menu_city.height::i32)
+    draw_street_marks(graphics, state.horizontal_streets, false, menu_city.width::i32)
+    graphics:pop()
+
     graphics:set_color("#05060a90")
     graphics:fill_rectangle(0.0, 0.0, WIDTH, HEIGHT)
+    graphics:push()
+    graphics:translate(-camera_x, -camera_y)
     draw_streak(state, graphics, streak_color)
+    graphics:pop()
 end
 
 return { draw = draw }

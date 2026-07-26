@@ -116,8 +116,8 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `project.js` | Stable source-project adapter for playground and conformance hosts. |
 | `main.walu` | Thin engine adapter that owns the session and routes callbacks to the live screen. |
 | `menu.walu` | The pre-game menu screen: presentation plus begin-gesture interpretation. |
-| `menu_city.walu` | DOM-free procedural city generation and thief-route animation state. |
-| `menu_city_render.walu` | WebGL2 primitive drawing for the menu's city and colored street streak. |
+| `menu_city.walu` | DOM-free procedural city generation, camera drift, and thief-route animation state. |
+| `menu_city_render.walu` | WebGL2 primitive drawing for the menu's panning city and colored street streak. |
 | `game_screen.walu` | The heist screen: rules/flow/choreography wiring and its input adapters. |
 | `game.walu` | DOM-free rules, AI, commands, outcomes, and read-only presentation view. |
 | `flow.walu` | DOM-free input gating, focus, modal, selection, and reveal phase transitions. |

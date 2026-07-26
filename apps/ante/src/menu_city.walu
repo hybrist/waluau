@@ -16,6 +16,7 @@ type State = {
     horizontal_streets: {f64},
     buildings: {Building},
     rng: f64,
+    pan_clock: f64,
     streak_clock: f64,
     streak_duration: f64,
     streak_horizontal: bool,
@@ -24,8 +25,10 @@ type State = {
     streak_suit: i32
 }
 
-const WIDTH: f64 = 960.0
-const HEIGHT: f64 = 600.0
+const VIEW_WIDTH: f64 = 960.0
+const VIEW_HEIGHT: f64 = 600.0
+const CITY_WIDTH: f64 = 1240.0
+const CITY_HEIGHT: f64 = 820.0
 const STREET_WIDTH: f64 = 20.0
 const RANDOM_MODULUS: f64 = 2147483647.0
 const RANDOM_MULTIPLIER: f64 = 16807.0
@@ -61,8 +64,8 @@ function generate(state: State): unit
     state.vertical_streets = {}
     state.horizontal_streets = {}
     state.buildings = {}
-    fill_streets(state, state.vertical_streets, WIDTH, 108.0, 168.0)
-    fill_streets(state, state.horizontal_streets, HEIGHT, 82.0, 132.0)
+    fill_streets(state, state.vertical_streets, CITY_WIDTH, 108.0, 168.0)
+    fill_streets(state, state.horizontal_streets, CITY_HEIGHT, 82.0, 132.0)
 
     for column = 0::i32, #state.vertical_streets - 2 do
         local left: f64 = state.vertical_streets[column] + STREET_WIDTH * 0.5
@@ -111,6 +114,7 @@ function new(seed: i32): State
         horizontal_streets = {},
         buildings = {},
         rng = value + 1.0,
+        pan_clock = 0.0,
         streak_clock = 0.0,
         streak_duration = 0.75,
         streak_horizontal = true,
@@ -124,19 +128,37 @@ function new(seed: i32): State
 end
 
 function regenerate(state: State): unit
+    state.pan_clock = 0.0
     generate(state)
     choose_streak(state, false)
 end
 
 function update(state: State, dt: f64): unit
+    state.pan_clock += dt
     state.streak_clock += dt
     if state.streak_clock > state.streak_duration then
         choose_streak(state, true)
     end
 end
 
+-- Two long, slightly different periods make a gentle path over the map that
+-- does not visibly repeat or ever reach beyond the generated city edges.
+function camera_x(state: State): f64
+    local range: f64 = CITY_WIDTH - VIEW_WIDTH
+    return range * 0.5 * (1.0 + math.sin(state.pan_clock * 0.025))
+end
+
+function camera_y(state: State): f64
+    local range: f64 = CITY_HEIGHT - VIEW_HEIGHT
+    return range * 0.5 * (1.0 + math.sin(state.pan_clock * 0.019))
+end
+
 return {
     new = new,
     regenerate = regenerate,
     update = update,
+    camera_x = camera_x,
+    camera_y = camera_y,
+    width = CITY_WIDTH,
+    height = CITY_HEIGHT,
 }
