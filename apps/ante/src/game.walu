@@ -21,15 +21,23 @@ type FeintOutcome = {
 -- slot means removal, sorting, and snapshots can never desynchronize a card
 -- from its mark.
 type HandSlot = { card: Card, known: bool }
+-- One spell the robbers carry, with the mana a single cast of it burns. The
+-- cost travels with the spell rather than being a constant of the kind: a run
+-- can sharpen the same spell between vaults, and two robbers carrying Firebolt
+-- do not necessarily pay the same for it.
+type Spell = { kind: i32, cost: i32 }
 type Trick = { round: i32, middle: {Card}, frozen_middle: {bool}, player_hand: {HandSlot}, computer_hand: {HandSlot}, player_cards: {Card}, computer_cards: {Card}, player_first: i32, player_second: i32, computer_first: i32, computer_second: i32, player_value: i32, computer_value: i32, winner: i32, points: i32, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32 }
 -- `boss` selects the boss battle variant: both sides start with eleven relics
 -- instead of five and never draw replacements, so the hands shrink by two each
 -- breach and the fifth breach is fought from a three-card hand.
--- `spell` is the starting spell the robbers chose before the heist (one of the
--- SPELL_* kinds); `player_points` is their mana, both the wager stake and the
--- resource each cast burns. Mana is dealt in rather than fixed, so a run can
--- hand one vault what the previous one left standing.
-type State = { deck: {Card}, player_hand: {HandSlot}, computer_hand: {HandSlot}, middle: {Card}, frozen_middle: {bool}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool, boss: bool, spell: i32 }
+-- `spells` is the loadout the robbers brought into this vault, in the order
+-- they learned the spells; a cast names a slot of it. `cast_kind` is the kind
+-- of the last cast these rules charged for, which is what decides whether a
+-- burn finishing on the board owes a Firebolt replacement. `player_points` is
+-- their mana, both the wager stake and the resource each cast burns. Both the
+-- loadout and the mana are dealt in rather than fixed, so a run can hand one
+-- vault what the previous one left standing and whatever it bought since.
+type State = { deck: {Card}, player_hand: {HandSlot}, computer_hand: {HandSlot}, middle: {Card}, frozen_middle: {bool}, history: {Trick}, round: i32, player_points: i32, player_tricks: i32, computer_tricks: i32, last_player_value: i32, last_computer_value: i32, last_winner: i32, swap_open: bool, pot: i32, player_wager: i32, computer_wager: i32, swap_winner: i32, swap_count: i32, swap_hand_indices: {i32}, swap_middle_indices: {i32}, finished: bool, boss: bool, spells: {Spell}, cast_kind: i32 }
 type View = {
     deck_count: i32,
     player_hand: {HandSlot},
@@ -43,7 +51,7 @@ type View = {
     computer_tricks: i32,
     swap_open: bool,
     finished: bool,
-    spell: i32
+    spells: {Spell}
 }
 -- The pair one side committed to a resolved trick, the hand slots it left,
 -- and that side's full revealed hand — see trick_side.
@@ -78,9 +86,29 @@ const SPELL_FIREBOLT: i32 = 1
 const SPELL_FREEZE_RAY: i32 = 2
 const SPELL_RAISE_CARD: i32 = 3
 const SPELL_CLONE: i32 = 4
+-- The kinds are 1..SPELL_KIND_COUNT, so anything picking a spell at random —
+-- the shop's offer, say — enumerates them without a second catalog.
+const SPELL_KIND_COUNT: i32 = 4
+-- What a freshly learned spell charges per cast, before a run sharpens it.
 const SPELL_COST: i32 = 5
-const SNAPSHOT_SCHEMA: string = "ante-state-v5"
+const SNAPSHOT_SCHEMA: string = "ante-state-v6"
 const SNAPSHOT_COLLECTION_LIMIT: i32 = 256
+
+-- A spell as it is first learned: full price until something reduces it.
+function new_spell(kind: i32): Spell
+    return { kind = kind, cost = SPELL_COST }
+end
+
+-- A loadout the caller cannot reach into afterwards. A vault is dealt the
+-- run's spells the way it is dealt its mana — as a reading of them, not as the
+-- run's own records — so nothing inside a heist can sharpen a spell.
+function clone_spells(spells: {Spell}): {Spell}
+    local copy: {Spell} = {}
+    for spell in spells do
+        table.insert(copy, { kind = spell.kind, cost = spell.cost })
+    end
+    return copy
+end
 
 function make_deck(): {Card}
     local deck: {Card} = {}
@@ -616,6 +644,14 @@ function append_slots(parts: {string}, slots: {HandSlot}): unit
     end
 end
 
+function append_spells(parts: {string}, spells: {Spell}): unit
+    snapshot_data.append_i32(parts, #spells)
+    for spell in spells do
+        snapshot_data.append_i32(parts, spell.kind)
+        snapshot_data.append_i32(parts, spell.cost)
+    end
+end
+
 function append_flags(parts: {string}, flags: {bool}): unit
     snapshot_data.append_i32(parts, #flags)
     for flag in flags do snapshot_data.append_bool(parts, flag) end
@@ -670,7 +706,8 @@ function snapshot(state: State): string
     snapshot_data.append_indices(parts, state.swap_middle_indices)
     snapshot_data.append_bool(parts, state.finished)
     snapshot_data.append_bool(parts, state.boss)
-    snapshot_data.append_i32(parts, state.spell)
+    append_spells(parts, state.spells)
+    snapshot_data.append_i32(parts, state.cast_kind)
     return table.concat(parts, ",")
 end
 
@@ -693,6 +730,20 @@ function next_slots(reader: snapshot_data.Reader): {HandSlot}
         })
     end
     return slots
+end
+
+function next_spells(reader: snapshot_data.Reader): {Spell}
+    local spells: {Spell} = {}
+    local length: i32 = reader:next_length()
+    for _ = 1, length do
+        -- Read each token into a local first: a record literal's fields are not
+        -- guaranteed to be evaluated in written order, and these two are only
+        -- told apart by their position in the payload.
+        local kind: i32 = reader:next_i32()
+        local cost: i32 = reader:next_i32()
+        table.insert(spells, { kind = kind, cost = cost })
+    end
+    return spells
 end
 
 function next_flags(reader: snapshot_data.Reader): {bool}
@@ -775,7 +826,8 @@ function restore(snapshot_value: string): State?
     local swap_middle_indices: {i32} = reader:next_indices()
     local finished: bool = reader:next_bool()
     local boss: bool = reader:next_bool()
-    local spell: i32 = reader:next_i32()
+    local spells: {Spell} = next_spells(reader)
+    local cast_kind: i32 = reader:next_i32()
     if not reader:complete() then return nil end
     local restored: State = {
         deck = deck,
@@ -801,12 +853,13 @@ function restore(snapshot_value: string): State?
         swap_middle_indices = swap_middle_indices,
         finished = finished,
         boss = boss,
-        spell = spell,
+        spells = spells,
+        cast_kind = cast_kind,
     }
     return restored
 end
 
-function new(boss: bool, spell: i32, mana: i32): State
+function new(boss: bool, spells: {Spell}, mana: i32): State
     local deck: {Card} = make_deck()
     shuffle(deck)
     local state: State = {
@@ -833,7 +886,8 @@ function new(boss: bool, spell: i32, mana: i32): State
         swap_middle_indices = {},
         finished = false,
         boss = boss,
-        spell = spell,
+        spells = clone_spells(spells),
+        cast_kind = 0,
     }
     local hand_size: i32 = HAND_SIZE
     if boss then hand_size = BOSS_HAND_SIZE end
@@ -859,7 +913,7 @@ function view(state: State): View
         computer_tricks = state.computer_tricks,
         swap_open = state.swap_open,
         finished = state.finished,
-        spell = state.spell,
+        spells = state.spells,
     }
 end
 
@@ -898,28 +952,46 @@ function State:mana(): i32
     return self.player_points
 end
 
-function State:spell_kind(): i32
-    return self.spell
+function State:spell_count(): i32
+    return #self.spells
+end
+
+-- The kind and price of one loadout slot. A slot the loadout does not have
+-- answers kind zero and a price of zero, which `can_cast` refuses either way:
+-- the input layer binds a fixed key per slot, so asking about an empty one is
+-- ordinary rather than a caller error.
+function State:spell_kind(slot: i32): i32
+    if slot < 0 or slot >= #self.spells then return 0 end
+    return self.spells[slot].kind
+end
+
+function State:spell_cost(slot: i32): i32
+    if slot < 0 or slot >= #self.spells then return 0 end
+    return self.spells[slot].cost
 end
 
 function State:is_frozen(ward: i32): bool
     return ward >= 0 and ward < #self.frozen_middle and self.frozen_middle[ward]
 end
 
--- Whether the chosen spell could be cast right now: the run is live and the
--- robbers can pay for it. Where in the turn a cast is allowed is the input
--- layer's decision; affordability is the rule this module owns.
-function State:can_cast(): bool
-    return not self.finished and self.spell ~= 0 and self.player_points >= SPELL_COST
+-- Whether the spell in that loadout slot could be cast right now: the run is
+-- live, the slot holds a spell, and the robbers can pay its price. Where in the
+-- turn a cast is allowed is the input layer's decision; affordability is the
+-- rule this module owns.
+function State:can_cast(slot: i32): bool
+    if self.finished or self:spell_kind(slot) == 0 then return false end
+    return self.player_points >= self.spells[slot].cost
 end
 
--- Pay for one cast of the chosen spell. Returns false — charging nothing —
--- when the spell is unaffordable, so a confirmed target only spends mana once
--- this accepts.
-function State:cast_spell(ward: i32): bool
-    if not self:can_cast() or ward < 0 or ward >= #self.middle then return false end
-    self.player_points -= SPELL_COST
-    if self.spell == SPELL_FREEZE_RAY then self.frozen_middle[ward] = true end
+-- Pay for one cast of the spell in that slot. Returns false — charging
+-- nothing — when the slot is empty or the spell unaffordable, so a confirmed
+-- target only spends mana once this accepts.
+function State:cast_spell(slot: i32, ward: i32): bool
+    if not self:can_cast(slot) or ward < 0 or ward >= #self.middle then return false end
+    local spell: Spell = self.spells[slot]
+    self.player_points -= spell.cost
+    self.cast_kind = spell.kind
+    if spell.kind == SPELL_FREEZE_RAY then self.frozen_middle[ward] = true end
     return true
 end
 
@@ -927,8 +999,10 @@ end
 -- ward away. The discarded card is returned to the screen choreography,
 -- which owns the neutral discard-pile ledger; the replacement is immediately
 -- part of the live rules state and comes off the same sealed deck as a deal.
+-- Only a Firebolt these rules charged for can burn a ward away, whichever
+-- loadout slot it was cast from.
 function State:resolve_firebolt(target: i32): Card?
-    if self.finished or self.spell ~= SPELL_FIREBOLT then return nil end
+    if self.finished or self.cast_kind ~= SPELL_FIREBOLT then return nil end
     if target < 0 or target >= #self.middle or #self.deck == 0 then return nil end
     local discarded: Card = self.middle[target]
     self.middle[target] = draw(self.deck)
@@ -973,14 +1047,15 @@ function view_side(view: View, owner: i32): {HandSlot}
     return view.computer_hand
 end
 
--- Start over as the given variant: the mode, starting spell, and opening mana
--- are arguments rather than carried-over fields so the next deal can also be a
--- mode or spell switch from the menu, or the next vault of a run fought with
--- the mana the last one left.
-function State:reset(boss: bool, spell: i32, mana: i32): unit
-    local fresh: State = new(boss, spell, mana)
+-- Start over as the given variant: the mode, loadout, and opening mana are
+-- arguments rather than carried-over fields so the next deal can also be a mode
+-- or spell switch from the menu, or the next vault of a run fought with the
+-- mana the last one left and whatever it bought between vaults.
+function State:reset(boss: bool, spells: {Spell}, mana: i32): unit
+    local fresh: State = new(boss, spells, mana)
     self.boss = fresh.boss
-    self.spell = fresh.spell
+    self.spells = fresh.spells
+    self.cast_kind = fresh.cast_kind
     self.deck = fresh.deck
     self.player_hand = fresh.player_hand
     self.computer_hand = fresh.computer_hand
@@ -1138,10 +1213,13 @@ return {
     scoring_cards = scoring_cards,
     snapshot = snapshot,
     restore = restore,
+    new_spell = new_spell,
+    clone_spells = clone_spells,
     spell_firebolt = SPELL_FIREBOLT,
     spell_freeze_ray = SPELL_FREEZE_RAY,
     spell_raise_card = SPELL_RAISE_CARD,
     spell_clone = SPELL_CLONE,
+    spell_kind_count = SPELL_KIND_COUNT,
     spell_cost = SPELL_COST,
     starting_mana = STARTING_MANA,
 }

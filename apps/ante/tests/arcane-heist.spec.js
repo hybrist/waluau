@@ -243,6 +243,33 @@ function countPassInk(canvas) {
   });
 }
 
+// Cyan ink where the fence prints the mana on hand: a 24px number right-aligned
+// at the top of its panel. Nothing else draws cyan that high — the board's own
+// mana readout sits in the HUD above it, and the verdict's headings are gold —
+// so this is how these tests tell the fence apart from a dealt vault.
+function countFenceManaInk(canvas) {
+  return canvas.evaluate((node) => {
+    const gl = node.getContext('webgl2');
+    const left = Math.round(node.width * 0.719);
+    const width = Math.round(node.width * 0.156);
+    // readPixels counts up from the bottom; the number sits at 100..132 of the
+    // 600-tall board.
+    const bottom = Math.round(node.height * 0.78);
+    const height = Math.round(node.height * 0.053);
+    const pixels = new Uint8Array(width * height * 4);
+    gl.readPixels(left, bottom, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    let count = 0;
+    for (let index = 0; index < pixels.length; index += 4) {
+      if (
+        Math.abs(pixels[index] - 103) <= 40
+        && Math.abs(pixels[index + 1] - 232) <= 40
+        && Math.abs(pixels[index + 2] - 249) <= 40
+      ) count += 1;
+    }
+    return count;
+  });
+}
+
 const PRESS_MS = 200;
 const REVEAL_MS = 600;
 const CLEANUP_MS = 1600;
@@ -310,9 +337,21 @@ test('carries the run into the next vault once this one is settled', async ({ pa
     .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
     .toBeLessThan(10);
 
-  // A settled vault is a moment in the run rather than the end of play: the
-  // next press deals the vault the run moved to, sealed draw pile and all.
+  // A settled vault is a moment in the run rather than the end of play. Taking
+  // it stops at the fence, where the carried mana buys spell upgrades before
+  // the next vault is dealt; a lost run has neither mana nor loadout left to
+  // spend, so its fresh first vault is dealt straight away. Which of the two
+  // this vault ended as is the cards' to decide, so this covers both.
   await page.keyboard.press('Enter');
+  await settleBoard(canvas);
+  if (await countFenceManaInk(canvas) > 20) {
+    const fence = await frameSignature(canvas);
+    // The fence is a cursor-driven offer list, and Esc walks past every offer
+    // into the vault the run is standing in front of.
+    await page.keyboard.press('ArrowDown');
+    await expect.poll(() => frameSignature(canvas)).not.toBe(fence);
+    await page.keyboard.press('Escape');
+  }
   await expect
     .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
     .toBeGreaterThan(40);

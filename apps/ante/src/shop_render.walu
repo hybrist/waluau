@@ -1,0 +1,160 @@
+-- The fence's screen: the intermission between two vaults, drawn as one
+-- cursor-driven list of offers over the vault's own panel chrome. The shop
+-- module owns what the lines are and what they cost; this module owns where
+-- they sit, which is also why the pointer's row lookup lives here.
+
+local engine = require("waluau:engine")
+local game = require("./game")
+local render = require("./render")
+local run_module = require("./run")
+local shop = require("./shop")
+
+const WIDTH: f64 = 960.0
+
+const PANEL_X: f64 = 92.0
+const PANEL_Y: f64 = 68.0
+const PANEL_W: f64 = 776.0
+const PANEL_H: f64 = 476.0
+
+const ROW_X: f64 = 150.0
+const ROW_W: f64 = 660.0
+const ROW_H: f64 = 54.0
+const ROW_TOP: f64 = 196.0
+const ROW_PITCH: f64 = 64.0
+
+function row_top(index: i32): f64
+    return ROW_TOP + (index::f64) * ROW_PITCH
+end
+
+-- The offer line under a point, or -1. The gaps between lines are dead space,
+-- so a pointer between two offers leaves the cursor on whichever it was.
+function row_at(x: f64, y: f64, count: i32): i32
+    if x < ROW_X or x > ROW_X + ROW_W then return -1 end
+    for index = 0::i32, count - 1 do
+        local top: f64 = row_top(index)
+        if y >= top and y <= top + ROW_H then return index end
+    end
+    return -1
+end
+
+-- What one line says on its left. Prices are the right-hand column, so nothing
+-- here repeats them. A spent line drops the detail it used to carry: the numbers
+-- it quoted were the ones it has already changed.
+function row_label(row: shop.Row, run: run_module.State, offer: i32): string
+    if row.action == shop.action_sharpen then
+        local name: string = render.spell_name(row.kind)
+        if row.sold then return "SHARPENED " .. name end
+        -- The spell an offer named can leave the loadout: the other offer of the
+        -- same visit may have traded it away.
+        if row.slot < 0 then return "SHARPEN " .. name .. "   TRADED AWAY" end
+        local spell: game.Spell = run.spells[row.slot]
+        if not run:can_sharpen(row.slot) then
+            return "SHARPEN " .. name .. "   AS CHEAP AS IT GETS"
+        end
+        return "SHARPEN " .. name
+            .. "   CAST " .. tostring(spell.cost)
+            .. " TO " .. tostring(spell.cost - 1) .. " MANA"
+    end
+    if row.action == shop.action_learn then
+        local name: string = render.spell_name(row.kind)
+        if row.sold then
+            return "LEARNED " .. name
+                .. "   KEY " .. tostring(run:slot_of(row.kind) + 1)
+        end
+        if row.slot < 0 then
+            return "LEARN " .. name .. "   TRADES A SPELL AWAY"
+        end
+        return "LEARN " .. name .. "   KEY " .. tostring(row.slot + 1)
+    end
+    if row.action == shop.action_replace then
+        return "TRADE " .. render.spell_name(row.kind)
+            .. " FOR " .. render.spell_name(offer)
+    end
+    if row.action == shop.action_cancel then return "KEEP BOTH SPELLS" end
+    local vault: string = "ENTER VAULT " .. tostring(run.vault)
+    if run:boss() then vault = vault .. "   BOSS BATTLE" end
+    return vault
+end
+
+-- Idle ink: an offer about a spell wears that spell's colour the way the menu's
+-- selection list does, and a line the purse cannot cover goes dark whether it
+-- names a spell or not.
+function row_ink(row: shop.Row): string
+    if not row.available then return "#52525b" end
+    if row.kind ~= 0 then return render.power_color(row.kind) end
+    return "#d4d4d8"
+end
+
+function draw_row(
+    graphics: engine.Graphics,
+    row: shop.Row,
+    label: string,
+    index: i32,
+    focused: bool
+): unit
+    local top: f64 = row_top(index)
+    local edge: string = "#3f3f46"
+    local ink: string = row_ink(row)
+    local price_ink: string = "#52525b"
+    if row.available and row.price > 0 then price_ink = "#fbbf24" end
+    if focused then
+        edge = "#fbbf24"
+        if row.available then ink = "#fbbf24" end
+    end
+    render.panel(graphics, ROW_X, top, ROW_W, ROW_H, "#17171c", edge)
+    render.text(graphics, label, ROW_X + 22.0, top + 33.0, 13, ink)
+    -- A bought line keeps its place with its price struck off: the stock of a
+    -- visit is two offers, and one of them is now spent.
+    if row.sold then
+        render.text_right(
+            graphics, "SOLD", ROW_X + ROW_W - 22.0, top + 33.0, 13, "#52525b")
+    elseif row.price > 0 then
+        render.text_right(
+            graphics, tostring(row.price) .. " MANA",
+            ROW_X + ROW_W - 22.0, top + 33.0, 13, price_ink)
+    end
+end
+
+-- `run` is read only here: every purchase has already been applied by the time
+-- a frame is drawn, so this module never asks the run to change.
+function draw(
+    state: shop.State,
+    run: run_module.State,
+    graphics: engine.Graphics
+): unit
+    local choosing: bool = shop.choosing(state)
+    render.draw_backdrop(graphics)
+    render.panel(graphics, PANEL_X, PANEL_Y, PANEL_W, PANEL_H, "#09090b", "#a1a1aa")
+    render.text(graphics, "THE FENCE", 126.0, 117.0, 24, "#fbbf24")
+    local subtitle: string = "MANA SPENT HERE WILL NOT FIGHT IN VAULT " .. tostring(run.vault)
+    local offered: i32 = 0
+    if choosing then
+        offered = state.offers[state.pending].kind
+        subtitle = "ONLY TWO SPELLS TRAVEL AT ONCE. WHICH ONE GOES?"
+    end
+    render.text(graphics, subtitle, 126.0, 145.0, 11, "#a1a1aa")
+    render.text_right(graphics, tostring(run.mana), 834.0, 122.0, 24, "#67e8f9")
+    render.text_right(graphics, "MANA ON HAND", 834.0, 145.0, 9, "#155e75")
+
+    local rows: {shop.Row} = shop.rows(state, run)
+    for index, row in rows do
+        draw_row(
+            graphics, row, row_label(row, run, offered),
+            index, index == state.cursor)
+    end
+    if not choosing then
+        -- Two offers are the whole stock of a visit, so say what the list is
+        -- rather than leaving the player waiting for it to refill.
+        render.text_centered(
+            graphics, "TWO OFFERS A VISIT. THE NEXT FENCE HAS ITS OWN",
+            WIDTH * 0.5, row_top(#rows) + 33.0, 11, "#8a8a92")
+    end
+    render.text_centered(
+        graphics, "ARROWS MOVE   ENTER OR CLICK BUYS   ESC ENTERS THE VAULT",
+        WIDTH * 0.5, 566.0, 11, "#a1a1aa")
+end
+
+return {
+    draw = draw,
+    row_at = row_at,
+}

@@ -10,9 +10,9 @@ local game_screen = require("./game_screen")
 local snapshot_data = require("./snapshot")
 local presentation_resources = require("./presentation_resources")
 
-const HOT_SNAPSHOT_SCHEMA: string = "ante-hmr-v3"
--- The live screen marker plus the heist screen's four sections.
-const HOT_SNAPSHOT_SECTIONS: i32 = 5
+const HOT_SNAPSHOT_SCHEMA: string = "ante-hmr-v4"
+-- The live screen marker plus the heist screen's five sections.
+const HOT_SNAPSHOT_SECTIONS: i32 = 6
 
 const SCREEN_MENU: i32 = 0
 const SCREEN_GAME: i32 = 1
@@ -147,7 +147,7 @@ function install_arcane_heist(): unit
                 return false
             end
             local restored: game_screen.State? = game_screen.restore(
-                payloads[1], payloads[2], payloads[3], payloads[4])
+                payloads[1], payloads[2], payloads[3], payloads[4], payloads[5])
             if restored == nil then return false end
             heist = restored::game_screen.State
             menu.reset(menu_state)

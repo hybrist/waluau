@@ -4,9 +4,11 @@
 
 local snapshot_data = require("./snapshot")
 
--- `casting` is the spell-targeting mode: entered by the cast key, it points
+-- `casting` is the spell-targeting mode: entered by a cast key, it points
 -- ward_cursor at the ward the spell would hit until the player confirms or
--- cancels. While it holds, ordinary binding input is suspended.
+-- cancels. While it holds, ordinary binding input is suspended. `cast_slot` is
+-- which loadout slot is being aimed — one cast key per slot — and only means
+-- anything while `casting` holds.
 type State = {
     hand_cursor: i32,
     ward_cursor: i32,
@@ -16,7 +18,8 @@ type State = {
     swap_wards: {i32},
     modal: i32,
     revealing: bool,
-    casting: bool
+    casting: bool,
+    cast_slot: i32
 }
 
 const MODAL_NONE: i32 = 0
@@ -45,7 +48,7 @@ const RESULT_ADVANCE: i32 = 6
 const CURSOR_HAND: i32 = 0
 const CURSOR_WARDS: i32 = 1
 const FAN_CLOSED: i32 = -1
-const UI_SNAPSHOT_SCHEMA: string = "ante-flow-v3"
+const UI_SNAPSHOT_SCHEMA: string = "ante-flow-v4"
 const UI_SNAPSHOT_COLLECTION_LIMIT: i32 = 256
 
 function new(): State
@@ -59,6 +62,7 @@ function new(): State
         modal = MODAL_NONE,
         revealing = false,
         casting = false,
+        cast_slot = 0,
     }
 end
 
@@ -92,6 +96,7 @@ function reset(state: State): unit
     state.modal = fresh.modal
     state.revealing = fresh.revealing
     state.casting = fresh.casting
+    state.cast_slot = fresh.cast_slot
 end
 
 function begin_reveal(state: State): unit
@@ -195,6 +200,7 @@ function snapshot(state: State): string
     snapshot_data.append_i32(parts, state.modal)
     snapshot_data.append_bool(parts, state.revealing)
     snapshot_data.append_bool(parts, state.casting)
+    snapshot_data.append_i32(parts, state.cast_slot)
     return table.concat(parts, ",")
 end
 
@@ -211,6 +217,7 @@ function restore(snapshot_value: string): State?
     local modal: i32 = reader:next_i32()
     local revealing: bool = reader:next_bool()
     local casting: bool = reader:next_bool()
+    local cast_slot: i32 = reader:next_i32()
     local restored: State = {
         hand_cursor = hand_cursor,
         ward_cursor = ward_cursor,
@@ -221,6 +228,7 @@ function restore(snapshot_value: string): State?
         modal = modal,
         revealing = revealing,
         casting = casting,
+        cast_slot = cast_slot,
     }
     if not reader:complete() then return nil end
     return restored

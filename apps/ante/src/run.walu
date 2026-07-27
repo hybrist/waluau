@@ -4,9 +4,11 @@
 -- the mana with it.
 --
 -- This module owns the shape of the sequence — which vault is live, how much
--- mana it opens with, and which vaults are boss battles — and nothing about
--- the heist inside a vault. Whether the live vault was won or lost is the
--- rules module's answer, so nothing here duplicates it.
+-- mana it opens with, which vaults are boss battles, and the spell loadout
+-- every vault is fought with — and nothing about the heist inside a vault.
+-- Whether the live vault was won or lost is the rules module's answer, so
+-- nothing here duplicates it. What the intermission between vaults sells is the
+-- shop's answer; this module only applies the purchase to the run.
 
 local game = require("./game")
 local snapshot_data = require("./snapshot")
@@ -14,24 +16,42 @@ local snapshot_data = require("./snapshot")
 -- `vault` is 1-based and counts every attempt in the sequence, cleared or
 -- live. `mana` is what the live vault was dealt, not what it has left: the
 -- rules spend from their own pool, and a cleared vault hands its remainder
--- back here. `rush` is the boss-rush run, where every vault is a boss battle
--- rather than every third.
-type State = { vault: i32, mana: i32, cleared: i32, spell: i32, rush: bool }
+-- back here — which is also the purse the intermission between vaults shops
+-- from. `spells` is the loadout every vault of the run is fought with, in the
+-- order the spells were learned; `start_spell` is the one the menu picked, so a
+-- run that ends can start over carrying what it originally set out with rather
+-- than what it had bought by the time it died. `rush` is the boss-rush run,
+-- where every vault is a boss battle rather than every third.
+type State = {
+    vault: i32,
+    mana: i32,
+    cleared: i32,
+    spells: {game.Spell},
+    start_spell: i32,
+    rush: bool
+}
 
 -- Every third vault is the boss battle variant, so a run's cadence is two
 -- standard heists and then eleven relics with no replacements.
 const BOSS_EVERY: i32 = 3
-const SNAPSHOT_SCHEMA: string = "ante-run-v1"
+-- Two spells are as many as the robbers can hold ready at once — keys 1 and 2
+-- in the vault. Learning a third is a trade, not an addition.
+const MAX_SPELLS: i32 = 2
+-- However cheap a spell is sharpened, a cast is never free.
+const MIN_SPELL_COST: i32 = 2
+const SNAPSHOT_SCHEMA: string = "ante-run-v2"
 const SNAPSHOT_COLLECTION_LIMIT: i32 = 8
 
 -- `rush` starts the boss-rush run instead of the standard cadence; `spell` is
--- the starting spell every vault of the run is fought with.
+-- the starting spell the run sets out with, and the whole of its opening
+-- loadout.
 function new(spell: i32, rush: bool): State
     return {
         vault = 1,
         mana = game.starting_mana,
         cleared = 0,
-        spell = spell,
+        spells = { game.new_spell(spell) },
+        start_spell = spell,
         rush = rush,
     }
 end
@@ -60,7 +80,7 @@ end
 -- what a finished heist decided is not this module's to decide again.
 function State:settle(cleared: bool, carried_mana: i32): unit
     if not cleared then
-        self:restart(self.spell, self.rush)
+        self:restart(self.start_spell, self.rush)
         return
     end
     self.cleared += 1
@@ -73,8 +93,76 @@ function State:restart(spell: i32, rush: bool): unit
     self.vault = fresh.vault
     self.mana = fresh.mana
     self.cleared = fresh.cleared
-    self.spell = spell
+    self.spells = fresh.spells
+    self.start_spell = spell
     self.rush = rush
+end
+
+-- Whether the loadout already holds that kind of spell, and therefore whether
+-- an intermission has anything new to offer in it.
+function State:carries(kind: i32): bool
+    for spell in self.spells do
+        if spell.kind == kind then return true end
+    end
+    return false
+end
+
+function State:spell_count(): i32
+    return #self.spells
+end
+
+-- Which key that kind of spell answers to, or -1 when the loadout does not
+-- carry it. An offer made about a spell names the spell rather than the key, so
+-- that a trade moving spells between keys cannot silently redirect it.
+function State:slot_of(kind: i32): i32
+    for slot, spell in self.spells do
+        if spell.kind == kind then return slot end
+    end
+    return -1
+end
+
+-- Spend from the carried pool. Buying between vaults comes out of the same mana
+-- the next vault opens with, so a purchase is always a smaller pool to fight in.
+function State:spend(mana: i32): bool
+    if mana < 0 or mana > self.mana then return false end
+    self.mana -= mana
+    return true
+end
+
+-- Whether the spell in that slot has room left to be sharpened.
+function State:can_sharpen(slot: i32): bool
+    if slot < 0 or slot >= #self.spells then return false end
+    return self.spells[slot].cost > MIN_SPELL_COST
+end
+
+function State:sharpen(slot: i32): bool
+    if not self:can_sharpen(slot) then return false end
+    self.spells[slot].cost -= 1
+    return true
+end
+
+-- Take on a spell at full price. `slot` past the end appends while the loadout
+-- has room, which is how the second spell gets its own key; naming an occupied
+-- slot trades that spell away for the new one, which is the only way to take a
+-- third.
+function State:learn(kind: i32, slot: i32): bool
+    if kind <= 0 or kind > game.spell_kind_count or self:carries(kind) then
+        return false
+    end
+    if slot < 0 or slot > #self.spells or slot >= MAX_SPELLS then return false end
+    if slot == #self.spells then
+        table.insert(self.spells, game.new_spell(kind))
+    else
+        self.spells[slot] = game.new_spell(kind)
+    end
+    return true
+end
+
+-- The slot a newly learned spell would take by itself: the next number up while
+-- the loadout has room, and -1 once it is full and something has to go.
+function State:open_slot(): i32
+    if #self.spells >= MAX_SPELLS then return -1 end
+    return #self.spells
 end
 
 function snapshot(state: State): string
@@ -82,7 +170,12 @@ function snapshot(state: State): string
     snapshot_data.append_i32(parts, state.vault)
     snapshot_data.append_i32(parts, state.mana)
     snapshot_data.append_i32(parts, state.cleared)
-    snapshot_data.append_i32(parts, state.spell)
+    snapshot_data.append_i32(parts, #state.spells)
+    for spell in state.spells do
+        snapshot_data.append_i32(parts, spell.kind)
+        snapshot_data.append_i32(parts, spell.cost)
+    end
+    snapshot_data.append_i32(parts, state.start_spell)
     snapshot_data.append_bool(parts, state.rush)
     return table.concat(parts, ",")
 end
@@ -94,17 +187,31 @@ function restore(snapshot_value: string): State?
     local vault: i32 = reader:next_i32()
     local mana: i32 = reader:next_i32()
     local cleared: i32 = reader:next_i32()
-    local spell: i32 = reader:next_i32()
+    local spells: {game.Spell} = {}
+    local spell_count: i32 = reader:next_length()
+    for _ = 1, spell_count do
+        -- One token at a time into locals: a record literal's fields are not
+        -- guaranteed to be evaluated in written order, and a kind and a cost
+        -- are only told apart by their position in the payload.
+        local kind: i32 = reader:next_i32()
+        local cost: i32 = reader:next_i32()
+        table.insert(spells, { kind = kind, cost = cost })
+    end
+    local start_spell: i32 = reader:next_i32()
     local rush: bool = reader:next_bool()
     local restored: State = {
         vault = vault,
         mana = mana,
         cleared = cleared,
-        spell = spell,
+        spells = spells,
+        start_spell = start_spell,
         rush = rush,
     }
     if not reader:complete() then return nil end
     if vault < 1 then return nil end
+    -- A run always carries at least the spell it set out with, and never more
+    -- than the two the robbers can hold ready.
+    if #spells < 1 or #spells > MAX_SPELLS then return nil end
     return restored
 end
 
@@ -114,4 +221,6 @@ return {
     snapshot = snapshot,
     restore = restore,
     boss_every = BOSS_EVERY,
+    max_spells = MAX_SPELLS,
+    min_spell_cost = MIN_SPELL_COST,
 }

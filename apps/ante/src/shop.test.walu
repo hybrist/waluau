@@ -1,0 +1,406 @@
+-- Deterministic, DOM-free checks for the fence between two vaults: the two
+-- offers a visit stocks, what they charge, and what the run walks out with.
+
+require("waluau:vitest")
+
+local game = require("./game")
+local run = require("./run")
+local shop = require("./shop")
+
+-- A run standing in front of its next vault with a purse to spend. The mana is
+-- set rather than won: what a vault leaves behind is the run module's business,
+-- and every price here is about the pool, not how it was earned.
+local function shopping_run(spell: i32, mana: i32): run.State
+    local state: run.State = run.new(spell, false)
+    state:settle(true, mana)
+    return state
+end
+
+local function open_shop(state: run.State): shop.State
+    local intermission: shop.State = shop.new()
+    shop.open_for(intermission, state)
+    return intermission
+end
+
+-- Stock a visit with exactly the offers a test is about, in place of the roll.
+-- Everything downstream of the roll — prices, availability, buying, trading — is
+-- what these tests are checking, and none of it should depend on the dice.
+local function stock_offers(intermission: shop.State, offers: {shop.Offer}): unit
+    intermission.offers = offers
+    intermission.cursor = 0
+end
+
+local function sharpen_offer(kind: i32): shop.Offer
+    return { action = shop.action_sharpen, kind = kind, sold = false }
+end
+
+local function learn_offer(kind: i32): shop.Offer
+    return { action = shop.action_learn, kind = kind, sold = false }
+end
+
+-- Move the cursor onto the first row with the given action, so a test names the
+-- offer it means instead of counting rows.
+local function point_at(intermission: shop.State, state: run.State, action: i32): unit
+    local rows: {shop.Row} = shop.rows(intermission, state)
+    for index, row in rows do
+        if row.action == action then
+            intermission.cursor = index
+            return
+        end
+    end
+    assert(false)
+end
+
+describe("Arcane Heist fence stock", function()
+    it("opens on two distinct offers and a way into the vault", function()
+        math.randomseed(101)
+        local state: run.State = shopping_run(game.spell_firebolt, 30)
+        local intermission: shop.State = open_shop(state)
+        expect(intermission.open):toBe(true)
+        expect(shop.choosing(intermission)):toBe(false)
+        expect(intermission.cursor):toBe(0)
+        expect(#intermission.offers):toBe(shop.max_offers)
+
+        local first: shop.Offer = intermission.offers[0]
+        local second: shop.Offer = intermission.offers[1]
+        expect(first.sold):toBe(false)
+        expect(second.sold):toBe(false)
+        -- No offer is ever listed twice, and every one of them is about a spell
+        -- the run can actually be sold something for.
+        expect(first.action == second.action and first.kind == second.kind):toBe(false)
+        for offer in intermission.offers do
+            if offer.action == shop.action_sharpen then
+                expect(state:carries(offer.kind)):toBe(true)
+            else
+                expect(state:carries(offer.kind)):toBe(false)
+            end
+        end
+
+        local rows: {shop.Row} = shop.rows(intermission, state)
+        expect(#rows):toBe(shop.max_offers + 1)
+        expect(rows[2].action):toBe(shop.action_leave)
+    end)
+
+    it("stocks only what the run could be sold", function()
+        math.randomseed(103)
+        local state: run.State = shopping_run(game.spell_firebolt, 30)
+        expect(state:learn(game.spell_clone, 1)):toBe(true)
+        -- Two spells carried leaves two to teach and two to sharpen.
+        expect(#shop.stock(state)):toBe(4)
+
+        -- A spell at its price floor is not something the fence can sell any
+        -- more, so it leaves the stock entirely.
+        local steps: i32 = game.spell_cost - run.min_spell_cost
+        for _ = 1, steps do expect(state:sharpen(0)):toBe(true) end
+        local pool: {shop.Offer} = shop.stock(state)
+        expect(#pool):toBe(3)
+        for offer in pool do
+            expect(offer.action == shop.action_sharpen and offer.kind == game.spell_firebolt)
+                :toBe(false)
+        end
+    end)
+
+    it("greys out what the purse cannot cover", function()
+        math.randomseed(107)
+        local state: run.State = shopping_run(game.spell_clone, 5)
+        local intermission: shop.State = open_shop(state)
+        stock_offers(intermission, {
+            sharpen_offer(game.spell_clone),
+            learn_offer(game.spell_firebolt),
+        })
+        local rows: {shop.Row} = shop.rows(intermission, state)
+        expect(rows[0].price):toBe(shop.sharpen_price(state, 0))
+        expect(rows[0].available):toBe(true)
+        expect(rows[1].price):toBe(shop.learn_price())
+        expect(rows[1].available):toBe(false)
+        -- The way out is never for sale, so it is never out of reach.
+        expect(rows[2].available):toBe(true)
+
+        -- Pressing an offer the run cannot pay for buys nothing rather than
+        -- falling through to the next line.
+        intermission.cursor = 1
+        expect(shop.activate(intermission, state)):toBe(shop.result_stay)
+        expect(state.mana):toBe(5)
+        expect(state:spell_count()):toBe(1)
+        expect(shop.choosing(intermission)):toBe(false)
+        expect(intermission.offers[1].sold):toBe(false)
+    end)
+end)
+
+describe("Arcane Heist fence purchases", function()
+    it("marks a bought offer sold instead of restocking it", function()
+        math.randomseed(109)
+        local state: run.State = shopping_run(game.spell_firebolt, 40)
+        local intermission: shop.State = open_shop(state)
+        stock_offers(intermission, {
+            sharpen_offer(game.spell_firebolt),
+            learn_offer(game.spell_clone),
+        })
+
+        expect(shop.activate(intermission, state)):toBe(shop.result_stay)
+        expect(state.spells[0].cost):toBe(game.spell_cost - 1)
+        expect(state.mana):toBe(36)
+
+        -- The line stays where it was, spent: the same spell is not sharpened a
+        -- second time at this fence however often it is pressed, and the offer
+        -- beside it is untouched.
+        local rows: {shop.Row} = shop.rows(intermission, state)
+        expect(#rows):toBe(3)
+        expect(rows[0].sold):toBe(true)
+        expect(rows[0].available):toBe(false)
+        expect(rows[1].sold):toBe(false)
+        expect(rows[1].available):toBe(true)
+
+        expect(shop.activate(intermission, state)):toBe(shop.result_stay)
+        expect(state.spells[0].cost):toBe(game.spell_cost - 1)
+        expect(state.mana):toBe(36)
+
+        -- The other offer is still live, and buying it spends its own price.
+        intermission.cursor = 1
+        expect(shop.activate(intermission, state)):toBe(shop.result_stay)
+        expect(state:spell_count()):toBe(2)
+        expect(state.spells[1].kind):toBe(game.spell_clone)
+        expect(state.mana):toBe(36 - shop.learn_price())
+        local spent: {shop.Row} = shop.rows(intermission, state)
+        expect(spent[0].sold):toBe(true)
+        expect(spent[1].sold):toBe(true)
+        -- Both offers spent leaves the way into the vault and nothing else.
+        expect(spent[2].action):toBe(shop.action_leave)
+        expect(shop.activate(intermission, state)):toBe(shop.result_stay)
+        expect(state.mana):toBe(36 - shop.learn_price())
+    end)
+
+    it("charges more for each mana already taken off a cast", function()
+        math.randomseed(113)
+        local state: run.State = shopping_run(game.spell_freeze_ray, 40)
+        local intermission: shop.State = open_shop(state)
+
+        -- The step a spell is on is the run's, not the visit's: a fresh fence
+        -- quotes the next step up for a spell an earlier one sharpened.
+        expect(shop.sharpen_price(state, 0)):toBe(4)
+        stock_offers(intermission, { sharpen_offer(game.spell_freeze_ray) })
+        shop.activate(intermission, state)
+        expect(state.spells[0].cost):toBe(game.spell_cost - 1)
+        expect(state.mana):toBe(36)
+
+        expect(shop.sharpen_price(state, 0)):toBe(6)
+        stock_offers(intermission, { sharpen_offer(game.spell_freeze_ray) })
+        shop.activate(intermission, state)
+        expect(state.spells[0].cost):toBe(game.spell_cost - 2)
+        expect(state.mana):toBe(30)
+
+        expect(shop.sharpen_price(state, 0)):toBe(8)
+        stock_offers(intermission, { sharpen_offer(game.spell_freeze_ray) })
+        shop.activate(intermission, state)
+        expect(state.spells[0].cost):toBe(run.min_spell_cost)
+        expect(state.mana):toBe(22)
+
+        -- A cast is never free, so the fence cannot offer that spell again at
+        -- all: it is out of the stock, and a stale offer for it is closed.
+        expect(#shop.stock(state)):toBe(3)
+        stock_offers(intermission, { sharpen_offer(game.spell_freeze_ray) })
+        local rows: {shop.Row} = shop.rows(intermission, state)
+        expect(rows[0].available):toBe(false)
+        shop.activate(intermission, state)
+        expect(state.spells[0].cost):toBe(run.min_spell_cost)
+        expect(state.mana):toBe(22)
+    end)
+
+    it("gives a learned spell the next cast key by itself", function()
+        math.randomseed(127)
+        local state: run.State = shopping_run(game.spell_firebolt, 30)
+        local intermission: shop.State = open_shop(state)
+        stock_offers(intermission, { learn_offer(game.spell_raise_card) })
+        expect(shop.rows(intermission, state)[0].slot):toBe(1)
+        expect(shop.activate(intermission, state)):toBe(shop.result_stay)
+
+        expect(state:spell_count()):toBe(2)
+        expect(state.spells[1].kind):toBe(game.spell_raise_card)
+        expect(state.spells[1].cost):toBe(game.spell_cost)
+        expect(state.mana):toBe(30 - shop.learn_price())
+        expect(intermission.offers[0].sold):toBe(true)
+    end)
+
+    it("asks a full loadout which spell a third one replaces", function()
+        math.randomseed(131)
+        local state: run.State = shopping_run(game.spell_firebolt, 40)
+        expect(state:learn(game.spell_clone, 1)):toBe(true)
+        local intermission: shop.State = open_shop(state)
+        stock_offers(intermission, {
+            sharpen_offer(game.spell_firebolt),
+            learn_offer(game.spell_freeze_ray),
+        })
+
+        intermission.cursor = 1
+        expect(shop.rows(intermission, state)[1].slot):toBe(-1)
+        expect(shop.activate(intermission, state)):toBe(shop.result_stay)
+        -- Being asked is not yet buying: the purse, the loadout, and the offer
+        -- are all untouched until a spell is named.
+        expect(shop.choosing(intermission)):toBe(true)
+        expect(intermission.pending):toBe(1)
+        expect(state.mana):toBe(40)
+        expect(state:spell_count()):toBe(2)
+        expect(intermission.offers[1].sold):toBe(false)
+
+        local choices: {shop.Row} = shop.rows(intermission, state)
+        expect(#choices):toBe(3)
+        expect(choices[0].action):toBe(shop.action_replace)
+        expect(choices[0].kind):toBe(game.spell_firebolt)
+        expect(choices[1].kind):toBe(game.spell_clone)
+        expect(choices[2].action):toBe(shop.action_cancel)
+
+        intermission.cursor = 1
+        expect(shop.activate(intermission, state)):toBe(shop.result_stay)
+        expect(shop.choosing(intermission)):toBe(false)
+        expect(state:spell_count()):toBe(2)
+        expect(state.spells[0].kind):toBe(game.spell_firebolt)
+        expect(state.spells[1].kind):toBe(game.spell_freeze_ray)
+        expect(state:carries(game.spell_clone)):toBe(false)
+        expect(state.mana):toBe(40 - shop.learn_price())
+        expect(intermission.offers[1].sold):toBe(true)
+        -- The cursor comes back to the line that was bought, and that line is
+        -- spent rather than restocked.
+        expect(intermission.cursor):toBe(1)
+        expect(shop.activate(intermission, state)):toBe(shop.result_stay)
+        expect(state.mana):toBe(40 - shop.learn_price())
+    end)
+
+    it("closes an offer whose spell the other one traded away", function()
+        math.randomseed(137)
+        local state: run.State = shopping_run(game.spell_firebolt, 40)
+        expect(state:learn(game.spell_clone, 1)):toBe(true)
+        local intermission: shop.State = open_shop(state)
+        stock_offers(intermission, {
+            sharpen_offer(game.spell_clone),
+            learn_offer(game.spell_raise_card),
+        })
+
+        -- Trade the very spell the first offer was about.
+        intermission.cursor = 1
+        shop.activate(intermission, state)
+        point_at(intermission, state, shop.action_replace)
+        intermission.cursor += 1
+        shop.activate(intermission, state)
+        expect(state:carries(game.spell_clone)):toBe(false)
+
+        -- An offer names a spell rather than a key, so the sharpening one is
+        -- simply closed instead of quietly sharpening whatever moved in.
+        local rows: {shop.Row} = shop.rows(intermission, state)
+        expect(rows[0].slot):toBe(-1)
+        expect(rows[0].available):toBe(false)
+        local before: i32 = state.mana
+        intermission.cursor = 0
+        expect(shop.activate(intermission, state)):toBe(shop.result_stay)
+        expect(state.mana):toBe(before)
+        expect(state.spells[1].cost):toBe(game.spell_cost)
+    end)
+
+    it("keeps both spells when the trade is called off", function()
+        math.randomseed(139)
+        local state: run.State = shopping_run(game.spell_raise_card, 40)
+        expect(state:learn(game.spell_freeze_ray, 1)):toBe(true)
+        local intermission: shop.State = open_shop(state)
+        stock_offers(intermission, {
+            learn_offer(game.spell_clone),
+            sharpen_offer(game.spell_raise_card),
+        })
+        shop.activate(intermission, state)
+        expect(shop.choosing(intermission)):toBe(true)
+
+        point_at(intermission, state, shop.action_cancel)
+        expect(shop.activate(intermission, state)):toBe(shop.result_stay)
+        expect(shop.choosing(intermission)):toBe(false)
+        expect(state.mana):toBe(40)
+        expect(state.spells[0].kind):toBe(game.spell_raise_card)
+        expect(state.spells[1].kind):toBe(game.spell_freeze_ray)
+        -- Calling off a trade is not buying: the offer is still for sale, and
+        -- the cursor is back on it.
+        expect(intermission.offers[0].sold):toBe(false)
+        expect(intermission.cursor):toBe(0)
+
+        -- Escape backs out of the same question, and then out of the shop.
+        shop.activate(intermission, state)
+        expect(shop.choosing(intermission)):toBe(true)
+        expect(shop.keypressed(intermission, state, "Escape")):toBe(shop.result_stay)
+        expect(shop.choosing(intermission)):toBe(false)
+        expect(shop.keypressed(intermission, state, "Escape")):toBe(shop.result_leave)
+    end)
+end)
+
+describe("Arcane Heist fence controls", function()
+    it("wraps the cursor over the offers it is showing", function()
+        math.randomseed(149)
+        local state: run.State = shopping_run(game.spell_clone, 30)
+        local intermission: shop.State = open_shop(state)
+        local count: i32 = shop.row_count(intermission, state)
+        expect(count):toBe(3)
+        shop.move(intermission, state, -1)
+        expect(intermission.cursor):toBe(count - 1)
+        shop.move(intermission, state, 1)
+        expect(intermission.cursor):toBe(0)
+        shop.keypressed(intermission, state, "ArrowDown")
+        expect(intermission.cursor):toBe(1)
+        shop.keypressed(intermission, state, "ArrowUp")
+        expect(intermission.cursor):toBe(0)
+
+        -- A pointer between the lines leaves the cursor where it was.
+        shop.focus(intermission, state, 2)
+        expect(intermission.cursor):toBe(2)
+        shop.focus(intermission, state, -1)
+        expect(intermission.cursor):toBe(2)
+        shop.focus(intermission, state, count)
+        expect(intermission.cursor):toBe(2)
+
+        -- The last line is the way into the vault, whichever gesture takes it.
+        expect(shop.keypressed(intermission, state, "Enter")):toBe(shop.result_leave)
+    end)
+
+    it("round-trips the visit through development snapshots", function()
+        math.randomseed(151)
+        local state: run.State = shopping_run(game.spell_firebolt, 40)
+        expect(state:learn(game.spell_clone, 1)):toBe(true)
+        local intermission: shop.State = open_shop(state)
+        stock_offers(intermission, {
+            sharpen_offer(game.spell_firebolt),
+            learn_offer(game.spell_freeze_ray),
+        })
+        intermission.cursor = 0
+        shop.activate(intermission, state)
+        intermission.cursor = 1
+        shop.activate(intermission, state)
+        expect(shop.choosing(intermission)):toBe(true)
+
+        local encoded: string = shop.snapshot(intermission)
+        local restored: shop.State? = shop.restore(encoded)
+        expect(restored == nil):toBe(false)
+        if restored ~= nil then
+            expect(restored.open):toBe(true)
+            expect(#restored.offers):toBe(2)
+            -- The spent offer comes back spent: what a visit has already sold is
+            -- as much a part of it as what it still has.
+            expect(restored.offers[0].sold):toBe(true)
+            expect(restored.offers[0].kind):toBe(game.spell_firebolt)
+            expect(restored.offers[1].action):toBe(shop.action_learn)
+            expect(restored.offers[1].kind):toBe(game.spell_freeze_ray)
+            expect(restored.pending):toBe(1)
+            expect(restored.cursor):toBe(intermission.cursor)
+            expect(shop.snapshot(restored)):toBe(encoded)
+        end
+
+        expect(shop.restore("ante-shop-v1,1,0,0,-1") == nil):toBe(true)
+        expect(shop.restore(encoded .. ",unexpected") == nil):toBe(true)
+        -- A spell kind, an action, an offer count, or a pending offer this build
+        -- could not have produced is a normal refusal.
+        expect(shop.restore("ante-shop-v2,1,1,2,9,0,0,-1") == nil):toBe(true)
+        expect(shop.restore("ante-shop-v2,1,1,7,1,0,0,-1") == nil):toBe(true)
+        expect(shop.restore("ante-shop-v2,1,3,1,1,0,2,1,0,1,3,0,0,-1") == nil):toBe(true)
+        expect(shop.restore("ante-shop-v2,1,1,2,1,0,0,1") == nil):toBe(true)
+
+        -- Closing the fence leaves nothing of the visit behind.
+        shop.close(intermission)
+        expect(intermission.open):toBe(false)
+        expect(#intermission.offers):toBe(0)
+        expect(shop.choosing(intermission)):toBe(false)
+        expect(intermission.cursor):toBe(0)
+    end)
+end)
