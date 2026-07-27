@@ -23,6 +23,9 @@ pub struct CompilerSession {
     /// In-memory file contents that take precedence over the filesystem.
     overlays: HashMap<PathBuf, String>,
     parse_cache: HashMap<PathBuf, CachedParse>,
+    hir_caches: HashMap<PathBuf, waluau_hir::TypeCheckCache>,
+    ir_caches: HashMap<PathBuf, waluau_ir::BuildCache>,
+    wasm_caches: HashMap<PathBuf, waluau_codegen_wasm::EmitCache>,
     parses_performed: usize,
 }
 
@@ -124,7 +127,18 @@ impl CompilerSession {
                 involved_files: outcome.involved_files,
             };
         }
-        match crate::compile_program(outcome.program, wasm_file_name, assets) {
+        let cache_key = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let hir_cache = self.hir_caches.entry(cache_key.clone()).or_default();
+        let ir_cache = self.ir_caches.entry(cache_key.clone()).or_default();
+        let wasm_cache = self.wasm_caches.entry(cache_key).or_default();
+        match crate::compile_program_with_cache(
+            outcome.program,
+            wasm_file_name,
+            assets,
+            Some(hir_cache),
+            Some(ir_cache),
+            Some(wasm_cache),
+        ) {
             Ok(artifacts) => BuildOutcome {
                 artifacts: Some(artifacts),
                 diagnostics: Vec::new(),
@@ -183,6 +197,22 @@ impl CompilerSession {
     /// not increment this (test/diagnostic aid).
     pub fn parses_performed(&self) -> usize {
         self.parses_performed
+    }
+
+    /// Incremental phase state from the most recent successful build.
+    pub fn incremental_stats(&self, root: &Path) -> (usize, bool, bool) {
+        let key = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        (
+            self.hir_caches
+                .get(&key)
+                .map_or(0, waluau_hir::TypeCheckCache::reused_function_count),
+            self.ir_caches
+                .get(&key)
+                .is_some_and(waluau_ir::BuildCache::last_build_was_incremental),
+            self.wasm_caches
+                .get(&key)
+                .is_some_and(waluau_codegen_wasm::EmitCache::last_emit_was_incremental),
+        )
     }
 }
 
@@ -336,5 +366,81 @@ mod tests {
         let artifacts = outcome.artifacts.expect("artifacts should be produced");
         assert!(!artifacts.wasm.is_empty());
         assert_eq!(outcome.involved_files.len(), 2);
+    }
+
+    #[test]
+    fn numeric_body_edit_reuses_hir_ir_and_wasm_products() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let main = write(
+            dir.path(),
+            "main.walu",
+            "function unchanged(): i32\n    return 7\nend\nfunction changed(): i32\n    return 32\nend\n",
+        );
+        let changed_source = "function unchanged(): i32\n    return 7\nend\nfunction changed(): i32\n    return 33\nend\n";
+
+        let mut session = CompilerSession::new();
+        let first = session.build_root(&main, "program.wasm");
+        let first_wasm = first.artifacts.expect("cold build artifacts").wasm;
+        let canonical_main = main.canonicalize().expect("canonicalize");
+        session.set_overlay(&canonical_main, changed_source);
+        let changed = session.build_root(&main, "program.wasm");
+        assert!(changed.diagnostics.is_empty(), "{:?}", changed.diagnostics);
+        let changed_wasm = changed.artifacts.expect("incremental artifacts").wasm;
+        assert_ne!(
+            first_wasm, changed_wasm,
+            "the edited literal must change Wasm"
+        );
+        let (reused_hir, incremental_ir, incremental_wasm) = session.incremental_stats(&main);
+        assert!(
+            reused_hir >= 1,
+            "an unchanged function should reuse typed HIR"
+        );
+        assert!(incremental_ir, "IR should lower only the changed function");
+        assert!(incremental_wasm, "Wasm should patch only the changed body");
+
+        let cold = write(dir.path(), "cold.walu", changed_source);
+        let cold_wasm = CompilerSession::new()
+            .build_root(&cold, "program.wasm")
+            .artifacts
+            .expect("cold comparison artifacts")
+            .wasm;
+        assert_eq!(
+            wasmprinter::print_bytes(&changed_wasm).expect("incremental Wasm should print"),
+            wasmprinter::print_bytes(&cold_wasm).expect("cold Wasm should print"),
+            "incremental and cold builds should be semantically identical"
+        );
+    }
+
+    #[test]
+    fn signature_edit_falls_back_to_full_lowering_and_emission() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let main = write(
+            dir.path(),
+            "main.walu",
+            "function changed(): i32\n    return 32\nend\n",
+        );
+        let mut session = CompilerSession::new();
+        assert!(
+            session
+                .build_root(&main, "program.wasm")
+                .artifacts
+                .is_some()
+        );
+        let canonical_main = main.canonicalize().expect("canonicalize");
+        session.set_overlay(
+            &canonical_main,
+            "function changed(): f64\n    return 32.0\nend\n",
+        );
+        let changed = session.build_root(&main, "program.wasm");
+        assert!(changed.diagnostics.is_empty(), "{:?}", changed.diagnostics);
+        let (_, incremental_ir, incremental_wasm) = session.incremental_stats(&main);
+        assert!(
+            !incremental_ir,
+            "signature changes require full IR lowering"
+        );
+        assert!(
+            !incremental_wasm,
+            "signature changes require full Wasm emission"
+        );
     }
 }

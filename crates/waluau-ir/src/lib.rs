@@ -219,9 +219,9 @@ mod lower {
     include!("lower.rs");
 }
 
-pub use lower::build;
 #[cfg(test)]
 pub(crate) use lower::build_function;
+pub use lower::{BuildCache, build, build_cached, build_cached_with_changes};
 pub use model::{
     BasicBlock, BitwiseIntrinsic, BlockId, DeclaredImport, Function, Instruction, MathIntrinsic,
     Module, Terminator, ValueId,

@@ -1,4 +1,18 @@
 pub fn verify(module: &Module) -> Result<(), Diagnostic> {
+    verify_matching(module, |_| true)
+}
+
+pub(crate) fn verify_functions(
+    module: &Module,
+    names: &HashSet<String>,
+) -> Result<(), Diagnostic> {
+    verify_matching(module, |function| names.contains(&function.name))
+}
+
+fn verify_matching(
+    module: &Module,
+    should_verify: impl Fn(&Function) -> bool + Sync,
+) -> Result<(), Diagnostic> {
     let signatures: HashMap<_, _> = module
         .functions
         .iter()
@@ -26,8 +40,42 @@ pub fn verify(module: &Module) -> Result<(), Diagnostic> {
             )
         })
         .collect();
-    for function in &module.functions {
-        verify_function(function, &signatures, &host_signatures)?;
+    #[cfg(target_family = "wasm")]
+    let results = module
+        .functions
+        .iter()
+        .filter(|function| should_verify(function))
+        .map(|function| verify_function(function, &signatures, &host_signatures))
+        .collect::<Vec<_>>();
+    #[cfg(not(target_family = "wasm"))]
+    let results = std::thread::scope(|scope| {
+        let workers = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get)
+            .min(module.functions.len().max(1));
+        let chunk_size = module.functions.len().max(1).div_ceil(workers);
+        let handles = module
+            .functions
+            .chunks(chunk_size)
+            .map(|chunk| {
+                let signatures = &signatures;
+                let host_signatures = &host_signatures;
+                let should_verify = &should_verify;
+                scope.spawn(move || {
+                    chunk
+                        .iter()
+                        .filter(|function| should_verify(function))
+                        .map(|function| verify_function(function, signatures, host_signatures))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().expect("IR verification worker panicked"))
+            .collect::<Vec<_>>()
+    });
+    for result in results {
+        result?;
     }
     Ok(())
 }

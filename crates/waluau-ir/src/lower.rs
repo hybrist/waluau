@@ -1,8 +1,140 @@
+struct CompilerTimer {
+    #[cfg(not(target_family = "wasm"))]
+    started: std::time::Instant,
+}
+
+impl CompilerTimer {
+    fn start() -> Self {
+        Self {
+            #[cfg(not(target_family = "wasm"))]
+            started: std::time::Instant::now(),
+        }
+    }
+
+    fn elapsed(&self) -> std::time::Duration {
+        #[cfg(not(target_family = "wasm"))]
+        return self.started.elapsed();
+        #[cfg(target_family = "wasm")]
+        return std::time::Duration::ZERO;
+    }
+
+    fn enabled() -> bool {
+        #[cfg(not(target_family = "wasm"))]
+        return std::env::var_os("WALUAU_TIMINGS").is_some();
+        #[cfg(target_family = "wasm")]
+        return false;
+    }
+}
+
+#[derive(Default)]
+pub struct BuildCache {
+    resolved: Option<Program>,
+    erased: Option<Program>,
+    monomorphic: Option<Program>,
+    module: Option<Module>,
+    last_incremental: bool,
+}
+
 pub fn build(program: &Program) -> Result<Module, Diagnostic> {
-    let mut resolved = program.clone();
+    build_inner(program, None, None)
+}
+
+pub fn build_cached<'a>(
+    program: &Program,
+    cache: &'a mut BuildCache,
+) -> Result<&'a Module, Diagnostic> {
+    build_cached_with_changes(program, cache, &[])
+}
+
+pub fn build_cached_with_changes<'a>(
+    program: &Program,
+    cache: &'a mut BuildCache,
+    changed_functions: &[usize],
+) -> Result<&'a Module, Diagnostic> {
+    cache.last_incremental = false;
+    let changed_hint = (changed_functions.len() == 1).then_some(changed_functions);
+    let module = build_inner(program, Some(cache), changed_hint)?;
+    cache.module = Some(module);
+    Ok(cache.module.as_ref().expect("cached IR module"))
+}
+
+impl BuildCache {
+    pub fn last_build_was_incremental(&self) -> bool {
+        self.last_incremental
+    }
+}
+
+fn build_inner(
+    program: &Program,
+    mut cache: Option<&mut BuildCache>,
+    changed_hint: Option<&[usize]>,
+) -> Result<Module, Diagnostic> {
+    let started = CompilerTimer::start();
+    let hinted_index = changed_hint
+        .and_then(|changed| changed.first().copied())
+        .filter(|index| {
+            program
+                .functions
+                .get(*index)
+                .is_some_and(|function| function.type_params.is_empty())
+        });
+    let mut resolved = if let Some(index) = hinted_index
+        && let Some(mut resolved) = cache.as_deref_mut().and_then(|cache| cache.resolved.take())
+        && resolved.functions.len() == program.functions.len()
+    {
+        resolved.functions[index] = program.functions[index].clone();
+        resolved.sources = program.sources.clone();
+        resolved
+    } else {
+        program.clone()
+    };
     waluau_ast::resolve_symbols(&mut resolved)?;
-    let erased = erase_opaque_types(&resolved);
+    let resolved_at = started.elapsed();
+    let incremental_index = hinted_index.or_else(|| cache.as_deref().and_then(|cache| {
+        let previous = cache.resolved.as_ref()?;
+        if !incremental_context_matches(&resolved, previous) {
+            return None;
+        }
+        let changed = resolved
+            .functions
+            .iter()
+            .zip(&previous.functions)
+            .enumerate()
+            .filter_map(|(index, (current, previous))| (current != previous).then_some(index))
+            .collect::<Vec<_>>();
+        (changed.len() == 1 && resolved.functions[changed[0]].type_params.is_empty())
+            .then(|| changed[0])
+    }));
+    let erased = if let Some(index) = incremental_index
+        && let Some(mut erased) = cache.as_deref_mut().and_then(|cache| cache.erased.take())
+    {
+        erased.functions[index] = erase_function_opaque_types(&resolved.functions[index]);
+        erased.sources = resolved.sources.clone();
+        erased
+    } else {
+        erase_opaque_types(&resolved)
+    };
+    let erased_at = started.elapsed();
+    if let Some(cached) = cache.as_deref_mut()
+        && let Some((monomorphic, module)) =
+            try_build_incremental(&resolved, &erased, cached, incremental_index)?
+    {
+        cached.resolved = Some(resolved);
+        cached.erased = Some(erased);
+        cached.monomorphic = Some(monomorphic);
+        cached.last_incremental = true;
+        if CompilerTimer::enabled() {
+            eprintln!(
+                "waluau ir timings: symbols={:?} erase={:?} incremental={:?}",
+                resolved_at,
+                erased_at - resolved_at,
+                started.elapsed() - erased_at,
+            );
+        }
+        return Ok(module);
+    }
     let monomorphic = Monomorphizer::new(&erased).run(&erased)?;
+    let monomorphic_at = started.elapsed();
     let tag_ids = collect_variant_tag_ids(&monomorphic, &resolved.type_declarations);
     let mut signatures = HashMap::new();
     let mut field_call_signatures = HashMap::new();
@@ -87,21 +219,69 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
             )
         })
         .collect::<HashMap<_, _>>();
+    #[cfg(target_family = "wasm")]
+    let lowered_functions = monomorphic
+        .functions
+        .iter()
+        .map(|function| {
+            build_function(
+                function,
+                &signatures,
+                &host_import_signatures,
+                &host_import_names,
+                &field_call_signatures,
+                &declared_constants,
+                &monomorphic.sources,
+                &tag_ids,
+            )
+        })
+        .collect::<Vec<_>>();
+    #[cfg(not(target_family = "wasm"))]
+    let lowered_functions = std::thread::scope(|scope| {
+        let workers = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get)
+            .min(monomorphic.functions.len().max(1));
+        let chunk_size = monomorphic.functions.len().max(1).div_ceil(workers);
+        let handles = monomorphic
+            .functions
+            .chunks(chunk_size)
+            .map(|chunk| {
+                let signatures = &signatures;
+                let host_import_signatures = &host_import_signatures;
+                let host_import_names = &host_import_names;
+                let field_call_signatures = &field_call_signatures;
+                let declared_constants = &declared_constants;
+                let sources = &monomorphic.sources;
+                let tag_ids = &tag_ids;
+                scope.spawn(move || {
+                    chunk
+                        .iter()
+                        .map(|function| {
+                            build_function(
+                                function,
+                                signatures,
+                                host_import_signatures,
+                                host_import_names,
+                                field_call_signatures,
+                                declared_constants,
+                                sources,
+                                tag_ids,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().expect("IR lowering worker panicked"))
+            .collect::<Vec<_>>()
+    });
     let mut functions = Vec::new();
-    for function in &monomorphic.functions {
-        let mut lowered = build_function(
-            function,
-            &signatures,
-            &host_import_signatures,
-            &host_import_names,
-            &field_call_signatures,
-            &declared_constants,
-            &monomorphic.sources,
-            &tag_ids,
-        )?;
-        functions.push(lowered.remove(0));
-        functions.extend(lowered);
+    for lowered in lowered_functions {
+        functions.extend(lowered?);
     }
+    let lowered_at = started.elapsed();
     let start = functions
         .iter()
         .position(|function| function.name == "__waluau_top_level_init");
@@ -117,8 +297,210 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
         start,
         tag_ids,
     };
+    if CompilerTimer::enabled() {
+        eprintln!(
+            "waluau ir timings: symbols={:?} erase={:?} mono={:?} setup+lower={:?} finish={:?}",
+            resolved_at,
+            erased_at - resolved_at,
+            monomorphic_at - erased_at,
+            lowered_at - monomorphic_at,
+            started.elapsed() - lowered_at,
+        );
+    }
     verify(&module)?;
+    if let Some(cached) = cache {
+        cached.resolved = Some(resolved);
+        cached.erased = Some(erased);
+        cached.monomorphic = Some(monomorphic);
+    }
     Ok(module)
+}
+
+fn incremental_context_matches(current: &Program, previous: &Program) -> bool {
+    current.declared_imports == previous.declared_imports
+        && current.declared_constants == previous.declared_constants
+        && current.type_declarations == previous.type_declarations
+        && current.top_level == previous.top_level
+        && current.export == previous.export
+        && current.entry_file_path == previous.entry_file_path
+        && current.functions.len() == previous.functions.len()
+        && current
+            .functions
+            .iter()
+            .zip(&previous.functions)
+            .all(|(current, previous)| {
+                current.name == previous.name
+                    && current.symbol_id == previous.symbol_id
+                    && current.type_params == previous.type_params
+                    && current.params == previous.params
+                    && current.vararg == previous.vararg
+                    && current.return_type == previous.return_type
+                    && current.file_path == previous.file_path
+            })
+}
+
+/// Rebuild one ordinary function while preserving the previously verified IR
+/// for every other function. Changes that can alter specialization or lifted
+/// function shape deliberately fall back to the full pipeline.
+fn try_build_incremental(
+    resolved: &Program,
+    erased: &Program,
+    cache: &mut BuildCache,
+    changed_hint: Option<usize>,
+) -> Result<Option<(Program, Module)>, Diagnostic> {
+    let started = CompilerTimer::start();
+    let (Some(previous_monomorphic), Some(previous_module)) =
+        (&cache.monomorphic, &cache.module)
+    else {
+        return Ok(None);
+    };
+    let Some(changed_index) = changed_hint else {
+        return Ok(None);
+    };
+
+    let changed_function = &erased.functions[changed_index];
+    let mut monomorphizer = Monomorphizer::new(erased);
+    let rewritten = monomorphizer.run_function(changed_function)?;
+    let rewritten_at = started.elapsed();
+    if rewritten.len() != 1 {
+        return Ok(None);
+    }
+    let rewritten = rewritten.into_iter().next().expect("one rewritten function");
+    let name = rewritten.name.to_string();
+    let Some(monomorphic_index) = previous_monomorphic
+        .functions
+        .iter()
+        .position(|function| function.name.to_string() == name)
+    else {
+        return Ok(None);
+    };
+
+    let mut monomorphic = cache
+        .monomorphic
+        .take()
+        .expect("cached monomorphic program");
+    monomorphic.functions[monomorphic_index] = rewritten;
+    monomorphic.sources = erased.sources.clone();
+    waluau_ast::resolve_symbols(&mut monomorphic)?;
+    let resolved_at = started.elapsed();
+
+    let tag_ids = collect_variant_tag_ids(&monomorphic, &resolved.type_declarations);
+    if tag_ids != previous_module.tag_ids {
+        return Ok(None);
+    }
+    let mut signatures = HashMap::new();
+    let mut field_call_signatures = HashMap::new();
+    let mut declared_imports = Vec::new();
+    for declared in &monomorphic.declared_imports {
+        let symbol_id = declared.symbol_id.ok_or_else(|| {
+            Diagnostic::new(format!(
+                "declared host function '{}' must have a symbol ID resolved",
+                declared.name
+            ))
+        })?;
+        let sig = (
+            declared.params.iter().map(|param| param.ty.clone()).collect(),
+            declared.return_type.clone(),
+        );
+        signatures.insert(symbol_id, sig.clone());
+        field_call_signatures.insert(declared.name.clone(), sig);
+        declared_imports.push(DeclaredImport {
+            module: "waluau".to_string(),
+            name: declared.name.clone(),
+            host_name: canonical_dom_import_host_name(&declared.host_name)
+                .unwrap_or_else(|| declared.host_name.clone()),
+            params: declared.params.iter().map(|param| param.ty.clone()).collect(),
+            return_type: declared.return_type.clone(),
+            symbol_id,
+        });
+    }
+    for function in &monomorphic.functions {
+        let symbol_id = function.symbol_id.ok_or_else(|| {
+            Diagnostic::new(format!(
+                "function '{}' must have a symbol ID resolved",
+                function.name
+            ))
+        })?;
+        let return_type = function.return_type.clone().ok_or_else(|| {
+            Diagnostic::new(format!(
+                "function '{}' must have a concrete return type before IR lowering",
+                function.name
+            ))
+        })?;
+        let mut params = function.params.iter().map(|param| param.ty.clone()).collect::<Vec<_>>();
+        if function.vararg {
+            params.push(Type::Variadic(Box::new(Type::Unknown)));
+        }
+        let sig = (params, return_type);
+        signatures.insert(symbol_id, sig.clone());
+        field_call_signatures.insert(function.name.to_string(), sig);
+    }
+    let host_import_signatures = declared_imports
+        .iter()
+        .map(|declared| {
+            (
+                declared.symbol_id,
+                (declared.params.clone(), declared.return_type.clone()),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let host_import_names = declared_imports
+        .iter()
+        .map(|declared| (declared.name.clone(), declared.symbol_id))
+        .collect::<HashMap<_, _>>();
+    let declared_constants = monomorphic
+        .declared_constants
+        .iter()
+        .map(|constant| {
+            (
+                constant.name.clone(),
+                (constant.ty.clone(), constant.value.clone()),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let lowered = build_function(
+        &monomorphic.functions[monomorphic_index],
+        &signatures,
+        &host_import_signatures,
+        &host_import_names,
+        &field_call_signatures,
+        &declared_constants,
+        &monomorphic.sources,
+        &tag_ids,
+    )?;
+    let lowered_at = started.elapsed();
+    if lowered.len() != 1 || lowered[0].name != name {
+        return Ok(None);
+    }
+    if declared_imports != previous_module.declared_imports {
+        return Ok(None);
+    }
+    let Some(module_index) = previous_module
+        .functions
+        .iter()
+        .position(|function| function.name == name)
+    else {
+        return Ok(None);
+    };
+    if lowered[0].params != previous_module.functions[module_index].params
+        || lowered[0].return_type != previous_module.functions[module_index].return_type
+    {
+        return Ok(None);
+    }
+    let mut module = cache.module.take().expect("cached IR module");
+    module.functions[module_index] = lowered.into_iter().next().expect("one lowered function");
+    let names = HashSet::from([name]);
+    verify::verify_functions(&module, &names)?;
+    if CompilerTimer::enabled() {
+        eprintln!(
+            "waluau ir incremental detail: rewrite={:?} clone+symbols={:?} setup+lower={:?} clone+verify={:?}",
+            rewritten_at,
+            resolved_at - rewritten_at,
+            lowered_at - resolved_at,
+            started.elapsed() - lowered_at,
+        );
+    }
+    Ok(Some((monomorphic, module)))
 }
 
 fn wrap_async_top_level_init_if_needed(
@@ -1383,6 +1765,14 @@ fn method_receiver_matches(expected: &Type, actual: &Type) -> bool {
     }
 }
 
+fn is_record_like(ty: &Type) -> bool {
+    match ty {
+        Type::Record(_) => true,
+        Type::Opaque { ty, .. } | Type::Nullable(ty) => is_record_like(ty),
+        _ => false,
+    }
+}
+
 fn method_signature(
     receiver: &Expr,
     name: &str,
@@ -1447,6 +1837,10 @@ fn type_property_getter_signature(
         }
     }
 
+    if is_record_like(receiver_ty) {
+        return None;
+    }
+
     let suffix = format!(".get/{name}");
     let mut matches = signatures
         .iter()
@@ -1478,6 +1872,10 @@ fn type_property_setter_signature(
         if let Some((params, return_type)) = signatures.get(&direct_name).cloned() {
             return Some((direct_name, params, return_type));
         }
+    }
+
+    if is_record_like(receiver_ty) {
+        return None;
     }
 
     let suffix = format!(".set/{name}");

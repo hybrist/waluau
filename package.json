@@ -5,6 +5,7 @@
   "scripts": {
     "build:ante": "pnpm --filter ante build",
     "build:playground": "pnpm --filter playground build",
+    "bench:ante-incremental": "cargo build --release -p waluau-cli && node tools/benchmark-ante-incremental.mjs",
     "dev:ante": "pnpm --filter ante dev",
     "dev:game-project": "pnpm --filter ante exec vite ../../examples/game-project --config ../../examples/game-project/vite.config.mjs",
     "dev": "pnpm --filter playground dev",

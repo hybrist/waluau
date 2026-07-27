@@ -66,6 +66,7 @@ impl NullableBoxKind {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct ArrayTypeRegistry {
     pub(crate) indices: HashMap<String, u32>,
     pub(crate) record_indices: HashMap<String, u32>,

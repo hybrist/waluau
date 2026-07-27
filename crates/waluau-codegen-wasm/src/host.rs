@@ -116,6 +116,7 @@ pub struct UsedHostImports {
 /// indices they occupy in the output module's import section.
 ///
 /// Slots whose corresponding import was not used hold `None`.
+#[derive(Clone)]
 pub struct HostImportMap {
     /// `indices[canonical]` is `Some(actual_func_idx)` when the import is present.
     indices: [Option<u32>; HOST_IMPORT_COUNT as usize],
