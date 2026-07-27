@@ -111,6 +111,16 @@ function State:spell_count(): i32
     return #self.spells
 end
 
+-- Which key that kind of spell answers to, or -1 when the loadout does not
+-- carry it. An offer made about a spell names the spell rather than the key, so
+-- that a trade moving spells between keys cannot silently redirect it.
+function State:slot_of(kind: i32): i32
+    for slot, spell in self.spells do
+        if spell.kind == kind then return slot end
+    end
+    return -1
+end
+
 -- Spend from the carried pool. Buying between vaults comes out of the same mana
 -- the next vault opens with, so a purchase is always a smaller pool to fight in.
 function State:spend(mana: i32): bool

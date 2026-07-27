@@ -24,14 +24,17 @@ the run from vault one at any point, which is also why a settled vault is never
 left standing on the board.
 
 The robbers set out with the one spell the menu picked and can hold two ready at
-once, on keys 1 and 2. The fence sells two things, both out of the carried pool:
-one mana off a spell's cast price — four mana for the first step, then six, then
-eight, and never below two per cast — or one new spell, drawn at random from the
-kinds the loadout does not carry and priced at seven. A learned spell takes the
-next free key at full price; once both keys are taken, learning a third asks
-which spell it trades away, and the one traded out is gone. Each visit sells at
-most one spell. Losing a vault ends the run and everything it bought with it: a
-fresh run sets out with its starting spell at full price again.
+once, on keys 1 and 2. A visit to the fence stocks exactly two offers, drawn
+without replacement from everything the run could be sold: one mana off a spell
+it carries — four mana for the first step, then six, then eight, and never below
+two per cast — or a spell it does not, priced at seven. Buying an offer marks
+that line sold and nothing takes its place; what restocks the fence is reaching
+the next one. A learned spell takes the next free key at full price; once both
+keys are taken, learning a third asks which spell it trades away, and the one
+traded out is gone. An offer names the spell it is about rather than the key, so
+trading a spell away closes an offer to sharpen it instead of redirecting it.
+Losing a vault ends the run and everything it bought with it: a fresh run sets
+out with its starting spell at full price again.
 
 Every third vault of a run is a boss battle: both sides are dealt eleven relics
 up front and spent pairs are never replaced from the draw pile, so the hands
@@ -154,7 +157,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `menu_city_render.walu` | WebGL2 primitive drawing for the menu's panning city and colored street streak. |
 | `game_screen.walu` | The heist screen: rules/flow/choreography wiring and its input adapters. |
 | `run.walu` | DOM-free run state: the vault sequence, its boss cadence, the spell loadout, and the mana carried between vaults. |
-| `shop.walu` | DOM-free intermission between vaults: what the fence offers, what it charges, and which offer the cursor holds. |
+| `shop.walu` | DOM-free intermission between vaults: the two offers a visit stocks, what they charge, which are spent, and which the cursor holds. |
 | `shop_render.walu` | Where the fence's offer list sits on the screen, and the pointer's row lookup for it. |
 | `game.walu` | DOM-free rules, AI, commands, outcomes, and read-only presentation view. |
 | `flow.walu` | DOM-free input gating, focus, modal, selection, and reveal phase transitions. |
@@ -172,7 +175,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `test/game_fixture.walu` | Narrow mutable test adapter for deterministic rule arrangements. |
 | `sim.test.walu` | Deterministic Vitest assertions for rules, flow, snapshots, and full-game completion. |
 | `run.test.walu` | Deterministic Vitest assertions for the boss cadence, mana carryover, the carried loadout, and where a run ends. |
-| `shop.test.walu` | Deterministic Vitest assertions for the fence's offers, prices, purchases, and trades. |
+| `shop.test.walu` | Deterministic Vitest assertions for the fence's stock, prices, spent offers, and trades. |
 | `tests/game-driver.js` | Shared browser-test seam for booting a heist and observing rendered frames. |
 | `tests/spell-effects.spec.js` | Spell-presentation behavior isolated from menu and gameplay browser coverage. |
 | `waluau.assets.json` | Typed package manifest for the card back, vault font, and flip sound. |

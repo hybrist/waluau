@@ -1,8 +1,12 @@
 -- DOM-free intermission between two vaults of a run: the fence the robbers
--- visit with whatever mana the last vault left standing. Two things are for
--- sale — sharpening a spell they already carry, or a spell they do not — and
--- both are paid for out of the pool the next vault opens with, so every
--- purchase is a smaller pot to fight in.
+-- visit with whatever mana the last vault left standing. It lays out two
+-- offers, rolled when the visit opens — sharpening a spell they already carry,
+-- or a spell they do not — and both are paid for out of the pool the next vault
+-- opens with, so every purchase is a smaller pot to fight in.
+--
+-- The two offers are the whole stock of a visit. Buying one marks that offer
+-- sold and nothing takes its place: what restocks the fence is reaching the next
+-- one, not spending mana at this one.
 --
 -- This module owns what is on offer, what it costs, and which line of the offer
 -- the cursor is on. The loadout limits and the purse belong to the run module,
@@ -13,17 +17,21 @@ local game = require("./game")
 local run_module = require("./run")
 local snapshot_data = require("./snapshot")
 
--- `offer` is the one spell this visit can teach, rolled when the shop opens
--- from the kinds the loadout lacks; it drops to zero once taken, so a single
--- intermission never sells two spells. `choosing` is the second stage a full
--- loadout forces: the new spell needs one of the two keys, so the shop asks
--- which spell is traded away before any mana changes hands.
-type State = { open: bool, offer: i32, cursor: i32, choosing: bool }
+-- One thing this visit has for sale. `kind` names the spell it is about — the
+-- one being sharpened, or the one being taught — rather than a loadout slot,
+-- because a trade can move a spell off the key it was rolled against and an
+-- offer must not follow it. `sold` is what stops a bought offer from being
+-- bought twice; the line stays on the screen, spent.
+type Offer = { action: i32, kind: i32, sold: bool }
+-- `pending` is the offer being asked about while a full loadout decides which
+-- spell a new one trades away — the one stage where mana has not changed hands
+-- yet. It is -1 the rest of the time.
+type State = { open: bool, offers: {Offer}, cursor: i32, pending: i32 }
 -- One line of the shop: what it would do, which loadout slot it does it to,
--- the spell ink it wears, its price, and whether the purse and the loadout
--- allow it at all. Input and drawing read the same list, so a greyed-out line
--- and a refused press can never disagree.
-type Row = { action: i32, slot: i32, kind: i32, price: i32, available: bool }
+-- the spell ink it wears, its price, whether it has already been bought, and
+-- whether the purse and the loadout allow it at all. Input and drawing read the
+-- same list, so a greyed-out line and a refused press can never disagree.
+type Row = { action: i32, slot: i32, kind: i32, price: i32, sold: bool, available: bool }
 
 const ACTION_SHARPEN: i32 = 1
 const ACTION_LEARN: i32 = 2
@@ -34,6 +42,9 @@ const ACTION_LEAVE: i32 = 5
 const RESULT_STAY: i32 = 0
 const RESULT_LEAVE: i32 = 1
 
+-- Two lines of stock per visit, however many things the run could in principle
+-- be sold.
+const MAX_OFFERS: i32 = 2
 -- Sharpening gets dearer as the spell gets cheaper: the first mana off a cast
 -- is four, the next six, the last eight. A spell learned here always costs the
 -- same, because what it is worth is decided by which one the roll offered.
@@ -41,37 +52,64 @@ const SHARPEN_PRICE: i32 = 4
 const SHARPEN_PRICE_STEP: i32 = 2
 const LEARN_PRICE: i32 = 7
 
-const SNAPSHOT_SCHEMA: string = "ante-shop-v1"
+const NOTHING_PENDING: i32 = -1
+const SNAPSHOT_SCHEMA: string = "ante-shop-v2"
 const SNAPSHOT_COLLECTION_LIMIT: i32 = 8
 
 function new(): State
-    return { open = false, offer = 0, cursor = 0, choosing = false }
+    return { open = false, offers = {}, cursor = 0, pending = NOTHING_PENDING }
 end
 
--- The spell this visit sells, drawn from the kinds the run does not already
--- carry. A loadout holding every spell leaves nothing to teach, which is kind
--- zero and one line fewer on the screen.
-function roll_offer(run: run_module.State): i32
-    local pool: {i32} = {}
-    for kind = 1::i32, game.spell_kind_count do
-        if not run:carries(kind) then table.insert(pool, kind) end
+-- Everything the fence could sell this run, in a stable order: one line per
+-- spell it could sharpen, then one per spell it could teach. The roll draws
+-- from this.
+function stock(run: run_module.State): {Offer}
+    local pool: {Offer} = {}
+    for slot = 0::i32, #run.spells - 1 do
+        if run:can_sharpen(slot) then
+            table.insert(pool, {
+                action = ACTION_SHARPEN, kind = run.spells[slot].kind, sold = false,
+            })
+        end
     end
-    if #pool == 0 then return 0 end
-    return pool[math.random(#pool) - 1]
+    for kind = 1::i32, game.spell_kind_count do
+        if not run:carries(kind) then
+            table.insert(pool, { action = ACTION_LEARN, kind = kind, sold = false })
+        end
+    end
+    return pool
+end
+
+-- Two of that stock, drawn without replacement, so a visit never lists the same
+-- offer twice. A run with less than two things left to buy is simply offered
+-- what there is.
+function roll_offers(run: run_module.State): {Offer}
+    local pool: {Offer} = stock(run)
+    local offers: {Offer} = {}
+    while #offers < MAX_OFFERS and #pool > 0 do
+        local index: i32 = math.random(#pool) - 1
+        table.insert(offers, pool[index])
+        table.remove(pool, index)
+    end
+    return offers
 end
 
 function open_for(state: State, run: run_module.State): unit
     state.open = true
-    state.offer = roll_offer(run)
+    state.offers = roll_offers(run)
     state.cursor = 0
-    state.choosing = false
+    state.pending = NOTHING_PENDING
 end
 
 function close(state: State): unit
     state.open = false
-    state.offer = 0
+    state.offers = {}
     state.cursor = 0
-    state.choosing = false
+    state.pending = NOTHING_PENDING
+end
+
+function choosing(state: State): bool
+    return state.pending ~= NOTHING_PENDING
 end
 
 -- What sharpening the spell in that slot costs next. Slots the run cannot
@@ -86,48 +124,70 @@ function learn_price(): i32
     return LEARN_PRICE
 end
 
--- The lines of the shop as it stands. While a full loadout is being asked
--- which spell to trade away, those are the only lines there are: the sale is
--- already in progress and the other offers would be answering a different
--- question.
+-- One offer as a line: the slot it acts on resolved from the spell it names, its
+-- price at the loadout's current state, and whether it can be bought right now.
+-- A sold line is never available, and neither is one whose spell has been traded
+-- away since the roll.
+function offer_row(offer: Offer, run: run_module.State): Row
+    if offer.action == ACTION_SHARPEN then
+        local slot: i32 = run:slot_of(offer.kind)
+        local price: i32 = sharpen_price(run, slot)
+        return {
+            action = ACTION_SHARPEN,
+            slot = slot,
+            kind = offer.kind,
+            price = price,
+            sold = offer.sold,
+            available = not offer.sold and run:can_sharpen(slot) and run.mana >= price,
+        }
+    end
+    return {
+        action = ACTION_LEARN,
+        slot = run:open_slot(),
+        kind = offer.kind,
+        price = LEARN_PRICE,
+        sold = offer.sold,
+        available = not offer.sold
+            and not run:carries(offer.kind)
+            and run.mana >= LEARN_PRICE,
+    }
+end
+
+-- The lines of the shop as it stands. While a full loadout is being asked which
+-- spell to trade away, those are the only lines there are: the sale is already
+-- in progress and the other offers would be answering a different question.
 function rows(state: State, run: run_module.State): {Row}
     local list: {Row} = {}
-    if state.choosing then
+    if choosing(state) then
+        local offered: i32 = state.offers[state.pending].kind
         for slot = 0::i32, #run.spells - 1 do
             table.insert(list, {
                 action = ACTION_REPLACE,
                 slot = slot,
                 kind = run.spells[slot].kind,
                 price = LEARN_PRICE,
-                available = run.mana >= LEARN_PRICE,
+                sold = false,
+                available = run.mana >= LEARN_PRICE and not run:carries(offered),
             })
         end
         table.insert(list, {
-            action = ACTION_CANCEL, slot = -1, kind = 0, price = 0, available = true,
+            action = ACTION_CANCEL,
+            slot = -1,
+            kind = 0,
+            price = 0,
+            sold = false,
+            available = true,
         })
         return list
     end
-    for slot = 0::i32, #run.spells - 1 do
-        local price: i32 = sharpen_price(run, slot)
-        table.insert(list, {
-            action = ACTION_SHARPEN,
-            slot = slot,
-            kind = run.spells[slot].kind,
-            price = price,
-            available = run:can_sharpen(slot) and run.mana >= price,
-        })
-    end
-    if state.offer ~= 0 then
-        table.insert(list, {
-            action = ACTION_LEARN,
-            slot = run:open_slot(),
-            kind = state.offer,
-            price = LEARN_PRICE,
-            available = run.mana >= LEARN_PRICE,
-        })
-    end
+    for offer in state.offers do table.insert(list, offer_row(offer, run)) end
     table.insert(list, {
-        action = ACTION_LEAVE, slot = -1, kind = 0, price = 0, available = true,
+        action = ACTION_LEAVE,
+        slot = -1,
+        kind = 0,
+        price = 0,
+        sold = false,
+        available = true,
     })
     return list
 end
@@ -148,48 +208,50 @@ function focus(state: State, run: run_module.State, row: i32): unit
     state.cursor = row
 end
 
--- Take the spell on offer into the named slot. The mana leaves the purse only
--- once the loadout accepts it, and the offer is spent either way it lands: one
--- visit, one spell.
-function commit_learn(state: State, run: run_module.State, slot: i32): unit
+-- Take the offer being asked about into the named slot. The mana leaves the
+-- purse only once the loadout accepts the spell, and the offer is marked sold
+-- rather than removed: the line stays where it was, spent.
+function commit_learn(state: State, run: run_module.State, offer: i32, slot: i32): unit
     if run.mana < LEARN_PRICE then return end
-    if not run:learn(state.offer, slot) then return end
+    if not run:learn(state.offers[offer].kind, slot) then return end
     run:spend(LEARN_PRICE)
-    state.offer = 0
-    state.choosing = false
-    state.cursor = 0
+    state.offers[offer].sold = true
+    state.pending = NOTHING_PENDING
+    state.cursor = offer
 end
 
 -- Buy, or start being asked which spell to trade away, or leave. A line the
--- purse cannot cover is simply not bought: the cursor stays on it rather than
--- the press falling through to something else.
+-- purse cannot cover — or one already bought — is simply not bought: the cursor
+-- stays on it rather than the press falling through to something else.
 function activate(state: State, run: run_module.State): i32
     local list: {Row} = rows(state, run)
     if state.cursor < 0 or state.cursor >= #list then return RESULT_STAY end
     local row: Row = list[state.cursor]
     if row.action == ACTION_LEAVE then return RESULT_LEAVE end
     if row.action == ACTION_CANCEL then
-        state.choosing = false
-        state.cursor = 0
+        local asked: i32 = state.pending
+        state.pending = NOTHING_PENDING
+        state.cursor = asked
         return RESULT_STAY
     end
     if not row.available then return RESULT_STAY end
+    if row.action == ACTION_REPLACE then
+        commit_learn(state, run, state.pending, row.slot)
+        return RESULT_STAY
+    end
     if row.action == ACTION_SHARPEN then
         if run:can_sharpen(row.slot) and run:spend(row.price) then
             run:sharpen(row.slot)
+            state.offers[state.cursor].sold = true
         end
-        return RESULT_STAY
-    end
-    if row.action == ACTION_REPLACE then
-        commit_learn(state, run, row.slot)
         return RESULT_STAY
     end
     -- Learning: a loadout with room gives the spell the next key by itself, and
     -- a full one has to be asked which of the two it replaces.
     if row.slot >= 0 then
-        commit_learn(state, run, row.slot)
+        commit_learn(state, run, state.cursor, row.slot)
     else
-        state.choosing = true
+        state.pending = state.cursor
         state.cursor = 0
     end
     return RESULT_STAY
@@ -208,9 +270,10 @@ function keypressed(state: State, run: run_module.State, key: string): i32
     -- Escape backs out of the replacement question, and otherwise out of the
     -- shop: the next vault is always one press away.
     if key == "Escape" then
-        if state.choosing then
-            state.choosing = false
-            state.cursor = 0
+        if choosing(state) then
+            local asked: i32 = state.pending
+            state.pending = NOTHING_PENDING
+            state.cursor = asked
             return RESULT_STAY
         end
         return RESULT_LEAVE
@@ -221,9 +284,14 @@ end
 function snapshot(state: State): string
     local parts: {string} = { SNAPSHOT_SCHEMA }
     snapshot_data.append_bool(parts, state.open)
-    snapshot_data.append_i32(parts, state.offer)
+    snapshot_data.append_i32(parts, #state.offers)
+    for offer in state.offers do
+        snapshot_data.append_i32(parts, offer.action)
+        snapshot_data.append_i32(parts, offer.kind)
+        snapshot_data.append_bool(parts, offer.sold)
+    end
     snapshot_data.append_i32(parts, state.cursor)
-    snapshot_data.append_bool(parts, state.choosing)
+    snapshot_data.append_i32(parts, state.pending)
     return table.concat(parts, ",")
 end
 
@@ -232,18 +300,36 @@ function restore(snapshot_value: string): State?
         snapshot_value, SNAPSHOT_COLLECTION_LIMIT)
     if reader:next_string() ~= SNAPSHOT_SCHEMA then return nil end
     local open: bool = reader:next_bool()
-    local offer: i32 = reader:next_i32()
+    local offers: {Offer} = {}
+    local offer_count: i32 = reader:next_length()
+    for _ = 1, offer_count do
+        -- One token at a time into locals: a record literal's fields are not
+        -- guaranteed to be evaluated in written order, and these are only told
+        -- apart by their position in the payload.
+        local action: i32 = reader:next_i32()
+        local kind: i32 = reader:next_i32()
+        local sold: bool = reader:next_bool()
+        table.insert(offers, { action = action, kind = kind, sold = sold })
+    end
     local cursor: i32 = reader:next_i32()
-    local choosing: bool = reader:next_bool()
+    local pending: i32 = reader:next_i32()
     local restored: State = {
         open = open,
-        offer = offer,
+        offers = offers,
         cursor = cursor,
-        choosing = choosing,
+        pending = pending,
     }
     if not reader:complete() then return nil end
-    if offer < 0 or offer > game.spell_kind_count then return nil end
+    if #offers > MAX_OFFERS then return nil end
+    for offer in offers do
+        if offer.action ~= ACTION_SHARPEN and offer.action ~= ACTION_LEARN then
+            return nil
+        end
+        if offer.kind < 1 or offer.kind > game.spell_kind_count then return nil end
+    end
     if cursor < 0 then return nil end
+    -- A pending question names one of this visit's offers, or nothing at all.
+    if pending < NOTHING_PENDING or pending >= #offers then return nil end
     return restored
 end
 
@@ -251,7 +337,9 @@ return {
     new = new,
     open_for = open_for,
     close = close,
-    roll_offer = roll_offer,
+    choosing = choosing,
+    stock = stock,
+    roll_offers = roll_offers,
     rows = rows,
     row_count = row_count,
     move = move,
@@ -269,4 +357,5 @@ return {
     action_leave = ACTION_LEAVE,
     result_stay = RESULT_STAY,
     result_leave = RESULT_LEAVE,
+    max_offers = MAX_OFFERS,
 }

@@ -38,23 +38,33 @@ function row_at(x: f64, y: f64, count: i32): i32
 end
 
 -- What one line says on its left. Prices are the right-hand column, so nothing
--- here repeats them.
+-- here repeats them. A spent line drops the detail it used to carry: the numbers
+-- it quoted were the ones it has already changed.
 function row_label(row: shop.Row, run: run_module.State, offer: i32): string
     if row.action == shop.action_sharpen then
+        local name: string = render.spell_name(row.kind)
+        if row.sold then return "SHARPENED " .. name end
+        -- The spell an offer named can leave the loadout: the other offer of the
+        -- same visit may have traded it away.
+        if row.slot < 0 then return "SHARPEN " .. name .. "   TRADED AWAY" end
         local spell: game.Spell = run.spells[row.slot]
         if not run:can_sharpen(row.slot) then
-            return "SHARPEN " .. render.spell_name(spell.kind) .. "   AS CHEAP AS IT GETS"
+            return "SHARPEN " .. name .. "   AS CHEAP AS IT GETS"
         end
-        return "SHARPEN " .. render.spell_name(spell.kind)
+        return "SHARPEN " .. name
             .. "   CAST " .. tostring(spell.cost)
             .. " TO " .. tostring(spell.cost - 1) .. " MANA"
     end
     if row.action == shop.action_learn then
-        if row.slot < 0 then
-            return "LEARN " .. render.spell_name(offer) .. "   TRADES A SPELL AWAY"
+        local name: string = render.spell_name(row.kind)
+        if row.sold then
+            return "LEARNED " .. name
+                .. "   KEY " .. tostring(run:slot_of(row.kind) + 1)
         end
-        return "LEARN " .. render.spell_name(offer)
-            .. "   KEY " .. tostring(row.slot + 1)
+        if row.slot < 0 then
+            return "LEARN " .. name .. "   TRADES A SPELL AWAY"
+        end
+        return "LEARN " .. name .. "   KEY " .. tostring(row.slot + 1)
     end
     if row.action == shop.action_replace then
         return "TRADE " .. render.spell_name(row.kind)
@@ -93,7 +103,12 @@ function draw_row(
     end
     render.panel(graphics, ROW_X, top, ROW_W, ROW_H, "#17171c", edge)
     render.text(graphics, label, ROW_X + 22.0, top + 33.0, 13, ink)
-    if row.price > 0 then
+    -- A bought line keeps its place with its price struck off: the stock of a
+    -- visit is two offers, and one of them is now spent.
+    if row.sold then
+        render.text_right(
+            graphics, "SOLD", ROW_X + ROW_W - 22.0, top + 33.0, 13, "#52525b")
+    elseif row.price > 0 then
         render.text_right(
             graphics, tostring(row.price) .. " MANA",
             ROW_X + ROW_W - 22.0, top + 33.0, 13, price_ink)
@@ -107,11 +122,14 @@ function draw(
     run: run_module.State,
     graphics: engine.Graphics
 ): unit
+    local choosing: bool = shop.choosing(state)
     render.draw_backdrop(graphics)
     render.panel(graphics, PANEL_X, PANEL_Y, PANEL_W, PANEL_H, "#09090b", "#a1a1aa")
     render.text(graphics, "THE FENCE", 126.0, 117.0, 24, "#fbbf24")
     local subtitle: string = "MANA SPENT HERE WILL NOT FIGHT IN VAULT " .. tostring(run.vault)
-    if state.choosing then
+    local offered: i32 = 0
+    if choosing then
+        offered = state.offers[state.pending].kind
         subtitle = "ONLY TWO SPELLS TRAVEL AT ONCE. WHICH ONE GOES?"
     end
     render.text(graphics, subtitle, 126.0, 145.0, 11, "#a1a1aa")
@@ -121,14 +139,14 @@ function draw(
     local rows: {shop.Row} = shop.rows(state, run)
     for index, row in rows do
         draw_row(
-            graphics, row, row_label(row, run, state.offer),
+            graphics, row, row_label(row, run, offered),
             index, index == state.cursor)
     end
-    if state.offer == 0 and not state.choosing then
-        -- One spell per visit: once it is taken, say so rather than leaving the
-        -- player looking for the line that was there a moment ago.
+    if not choosing then
+        -- Two offers are the whole stock of a visit, so say what the list is
+        -- rather than leaving the player waiting for it to refill.
         render.text_centered(
-            graphics, "THE FENCE HAS NO OTHER SPELL TONIGHT",
+            graphics, "TWO OFFERS A VISIT. THE NEXT FENCE HAS ITS OWN",
             WIDTH * 0.5, row_top(#rows) + 33.0, 11, "#8a8a92")
     end
     render.text_centered(
