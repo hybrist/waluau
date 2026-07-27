@@ -16,10 +16,22 @@ early, leaving room to maximize the mana carried out of it.
 A vault is one heist inside a longer roguelike run. Clearing all five breaches
 opens the next vault, which is dealt with whatever mana survived the last one:
 the pool is the run's, not the vault's, and every cast spends from it for good.
+Between two vaults the run stops at the fence, where that same mana buys spell
+upgrades before the next vault is dealt.
 The Arch Mage holding three wards ends the whole run, carried mana included, and
 the next heist is the first vault of a fresh run rather than a retry. R restarts
 the run from vault one at any point, which is also why a settled vault is never
 left standing on the board.
+
+The robbers set out with the one spell the menu picked and can hold two ready at
+once, on keys 1 and 2. The fence sells two things, both out of the carried pool:
+one mana off a spell's cast price — four mana for the first step, then six, then
+eight, and never below two per cast — or one new spell, drawn at random from the
+kinds the loadout does not carry and priced at seven. A learned spell takes the
+next free key at full price; once both keys are taken, learning a third asks
+which spell it trades away, and the one traded out is gone. Each visit sells at
+most one spell. Losing a vault ends the run and everything it bought with it: a
+fresh run sets out with its starting spell at full price again.
 
 Every third vault of a run is a boss battle: both sides are dealt eleven relics
 up front and spent pairs are never replaced from the draw pile, so the hands
@@ -109,10 +121,15 @@ Keyboard (in the vault):
 - Enter commits a feint or breach.
 - P passes during the feint phase.
 - C sorts the relic fan by school (color); V sorts it by rank.
-- 1 enters targeting for the spell chosen before the heist; arrows choose a ward, Enter casts, and Esc cancels.
+- 1 and 2 enter targeting for the spell on that key; arrows choose a ward, Enter
+  casts, and Esc cancels. The other spell's key swings the aim over to it, and
+  the aimed spell's own key calls the cast off.
 - H opens the breach ledger, ? opens help, and R restarts the run.
-- On the vault's verdict, Enter, Space, or a click enters whatever the run
-  deals next: the following vault, or the first vault of a fresh run.
+- On the vault's verdict, Enter, Space, or a click takes whatever the run has
+  next: the fence before the following vault, or the first vault of a fresh run.
+- At the fence, arrows move between the offers, Enter or a click buys the one
+  under the cursor, and Esc walks past all of them into the vault. R still
+  restarts the run and M still returns to the menu.
 - Enter, Space, or Esc skips a running deal or feint animation.
 
 Mouse (Love2D-style engine callbacks in logical canvas coordinates):
@@ -136,7 +153,9 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `menu_city.walu` | DOM-free procedural city generation, camera drift, and thief-route animation state. |
 | `menu_city_render.walu` | WebGL2 primitive drawing for the menu's panning city and colored street streak. |
 | `game_screen.walu` | The heist screen: rules/flow/choreography wiring and its input adapters. |
-| `run.walu` | DOM-free run state: the vault sequence, its boss cadence, and the mana carried between vaults. |
+| `run.walu` | DOM-free run state: the vault sequence, its boss cadence, the spell loadout, and the mana carried between vaults. |
+| `shop.walu` | DOM-free intermission between vaults: what the fence offers, what it charges, and which offer the cursor holds. |
+| `shop_render.walu` | Where the fence's offer list sits on the screen, and the pointer's row lookup for it. |
 | `game.walu` | DOM-free rules, AI, commands, outcomes, and read-only presentation view. |
 | `flow.walu` | DOM-free input gating, focus, modal, selection, and reveal phase transitions. |
 | `choreography.walu` | Domain-level deal, feint, breach, fan, pile, reveal timing, and animation choreography. |
@@ -152,7 +171,8 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `snapshot.walu` | Shared validated snapshot primitives and atomic payload framing. |
 | `test/game_fixture.walu` | Narrow mutable test adapter for deterministic rule arrangements. |
 | `sim.test.walu` | Deterministic Vitest assertions for rules, flow, snapshots, and full-game completion. |
-| `run.test.walu` | Deterministic Vitest assertions for the boss cadence, mana carryover, and where a run ends. |
+| `run.test.walu` | Deterministic Vitest assertions for the boss cadence, mana carryover, the carried loadout, and where a run ends. |
+| `shop.test.walu` | Deterministic Vitest assertions for the fence's offers, prices, purchases, and trades. |
 | `tests/game-driver.js` | Shared browser-test seam for booting a heist and observing rendered frames. |
 | `tests/spell-effects.spec.js` | Spell-presentation behavior isolated from menu and gameplay browser coverage. |
 | `waluau.assets.json` | Typed package manifest for the card back, vault font, and flip sound. |

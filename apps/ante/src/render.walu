@@ -391,7 +391,10 @@ type Interaction = {
     swap_wards: {i32},
     modal: i32,
     revealing: bool,
-    casting: bool
+    casting: bool,
+    -- The loadout slot being aimed while `casting` holds: which spell the aim
+    -- prompt names, and whose price it quotes.
+    cast_slot: i32
 }
 -- The run behind the live board, as the renderer needs it: which vault of the
 -- sequence this is, how many the robbers have already taken, whether this one
@@ -1151,16 +1154,23 @@ function draw_hud(graphics: Graphics, state: game.View, run: RunView): unit
     text_right(graphics, "MANA", WIDTH - 32.0, 64.0, 9, "#155e75")
 end
 
--- The cast hint names the heist's chosen spell and greys out whenever the
--- mana on hand no longer covers a cast.
+-- One cast hint per spell the robbers carry, each on the key that casts it and
+-- in its own ink, greying out on its own as the mana on hand stops covering its
+-- price. A run that never buys a second spell keeps the single hint it started
+-- with.
+const CAST_HINT_PITCH: f64 = 150.0
+
 function draw_footer(graphics: Graphics, state: game.View): unit
-    local ink: string = power_color(state.spell)
-    if state.player_points < game.spell_cost then ink = "#52525b" end
-    text(
-        graphics,
-        "1 CAST " .. spell_name(state.spell)
-            .. "  " .. tostring(game.spell_cost) .. " MANA",
-        17.0, 582.0, 9, ink)
+    for slot = 0::i32, #state.spells - 1 do
+        local spell: game.Spell = state.spells[slot]
+        local ink: string = power_color(spell.kind)
+        if state.player_points < spell.cost then ink = "#52525b" end
+        text(
+            graphics,
+            tostring(slot + 1) .. " " .. spell_name(spell.kind)
+                .. " " .. tostring(spell.cost) .. " MANA",
+            17.0 + (slot::f64) * CAST_HINT_PITCH, 582.0, 9, ink)
+    end
     text(graphics, "M MENU", 386.0, 582.0, 9, "#8a8a92")
     text_right(graphics, "? HELP", WIDTH - 17.0, 582.0, 10, "#8a8a92")
 end
@@ -2277,15 +2287,17 @@ function draw_playfield(graphics: Graphics, effects: EffectShaders, frame: Frame
     end
     if casting then
         -- Target selection replaces the phase prompts and commit capsules:
-        -- nothing else accepts input until the cast lands or is called off.
+        -- nothing else accepts input until the cast lands or is called off. The
+        -- prompt names the spell whose key opened targeting, at its own price.
+        local aimed: game.Spell = state.spells[frame.interaction.cast_slot]
         text_centered(
             graphics,
-            "AIM " .. spell_name(state.spell) .. " AT A WARD",
-            WIDTH * 0.5, 252.0, 11, power_color(state.spell))
+            "AIM " .. spell_name(aimed.kind) .. " AT A WARD",
+            WIDTH * 0.5, 252.0, 11, power_color(aimed.kind))
         text_centered(
             graphics,
             "ARROWS MOVE   ENTER CASTS "
-                .. tostring(game.spell_cost) .. " MANA   ESC CANCELS",
+                .. tostring(aimed.cost) .. " MANA   ESC CANCELS",
             WIDTH * 0.5, 430.0, 12, "#fbbf24")
     elseif state.swap_open then
         text_centered(graphics, "FEINT: BIND MATCHING RELICS + WARDS", WIDTH * 0.5, 252.0, 11, "#fbbf24")
@@ -2378,7 +2390,7 @@ function draw_help(graphics: Graphics, effects: EffectShaders): unit
     draw_orb(graphics, 330.0, 436.0, ORB_STALEMATE_EDGE, ORB_STALEMATE_FILL, true)
     text(graphics, "TIE", 345.0, 440.0, 11, "#d4d4d8")
     text(graphics, "ARROWS MOVE   SPACE BIND   ENTER COMMIT   H HISTORY", 126.0, 474.0, 11, "#fbbf24")
-    text(graphics, "C SORT BY COLOR   V SORT BY RANK   1 CASTS YOUR SPELL", 126.0, 498.0, 11, "#fbbf24")
+    text(graphics, "C SORT BY COLOR   V SORT BY RANK   1 AND 2 CAST SPELLS", 126.0, 498.0, 11, "#fbbf24")
     text(graphics, "MOUSE: HOVER FOCUSES   CLICK BINDS   BUTTONS COMMIT OR PASS", 126.0, 522.0, 11, "#fbbf24")
 end
 
@@ -2424,7 +2436,9 @@ function draw_final(graphics: Graphics, state: game.View, run: RunView): unit
         local ahead: string = "NEXT: VAULT " .. tostring(run.vault + 1)
         if run.next_is_boss then ahead = ahead .. "   BOSS BATTLE" end
         text_centered(graphics, ahead, WIDTH * 0.5, 424.0, 13, "#fbbf24")
-        text_centered(graphics, "ENTER OR CLICK ENTERS IT   H OPENS THE LEDGER", WIDTH * 0.5, 482.0, 12, "#fbbf24")
+        -- The next vault is not dealt straight off the verdict any more: the
+        -- fence stands between them, spending this pile of mana.
+        text_centered(graphics, "ENTER OR CLICK VISITS THE FENCE   H OPENS THE LEDGER", WIDTH * 0.5, 482.0, 12, "#fbbf24")
     else
         text_centered(graphics, "ENTER OR CLICK STARTS A NEW RUN   H OPENS THE LEDGER", WIDTH * 0.5, 482.0, 12, "#fbbf24")
     end
@@ -2471,10 +2485,12 @@ return {
     draw = draw,
     draw_shader_error = draw_shader_error,
     draw_audio_error = draw_audio_error,
-    -- The menu screen shares the vault's panel chrome, centred type, and help
-    -- modal instead of restating the presentation vocabulary.
+    -- The menu and shop screens share the vault's panel chrome, centred type,
+    -- and help modal instead of restating the presentation vocabulary.
     draw_backdrop = draw_backdrop,
     draw_help = draw_help,
+    text = text,
+    text_right = text_right,
     -- The spell vocabulary the menu's selection list shares with the board.
     spell_name = spell_name,
     power_color = power_color,

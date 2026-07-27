@@ -1,0 +1,272 @@
+-- DOM-free intermission between two vaults of a run: the fence the robbers
+-- visit with whatever mana the last vault left standing. Two things are for
+-- sale — sharpening a spell they already carry, or a spell they do not — and
+-- both are paid for out of the pool the next vault opens with, so every
+-- purchase is a smaller pot to fight in.
+--
+-- This module owns what is on offer, what it costs, and which line of the offer
+-- the cursor is on. The loadout limits and the purse belong to the run module,
+-- which applies every purchase; where the lines are drawn on the screen belongs
+-- to shop_render, so a click arrives here as a row number.
+
+local game = require("./game")
+local run_module = require("./run")
+local snapshot_data = require("./snapshot")
+
+-- `offer` is the one spell this visit can teach, rolled when the shop opens
+-- from the kinds the loadout lacks; it drops to zero once taken, so a single
+-- intermission never sells two spells. `choosing` is the second stage a full
+-- loadout forces: the new spell needs one of the two keys, so the shop asks
+-- which spell is traded away before any mana changes hands.
+type State = { open: bool, offer: i32, cursor: i32, choosing: bool }
+-- One line of the shop: what it would do, which loadout slot it does it to,
+-- the spell ink it wears, its price, and whether the purse and the loadout
+-- allow it at all. Input and drawing read the same list, so a greyed-out line
+-- and a refused press can never disagree.
+type Row = { action: i32, slot: i32, kind: i32, price: i32, available: bool }
+
+const ACTION_SHARPEN: i32 = 1
+const ACTION_LEARN: i32 = 2
+const ACTION_REPLACE: i32 = 3
+const ACTION_CANCEL: i32 = 4
+const ACTION_LEAVE: i32 = 5
+
+const RESULT_STAY: i32 = 0
+const RESULT_LEAVE: i32 = 1
+
+-- Sharpening gets dearer as the spell gets cheaper: the first mana off a cast
+-- is four, the next six, the last eight. A spell learned here always costs the
+-- same, because what it is worth is decided by which one the roll offered.
+const SHARPEN_PRICE: i32 = 4
+const SHARPEN_PRICE_STEP: i32 = 2
+const LEARN_PRICE: i32 = 7
+
+const SNAPSHOT_SCHEMA: string = "ante-shop-v1"
+const SNAPSHOT_COLLECTION_LIMIT: i32 = 8
+
+function new(): State
+    return { open = false, offer = 0, cursor = 0, choosing = false }
+end
+
+-- The spell this visit sells, drawn from the kinds the run does not already
+-- carry. A loadout holding every spell leaves nothing to teach, which is kind
+-- zero and one line fewer on the screen.
+function roll_offer(run: run_module.State): i32
+    local pool: {i32} = {}
+    for kind = 1::i32, game.spell_kind_count do
+        if not run:carries(kind) then table.insert(pool, kind) end
+    end
+    if #pool == 0 then return 0 end
+    return pool[math.random(#pool) - 1]
+end
+
+function open_for(state: State, run: run_module.State): unit
+    state.open = true
+    state.offer = roll_offer(run)
+    state.cursor = 0
+    state.choosing = false
+end
+
+function close(state: State): unit
+    state.open = false
+    state.offer = 0
+    state.cursor = 0
+    state.choosing = false
+end
+
+-- What sharpening the spell in that slot costs next. Slots the run cannot
+-- sharpen any further still answer a price; `rows` is what marks them closed.
+function sharpen_price(run: run_module.State, slot: i32): i32
+    if slot < 0 or slot >= #run.spells then return SHARPEN_PRICE end
+    local taken: i32 = game.spell_cost - run.spells[slot].cost
+    return SHARPEN_PRICE + taken * SHARPEN_PRICE_STEP
+end
+
+function learn_price(): i32
+    return LEARN_PRICE
+end
+
+-- The lines of the shop as it stands. While a full loadout is being asked
+-- which spell to trade away, those are the only lines there are: the sale is
+-- already in progress and the other offers would be answering a different
+-- question.
+function rows(state: State, run: run_module.State): {Row}
+    local list: {Row} = {}
+    if state.choosing then
+        for slot = 0::i32, #run.spells - 1 do
+            table.insert(list, {
+                action = ACTION_REPLACE,
+                slot = slot,
+                kind = run.spells[slot].kind,
+                price = LEARN_PRICE,
+                available = run.mana >= LEARN_PRICE,
+            })
+        end
+        table.insert(list, {
+            action = ACTION_CANCEL, slot = -1, kind = 0, price = 0, available = true,
+        })
+        return list
+    end
+    for slot = 0::i32, #run.spells - 1 do
+        local price: i32 = sharpen_price(run, slot)
+        table.insert(list, {
+            action = ACTION_SHARPEN,
+            slot = slot,
+            kind = run.spells[slot].kind,
+            price = price,
+            available = run:can_sharpen(slot) and run.mana >= price,
+        })
+    end
+    if state.offer ~= 0 then
+        table.insert(list, {
+            action = ACTION_LEARN,
+            slot = run:open_slot(),
+            kind = state.offer,
+            price = LEARN_PRICE,
+            available = run.mana >= LEARN_PRICE,
+        })
+    end
+    table.insert(list, {
+        action = ACTION_LEAVE, slot = -1, kind = 0, price = 0, available = true,
+    })
+    return list
+end
+
+function row_count(state: State, run: run_module.State): i32
+    return #rows(state, run)
+end
+
+function move(state: State, run: run_module.State, delta: i32): unit
+    local count: i32 = row_count(state, run)
+    state.cursor = (state.cursor + delta + count) % count
+end
+
+-- Point the cursor at the row the pointer is over. Dead space between lines
+-- leaves the cursor where it was, the way hovering the board does.
+function focus(state: State, run: run_module.State, row: i32): unit
+    if row < 0 or row >= row_count(state, run) then return end
+    state.cursor = row
+end
+
+-- Take the spell on offer into the named slot. The mana leaves the purse only
+-- once the loadout accepts it, and the offer is spent either way it lands: one
+-- visit, one spell.
+function commit_learn(state: State, run: run_module.State, slot: i32): unit
+    if run.mana < LEARN_PRICE then return end
+    if not run:learn(state.offer, slot) then return end
+    run:spend(LEARN_PRICE)
+    state.offer = 0
+    state.choosing = false
+    state.cursor = 0
+end
+
+-- Buy, or start being asked which spell to trade away, or leave. A line the
+-- purse cannot cover is simply not bought: the cursor stays on it rather than
+-- the press falling through to something else.
+function activate(state: State, run: run_module.State): i32
+    local list: {Row} = rows(state, run)
+    if state.cursor < 0 or state.cursor >= #list then return RESULT_STAY end
+    local row: Row = list[state.cursor]
+    if row.action == ACTION_LEAVE then return RESULT_LEAVE end
+    if row.action == ACTION_CANCEL then
+        state.choosing = false
+        state.cursor = 0
+        return RESULT_STAY
+    end
+    if not row.available then return RESULT_STAY end
+    if row.action == ACTION_SHARPEN then
+        if run:can_sharpen(row.slot) and run:spend(row.price) then
+            run:sharpen(row.slot)
+        end
+        return RESULT_STAY
+    end
+    if row.action == ACTION_REPLACE then
+        commit_learn(state, run, row.slot)
+        return RESULT_STAY
+    end
+    -- Learning: a loadout with room gives the spell the next key by itself, and
+    -- a full one has to be asked which of the two it replaces.
+    if row.slot >= 0 then
+        commit_learn(state, run, row.slot)
+    else
+        state.choosing = true
+        state.cursor = 0
+    end
+    return RESULT_STAY
+end
+
+function keypressed(state: State, run: run_module.State, key: string): i32
+    if key == "ArrowUp" or key == "w" or key == "W" then
+        move(state, run, -1)
+        return RESULT_STAY
+    end
+    if key == "ArrowDown" or key == "s" or key == "S" then
+        move(state, run, 1)
+        return RESULT_STAY
+    end
+    if key == "Enter" or key == " " then return activate(state, run) end
+    -- Escape backs out of the replacement question, and otherwise out of the
+    -- shop: the next vault is always one press away.
+    if key == "Escape" then
+        if state.choosing then
+            state.choosing = false
+            state.cursor = 0
+            return RESULT_STAY
+        end
+        return RESULT_LEAVE
+    end
+    return RESULT_STAY
+end
+
+function snapshot(state: State): string
+    local parts: {string} = { SNAPSHOT_SCHEMA }
+    snapshot_data.append_bool(parts, state.open)
+    snapshot_data.append_i32(parts, state.offer)
+    snapshot_data.append_i32(parts, state.cursor)
+    snapshot_data.append_bool(parts, state.choosing)
+    return table.concat(parts, ",")
+end
+
+function restore(snapshot_value: string): State?
+    local reader: snapshot_data.Reader = snapshot_data.reader(
+        snapshot_value, SNAPSHOT_COLLECTION_LIMIT)
+    if reader:next_string() ~= SNAPSHOT_SCHEMA then return nil end
+    local open: bool = reader:next_bool()
+    local offer: i32 = reader:next_i32()
+    local cursor: i32 = reader:next_i32()
+    local choosing: bool = reader:next_bool()
+    local restored: State = {
+        open = open,
+        offer = offer,
+        cursor = cursor,
+        choosing = choosing,
+    }
+    if not reader:complete() then return nil end
+    if offer < 0 or offer > game.spell_kind_count then return nil end
+    if cursor < 0 then return nil end
+    return restored
+end
+
+return {
+    new = new,
+    open_for = open_for,
+    close = close,
+    roll_offer = roll_offer,
+    rows = rows,
+    row_count = row_count,
+    move = move,
+    focus = focus,
+    activate = activate,
+    keypressed = keypressed,
+    sharpen_price = sharpen_price,
+    learn_price = learn_price,
+    snapshot = snapshot,
+    restore = restore,
+    action_sharpen = ACTION_SHARPEN,
+    action_learn = ACTION_LEARN,
+    action_replace = ACTION_REPLACE,
+    action_cancel = ACTION_CANCEL,
+    action_leave = ACTION_LEAVE,
+    result_stay = RESULT_STAY,
+    result_leave = RESULT_LEAVE,
+}

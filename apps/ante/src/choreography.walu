@@ -44,7 +44,8 @@ type Interaction = {
     swap_wards: {i32},
     modal: i32,
     revealing: bool,
-    casting: bool
+    casting: bool,
+    cast_slot: i32
 }
 
 const ANIM_NONE: i32 = 0
@@ -202,6 +203,13 @@ function update_power(state: State, dt: f64): i32
         return target
     end
     return -1
+end
+
+-- Drop a Freeze Ray's standing condition, leaving any other spell's alone. The
+-- rules thaw every ward when a feint resolves and again when a breach does, and
+-- the ice on the board has to go with them.
+function clear_freeze(state: State): unit
+    if state.power_kind == game.spell_freeze_ray then apply_power(state, 0, 0) end
 end
 
 function firebolt_pending(state: State): bool
@@ -557,7 +565,7 @@ function record_burned_losers(state: State, trick: game.Trick): unit
 end
 
 function resolved_breach_cleanup(view: game.View, trick: game.Trick, state: State): unit
-    if state.power_kind == game.spell_freeze_ray then apply_power(state, 0, 0) end
+    clear_freeze(state)
     -- The trick records the pre-breach hands; the live view holds the settled
     -- ones. In a boss battle those layouts differ (the rows narrow by two
     -- cards), so departure legs read the trick's layout while landings and
@@ -824,6 +832,7 @@ function draw(
             modal = interaction.modal,
             revealing = interaction.revealing,
             casting = interaction.casting,
+            cast_slot = interaction.cast_slot,
         },
         motion = {
             fan_parts = state.fan_parts,
@@ -863,6 +872,7 @@ return {
     finish_reveal = finish_reveal,
     reveal_finished = reveal_finished,
     apply_power = apply_power,
+    clear_freeze = clear_freeze,
     update_power = update_power,
     firebolt_pending = firebolt_pending,
     firebolt_resolved = firebolt_resolved,

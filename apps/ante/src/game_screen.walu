@@ -7,7 +7,9 @@
 --
 -- One screen spans a whole run: clearing a vault deals the next one in place
 -- rather than handing control back to the entry module, so the run's carried
--- mana never has to leave this screen.
+-- mana never has to leave this screen. The fence between two vaults is part of
+-- that span — it spends the same carried mana — so this screen owns it too, and
+-- routes input and drawing to it while it stands.
 
 local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
@@ -16,12 +18,15 @@ local run_module = require("./run")
 local render = require("./render")
 local choreography = require("./choreography")
 local flow = require("./flow")
+local shop = require("./shop")
+local shop_render = require("./shop_render")
 
 type State = {
     run: run_module.State,
     rules: game.State,
     ui: flow.State,
-    presentation: choreography.State
+    presentation: choreography.State,
+    shop: shop.State
 }
 
 const ACTION_NONE: i32 = 0
@@ -31,9 +36,10 @@ function new(): State
     local run: run_module.State = run_module.new(game.spell_firebolt, false)
     return {
         run = run,
-        rules = game.new(run:boss(), run.spell, run.mana),
+        rules = game.new(run:boss(), run.spells, run.mana),
         ui = flow.new(),
         presentation = choreography.new(),
+        shop = shop.new(),
     }
 end
 
@@ -42,7 +48,8 @@ end
 -- dealt as.
 function deal_vault(state: State): unit
     local run: run_module.State = state.run
-    state.rules:reset(run:boss(), run.spell, run.mana)
+    shop.close(state.shop)
+    state.rules:reset(run:boss(), run.spells, run.mana)
     flow.reset(state.ui)
     choreography.reset(state.presentation)
     -- The opening deal is already reflected in rules state; choreography
@@ -60,9 +67,25 @@ end
 
 -- The live vault has been fought to a verdict and the player asked for what
 -- comes next. The run settles on which vault that is — the next one of this
--- run, or the first of a fresh one — and this screen deals it.
+-- run, or the first of a fresh one.
+--
+-- A taken vault is followed by the fence rather than by a deal: the run has
+-- already moved on and is holding the mana it carried out, which is exactly
+-- what the intermission spends. A lost run has nothing to spend and no loadout
+-- to spend it on, so its fresh first vault is dealt straight away.
 function advance_run(state: State): unit
-    state.run:settle(state.rules:is_victory(), state.rules:mana())
+    local cleared: bool = state.rules:is_victory()
+    state.run:settle(cleared, state.rules:mana())
+    if cleared then
+        shop.open_for(state.shop, state.run)
+        return
+    end
+    deal_vault(state)
+end
+
+-- The fence is done with: deal the vault the run has been standing in front of,
+-- loadout, prices, and remaining mana as the shop left them.
+function leave_shop(state: State): unit
     deal_vault(state)
 end
 
@@ -92,6 +115,9 @@ end
 -- Returns how many card-flip sound cues this tick earned; the entry module
 -- owns audio resources and playback.
 function update(state: State, dt: f64): i32
+    -- The fence is a still screen standing between two vaults: the board behind
+    -- it is already settled, so nothing advances while it is up.
+    if state.shop.open then return 0 end
     local ui: flow.State = state.ui
     local presentation: choreography.State = state.presentation
     local animating: bool = choreography.is_animating(presentation)
@@ -122,6 +148,10 @@ function draw(
     effects: render.EffectShaders,
     card_back: graphics_module.Texture?
 ): unit
+    if state.shop.open then
+        shop_render.draw(state.shop, state.run, graphics)
+        return
+    end
     local ui: flow.State = state.ui
     choreography.draw(
         graphics,
@@ -140,6 +170,7 @@ function draw(
             modal = ui.modal,
             revealing = ui.revealing,
             casting = ui.casting,
+            cast_slot = ui.cast_slot,
         },
         card_back
     )
@@ -157,20 +188,21 @@ function submit_swap(state: State): unit
     end
     flow.clear_picks(ui)
     if outcome ~= nil then
-        if state.rules:spell_kind() == game.spell_freeze_ray then
-            choreography.apply_power(state.presentation, 0, 0)
-        end
+        -- A resolved feint thaws every ward, so a Freeze Ray standing on the
+        -- board loses its condition with it. Which spell is standing there is
+        -- the presentation's own reading, not a question for the loadout.
+        choreography.clear_freeze(state.presentation)
         choreography.feint(outcome::game.FeintOutcome, state.presentation)
     end
 end
 
--- Pay for and launch the chosen spell at the given ward. The rules charge the
--- mana only when they accept the cast, so a cancelled or unaffordable attempt
--- costs nothing; targeting mode ends either way.
-function confirm_cast(state: State, ward: i32): unit
-    if state.rules:cast_spell(ward) then
+-- Pay for and launch the spell in the aimed loadout slot at the given ward. The
+-- rules charge the mana only when they accept the cast, so a cancelled or
+-- unaffordable attempt costs nothing; targeting mode ends either way.
+function confirm_cast(state: State, slot: i32, ward: i32): unit
+    if state.rules:cast_spell(slot, ward) then
         choreography.apply_power(
-            state.presentation, state.rules:spell_kind(), ward)
+            state.presentation, state.rules:spell_kind(slot), ward)
     end
     state.ui.casting = false
 end
@@ -197,7 +229,7 @@ function consume_gate(state: State, command: i32): bool
     -- Restart is a run restart, not a redeal of the live vault: a vault the
     -- run already paid mana into cannot be fought a second time.
     if result == flow.result_reset then
-        reset(state, state.run.rush, state.run.spell)
+        reset(state, state.run.rush, state.run.start_spell)
     elseif result == flow.result_advance then
         advance_run(state)
     elseif result == flow.result_refill then
@@ -214,6 +246,15 @@ function consume_gate(state: State, command: i32): bool
     return true
 end
 
+-- Which loadout slot a key casts, or -1 for every other key. One key per slot,
+-- numbered the way the loadout is: the spell learned second answers to 2.
+function cast_slot_for(key: string, slots: i32): i32
+    for slot = 0::i32, slots - 1 do
+        if key == tostring(slot + 1) then return slot end
+    end
+    return -1
+end
+
 -- TODO(waluau-language): Exhaustive enums and pattern matching for host key
 -- values would replace this string ladder and make unmapped controls a
 -- compile-time decision shared by every input adapter.
@@ -222,21 +263,34 @@ function keypressed(state: State, key: string): i32
     local rules: game.State = state.rules
     local presentation: choreography.State = state.presentation
     if key == "m" or key == "M" then return ACTION_EXIT end
+    -- The fence answers its own list; nothing on the settled board behind it is
+    -- reachable until the next vault is dealt. Restarting the run is the one
+    -- gesture that still works everywhere, the fence included.
+    if state.shop.open then
+        if key == "r" or key == "R" then
+            reset(state, state.run.rush, state.run.start_spell)
+        elseif shop.keypressed(state.shop, state.run, key) == shop.result_leave then
+            leave_shop(state)
+        end
+        return ACTION_NONE
+    end
     -- Keep the struck ward stable until Firebolt's burn commits its discard
     -- and replacement. Other spell conditions are persistent and do not lock
     -- the board, but advancing the turn during this one-shot effect could make
     -- its target name a newly dealt ward instead of the card the bolt hit.
     if choreography.firebolt_pending(presentation) then return ACTION_NONE end
-    if key == "1" then
+    local cast_slot: i32 = cast_slot_for(key, rules:spell_count())
+    if cast_slot >= 0 then
         if ui.modal ~= flow.modal_none or ui.revealing or rules:is_finished() then
             return ACTION_NONE
         end
-        -- The cast key toggles: a second press while aiming calls it off.
-        if ui.casting then
+        -- A cast key toggles: pressing the aimed spell's own key again calls it
+        -- off, while the other spell's key swings the aim over to that one.
+        if ui.casting and ui.cast_slot == cast_slot then
             ui.casting = false
             return ACTION_NONE
         end
-        if not rules:can_cast() then return ACTION_NONE end
+        if not rules:can_cast(cast_slot) then return ACTION_NONE end
         -- The cast should respond on the first gesture. If the opening deal
         -- is still running, settle it before targeting begins so the wards
         -- are visibly present for the aim cursor.
@@ -244,6 +298,7 @@ function keypressed(state: State, key: string): i32
             choreography.skip(presentation)
         end
         ui.casting = true
+        ui.cast_slot = cast_slot
         return ACTION_NONE
     end
     if ui.casting then
@@ -255,7 +310,7 @@ function keypressed(state: State, key: string): i32
         elseif key == "ArrowRight" or key == "d" then
             ui.ward_cursor = (ui.ward_cursor + 1) % 3
         elseif key == "Enter" or key == " " then
-            confirm_cast(state, ui.ward_cursor)
+            confirm_cast(state, ui.cast_slot, ui.ward_cursor)
         end
         return ACTION_NONE
     end
@@ -310,6 +365,12 @@ function keypressed(state: State, key: string): i32
 end
 
 function mousemoved(state: State, x: f64, y: f64): unit
+    if state.shop.open then
+        shop.focus(
+            state.shop, state.run,
+            shop_render.row_at(x, y, shop.row_count(state.shop, state.run)))
+        return
+    end
     local ui: flow.State = state.ui
     if flow.gate(
         ui, state.rules:is_finished(),
@@ -341,6 +402,19 @@ end
 
 function mousepressed(state: State, x: f64, y: f64, button: i32): unit
     if button ~= 1 then return end
+    -- Clicking an offer buys it the same way Enter on it does; a click on the
+    -- chrome between the lines buys nothing rather than taking whatever the
+    -- cursor happened to rest on.
+    if state.shop.open then
+        local row: i32 = shop_render.row_at(
+            x, y, shop.row_count(state.shop, state.run))
+        if row < 0 then return end
+        shop.focus(state.shop, state.run, row)
+        if shop.activate(state.shop, state.run) == shop.result_leave then
+            leave_shop(state)
+        end
+        return
+    end
     if choreography.firebolt_pending(state.presentation) then return end
     if consume_gate(state, flow.command_primary) then return end
 
@@ -353,7 +427,7 @@ function mousepressed(state: State, x: f64, y: f64, button: i32): unit
         local target: i32 = render.hit_ward(at)
         if target >= 0 then
             ui.ward_cursor = target
-            confirm_cast(state, target)
+            confirm_cast(state, ui.cast_slot, target)
         end
         return
     end
@@ -391,7 +465,7 @@ function mousepressed(state: State, x: f64, y: f64, button: i32): unit
     end
 end
 
--- Four independently versioned development-snapshot payloads, in the same
+-- Five independently versioned development-snapshot payloads, in the same
 -- order restore expects them. The entry module owns the frame around them.
 function snapshot(state: State): {string}
     return {
@@ -399,6 +473,7 @@ function snapshot(state: State): {string}
         game.snapshot(state.rules),
         flow.snapshot(state.ui),
         choreography.snapshot(state.presentation),
+        shop.snapshot(state.shop),
     }
 end
 
@@ -406,21 +481,35 @@ function restore(
     run_payload: string,
     rules_payload: string,
     ui_payload: string,
-    presentation_payload: string
+    presentation_payload: string,
+    shop_payload: string
 ): State?
     local run: run_module.State? = run_module.restore(run_payload)
     local rules: game.State? = game.restore(rules_payload)
     local ui: flow.State? = flow.restore(ui_payload)
     local presentation: choreography.State? = choreography.restore(presentation_payload)
+    local intermission: shop.State? = shop.restore(shop_payload)
     if run == nil then return nil end
     if rules == nil then return nil end
     if ui == nil then return nil end
     if presentation == nil then return nil end
+    if intermission == nil then return nil end
+    local restored_ui: flow.State = ui::flow.State
+    local restored_rules: game.State = rules::game.State
+    -- An aim is an in-flight gesture, and this is the one place that can see
+    -- both halves of it: a cast_slot the restored loadout has no spell in names
+    -- nothing, so the aim settles as cancelled rather than coming back pointing
+    -- at a spell that is not there.
+    if restored_ui.cast_slot >= restored_rules:spell_count() then
+        restored_ui.casting = false
+        restored_ui.cast_slot = 0
+    end
     return {
         run = run::run_module.State,
-        rules = rules::game.State,
-        ui = ui::flow.State,
+        rules = restored_rules,
+        ui = restored_ui,
         presentation = presentation::choreography.State,
+        shop = intermission::shop.State,
     }
 end
 
