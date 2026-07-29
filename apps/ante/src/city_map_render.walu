@@ -3,9 +3,14 @@
 -- heist walks and the thief streak passing somewhere else in the city.
 --
 -- Everything is drawn at `alpha`, so the same picture serves both the map
--- screens and the dissolve into and out of a vault. At full opacity it clears
+-- screens and the handover into and out of a vault. At full opacity it clears
 -- the frame; at anything less it lays itself over whatever is already there,
--- which is the vault the map is dissolving away from.
+-- which is the vault the map is giving the screen to.
+--
+-- The push into a house is drawn as well as zoomed. As the camera closes, the
+-- route furniture and then the surrounding city drop away, so what is left
+-- growing into the frame is the one house being entered — its dark interior
+-- becomes the room the vault's own backdrop fades in behind.
 
 local engine = require("waluau:engine")
 local render = require("./render")
@@ -103,6 +108,14 @@ function clamp(value: f64, low: f64, high: f64): f64
     if value < low then return low end
     if value > high then return high end
     return value
+end
+
+-- 0 at or below `low`, 1 at or above `high`, eased between them.
+function ramp(value: f64, low: f64, high: f64): f64
+    if value <= low then return 0.0 end
+    if value >= high then return 1.0 end
+    local progress: f64 = (value - low) / (high - low)
+    return progress * progress * (3.0 - 2.0 * progress)
 end
 
 function draw_streak(state: city_map.State, graphics: Graphics, color: string, alpha: f64): unit
@@ -220,12 +233,16 @@ end
 -- of the vault it holds so the map says how far into the run the heist is. The
 -- number sits on its own plate, because it lands on rooftops as often as on
 -- street and has to be read off either.
+-- `alpha` carries the house itself and `label_alpha` the writing under it: a
+-- house being gone into keeps its walls all the way in while its map label,
+-- which would be a banner across the screen by then, drops away early.
 function draw_vault_stop(
     graphics: Graphics,
     stop: city_map.Stop,
     label: string,
     reached: bool,
-    alpha: f64
+    alpha: f64,
+    label_alpha: f64
 ): unit
     local ink: string = VAULT_DIM
     if reached then ink = VAULT_INK end
@@ -236,14 +253,17 @@ function draw_vault_stop(
     graphics:stroke_rectangle(stop.x - 15.0, stop.y - 12.0, 30.0, 26.0)
     graphics:line(stop.x - 18.0, stop.y - 12.0, stop.x, stop.y - 24.0)
     graphics:line(stop.x, stop.y - 24.0, stop.x + 18.0, stop.y - 12.0)
-    graphics:set_line_width(1.5)
+    if label_alpha <= 0.0 then return end
+    -- The dial is the marker saying "vault", not part of the building: a house
+    -- being walked into keeps its walls and gives that up, rather than hanging
+    -- a storey-high disc in the room.
+    graphics:set_color(render.fade(ink, label_alpha))
     graphics:fill_circle(stop.x, stop.y + 1.0, 4.0)
-
-    graphics:set_color(render.fade("#0b0c12", alpha * 0.9))
+    graphics:set_color(render.fade("#0b0c12", label_alpha * 0.9))
     graphics:fill_rectangle(stop.x - 26.0, stop.y + 19.0, 52.0, 17.0)
     render.text_centered(
         graphics, "VAULT " .. label, stop.x, stop.y + 32.0, 10,
-        render.fade(ink, alpha))
+        render.fade(ink, label_alpha))
 end
 
 -- A street vendor: a stall with an awning, small enough that the houses stay
@@ -267,22 +287,39 @@ function draw_vendor_stop(
     graphics:line(stop.x - 9.0, stop.y - 12.0, stop.x + 9.0, stop.y - 12.0)
 end
 
+-- The stop the camera is going into, or -1 while the map is simply being read.
+-- It is the only one that keeps its full weight through a dive: the others are
+-- map furniture, and the map is on its way out.
+function entered_stop(state: city_map.State): i32
+    if state.dive <= 0.0 then return -1 end
+    return math.floor(state.target + 0.5)::i32
+end
+
 function draw_stops(
     state: city_map.State,
     graphics: Graphics,
     left: f64, right: f64, top: f64, bottom: f64,
-    alpha: f64
+    alpha: f64,
+    furniture: f64
 ): unit
     local last: i32 = city_map.stop_count(state) - 1
+    local entered: i32 = entered_stop(state)
     for index = 0::i32, last do
         local stop: city_map.Stop = state.stops[index]
         if stop.x >= left and stop.x <= right and stop.y >= top and stop.y <= bottom then
             local reached: bool = (index::f64) <= state.travel + 0.001
-            if stop.vault then
+            if index == entered then
                 draw_vault_stop(
-                    graphics, stop, tostring(city_map.stop_vault(index)), reached, alpha)
-            else
-                draw_vendor_stop(graphics, stop, reached, alpha)
+                    graphics, stop, tostring(city_map.stop_vault(index)),
+                    reached, alpha, furniture)
+            elseif furniture > 0.0 then
+                if stop.vault then
+                    draw_vault_stop(
+                        graphics, stop, tostring(city_map.stop_vault(index)),
+                        reached, furniture, furniture)
+                else
+                    draw_vendor_stop(graphics, stop, reached, furniture)
+                end
             end
         end
     end
@@ -316,52 +353,63 @@ end
 
 function draw(state: city_map.State, graphics: Graphics, streak_color: string, alpha: f64): unit
     if alpha <= 0.0 then return end
-    -- A map that owns the frame clears it; one dissolving over a vault must
-    -- leave the vault underneath it to fade into.
+    -- A map that owns the frame clears it; one handing the screen to a vault
+    -- must leave the vault underneath it to come through.
     if alpha >= 1.0 then graphics:clear(NIGHT) end
     graphics:set_color(render.fade(ASPHALT, alpha))
     graphics:fill_rectangle(0.0, 0.0, WIDTH, HEIGHT)
+
+    -- Going into a house sheds the map in two passes, so the last thing left
+    -- growing is the house itself: the route furniture goes first, because at
+    -- this zoom a dashed road is a bar across the screen, and the surrounding
+    -- city follows it.
+    local furniture: f64 = alpha * (1.0 - ramp(state.dive, 0.0, 0.30))
+    local city_ink: f64 = alpha * (1.0 - ramp(state.dive, 0.16, 0.62))
 
     local left: f64 = state.camera_x - (state.anchor_x / state.zoom + 60.0)
     local right: f64 = state.camera_x + ((WIDTH - state.anchor_x) / state.zoom + 60.0)
     local top: f64 = state.camera_y - (state.anchor_y / state.zoom + 60.0)
     local bottom: f64 = state.camera_y + ((HEIGHT - state.anchor_y) / state.zoom + 60.0)
 
-    apply_camera(state, graphics)
-    graphics:set_color(render.fade(BLOCK, alpha))
-    for building in state.buildings do
-        if building.x + building.width >= left and building.x <= right
-            and building.y + building.height >= top and building.y <= bottom then
-            graphics:fill_rectangle(
-                building.x - 5.0, building.y - 5.0,
-                building.width + 10.0, building.height + 10.0)
+    if city_ink > 0.0 then
+        apply_camera(state, graphics)
+        graphics:set_color(render.fade(BLOCK, city_ink))
+        for building in state.buildings do
+            if building.x + building.width >= left and building.x <= right
+                and building.y + building.height >= top and building.y <= bottom then
+                graphics:fill_rectangle(
+                    building.x - 5.0, building.y - 5.0,
+                    building.width + 10.0, building.height + 10.0)
+            end
         end
-    end
-    for building in state.buildings do
-        if building.x + building.width >= left and building.x <= right
-            and building.y + building.height >= top and building.y <= bottom then
-            draw_rooftop(graphics, building, alpha)
+        for building in state.buildings do
+            if building.x + building.width >= left and building.x <= right
+                and building.y + building.height >= top and building.y <= bottom then
+                draw_rooftop(graphics, building, city_ink)
+            end
         end
+        draw_street_marks(
+            graphics, state.vertical_streets, true, city_map.height::i32,
+            left, right, top, bottom, city_ink)
+        draw_street_marks(
+            graphics, state.horizontal_streets, false, city_map.width::i32,
+            top, bottom, left, right, city_ink)
+        draw_streak(state, graphics, streak_color, city_ink)
+        graphics:pop()
     end
-    draw_street_marks(
-        graphics, state.vertical_streets, true, city_map.height::i32,
-        left, right, top, bottom, alpha)
-    draw_street_marks(
-        graphics, state.horizontal_streets, false, city_map.width::i32,
-        top, bottom, left, right, alpha)
-    draw_streak(state, graphics, streak_color, alpha)
-    graphics:pop()
 
     -- The rooftops go under a scrim so a list of options reads over them; the
     -- route goes on top of it, because the route is the thing being said.
-    graphics:set_color(render.fade(SCRIM, SCRIM_STRENGTH * alpha))
+    graphics:set_color(render.fade(SCRIM, SCRIM_STRENGTH * city_ink))
     graphics:fill_rectangle(0.0, 0.0, WIDTH, HEIGHT)
 
     apply_camera(state, graphics)
-    draw_route_ahead(state, graphics, alpha)
-    draw_route_done(state, graphics, alpha)
-    draw_stops(state, graphics, left, right, top, bottom, alpha)
-    draw_party(state, graphics, alpha)
+    if furniture > 0.0 then
+        draw_route_ahead(state, graphics, furniture)
+        draw_route_done(state, graphics, furniture)
+    end
+    draw_stops(state, graphics, left, right, top, bottom, alpha, furniture)
+    if furniture > 0.0 then draw_party(state, graphics, furniture) end
     graphics:pop()
 end
 

@@ -43,13 +43,15 @@ type State = {
     travel: f64,
     target: f64,
     drifting: bool,
+    dive: f64,
+    dive_target: f64,
     camera_x: f64,
     camera_y: f64,
     anchor_x: f64,
     anchor_y: f64,
     zoom: f64,
     cover: f64,
-    cover_target: f64,
+    street: f64,
     rng: f64,
     pan_clock: f64,
     streak_clock: f64,
@@ -70,10 +72,12 @@ const STREET_WIDTH: f64 = 20.0
 const RANDOM_MODULUS: f64 = 2147483647.0
 const RANDOM_MULTIPLIER: f64 = 16807.0
 
--- The map is read at 1:1 and the vault is dived into, so leaving the map pushes
--- the camera in on the house it is about to be inside of.
+-- The map is read at 1:1, and a vault is gone into rather than cut to: the
+-- camera closes on the house until the room behind its door is the whole
+-- screen, which is where the vault's own backdrop takes over. Nine octaves of
+-- doubling would be a telescope; five puts a map marker across the screen.
 const MAP_ZOOM: f64 = 1.0
-const VAULT_ZOOM: f64 = 1.62
+const DIVE_OCTAVES: f64 = 4.9
 -- Where on the screen the stop being followed sits. A map screen carries a list
 -- of options down its left, so the heist stands clear of it on the right and
 -- the player can read both at once; a vault is dived into head-on, so the push
@@ -82,13 +86,18 @@ const MAP_ANCHOR_X: f64 = 736.0
 const MAP_ANCHOR_Y: f64 = 306.0
 const VAULT_ANCHOR_X: f64 = 480.0
 const VAULT_ANCHOR_Y: f64 = 300.0
--- Easing rates, in "fraction closed per second". Travel is the slowest of them
--- so the walk between two stops reads as a walk; cover is quick enough that a
--- screen change is a dissolve rather than a wait.
-const TRAVEL_RATE: f64 = 1.6
+-- The two movements a screen change is made of, each walked at a steady pace so
+-- it takes the same time every time: the robbers cross a block to the door, and
+-- then the camera goes in after them. They never overlap — a push into a house
+-- the heist has not reached yet would be a push into the road outside it.
+const STOP_SECONDS: f64 = 0.62
+const DIVE_SECONDS: f64 = 0.80
+-- How much of the dive is spent purely closing on the house. Until then the map
+-- keeps the whole screen: the push in is the thing being shown, not something
+-- to fade through. The rest of it hands over to the vault's own backdrop, by
+-- which time the door is wide enough to be the frame around it.
+const DIVE_HANDOVER: f64 = 0.5
 const CAMERA_RATE: f64 = 3.2
-const ZOOM_RATE: f64 = 2.4
-const COVER_RATE: f64 = 2.2
 -- How far past the stop being walked to the route is kept generated. Three
 -- vaults of dashed road ahead is enough to read as a plan without the map
 -- promising a run that has an end.
@@ -304,19 +313,59 @@ function camera_target(state: State): Point
     return position(state)
 end
 
-function zoom_target(state: State): f64
-    if state.cover_target > 0.5 then return MAP_ZOOM end
-    return VAULT_ZOOM
+-- Two raised to a power, for the octaves the push in walks. The language has no
+-- pow, and this only ever runs over a bounded, gentle range: whole octaves are
+-- doublings, and the fraction is a cubic fit of 2^f that is exact at both ends
+-- and inside a twentieth of a percent between them.
+function two_to_the(power: f64): f64
+    local whole: f64 = math.floor(power)
+    local fraction: f64 = power - whole
+    local scale: f64 = 1.0
+        + fraction * (0.6931472 + fraction * (0.2402265 + fraction * 0.0666263))
+    for _ = 1, whole::i32 do scale = scale * 2.0 end
+    return scale
 end
 
-function anchor_target_x(state: State): f64
-    if state.cover_target > 0.5 then return MAP_ANCHOR_X end
-    return VAULT_ANCHOR_X
+-- Ease in and out, so a movement leaves and arrives without a jolt.
+function smooth(progress: f64): f64
+    if progress <= 0.0 then return 0.0 end
+    if progress >= 1.0 then return 1.0 end
+    return progress * progress * (3.0 - 2.0 * progress)
 end
 
-function anchor_target_y(state: State): f64
-    if state.cover_target > 0.5 then return MAP_ANCHOR_Y end
-    return VAULT_ANCHOR_Y
+-- Everything the dive is worth, read off its one progress value. Zoom walks
+-- octaves because that is what a closing camera looks like; the map keeps the
+-- screen until the handover; and the anchor comes back to the middle over the
+-- same stretch, because the list it was standing clear of is going with it.
+function dive_zoom(dive: f64): f64
+    return MAP_ZOOM * two_to_the(DIVE_OCTAVES * smooth(dive))
+end
+
+function dive_cover(dive: f64): f64
+    if dive <= DIVE_HANDOVER then return 1.0 end
+    return 1.0 - smooth((dive - DIVE_HANDOVER) / (1.0 - DIVE_HANDOVER))
+end
+
+function dive_anchor_x(dive: f64): f64
+    return MAP_ANCHOR_X + (VAULT_ANCHOR_X - MAP_ANCHOR_X) * smooth(dive / DIVE_HANDOVER)
+end
+
+function dive_anchor_y(dive: f64): f64
+    return MAP_ANCHOR_Y + (VAULT_ANCHOR_Y - MAP_ANCHOR_Y) * smooth(dive / DIVE_HANDOVER)
+end
+
+-- Put every value the dive owns where its progress says they are. `street` is
+-- the second reading of the same movement: `cover` is how much of the screen
+-- the map is worth, and this is how much of it is the street the heist is
+-- standing on rather than a house it is inside. A screen that belongs to a stop
+-- — a fence's offers — is worth this much, so it waits for the camera to come
+-- back out instead of arriving while the room is still the picture.
+function apply_dive(state: State): unit
+    state.zoom = dive_zoom(state.dive)
+    state.cover = dive_cover(state.dive)
+    state.street = 1.0 - smooth(state.dive)
+    state.anchor_x = dive_anchor_x(state.dive)
+    state.anchor_y = dive_anchor_y(state.dive)
 end
 
 -- Keep the visible rectangle inside the generated city, so no screen edge ever
@@ -349,6 +398,23 @@ function approach(dt: f64, rate: f64): f64
     return step
 end
 
+-- Walk a value toward a goal at a steady pace, landing on it exactly. Movements
+-- spelled this way take the same time however far into them a frame lands,
+-- which is what lets two of them be given the screen in turn.
+function step_toward(value: f64, goal: f64, step: f64): f64
+    if value < goal then
+        local next: f64 = value + step
+        if next > goal then return goal end
+        return next
+    end
+    if value > goal then
+        local next: f64 = value - step
+        if next < goal then return goal end
+        return next
+    end
+    return goal
+end
+
 function choose_streak(state: State, wait: bool): unit
     state.streak_horizontal = random(state) < 0.5
     if state.streak_horizontal then
@@ -378,14 +444,12 @@ function place_camera(state: State): unit
     state.camera_y = clamp_camera_y(state, aim.y)
 end
 
--- Put every eased value where it is heading, the dissolve included. Used when
--- the map is not the picture on screen and therefore has nothing to animate
--- for, which is what a development snapshot coming back is.
+-- Put every moving value where it is heading, the dive included. Used when the
+-- map is not the picture on screen and therefore has nothing to animate for,
+-- which is what a development snapshot coming back is.
 function settle(state: State): unit
-    state.cover = state.cover_target
-    state.zoom = zoom_target(state)
-    state.anchor_x = anchor_target_x(state)
-    state.anchor_y = anchor_target_y(state)
+    state.dive = state.dive_target
+    apply_dive(state)
     place_camera(state)
 end
 
@@ -407,13 +471,15 @@ function new(seed: i32): State
         travel = 0.0,
         target = 0.0,
         drifting = true,
+        dive = 0.0,
+        dive_target = 0.0,
         camera_x = CITY_WIDTH * 0.5,
         camera_y = CITY_HEIGHT * 0.5,
         anchor_x = MAP_ANCHOR_X,
         anchor_y = MAP_ANCHOR_Y,
         zoom = MAP_ZOOM,
         cover = 1.0,
-        cover_target = 1.0,
+        street = 1.0,
         rng = value + 1.0,
         pan_clock = 0.0,
         streak_clock = 0.0,
@@ -440,7 +506,7 @@ end
 function regenerate(state: State): unit
     state.pan_clock = 0.0
     state.drifting = true
-    state.cover_target = 1.0
+    state.dive_target = 0.0
     generate(state)
     begin_route(state)
     choose_streak(state, false)
@@ -468,15 +534,16 @@ function warp(state: State, stop: i32): unit
     place_camera(state)
 end
 
--- The map is the picture, or the vault behind it is. Both are a request for a
--- dissolve; `settle` is how a caller asks for the change to have already
+-- Come back out of the house, or go into it. Both are a request for the whole
+-- movement — the camera closing or opening, and the map handing the screen over
+-- or taking it back; `settle` is how a caller asks for it to have already
 -- happened.
 function show(state: State): unit
-    state.cover_target = 1.0
+    state.dive_target = 0.0
 end
 
 function hide(state: State): unit
-    state.cover_target = 0.0
+    state.dive_target = 1.0
 end
 
 -- Whether the map still owes the screen anything. A vault that has fully taken
@@ -492,25 +559,23 @@ function update(state: State, dt: f64): unit
         choose_streak(state, true)
     end
 
-    local walk: f64 = approach(dt, TRAVEL_RATE)
-    state.travel += (state.target - state.travel) * walk
-    if math.abs(state.target - state.travel) < 0.0005 then state.travel = state.target end
-
-    local pushed_in: f64 = zoom_target(state)
-    local framing: f64 = approach(dt, ZOOM_RATE)
-    state.zoom += (pushed_in - state.zoom) * framing
-    if math.abs(pushed_in - state.zoom) < 0.0008 then state.zoom = pushed_in end
-    -- The anchor walks with the zoom: a list down the left gives its half of
-    -- the screen back as the map leaves, so the dive lands head-on.
-    state.anchor_x += (anchor_target_x(state) - state.anchor_x) * framing
-    state.anchor_y += (anchor_target_y(state) - state.anchor_y) * framing
-    state.cover += (state.cover_target - state.cover) * approach(dt, COVER_RATE)
-    if math.abs(state.cover_target - state.cover) < 0.002 then
-        state.cover = state.cover_target
+    -- The two movements take turns. On the map the heist walks; once it is on
+    -- the doorstep the camera goes in after it, and coming back out the camera
+    -- opens up before anyone steps into the street. Either way what is on the
+    -- screen is one thing moving rather than two.
+    if state.dive <= 0.0 then
+        state.travel = step_toward(state.travel, state.target, dt / STOP_SECONDS)
     end
+    if state.dive > state.dive_target or state.travel == state.target then
+        state.dive = step_toward(state.dive, state.dive_target, dt / DIVE_SECONDS)
+    end
+    apply_dive(state)
 
+    -- The camera closes at a steady speed on the screen rather than in the
+    -- city: a lag of a few paces is a soft follow on the map and half a room
+    -- out of frame once the push in has magnified it twentyfold.
     local aim: Point = camera_target(state)
-    local pan: f64 = approach(dt, CAMERA_RATE)
+    local pan: f64 = approach(dt, CAMERA_RATE * state.zoom)
     state.camera_x += (aim.x - state.camera_x) * pan
     state.camera_y += (aim.y - state.camera_y) * pan
     state.camera_x = clamp_camera_x(state, state.camera_x)

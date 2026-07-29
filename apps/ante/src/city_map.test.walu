@@ -165,31 +165,76 @@ describe("city map", function()
         expect(on_screen(city, city_map.position(city))):toBe(true)
     end)
 
-    it("dissolves between the map and the vault rather than cutting", function()
+    it("goes into the house before handing the screen to the vault", function()
         local city: city_map.State = city_map.new(88)
-        expect(city.cover):toBe(1.0)
-        expect(city_map.visible(city)):toBe(true)
-
-        city_map.hide(city)
-        city_map.update(city, 1.0 / 60.0)
-        expect(city.cover):toBeLessThan(1.0)
-        expect(city.cover):toBeGreaterThan(0.0)
-        expect(city_map.visible(city)):toBe(true)
-
-        step_seconds(city, 4.0)
-        expect(city.cover):toBe(0.0)
-        expect(city_map.visible(city)):toBe(false)
-        -- Leaving the map pushes the camera in on the house it is about to be
-        -- inside of.
-        expect(city.zoom):toBeGreaterThan(1.0)
-
-        city_map.show(city)
-        city_map.update(city, 1.0 / 60.0)
-        expect(city.cover):toBeGreaterThan(0.0)
-        expect(city.cover):toBeLessThan(1.0)
-        step_seconds(city, 4.0)
+        city_map.warp(city, city_map.vault_stop(1))
         expect(city.cover):toBe(1.0)
         expect(city.zoom):toBe(1.0)
+        expect(city_map.visible(city)):toBe(true)
+
+        -- The first half of the dive is the camera closing on the house, with
+        -- the map still holding the whole screen. A push in nobody can see is
+        -- the cut this exists to avoid.
+        city_map.hide(city)
+        step_seconds(city, 0.25)
+        expect(city.zoom):toBeGreaterThan(1.5)
+        expect(city.cover):toBe(1.0)
+
+        -- Then the vault takes over, and by the time it has the door is wide
+        -- enough to be the frame around it.
+        step_seconds(city, 0.3)
+        expect(city.cover):toBeLessThan(1.0)
+        expect(city.cover):toBeGreaterThan(0.0)
+        expect(city_map.visible(city)):toBe(true)
+        local midway: f64 = city.zoom
+
+        step_seconds(city, 0.6)
+        expect(city.cover):toBe(0.0)
+        expect(city_map.visible(city)):toBe(false)
+        expect(city.zoom):toBeGreaterThan(midway)
+        -- Close enough that a map marker is the whole screen.
+        expect(city.zoom):toBeGreaterThan(20.0)
+
+        -- Coming back out runs the same movement backwards: the map has the
+        -- screen again well before the camera has finished opening up.
+        city_map.show(city)
+        step_seconds(city, 0.45)
+        expect(city.cover):toBe(1.0)
+        expect(city.zoom):toBeGreaterThan(1.0)
+        step_seconds(city, 0.5)
+        expect(city.zoom):toBe(1.0)
+    end)
+
+    it("walks to the door and dives in afterwards, never both at once", function()
+        local city: city_map.State = city_map.new(31)
+        city_map.warp(city, city_map.fence_stop(1))
+
+        -- Asking for the next vault while standing at its fence is a walk
+        -- first: the camera cannot go into a house the heist has not reached.
+        city_map.follow(city, city_map.vault_stop(1))
+        city_map.hide(city)
+        step_seconds(city, 0.3)
+        expect(city.travel):toBeGreaterThan(0.0)
+        expect(city.travel):toBeLessThan(1.0)
+        expect(city.zoom):toBe(1.0)
+        expect(city.cover):toBe(1.0)
+
+        step_seconds(city, 0.5)
+        expect(city.travel):toBe(1.0)
+        expect(city.zoom):toBeGreaterThan(1.0)
+        step_seconds(city, 1.0)
+        expect(city.zoom):toBeGreaterThan(20.0)
+
+        -- And coming out of a vault the camera opens up before anyone steps
+        -- into the street.
+        city_map.follow(city, city_map.fence_stop(2))
+        city_map.show(city)
+        step_seconds(city, 0.4)
+        expect(city.travel):toBe(1.0)
+        expect(city.zoom):toBeGreaterThan(1.0)
+        step_seconds(city, 1.4)
+        expect(city.zoom):toBe(1.0)
+        expect(city.travel):toBe(2.0)
     end)
 
     it("settles a dissolve that has nothing to play for", function()

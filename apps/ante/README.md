@@ -122,14 +122,21 @@ the model, `city_map_render.walu` for the drawing) and draws it under whichever
 screen is live, because the run crosses it rather than visiting it: the title
 drifts over a city, the starting spell is bought at the first street vendor on
 the route, every fence between two vaults is the next vendor along it, and a
-vault is the house the map dissolves into. The route alternates the two — vendor,
+vault is the house the camera goes into. The route alternates the two — vendor,
 house, vendor, house — with the road already walked drawn solid in gold behind
 the robbers and the road still to come dashed ahead of them, so the map is the
-run's progress bar as well as its backdrop. Screens never cut between those
-pictures: choosing NEW RUN pans from the drifting view to the first vendor,
-entering a vault pushes the camera in on its house while the map dissolves into
-the board, and clearing one brings the map back up over the settled board with
-the fence's offers fading in on it.
+run's progress bar as well as its backdrop.
+
+The vault keeps its own backdrop, and the map goes into it rather than cutting
+to it. A screen change is two movements taking the screen in turn, never at
+once: the robbers walk the block to the door, and then the camera closes on the
+house through five octaves of zoom until the room behind it is the whole frame.
+The route furniture drops away first, then the surrounding city, so what is left
+growing into the frame is the one house being entered — and its dark interior is
+where the vault's backdrop fades in. Coming out runs the same movement
+backwards: the room opens up into a block, a street, and a city, and only once
+the map is standing still does the fence's offer list arrive on it. Choosing NEW
+RUN pans from the drifting title view to the first vendor the same way.
 
 Keyboard (in the vault):
 

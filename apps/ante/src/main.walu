@@ -7,9 +7,9 @@
 -- The city map is shared rather than owned by a screen because the run crosses
 -- it: the menu's title drifts over it, the starting spell is picked at its first
 -- vendor, every fence between two vaults is another one, and a vault is the
--- house the map dissolves into. Drawing it here — under whichever screen is
--- live, and only while it still owes the frame anything — is what makes each of
--- those a pan and a dissolve rather than a cut.
+-- house the camera goes into. Drawing it here — under whichever screen is live,
+-- and only while it still owes the frame anything — is what makes each of those
+-- a pan and a push in rather than a cut.
 
 local engine = require("waluau:engine")
 local hot = require("waluau:engine/hot")
@@ -73,7 +73,7 @@ function install_arcane_heist(): unit
         if screen == SCREEN_MENU then
             menu.update(menu_state, city, dt)
         else
-            game_screen.steer_city(heist, city)
+            game_screen.steer_city(heist, city, dt)
             if presentation_resources.can_update(assets) then
                 play_flip_cues(assets, game_screen.update(heist, city, dt))
             end
@@ -82,7 +82,7 @@ function install_arcane_heist(): unit
     end
 
     -- Three layers, bottom to top: the vault board, the city map over it, and
-    -- the live screen's own list over that. The map is what dissolves, so the
+    -- the live screen's own list over that. The map is what gives way, so the
     -- board is drawn whenever the map is not the whole picture and skipped once
     -- it is.
     local function draw(graphics: engine.Graphics, alpha: f64): unit
@@ -100,7 +100,7 @@ function install_arcane_heist(): unit
             return
         end
         if game_screen.fence_open(heist) then
-            game_screen.draw_fence(heist, graphics, city.cover)
+            game_screen.draw_fence(heist, city, graphics)
         end
     end
 
