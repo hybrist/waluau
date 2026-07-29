@@ -29,6 +29,33 @@ function countMenuTitleInk(canvas) {
   });
 }
 
+// Cyan stall ink where the city map stands the stop the run is on. Every map
+// screen anchors that stop at 736,306 of the 960-wide board and the run always
+// sets out from a vendor, so a positive count is the map really being under the
+// screen rather than a backdrop that happens to look like one.
+function countMapStopInk(canvas) {
+  return canvas.evaluate((node) => {
+    const gl = node.getContext('webgl2');
+    const left = Math.round(node.width * 0.740);
+    const width = Math.round(node.width * 0.058);
+    // readPixels counts up from the bottom; the stall sits at 288..322 of the
+    // 600-tall board.
+    const bottom = Math.round(node.height * 0.463);
+    const height = Math.round(node.height * 0.057);
+    const pixels = new Uint8Array(width * height * 4);
+    gl.readPixels(left, bottom, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    let count = 0;
+    for (let index = 0; index < pixels.length; index += 4) {
+      if (
+        Math.abs(pixels[index] - 103) <= 45
+        && Math.abs(pixels[index + 1] - 232) <= 45
+        && Math.abs(pixels[index + 2] - 249) <= 45
+      ) count += 1;
+    }
+    return count;
+  });
+}
+
 test('boots to a menu with new run, boss rush, and how to play options', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
@@ -64,6 +91,32 @@ test('boots to a menu with new run, boss rush, and how to play options', async (
   await expect
     .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
     .toBeGreaterThan(300);
+  expect(pageErrors).toEqual([]);
+});
+
+test('picks the starting spell at a vendor on the city map, then dives into the first vault', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  const canvas = await openGame(page);
+  await expect
+    .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
+    .toBeGreaterThan(300);
+
+  // The title drifts over the city with no route being walked, so the stop
+  // anchor holds nothing yet. Opening the spell list pans to the vendor the run
+  // sets out from and parks it beside the options, where it stays put.
+  await page.keyboard.press('Enter');
+  await expect
+    .poll(() => countMapStopInk(canvas), { timeout: GAME_READY_TIMEOUT })
+    .toBeGreaterThan(30);
+
+  // Taking the spell walks off that vendor and into the first vault: the deck
+  // comes up and the map is no longer on the screen to be measured.
+  await page.keyboard.press('Enter');
+  await expect
+    .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
+    .toBeGreaterThan(40);
+  expect(await countMapStopInk(canvas)).toBeLessThan(10);
   expect(pageErrors).toEqual([]);
 });
 
@@ -250,8 +303,10 @@ function countPassInk(canvas) {
 function countFenceManaInk(canvas) {
   return canvas.evaluate((node) => {
     const gl = node.getContext('webgl2');
-    const left = Math.round(node.width * 0.719);
-    const width = Math.round(node.width * 0.156);
+    // The fence keeps to a column down the left of the city map, so its mana
+    // readout is right-aligned at 550 of the 960-wide board.
+    const left = Math.round(node.width * 0.52);
+    const width = Math.round(node.width * 0.06);
     // readPixels counts up from the bottom; the number sits at 100..132 of the
     // 600-tall board.
     const bottom = Math.round(node.height * 0.78);
@@ -342,14 +397,25 @@ test('carries the run into the next vault once this one is settled', async ({ pa
   // the next vault is dealt; a lost run has neither mana nor loadout left to
   // spend, so its fresh first vault is dealt straight away. Which of the two
   // this vault ended as is the cards' to decide, so this covers both.
+  //
+  // The fence stands on the animating city map, so there is no still frame to
+  // wait for here: what settles is which of the two screens came up.
   await page.keyboard.press('Enter');
-  await settleBoard(canvas);
+  await expect
+    .poll(
+      async () => (await countFenceManaInk(canvas)) > 20
+        || (await countCardBackInk(canvas)) > 40,
+      { timeout: GAME_READY_TIMEOUT })
+    .toBe(true);
   if (await countFenceManaInk(canvas) > 20) {
-    const fence = await frameSignature(canvas);
+    // The fence keeps to a column so the map it stands on stays readable: the
+    // vendor the run has reached is still anchored beside the offers.
+    await expect
+      .poll(() => countMapStopInk(canvas), { timeout: GAME_READY_TIMEOUT })
+      .toBeGreaterThan(30);
     // The fence is a cursor-driven offer list, and Esc walks past every offer
     // into the vault the run is standing in front of.
     await page.keyboard.press('ArrowDown');
-    await expect.poll(() => frameSignature(canvas)).not.toBe(fence);
     await page.keyboard.press('Escape');
   }
   await expect

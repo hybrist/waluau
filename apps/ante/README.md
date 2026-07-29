@@ -117,6 +117,20 @@ the run. The menu and the heist board are separate screen modules
 receives engine callbacks. One heist screen spans a whole run, dealing each
 vault in place from the run state it owns.
 
+Both screens stand on one city map. `main.walu` owns it (`city_map.walu` for
+the model, `city_map_render.walu` for the drawing) and draws it under whichever
+screen is live, because the run crosses it rather than visiting it: the title
+drifts over a city, the starting spell is bought at the first street vendor on
+the route, every fence between two vaults is the next vendor along it, and a
+vault is the house the map dissolves into. The route alternates the two — vendor,
+house, vendor, house — with the road already walked drawn solid in gold behind
+the robbers and the road still to come dashed ahead of them, so the map is the
+run's progress bar as well as its backdrop. Screens never cut between those
+pictures: choosing NEW RUN pans from the drifting view to the first vendor,
+entering a vault pushes the camera in on its house while the map dissolves into
+the board, and clearing one brings the map back up over the settled board with
+the fence's offers fading in on it.
+
 Keyboard (in the vault):
 
 - Arrow keys or WASD move focus; up/down switches between relics and wards.
@@ -153,12 +167,12 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `project.js` | Stable source-project adapter for playground and conformance hosts. |
 | `main.walu` | Thin engine adapter that owns the session and routes callbacks to the live screen. |
 | `menu.walu` | The pre-game menu screen: presentation plus begin-gesture interpretation. |
-| `menu_city.walu` | DOM-free procedural city generation, camera drift, and thief-route animation state. |
-| `menu_city_render.walu` | WebGL2 primitive drawing for the menu's panning city and colored street streak. |
+| `city_map.walu` | DOM-free city generation, the alternating vendor/vault route, and the camera pans and dissolves that carry it between screens. |
+| `city_map_render.walu` | WebGL2 primitive drawing for the city, its walked and upcoming route, and the colored street streak, all at one opacity. |
 | `game_screen.walu` | The heist screen: rules/flow/choreography wiring and its input adapters. |
 | `run.walu` | DOM-free run state: the vault sequence, its boss cadence, the spell loadout, and the mana carried between vaults. |
 | `shop.walu` | DOM-free intermission between vaults: the two offers a visit stocks, what they charge, which are spent, and which the cursor holds. |
-| `shop_render.walu` | Where the fence's offer list sits on the screen, and the pointer's row lookup for it. |
+| `shop_render.walu` | Where the fence's offer list sits on the city map, at the map's own opacity, and the pointer's row lookup for it. |
 | `game.walu` | DOM-free rules, AI, commands, outcomes, and read-only presentation view. |
 | `flow.walu` | DOM-free input gating, focus, modal, selection, and reveal phase transitions. |
 | `choreography.walu` | Domain-level deal, feint, breach, fan, pile, reveal timing, and animation choreography. |
@@ -176,6 +190,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `sim.test.walu` | Deterministic Vitest assertions for rules, flow, snapshots, and full-game completion. |
 | `run.test.walu` | Deterministic Vitest assertions for the boss cadence, mana carryover, the carried loadout, and where a run ends. |
 | `shop.test.walu` | Deterministic Vitest assertions for the fence's stock, prices, spent offers, and trades. |
+| `city_map.test.walu` | Deterministic Vitest assertions for the generated streets, the route's alternating stops, and the pans and dissolves between screens. |
 | `tests/game-driver.js` | Shared browser-test seam for booting a heist and observing rendered frames. |
 | `tests/spell-effects.spec.js` | Spell-presentation behavior isolated from menu and gameplay browser coverage. |
 | `waluau.assets.json` | Typed package manifest for the card back, vault font, and flip sound. |

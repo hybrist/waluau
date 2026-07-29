@@ -1,0 +1,543 @@
+-- DOM-free city map behind every screen of a run: the streets and rooftops the
+-- robbers cross, the route they take through them, and the camera that follows
+-- it. One module owns that picture for the menu, for the fence between vaults,
+-- and for the dive into a vault, so the map never restarts when the screen
+-- does.
+--
+-- The route alternates the two things a run is made of: a street vendor the
+-- robbers shop at, then a house whose vault they breach. Stop 0 is the vendor
+-- the starting spell is picked from, which is why the menu's spell list and
+-- every later fence stand on the same map at their own corner of the city.
+--
+-- Nothing here knows what a vault contains or what a fence sells. It knows
+-- where the next stop is, how far along the way the heist stands, and how much
+-- of the screen the map is currently worth — `cover`, which is 1.0 while the
+-- map is the picture and 0.0 once the vault has taken it over. Its private
+-- random stream keeps generation and animation timing from changing the heist's
+-- deck shuffle.
+
+type Building = {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    tone: i32,
+    detail: i32
+}
+-- One place the heist stops. `vault` tells the two kinds apart: a house with a
+-- vault in it, or the street vendor standing between two of them.
+type Stop = { x: f64, y: f64, vault: bool }
+type Point = { x: f64, y: f64 }
+type State = {
+    vertical_streets: {f64},
+    horizontal_streets: {f64},
+    buildings: {Building},
+    stops: {Stop},
+    walk_column: i32,
+    walk_row: i32,
+    walk_horizontal: bool,
+    column_low: i32,
+    column_high: i32,
+    row_low: i32,
+    row_high: i32,
+    travel: f64,
+    target: f64,
+    drifting: bool,
+    camera_x: f64,
+    camera_y: f64,
+    anchor_x: f64,
+    anchor_y: f64,
+    zoom: f64,
+    cover: f64,
+    cover_target: f64,
+    rng: f64,
+    pan_clock: f64,
+    streak_clock: f64,
+    streak_duration: f64,
+    streak_horizontal: bool,
+    streak_street: f64,
+    streak_forward: bool,
+    streak_suit: i32
+}
+
+const VIEW_WIDTH: f64 = 960.0
+const VIEW_HEIGHT: f64 = 600.0
+-- Wide enough that a route of a dozen stops is a journey across a city rather
+-- than a lap of one neighbourhood.
+const CITY_WIDTH: f64 = 2560.0
+const CITY_HEIGHT: f64 = 1720.0
+const STREET_WIDTH: f64 = 20.0
+const RANDOM_MODULUS: f64 = 2147483647.0
+const RANDOM_MULTIPLIER: f64 = 16807.0
+
+-- The map is read at 1:1 and the vault is dived into, so leaving the map pushes
+-- the camera in on the house it is about to be inside of.
+const MAP_ZOOM: f64 = 1.0
+const VAULT_ZOOM: f64 = 1.62
+-- Where on the screen the stop being followed sits. A map screen carries a list
+-- of options down its left, so the heist stands clear of it on the right and
+-- the player can read both at once; a vault is dived into head-on, so the push
+-- in walks that anchor back to the middle of the screen as the map goes.
+const MAP_ANCHOR_X: f64 = 736.0
+const MAP_ANCHOR_Y: f64 = 306.0
+const VAULT_ANCHOR_X: f64 = 480.0
+const VAULT_ANCHOR_Y: f64 = 300.0
+-- Easing rates, in "fraction closed per second". Travel is the slowest of them
+-- so the walk between two stops reads as a walk; cover is quick enough that a
+-- screen change is a dissolve rather than a wait.
+const TRAVEL_RATE: f64 = 1.6
+const CAMERA_RATE: f64 = 3.2
+const ZOOM_RATE: f64 = 2.4
+const COVER_RATE: f64 = 2.2
+-- How far past the stop being walked to the route is kept generated. Three
+-- vaults of dashed road ahead is enough to read as a plan without the map
+-- promising a run that has an end.
+const LOOKAHEAD: i32 = 7
+const MAX_STEP_BLOCKS: i32 = 3
+
+function random(state: State): f64
+    local next: f64 = state.rng * RANDOM_MULTIPLIER
+    next = next - math.floor(next / RANDOM_MODULUS) * RANDOM_MODULUS
+    if next < 1.0 then next = 1.0 end
+    state.rng = next
+    return (next - 1.0) / (RANDOM_MODULUS - 1.0)
+end
+
+function random_range(state: State, low: f64, high: f64): f64
+    return low + (high - low) * random(state)
+end
+
+function random_index(state: State, count: i32): i32
+    if count <= 1 then return 0 end
+    return math.floor(random(state) * (count::f64))::i32
+end
+
+function fill_streets(state: State, streets: {f64}, limit: f64, low: f64, high: f64): unit
+    table.insert(streets, 0.0)
+    local position: f64 = random_range(state, low * 0.55, high * 0.55)
+    while position < limit - low * 0.55 do
+        table.insert(streets, position)
+        position += random_range(state, low, high)
+    end
+    table.insert(streets, limit)
+end
+
+function generate(state: State): unit
+    state.vertical_streets = {}
+    state.horizontal_streets = {}
+    state.buildings = {}
+    fill_streets(state, state.vertical_streets, CITY_WIDTH, 108.0, 168.0)
+    fill_streets(state, state.horizontal_streets, CITY_HEIGHT, 82.0, 132.0)
+
+    for column = 0::i32, #state.vertical_streets - 2 do
+        local left: f64 = state.vertical_streets[column] + STREET_WIDTH * 0.5
+        local right: f64 = state.vertical_streets[column + 1] - STREET_WIDTH * 0.5
+        for row = 0::i32, #state.horizontal_streets - 2 do
+            local top: f64 = state.horizontal_streets[row] + STREET_WIDTH * 0.5
+            local bottom: f64 = state.horizontal_streets[row + 1] - STREET_WIDTH * 0.5
+            local inset_x: f64 = random_range(state, 5.0, 12.0)
+            local inset_y: f64 = random_range(state, 5.0, 11.0)
+            table.insert(state.buildings, {
+                x = left + inset_x,
+                y = top + inset_y,
+                width = right - left - inset_x * 2.0,
+                height = bottom - top - inset_y * 2.0,
+                tone = random_index(state, 4),
+                detail = random_index(state, 3),
+            })
+        end
+    end
+end
+
+-- The band of streets the route is allowed to stand on. A stop has to be
+-- bringable under the map's anchor, and the anchor is off to one side, so a
+-- street closer to a city edge than the anchor's own margin could never be put
+-- there — the camera would clamp and the stop would sit wide of the mark the
+-- screens leave room for. The outermost street of each axis is out for its own
+-- reason: a stop on it would have no block on one side to be a corner of.
+function first_street_past(streets: {f64}, margin: f64): i32
+    for index = 1::i32, #streets - 2 do
+        if streets[index] >= margin then return index end
+    end
+    return 1
+end
+
+function last_street_before(streets: {f64}, margin: f64): i32
+    local found: i32 = 1
+    for index = 1::i32, #streets - 2 do
+        if streets[index] <= margin then found = index end
+    end
+    return found
+end
+
+-- One leg of the walk along a single axis. Running out of band turns the leg
+-- around rather than shortening it, so the route keeps its stride instead of
+-- crowding against an edge.
+function walk_axis(position: i32, low: i32, high: i32, span: i32, forward: bool): i32
+    if high <= low then return low end
+    local direction: i32 = -1
+    if forward then direction = 1 end
+    local next: i32 = position + direction * span
+    if next > high or next < low then next = position - direction * span end
+    if next > high then next = high end
+    if next < low then next = low end
+    if next == position then
+        if position < high then next = position + 1 else next = position - 1 end
+    end
+    return next
+end
+
+-- Vendors and vaults alternate from the start of the route, so every odd stop
+-- is a house and every even one the vendor standing before it.
+function append_stop(state: State): unit
+    local index: i32 = #state.stops
+    table.insert(state.stops, {
+        x = state.vertical_streets[state.walk_column],
+        y = state.horizontal_streets[state.walk_row],
+        vault = index % 2 == 1,
+    })
+end
+
+-- Turn a corner and walk one to three blocks. Alternating the axis every leg is
+-- what makes the route a path through streets rather than a line drawn over
+-- them.
+function walk_next(state: State): unit
+    local span: i32 = 1 + random_index(state, MAX_STEP_BLOCKS)
+    local forward: bool = random(state) < 0.5
+    if state.walk_horizontal then
+        state.walk_column = walk_axis(
+            state.walk_column, state.column_low, state.column_high, span, forward)
+    else
+        state.walk_row = walk_axis(
+            state.walk_row, state.row_low, state.row_high, span, forward)
+    end
+    state.walk_horizontal = not state.walk_horizontal
+    append_stop(state)
+end
+
+-- Walk far enough that the route holds that many stops. The map extends itself
+-- as the run asks for more of it, because a run has no last vault to generate
+-- up to.
+function ensure_stops(state: State, count: i32): unit
+    while #state.stops < count do walk_next(state) end
+end
+
+function begin_route(state: State): unit
+    state.stops = {}
+    state.column_low = first_street_past(state.vertical_streets, MAP_ANCHOR_X)
+    state.column_high = last_street_before(
+        state.vertical_streets, CITY_WIDTH - (VIEW_WIDTH - MAP_ANCHOR_X))
+    state.row_low = first_street_past(state.horizontal_streets, MAP_ANCHOR_Y)
+    state.row_high = last_street_before(
+        state.horizontal_streets, CITY_HEIGHT - (VIEW_HEIGHT - MAP_ANCHOR_Y))
+    state.walk_column = state.column_low
+        + random_index(state, state.column_high - state.column_low + 1)
+    state.walk_row = state.row_low
+        + random_index(state, state.row_high - state.row_low + 1)
+    state.walk_horizontal = random(state) < 0.5
+    append_stop(state)
+    state.travel = 0.0
+    state.target = 0.0
+    ensure_stops(state, LOOKAHEAD)
+end
+
+-- Vaults and vendors alternate along the route: the run sets out from the
+-- vendor standing before its first vault, so vault `n` is stop 2n-1 and the
+-- fence before it stop 2n-2. Vault numbers are the run's, and 1-based.
+function vault_stop(vault: i32): i32
+    return vault * 2 - 1
+end
+
+function fence_stop(vault: i32): i32
+    return vault * 2 - 2
+end
+
+function stop_count(state: State): i32
+    return #state.stops
+end
+
+-- Which vault a stop is, counting from one. Vendor stops answer with the vault
+-- they stand before, which is the one the map is on its way to.
+function stop_vault(index: i32): i32
+    return math.floor((index::f64) / 2.0)::i32 + 1
+end
+
+-- Where on the route a fractional stop position stands. Past the generated end
+-- it stands on the last stop there is, so a caller that reads ahead of the walk
+-- never falls off the route.
+function position_at(state: State, travel: f64): Point
+    local last: i32 = #state.stops - 1
+    if last < 0 then return { x = CITY_WIDTH * 0.5, y = CITY_HEIGHT * 0.5 } end
+    if travel <= 0.0 then return { x = state.stops[0].x, y = state.stops[0].y } end
+    if travel >= last::f64 then return { x = state.stops[last].x, y = state.stops[last].y } end
+    local base: i32 = math.floor(travel)::i32
+    local fraction: f64 = travel - (base::f64)
+    local from: Stop = state.stops[base]
+    local into: Stop = state.stops[base + 1]
+    return {
+        x = from.x + (into.x - from.x) * fraction,
+        y = from.y + (into.y - from.y) * fraction,
+    }
+end
+
+function position(state: State): Point
+    return position_at(state, state.travel)
+end
+
+-- Two long, slightly different periods make a gentle sweep over the map that
+-- does not visibly repeat. This is the menu's camera: no route is being walked,
+-- so the city itself is the subject.
+function drift_center_x(state: State): f64
+    return CITY_WIDTH * 0.5
+        + math.sin(state.pan_clock * 0.021) * (CITY_WIDTH - VIEW_WIDTH) * 0.42
+end
+
+function drift_center_y(state: State): f64
+    return CITY_HEIGHT * 0.5
+        + math.sin(state.pan_clock * 0.017) * (CITY_HEIGHT - VIEW_HEIGHT) * 0.42
+end
+
+function camera_target(state: State): Point
+    if state.drifting then
+        return { x = drift_center_x(state), y = drift_center_y(state) }
+    end
+    return position(state)
+end
+
+function zoom_target(state: State): f64
+    if state.cover_target > 0.5 then return MAP_ZOOM end
+    return VAULT_ZOOM
+end
+
+function anchor_target_x(state: State): f64
+    if state.cover_target > 0.5 then return MAP_ANCHOR_X end
+    return VAULT_ANCHOR_X
+end
+
+function anchor_target_y(state: State): f64
+    if state.cover_target > 0.5 then return MAP_ANCHOR_Y end
+    return VAULT_ANCHOR_Y
+end
+
+-- Keep the visible rectangle inside the generated city, so no screen edge ever
+-- shows the void past the last street. `before` and `after` are how much city
+-- the anchor has on each side of it, which is not half the view once the anchor
+-- is off centre.
+function clamp_camera(value: f64, limit: f64, before: f64, after: f64): f64
+    if before + after >= limit then return limit * 0.5 end
+    if value < before then return before end
+    if value > limit - after then return limit - after end
+    return value
+end
+
+function clamp_camera_x(state: State, value: f64): f64
+    return clamp_camera(
+        value, CITY_WIDTH,
+        state.anchor_x / state.zoom, (VIEW_WIDTH - state.anchor_x) / state.zoom)
+end
+
+function clamp_camera_y(state: State, value: f64): f64
+    return clamp_camera(
+        value, CITY_HEIGHT,
+        state.anchor_y / state.zoom, (VIEW_HEIGHT - state.anchor_y) / state.zoom)
+end
+
+function approach(dt: f64, rate: f64): f64
+    local step: f64 = dt * rate
+    if step > 1.0 then return 1.0 end
+    if step < 0.0 then return 0.0 end
+    return step
+end
+
+function choose_streak(state: State, wait: bool): unit
+    state.streak_horizontal = random(state) < 0.5
+    if state.streak_horizontal then
+        state.streak_street = state.horizontal_streets[
+            1 + random_index(state, #state.horizontal_streets - 2)]
+    else
+        state.streak_street = state.vertical_streets[
+            1 + random_index(state, #state.vertical_streets - 2)]
+    end
+    state.streak_forward = random(state) < 0.5
+    state.streak_suit = random_index(state, 4)
+    state.streak_duration = random_range(state, 0.62, 0.88)
+    if wait then
+        state.streak_clock = -random_range(state, 1.8, 4.8)
+    else
+        state.streak_clock = -0.75
+    end
+end
+
+-- Stand on the stop being headed for, with the camera already over it. Ground
+-- the map is moved across without being walked is ground nobody watched it
+-- cover.
+function place_camera(state: State): unit
+    state.travel = state.target
+    local aim: Point = camera_target(state)
+    state.camera_x = clamp_camera_x(state, aim.x)
+    state.camera_y = clamp_camera_y(state, aim.y)
+end
+
+-- Put every eased value where it is heading, the dissolve included. Used when
+-- the map is not the picture on screen and therefore has nothing to animate
+-- for, which is what a development snapshot coming back is.
+function settle(state: State): unit
+    state.cover = state.cover_target
+    state.zoom = zoom_target(state)
+    state.anchor_x = anchor_target_x(state)
+    state.anchor_y = anchor_target_y(state)
+    place_camera(state)
+end
+
+function new(seed: i32): State
+    local value: f64 = math.floor(math.abs(seed::f64))
+    value = value - math.floor(value / (RANDOM_MODULUS - 1.0)) * (RANDOM_MODULUS - 1.0)
+    local state: State = {
+        vertical_streets = {},
+        horizontal_streets = {},
+        buildings = {},
+        stops = {},
+        walk_column = 1,
+        walk_row = 1,
+        walk_horizontal = true,
+        column_low = 1,
+        column_high = 1,
+        row_low = 1,
+        row_high = 1,
+        travel = 0.0,
+        target = 0.0,
+        drifting = true,
+        camera_x = CITY_WIDTH * 0.5,
+        camera_y = CITY_HEIGHT * 0.5,
+        anchor_x = MAP_ANCHOR_X,
+        anchor_y = MAP_ANCHOR_Y,
+        zoom = MAP_ZOOM,
+        cover = 1.0,
+        cover_target = 1.0,
+        rng = value + 1.0,
+        pan_clock = 0.0,
+        streak_clock = 0.0,
+        streak_duration = 0.75,
+        streak_horizontal = true,
+        streak_street = 0.0,
+        streak_forward = true,
+        streak_suit = 0,
+    }
+    generate(state)
+    begin_route(state)
+    choose_streak(state, false)
+    settle(state)
+    return state
+end
+
+-- A different city, and a different route through it. The menu redraws the map
+-- between runs; a run in progress never does, because the ground it has already
+-- covered is the progress it is showing.
+--
+-- The dissolve is left running rather than settled: abandoning a vault for the
+-- menu asks for the map back, and the new city rises over the board being left
+-- instead of replacing it between two frames.
+function regenerate(state: State): unit
+    state.pan_clock = 0.0
+    state.drifting = true
+    state.cover_target = 1.0
+    generate(state)
+    begin_route(state)
+    choose_streak(state, false)
+    place_camera(state)
+end
+
+-- Let go of the route: the camera sweeps the city instead of watching the
+-- heist. This is the menu's view of the map.
+function drift(state: State): unit
+    state.drifting = true
+end
+
+-- Head for that stop, walking the streets in between. Everything past it that
+-- the map will need to draw as road ahead is generated here.
+function follow(state: State, stop: i32): unit
+    state.drifting = false
+    state.target = stop::f64
+    ensure_stops(state, stop + LOOKAHEAD)
+end
+
+-- Stand on that stop with no walk at all: the route is being restarted, not
+-- travelled.
+function warp(state: State, stop: i32): unit
+    follow(state, stop)
+    place_camera(state)
+end
+
+-- The map is the picture, or the vault behind it is. Both are a request for a
+-- dissolve; `settle` is how a caller asks for the change to have already
+-- happened.
+function show(state: State): unit
+    state.cover_target = 1.0
+end
+
+function hide(state: State): unit
+    state.cover_target = 0.0
+end
+
+-- Whether the map still owes the screen anything. A vault that has fully taken
+-- over does not pay for a map draw underneath it.
+function visible(state: State): bool
+    return state.cover > 0.002
+end
+
+function update(state: State, dt: f64): unit
+    state.pan_clock += dt
+    state.streak_clock += dt
+    if state.streak_clock > state.streak_duration then
+        choose_streak(state, true)
+    end
+
+    local walk: f64 = approach(dt, TRAVEL_RATE)
+    state.travel += (state.target - state.travel) * walk
+    if math.abs(state.target - state.travel) < 0.0005 then state.travel = state.target end
+
+    local pushed_in: f64 = zoom_target(state)
+    local framing: f64 = approach(dt, ZOOM_RATE)
+    state.zoom += (pushed_in - state.zoom) * framing
+    if math.abs(pushed_in - state.zoom) < 0.0008 then state.zoom = pushed_in end
+    -- The anchor walks with the zoom: a list down the left gives its half of
+    -- the screen back as the map leaves, so the dive lands head-on.
+    state.anchor_x += (anchor_target_x(state) - state.anchor_x) * framing
+    state.anchor_y += (anchor_target_y(state) - state.anchor_y) * framing
+    state.cover += (state.cover_target - state.cover) * approach(dt, COVER_RATE)
+    if math.abs(state.cover_target - state.cover) < 0.002 then
+        state.cover = state.cover_target
+    end
+
+    local aim: Point = camera_target(state)
+    local pan: f64 = approach(dt, CAMERA_RATE)
+    state.camera_x += (aim.x - state.camera_x) * pan
+    state.camera_y += (aim.y - state.camera_y) * pan
+    state.camera_x = clamp_camera_x(state, state.camera_x)
+    state.camera_y = clamp_camera_y(state, state.camera_y)
+end
+
+return {
+    new = new,
+    regenerate = regenerate,
+    drift = drift,
+    follow = follow,
+    warp = warp,
+    show = show,
+    hide = hide,
+    settle = settle,
+    visible = visible,
+    update = update,
+    ensure_stops = ensure_stops,
+    position = position,
+    position_at = position_at,
+    stop_count = stop_count,
+    stop_vault = stop_vault,
+    vault_stop = vault_stop,
+    fence_stop = fence_stop,
+    width = CITY_WIDTH,
+    height = CITY_HEIGHT,
+    view_width = VIEW_WIDTH,
+    view_height = VIEW_HEIGHT,
+    lookahead = LOOKAHEAD,
+}

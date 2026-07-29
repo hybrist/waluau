@@ -1,12 +1,23 @@
 -- Arcane Heist hosted by the 2D engine. This entry module is intentionally an
--- adapter: it owns the engine session, the shared presentation resources, and
--- which screen is live. The menu and the heist board each live behind their
--- own screen module; neither knows the other exists.
+-- adapter: it owns the engine session, the shared presentation resources, the
+-- city map every screen stands on, and which screen is live. The menu and the
+-- heist board each live behind their own screen module; neither knows the other
+-- exists.
+--
+-- The city map is shared rather than owned by a screen because the run crosses
+-- it: the menu's title drifts over it, the starting spell is picked at its first
+-- vendor, every fence between two vaults is another one, and a vault is the
+-- house the map dissolves into. Drawing it here — under whichever screen is
+-- live, and only while it still owes the frame anything — is what makes each of
+-- those a pan and a dissolve rather than a cut.
 
 local engine = require("waluau:engine")
 local hot = require("waluau:engine/hot")
+local city_map = require("./city_map")
+local city_map_render = require("./city_map_render")
 local menu = require("./menu")
 local game_screen = require("./game_screen")
+local render = require("./render")
 local snapshot_data = require("./snapshot")
 local presentation_resources = require("./presentation_resources")
 
@@ -25,6 +36,7 @@ function install_arcane_heist(): unit
     local screen: i32 = SCREEN_MENU
     local menu_state: menu.State = menu.new()
     local heist: game_screen.State = game_screen.new()
+    local city: city_map.State = city_map.new(math.random(2147483646))
     local assets: presentation_resources.State = presentation_resources.new()
 
     local function load_assets_async(): i32
@@ -44,32 +56,52 @@ function install_arcane_heist(): unit
     -- picked on the menu's second list and carried for the whole run.
     local function begin_run(rush: bool, spell: i32): unit
         if not presentation_resources.unlock_audio(assets) then return end
-        game_screen.reset(heist, rush, spell)
+        game_screen.reset(heist, city, rush, spell)
         screen = SCREEN_GAME
     end
 
     local function leave_run(): unit
-        menu.reset(menu_state)
+        menu.reset(menu_state, city)
         screen = SCREEN_MENU
     end
 
     local function update(dt: f64, input: engine.Input): unit
+        -- Whichever screen is live aims the map first, and the map is advanced
+        -- once afterwards. A heist whose resources are still loading still gets
+        -- to aim, so its walk between two stops keeps time with the run rather
+        -- than with the asset loader.
         if screen == SCREEN_MENU then
-            menu.update(menu_state, dt)
-            return
+            menu.update(menu_state, city, dt)
+        else
+            game_screen.steer_city(heist, city)
+            if presentation_resources.can_update(assets) then
+                play_flip_cues(assets, game_screen.update(heist, city, dt))
+            end
         end
-        if not presentation_resources.can_update(assets) then return end
-        play_flip_cues(assets, game_screen.update(heist, dt))
+        city_map.update(city, dt)
     end
 
+    -- Three layers, bottom to top: the vault board, the city map over it, and
+    -- the live screen's own list over that. The map is what dissolves, so the
+    -- board is drawn whenever the map is not the whole picture and skipped once
+    -- it is.
     local function draw(graphics: engine.Graphics, alpha: f64): unit
         presentation_resources.prepare(assets, graphics)
         if presentation_resources.draw_failure(assets, graphics) then return end
+        if city.cover < 1.0 then
+            game_screen.draw_vault(heist, graphics, assets.effects, assets.texture)
+        end
+        if city_map.visible(city) then
+            city_map_render.draw(
+                city, graphics, render.school_color(city.streak_suit), city.cover)
+        end
         if screen == SCREEN_MENU then
             menu.draw(menu_state, graphics, assets.effects, assets.sound_finished)
             return
         end
-        game_screen.draw(heist, graphics, assets.effects, assets.texture)
+        if game_screen.fence_open(heist) then
+            game_screen.draw_fence(heist, graphics, city.cover)
+        end
     end
 
     local function menu_action(action: i32): unit
@@ -86,7 +118,7 @@ function install_arcane_heist(): unit
             menu_action(menu.keypressed(menu_state, key))
             return
         end
-        if game_screen.keypressed(heist, key) == game_screen.action_exit then
+        if game_screen.keypressed(heist, city, key) == game_screen.action_exit then
             leave_run()
         end
     end
@@ -106,7 +138,7 @@ function install_arcane_heist(): unit
             menu_action(menu.mousepressed(menu_state, x, y, button))
             return
         end
-        game_screen.mousepressed(heist, x, y, button)
+        game_screen.mousepressed(heist, city, x, y, button)
     end
 
     local session: engine.Session? = engine.start({
@@ -150,8 +182,14 @@ function install_arcane_heist(): unit
                 payloads[1], payloads[2], payloads[3], payloads[4], payloads[5])
             if restored == nil then return false end
             heist = restored::game_screen.State
-            menu.reset(menu_state)
+            menu.reset(menu_state, city)
             screen = restored_screen
+            -- A restored run is set down where it stands rather than played
+            -- back to it: the map takes the heist's stop with no walk and no
+            -- dissolve left to run.
+            if restored_screen == SCREEN_GAME then
+                game_screen.place_city(heist, city)
+            end
             return true
         end,
         dispose = function(): unit

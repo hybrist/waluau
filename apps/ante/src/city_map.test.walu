@@ -1,0 +1,240 @@
+-- Deterministic, DOM-free checks for the generated city map: its streets, the
+-- route the heist walks through them, and the pans and dissolves that carry the
+-- picture from one screen to the next.
+
+require("waluau:vitest")
+
+local city_map = require("./city_map")
+
+function contains(streets: {f64}, coordinate: f64): bool
+    for street in streets do
+        if street == coordinate then return true end
+    end
+    return false
+end
+
+-- Whether a point on the route is inside the rectangle the camera is showing.
+-- Following a stop means putting it on the screen, which is a weaker and more
+-- honest claim than a camera pinned to a coordinate the city edges can clamp.
+function on_screen(state: city_map.State, point: city_map.Point): bool
+    local screen_x: f64 = state.anchor_x + (point.x - state.camera_x) * state.zoom
+    local screen_y: f64 = state.anchor_y + (point.y - state.camera_y) * state.zoom
+    return screen_x >= 0.0 and screen_x <= city_map.view_width
+        and screen_y >= 0.0 and screen_y <= city_map.view_height
+end
+
+-- Whether the camera has the point exactly where the screens leave room for it,
+-- rather than merely somewhere on the screen. Clamping against a city edge is
+-- what would break this.
+function at_anchor(state: city_map.State, point: city_map.Point): bool
+    return math.abs(point.x - state.camera_x) < 0.001
+        and math.abs(point.y - state.camera_y) < 0.001
+end
+
+function step_seconds(state: city_map.State, seconds: f64): unit
+    local ticks: i32 = math.floor(seconds * 60.0)::i32
+    for _ = 1, ticks do city_map.update(state, 1.0 / 60.0) end
+end
+
+describe("city map", function()
+    it("generates a stable irregular map from a seed", function()
+        local first: city_map.State = city_map.new(41)
+        local second: city_map.State = city_map.new(41)
+
+        expect(#first.vertical_streets):toBeGreaterThan(5)
+        expect(#first.horizontal_streets):toBeGreaterThan(5)
+        expect(first.vertical_streets[#first.vertical_streets - 1]):toBe(city_map.width)
+        expect(first.horizontal_streets[#first.horizontal_streets - 1]):toBe(city_map.height)
+        expect(#first.buildings):toBe(
+            (#first.vertical_streets - 1) * (#first.horizontal_streets - 1))
+        expect(#second.vertical_streets):toBe(#first.vertical_streets)
+        expect(#second.horizontal_streets):toBe(#first.horizontal_streets)
+        for index = 0::i32, #first.vertical_streets - 1 do
+            expect(second.vertical_streets[index]):toBe(first.vertical_streets[index])
+        end
+        for index = 0::i32, #first.horizontal_streets - 1 do
+            expect(second.horizontal_streets[index]):toBe(first.horizontal_streets[index])
+        end
+        for index = 0::i32, city_map.stop_count(first) - 1 do
+            expect(second.stops[index].x):toBe(first.stops[index].x)
+            expect(second.stops[index].y):toBe(first.stops[index].y)
+        end
+    end)
+
+    it("alternates vendors and vaults along streets it generated", function()
+        local city: city_map.State = city_map.new(17)
+        city_map.ensure_stops(city, 24)
+
+        expect(city_map.stop_count(city)):toBeGreaterThanOrEqual(24)
+        for index = 0::i32, city_map.stop_count(city) - 1 do
+            local stop: city_map.Stop = city.stops[index]
+            expect(stop.vault):toBe(index % 2 == 1)
+            expect(contains(city.vertical_streets, stop.x)):toBe(true)
+            expect(contains(city.horizontal_streets, stop.y)):toBe(true)
+            -- The route never stands on the city's outermost street, so every
+            -- stop has blocks on both sides of it to be a corner of.
+            expect(stop.x):toBeGreaterThan(0.0)
+            expect(stop.x):toBeLessThan(city_map.width)
+            expect(stop.y):toBeGreaterThan(0.0)
+            expect(stop.y):toBeLessThan(city_map.height)
+        end
+
+        -- Every stop can be brought under the anchor the map screens leave room
+        -- for. A stop too near a city edge for that would be shown wide of the
+        -- mark, behind whatever list is standing there.
+        for index = 0::i32, city_map.stop_count(city) - 1 do
+            city_map.warp(city, index)
+            expect(at_anchor(city, city_map.position(city))):toBe(true)
+        end
+        -- Each leg turns a corner and covers ground: one axis changes, the
+        -- other holds, and the two stops are never the same corner.
+        for index = 0::i32, city_map.stop_count(city) - 2 do
+            local from: city_map.Stop = city.stops[index]
+            local into: city_map.Stop = city.stops[index + 1]
+            expect(from.x == into.x or from.y == into.y):toBe(true)
+            expect(from.x == into.x and from.y == into.y):toBe(false)
+        end
+    end)
+
+    it("numbers the route so vaults and the fences before them agree", function()
+        expect(city_map.fence_stop(1)):toBe(0)
+        expect(city_map.vault_stop(1)):toBe(1)
+        expect(city_map.fence_stop(3)):toBe(4)
+        expect(city_map.vault_stop(3)):toBe(5)
+        expect(city_map.stop_vault(0)):toBe(1)
+        expect(city_map.stop_vault(1)):toBe(1)
+        expect(city_map.stop_vault(4)):toBe(3)
+        expect(city_map.stop_vault(5)):toBe(3)
+
+        -- Following a vault the route has not been walked out to still finds a
+        -- stop there: the map extends itself rather than ending.
+        local city: city_map.State = city_map.new(23)
+        city_map.follow(city, city_map.vault_stop(40))
+        expect(city_map.stop_count(city)):toBeGreaterThan(city_map.vault_stop(40))
+    end)
+
+    it("pans slowly within the generated map while no route is followed", function()
+        local city: city_map.State = city_map.new(52)
+        local start_x: f64 = city.camera_x
+        local start_y: f64 = city.camera_y
+        step_seconds(city, 10.0)
+
+        expect(city.camera_x):toBeGreaterThan(start_x)
+        expect(city.camera_y):toBeGreaterThan(start_y)
+        -- The visible rectangle never runs off the generated city.
+        expect(city.camera_x - city.anchor_x / city.zoom):toBeGreaterThanOrEqual(0.0)
+        expect(
+            city.camera_x + (city_map.view_width - city.anchor_x) / city.zoom
+        ):toBeLessThanOrEqual(city_map.width)
+        expect(city.camera_y - city.anchor_y / city.zoom):toBeGreaterThanOrEqual(0.0)
+        expect(
+            city.camera_y + (city_map.view_height - city.anchor_y) / city.zoom
+        ):toBeLessThanOrEqual(city_map.height)
+    end)
+
+    it("walks to a followed stop instead of jumping to it", function()
+        local city: city_map.State = city_map.new(64)
+        city_map.follow(city, 4)
+
+        city_map.update(city, 1.0 / 60.0)
+        expect(city.travel):toBeGreaterThan(0.0)
+        expect(city.travel):toBeLessThan(4.0)
+
+        step_seconds(city, 12.0)
+        expect(city.travel):toBe(4.0)
+        expect(on_screen(city, city_map.position(city))):toBe(true)
+
+        -- The menu's drifting view and the first vendor are the same map, so
+        -- aiming at the vendor moves the camera rather than replacing the
+        -- picture.
+        city_map.drift(city)
+        step_seconds(city, 4.0)
+        city_map.follow(city, city_map.fence_stop(1))
+        step_seconds(city, 12.0)
+        expect(city.travel):toBe(0.0)
+        expect(on_screen(city, city_map.position(city))):toBe(true)
+    end)
+
+    it("sets a restarted route down without walking the city back to it", function()
+        local city: city_map.State = city_map.new(77)
+        city_map.follow(city, 6)
+        step_seconds(city, 12.0)
+
+        city_map.warp(city, city_map.fence_stop(1))
+        expect(city.travel):toBe(0.0)
+        expect(on_screen(city, city_map.position(city))):toBe(true)
+    end)
+
+    it("dissolves between the map and the vault rather than cutting", function()
+        local city: city_map.State = city_map.new(88)
+        expect(city.cover):toBe(1.0)
+        expect(city_map.visible(city)):toBe(true)
+
+        city_map.hide(city)
+        city_map.update(city, 1.0 / 60.0)
+        expect(city.cover):toBeLessThan(1.0)
+        expect(city.cover):toBeGreaterThan(0.0)
+        expect(city_map.visible(city)):toBe(true)
+
+        step_seconds(city, 4.0)
+        expect(city.cover):toBe(0.0)
+        expect(city_map.visible(city)):toBe(false)
+        -- Leaving the map pushes the camera in on the house it is about to be
+        -- inside of.
+        expect(city.zoom):toBeGreaterThan(1.0)
+
+        city_map.show(city)
+        city_map.update(city, 1.0 / 60.0)
+        expect(city.cover):toBeGreaterThan(0.0)
+        expect(city.cover):toBeLessThan(1.0)
+        step_seconds(city, 4.0)
+        expect(city.cover):toBe(1.0)
+        expect(city.zoom):toBe(1.0)
+    end)
+
+    it("settles a dissolve that has nothing to play for", function()
+        local city: city_map.State = city_map.new(99)
+        city_map.follow(city, 5)
+        city_map.hide(city)
+        city_map.settle(city)
+
+        expect(city.cover):toBe(0.0)
+        expect(city.travel):toBe(5.0)
+        expect(on_screen(city, city_map.position(city))):toBe(true)
+    end)
+
+    it("keeps every animated dash on a generated street", function()
+        local city: city_map.State = city_map.new(73)
+        if city.streak_horizontal then
+            expect(contains(city.horizontal_streets, city.streak_street)):toBe(true)
+        else
+            expect(contains(city.vertical_streets, city.streak_street)):toBe(true)
+        end
+        expect(city.streak_suit):toBeGreaterThanOrEqual(0)
+        expect(city.streak_suit):toBeLessThan(4)
+
+        -- Cross the first dash so the next randomized route is chosen.
+        city_map.update(city, 2.0)
+        expect(city.streak_clock):toBeLessThan(0.0)
+        if city.streak_horizontal then
+            expect(contains(city.horizontal_streets, city.streak_street)):toBe(true)
+        else
+            expect(contains(city.vertical_streets, city.streak_street)):toBe(true)
+        end
+    end)
+
+    it("does not consume gameplay randomness while it animates", function()
+        math.randomseed(91)
+        local seed: i32 = math.random(2147483646)
+        local expected_next: i32 = math.random(2147483646)
+
+        math.randomseed(91)
+        local city: city_map.State = city_map.new(math.random(2147483646))
+        city_map.update(city, 2.0)
+        city_map.follow(city, city_map.vault_stop(6))
+        city_map.update(city, 9.0)
+        expect(math.random(2147483646)):toBe(expected_next)
+        -- Keep the sampled seed live so the compiler also pins its type.
+        expect(seed):toBeGreaterThan(0)
+    end)
+end)

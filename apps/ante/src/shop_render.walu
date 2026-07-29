@@ -1,7 +1,12 @@
 -- The fence's screen: the intermission between two vaults, drawn as one
--- cursor-driven list of offers over the vault's own panel chrome. The shop
--- module owns what the lines are and what they cost; this module owns where
--- they sit, which is also why the pointer's row lookup lives here.
+-- cursor-driven list of offers in the vault's own panel chrome. The shop module
+-- owns what the lines are and what they cost; this module owns where they sit,
+-- which is also why the pointer's row lookup lives here.
+--
+-- The list stands on the city map, at the vendor the route has reached, and
+-- keeps to a column so the map beside it can be read at the same time. Every
+-- colour it draws goes through `alpha`: arriving at a fence and leaving one are
+-- dissolves the map runs, and the offers travel with it.
 
 local engine = require("waluau:engine")
 local game = require("./game")
@@ -9,15 +14,17 @@ local render = require("./render")
 local run_module = require("./run")
 local shop = require("./shop")
 
-const WIDTH: f64 = 960.0
-
-const PANEL_X: f64 = 92.0
+-- The offers keep to a column down the left so the right of the screen stays
+-- the city map: where the run has got to and which house is next are as much
+-- of this screen as the prices are.
+const PANEL_X: f64 = 44.0
 const PANEL_Y: f64 = 68.0
-const PANEL_W: f64 = 776.0
+const PANEL_W: f64 = 540.0
 const PANEL_H: f64 = 476.0
+const PANEL_CENTER: f64 = 314.0
 
-const ROW_X: f64 = 150.0
-const ROW_W: f64 = 660.0
+const ROW_X: f64 = 76.0
+const ROW_W: f64 = 476.0
 const ROW_H: f64 = 54.0
 const ROW_TOP: f64 = 196.0
 const ROW_PITCH: f64 = 64.0
@@ -90,7 +97,8 @@ function draw_row(
     row: shop.Row,
     label: string,
     index: i32,
-    focused: bool
+    focused: bool,
+    alpha: f64
 ): unit
     local top: f64 = row_top(index)
     local edge: string = "#3f3f46"
@@ -101,57 +109,68 @@ function draw_row(
         edge = "#fbbf24"
         if row.available then ink = "#fbbf24" end
     end
-    render.panel(graphics, ROW_X, top, ROW_W, ROW_H, "#17171c", edge)
-    render.text(graphics, label, ROW_X + 22.0, top + 33.0, 13, ink)
+    render.panel(
+        graphics, ROW_X, top, ROW_W, ROW_H,
+        render.fade("#17171c", alpha), render.fade(edge, alpha))
+    render.text(
+        graphics, label, ROW_X + 22.0, top + 33.0, 13, render.fade(ink, alpha))
     -- A bought line keeps its place with its price struck off: the stock of a
     -- visit is two offers, and one of them is now spent.
     if row.sold then
         render.text_right(
-            graphics, "SOLD", ROW_X + ROW_W - 22.0, top + 33.0, 13, "#52525b")
+            graphics, "SOLD", ROW_X + ROW_W - 22.0, top + 33.0, 13,
+            render.fade("#52525b", alpha))
     elseif row.price > 0 then
         render.text_right(
             graphics, tostring(row.price) .. " MANA",
-            ROW_X + ROW_W - 22.0, top + 33.0, 13, price_ink)
+            ROW_X + ROW_W - 22.0, top + 33.0, 13, render.fade(price_ink, alpha))
     end
 end
 
 -- `run` is read only here: every purchase has already been applied by the time
--- a frame is drawn, so this module never asks the run to change.
+-- a frame is drawn, so this module never asks the run to change. The backdrop
+-- is the city map the entry module has already drawn, so the panel is laid over
+-- the street the vendor is standing on rather than over a board.
 function draw(
     state: shop.State,
     run: run_module.State,
-    graphics: engine.Graphics
+    graphics: engine.Graphics,
+    alpha: f64
 ): unit
+    if alpha <= 0.0 then return end
     local choosing: bool = shop.choosing(state)
-    render.draw_backdrop(graphics)
-    render.panel(graphics, PANEL_X, PANEL_Y, PANEL_W, PANEL_H, "#09090b", "#a1a1aa")
-    render.text(graphics, "THE FENCE", 126.0, 117.0, 24, "#fbbf24")
+    render.panel(
+        graphics, PANEL_X, PANEL_Y, PANEL_W, PANEL_H,
+        render.fade("#09090b", alpha * 0.94), render.fade("#a1a1aa", alpha))
+    render.text(graphics, "THE FENCE", 78.0, 117.0, 24, render.fade("#fbbf24", alpha))
     local subtitle: string = "MANA SPENT HERE WILL NOT FIGHT IN VAULT " .. tostring(run.vault)
     local offered: i32 = 0
     if choosing then
         offered = state.offers[state.pending].kind
         subtitle = "ONLY TWO SPELLS TRAVEL AT ONCE. WHICH ONE GOES?"
     end
-    render.text(graphics, subtitle, 126.0, 145.0, 11, "#a1a1aa")
-    render.text_right(graphics, tostring(run.mana), 834.0, 122.0, 24, "#67e8f9")
-    render.text_right(graphics, "MANA ON HAND", 834.0, 145.0, 9, "#155e75")
+    render.text(graphics, subtitle, 78.0, 145.0, 11, render.fade("#a1a1aa", alpha))
+    render.text_right(
+        graphics, tostring(run.mana), 550.0, 122.0, 24, render.fade("#67e8f9", alpha))
+    render.text_right(
+        graphics, "MANA ON HAND", 550.0, 145.0, 9, render.fade("#155e75", alpha))
 
     local rows: {shop.Row} = shop.rows(state, run)
     for index, row in rows do
         draw_row(
             graphics, row, row_label(row, run, offered),
-            index, index == state.cursor)
+            index, index == state.cursor, alpha)
     end
     if not choosing then
         -- Two offers are the whole stock of a visit, so say what the list is
         -- rather than leaving the player waiting for it to refill.
         render.text_centered(
             graphics, "TWO OFFERS A VISIT. THE NEXT FENCE HAS ITS OWN",
-            WIDTH * 0.5, row_top(#rows) + 33.0, 11, "#8a8a92")
+            PANEL_CENTER, row_top(#rows) + 33.0, 11, render.fade("#8a8a92", alpha))
     end
     render.text_centered(
         graphics, "ARROWS MOVE   ENTER OR CLICK BUYS   ESC ENTERS THE VAULT",
-        WIDTH * 0.5, 566.0, 11, "#a1a1aa")
+        PANEL_CENTER, 566.0, 11, render.fade("#a1a1aa", alpha))
 end
 
 return {
