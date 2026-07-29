@@ -5,15 +5,21 @@
 -- of resource and rules concerns.
 --
 -- Picking NEW RUN or BOSS RUSH leads to a second list: the starting spell the
--- robbers bring on the job. Only confirming a spell emits a start action, so
--- the entry module always receives a complete mode-plus-spell choice. Both
--- entries start a run — a sequence of vaults sharing one mana pool; they
--- differ only in how often a vault is fought as a boss battle.
+-- robbers bring on the job. That list is the run's first fence — a street
+-- vendor standing at the mouth of the route — so this screen aims the shared
+-- city map at it and lets the map pan there from the drifting view the title
+-- sits over. Only confirming a spell emits a start action, so the entry module
+-- always receives a complete mode-plus-spell choice. Both entries start a run —
+-- a sequence of vaults sharing one mana pool; they differ only in how often a
+-- vault is fought as a boss battle.
+--
+-- The map itself belongs to the entry module and outlives this screen, which is
+-- why it arrives as a parameter rather than living here: the pan that starts on
+-- this screen finishes on the heist's.
 
 local engine = require("waluau:engine")
 local render = require("./render")
-local menu_city = require("./menu_city")
-local menu_city_render = require("./menu_city_render")
+local city_map = require("./city_map")
 
 type State = {
     clock: f64,
@@ -21,8 +27,7 @@ type State = {
     help_open: bool,
     stage: i32,
     rush_choice: bool,
-    spell_cursor: i32,
-    city: menu_city.State
+    spell_cursor: i32
 }
 
 const ACTION_NONE: i32 = 0
@@ -53,23 +58,32 @@ function new(): State
         stage = STAGE_MAIN,
         rush_choice = false,
         spell_cursor = 0,
-        city = menu_city.new(math.random(2147483646)),
     }
 end
 
-function reset(state: State): unit
+-- Coming back to the menu is coming back to a different job: a new city, and a
+-- new route through it for the next run to walk.
+function reset(state: State, city: city_map.State): unit
     state.clock = 0.0
     state.cursor = ITEM_NEW_RUN
     state.help_open = false
     state.stage = STAGE_MAIN
     state.rush_choice = false
     state.spell_cursor = 0
-    menu_city.regenerate(state.city)
+    city_map.regenerate(city)
 end
 
-function update(state: State, dt: f64): unit
+-- Aim the map: the title sits over a city sweeping past, and the spell list
+-- sits over the vendor the run sets out from. Nothing else changes, so the
+-- change of stage is a pan rather than a cut.
+function update(state: State, city: city_map.State, dt: f64): unit
     state.clock += dt
-    menu_city.update(state.city, dt)
+    city_map.show(city)
+    if state.stage == STAGE_SPELL then
+        city_map.follow(city, city_map.fence_stop(1))
+    else
+        city_map.drift(city)
+    end
 end
 
 -- The starting spell the current selection names, as the rules' spell kind.
@@ -138,13 +152,16 @@ end
 
 function draw_spell_stage(state: State, graphics: engine.Graphics): unit
     -- The pick lasts the whole run, not one vault, and the mana it burns is
-    -- the same pool the next vault inherits.
+    -- the same pool the next vault inherits. It is bought at a vendor like
+    -- every later upgrade, which is what the map behind this list is showing.
     local mode: string = "NEW RUN"
     if state.rush_choice then mode = "BOSS RUSH" end
-    render.text_centered(graphics, "CHOOSE A STARTING SPELL", WIDTH * 0.5, 212.0, 30, "#fbbf24")
+    render.text_centered(graphics, "THE FIRST FENCE", WIDTH * 0.5, 212.0, 30, "#fbbf24")
+    render.text_centered(
+        graphics, "CHOOSE A STARTING SPELL", WIDTH * 0.5, 246.0, 12, "#d4d4d8")
     render.text_centered(
         graphics, mode .. "   CARRIED ALL RUN, EVERY CAST COSTS 5 MANA",
-        WIDTH * 0.5, 252.0, 12, "#d4d4d8")
+        WIDTH * 0.5, 268.0, 11, "#a1a1aa")
     for spell = 0::i32, SPELL_COUNT - 1 do
         local kind: i32 = spell + 1
         -- Each idle row wears its spell's colour, so the list doubles as the
@@ -161,8 +178,11 @@ end
 -- `ready` reports whether the required flip sound has finished loading. The
 -- menu accepts NEW RUN either way — the heist screen already waits for its
 -- resources — but says so instead of promising a start that visibly stalls.
+--
+-- The city map is already on the screen by the time this runs: the entry module
+-- draws it under whichever screen is live, so what is drawn here is only the
+-- list standing over it.
 function draw(state: State, graphics: engine.Graphics, effects: render.EffectShaders, ready: bool): unit
-    menu_city_render.draw(state.city, graphics, render.school_color(state.city.streak_suit))
     if state.help_open then
         render.draw_help(graphics, effects)
         return

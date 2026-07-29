@@ -10,6 +10,14 @@
 -- mana never has to leave this screen. The fence between two vaults is part of
 -- that span — it spends the same carried mana — so this screen owns it too, and
 -- routes input and drawing to it while it stands.
+--
+-- Where the run stands is also a place on the shared city map, which this
+-- screen aims but does not own: the fence is a vendor on a street corner and
+-- the vault is the house at the end of the next block. `leaving_fence` is the
+-- one moment the two disagree — the offers are still on the screen while the
+-- map they are drawn on dissolves into the vault that has already been dealt
+-- behind it — so that walking into a heist is one movement instead of a list
+-- vanishing and a board appearing.
 
 local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
@@ -17,6 +25,7 @@ local game = require("./game")
 local run_module = require("./run")
 local render = require("./render")
 local choreography = require("./choreography")
+local city_map = require("./city_map")
 local flow = require("./flow")
 local shop = require("./shop")
 local shop_render = require("./shop_render")
@@ -26,7 +35,9 @@ type State = {
     rules: game.State,
     ui: flow.State,
     presentation: choreography.State,
-    shop: shop.State
+    shop: shop.State,
+    leaving_fence: bool,
+    fence_fade: f64
 }
 
 const ACTION_NONE: i32 = 0
@@ -40,7 +51,15 @@ function new(): State
         ui = flow.new(),
         presentation = choreography.new(),
         shop = shop.new(),
+        leaving_fence = false,
+        fence_fade = 0.0,
     }
+end
+
+-- Whether the map is the screen. The fence stands on it; a vault that has been
+-- walked into has taken it over, and so has one whose fence is being left.
+function on_map(state: State): bool
+    return state.shop.open and not state.leaving_fence
 end
 
 -- Deal the vault the run is currently on: its variant and opening mana are the
@@ -48,7 +67,6 @@ end
 -- dealt as.
 function deal_vault(state: State): unit
     local run: run_module.State = state.run
-    shop.close(state.shop)
     state.rules:reset(run:boss(), run.spells, run.mana)
     flow.reset(state.ui)
     choreography.reset(state.presentation)
@@ -57,11 +75,25 @@ function deal_vault(state: State): unit
     choreography.opening_deal(game.view(state.rules), state.presentation)
 end
 
+function close_fence(state: State): unit
+    shop.close(state.shop)
+    state.leaving_fence = false
+end
+
+-- A run that is starting or starting over sets out from the vendor its opening
+-- spell was picked at, so the map is put back at the mouth of the route instead
+-- of walking the whole city back to it.
+function open_route(city: city_map.State): unit
+    city_map.warp(city, city_map.fence_stop(1))
+end
+
 -- Start a run at its first vault. `rush` is the boss-rush run and `spell` the
 -- starting spell every vault of it is fought with; the entry module passes the
 -- menu's choices, and an in-game restart replays the same pair from vault one.
-function reset(state: State, rush: bool, spell: i32): unit
+function reset(state: State, city: city_map.State, rush: bool, spell: i32): unit
     state.run:restart(spell, rush)
+    close_fence(state)
+    open_route(city)
     deal_vault(state)
 end
 
@@ -73,20 +105,81 @@ end
 -- already moved on and is holding the mana it carried out, which is exactly
 -- what the intermission spends. A lost run has nothing to spend and no loadout
 -- to spend it on, so its fresh first vault is dealt straight away.
-function advance_run(state: State): unit
+function advance_run(state: State, city: city_map.State): unit
     local cleared: bool = state.rules:is_victory()
     state.run:settle(cleared, state.rules:mana())
     if cleared then
         shop.open_for(state.shop, state.run)
+        state.leaving_fence = false
         return
     end
+    close_fence(state)
+    open_route(city)
     deal_vault(state)
 end
 
 -- The fence is done with: deal the vault the run has been standing in front of,
--- loadout, prices, and remaining mana as the shop left them.
+-- loadout, prices, and remaining mana as the shop left them. The offers are not
+-- taken down here — the map carries them out as it dissolves, and `update`
+-- clears them once it has.
 function leave_shop(state: State): unit
+    state.leaving_fence = true
     deal_vault(state)
+end
+
+-- Which stop of the route the run stands on: the vendor before the live vault
+-- while the intermission is up, and the vault's own house otherwise.
+function city_stop(state: State): i32
+    if on_map(state) then return city_map.fence_stop(state.run.vault) end
+    return city_map.vault_stop(state.run.vault)
+end
+
+-- How much of the offer list is on the screen. Leaving a fence takes it down
+-- before the walk to the next house is under way, and the map's own `street`
+-- keeps it from arriving while the camera is still inside the last vault: a
+-- list about where the heist is standing waits until it is standing there.
+const FENCE_FADE_SECONDS: f64 = 0.28
+
+function fade_toward(value: f64, goal: f64, step: f64): f64
+    if value < goal then
+        local next: f64 = value + step
+        if next > goal then return goal end
+        return next
+    end
+    local next: f64 = value - step
+    if next < goal then return goal end
+    return next
+end
+
+-- Aim the map at where the run stands and say whether the map or the vault is
+-- the picture. Called every frame, resources loaded or not, so the walk between
+-- two stops keeps time with the run rather than with the asset loader.
+function steer_city(state: State, city: city_map.State, dt: f64): unit
+    city_map.follow(city, city_stop(state))
+    local standing: f64 = 0.0
+    if on_map(state) then
+        city_map.show(city)
+        standing = 1.0
+    else
+        city_map.hide(city)
+    end
+    state.fence_fade = fade_toward(
+        state.fence_fade, standing, dt / FENCE_FADE_SECONDS)
+end
+
+-- The same aim, with the travel and the dive already finished: for a run that
+-- is being set down rather than played into place, which is what a development
+-- snapshot coming back is.
+function place_city(state: State, city: city_map.State): unit
+    -- A whole fade's worth of time in one step is how this asks for the aim to
+    -- have already arrived, offers included.
+    steer_city(state, city, FENCE_FADE_SECONDS)
+    city_map.warp(city, city_stop(state))
+    city_map.settle(city)
+end
+
+function fence_open(state: State): bool
+    return state.shop.open
 end
 
 -- What the renderer needs to know about the run behind the live board.
@@ -114,10 +207,13 @@ end
 
 -- Returns how many card-flip sound cues this tick earned; the entry module
 -- owns audio resources and playback.
-function update(state: State, dt: f64): i32
+function update(state: State, city: city_map.State, dt: f64): i32
     -- The fence is a still screen standing between two vaults: the board behind
-    -- it is already settled, so nothing advances while it is up.
-    if state.shop.open then return 0 end
+    -- it is already settled, so nothing advances while it is up. Once it has
+    -- been left the vault is dealt and running, and the offers only wait for
+    -- the map under them to finish dissolving before they are taken down.
+    if on_map(state) then return 0 end
+    if state.leaving_fence and not city_map.visible(city) then close_fence(state) end
     local ui: flow.State = state.ui
     local presentation: choreography.State = state.presentation
     local animating: bool = choreography.is_animating(presentation)
@@ -142,16 +238,14 @@ function update(state: State, dt: f64): i32
     return 0
 end
 
-function draw(
+-- The vault board. The entry module draws it under the city map whenever the
+-- map is not the whole picture, so a dissolve always has a vault to arrive at.
+function draw_vault(
     state: State,
     graphics: engine.Graphics,
     effects: render.EffectShaders,
     card_back: graphics_module.Texture?
 ): unit
-    if state.shop.open then
-        shop_render.draw(state.shop, state.run, graphics)
-        return
-    end
     local ui: flow.State = state.ui
     choreography.draw(
         graphics,
@@ -174,6 +268,13 @@ function draw(
         },
         card_back
     )
+end
+
+-- The fence's offers, at the opacity of the street they are laid out on: they
+-- arrive as the camera comes back out of the last vault, and are gone before
+-- the walk to the next house begins.
+function draw_fence(state: State, city: city_map.State, graphics: engine.Graphics): unit
+    shop_render.draw(state.shop, state.run, graphics, state.fence_fade * city.street)
 end
 
 function submit_swap(state: State): unit
@@ -220,7 +321,7 @@ function submit_breach(state: State): unit
     choreography.begin_reveal(state.presentation, resolved.winner ~= 0)
 end
 
-function consume_gate(state: State, command: i32): bool
+function consume_gate(state: State, city: city_map.State, command: i32): bool
     local result: i32 = flow.gate(
         state.ui, state.rules:is_finished(),
         choreography.is_animating(state.presentation),
@@ -229,9 +330,9 @@ function consume_gate(state: State, command: i32): bool
     -- Restart is a run restart, not a redeal of the live vault: a vault the
     -- run already paid mana into cannot be fought a second time.
     if result == flow.result_reset then
-        reset(state, state.run.rush, state.run.start_spell)
+        reset(state, city, state.run.rush, state.run.start_spell)
     elseif result == flow.result_advance then
-        advance_run(state)
+        advance_run(state, city)
     elseif result == flow.result_refill then
         local trick: game.Trick? = state.rules:last_trick()
         if trick ~= nil then
@@ -258,17 +359,19 @@ end
 -- TODO(waluau-language): Exhaustive enums and pattern matching for host key
 -- values would replace this string ladder and make unmapped controls a
 -- compile-time decision shared by every input adapter.
-function keypressed(state: State, key: string): i32
+function keypressed(state: State, city: city_map.State, key: string): i32
     local ui: flow.State = state.ui
     local rules: game.State = state.rules
     local presentation: choreography.State = state.presentation
     if key == "m" or key == "M" then return ACTION_EXIT end
     -- The fence answers its own list; nothing on the settled board behind it is
     -- reachable until the next vault is dealt. Restarting the run is the one
-    -- gesture that still works everywhere, the fence included.
-    if state.shop.open then
+    -- gesture that still works everywhere, the fence included. A fence already
+    -- left answers nothing: the offers on the screen are a picture the map is
+    -- carrying out, and the board underneath is the live one.
+    if on_map(state) then
         if key == "r" or key == "R" then
-            reset(state, state.run.rush, state.run.start_spell)
+            reset(state, city, state.run.rush, state.run.start_spell)
         elseif shop.keypressed(state.shop, state.run, key) == shop.result_leave then
             leave_shop(state)
         end
@@ -314,7 +417,7 @@ function keypressed(state: State, key: string): i32
         end
         return ACTION_NONE
     end
-    if consume_gate(state, key_command(key)) then return ACTION_NONE end
+    if consume_gate(state, city, key_command(key)) then return ACTION_NONE end
 
     if key == "ArrowLeft" or key == "a" then
         if ui.cursor_area == flow.cursor_hand then
@@ -365,7 +468,7 @@ function keypressed(state: State, key: string): i32
 end
 
 function mousemoved(state: State, x: f64, y: f64): unit
-    if state.shop.open then
+    if on_map(state) then
         shop.focus(
             state.shop, state.run,
             shop_render.row_at(x, y, shop.row_count(state.shop, state.run)))
@@ -400,12 +503,12 @@ function mousemoved(state: State, x: f64, y: f64): unit
     end
 end
 
-function mousepressed(state: State, x: f64, y: f64, button: i32): unit
+function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button: i32): unit
     if button ~= 1 then return end
     -- Clicking an offer buys it the same way Enter on it does; a click on the
     -- chrome between the lines buys nothing rather than taking whatever the
     -- cursor happened to rest on.
-    if state.shop.open then
+    if on_map(state) then
         local row: i32 = shop_render.row_at(
             x, y, shop.row_count(state.shop, state.run))
         if row < 0 then return end
@@ -416,7 +519,7 @@ function mousepressed(state: State, x: f64, y: f64, button: i32): unit
         return
     end
     if choreography.firebolt_pending(state.presentation) then return end
-    if consume_gate(state, flow.command_primary) then return end
+    if consume_gate(state, city, flow.command_primary) then return end
 
     local ui: flow.State = state.ui
     local rules: game.State = state.rules
@@ -510,6 +613,12 @@ function restore(
         ui = restored_ui,
         presentation = presentation::choreography.State,
         shop = intermission::shop.State,
+        -- Leaving a fence is a moment of movement, not a phase of the run. A
+        -- snapshot lands on one side of it: an open fence comes back standing,
+        -- and `place_city` puts the map and the offers where that leaves the
+        -- run.
+        leaving_fence = false,
+        fence_fade = 0.0,
     }
 end
 
@@ -517,7 +626,11 @@ return {
     new = new,
     reset = reset,
     update = update,
-    draw = draw,
+    steer_city = steer_city,
+    place_city = place_city,
+    fence_open = fence_open,
+    draw_vault = draw_vault,
+    draw_fence = draw_fence,
     keypressed = keypressed,
     mousemoved = mousemoved,
     mousepressed = mousepressed,

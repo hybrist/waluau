@@ -687,6 +687,25 @@ function text_right(graphics: Graphics, value: string, right_x: f64, y: f64, siz
     graphics:print_aligned(value, right_x, y, "right")
 end
 
+-- One colour of a palette written as "#rrggbb", at a fraction of its opacity.
+-- A screen that dissolves into another needs every one of its colours at the
+-- same fraction, and the renderer's colours are literals rather than channels,
+-- so the fade is spelled as the alpha pair the engine already accepts on the
+-- end of a hex colour. Colours that already carry an alpha pair are not
+-- fadeable this way and none are passed here.
+const FADE_DIGITS: string = "0123456789abcdef"
+
+function fade(color: string, alpha: f64): string
+    if alpha >= 1.0 then return color end
+    if alpha <= 0.0 then return color .. "00" end
+    local level: i32 = math.floor(alpha * 255.0 + 0.5)::i32
+    local high: i32 = math.floor((level::f64) / 16.0)::i32
+    local low: i32 = level - high * 16
+    return color
+        .. string.sub(FADE_DIGITS, high + 1, high + 1)
+        .. string.sub(FADE_DIGITS, low + 1, low + 1)
+end
+
 function panel(graphics: Graphics, x: f64, y: f64, width: f64, height: f64, fill: string, edge: string): unit
     graphics:set_color(fill)
     graphics:fill_rectangle(x, y, width, height)
@@ -2499,6 +2518,9 @@ return {
     -- holds the pose the condition leaves behind.
     power_settled_clock = power_settled_clock,
     panel = panel,
+    -- One screen dissolving into another needs every colour of it at the same
+    -- opacity, which is what a screen laid over the city map asks for.
+    fade = fade,
     text_centered = text_centered,
     point = point,
     midpoint = midpoint,
