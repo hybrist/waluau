@@ -4,7 +4,7 @@
 
 export const parameters = { renderer: 'waluau' };
 
-/** Stories carry their own mount instruction, so args do not shape the render. */
+/** Generated story render functions pair Storybook args with their Waluau book. */
 export const render = (args, context) => {
   const { component } = context;
   if (typeof component === 'function') return component(args, context);
@@ -26,7 +26,7 @@ export async function renderToCanvas({ storyFn, name, showMain, showError }, can
     return undefined;
   }
 
-  await result.book.mount(result.name, canvasElement);
+  await result.book.mount(result.name, canvasElement, result.args);
   showMain();
   // Storybook replaces the canvas element between stories from different
   // files; tearing the session down here is what stops the old animation loop

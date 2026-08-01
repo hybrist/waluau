@@ -20,7 +20,7 @@ function fakeModule({ stories, onShow, onTeardown }) {
       for (const name of stories) {
         host.__waluau_storybook_story(name, () => {
           calls.push(`show:${name}`);
-          onShow?.(name);
+          onShow?.(name, host);
         });
       }
       host.__waluau_storybook_teardown(() => {
@@ -142,5 +142,42 @@ test('releases the old session when Storybook renders into a new element', async
     await book.mount('Face up', fakeElement());
 
     assert.deepEqual(module.calls, ['show:Face up', 'teardown', 'show:Face up']);
+  });
+});
+
+test('makes the current Storybook integer args visible to the mounted story', async () => {
+  await withFakeDocument(async () => {
+    const observed = [];
+    const module = fakeModule({
+      stories: ['Face up'],
+      onShow: (_name, host) => {
+        observed.push([
+          host.__waluau_storybook_arg_i32('suit'),
+          host.__waluau_storybook_arg_i32('rank'),
+        ]);
+      },
+    });
+    const book = bookFor(module);
+    const canvas = fakeElement();
+
+    await book.mount('Face up', canvas, { suit: 0, rank: 13 });
+    await book.mount('Face up', canvas, { suit: 3, rank: 2 });
+
+    assert.deepEqual(observed, [[0, 13], [3, 2]]);
+  });
+});
+
+test('rejects a missing or non-integer arg at the typed host bridge', async () => {
+  await withFakeDocument(async () => {
+    const module = fakeModule({
+      stories: ['Face up'],
+      onShow: (_name, host) => host.__waluau_storybook_arg_i32('rank'),
+    });
+    const book = bookFor(module);
+
+    await assert.rejects(
+      () => book.mount('Face up', fakeElement(), { rank: 2.5 }),
+      /arg "rank" is not an i32/,
+    );
   });
 });

@@ -47,6 +47,15 @@ type Scene = {
 }
 
 type Story = { name: string, scene: Scene }
+type Control = {
+    name: string,
+    kind: string,
+    initial: i32,
+    min: i32,
+    max: i32,
+    step: i32,
+    labels: {string}
+}
 
 const DEFAULT_WIDTH: u32 = 960
 const DEFAULT_HEIGHT: u32 = 600
@@ -63,6 +72,10 @@ declare function __waluau_storybook_teardown(hide: () -> unit): unit
 -- The id of the element Storybook wants the canvas inside, read at mount time
 -- because the host replaces that element between renders.
 declare function __waluau_storybook_mount(): string
+-- The generated CSF export supplies the currently selected args before it
+-- mounts a story. Integer controls cross through this typed getter instead of
+-- exposing a generic JavaScript object inside game code.
+declare function __waluau_storybook_arg_i32(name: string): i32
 
 -- The live canvas, plus which story is currently on it. One book mounts one
 -- story at a time; a record rather than module state because a module's
@@ -210,7 +223,38 @@ function show(mount: Mount, name: string, scene: Scene): unit
     end
 end
 
-function story(name: string, scene: Scene): Story
+-- Control declarations are real values so the story source type-checks, but
+-- their literal calls are read statically by the Storybook indexer. The host
+-- owns their UI metadata and current values.
+function range(name: string, initial: i32, min: i32, max: i32, step: i32): Control
+    return {
+        name = name,
+        kind = "range",
+        initial = initial,
+        min = min,
+        max = max,
+        step = step,
+        labels = {}
+    }
+end
+
+function select(name: string, initial: i32, labels: {string}): Control
+    return {
+        name = name,
+        kind = "select",
+        initial = initial,
+        min = 0,
+        max = #labels - 1,
+        step = 1,
+        labels = labels
+    }
+end
+
+function arg_i32(name: string): i32
+    return __waluau_storybook_arg_i32(name)
+end
+
+function story(name: string, scene: Scene, ...): Story
     return { name = name, scene = scene }
 end
 
@@ -239,6 +283,9 @@ function publish(stories: {Story}): unit
 end
 
 return {
+    arg_i32 = arg_i32,
+    range = range,
+    select = select,
     story = story,
     publish = publish
 }

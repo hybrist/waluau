@@ -44,6 +44,7 @@ export function createWaluauBook({ run, createImports, wasmUrl }) {
   let getWasmExports = () => null;
   let loading = null;
   let mountedElement = null;
+  let currentArgs = {};
 
   const invoke = (callback) => {
     const trampoline = getWasmExports()?.[CALLBACK_UNIT_TRAMPOLINE_EXPORT];
@@ -65,6 +66,14 @@ export function createWaluauBook({ run, createImports, wasmUrl }) {
       teardown = hide;
     },
     __waluau_storybook_mount: () => WALUAU_STORY_VIEWPORT_ID,
+    __waluau_storybook_arg_i32: (name) => {
+      const key = String(name);
+      const value = currentArgs[key];
+      if (!Number.isInteger(value) || value < -2147483648 || value > 2147483647) {
+        throw new Error(`The Waluau Storybook arg "${key}" is not an i32`);
+      }
+      return value;
+    },
   };
 
   // The module's top level publishes every story, so loading it once is what
@@ -120,11 +129,12 @@ export function createWaluauBook({ run, createImports, wasmUrl }) {
     names() {
       return Array.from(shows.keys());
     },
-    async mount(name, canvasElement) {
+    async mount(name, canvasElement, args = {}) {
       if (pendingTeardown != null) {
         clearTimeout(pendingTeardown);
         pendingTeardown = null;
       }
+      currentArgs = args ?? {};
       await load();
       const show = shows.get(name);
       if (show === undefined) {
