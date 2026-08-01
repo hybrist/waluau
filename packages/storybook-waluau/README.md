@@ -51,6 +51,30 @@ storybook.publish({
 })
 ```
 
+A story can declare integer controls in a third argument. `range` exposes a
+slider and `select` maps zero-based integer values to labels; the scene reads
+the current value with `arg_i32` whenever it draws:
+
+```walu
+local function draw_card(graphics: engine.Graphics, alpha: f64): unit
+    local rank: i32 = storybook.arg_i32("rank")
+    local suit: i32 = storybook.arg_i32("suit")
+    render.draw_card(graphics, { rank = rank, suit = suit }, 40.0, 40.0)
+end
+
+storybook.publish({
+    storybook.story("Card", { draw = draw_card }, {
+        storybook.select("suit", 0, { "Red", "Blue", "Black", "Green" }),
+        storybook.range("rank", 13, 2, 14, 1),
+    }),
+})
+```
+
+Control names and arguments must be literals because Storybook builds its
+index without instantiating the Wasm module. A `select` initial value is the
+zero-based index of one of its labels. A `range` initial value must be between
+its minimum and maximum, and its step must be positive.
+
 A story's scene is `draw` plus whatever else it needs: `load` (run each time
 the story is mounted), `update`, `keypressed`, `keyreleased`, `mousepressed`,
 `mousereleased`, `mousemoved`, and `width`/`height`/`background` for a story the
@@ -83,5 +107,4 @@ valid.
   teardown that stops the session.
 
 Docs blocks (`@storybook/addon-docs`) are not supported: a story is a canvas,
-and there is no source snippet or args table to generate from it. Controls are
-likewise empty — stories have no args.
+and there is no source snippet or args table to generate from it.

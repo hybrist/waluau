@@ -47,7 +47,10 @@ test('turns a .stories.walu import into a CSF module of published stories', asyn
       { addWatchFile: () => {} },
       `local storybook = require("waluau:engine/storybook")
 storybook.publish({
-    storybook.story("Face up", { draw = draw_face_up }),
+    storybook.story("Face up", { draw = draw_face_up }, {
+      storybook.select("suit", 0, { "Red", "Blue" }),
+      storybook.range("rank", 13, 2, 14, 1),
+    }),
     storybook.story("Face down", { draw = draw_face_down }),
 })`,
       entry,
@@ -56,7 +59,13 @@ storybook.publish({
     assert.match(transformed.code, /createWaluauBook\(\{/);
     assert.match(transformed.code, /export const FaceUp = \{\n  name: "Face up",/);
     assert.match(transformed.code, /export const FaceDown = \{\n  name: "Face down",/);
-    assert.match(transformed.code, /render: \(\) => \(\{ book, name: "Face up" \}\)/);
+    assert.match(transformed.code, /args: \{"suit":0,"rank":13\}/);
+    assert.match(transformed.code, /"type":"select","labels":\{"0":"Red","1":"Blue"\}/);
+    assert.match(transformed.code, /"type":"range","min":2,"max":14,"step":1/);
+    assert.match(
+      transformed.code,
+      /render: \(args\) => \(\{ book, name: "Face up", args \}\)/,
+    );
     // A story module is not a game: nothing starts on import.
     assert.doesNotMatch(transformed.code, /replaceWaluauGame/);
   } finally {

@@ -69,3 +69,55 @@ storybook.publish({
     { name: 'Face-up', exportName: 'FaceUp2' },
   ]);
 });
+
+test('reads range and labelled select controls from a story declaration', () => {
+  const stories = parseStories(source(`
+storybook.publish({
+    storybook.story("Card", card_scene(draw_card), {
+        storybook.select("suit", 2, { "Red", "Blue", "Black", "Green" }),
+        storybook.range("rank", 13, 2, 14, 1),
+    }),
+})`));
+
+  assert.deepEqual(stories, [{
+    name: 'Card',
+    exportName: 'Card',
+    args: { suit: 2, rank: 13 },
+    argTypes: {
+      suit: {
+        name: 'Suit',
+        options: [0, 1, 2, 3],
+        control: {
+          type: 'select',
+          labels: { 0: 'Red', 1: 'Blue', 2: 'Black', 3: 'Green' },
+        },
+      },
+      rank: {
+        name: 'Rank',
+        control: { type: 'range', min: 2, max: 14, step: 1 },
+      },
+    },
+  }]);
+});
+
+test('rejects control declarations that cannot become valid Storybook args', () => {
+  assert.throws(
+    () => parseStories(source(`storybook.story("Card", scene, {
+      storybook.select("suit", 4, { "Red", "Blue", "Black", "Green" }),
+    })`)),
+    /suit initial value must select one of its labels/,
+  );
+  assert.throws(
+    () => parseStories(source(`storybook.story("Card", scene, {
+      storybook.range("rank", 13, 14, 2, 0),
+    })`)),
+    /rank minimum must not exceed its maximum/,
+  );
+  assert.throws(
+    () => parseStories(source(`storybook.story("Card", scene, {
+      storybook.range("rank", 13, 2, 14, 1),
+      storybook.range("rank", 12, 2, 14, 1),
+    })`)),
+    /repeats control "rank"/,
+  );
+});

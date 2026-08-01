@@ -84,7 +84,15 @@ local function draw_state(
 end
 
 local function draw_face_up(graphics: engine.Graphics, alpha: f64): unit
-    draw_state(graphics, card(13, 0), false, false, false, false, false)
+    draw_state(
+        graphics,
+        card(storybook.arg_i32("rank"), storybook.arg_i32("suit")),
+        false,
+        false,
+        false,
+        false,
+        false
+    )
 end
 
 local function draw_face_down(graphics: engine.Graphics, alpha: f64): unit
@@ -197,7 +205,10 @@ local function card_scene(draw: (engine.Graphics, f64) -> unit): storybook.Scene
 end
 
 storybook.publish({
-    storybook.story("Face up", card_scene(draw_face_up)),
+    storybook.story("Face up", card_scene(draw_face_up), {
+        storybook.select("suit", 0, { "Red", "Blue", "Black", "Green" }),
+        storybook.range("rank", 13, 2, 14, 1),
+    }),
     storybook.story("Face down", card_scene(draw_face_down)),
     storybook.story("Bound", card_scene(draw_bound)),
     storybook.story("Focused", card_scene(draw_focused)),

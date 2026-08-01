@@ -153,9 +153,11 @@ export default game;
 function storiesModuleSource(generatedModule, version, shaderModule, stories) {
   const generatedSpecifier = `${generatedModule}?waluau-hmr=${version}`;
   const exports = stories.map(
-    ({ name, exportName }) => `export const ${exportName} = {
+    ({ name, exportName, args, argTypes }) => `export const ${exportName} = {
   name: ${JSON.stringify(name)},
-  render: () => ({ book, name: ${JSON.stringify(name)} }),
+${args == null ? '' : `  args: ${JSON.stringify(args)},
+  argTypes: ${JSON.stringify(argTypes)},
+`}  render: (args) => ({ book, name: ${JSON.stringify(name)}, args }),
 };`,
   ).join('\n');
   return `
