@@ -3,10 +3,11 @@
   "installCommand": "pnpm install --frozen-lockfile",
   "buildCommand": "pnpm build && pnpm build-storybook",
   "outputDirectory": "dist",
-  "rewrites": [
+  "redirects": [
     {
       "source": "/storybook",
-      "destination": "/storybook/index.html"
+      "destination": "/storybook/",
+      "permanent": true
     }
   ],
   "git": {
