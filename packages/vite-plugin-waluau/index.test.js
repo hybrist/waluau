@@ -37,6 +37,33 @@ test('transforms a .walu import into an ES module', async () => {
   }
 });
 
+test('turns a .stories.walu import into a CSF module of published stories', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
+  try {
+    const entry = join(root, 'card.stories.walu');
+    const plugin = waluau({ compiler: { command: 'true' } });
+    plugin.configResolved({ root });
+    const transformed = await plugin.transform.call(
+      { addWatchFile: () => {} },
+      `local storybook = require("waluau:engine/storybook")
+storybook.publish({
+    storybook.story("Face up", { draw = draw_face_up }),
+    storybook.story("Face down", { draw = draw_face_down }),
+})`,
+      entry,
+    );
+
+    assert.match(transformed.code, /createWaluauBook\(\{/);
+    assert.match(transformed.code, /export const FaceUp = \{\n  name: "Face up",/);
+    assert.match(transformed.code, /export const FaceDown = \{\n  name: "Face down",/);
+    assert.match(transformed.code, /render: \(\) => \(\{ book, name: "Face up" \}\)/);
+    // A story module is not a game: nothing starts on import.
+    assert.doesNotMatch(transformed.code, /replaceWaluauGame/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('passes a resolved asset manifest to the compiler', async () => {
   const root = await mkdtemp(join(tmpdir(), 'waluau-vite-plugin-'));
   try {

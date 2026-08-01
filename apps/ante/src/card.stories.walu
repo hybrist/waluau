@@ -1,0 +1,223 @@
+-- The relic, in every state the board can put it in. A card is drawn from a
+-- rank, a school, and four flags — sealed, bound, focused, watched — and the
+-- combinations are what these stories pin down, one per state, without having
+-- to deal a heist that happens to produce them.
+
+local storybook = require("waluau:engine/storybook")
+local engine = require("waluau:engine")
+local game = require("./game")
+local render = require("./render")
+local presentation_resources = require("./presentation_resources")
+
+const WIDTH: f64 = 420.0
+const HEIGHT: f64 = 280.0
+const SCHOOLS_WIDTH: f64 = 560.0
+const BACKGROUND: string = "#0b0b12"
+
+-- The card back, the display font, and the school shaders every story here
+-- draws with. One set is loaded for the whole file: Storybook moves between
+-- these stories constantly, and the assets do not change between them.
+local assets: presentation_resources.State = presentation_resources.new()
+-- Loading is asynchronous and happens once, however many times a story is
+-- mounted. The clock is a story's own and restarts with it.
+local shared: {started: bool, clock: f64} = { started = false, clock = 0.0 }
+
+local function load_assets(): i32
+    return presentation_resources.load_async(assets)
+end
+
+local function load(): unit
+    shared.clock = 0.0
+    if shared.started then return end
+    shared.started = true
+    local loader: thread = coroutine.create(load_assets)
+    coroutine.resume(loader)
+end
+
+local function tick(dt: f64, input: engine.Input): unit
+    shared.clock += dt
+end
+
+-- Decoded images and fonts become GPU resources on the frame after they
+-- arrive, so every story asks for that before it draws anything.
+local function ready(graphics: engine.Graphics): unit
+    presentation_resources.prepare(assets, graphics)
+end
+
+local function card(rank: i32, suit: i32): game.Card
+    return { rank = rank, suit = suit }
+end
+
+local function centered_x(width: f64): f64
+    return (width - render.card_width) * 0.5
+end
+
+local function centered_y(): f64
+    return (HEIGHT - render.card_height) * 0.5
+end
+
+-- Every flag of the board's card renderer, named once so a story reads as the
+-- state it is showing rather than as five booleans.
+local function draw_state(
+    graphics: engine.Graphics,
+    subject: game.Card,
+    selected: bool,
+    focused: bool,
+    hidden: bool,
+    colored: bool,
+    known: bool
+): unit
+    ready(graphics)
+    render.draw_card(
+        graphics,
+        assets.effects,
+        assets.texture,
+        subject,
+        centered_x(WIDTH),
+        centered_y(),
+        selected,
+        focused,
+        hidden,
+        colored,
+        known
+    )
+end
+
+local function draw_face_up(graphics: engine.Graphics, alpha: f64): unit
+    draw_state(graphics, card(13, 0), false, false, false, false, false)
+end
+
+local function draw_face_down(graphics: engine.Graphics, alpha: f64): unit
+    draw_state(graphics, card(13, 0), false, false, true, false, false)
+end
+
+-- Bound: the card is committed to the formation being built. It lifts, takes
+-- its school's edge, and runs that school's pattern.
+local function draw_bound(graphics: engine.Graphics, alpha: f64): unit
+    draw_state(graphics, card(14, 1), true, false, false, false, false)
+end
+
+-- Focused is where the cursor is, which is amber and independent of binding.
+local function draw_focused(graphics: engine.Graphics, alpha: f64): unit
+    draw_state(graphics, card(7, 3), false, true, false, false, false)
+end
+
+-- A contributing card in a finished formation, in full school color.
+local function draw_contributing(graphics: engine.Graphics, alpha: f64): unit
+    draw_state(graphics, card(12, 2), false, false, false, true, false)
+end
+
+-- Watched: the Arch Mage has seen this relic. Sealed and watched at once is
+-- the state the player reads through the back.
+local function draw_watched(graphics: engine.Graphics, alpha: f64): unit
+    draw_state(graphics, card(10, 2), false, false, true, false, true)
+end
+
+-- The four schools side by side, in the colored state that makes each one's
+-- pattern legible. Nothing else on the board shows them together.
+local function draw_schools(graphics: engine.Graphics, alpha: f64): unit
+    ready(graphics)
+    const GAP: f64 = 12.0
+    local span: f64 = render.card_width * 4.0 + GAP * 3.0
+    local x: f64 = (SCHOOLS_WIDTH - span) * 0.5
+    for suit = 0::i32, 3::i32 do
+        render.draw_card(
+            graphics,
+            assets.effects,
+            assets.texture,
+            card(11 + suit, suit),
+            x + (suit::f64) * (render.card_width + GAP),
+            centered_y(),
+            false,
+            false,
+            false,
+            true,
+            false
+        )
+    end
+end
+
+-- The turn itself, looping: the same flip the board plays when a relic is
+-- revealed, off a clock this story owns.
+const FLIP_PERIOD: f64 = 1.7
+
+local function draw_turning(graphics: engine.Graphics, alpha: f64): unit
+    ready(graphics)
+    local clock: f64 = shared.clock - math.floor(shared.clock / FLIP_PERIOD) * FLIP_PERIOD
+    render.draw_flipping_card(
+        graphics,
+        assets.effects,
+        assets.texture,
+        card(14, 0),
+        centered_x(WIDTH),
+        centered_y(),
+        clock,
+        0.35,
+        false
+    )
+end
+
+-- The player's fan, which is where a relic is normally seen: tilted, lifted
+-- when bound, and amber where the cursor sits.
+const FAN_COUNT: i32 = 5
+
+local function draw_fan(graphics: engine.Graphics, alpha: f64): unit
+    ready(graphics)
+    local hand: {game.Card} = {
+        card(14, 0), card(13, 1), card(9, 2), card(6, 3), card(3, 0)
+    }
+    for index = 0::i32, FAN_COUNT - 1 do
+        render.draw_hand_card(
+            graphics,
+            assets.effects,
+            assets.texture,
+            hand[index],
+            index,
+            1.0,
+            FAN_COUNT,
+            index == 1,
+            index == 2,
+            false,
+            false
+        )
+    end
+end
+
+-- A card story is one card on one small canvas; only the fan needs the board's
+-- own geometry, because that is the space its slots are laid out in.
+local function card_scene(draw: (engine.Graphics, f64) -> unit): storybook.Scene
+    return {
+        draw = draw,
+        load = load,
+        update = tick,
+        width = WIDTH::u32,
+        height = HEIGHT::u32,
+        background = BACKGROUND
+    }
+end
+
+storybook.publish({
+    storybook.story("Face up", card_scene(draw_face_up)),
+    storybook.story("Face down", card_scene(draw_face_down)),
+    storybook.story("Bound", card_scene(draw_bound)),
+    storybook.story("Focused", card_scene(draw_focused)),
+    storybook.story("Contributing", card_scene(draw_contributing)),
+    storybook.story("Watched", card_scene(draw_watched)),
+    storybook.story("Turning over", card_scene(draw_turning)),
+    storybook.story("Every school", {
+        draw = draw_schools,
+        load = load,
+        update = tick,
+        width = SCHOOLS_WIDTH::u32,
+        height = HEIGHT::u32,
+        background = BACKGROUND
+    }),
+    storybook.story("In the fan", {
+        draw = draw_fan,
+        load = load,
+        update = tick,
+        width = 960,
+        height = 600,
+        background = BACKGROUND
+    }),
+})

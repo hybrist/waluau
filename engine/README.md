@@ -46,7 +46,16 @@ local session: engine.Session = engine.start({
 
 -- Stops the animation loop and unregisters browser input listeners.
 session.stop()
+
+-- Changes the logical viewport without starting over, so everything already
+-- loaded into the renderer stays valid.
+session.resize(800, 480)
 ```
+
+`Config.mount` names an element to put the game inside. Left out, the document
+body hosts it and the game owns the page; named, the engine styles only what it
+mounted, which is what lets a host page — Storybook's preview — keep its own
+layout around the canvas.
 
 ## Package and version contract
 
@@ -54,7 +63,7 @@ The compiler embeds the engine sources. `waluau:engine` selects the current
 stable major version and `waluau:engine/v1` pins major version 1. Both expose
 the same aggregate facade:
 
-- `VERSION`: the semantic API version (`1.3.0`)
+- `VERSION`: the semantic API version (`1.4.0`)
 - `start`: the browser lifecycle entry point
 - `Config`, `Game`, `Session`, `Input`, `Graphics`, and `ParticleSystem`:
   canonical public types
@@ -78,6 +87,7 @@ Subsystem modules remain supported for focused programs, including DOM-free ones
 | `waluau:engine/browser` | `waluau:engine/v1/browser` | DOM setup, input events, and the animation loop |
 | `waluau:engine/hot` | `waluau:engine/v1/hot` | development snapshot/restore registration |
 | `waluau:engine/shader_sources` | `waluau:engine/v1/shader_sources` | revisioned external shader source polling |
+| `waluau:engine/storybook` | `waluau:engine/v1/storybook` | story declarations for Storybook (`@waluau/storybook`) |
 
 Relative imports remain valid for engine development, but applications should
 use package imports. See [`examples/game-project`](../examples/game-project/)

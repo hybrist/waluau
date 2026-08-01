@@ -1,0 +1,31 @@
+{
+  "name": "@waluau/storybook",
+  "version": "0.1.0",
+  "description": "Storybook framework for Waluau: stories written in .walu and drawn by the engine",
+  "type": "module",
+  "keywords": [
+    "storybook",
+    "storybook-framework",
+    "waluau",
+    "vite"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./preset": "./preset.js",
+    "./renderer-preset": "./renderer-preset.js",
+    "./entry-preview": "./entry-preview.js",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "@storybook/builder-vite": "^10.5.5",
+    "@waluau/vite-plugin": "workspace:*"
+  },
+  "peerDependencies": {
+    "storybook": "^10.0.0",
+    "vite": "^8.0.0"
+  },
+  "devDependencies": {
+    "storybook": "^10.5.5",
+    "vite": "^8.0.14"
+  }
+}

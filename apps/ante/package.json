@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:unit": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "storybook": "storybook dev -p 6006 --no-open",
+    "build-storybook": "storybook build"
   },
   "dependencies": {
     "@waluau/vite-plugin": "workspace:*"
@@ -17,8 +19,10 @@
   "devDependencies": {
     "@playwright/test": "^1.60.0",
     "@vitest/browser-playwright": "^4.0.8",
+    "@waluau/storybook": "workspace:*",
     "get-port": "^7.2.0",
     "playwright": "^1.60.0",
+    "storybook": "^10.5.5",
     "vite": "^8.0.14",
     "vitest": "^4.0.8"
   }

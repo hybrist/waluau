@@ -3,17 +3,19 @@
   "private": true,
   "packageManager": "pnpm@10.20.0",
   "scripts": {
+    "bench:ante-incremental": "cargo build --release -p waluau-cli && node tools/benchmark-ante-incremental.mjs",
     "build:ante": "pnpm --filter ante build",
     "build:playground": "pnpm --filter playground build",
-    "bench:ante-incremental": "cargo build --release -p waluau-cli && node tools/benchmark-ante-incremental.mjs",
+    "dev": "pnpm --filter playground dev",
     "dev:ante": "pnpm --filter ante dev",
     "dev:game-project": "pnpm --filter ante exec vite ../../examples/game-project --config ../../examples/game-project/vite.config.mjs",
-    "dev": "pnpm --filter playground dev",
     "generate:dom-externs": "node tools/dom-idl/generate-dom-externs.mjs",
-    "test:dom-externs": "node --test tools/dom-idl/generate-dom-externs.test.mjs",
-    "test:playground": "pnpm --filter playground test",
+    "storybook:ante": "pnpm --filter ante storybook",
     "test:ante": "pnpm --filter ante test",
     "test:conformance-browser": "pnpm --filter conformance-runner test:browser",
+    "test:dom-externs": "node --test tools/dom-idl/generate-dom-externs.test.mjs",
+    "test:playground": "pnpm --filter playground test",
+    "test:storybook": "node --test packages/storybook-waluau/*.test.js",
     "test:vite-plugin": "node --test packages/vite-plugin-waluau/*.test.js"
   },
   "devDependencies": {

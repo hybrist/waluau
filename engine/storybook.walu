@@ -1,0 +1,244 @@
+-- Story declarations for Storybook. A story is one engine-drawn scene pinned
+-- in one state — a card face up, a shop with nothing left to sell — so the
+-- visual surface of a game can be looked at without playing to it.
+--
+-- Storybook itself owns the sidebar, the URL, the toolbar and the addons; this
+-- module owns nothing but the scenes. A story file declares its stories at the
+-- top level and publishes them, which is what the host indexes and mounts:
+--
+--     local storybook = require("waluau:engine/storybook")
+--     local engine = require("waluau:engine")
+--
+--     local function draw_face_up(graphics: engine.Graphics, alpha: f64): unit
+--     end
+--
+--     storybook.publish({
+--         storybook.story("Face up", { draw = draw_face_up }),
+--         storybook.story("Face down", { draw = draw_face_down }),
+--     })
+--
+-- The host (@waluau/storybook) mounts one story at a time into the element
+-- Storybook gives it, so a scene draws from the canvas origin and never has to
+-- know that anything else is on the page.
+
+local browser = require("./browser")
+local graphics_module = require("./graphics")
+local input_module = require("./input")
+
+-- What a story does with the canvas it is given. `draw` is the whole contract;
+-- everything else is for a story that is not a still life. `load` runs once
+-- each time the story is mounted, so a scene that builds GPU resources or
+-- seeds a simulation starts over on every visit.
+type Scene = {
+    draw: (graphics_module.Graphics, f64) -> unit,
+    load: (() -> unit)?,
+    update: ((f64, input_module.Input) -> unit)?,
+    keypressed: ((string) -> unit)?,
+    keyreleased: ((string) -> unit)?,
+    mousepressed: ((f64, f64, i32) -> unit)?,
+    mousereleased: ((f64, f64, i32) -> unit)?,
+    mousemoved: ((f64, f64, f64, f64) -> unit)?,
+    -- Canvas size and clear color for this story, when the defaults do not
+    -- frame it. One canvas serves the whole file and is resized between
+    -- stories, so GPU resources a story file loads once stay valid.
+    width: u32?,
+    height: u32?,
+    background: string?
+}
+
+type Story = { name: string, scene: Scene }
+
+const DEFAULT_WIDTH: u32 = 960
+const DEFAULT_HEIGHT: u32 = 600
+const DEFAULT_BACKGROUND: string = "#09090b"
+const DEFAULT_UPDATE_HZ: f64 = 60.0
+const MAX_FRAME_SECONDS: f64 = 0.25
+
+-- Host bridge. Each story hands over a closure that mounts it; the host calls
+-- back through the compiler's () -> unit trampoline, the same way development
+-- hot replacement and the test bridge do. Outside a Storybook host these
+-- imports are inert, so a published artifact still instantiates.
+declare function __waluau_storybook_story(name: string, show: () -> unit): unit
+declare function __waluau_storybook_teardown(hide: () -> unit): unit
+-- The id of the element Storybook wants the canvas inside, read at mount time
+-- because the host replaces that element between renders.
+declare function __waluau_storybook_mount(): string
+
+-- The live canvas, plus which story is currently on it. One book mounts one
+-- story at a time; a record rather than module state because a module's
+-- top-level locals are not visible to its functions.
+type Mount = {
+    session: browser.Session?,
+    scene: Scene?,
+    name: string,
+    width: u32,
+    height: u32,
+    background: string,
+    prepared: bool
+}
+
+function scene_width(scene: Scene): u32
+    local value: u32? = scene.width
+    if value ~= nil then return value::u32 end
+    return DEFAULT_WIDTH
+end
+
+function scene_height(scene: Scene): u32
+    local value: u32? = scene.height
+    if value ~= nil then return value::u32 end
+    return DEFAULT_HEIGHT
+end
+
+function scene_background(scene: Scene): string
+    local value: string? = scene.background
+    if value ~= nil then return value::string end
+    return DEFAULT_BACKGROUND
+end
+
+function stop(mount: Mount): unit
+    local running: browser.Session? = mount.session
+    if running ~= nil then
+        (running::browser.Session).stop()
+    end
+    mount.session = nil
+    mount.scene = nil
+    mount.prepared = false
+end
+
+-- The mounted scene's load hook runs on the first frame it is asked for, so a
+-- scene that needs the renderer has one by the time it builds anything.
+function prepare(mount: Mount): unit
+    if mount.prepared then return end
+    local scene: Scene? = mount.scene
+    if scene == nil then return end
+    mount.prepared = true
+    local hook: (() -> unit)? = (scene::Scene).load
+    if hook ~= nil then hook() end
+end
+
+function start_session(mount: Mount): unit
+    local function load(): unit
+        prepare(mount)
+    end
+
+    local function update(dt: f64, input: input_module.Input): unit
+        prepare(mount)
+        local scene: Scene? = mount.scene
+        if scene == nil then return end
+        local step: ((f64, input_module.Input) -> unit)? = (scene::Scene).update
+        if step ~= nil then step(dt, input) end
+    end
+
+    local function draw(graphics: graphics_module.Graphics, alpha: f64): unit
+        prepare(mount)
+        graphics:clear(mount.background)
+        local scene: Scene? = mount.scene
+        if scene == nil then return end
+        (scene::Scene).draw(graphics, alpha)
+    end
+
+    local function keypressed(key: string): unit
+        local scene: Scene? = mount.scene
+        if scene == nil then return end
+        local hook: ((string) -> unit)? = (scene::Scene).keypressed
+        if hook ~= nil then hook(key) end
+    end
+
+    local function keyreleased(key: string): unit
+        local scene: Scene? = mount.scene
+        if scene == nil then return end
+        local hook: ((string) -> unit)? = (scene::Scene).keyreleased
+        if hook ~= nil then hook(key) end
+    end
+
+    local function mousepressed(x: f64, y: f64, button: i32): unit
+        local scene: Scene? = mount.scene
+        if scene == nil then return end
+        local hook: ((f64, f64, i32) -> unit)? = (scene::Scene).mousepressed
+        if hook ~= nil then hook(x, y, button) end
+    end
+
+    local function mousereleased(x: f64, y: f64, button: i32): unit
+        local scene: Scene? = mount.scene
+        if scene == nil then return end
+        local hook: ((f64, f64, i32) -> unit)? = (scene::Scene).mousereleased
+        if hook ~= nil then hook(x, y, button) end
+    end
+
+    local function mousemoved(x: f64, y: f64, dx: f64, dy: f64): unit
+        local scene: Scene? = mount.scene
+        if scene == nil then return end
+        local hook: ((f64, f64, f64, f64) -> unit)? = (scene::Scene).mousemoved
+        if hook ~= nil then hook(x, y, dx, dy) end
+    end
+
+    mount.session = browser.start({
+        title = mount.name,
+        width = mount.width,
+        height = mount.height,
+        update_hz = DEFAULT_UPDATE_HZ,
+        max_frame_seconds = MAX_FRAME_SECONDS,
+        background = mount.background,
+        mount = __waluau_storybook_mount()
+    }, {
+        load = load,
+        update = update,
+        draw = draw,
+        keypressed = keypressed,
+        keyreleased = keyreleased,
+        mousepressed = mousepressed,
+        mousereleased = mousereleased,
+        mousemoved = mousemoved
+    })
+end
+
+-- Puts one story on the canvas. The canvas, its WebGL context, and everything
+-- the story file has loaded into it outlive the move from one story to the
+-- next; a story that wants a different size resizes what is already there.
+function show(mount: Mount, name: string, scene: Scene): unit
+    mount.name = name
+    mount.width = scene_width(scene)
+    mount.height = scene_height(scene)
+    mount.background = scene_background(scene)
+    mount.scene = scene
+    mount.prepared = false
+    local running: browser.Session? = mount.session
+    if running == nil then
+        start_session(mount)
+    else
+        (running::browser.Session).resize(mount.width, mount.height)
+    end
+end
+
+function story(name: string, scene: Scene): Story
+    return { name = name, scene = scene }
+end
+
+-- Hands every story in this file to the host. The host indexes the same names
+-- statically, so what Storybook lists and what it can mount cannot drift.
+function publish(stories: {Story}): unit
+    local mount: Mount = {
+        session = nil,
+        scene = nil,
+        name = "",
+        width = DEFAULT_WIDTH,
+        height = DEFAULT_HEIGHT,
+        background = DEFAULT_BACKGROUND,
+        prepared = false
+    }
+    for entry in stories do
+        local name: string = entry.name
+        local scene: Scene = entry.scene
+        __waluau_storybook_story(name, function(): unit
+            show(mount, name, scene)
+        end)
+    end
+    __waluau_storybook_teardown(function(): unit
+        stop(mount)
+    end)
+end
+
+return {
+    story = story,
+    publish = publish
+}
