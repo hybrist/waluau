@@ -11,6 +11,9 @@ importers:
       '@webref/idl':
         specifier: ^3.80.0
         version: 3.80.0(webidl2@24.5.0)
+      tslib:
+        specifier: ^2.8.1
+        version: 2.8.1
       webidl2:
         specifier: ^24.5.0
         version: 24.5.0
