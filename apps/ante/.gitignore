@@ -1,5 +1,4 @@
 dist
-storybook-static
 .waluau
 .vitest-attachments
 src/__screenshots__

@@ -1,8 +1,15 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "pnpm install --frozen-lockfile",
-  "buildCommand": "pnpm build",
+  "buildCommand": "pnpm build && pnpm build-storybook",
   "outputDirectory": "dist",
+  "redirects": [
+    {
+      "source": "/storybook",
+      "destination": "/storybook/",
+      "permanent": true
+    }
+  ],
   "git": {
     "deploymentEnabled": {
       "__dolt_remote_info__": false
