@@ -238,3 +238,27 @@ export default defineConfig({
 `apps/ante` is wired up this way. The bridge itself lives in
 `@waluau/vite-plugin/testing`; its meta-tests (and a browser-compiled
 variant used by the conformance runner) live in `apps/conformance-runner`.
+
+## Stories for Storybook
+
+Files named `*.stories.walu` become Component Story Format modules instead of
+games: the plugin compiles them the same way, reads the published story names
+out of the source, and generates one named CSF export per story. Each export
+mounts its story through `@waluau/vite-plugin/storybook`, which bridges
+`engine/storybook.walu`'s registration imports onto the compiled module.
+
+```walu
+local storybook = require("waluau:engine/storybook")
+local engine = require("waluau:engine")
+
+local function draw_face_up(graphics: engine.Graphics, alpha: f64): unit
+end
+
+storybook.publish({
+    storybook.story("Face up", { draw = draw_face_up }),
+})
+```
+
+The plugin does not run Storybook. `@waluau/storybook` is the framework that
+does: it adds this plugin to Storybook's Vite config, indexes the same story
+names for the sidebar, and renders them. See that package's README.

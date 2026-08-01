@@ -425,6 +425,7 @@ fn engine_module_name(specifier: &str) -> Option<&str> {
         "waluau:engine/shader_sources" | "waluau:engine/v1/shader_sources" => {
             Some("shader_sources")
         }
+        "waluau:engine/storybook" | "waluau:engine/v1/storybook" => Some("storybook"),
         _ => None,
     }
 }
@@ -456,6 +457,7 @@ fn engine_module_source(module: &str) -> Option<&'static str> {
         "font" => Some(include_str!("../../../engine/font.walu")),
         "hot" => Some(include_str!("../../../engine/hot.walu")),
         "shader_sources" => Some(include_str!("../../../engine/shader_sources.walu")),
+        "storybook" => Some(include_str!("../../../engine/storybook.walu")),
         _ => None,
     }
 }

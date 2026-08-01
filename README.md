@@ -34,6 +34,7 @@ supported baseline, non-goals, seam rule, and testing strategy.
 | `externs/` | Generated DOM extern declarations (`dom.walu`) |
 | `tools/dom-idl/` | Generator that turns Web IDL into `externs/dom.walu` |
 | `packages/vite-plugin-waluau/` | Vite plugin and browser runtime that build and instantiate `.walu` entry points |
+| `packages/storybook-waluau/` | Storybook framework for stories written in `.walu` and drawn by the engine |
 | `apps/playground/` | Browser playground and its Playwright suite |
 | `apps/ante/` | Arcane Heist, the reference game |
 | `apps/conformance-runner/` | Headless-browser runner for the conformance suite |

@@ -13,7 +13,12 @@ type Config = {
     height: u32,
     update_hz: f64,
     max_frame_seconds: f64,
-    background: string
+    background: string,
+    -- The id of an element to put the game inside. A game that owns the page
+    -- leaves this out and the document body hosts it; a host that already owns
+    -- the page — Storybook's preview, a docs page — names its own element, and
+    -- the engine then styles only what it mounted.
+    mount: string?
 }
 
 type Game = {
@@ -36,6 +41,11 @@ type Game = {
 -- mounted for the replacement handoff.
 type Session = {
     stop: () -> unit,
+    -- Change the logical viewport of a running game. A host that keeps one
+    -- canvas across scenes of different sizes — Storybook's preview moving
+    -- between stories — resizes rather than starts over, so GPU resources
+    -- built against this renderer stay valid.
+    resize: (u32, u32) -> unit,
     -- Stop callbacks but leave the last rendered canvas mounted. Development
     -- hot replacement uses this while the next instance prepares its first
     -- frame, avoiding a black handoff between Wasm modules.
@@ -96,15 +106,32 @@ end
 function start(config: Config, game: Game): Session
     local document: Document = window.document
     local body: HTMLElement = document.body
-    body:set_attribute("style", "margin:0;min-height:100vh;overflow:hidden;background:" .. config.background .. ";")
+    -- Whichever element hosts the game owns the page's background and the
+    -- root's sizing. A named mount that has gone missing falls back to the
+    -- body rather than dropping the canvas on the floor.
+    local host: Element = body
+    local mount_id: string? = config.mount
+    if mount_id ~= nil then
+        local target: Element? = document:get_element_by_id(mount_id::string)
+        if target ~= nil then host = target::Element end
+    end
+    local owns_page: bool = host == body
+    if owns_page then
+        body:set_attribute("style", "margin:0;min-height:100vh;overflow:hidden;background:" .. config.background .. ";")
+    end
     local previous_root: Element? = document:get_element_by_id("walua-game")
 
     local root: Element = document:create_element("main")
     if previous_root == nil then root.id = "walua-game"
     else root.id = "walua-game-pending" end
     root.class_name = "flex min-h-screen w-full flex-col items-center justify-center gap-2 overflow-hidden bg-slate-950 p-2 text-slate-100"
-    root:set_attribute("style", "box-sizing:border-box;display:flex;width:100vw;min-height:100vh;align-items:center;justify-content:center;overflow:hidden;padding:8px;background:" .. config.background .. ";")
-    body:append_child(root)
+    -- A game that owns the page paints its own backdrop around the canvas. A
+    -- mounted game paints nothing outside the canvas: the host's page keeps
+    -- its own background, and the canvas stays a measurable box on it.
+    local root_box: string = "width:100vw;min-height:100vh;padding:8px;background:" .. config.background .. ";"
+    if not owns_page then root_box = "width:100%;min-height:100%;padding:0;" end
+    root:set_attribute("style", "box-sizing:border-box;display:flex;" .. root_box .. "align-items:center;justify-content:center;overflow:hidden;")
+    host:append_child(root)
 
     local heading: Element = document:create_element("h1")
     heading.class_name = "sr-only"
@@ -130,7 +157,10 @@ function start(config: Config, game: Game): Session
         style:setProperty("background-color", config.background)
         style:setProperty("image-rendering", "pixelated")
 
-        sync_canvas_size(game_canvas, config.width, config.height)
+        -- The logical viewport is config's to begin with and the session's
+        -- from then on, so a resize is what the frame loop reads next.
+        local viewport: {width: u32, height: u32} = { width = config.width, height = config.height }
+        sync_canvas_size(game_canvas, viewport.width, viewport.height)
 
         local maybe_gl: WebGL2RenderingContext? = game_canvas:get_context_webgl2()
         assert(maybe_gl ~= nil)
@@ -228,7 +258,7 @@ function start(config: Config, game: Game): Session
         local frame_handle: u32 = 0
         local function frame(timestamp_ms: f64): unit
             if stopped then return end
-            if sync_canvas_size(game_canvas, config.width, config.height) then
+            if sync_canvas_size(game_canvas, viewport.width, viewport.height) then
                 graphics:resize()
             end
             local steps: i32 = clock:advance(timestamp_ms)
@@ -241,7 +271,7 @@ function start(config: Config, game: Game): Session
             graphics:present()
             if root.id == "walua-game-pending" then
                 local mounted_root: Element? = document:get_element_by_id("walua-game")
-                if mounted_root ~= nil then body:remove_child(mounted_root) end
+                if mounted_root ~= nil then host:remove_child(mounted_root) end
                 root.id = "walua-game"
             end
             frame_handle = window:requestAnimationFrame(frame)
@@ -260,12 +290,25 @@ function start(config: Config, game: Game): Session
             end
             if remove_root then
                 local mounted_root: Element? = document:get_element_by_id(root.id)
-                if mounted_root == root then body:remove_child(root) end
+                if mounted_root == root then host:remove_child(root) end
             end
         end
+        local function resize_viewport(width: u32, height: u32): unit
+            if width == viewport.width and height == viewport.height then return end
+            viewport.width = width
+            viewport.height = height
+            style:setProperty("width", tostring(width) .. "px")
+            style:setProperty("height", tostring(height) .. "px")
+            style:setProperty("aspect-ratio", tostring(width) .. " / " .. tostring(height))
+            graphics:set_logical_size(width::f64, height::f64)
+            sync_canvas_size(game_canvas, width, height)
+            graphics:resize()
+        end
+
         return {
             stop = function(): unit stop_session(true) end,
             suspend = function(): unit stop_session(false) end,
+            resize = resize_viewport,
         }
     else
         error("game engine could not create a WebGL2 canvas")
@@ -276,6 +319,7 @@ function start(config: Config, game: Game): Session
     return {
         stop = function(): unit end,
         suspend = function(): unit end,
+        resize = function(width: u32, height: u32): unit end,
     }
 end
 

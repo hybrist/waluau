@@ -198,6 +198,8 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `run.test.walu` | Deterministic Vitest assertions for the boss cadence, mana carryover, the carried loadout, and where a run ends. |
 | `shop.test.walu` | Deterministic Vitest assertions for the fence's stock, prices, spent offers, and trades. |
 | `city_map.test.walu` | Deterministic Vitest assertions for the generated streets, the route's alternating stops, and the pans and dissolves between screens. |
+| `card.stories.walu` | Storybook stories for the relic: every state the board can put a card in, without dealing a heist that produces it. |
+| `.storybook/main.js` | Storybook configuration: the story glob and the compiler options stories are built with. |
 | `tests/game-driver.js` | Shared browser-test seam for booting a heist and observing rendered frames. |
 | `tests/spell-effects.spec.js` | Spell-presentation behavior isolated from menu and gameplay browser coverage. |
 | `waluau.assets.json` | Typed package manifest for the card back, vault font, and flip sound. |
@@ -236,6 +238,20 @@ audio, so no pre-gesture effect can be queued and released late.
 
 Cinzel is distributed under the SIL Open Font License 1.1; the bundled
 license is [`assets/OFL-Cinzel.txt`](assets/OFL-Cinzel.txt).
+
+## Storybook
+
+```bash
+pnpm --filter ante storybook
+```
+
+The relic's states — face up, sealed, bound, focused, watched, mid-turn, one per
+school, and in the fan — are stories in
+[`src/card.stories.walu`](src/card.stories.walu), drawn by the same
+`render.walu` the board draws them with and loading the same packaged card back,
+font, and school shaders. Looking at one is therefore looking at the game's own
+presentation, not a mock of it. `@waluau/storybook` is the framework; see its
+README for how a story file is written.
 
 ## Building
 

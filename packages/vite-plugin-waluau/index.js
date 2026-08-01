@@ -6,6 +6,7 @@ import { dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createCompilerHost } from './compiler-host.js';
+import { parseStories } from './stories.js';
 
 const packageRoot = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(packageRoot, '../..');
@@ -142,6 +143,63 @@ void game.catch((error) => {
   if (!(error instanceof HotReplacementFallback)) reportError(error);
 });
 export default game;
+`;
+}
+
+// A *.stories.walu file becomes a Component Story Format module: one named
+// export per published story, all of them mounting through the same book, so
+// Storybook's own indexer contract is met by ordinary JavaScript exports. The
+// Wasm module is not touched until a story is actually rendered.
+function storiesModuleSource(generatedModule, version, shaderModule, stories) {
+  const generatedSpecifier = `${generatedModule}?waluau-hmr=${version}`;
+  const exports = stories.map(
+    ({ name, exportName }) => `export const ${exportName} = {
+  name: ${JSON.stringify(name)},
+  render: () => ({ book, name: ${JSON.stringify(name)} }),
+};`,
+  ).join('\n');
+  return `
+import { buildWaluauImports } from '@waluau/vite-plugin/runtime';
+import { createWaluauBook } from '@waluau/vite-plugin/storybook';
+import shaderSourceHost from ${JSON.stringify(shaderModule)};
+import {
+  run as runWaluau,
+  wasmUrl as generatedWasmUrl,
+} from ${JSON.stringify(generatedSpecifier)};
+
+// The generated module is imported per build; its sibling Wasm URL is not, so
+// it carries the same version to keep a recompiled story off the old binary.
+function versionedWasmUrl() {
+  if (generatedWasmUrl == null) return null;
+  const url = new URL(generatedWasmUrl);
+  url.searchParams.set('waluau-hmr', ${JSON.stringify(String(version))});
+  return url;
+}
+
+const book = createWaluauBook({
+  run: runWaluau,
+  wasmUrl: versionedWasmUrl(),
+  createImports: (context, hostImports) => buildWaluauImports(null, console.log, {
+    requiredImports: context.requiredImports,
+    bytesConstants: context.bytesConstants,
+    domOutputRoot: document,
+    getWasmExports: context.getWasmExports,
+    hostImports,
+    shaderSources: shaderSourceHost,
+    gameServices: {
+      assetBaseUrl: context.assetBaseUrl,
+      assetManifest: context.assetManifest,
+    },
+  }),
+});
+
+export default {
+  // A story is a fixed-size canvas, so it is centred in the preview rather
+  // than laid out in the flow of a page.
+  parameters: { layout: 'centered' },
+};
+
+${exports}
 `;
 }
 
@@ -490,21 +548,33 @@ export function waluau(options = {}) {
       for (const involved of compileStates.get(file)?.involvedFiles ?? []) {
         this.addWatchFile(involved);
       }
-      // *.test.walu files register with vitest instead of booting a game.
+      // *.test.walu files register with vitest and *.stories.walu files become
+      // Storybook CSF modules, instead of booting a game.
       const isTestModule = file.endsWith('.test.walu');
+      const isStoriesModule = file.endsWith('.stories.walu');
       const shaderModule = `${shaderModulePrefix}${createHash('sha256')
         .update(file)
         .digest('hex')
         .slice(0, 12)}`;
       shaderModules.set(`\0${shaderModule}`, shaderModuleSource(resolvedShaderSources()));
-      return {
-        code: isTestModule
-          ? testModuleSource(artifacts.module)
-          : runtimeSource(
+      if (isTestModule) return { code: testModuleSource(artifacts.module), map: null };
+      if (isStoriesModule) {
+        return {
+          code: storiesModuleSource(
             artifacts.module,
             compileStates.get(file).version,
             shaderModule,
+            parseStories(code),
           ),
+          map: null,
+        };
+      }
+      return {
+        code: runtimeSource(
+          artifacts.module,
+          compileStates.get(file).version,
+          shaderModule,
+        ),
         map: null,
       };
     },

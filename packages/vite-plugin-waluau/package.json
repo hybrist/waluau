@@ -7,6 +7,8 @@
     "./hot": "./hot.js",
     "./runtime": "./runtime.js",
     "./shaders": "./shaders.js",
+    "./stories": "./stories.js",
+    "./storybook": "./storybook.js",
     "./testing": "./testing.js"
   },
   "peerDependencies": {

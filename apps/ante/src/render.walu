@@ -2504,6 +2504,14 @@ return {
     draw = draw,
     draw_shader_error = draw_shader_error,
     draw_audio_error = draw_audio_error,
+    -- One relic, drawn the way the board draws it. The card is the smallest
+    -- piece of this presentation that can be looked at on its own, which is
+    -- what the storybook does with it.
+    draw_card = draw_card,
+    draw_hand_card = draw_hand_card,
+    draw_flipping_card = draw_flipping_card,
+    card_width = CARD_W,
+    card_height = CARD_H,
     -- The menu and shop screens share the vault's panel chrome, centred type,
     -- and help modal instead of restating the presentation vocabulary.
     draw_backdrop = draw_backdrop,

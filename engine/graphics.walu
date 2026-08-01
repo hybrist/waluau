@@ -394,6 +394,19 @@ void main() {
     }
 end
 
+-- Changes the logical coordinate system itself, for a host that keeps one
+-- renderer across scenes of different sizes. Drawing that is aimed at a render
+-- target keeps that target's space until the screen is selected again.
+function Graphics:set_logical_size(width: f64, height: f64): unit
+    self:flush()
+    self.width = width
+    self.height = height
+    if self.current_target == 0 then
+        self.draw_width = width
+        self.draw_height = height
+    end
+end
+
 -- Resizing the canvas changes its WebGL drawing buffer but preserves the
 -- engine's logical coordinate system. Refresh both the viewport and the scale
 -- used to express fragment effects in logical pixels.

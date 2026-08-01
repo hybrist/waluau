@@ -6,6 +6,7 @@
 const productionModules = import.meta.glob([
   './src/**/*.walu',
   '!./src/**/*.test.walu',
+  '!./src/**/*.stories.walu',
 ], {
   eager: true,
   query: '?raw',
