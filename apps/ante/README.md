@@ -245,6 +245,11 @@ license is [`assets/OFL-Cinzel.txt`](assets/OFL-Cinzel.txt).
 pnpm --filter ante storybook
 ```
 
+The deployed game carries its storybook with it, at `/storybook`:
+`pnpm --filter ante build-storybook` builds it into `dist/storybook`, and the
+Vercel build runs it after the game's own `vite build` so one deployment serves
+both.
+
 The relic's states — face up, sealed, bound, focused, watched, mid-turn, one per
 school, and in the fan — are stories in
 [`src/card.stories.walu`](src/card.stories.walu), drawn by the same
