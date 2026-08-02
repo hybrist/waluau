@@ -33,12 +33,12 @@ function thrown(overshoot: f64, rise: f64): card_draw.Draw
         stretch_limit = 1.26,
         overshoot = overshoot,
         rise = rise,
-        arc = card_draw.arc_late
+        arc = card_draw.arc_very_late
     }
 end
 
 function drawing(): card_draw.Draw
-    return thrown(0.2, 270.0)
+    return thrown(0.3, 270.0)
 end
 
 -- Where the card actually appears to be: the middle of the shape on screen,
