@@ -18,6 +18,7 @@ local city_map_render = require("./city_map_render")
 local menu = require("./menu")
 local game_screen = require("./game_screen")
 local render = require("./render")
+local layout = require("./layout")
 local snapshot_data = require("./snapshot")
 local presentation_resources = require("./presentation_resources")
 
@@ -38,6 +39,9 @@ function install_arcane_heist(): unit
     local heist: game_screen.State = game_screen.new()
     local city: city_map.State = city_map.new(math.random(2147483646))
     local assets: presentation_resources.State = presentation_resources.new()
+    -- TODO(waluau-teu2): Remove this adapter-owned copy and the resize
+    -- propagation below when layout can own its live module-local State.
+    local canvas: layout.State = layout.calculate(960.0, 600.0)
 
     local function load_assets_async(): i32
         return presentation_resources.load_async(assets)
@@ -86,22 +90,31 @@ function install_arcane_heist(): unit
     -- board is drawn whenever the map is not the whole picture and skipped once
     -- it is.
     local function draw(graphics: engine.Graphics, alpha: f64): unit
+        -- The canvas itself is the viewport. One uniform unit scale preserves
+        -- local shape proportions; the logical width and height stay live, so
+        -- every screen can place its semantic regions in all available space.
+        canvas = layout.calculate(graphics.width, graphics.height)
+        game_screen.resize(heist, canvas)
+        city_map.resize(city, canvas.width, canvas.height)
+        graphics:clear("#09090b")
+        graphics:push()
+        graphics:scale(canvas.scale, canvas.scale)
         presentation_resources.prepare(assets, graphics)
-        if presentation_resources.draw_failure(assets, graphics) then return end
-        if city.cover < 1.0 then
-            game_screen.draw_vault(heist, graphics, assets.effects, assets.texture)
+        if not presentation_resources.draw_failure(assets, graphics) then
+            if city.cover < 1.0 then
+                game_screen.draw_vault(heist, graphics, assets.effects, assets.texture)
+            end
+            if city_map.visible(city) then
+                city_map_render.draw(
+                    city, graphics, render.school_color(city.streak_suit), city.cover)
+            end
+            if screen == SCREEN_MENU then
+                menu.draw(menu_state, canvas, graphics, assets.effects, assets.sound_finished)
+            elseif game_screen.fence_open(heist) then
+                game_screen.draw_fence(heist, city, canvas, graphics)
+            end
         end
-        if city_map.visible(city) then
-            city_map_render.draw(
-                city, graphics, render.school_color(city.streak_suit), city.cover)
-        end
-        if screen == SCREEN_MENU then
-            menu.draw(menu_state, graphics, assets.effects, assets.sound_finished)
-            return
-        end
-        if game_screen.fence_open(heist) then
-            game_screen.draw_fence(heist, city, graphics)
-        end
+        graphics:pop()
     end
 
     local function menu_action(action: i32): unit
@@ -125,8 +138,10 @@ function install_arcane_heist(): unit
 
     local function mousemoved(x: f64, y: f64, dx: f64, dy: f64): unit
         if #assets.fatal_audio_code > 0 then return end
+        x = layout.canvas_x(canvas, x)
+        y = layout.canvas_y(canvas, y)
         if screen == SCREEN_MENU then
-            menu.mousemoved(menu_state, x, y)
+            menu.mousemoved(menu_state, canvas, x, y)
             return
         end
         game_screen.mousemoved(heist, x, y)
@@ -134,8 +149,10 @@ function install_arcane_heist(): unit
 
     local function mousepressed(x: f64, y: f64, button: i32): unit
         if #assets.fatal_audio_code > 0 then return end
+        x = layout.canvas_x(canvas, x)
+        y = layout.canvas_y(canvas, y)
         if screen == SCREEN_MENU then
-            menu_action(menu.mousepressed(menu_state, x, y, button))
+            menu_action(menu.mousepressed(menu_state, canvas, x, y, button))
             return
         end
         game_screen.mousepressed(heist, city, x, y, button)
@@ -148,6 +165,7 @@ function install_arcane_heist(): unit
         update_hz = 60.0,
         max_frame_seconds = 0.25,
         background = "#09090b",
+        canvas_sizing = "fluid",
     }, {
         load = load,
         update = update,

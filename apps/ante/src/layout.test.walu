@@ -1,0 +1,38 @@
+-- DOM-free checks for the live logical viewport and its semantic board bands.
+
+require("waluau:vitest")
+
+local layout = require("./layout")
+
+describe("Arcane Heist canvas layout", function()
+    it("uses additional width as logical layout space", function()
+        local state: layout.State = layout.calculate(1200.0, 600.0)
+
+        expect(state.scale):toBe(1.0)
+        expect(state.width):toBe(1200.0)
+        expect(state.height):toBe(600.0)
+        expect(state.center_x):toBe(600.0)
+        expect(state.side_right):toBe(1040.0)
+    end)
+
+    it("uses additional height to separate semantic rows", function()
+        local state: layout.State = layout.calculate(960.0, 800.0)
+
+        expect(state.scale):toBe(1.0)
+        expect(state.width):toBe(960.0)
+        expect(state.height):toBe(800.0)
+        expect(state.player_y):toBe(709.0)
+        expect(state.ward_y):toBeGreaterThan(292.0)
+        expect(state.footer_y):toBe(782.0)
+    end)
+
+    it("keeps one element scale while exposing a portrait logical viewport", function()
+        local state: layout.State = layout.calculate(600.0, 800.0)
+
+        expect(state.scale):toBe(0.625)
+        expect(state.width):toBe(960.0)
+        expect(state.height):toBe(1280.0)
+        expect(layout.canvas_x(state, 300.0)):toBe(480.0)
+        expect(layout.canvas_y(state, 400.0)):toBe(640.0)
+    end)
+end)

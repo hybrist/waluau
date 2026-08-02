@@ -13,32 +13,30 @@ local game = require("./game")
 local render = require("./render")
 local run_module = require("./run")
 local shop = require("./shop")
+local layout = require("./layout")
 
 -- The offers keep to a column down the left so the right of the screen stays
 -- the city map: where the run has got to and which house is next are as much
 -- of this screen as the prices are.
 const PANEL_X: f64 = 44.0
-const PANEL_Y: f64 = 68.0
 const PANEL_W: f64 = 540.0
-const PANEL_H: f64 = 476.0
 const PANEL_CENTER: f64 = 314.0
 
 const ROW_X: f64 = 76.0
 const ROW_W: f64 = 476.0
 const ROW_H: f64 = 54.0
-const ROW_TOP: f64 = 196.0
 const ROW_PITCH: f64 = 64.0
 
-function row_top(index: i32): f64
-    return ROW_TOP + (index::f64) * ROW_PITCH
+function row_top(viewport: layout.State, index: i32): f64
+    return viewport.height * 0.3266666667 + (index::f64) * ROW_PITCH
 end
 
 -- The offer line under a point, or -1. The gaps between lines are dead space,
 -- so a pointer between two offers leaves the cursor on whichever it was.
-function row_at(x: f64, y: f64, count: i32): i32
+function row_at(viewport: layout.State, x: f64, y: f64, count: i32): i32
     if x < ROW_X or x > ROW_X + ROW_W then return -1 end
     for index = 0::i32, count - 1 do
-        local top: f64 = row_top(index)
+        local top: f64 = row_top(viewport, index)
         if y >= top and y <= top + ROW_H then return index end
     end
     return -1
@@ -94,13 +92,14 @@ end
 
 function draw_row(
     graphics: engine.Graphics,
+    viewport: layout.State,
     row: shop.Row,
     label: string,
     index: i32,
     focused: bool,
     alpha: f64
 ): unit
-    local top: f64 = row_top(index)
+    local top: f64 = row_top(viewport, index)
     local edge: string = "#3f3f46"
     local ink: string = row_ink(row)
     local price_ink: string = "#52525b"
@@ -134,31 +133,34 @@ end
 function draw(
     state: shop.State,
     run: run_module.State,
+    viewport: layout.State,
     graphics: engine.Graphics,
     alpha: f64
 ): unit
     if alpha <= 0.0 then return end
+    local panel_y: f64 = viewport.height * 0.1133333333
+    local panel_h: f64 = viewport.height - panel_y - 56.0
     local choosing: bool = shop.choosing(state)
     render.panel(
-        graphics, PANEL_X, PANEL_Y, PANEL_W, PANEL_H,
+        graphics, PANEL_X, panel_y, PANEL_W, panel_h,
         render.fade("#09090b", alpha * 0.94), render.fade("#a1a1aa", alpha))
-    render.text(graphics, "THE FENCE", 78.0, 117.0, 24, render.fade("#fbbf24", alpha))
+    render.text(graphics, "THE FENCE", 78.0, panel_y + 49.0, 24, render.fade("#fbbf24", alpha))
     local subtitle: string = "MANA SPENT HERE WILL NOT FIGHT IN VAULT " .. tostring(run.vault)
     local offered: i32 = 0
     if choosing then
         offered = state.offers[state.pending].kind
         subtitle = "ONLY TWO SPELLS TRAVEL AT ONCE. WHICH ONE GOES?"
     end
-    render.text(graphics, subtitle, 78.0, 145.0, 11, render.fade("#a1a1aa", alpha))
+    render.text(graphics, subtitle, 78.0, panel_y + 77.0, 11, render.fade("#a1a1aa", alpha))
     render.text_right(
-        graphics, tostring(run.mana), 550.0, 122.0, 24, render.fade("#67e8f9", alpha))
+        graphics, tostring(run.mana), 550.0, panel_y + 54.0, 24, render.fade("#67e8f9", alpha))
     render.text_right(
-        graphics, "MANA ON HAND", 550.0, 145.0, 9, render.fade("#155e75", alpha))
+        graphics, "MANA ON HAND", 550.0, panel_y + 77.0, 9, render.fade("#155e75", alpha))
 
     local rows: {shop.Row} = shop.rows(state, run)
     for index, row in rows do
         draw_row(
-            graphics, row, row_label(row, run, offered),
+            graphics, viewport, row, row_label(row, run, offered),
             index, index == state.cursor, alpha)
     end
     if not choosing then
@@ -166,11 +168,11 @@ function draw(
         -- rather than leaving the player waiting for it to refill.
         render.text_centered(
             graphics, "TWO OFFERS A VISIT. THE NEXT FENCE HAS ITS OWN",
-            PANEL_CENTER, row_top(#rows) + 33.0, 11, render.fade("#8a8a92", alpha))
+            PANEL_CENTER, row_top(viewport, #rows) + 33.0, 11, render.fade("#8a8a92", alpha))
     end
     render.text_centered(
         graphics, "ARROWS MOVE   ENTER OR CLICK BUYS   ESC ENTERS THE VAULT",
-        PANEL_CENTER, 566.0, 11, render.fade("#a1a1aa", alpha))
+        PANEL_CENTER, viewport.height - 34.0, 11, render.fade("#a1a1aa", alpha))
 end
 
 return {

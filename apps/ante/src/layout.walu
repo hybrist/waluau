@@ -1,0 +1,85 @@
+-- Arcane Heist's live logical viewport. The canvas may have any aspect ratio:
+-- one uniform scale keeps cards, text, circles, and line widths proportional,
+-- while the logical width and height expand independently to consume every
+-- available canvas pixel. Render modules place semantic regions against these
+-- live dimensions instead of drawing a fixed board into a letterbox.
+--
+-- TODO(waluau-teu2): Once exported module functions can close over mutable
+-- module-local bindings, own the current State here behind update/current
+-- functions. Then remove the viewport parameters threaded through menu,
+-- shop_render, render, and choreography, plus their repeated calculate calls.
+
+type State = {
+    canvas_width: f64,
+    canvas_height: f64,
+    scale: f64,
+    width: f64,
+    height: f64,
+    center_x: f64,
+    center_y: f64,
+    computer_y: f64,
+    player_y: f64,
+    ward_y: f64,
+    action_y: f64,
+    side_left: f64,
+    side_right: f64,
+    hand_span: f64,
+    footer_y: f64
+}
+
+const REFERENCE_WIDTH: f64 = 960.0
+const REFERENCE_HEIGHT: f64 = 600.0
+const CARD_HEIGHT: f64 = 128.0
+
+function calculate(canvas_width: f64, canvas_height: f64): State
+    if canvas_width < 1.0 then canvas_width = REFERENCE_WIDTH end
+    if canvas_height < 1.0 then canvas_height = REFERENCE_HEIGHT end
+
+    local scale: f64 = canvas_width / REFERENCE_WIDTH
+    local height_scale: f64 = canvas_height / REFERENCE_HEIGHT
+    if height_scale < scale then scale = height_scale end
+    if scale <= 0.0 then scale = 1.0 end
+
+    local width: f64 = canvas_width / scale
+    local height: f64 = canvas_height / scale
+    local center_x: f64 = width * 0.5
+    local center_y: f64 = height * 0.5
+    local player_y: f64 = height - 91.0
+    local computer_center_y: f64 = 116.0 + CARD_HEIGHT * 0.5
+    local ward_center_y: f64 = (computer_center_y + player_y) * 0.5 + 12.0
+
+    local hand_span: f64 = math.min(520.0, width - 440.0)
+    if hand_span < 240.0 then hand_span = 240.0 end
+    local ward_y: f64 = ward_center_y - CARD_HEIGHT * 0.5
+    return {
+        canvas_width = canvas_width,
+        canvas_height = canvas_height,
+        scale = scale,
+        width = width,
+        height = height,
+        center_x = center_x,
+        center_y = center_y,
+        computer_y = 116.0,
+        player_y = player_y,
+        ward_y = ward_y,
+        action_y = ward_y + 120.0,
+        side_left = 56.0,
+        side_right = width - 160.0,
+        hand_span = hand_span,
+        footer_y = height - 18.0,
+    }
+end
+
+function canvas_x(state: State, value: f64): f64
+    return value / state.scale
+end
+
+function canvas_y(state: State, value: f64): f64
+    return value / state.scale
+end
+
+return {
+    calculate = calculate,
+    canvas_x = canvas_x,
+    canvas_y = canvas_y,
+}

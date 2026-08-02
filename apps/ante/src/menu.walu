@@ -20,6 +20,7 @@
 local engine = require("waluau:engine")
 local render = require("./render")
 local city_map = require("./city_map")
+local layout = require("./layout")
 
 type State = {
     clock: f64,
@@ -34,8 +35,6 @@ const ACTION_NONE: i32 = 0
 const ACTION_START: i32 = 1
 const ACTION_START_RUSH: i32 = 2
 
-const WIDTH: f64 = 960.0
-
 const STAGE_MAIN: i32 = 0
 const STAGE_SPELL: i32 = 1
 
@@ -44,11 +43,21 @@ const ITEM_BOSS_RUSH: i32 = 1
 const ITEM_HOW_TO_PLAY: i32 = 2
 const ITEM_COUNT: i32 = 3
 const SPELL_COUNT: i32 = 4
-const ITEM_X: f64 = 290.0
 const ITEM_W: f64 = 380.0
 const ITEM_H: f64 = 52.0
-const ITEM_TOP: f64 = 306.0
 const ITEM_PITCH: f64 = 60.0
+
+function item_x(viewport: layout.State): f64
+    return viewport.center_x - ITEM_W * 0.5
+end
+
+function title_y(viewport: layout.State): f64
+    return viewport.height * 0.3533333333
+end
+
+function item_start_y(viewport: layout.State): f64
+    return viewport.height * 0.51
+end
 
 function new(): State
     return {
@@ -91,15 +100,16 @@ function selected_spell(state: State): i32
     return state.spell_cursor + 1
 end
 
-function item_top(index: i32): f64
-    return ITEM_TOP + (index::f64) * ITEM_PITCH
+function item_top(viewport: layout.State, index: i32): f64
+    return item_start_y(viewport) + (index::f64) * ITEM_PITCH
 end
 
 -- Both stages share the option-list geometry; only the row count differs.
-function item_at(x: f64, y: f64, count: i32): i32
-    if x < ITEM_X or x > ITEM_X + ITEM_W then return -1 end
+function item_at(viewport: layout.State, x: f64, y: f64, count: i32): i32
+    local left: f64 = item_x(viewport)
+    if x < left or x > left + ITEM_W then return -1 end
     for index = 0::i32, count - 1 do
-        local top: f64 = item_top(index)
+        local top: f64 = item_top(viewport, index)
         if y >= top and y <= top + ITEM_H then return index end
     end
     return -1
@@ -131,8 +141,9 @@ function start_action(state: State): i32
     return ACTION_START
 end
 
-function draw_item(state: State, graphics: engine.Graphics, index: i32, label: string, idle_ink: string): unit
-    local top: f64 = item_top(index)
+function draw_item(state: State, viewport: layout.State, graphics: engine.Graphics, index: i32, label: string, idle_ink: string): unit
+    local top: f64 = item_top(viewport, index)
+    local left: f64 = item_x(viewport)
     local edge: string = "#52525b"
     local ink: string = idle_ink
     if index == state.cursor then
@@ -144,35 +155,36 @@ function draw_item(state: State, graphics: engine.Graphics, index: i32, label: s
         graphics:set_color("#fbbf24")
         graphics:set_line_width(1.0)
         graphics:stroke_rectangle(
-            ITEM_X - grow, top - grow, ITEM_W + grow * 2.0, ITEM_H + grow * 2.0)
+            left - grow, top - grow, ITEM_W + grow * 2.0, ITEM_H + grow * 2.0)
     end
-    render.panel(graphics, ITEM_X, top, ITEM_W, ITEM_H, "#17171c", edge)
-    render.text_centered(graphics, label, WIDTH * 0.5, top + 33.0, 15, ink)
+    render.panel(graphics, left, top, ITEM_W, ITEM_H, "#17171c", edge)
+    render.text_centered(graphics, label, viewport.center_x, top + 33.0, 15, ink)
 end
 
-function draw_spell_stage(state: State, graphics: engine.Graphics): unit
+function draw_spell_stage(state: State, viewport: layout.State, graphics: engine.Graphics): unit
+    local heading_y: f64 = title_y(viewport)
     -- The pick lasts the whole run, not one vault, and the mana it burns is
     -- the same pool the next vault inherits. It is bought at a vendor like
     -- every later upgrade, which is what the map behind this list is showing.
     local mode: string = "NEW RUN"
     if state.rush_choice then mode = "BOSS RUSH" end
-    render.text_centered(graphics, "THE FIRST FENCE", WIDTH * 0.5, 212.0, 30, "#fbbf24")
+    render.text_centered(graphics, "THE FIRST FENCE", viewport.center_x, heading_y, 30, "#fbbf24")
     render.text_centered(
-        graphics, "CHOOSE A STARTING SPELL", WIDTH * 0.5, 246.0, 12, "#d4d4d8")
+        graphics, "CHOOSE A STARTING SPELL", viewport.center_x, heading_y + 34.0, 12, "#d4d4d8")
     render.text_centered(
         graphics, mode .. "   CARRIED ALL RUN, EVERY CAST COSTS 5 MANA",
-        WIDTH * 0.5, 268.0, 11, "#a1a1aa")
+        viewport.center_x, heading_y + 56.0, 11, "#a1a1aa")
     for spell = 0::i32, SPELL_COUNT - 1 do
         local kind: i32 = spell + 1
         -- Each idle row wears its spell's colour, so the list doubles as the
         -- legend for the effect the pick will launch in the vault.
         draw_item(
-            state, graphics, spell,
+            state, viewport, graphics, spell,
             render.spell_name(kind), render.power_color(kind))
     end
     render.text_centered(
         graphics, "ARROWS MOVE   ENTER OR CLICK SELECTS   ESC GOES BACK",
-        WIDTH * 0.5, 566.0, 11, "#a1a1aa")
+        viewport.center_x, viewport.height - 34.0, 11, "#a1a1aa")
 end
 
 -- `ready` reports whether the required flip sound has finished loading. The
@@ -182,51 +194,52 @@ end
 -- The city map is already on the screen by the time this runs: the entry module
 -- draws it under whichever screen is live, so what is drawn here is only the
 -- list standing over it.
-function draw(state: State, graphics: engine.Graphics, effects: render.EffectShaders, ready: bool): unit
+function draw(state: State, viewport: layout.State, graphics: engine.Graphics, effects: render.EffectShaders, ready: bool): unit
+    local heading_y: f64 = title_y(viewport)
     if state.help_open then
         render.draw_help(graphics, effects)
         return
     end
     if state.stage == STAGE_SPELL then
-        draw_spell_stage(state, graphics)
+        draw_spell_stage(state, viewport, graphics)
         return
     end
-    render.text_centered(graphics, "ARCANE HEIST", WIDTH * 0.5, 212.0, 52, "#fbbf24")
+    render.text_centered(graphics, "ARCANE HEIST", viewport.center_x, heading_y, 52, "#fbbf24")
     render.text_centered(
         graphics, "VAULT AFTER VAULT ON ONE POOL OF MANA. FIVE BREACHES EACH",
-        WIDTH * 0.5, 252.0, 12, "#d4d4d8")
+        viewport.center_x, heading_y + 40.0, 12, "#d4d4d8")
     -- The four schools of magic as small mana motes under the title, in the
     -- same colours the footer legend uses in the vault.
     for i = 0::i32, 3::i32 do
         graphics:set_color(render.school_color(i))
-        graphics:fill_circle(WIDTH * 0.5 - 54.0 + (i::f64) * 36.0, 282.0, 6.0)
+        graphics:fill_circle(viewport.center_x - 54.0 + (i::f64) * 36.0, heading_y + 70.0, 6.0)
     end
 
-    draw_item(state, graphics, ITEM_NEW_RUN, "NEW RUN", "#8a8a92")
+    draw_item(state, viewport, graphics, ITEM_NEW_RUN, "NEW RUN", "#8a8a92")
     -- A boss battle deals eleven relics and never replaces a spent one. The
     -- standard run reaches one every third vault; the rush is nothing else.
     -- Both labels carry the stakes without needing their own help screen.
-    draw_item(state, graphics, ITEM_BOSS_RUSH, "BOSS RUSH", "#8a8a92")
-    draw_item(state, graphics, ITEM_HOW_TO_PLAY, "HOW TO PLAY", "#8a8a92")
+    draw_item(state, viewport, graphics, ITEM_BOSS_RUSH, "BOSS RUSH", "#8a8a92")
+    draw_item(state, viewport, graphics, ITEM_HOW_TO_PLAY, "HOW TO PLAY", "#8a8a92")
     if state.cursor == ITEM_NEW_RUN then
         render.text_centered(
             graphics, "EVERY THIRD VAULT IS A BOSS BATTLE. MANA CARRIES OVER",
-            WIDTH * 0.5, 502.0, 10, "#fbbf24")
+            viewport.center_x, item_top(viewport, ITEM_COUNT) + 16.0, 10, "#fbbf24")
     elseif state.cursor == ITEM_BOSS_RUSH then
         render.text_centered(
             graphics, "EVERY VAULT A BOSS. ELEVEN RELICS, NO REPLACEMENTS",
-            WIDTH * 0.5, 502.0, 10, "#fbbf24")
+            viewport.center_x, item_top(viewport, ITEM_COUNT) + 16.0, 10, "#fbbf24")
     elseif not ready then
         render.text_centered(
-            graphics, "PREPARING THE VAULT", WIDTH * 0.5, 502.0, 10, "#8a8a92")
+            graphics, "PREPARING THE VAULT", viewport.center_x, item_top(viewport, ITEM_COUNT) + 16.0, 10, "#8a8a92")
     end
 
     render.text_centered(
         graphics, "ARROWS MOVE   ENTER OR CLICK SELECTS",
-        WIDTH * 0.5, 524.0, 11, "#a1a1aa")
+        viewport.center_x, viewport.height - 76.0, 11, "#a1a1aa")
     render.text_centered(
         graphics, "IN THE VAULT: ? HELP   H LEDGER   R RESTART RUN   M MENU",
-        WIDTH * 0.5, 548.0, 10, "#8a8a92")
+        viewport.center_x, viewport.height - 52.0, 10, "#8a8a92")
 end
 
 function keypressed(state: State, key: string): i32
@@ -278,21 +291,21 @@ function keypressed(state: State, key: string): i32
     return ACTION_NONE
 end
 
-function mousemoved(state: State, x: f64, y: f64): unit
+function mousemoved(state: State, viewport: layout.State, x: f64, y: f64): unit
     if state.help_open then return end
-    local item: i32 = item_at(x, y, stage_item_count(state))
+    local item: i32 = item_at(viewport, x, y, stage_item_count(state))
     if item < 0 then return end
     state.cursor = item
     if state.stage == STAGE_SPELL then state.spell_cursor = item end
 end
 
-function mousepressed(state: State, x: f64, y: f64, button: i32): i32
+function mousepressed(state: State, viewport: layout.State, x: f64, y: f64, button: i32): i32
     if button ~= 1 then return ACTION_NONE end
     if state.help_open then
         state.help_open = false
         return ACTION_NONE
     end
-    local item: i32 = item_at(x, y, stage_item_count(state))
+    local item: i32 = item_at(viewport, x, y, stage_item_count(state))
     if item < 0 then return ACTION_NONE end
     state.cursor = item
     if state.stage == STAGE_SPELL then

@@ -47,6 +47,8 @@ type State = {
     dive_target: f64,
     camera_x: f64,
     camera_y: f64,
+    view_width: f64,
+    view_height: f64,
     anchor_x: f64,
     anchor_y: f64,
     zoom: f64,
@@ -84,8 +86,6 @@ const DIVE_OCTAVES: f64 = 4.9
 -- in walks that anchor back to the middle of the screen as the map goes.
 const MAP_ANCHOR_X: f64 = 736.0
 const MAP_ANCHOR_Y: f64 = 306.0
-const VAULT_ANCHOR_X: f64 = 480.0
-const VAULT_ANCHOR_Y: f64 = 300.0
 -- The two movements a screen change is made of, each walked at a steady pace so
 -- it takes the same time every time: the robbers cross a block to the door, and
 -- then the camera goes in after them. They never overlap — a push into a house
@@ -297,13 +297,17 @@ end
 -- does not visibly repeat. This is the menu's camera: no route is being walked,
 -- so the city itself is the subject.
 function drift_center_x(state: State): f64
+    local span: f64 = CITY_WIDTH - state.view_width
+    if span < 0.0 then span = 0.0 end
     return CITY_WIDTH * 0.5
-        + math.sin(state.pan_clock * 0.021) * (CITY_WIDTH - VIEW_WIDTH) * 0.42
+        + math.sin(state.pan_clock * 0.021) * span * 0.42
 end
 
 function drift_center_y(state: State): f64
+    local span: f64 = CITY_HEIGHT - state.view_height
+    if span < 0.0 then span = 0.0 end
     return CITY_HEIGHT * 0.5
-        + math.sin(state.pan_clock * 0.017) * (CITY_HEIGHT - VIEW_HEIGHT) * 0.42
+        + math.sin(state.pan_clock * 0.017) * span * 0.42
 end
 
 function camera_target(state: State): Point
@@ -346,12 +350,14 @@ function dive_cover(dive: f64): f64
     return 1.0 - smooth((dive - DIVE_HANDOVER) / (1.0 - DIVE_HANDOVER))
 end
 
-function dive_anchor_x(dive: f64): f64
-    return MAP_ANCHOR_X + (VAULT_ANCHOR_X - MAP_ANCHOR_X) * smooth(dive / DIVE_HANDOVER)
+function dive_anchor_x(state: State, dive: f64): f64
+    local vault_anchor: f64 = state.view_width * 0.5
+    return MAP_ANCHOR_X + (vault_anchor - MAP_ANCHOR_X) * smooth(dive / DIVE_HANDOVER)
 end
 
-function dive_anchor_y(dive: f64): f64
-    return MAP_ANCHOR_Y + (VAULT_ANCHOR_Y - MAP_ANCHOR_Y) * smooth(dive / DIVE_HANDOVER)
+function dive_anchor_y(state: State, dive: f64): f64
+    local vault_anchor: f64 = state.view_height * 0.5
+    return MAP_ANCHOR_Y + (vault_anchor - MAP_ANCHOR_Y) * smooth(dive / DIVE_HANDOVER)
 end
 
 -- Put every value the dive owns where its progress says they are. `street` is
@@ -364,8 +370,8 @@ function apply_dive(state: State): unit
     state.zoom = dive_zoom(state.dive)
     state.cover = dive_cover(state.dive)
     state.street = 1.0 - smooth(state.dive)
-    state.anchor_x = dive_anchor_x(state.dive)
-    state.anchor_y = dive_anchor_y(state.dive)
+    state.anchor_x = dive_anchor_x(state, state.dive)
+    state.anchor_y = dive_anchor_y(state, state.dive)
 end
 
 -- Keep the visible rectangle inside the generated city, so no screen edge ever
@@ -382,13 +388,13 @@ end
 function clamp_camera_x(state: State, value: f64): f64
     return clamp_camera(
         value, CITY_WIDTH,
-        state.anchor_x / state.zoom, (VIEW_WIDTH - state.anchor_x) / state.zoom)
+        state.anchor_x / state.zoom, (state.view_width - state.anchor_x) / state.zoom)
 end
 
 function clamp_camera_y(state: State, value: f64): f64
     return clamp_camera(
         value, CITY_HEIGHT,
-        state.anchor_y / state.zoom, (VIEW_HEIGHT - state.anchor_y) / state.zoom)
+        state.anchor_y / state.zoom, (state.view_height - state.anchor_y) / state.zoom)
 end
 
 function approach(dt: f64, rate: f64): f64
@@ -475,6 +481,8 @@ function new(seed: i32): State
         dive_target = 0.0,
         camera_x = CITY_WIDTH * 0.5,
         camera_y = CITY_HEIGHT * 0.5,
+        view_width = VIEW_WIDTH,
+        view_height = VIEW_HEIGHT,
         anchor_x = MAP_ANCHOR_X,
         anchor_y = MAP_ANCHOR_Y,
         zoom = MAP_ZOOM,
@@ -494,6 +502,19 @@ function new(seed: i32): State
     choose_streak(state, false)
     settle(state)
     return state
+end
+
+-- The city camera consumes the live logical viewport. Resizing does not
+-- regenerate the route or move the party; it only changes how much city is
+-- visible and where a vault dive converges.
+function resize(state: State, width: f64, height: f64): unit
+    if width < 1.0 or height < 1.0 then return end
+    if state.view_width == width and state.view_height == height then return end
+    state.view_width = width
+    state.view_height = height
+    apply_dive(state)
+    state.camera_x = clamp_camera_x(state, state.camera_x)
+    state.camera_y = clamp_camera_y(state, state.camera_y)
 end
 
 -- A different city, and a different route through it. The menu redraws the map
@@ -592,6 +613,7 @@ return {
     hide = hide,
     settle = settle,
     visible = visible,
+    resize = resize,
     update = update,
     ensure_stops = ensure_stops,
     position = position,
@@ -602,7 +624,5 @@ return {
     fence_stop = fence_stop,
     width = CITY_WIDTH,
     height = CITY_HEIGHT,
-    view_width = VIEW_WIDTH,
-    view_height = VIEW_HEIGHT,
     lookahead = LOOKAHEAD,
 }

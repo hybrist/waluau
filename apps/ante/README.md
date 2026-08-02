@@ -46,9 +46,14 @@ pitch (and the fan its tilt and arc) so an eleven-relic row still clears the
 deck and the three right-edge piles.
 
 The browser entry imports only the engine facade and contains no DOM or canvas
-host calls. The menu, game, help, history, and final outcome all render inside
-one 960×600 logical canvas that scales to the viewport. Trick results remain on the
-board, where color identifies the winning formation and any decisive kickers.
+host calls. The menu, game, help, history, and final outcome all use the live
+canvas size. A uniform unit scale keeps cards, text, circles, and line widths
+proportional, while the logical viewport expands along whichever canvas axis
+has more room. Semantic regions—headings, hand rows, wards, controls, piles,
+and footers—place themselves from those live dimensions, so additional width
+or height becomes game space rather than a fixed board or letterbox. Trick
+results remain on the board, where
+color identifies the winning formation and any decisive kickers.
 After the reveal flips, the winner's two cards fly out of their row and flank
 the three wards, completing the five-card formation in the middle of the
 board; a single golden halo then ignites around the whole set while the losing

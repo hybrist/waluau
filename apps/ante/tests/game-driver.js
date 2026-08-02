@@ -15,24 +15,81 @@ export function frameSignature(canvas) {
   });
 }
 
+// Read a rectangle expressed in Ante's live logical coordinates. Anchors let
+// assertions follow semantic regions as added width or height moves them.
+export function countDesignInk(canvas, rect, color, tolerance) {
+  return canvas.evaluate((node, sample) => {
+    const gl = node.getContext('webgl2');
+    const cssScale = Math.min(node.clientWidth / 960, node.clientHeight / 600);
+    const logicalWidth = node.clientWidth / cssScale;
+    const logicalHeight = node.clientHeight / cssScale;
+    const playerY = logicalHeight - 91;
+    const wardY = ((180 + playerY) * 0.5 + 12) - 64;
+    const actionY = wardY + 120;
+    const densityX = node.width / node.clientWidth;
+    const densityY = node.height / node.clientHeight;
+    let x = sample.rect.x ?? 0;
+    let y = sample.rect.y ?? 0;
+    if (sample.rect.centerOffsetX !== undefined) x = logicalWidth * 0.5 + sample.rect.centerOffsetX;
+    if (sample.rect.rightOffsetX !== undefined) x = logicalWidth + sample.rect.rightOffsetX;
+    if (sample.rect.heightRatio !== undefined) y = logicalHeight * sample.rect.heightRatio + (sample.rect.yOffset ?? 0);
+    if (sample.rect.wardOffsetY !== undefined) y = wardY + sample.rect.wardOffsetY;
+    if (sample.rect.actionOffsetY !== undefined) y = actionY + sample.rect.actionOffsetY;
+    if (sample.rect.bottomOffsetY !== undefined) y = logicalHeight + sample.rect.bottomOffsetY;
+    const left = Math.round(x * cssScale * densityX);
+    const top = Math.round(y * cssScale * densityY);
+    const width = Math.max(1, Math.round(sample.rect.width * cssScale * densityX));
+    const height = Math.max(1, Math.round(sample.rect.height * cssScale * densityY));
+    const bottom = node.height - top - height;
+    const pixels = new Uint8Array(width * height * 4);
+    gl.readPixels(left, bottom, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    let count = 0;
+    for (let index = 0; index < pixels.length; index += 4) {
+      if (
+        Math.abs(pixels[index] - sample.color[0]) <= sample.tolerance[0]
+        && Math.abs(pixels[index + 1] - sample.color[1]) <= sample.tolerance[1]
+        && Math.abs(pixels[index + 2] - sample.color[2]) <= sample.tolerance[2]
+      ) count += 1;
+    }
+    return count;
+  }, { rect, color, tolerance });
+}
+
+export async function clickDesignPoint(page, canvas, x, y) {
+  const point = await canvas.evaluate((node, designPoint) => {
+    const bounds = node.getBoundingClientRect();
+    const scale = Math.min(bounds.width / 960, bounds.height / 600);
+    return {
+      x: bounds.x + designPoint.x * scale,
+      y: bounds.y + designPoint.y * scale,
+    };
+  }, { x, y });
+  await page.mouse.click(point.x, point.y);
+}
+
+export async function clickMenuItem(page, canvas, index = 0) {
+  const point = await canvas.evaluate((node, itemIndex) => {
+    const bounds = node.getBoundingClientRect();
+    const scale = Math.min(bounds.width / 960, bounds.height / 600);
+    const logicalHeight = bounds.height / scale;
+    return {
+      x: bounds.x + bounds.width * 0.5,
+      y: bounds.y + (logicalHeight * 0.51 + itemIndex * 60 + 26) * scale,
+    };
+  }, index);
+  await page.mouse.click(point.x, point.y);
+}
+
 // Card-back ink on the draw pile: only the heist screen draws the deck, so a
 // positive count both proves the packaged asset decoded and that the menu has
 // handed over to the game screen.
 export function countCardBackInk(canvas) {
-  return canvas.evaluate((node) => {
-    const gl = node.getContext('webgl2');
-    const pixels = new Uint8Array(104 * 128 * 4);
-    gl.readPixels(56, node.height - 292 - 128, 104, 128, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-    let count = 0;
-    for (let index = 0; index < pixels.length; index += 4) {
-      if (
-        Math.abs(pixels[index] - 232) <= 12
-        && Math.abs(pixels[index + 1] - 223) <= 12
-        && Math.abs(pixels[index + 2] - 189) <= 12
-      ) count += 1;
-    }
-    return count;
-  });
+  return countDesignInk(
+    canvas,
+    { x: 56, wardOffsetY: 0, width: 104, height: 128 },
+    [232, 223, 189],
+    [12, 12, 12],
+  );
 }
 
 export async function openGame(page) {
