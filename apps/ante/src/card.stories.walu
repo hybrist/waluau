@@ -5,8 +5,11 @@
 
 local storybook = require("waluau:engine/storybook")
 local engine = require("waluau:engine")
+local graphics_module = require("waluau:engine/graphics")
 local game = require("./game")
 local render = require("./render")
+local card_warp = require("./card_warp")
+local card_draw = require("./card_draw")
 local presentation_resources = require("./presentation_resources")
 
 const WIDTH: f64 = 420.0
@@ -191,6 +194,186 @@ local function draw_fan(graphics: engine.Graphics, alpha: f64): unit
     end
 end
 
+-- The draw: a sealed card pulled off the deck by its bottom right corner and
+-- caught in the air. The card is a sheet of geometry here rather than a
+-- rectangle, so what happens to it is a corner leaving ahead of the rest of
+-- the card and the rest of the card answering for it.
+const DRAW_WIDTH: f64 = 760.0
+const DRAW_HEIGHT: f64 = 480.0
+-- Fine enough that a bend across the sheet is a curve and not a crease. Every
+-- cell is two triangles, so this is 1152 vertices — one batch.
+const DRAW_COLUMNS: i32 = 12
+const DRAW_ROWS: i32 = 16
+const DECK_X: f64 = 168.0
+const DECK_Y: f64 = 322.0
+const CAUGHT_X: f64 = 505.0
+const CAUGHT_Y: f64 = 196.0
+-- The card the deck gives up. It is sealed the whole way out of the stack and
+-- has turned over by the time it is caught.
+const DRAWN_RANK: i32 = 14
+const DRAWN_SUIT: i32 = 1
+
+-- The card as two surfaces and one grid, all three of which outlive every
+-- frame. A card being deformed sixty times a second should not be sixty
+-- render targets.
+local sheet: {
+    mesh: card_warp.Mesh,
+    back: graphics_module.RenderTarget?,
+    face: graphics_module.RenderTarget?,
+    captured: bool
+} = {
+    mesh = card_warp.new_mesh(DRAW_COLUMNS, DRAW_ROWS),
+    back = nil,
+    face = nil,
+    captured = false
+}
+
+local function drawn_card(): game.Card
+    return card(DRAWN_RANK, DRAWN_SUIT)
+end
+
+-- Both faces of the card, captured once. Until the packaged card back has
+-- arrived there is nothing worth capturing, so this simply waits.
+local function capture(graphics: engine.Graphics): bool
+    if sheet.captured then return true end
+    local card_back: graphics_module.Texture? = assets.texture
+    if card_back == nil then return false end
+    local back: graphics_module.RenderTarget? = render.capture_card(
+        graphics, assets.effects, card_back, drawn_card(), false, false, true)
+    local face: graphics_module.RenderTarget? = render.capture_card(
+        graphics, assets.effects, card_back, drawn_card(), false, false, false)
+    if back == nil or face == nil then return false end
+    sheet.back = back
+    sheet.face = face
+    sheet.captured = true
+    return true
+end
+
+local function draw_pose(
+    graphics: engine.Graphics,
+    pose: card_warp.Pose,
+    face_up: bool,
+    alpha: f64
+): unit
+    card_warp.build(sheet.mesh, pose)
+    local target: graphics_module.RenderTarget? = sheet.back
+    if face_up then target = sheet.face end
+    if target == nil then return end
+    local texture: graphics_module.Texture = graphics:texture_from_render_target(
+        target::graphics_module.RenderTarget)
+    -- Seen from behind, a card's face reads the wrong way round unless its
+    -- source region is taken right to left.
+    local source_x: f64 = 0.0
+    local source_width: f64 = render.card_width
+    if face_up then
+        source_x = render.card_width
+        source_width = -render.card_width
+    end
+    graphics:set_color_rgba(1.0, 1.0, 1.0, alpha)
+    graphics:draw_sprite_mesh(
+        texture,
+        DRAW_COLUMNS,
+        DRAW_ROWS,
+        sheet.mesh.xs,
+        sheet.mesh.ys,
+        sheet.mesh.shades,
+        source_x,
+        0.0,
+        source_width,
+        render.card_height
+    )
+end
+
+-- The stack the card comes out of. A pull needs something to be pulled from,
+-- and the thinning silhouette is the same one the board's draw pile uses.
+local function draw_deck(graphics: engine.Graphics): unit
+    local x: f64 = DECK_X - render.card_width * 0.5
+    local y: f64 = DECK_Y - render.card_height * 0.5
+    render.panel(graphics, x + 6.0, y + 6.0, render.card_width, render.card_height, "#17171c", "#3f3f46")
+    render.panel(graphics, x + 3.0, y + 3.0, render.card_width, render.card_height, "#17171c", "#3f3f46")
+    render.panel(graphics, x, y, render.card_width, render.card_height, "#17171c", "#52525b")
+    render.draw_card_back(graphics, assets.texture, x, y, false)
+end
+
+-- Whatever is holding the card up, seen only as what it does to the air. It
+-- arrives with the catch, which is the moment the card stops being thrown and
+-- starts being held.
+local function draw_hold(graphics: engine.Graphics, pose: card_warp.Pose, strength: f64): unit
+    if strength <= 0.0 then return end
+    -- Enough rings, faint enough, that the falloff is a glow rather than the
+    -- set of circles it is made of.
+    graphics:set_blend_mode("add")
+    for ring = 0::i32, 11::i32 do
+        local spread: f64 = 40.0 + (ring::f64) * 9.0
+        local weight: f64 = strength * 0.022 * (1.0 - (ring::f64) / 12.0)
+        graphics:set_color_rgba(0.36, 0.55, 0.95, weight)
+        graphics:fill_circle(pose.center_x, pose.center_y, spread)
+    end
+    graphics:set_blend_mode("alpha")
+end
+
+-- Where the story's clock is: running, or held wherever the scrub control put
+-- it. Scrubbing is what a beat this short is actually judged in — which is
+-- also why the scrub does not cover the whole loop. Everything worth stepping
+-- through happens in the first two thirds of a second, and a slider that
+-- spent three quarters of its travel on the hover would be a slider that
+-- cannot reach the whip.
+const SCRUB_TAIL: f64 = 0.35
+
+local function draw_clock(): f64
+    if storybook.arg_i32("playback") == 1 then
+        local scrubbed: f64 = card_draw.catch_end + SCRUB_TAIL
+        return scrubbed * (storybook.arg_i32("phase")::f64) / 100.0
+    end
+    local total: f64 = card_draw.total_seconds()
+    return shared.clock - math.floor(shared.clock / total) * total
+end
+
+local function drawing(): card_draw.Draw
+    return {
+        from_x = DECK_X,
+        from_y = DECK_Y,
+        to_x = CAUGHT_X,
+        to_y = CAUGHT_Y,
+        width = render.card_width,
+        height = render.card_height,
+        stretch_limit = (storybook.arg_i32("stretch")::f64) / 100.0
+    }
+end
+
+local function draw_drawing(graphics: engine.Graphics, alpha: f64): unit
+    ready(graphics)
+    draw_deck(graphics)
+    if not capture(graphics) then return end
+    local draw: card_draw.Draw = drawing()
+    local clock: f64 = draw_clock()
+
+    -- The slam is the only beat fast enough to leave anything behind it, and
+    -- the ghosts are earlier states of the same sheet rather than smears of
+    -- the last frame — a stretched card trailing an unstretched copy of
+    -- itself is what gives the deformation away.
+    if card_draw.trails(clock) then
+        local offsets: {f64} = card_draw.ghost_offsets()
+        for index = 0::i32, #offsets - 1 do
+            local past: f64 = clock - offsets[index]
+            if card_draw.ghost_visible(past) then
+                draw_pose(
+                    graphics,
+                    card_draw.pose_at(draw, past),
+                    card_draw.shows_face(draw, past),
+                    0.16 + 0.1 * (index::f64)
+                )
+            end
+        end
+    end
+
+    local pose: card_warp.Pose = card_draw.pose_at(draw, clock)
+    local hold: f64 = 0.0
+    if clock >= card_draw.slam_end then hold = 1.0 end
+    draw_hold(graphics, pose, hold)
+    draw_pose(graphics, pose, card_draw.shows_face(draw, clock), 1.0)
+end
+
 -- A card story is one card on one small canvas; only the fan needs the board's
 -- own geometry, because that is the space its slots are laid out in.
 local function card_scene(draw: (engine.Graphics, f64) -> unit): storybook.Scene
@@ -222,6 +405,20 @@ storybook.publish({
         width = SCHOOLS_WIDTH::u32,
         height = HEIGHT::u32,
         background = BACKGROUND
+    }),
+    storybook.story("Drawn from the deck", {
+        draw = draw_drawing,
+        load = load,
+        update = tick,
+        width = DRAW_WIDTH::u32,
+        height = DRAW_HEIGHT::u32,
+        background = BACKGROUND
+    }, {
+        storybook.select("playback", 0, { "Loop", "Scrub" }),
+        storybook.range("phase", 0, 0, 100, 1),
+        -- The one number that decides whether this reads as a card with
+        -- weight or as a rubber toy.
+        storybook.range("stretch", 118, 100, 160, 1),
     }),
     storybook.story("In the fan", {
         draw = draw_fan,

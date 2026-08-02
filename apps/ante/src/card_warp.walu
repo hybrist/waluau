@@ -56,7 +56,8 @@ type Pose = {
     -- undeformed, because every point has moved together.
     follow: f64,
     -- How tightly the pull concentrates at the held corner. Higher grip keeps
-    -- the far side of the card out of it for longer.
+    -- the far side of the card out of it for longer, and high enough turns the
+    -- stretch into a spike at one corner rather than a card being pulled.
     grip: f64,
     -- The longest the sheet may get, as a multiple of its rest diagonal. This
     -- is the dial between a card with weight and a rubber toy; nothing else
@@ -110,8 +111,8 @@ function rest_pose(width: f64, height: f64, center_x: f64, center_y: f64): Pose
         pull_y = 0.0,
         pull_z = 0.0,
         follow = 1.0,
-        grip = 4.0,
-        stretch_limit = 1.18,
+        grip = 2.2,
+        stretch_limit = 1.26,
         axis_x = 0.0,
         axis_y = 1.0,
         axial = 1.0,

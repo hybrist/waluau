@@ -1264,10 +1264,12 @@ function draw_disintegration_ring(graphics: Graphics, x: f64, y: f64, radius: f6
     graphics:stroke()
 end
 
--- Capture the complete live card into one texture before burning it. The rank,
--- school shader, sigil, and border then share a single UV space, letting one
--- noisy front eat the object instead of dissolving each drawing primitive.
-function capture_card_face(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, colored: bool, known: bool): graphics_module.RenderTarget?
+-- Capture the complete live card into one texture. The rank, school shader,
+-- sigil, and border then share a single UV space, letting one noisy front eat
+-- the object instead of dissolving each drawing primitive — and letting a
+-- card be handed whole to an effect that has to treat it as a surface rather
+-- than as the dozen primitives it is drawn from.
+function capture_card(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, colored: bool, known: bool, hidden: bool): graphics_module.RenderTarget?
     stop_effect(graphics)
     local result: graphics_module.RenderTargetResult = graphics:create_render_target(
         CARD_W::i32, CARD_H::i32)
@@ -1280,20 +1282,28 @@ function capture_card_face(graphics: Graphics, effects: EffectShaders, card_back
     graphics:clear("#00000000")
     draw_card(
         graphics, effects, card_back, card, 0.0, 0.0,
-        false, false, false, colored, known)
-    -- The burn target owns a texture exactly the size of the card. Reassert
-    -- the two thin identity layers last: the ordinary renderer can safely
-    -- batch them among the face primitives, but on a target boundary the
-    -- frame stroke is partially clipped and the five-pixel school stripe can
-    -- otherwise disappear at the handoff. They remain part of this texture,
-    -- so the shader chars and removes them only when its front reaches them.
-    graphics:set_color("#52525b")
-    graphics:set_line_width(2.0)
-    graphics:stroke_rectangle(1.0, 1.0, CARD_W - 2.0, CARD_H - 2.0)
-    graphics:set_color(school_color(card.suit))
-    graphics:fill_rectangle(7.0, 7.0, 5.0, CARD_H - 14.0)
+        false, false, hidden, colored, known)
+    -- The target owns a texture exactly the size of the card. Reassert the two
+    -- thin identity layers last: the ordinary renderer can safely batch them
+    -- among the face primitives, but on a target boundary the frame stroke is
+    -- partially clipped and the five-pixel school stripe can otherwise
+    -- disappear at the handoff. They remain part of this texture, so the burn
+    -- shader chars and removes them only when its front reaches them. A sealed
+    -- card shows neither: its back is the packaged image, edge to edge.
+    if not hidden then
+        graphics:set_color("#52525b")
+        graphics:set_line_width(2.0)
+        graphics:stroke_rectangle(1.0, 1.0, CARD_W - 2.0, CARD_H - 2.0)
+        graphics:set_color(school_color(card.suit))
+        graphics:fill_rectangle(7.0, 7.0, 5.0, CARD_H - 14.0)
+    end
     graphics:set_screen_target()
     return target
+end
+
+-- The face alone, which is what every burn in the game captures.
+function capture_card_face(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, colored: bool, known: bool): graphics_module.RenderTarget?
+    return capture_card(graphics, effects, card_back, card, colored, known, false)
 end
 
 -- How far the losing pair has burned, read off the reveal clock alone. The
@@ -2508,8 +2518,12 @@ return {
     -- piece of this presentation that can be looked at on its own, which is
     -- what the storybook does with it.
     draw_card = draw_card,
+    draw_card_back = draw_card_back,
     draw_hand_card = draw_hand_card,
     draw_flipping_card = draw_flipping_card,
+    -- A card as one surface rather than as the primitives it is drawn from,
+    -- which is what an effect deforming it has to have.
+    capture_card = capture_card,
     card_width = CARD_W,
     card_height = CARD_H,
     -- The menu and shop screens share the vault's panel chrome, centred type,

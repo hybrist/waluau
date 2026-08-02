@@ -1,0 +1,341 @@
+-- A card being drawn off the deck, as a clock and six beats.
+--
+-- The shape of the card at any instant is card_warp's business; this module
+-- decides what that shape should be at a given moment, which is the whole of
+-- the animation. Each beat is a window on one clock, and every beat hands the
+-- next one a card already moving, because a card that arrives at rest between
+-- two beats has stopped acting and started waiting.
+--
+-- The beats, and what each is for:
+--
+--   settle       the card leans away from the pull before it goes, so the
+--                pull has something to break away from
+--   pull         the bottom right corner leaves and the sheet trails it
+--   whip         the pull ends, the trailing sheet arrives past the corner
+--   slam         the card drives at its destination, turning over on the way
+--   catch        it is stopped short, in the air, and pays for the stop
+--   hover        it is held there, breathing, by whatever caught it
+--
+-- Nothing in here draws, so where the beats sit in time can be read off the
+-- source instead of inferred from a canvas.
+
+local card_warp = require("./card_warp")
+
+-- Beat boundaries, in seconds from the start of the draw. Anticipation is
+-- slow, the catch is the shortest thing in the animation, and the whip exists
+-- only because the eye needs to see the sheet overtake the corner.
+const SETTLE_END: f64 = 0.12
+const PULL_END: f64 = 0.34
+const WHIP_END: f64 = 0.44
+const SLAM_END: f64 = 0.62
+const CATCH_END: f64 = 0.68
+-- How long the card hovers before the story starts over.
+const HOVER_SECONDS: f64 = 1.9
+
+-- The drag: up and to the right, off the bottom right corner.
+const DRAG_X: f64 = 0.6
+const DRAG_Y: f64 = -0.8
+-- How far the held corner gets ahead of the sheet at the height of the pull,
+-- in logical pixels. The stretch limit is what actually decides how much of
+-- this reaches the card.
+const PULL_REACH: f64 = 78.0
+-- How far up and right the whole card travels while it is being pulled free.
+const LIFT_X: f64 = 54.0
+const LIFT_Y: f64 = -66.0
+
+-- The two turns the hover breathes with, at periods that do not divide into
+-- each other, so the loop never lands where the eye can find it.
+const HOVER_TILT_PERIOD: f64 = 3.1
+const HOVER_FLIP_PERIOD: f64 = 4.7
+const HOVER_RISE_PERIOD: f64 = 2.3
+const HOVER_TILT: f64 = 0.085
+const HOVER_FLIP: f64 = 0.11
+const HOVER_RISE: f64 = 2.6
+
+type Beat = { index: i32, part: f64 }
+
+-- Which beat a clock is in, and how far through it. Past the end everything
+-- reads as the hover, because the hover is where the animation lives once it
+-- has finished happening.
+const BEAT_SETTLE: i32 = 0
+const BEAT_PULL: i32 = 1
+const BEAT_WHIP: i32 = 2
+const BEAT_SLAM: i32 = 3
+const BEAT_CATCH: i32 = 4
+const BEAT_HOVER: i32 = 5
+
+function span(clock: f64, from: f64, to: f64): f64
+    local part: f64 = (clock - from) / (to - from)
+    if part < 0.0 then return 0.0 end
+    if part > 1.0 then return 1.0 end
+    return part
+end
+
+function beat_at(clock: f64): Beat
+    if clock < SETTLE_END then
+        return { index = BEAT_SETTLE, part = span(clock, 0.0, SETTLE_END) }
+    end
+    if clock < PULL_END then
+        return { index = BEAT_PULL, part = span(clock, SETTLE_END, PULL_END) }
+    end
+    if clock < WHIP_END then
+        return { index = BEAT_WHIP, part = span(clock, PULL_END, WHIP_END) }
+    end
+    if clock < SLAM_END then
+        return { index = BEAT_SLAM, part = span(clock, WHIP_END, SLAM_END) }
+    end
+    if clock < CATCH_END then
+        return { index = BEAT_CATCH, part = span(clock, SLAM_END, CATCH_END) }
+    end
+    return { index = BEAT_HOVER, part = clock - CATCH_END }
+end
+
+function total_seconds(): f64
+    return CATCH_END + HOVER_SECONDS
+end
+
+-- Easings. The board keeps its own set private and none of them anticipate or
+-- overshoot on the way in, which is most of what this animation is made of.
+function ease_out_cubic(t: f64): f64
+    local inverse: f64 = 1.0 - t
+    return 1.0 - inverse * inverse * inverse
+end
+
+function ease_in_cubic(t: f64): f64
+    return t * t * t
+end
+
+function ease_in_out_cubic(t: f64): f64
+    if t < 0.5 then return 4.0 * t * t * t end
+    local inverse: f64 = -2.0 * t + 2.0
+    return 1.0 - inverse * inverse * inverse * 0.5
+end
+
+-- Out and back: nothing at either end, everything in the middle. Anticipation
+-- and the catch's squash are both this shape, because both are a departure
+-- from a pose that has to return to it.
+function ease_arc(t: f64): f64
+    return math.sin(t * math.pi)
+end
+
+-- A settling overshoot: past the mark and back to it. This is what makes the
+-- catch read as being caught rather than as being lowered. The board's own
+-- ease_out_back overshoots half again as hard, which on something this short
+-- is a bounce rather than a stop.
+const BACK_OVERSHOOT: f64 = 1.2
+
+function ease_out_back(t: f64): f64
+    local past: f64 = t - 1.0
+    return 1.0
+        + (BACK_OVERSHOOT + 1.0) * past * past * past
+        + BACK_OVERSHOOT * past * past
+end
+
+-- Where the deck sits and where the card is caught, both as the card's centre.
+type Draw = {
+    from_x: f64,
+    from_y: f64,
+    to_x: f64,
+    to_y: f64,
+    width: f64,
+    height: f64,
+    stretch_limit: f64
+}
+
+-- How far the sheet has caught up with the held corner. It trails hard while
+-- the corner is leaving, races past it on the whip, and is level with it from
+-- the slam onward — from there the card is travelling, not deforming.
+function follow_at(beat: Beat): f64
+    if beat.index == BEAT_SETTLE then return 1.0 end
+    if beat.index == BEAT_PULL then
+        -- The sheet is furthest behind early, when the corner has just gone.
+        return 0.08 + 0.5 * ease_in_cubic(beat.part)
+    end
+    if beat.index == BEAT_WHIP then
+        return 0.58 + 0.75 * ease_arc(beat.part)
+    end
+    return 1.0
+end
+
+-- How far the held corner has been dragged from where the sheet would put it.
+function reach_at(beat: Beat): f64
+    if beat.index == BEAT_PULL then
+        return PULL_REACH * ease_out_cubic(beat.part)
+    end
+    if beat.index == BEAT_WHIP then
+        return PULL_REACH * (1.0 - ease_in_out_cubic(beat.part))
+    end
+    return 0.0
+end
+
+-- The card's own travel, which is separate from anything happening to its
+-- shape. It creeps up off the deck during the pull, holds through the whip,
+-- then drives at where it is caught.
+type Travel = { x: f64, y: f64, speed: f64 }
+
+function travel_at(draw: Draw, beat: Beat): Travel
+    if beat.index == BEAT_SETTLE then
+        -- Anticipation: a shade down and back, into the deck.
+        return { x = draw.from_x, y = draw.from_y + 3.0 * ease_arc(beat.part), speed = 0.0 }
+    end
+    if beat.index == BEAT_PULL then
+        -- The body leaves late and the corner leaves at once. Easing the two
+        -- the same way is what makes a pull look like a card being slid: the
+        -- corner's lead is real either way, but travelling with it hides the
+        -- lead behind the motion of the whole card.
+        local part: f64 = ease_in_cubic(beat.part)
+        return {
+            x = draw.from_x + LIFT_X * part,
+            y = draw.from_y + LIFT_Y * part,
+            speed = 0.0
+        }
+    end
+    local lifted_x: f64 = draw.from_x + LIFT_X
+    local lifted_y: f64 = draw.from_y + LIFT_Y
+    if beat.index == BEAT_WHIP then
+        return { x = lifted_x, y = lifted_y, speed = 0.0 }
+    end
+    if beat.index == BEAT_SLAM then
+        -- Driving, and still short of the destination when the catch takes
+        -- over: the card never gets there under its own steam.
+        local part: f64 = ease_in_cubic(beat.part) * 0.86
+        return {
+            x = lifted_x + (draw.to_x - lifted_x) * part,
+            y = lifted_y + (draw.to_y - lifted_y) * part,
+            speed = part
+        }
+    end
+    local stopped_x: f64 = lifted_x + (draw.to_x - lifted_x) * 0.86
+    local stopped_y: f64 = lifted_y + (draw.to_y - lifted_y) * 0.86
+    if beat.index == BEAT_CATCH then
+        local part: f64 = ease_out_back(beat.part)
+        return {
+            x = stopped_x + (draw.to_x - stopped_x) * part,
+            y = stopped_y + (draw.to_y - stopped_y) * part,
+            speed = 0.0
+        }
+    end
+    return { x = draw.to_x, y = draw.to_y, speed = 0.0 }
+end
+
+-- The turn. The card leaves the deck face down and is face up by the time it
+-- is caught, so the whole half turn belongs to the slam — a card that turned
+-- over while it was being pulled would have two things to watch at once.
+function flip_at(beat: Beat): f64
+    if beat.index == BEAT_SETTLE or beat.index == BEAT_PULL or beat.index == BEAT_WHIP then
+        return 0.0
+    end
+    if beat.index == BEAT_SLAM then
+        return math.pi * ease_in_out_cubic(beat.part)
+    end
+    return math.pi
+end
+
+-- What the card's shape owes to how fast it is going and to being stopped.
+-- Travel stretches into its direction; the catch pays that back and then some,
+-- across it.
+function axial_at(beat: Beat): f64
+    if beat.index == BEAT_SLAM then
+        return 1.0 + 0.14 * beat.part
+    end
+    if beat.index == BEAT_CATCH then
+        return 1.14 - 0.3 * ease_arc(beat.part)
+    end
+    return 1.0
+end
+
+-- The whole pose, at one moment. The hover is not a seventh beat so much as
+-- what the card does once there is nothing left to do to it.
+function pose_at(draw: Draw, clock: f64): card_warp.Pose
+    local beat: Beat = beat_at(clock)
+    local travel: Travel = travel_at(draw, beat)
+    local pose: card_warp.Pose = card_warp.rest_pose(
+        draw.width, draw.height, travel.x, travel.y)
+    pose.stretch_limit = draw.stretch_limit
+    pose.follow = follow_at(beat)
+    local reach: f64 = reach_at(beat)
+    pose.pull_x = DRAG_X * reach
+    pose.pull_y = DRAG_Y * reach
+    -- The corner comes up off the deck as well as across it, which is what
+    -- keeps the pull from reading as a card sliding on a table.
+    pose.pull_z = 0.42 * reach
+    pose.flip = flip_at(beat)
+    pose.axial = axial_at(beat)
+
+    if beat.index == BEAT_SETTLE then
+        -- Leaning into the deck, away from where the pull will go.
+        pose.roll = -0.02 * ease_arc(beat.part)
+        pose.tilt = 0.05 * ease_arc(beat.part)
+    elseif beat.index == BEAT_PULL or beat.index == BEAT_WHIP then
+        local lean: f64 = reach / PULL_REACH
+        pose.roll = 0.14 * lean
+        pose.tilt = -0.2 * lean
+    elseif beat.index == BEAT_SLAM then
+        -- Leaning into the travel, and the stretch runs along it too.
+        local heading_x: f64 = draw.to_x - draw.from_x - LIFT_X
+        local heading_y: f64 = draw.to_y - draw.from_y - LIFT_Y
+        pose.axis_x = heading_x
+        pose.axis_y = heading_y
+        pose.roll = 0.12 * (1.0 - beat.part)
+    elseif beat.index == BEAT_CATCH then
+        -- Squashing across the travel it was stopped in.
+        pose.axis_x = draw.to_x - draw.from_x - LIFT_X
+        pose.axis_y = draw.to_y - draw.from_y - LIFT_Y
+        pose.roll = 0.04 * (1.0 - beat.part)
+    else
+        local held: f64 = beat.part
+        pose.tilt = HOVER_TILT * math.sin(held * math.pi * 2.0 / HOVER_TILT_PERIOD)
+        pose.flip = math.pi + HOVER_FLIP * math.sin(held * math.pi * 2.0 / HOVER_FLIP_PERIOD)
+        pose.center_y = draw.to_y
+            + HOVER_RISE * math.sin(held * math.pi * 2.0 / HOVER_RISE_PERIOD)
+        -- A card held in the air is never quite still and never quite the same
+        -- size, because whatever is holding it is not a hand.
+        pose.scale = 1.0 + 0.012 * math.sin(held * math.pi * 2.0 / HOVER_FLIP_PERIOD)
+    end
+    return pose
+end
+
+-- Whether the card at this moment shows the face the deck was hiding. The
+-- pose knows how far it has turned; this is only about which texture goes on
+-- the sheet.
+function shows_face(draw: Draw, clock: f64): bool
+    return not card_warp.facing_front(pose_at(draw, clock))
+end
+
+-- How far back the ghosts of a slamming card are, in seconds. Two frames and
+-- change: far enough back to read as speed, near enough that they are still
+-- the same card and not a second one left behind at the deck.
+function ghost_offsets(): {f64}
+    return { 0.032, 0.016 }
+end
+
+-- The slam is the only beat fast enough to leave anything behind it, and a
+-- ghost only belongs to the card if it is inside the slam as well.
+function trails(clock: f64): bool
+    return beat_at(clock).index == BEAT_SLAM
+end
+
+function ghost_visible(clock: f64): bool
+    return clock > WHIP_END and beat_at(clock).index == BEAT_SLAM
+end
+
+return {
+    beat_at = beat_at,
+    pose_at = pose_at,
+    shows_face = shows_face,
+    trails = trails,
+    ghost_offsets = ghost_offsets,
+    ghost_visible = ghost_visible,
+    total_seconds = total_seconds,
+    settle_end = SETTLE_END,
+    pull_end = PULL_END,
+    whip_end = WHIP_END,
+    slam_end = SLAM_END,
+    catch_end = CATCH_END,
+    beat_settle = BEAT_SETTLE,
+    beat_pull = BEAT_PULL,
+    beat_whip = BEAT_WHIP,
+    beat_slam = BEAT_SLAM,
+    beat_catch = BEAT_CATCH,
+    beat_hover = BEAT_HOVER
+}
