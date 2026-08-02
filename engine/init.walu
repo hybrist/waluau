@@ -15,7 +15,7 @@ type ParticleSystem = particles_module.ParticleSystem
 type ParticleColor = particles_module.Color
 type ParticleQuad = particles_module.Quad
 
-local VERSION <const>: string = "1.4.0"
+local VERSION <const>: string = "1.5.0"
 
 return {
     VERSION = VERSION,

@@ -9,6 +9,7 @@ local burn_particles = require("./burn_particles")
 local spell_cast = require("./spell_cast")
 local spell_launch = require("./spell_launch")
 local game = require("./game")
+local layout = require("./layout")
 
 type Graphics = engine.Graphics
 type EffectShaders = effect_shaders.EffectShaders
@@ -29,8 +30,6 @@ function lerp(a: Point, b: Point, t: f64): Point
     return { x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t }
 end
 
-const WIDTH: f64 = 960.0
-const HEIGHT: f64 = 600.0
 const CARD_W: f64 = 104.0
 const CARD_H: f64 = 128.0
 const MODAL_HISTORY: i32 = 1
@@ -208,11 +207,6 @@ const FLY_SECONDS: f64 = 0.45
 const FLY_STAGGER: f64 = 0.12
 -- Where the pair lands: one flank on each side of the wards, extending their
 -- 116-pitch row to a five-card formation that stays centred on the board.
-const ROW_LEFT_X: f64 = 186.0
-const ROW_RIGHT_X: f64 = 650.0
-const ROW_Y: f64 = 292.0
-const ROW_CENTER_X: f64 = 470.0
-const ROW_CENTER_Y: f64 = 356.0
 const WIN_LIFT_SCALE: f64 = 1.14
 const WIN_LIFT_Y: f64 = 10.0
 
@@ -311,17 +305,12 @@ const FAN_TILT: f64 = 0.075
 -- The arc's dip per squared step: the outermost relics sit 4 * FAN_DROP below
 -- the middle one, which approximates a pivot far below the board.
 const FAN_DROP: f64 = 2.8
-const FAN_CENTER_X: f64 = 480.0
-const FAN_CENTER_Y: f64 = 509.0
 -- Widest sideways spread either hand row may occupy, first to last card
 -- centre. Five cards never reach it; a boss battle's eleven-card rows shrink
 -- their pitch to it so both rows clear the piles on the right edge.
-const HAND_SPAN_LIMIT: f64 = 520.0
 -- The Arch Mage's flat row: pitch of the five-card layout and the fixed
 -- centre both layouts share (190 + (4 * 116 + 104) / 2 in the original).
 const COMPUTER_PITCH: f64 = 116.0
-const COMPUTER_CENTER_X: f64 = 474.0
-const COMPUTER_ROW_Y: f64 = 116.0
 -- How far the fan slides open around the focused relic, in the same steps as
 -- everything else here — about a quarter of the gap to its neighbour. This is
 -- deliberately short of the ~0.41 steps it would take for FAN_PITCH to clear
@@ -447,6 +436,7 @@ type SpellParticles = {
     grave_dust: particles.ParticleSystem
 }
 type Frame = {
+    viewport: layout.State,
     view: game.View,
     run: RunView,
     interaction: Interaction,
@@ -505,9 +495,9 @@ function fan_scale_of(count: i32): f64
     return FAN_MIDDLE / middle
 end
 
-function row_pitch_of(pitch: f64, count: i32): f64
+function row_pitch_of(viewport: layout.State, pitch: f64, count: i32): f64
     if count <= 1 then return pitch end
-    return math.min(pitch, HAND_SPAN_LIMIT / ((count - 1)::f64))
+    return math.min(pitch, viewport.hand_span / ((count - 1)::f64))
 end
 
 -- Where a relic sits along the fan: steps from the middle relic, negative to
@@ -524,12 +514,12 @@ function hand_angle_at(index: i32, part: f64, count: i32): f64
 end
 
 -- Top-left of a relic's card box, in its own tilted frame.
-function hand_pos_at(index: i32, part: f64, count: i32): Point
+function hand_pos_at(viewport: layout.State, index: i32, part: f64, count: i32): Point
     local step: f64 = hand_step_at(index, part, count)
     local scale: f64 = fan_scale_of(count)
     return {
-        x = FAN_CENTER_X + step * row_pitch_of(FAN_PITCH, count) - CARD_W * 0.5,
-        y = FAN_CENTER_Y + step * step * FAN_DROP * scale * scale - CARD_H * 0.5,
+        x = viewport.center_x + step * row_pitch_of(viewport, FAN_PITCH, count) - CARD_W * 0.5,
+        y = viewport.player_y + step * step * FAN_DROP * scale * scale - CARD_H * 0.5,
     }
 end
 
@@ -551,25 +541,31 @@ end
 -- opposite the deck, each at its owner's height: the Arch Mage's up beside its
 -- sealed row, the player's down beside the fan, the burn pile centred between.
 -- The count parameter sizes the two hand rows; every other slot ignores it.
-function slot_pos_at(kind: i32, index: i32, count: i32): Point
-    if kind == SLOT_PLAYER then return hand_pos_at(index, 0.0, count) end
+function slot_pos_at(viewport: layout.State, kind: i32, index: i32, count: i32): Point
+    if kind == SLOT_PLAYER then return hand_pos_at(viewport, index, 0.0, count) end
     if kind == SLOT_COMPUTER then
-        local pitch: f64 = row_pitch_of(COMPUTER_PITCH, count)
-        local left: f64 = COMPUTER_CENTER_X - (((count - 1)::f64) * pitch + CARD_W) * 0.5
-        return point(left + (index::f64) * pitch, COMPUTER_ROW_Y)
+        local pitch: f64 = row_pitch_of(viewport, COMPUTER_PITCH, count)
+        local left: f64 = viewport.center_x - (((count - 1)::f64) * pitch + CARD_W) * 0.5
+        return point(left + (index::f64) * pitch, viewport.computer_y)
     end
-    if kind == SLOT_MIDDLE then return point(302.0 + (index::f64) * 116.0, 292.0) end
-    if kind == SLOT_DECK then return point(56.0, 292.0) end
-    if kind == SLOT_COMPUTER_WON then return point(800.0, 116.0) end
-    if kind == SLOT_PLAYER_WON then return point(800.0, 452.0) end
-    return point(800.0 + (index::f64) * 4.0, 292.0 + (index::f64) * 12.0)
+    if kind == SLOT_MIDDLE then
+        return point(viewport.center_x - 168.0 + (index::f64) * 116.0, viewport.ward_y)
+    end
+    if kind == SLOT_DECK then return point(viewport.side_left, viewport.ward_y) end
+    if kind == SLOT_COMPUTER_WON then return point(viewport.side_right, viewport.computer_y) end
+    if kind == SLOT_PLAYER_WON then
+        return point(viewport.side_right, viewport.player_y - CARD_H * 0.5 + 7.0)
+    end
+    return point(
+        viewport.side_right + (index::f64) * 4.0,
+        viewport.ward_y + (index::f64) * 12.0)
 end
 
 -- Countless slots — the wards, the deck, and the three piles — never move
 -- with the hand layout; this shorthand names them without inventing a count.
 -- The two hand rows must go through slot_pos_at with their real size.
-function slot_pos(kind: i32, index: i32): Point
-    return slot_pos_at(kind, index, 5)
+function slot_pos(viewport: layout.State, kind: i32, index: i32): Point
+    return slot_pos_at(viewport, kind, index, 5)
 end
 
 function slot_hidden(anims: {Anim}, clock: f64, kind: i32, index: i32): bool
@@ -595,26 +591,22 @@ end
 
 -- Clickable commit/pass capsules sit on the old prompt line, between the ward
 -- panel's bottom edge and the top of the fan.
-const BUTTON_Y: f64 = 412.0
 const BUTTON_H: f64 = 26.0
 const COMMIT_W: f64 = 190.0
 const PASS_W: f64 = 96.0
 const BUTTON_GAP: f64 = 14.0
 -- The footer's "? HELP" caption, grown to a comfortable click target.
-const HELP_LEFT: f64 = 890.0
-const HELP_TOP: f64 = 568.0
-const HELP_RIGHT: f64 = 952.0
-const HELP_BOTTOM: f64 = 592.0
 
 -- The feint phase shows COMMIT and PASS side by side; the breach phase
 -- centres its lone COMMIT, so the button's left edge depends on the phase.
-function commit_left(swap_open: bool): f64
-    if swap_open then return WIDTH * 0.5 - (COMMIT_W + BUTTON_GAP + PASS_W) * 0.5 end
-    return WIDTH * 0.5 - COMMIT_W * 0.5
+function commit_left(viewport: layout.State, swap_open: bool): f64
+    local center: f64 = viewport.center_x
+    if swap_open then return center - (COMMIT_W + BUTTON_GAP + PASS_W) * 0.5 end
+    return center - COMMIT_W * 0.5
 end
 
-function pass_left(): f64
-    return commit_left(true) + COMMIT_W + BUTTON_GAP
+function pass_left(viewport: layout.State): f64
+    return commit_left(viewport, true) + COMMIT_W + BUTTON_GAP
 end
 
 function point_in_rect(at: Point, left: f64, top: f64, width: f64, height: f64): bool
@@ -625,11 +617,11 @@ end
 -- earlier ones, so the scan runs highest slot first, and each relic's card box
 -- is checked in its own tilted frame: the point moves into the card's local
 -- space by undoing the same centre/rotation transform the card was drawn with.
-function hit_hand(at: Point, parts: {f64}): i32
+function hit_hand(viewport: layout.State, at: Point, parts: {f64}): i32
     for i = #parts - 1, 0::i32, -1::i32 do
         local part: f64 = parts[i]
         local angle: f64 = hand_angle_at(i, part, #parts)
-        local slot: Point = hand_pos_at(i, part, #parts)
+        local slot: Point = hand_pos_at(viewport, i, part, #parts)
         local dx: f64 = at.x - (slot.x + CARD_W * 0.5)
         local dy: f64 = at.y - (slot.y + CARD_H * 0.5)
         local local_x: f64 = dx * math.cos(angle) + dy * math.sin(angle)
@@ -642,9 +634,9 @@ function hit_hand(at: Point, parts: {f64}): i32
 end
 
 -- The ward under a point, or -1. Wards lie square to the board.
-function hit_ward(at: Point): i32
+function hit_ward(viewport: layout.State, at: Point): i32
     for i = 0::i32, 2::i32 do
-        local slot: Point = slot_pos(SLOT_MIDDLE, i)
+        local slot: Point = slot_pos(viewport, SLOT_MIDDLE, i)
         if point_in_rect(at, slot.x, slot.y, CARD_W, CARD_H) then
             return i
         end
@@ -652,21 +644,22 @@ function hit_ward(at: Point): i32
     return -1
 end
 
-function hit_commit(at: Point, swap_open: bool): bool
-    return point_in_rect(at, commit_left(swap_open), BUTTON_Y, COMMIT_W, BUTTON_H)
+function hit_commit(viewport: layout.State, at: Point, swap_open: bool): bool
+    return point_in_rect(
+        at, commit_left(viewport, swap_open), viewport.action_y, COMMIT_W, BUTTON_H)
 end
 
-function hit_pass(at: Point): bool
-    return point_in_rect(at, pass_left(), BUTTON_Y, PASS_W, BUTTON_H)
+function hit_pass(viewport: layout.State, at: Point): bool
+    return point_in_rect(at, pass_left(viewport), viewport.action_y, PASS_W, BUTTON_H)
 end
 
-function hit_help(at: Point): bool
-    return point_in_rect(at, HELP_LEFT, HELP_TOP, HELP_RIGHT - HELP_LEFT, HELP_BOTTOM - HELP_TOP)
+function hit_help(viewport: layout.State, at: Point): bool
+    return point_in_rect(at, viewport.width - 70.0, viewport.height - 32.0, 62.0, 24.0)
 end
 
 -- Inactive buttons stay visible but grey: a click still lands (main.walu owns
 -- the rules), it simply will not satisfy them yet.
-function draw_button(graphics: Graphics, label: string, x: f64, width: f64, active: bool): unit
+function draw_button(graphics: Graphics, viewport: layout.State, label: string, x: f64, width: f64, active: bool): unit
     local border: string = "#52525b"
     local ink: string = "#8a8a92"
     if active then
@@ -674,11 +667,12 @@ function draw_button(graphics: Graphics, label: string, x: f64, width: f64, acti
         ink = "#fbbf24"
     end
     graphics:set_color("#17171c")
-    graphics:fill_rectangle(x, BUTTON_Y, width, BUTTON_H)
+    local y: f64 = viewport.action_y
+    graphics:fill_rectangle(x, y, width, BUTTON_H)
     graphics:set_color(border)
     graphics:set_line_width(1.5)
-    graphics:stroke_rectangle(x, BUTTON_Y, width, BUTTON_H)
-    text_centered(graphics, label, x + width * 0.5, BUTTON_Y + 18.0, 11, ink)
+    graphics:stroke_rectangle(x, y, width, BUTTON_H)
+    text_centered(graphics, label, x + width * 0.5, y + 18.0, 11, ink)
 end
 
 function text_right(graphics: Graphics, value: string, right_x: f64, y: f64, size: f64, color: string): unit
@@ -868,7 +862,8 @@ end
 -- axis rather than straight up the screen, and the focus edge stays square to
 -- the card.
 function draw_hand_card(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, index: i32, part: f64, count: i32, selected: bool, focused: bool, colored: bool, known: bool): unit
-    local slot: Point = hand_pos_at(index, part, count)
+    local viewport: layout.State = layout.calculate(graphics.width, graphics.height)
+    local slot: Point = hand_pos_at(viewport, index, part, count)
     graphics:push()
     graphics:translate(slot.x + CARD_W * 0.5, slot.y + CARD_H * 0.5)
     graphics:rotate(hand_angle_at(index, part, count))
@@ -909,7 +904,8 @@ end
 -- silhouette thins as the run burns down; the label tracks the exact count.
 function draw_deck(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, count: i32): unit
     if count <= 0 then return end
-    local slot: Point = slot_pos(SLOT_DECK, 0)
+    local viewport: layout.State = layout.calculate(graphics.width, graphics.height)
+    local slot: Point = slot_pos(viewport, SLOT_DECK, 0)
     local x: f64 = slot.x
     local y: f64 = slot.y
     if count > 18 then panel(graphics, x + 6.0, y + 6.0, CARD_W, CARD_H, "#17171c", "#3f3f46") end
@@ -929,7 +925,8 @@ end
 -- already tally the run.
 function draw_pile(graphics: Graphics, effects: EffectShaders, cards: {game.Card}, count: i32, kind: i32): unit
     if count <= 0 then return end
-    local slot: Point = slot_pos(kind, 0)
+    local viewport: layout.State = layout.calculate(graphics.width, graphics.height)
+    local slot: Point = slot_pos(viewport, kind, 0)
     local x: f64 = slot.x
     local y: f64 = slot.y
     if count > 18 then panel(graphics, x - 6.0, y + 6.0, CARD_W, CARD_H, "#17171c", "#3f3f46") end
@@ -1096,12 +1093,17 @@ function draw_anims(graphics: Graphics, effects: EffectShaders, card_back: graph
 end
 
 function draw_backdrop(graphics: Graphics): unit
+    local viewport: layout.State = layout.calculate(graphics.width, graphics.height)
     graphics:clear("#09090b")
     graphics:set_color("#111114")
-    graphics:fill_rectangle(0.0, 0.0, WIDTH, HEIGHT)
+    graphics:fill_rectangle(0.0, 0.0, viewport.width, viewport.height)
     graphics:set_color("#1e1e24")
     graphics:set_line_width(1.0)
-    for x = 0, 960, 48 do graphics:line(x::f64, 0.0, WIDTH - (x::f64), HEIGHT) end
+    local columns: i32 = math.ceil(viewport.width / 48.0)::i32
+    for column = 0::i32, columns do
+        local x: f64 = (column::f64) * 48.0
+        graphics:line(x, 0.0, viewport.width - x, viewport.height)
+    end
 end
 
 function draw_orb(graphics: Graphics, x: f64, y: f64, edge: string, fill: string, played: bool): unit
@@ -1116,8 +1118,9 @@ function draw_orb(graphics: Graphics, x: f64, y: f64, edge: string, fill: string
 end
 
 function draw_round_orbs(graphics: Graphics, state: game.View): unit
+    local center: f64 = layout.calculate(graphics.width, graphics.height).center_x
     for round = 0::i32, TOTAL_ROUNDS - 1 do
-        local x: f64 = 412.0 + (round::f64) * 34.0
+        local x: f64 = center - 68.0 + (round::f64) * 34.0
         local edge: string = "#52525b"
         local fill: string = "#17171c"
         local played: bool = round < #state.history
@@ -1163,14 +1166,15 @@ function draw_run_marker(graphics: Graphics, run: RunView): unit
 end
 
 function draw_hud(graphics: Graphics, state: game.View, run: RunView): unit
+    local right: f64 = layout.calculate(graphics.width, graphics.height).width - 32.0
     text(graphics, "ARCANE HEIST", 32.0, 47.0, 22, "#fbbf24")
     draw_run_marker(graphics, run)
     draw_round_orbs(graphics, state)
     local score: string = tostring(state.player_points)
     graphics:set_font("22px monospace")
     graphics:set_color("#67e8f9")
-    graphics:print_aligned(score, WIDTH - 32.0, 47.0, "right")
-    text_right(graphics, "MANA", WIDTH - 32.0, 64.0, 9, "#155e75")
+    graphics:print_aligned(score, right, 47.0, "right")
+    text_right(graphics, "MANA", right, 64.0, 9, "#155e75")
 end
 
 -- One cast hint per spell the robbers carry, each on the key that casts it and
@@ -1180,6 +1184,7 @@ end
 const CAST_HINT_PITCH: f64 = 150.0
 
 function draw_footer(graphics: Graphics, state: game.View): unit
+    local viewport: layout.State = layout.calculate(graphics.width, graphics.height)
     for slot = 0::i32, #state.spells - 1 do
         local spell: game.Spell = state.spells[slot]
         local ink: string = power_color(spell.kind)
@@ -1188,36 +1193,36 @@ function draw_footer(graphics: Graphics, state: game.View): unit
             graphics,
             tostring(slot + 1) .. " " .. spell_name(spell.kind)
                 .. " " .. tostring(spell.cost) .. " MANA",
-            17.0 + (slot::f64) * CAST_HINT_PITCH, 582.0, 9, ink)
+            17.0 + (slot::f64) * CAST_HINT_PITCH, viewport.footer_y, 9, ink)
     end
-    text(graphics, "M MENU", 386.0, 582.0, 9, "#8a8a92")
-    text_right(graphics, "? HELP", WIDTH - 17.0, 582.0, 10, "#8a8a92")
+    text_centered(graphics, "M MENU", viewport.center_x, viewport.footer_y, 9, "#8a8a92")
+    text_right(graphics, "? HELP", viewport.width - 17.0, viewport.footer_y, 10, "#8a8a92")
 end
 
 -- Anchors of the resolved five-card row: the card top-left on each flank,
 -- where the winner's pair lands to complete the formation. Exported so
 -- choreography can start the scoop legs exactly where the reveal left the
 -- cards.
-function row_left(): Point
-    return point(ROW_LEFT_X, ROW_Y)
+function row_left(viewport: layout.State): Point
+    return point(viewport.center_x - 294.0, viewport.ward_y)
 end
 
-function row_right(): Point
-    return point(ROW_RIGHT_X, ROW_Y)
+function row_right(viewport: layout.State): Point
+    return point(viewport.center_x + 170.0, viewport.ward_y)
 end
 
 -- Centre of a board slot's card box, in a hand row laid out for `count`.
-function slot_center(kind: i32, index: i32, count: i32): Point
-    local slot: Point = slot_pos_at(kind, index, count)
+function slot_center(viewport: layout.State, kind: i32, index: i32, count: i32): Point
+    local slot: Point = slot_pos_at(viewport, kind, index, count)
     return point(slot.x + CARD_W * 0.5, slot.y + CARD_H * 0.5)
 end
 
 -- Centre of a bound relic in the fan: the bind lift rises along the card's
 -- tilted axis, so the launch point folds that (0, -10) offset through the
 -- relic's angle instead of lifting straight up the screen.
-function bound_hand_center(index: i32, part: f64, count: i32): Point
+function bound_hand_center(viewport: layout.State, index: i32, part: f64, count: i32): Point
     local angle: f64 = hand_angle_at(index, part, count)
-    local slot: Point = hand_pos_at(index, part, count)
+    local slot: Point = hand_pos_at(viewport, index, part, count)
     return {
         x = slot.x + CARD_W * 0.5 + math.sin(angle) * 10.0,
         y = slot.y + CARD_H * 0.5 - math.cos(angle) * 10.0,
@@ -1501,7 +1506,8 @@ function draw_disintegrating_card(graphics: Graphics, effects: EffectShaders, ca
 end
 
 function draw_hand_disintegration(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, card: game.Card, index: i32, part: f64, count: i32, progress: f64, seed: i32, ash: particles.ParticleSystem): unit
-    local slot: Point = hand_pos_at(index, part, count)
+    local viewport: layout.State = layout.calculate(graphics.width, graphics.height)
+    local slot: Point = hand_pos_at(viewport, index, part, count)
     -- Past full burn there is no sheet left to capture, only the last flakes
     -- falling — and they fall inside the relic's own tilt, the way they did
     -- while it was still there.
@@ -1621,12 +1627,13 @@ end
 -- is drawn from.
 function step_spell_particles(
     spells: SpellParticles,
+    viewport: layout.State,
     kind: i32,
     clock: f64,
     target: i32,
     dt: f64
 ): unit
-    local slot: Point = slot_pos(SLOT_MIDDLE, target)
+    local slot: Point = slot_pos(viewport, SLOT_MIDDLE, target)
     spell_launch.step(
         spells.sparks, kind, clock, dt,
         slot.x + CARD_W * 0.5, slot.y + CARD_H * 0.5)
@@ -2025,7 +2032,8 @@ function draw_spell_launch(
     target: i32,
     sparks: spell_cast.Sparks
 ): unit
-    local slot: Point = slot_pos(SLOT_MIDDLE, target)
+    local viewport: layout.State = layout.calculate(graphics.width, graphics.height)
+    local slot: Point = slot_pos(viewport, SLOT_MIDDLE, target)
     spell_launch.draw(
         graphics, effects, kind, clock,
         slot.x + CARD_W * 0.5, slot.y + CARD_H * 0.5, sparks)
@@ -2045,6 +2053,7 @@ function draw_resolution_board(
     effects: EffectShaders,
     frame: Frame
 ): unit
+    local viewport: layout.State = frame.viewport
     local state: game.View = frame.view
     local card_back: graphics_module.Texture? = frame.card_back
     local fan_parts: {f64} = frame.motion.fan_parts
@@ -2092,17 +2101,17 @@ function draw_resolution_board(
     local burn_landed: i32 = #discards
     if trick.winner ~= 0 then burn_landed -= 2 end
     draw_piles(graphics, effects, discards, burn_landed, computer_won, #computer_won, player_won, #player_won)
-    if trick.winner > 0 then text_centered(graphics, "DEFENSE BREACHED +" .. tostring(trick.points), WIDTH * 0.5, 103.0, 14, "#67e8f9")
-    elseif trick.winner < 0 then text_centered(graphics, "THE WARDS HOLD", WIDTH * 0.5, 103.0, 14, "#fca5a5")
-    else text_centered(graphics, "MAGICS CANCEL", WIDTH * 0.5, 103.0, 14, "#fbbf24") end
-    text_centered(graphics, game.category_name(trick.player_value) .. "  VS  " .. game.category_name(trick.computer_value), WIDTH * 0.5, 252.0, 11, "#d4d4d8")
+    if trick.winner > 0 then text_centered(graphics, "DEFENSE BREACHED +" .. tostring(trick.points), viewport.center_x, 103.0, 14, "#67e8f9")
+    elseif trick.winner < 0 then text_centered(graphics, "THE WARDS HOLD", viewport.center_x, 103.0, 14, "#fca5a5")
+    else text_centered(graphics, "MAGICS CANCEL", viewport.center_x, 103.0, 14, "#fbbf24") end
+    text_centered(graphics, game.category_name(trick.player_value) .. "  VS  " .. game.category_name(trick.computer_value), viewport.center_x, viewport.ward_y - 40.0, 11, "#d4d4d8")
 
     -- The played Arch Mage cards flip in their original slots, then fly to
     -- the ward row if the wards held; a slot goes empty the moment its card
     -- takes off. Everything else stays sealed, so only the winning formation
     -- gains suit color.
     for i = 0::i32, #trick.computer_hand - 1 do
-        local slot: Point = slot_pos_at(SLOT_COMPUTER, i, hand_count)
+        local slot: Point = slot_pos_at(viewport, SLOT_COMPUTER, i, hand_count)
         if i == trick.computer_first then
             if trick.winner >= 0 or fly0 <= 0.0 then
                 if trick.winner > 0 and loss_progress > 0.0 then
@@ -2127,10 +2136,12 @@ function draw_resolution_board(
     -- The panel marks the landing zone. Before the halo ignites, the three
     -- wards remain part of this ordinary table layer; once the formation is
     -- complete, they move into the foreground layer with the winning pair.
-    panel(graphics, 160.0, 258.0, 620.0, 148.0, "#101013", "#3f3f46")
+    panel(
+        graphics, viewport.center_x - 320.0, viewport.ward_y - 34.0,
+        640.0, 148.0, "#101013", "#3f3f46")
     if glow <= 0.0 then
         for i = 0::i32, 2::i32 do
-            local slot: Point = slot_pos(SLOT_MIDDLE, i)
+            local slot: Point = slot_pos(viewport, SLOT_MIDDLE, i)
             if i == frame.spell.target then
                 draw_powered_card(
                     graphics, effects, card_back, trick.middle[i],
@@ -2143,7 +2154,9 @@ function draw_resolution_board(
         end
     end
 
-    text_centered(graphics, "CLICK OR ENTER CONTINUES", WIDTH * 0.5, 442.0, 12, "#fbbf24")
+    text_centered(
+        graphics, "CLICK OR ENTER CONTINUES",
+        viewport.center_x, viewport.action_y + 30.0, 12, "#fbbf24")
     -- The cursor is not live while a breach resolves, so the fan is already
     -- easing shut; it settles closed behind the flips. The committed relics
     -- stay bound and lifted until their flight begins, so it stays clear
@@ -2181,12 +2194,18 @@ function draw_resolution_board(
     if foreground then
         local scale: f64 = 1.0 + (WIN_LIFT_SCALE - 1.0) * lift_progress
         graphics:push()
-        graphics:translate(ROW_CENTER_X, ROW_CENTER_Y - WIN_LIFT_Y * lift_progress)
+        local result_left: Point = row_left(viewport)
+        local result_right: Point = row_right(viewport)
+        local result_center_x: f64 = viewport.center_x
+        local result_center_y: f64 = viewport.ward_y + CARD_H * 0.5
+        graphics:translate(result_center_x, result_center_y - WIN_LIFT_Y * lift_progress)
         graphics:apply_transform(scale, 0.0, 0.0, scale, 0.0, 0.0)
-        graphics:translate(-ROW_CENTER_X, -ROW_CENTER_Y)
-        draw_result_field(graphics, effects, ROW_LEFT_X, ROW_Y, ROW_RIGHT_X + CARD_W - ROW_LEFT_X, CARD_H, glow, trick.winner > 0)
+        graphics:translate(-result_center_x, -result_center_y)
+        draw_result_field(
+            graphics, effects, result_left.x, result_left.y,
+            result_right.x + CARD_W - result_left.x, CARD_H, glow, trick.winner > 0)
         for i = 0::i32, 2::i32 do
-            local slot: Point = slot_pos(SLOT_MIDDLE, i)
+            local slot: Point = slot_pos(viewport, SLOT_MIDDLE, i)
             if i == frame.spell.target then
                 draw_powered_card(
                     graphics, effects, card_back, trick.middle[i],
@@ -2205,20 +2224,20 @@ function draw_resolution_board(
     -- takeoff continues the lift instead of snapping back down to the slot.
     if trick.winner < 0 then
         draw_winner_flight(graphics, effects, card_back, trick.computer_cards[0],
-            slot_center(SLOT_COMPUTER, trick.computer_first, hand_count), 0.0,
-            point(ROW_LEFT_X, ROW_Y), fly0, scoring[3])
+            slot_center(viewport, SLOT_COMPUTER, trick.computer_first, hand_count), 0.0,
+            row_left(viewport), fly0, scoring[3])
         draw_winner_flight(graphics, effects, card_back, trick.computer_cards[1],
-            slot_center(SLOT_COMPUTER, trick.computer_second, hand_count), 0.0,
-            point(ROW_RIGHT_X, ROW_Y), fly1, scoring[4])
+            slot_center(viewport, SLOT_COMPUTER, trick.computer_second, hand_count), 0.0,
+            row_right(viewport), fly1, scoring[4])
     elseif trick.winner > 0 then
         local angle0: f64 = hand_angle_at(trick.player_first, fan_parts[trick.player_first], hand_count)
         local angle1: f64 = hand_angle_at(trick.player_second, fan_parts[trick.player_second], hand_count)
         draw_winner_flight(graphics, effects, card_back, trick.player_cards[0],
-            bound_hand_center(trick.player_first, fan_parts[trick.player_first], hand_count),
-            angle0, point(ROW_LEFT_X, ROW_Y), fly0, scoring[3])
+            bound_hand_center(viewport, trick.player_first, fan_parts[trick.player_first], hand_count),
+            angle0, row_left(viewport), fly0, scoring[3])
         draw_winner_flight(graphics, effects, card_back, trick.player_cards[1],
-            bound_hand_center(trick.player_second, fan_parts[trick.player_second], hand_count),
-            angle1, point(ROW_RIGHT_X, ROW_Y), fly1, scoring[4])
+            bound_hand_center(viewport, trick.player_second, fan_parts[trick.player_second], hand_count),
+            angle1, row_right(viewport), fly1, scoring[4])
     end
     if foreground then graphics:pop() end
     draw_spell_launch(
@@ -2240,6 +2259,7 @@ end
 -- the fan's motion survives a frame and the focus edge and the parting can
 -- never disagree about which relic is active.
 function draw_playfield(graphics: Graphics, effects: EffectShaders, frame: Frame): unit
+    local viewport: layout.State = frame.viewport
     local state: game.View = frame.view
     local card_back: graphics_module.Texture? = frame.card_back
     local hand_focus: i32 = frame.interaction.hand_focus
@@ -2272,15 +2292,17 @@ function draw_playfield(graphics: Graphics, effects: EffectShaders, frame: Frame
     -- already-updated game state cannot leak ahead of the animation.
     for i = 0::i32, #state.computer_hand - 1 do
         if not slot_hidden(anims, anim_clock, SLOT_COMPUTER, i) then
-            local slot: Point = slot_pos_at(SLOT_COMPUTER, i, #state.computer_hand)
+            local slot: Point = slot_pos_at(viewport, SLOT_COMPUTER, i, #state.computer_hand)
             draw_card(graphics, effects, card_back, state.computer_hand[i].card, slot.x, slot.y, false, false, true, false, state.computer_hand[i].known)
         end
     end
     if not state.swap_open and not casting and #play_picks == 2 then
         local preview_value: i32 = game.value_for_pair(game.hand_cards(state.player_hand), state.middle, play_picks[0], play_picks[1])
-        text_centered(graphics, "OFFER: " .. game.category_name(preview_value), WIDTH * 0.5, 252.0, 11, "#d4d4d8")
+        text_centered(graphics, "OFFER: " .. game.category_name(preview_value), viewport.center_x, viewport.ward_y - 40.0, 11, "#d4d4d8")
     end
-    panel(graphics, 278.0, 258.0, 404.0, 148.0, "#101013", "#3f3f46")
+    panel(
+        graphics, viewport.center_x - 202.0, viewport.ward_y - 34.0,
+        404.0, 148.0, "#101013", "#3f3f46")
     for i = 0::i32, #state.middle - 1 do
         local selected: bool = state.swap_open and is_picked(swap_wards, i)
         -- Targeting a cast borrows the ward focus ring for its aim cursor,
@@ -2292,7 +2314,7 @@ function draw_playfield(graphics: Graphics, effects: EffectShaders, frame: Frame
             -- carries an eye: the mark only says something about a hand. One
             -- crossing into a hand does wear it, but that card is an
             -- animation leg rather than this slot.
-            local slot: Point = slot_pos(SLOT_MIDDLE, i)
+            local slot: Point = slot_pos(viewport, SLOT_MIDDLE, i)
             if i == frame.spell.target then
                 draw_powered_card(
                     graphics, effects, card_back, state.middle[i],
@@ -2312,14 +2334,14 @@ function draw_playfield(graphics: Graphics, effects: EffectShaders, frame: Frame
         text_centered(
             graphics,
             "AIM " .. spell_name(aimed.kind) .. " AT A WARD",
-            WIDTH * 0.5, 252.0, 11, power_color(aimed.kind))
+            viewport.center_x, viewport.ward_y - 40.0, 11, power_color(aimed.kind))
         text_centered(
             graphics,
             "ARROWS MOVE   ENTER CASTS "
                 .. tostring(aimed.cost) .. " MANA   ESC CANCELS",
-            WIDTH * 0.5, 430.0, 12, "#fbbf24")
+            viewport.center_x, viewport.action_y + 18.0, 12, "#fbbf24")
     elseif state.swap_open then
-        text_centered(graphics, "FEINT: BIND MATCHING RELICS + WARDS", WIDTH * 0.5, 252.0, 11, "#fbbf24")
+        text_centered(graphics, "FEINT: BIND MATCHING RELICS + WARDS", viewport.center_x, viewport.ward_y - 40.0, 11, "#fbbf24")
         -- Mirrors main.walu's submit rule so the capsule only lights up when
         -- a commit would actually be accepted.
         local available: bool = true
@@ -2328,12 +2350,12 @@ function draw_playfield(graphics: Graphics, effects: EffectShaders, frame: Frame
         end
         local balanced: bool = available
             and #swap_hand == #swap_wards and #swap_hand <= state.player_points
-        draw_button(graphics, "COMMIT FEINT", commit_left(true), COMMIT_W, balanced)
-        draw_button(graphics, "PASS", pass_left(), PASS_W, true)
+        draw_button(graphics, viewport, "COMMIT FEINT", commit_left(viewport, true), COMMIT_W, balanced)
+        draw_button(graphics, viewport, "PASS", pass_left(viewport), PASS_W, true)
     elseif #play_picks == 2 then
-        draw_button(graphics, "COMMIT BREACH", commit_left(false), COMMIT_W, true)
+        draw_button(graphics, viewport, "COMMIT BREACH", commit_left(viewport, false), COMMIT_W, true)
     else
-        text_centered(graphics, "BREACH: BIND TWO RELICS", WIDTH * 0.5, 430.0, 12, "#fbbf24")
+        text_centered(graphics, "BREACH: BIND TWO RELICS", viewport.center_x, viewport.action_y + 18.0, 12, "#fbbf24")
     end
     -- Relics keep the order they were dealt in, focused or not: pulling the
     -- focused one to the front would slide it through its neighbours instead of
@@ -2358,7 +2380,14 @@ function modal_shell(graphics: Graphics, title: string, subtitle: string): unit
     text(graphics, subtitle, 126.0, 145.0, 11, "#a1a1aa")
 end
 
+function begin_modal(graphics: Graphics): unit
+    local viewport: layout.State = layout.calculate(graphics.width, graphics.height)
+    graphics:push()
+    graphics:translate(viewport.center_x - 480.0, viewport.center_y - 300.0)
+end
+
 function draw_help(graphics: Graphics, effects: EffectShaders): unit
+    begin_modal(graphics)
     -- "Three ward holds" read as though a stalemate counted; only breaches the
     -- Arch Mage actually wins end the vault early.
     modal_shell(
@@ -2372,7 +2401,7 @@ function draw_help(graphics: Graphics, effects: EffectShaders): unit
     local tile_width: f64 = 136.0
     local tile_gap: f64 = 16.0
     local row_width: f64 = tile_width * 4.0 + tile_gap * 3.0
-    local row_left: f64 = WIDTH * 0.5 - row_width * 0.5
+    local row_left: f64 = 480.0 - row_width * 0.5
     for suit = 0::i32, 3::i32 do
         local tile_x: f64 = row_left + (suit::f64) * (tile_width + tile_gap)
         local center: f64 = tile_x + tile_width * 0.5
@@ -2411,12 +2440,15 @@ function draw_help(graphics: Graphics, effects: EffectShaders): unit
     text(graphics, "ARROWS MOVE   SPACE BIND   ENTER COMMIT   H HISTORY", 126.0, 474.0, 11, "#fbbf24")
     text(graphics, "C SORT BY COLOR   V SORT BY RANK   1 AND 2 CAST SPELLS", 126.0, 498.0, 11, "#fbbf24")
     text(graphics, "MOUSE: HOVER FOCUSES   CLICK BINDS   BUTTONS COMMIT OR PASS", 126.0, 522.0, 11, "#fbbf24")
+    graphics:pop()
 end
 
 function draw_history(graphics: Graphics, state: game.View): unit
+    begin_modal(graphics)
     modal_shell(graphics, "BREACH LEDGER", "H, ESC, OR A CLICK CLOSES THE LEDGER")
     if #state.history == 0 then
         text(graphics, "NO DEFENSES BREACHED YET.", 126.0, 220.0, 16, "#8a8a92")
+        graphics:pop()
         return
     end
     local y: f64 = 188.0
@@ -2429,39 +2461,42 @@ function draw_history(graphics: Graphics, state: game.View): unit
         text(graphics, game.category_name(trick.player_value) .. " VS " .. game.category_name(trick.computer_value), 430.0, y, 10, "#b5b5bd")
         y += 54.0
     end
+    graphics:pop()
 end
 
 -- The verdict of the vault just fought, read as a moment in the run. Taking it
 -- is an intermission — the mana on the table is the stake the next vault opens
 -- with — while losing it is where the whole run stops.
 function draw_final(graphics: Graphics, state: game.View, run: RunView): unit
+    begin_modal(graphics)
     local cleared: bool = game.view_cleared(state)
     if not cleared then
         modal_shell(
             graphics, "THE RUN ENDS",
             "THE ARCH MAGE HELD VAULT " .. tostring(run.vault)
                 .. ". THE CARRIED MANA GOES WITH IT")
-        text_centered(graphics, "VAULTS TAKEN", WIDTH * 0.5, 250.0, 18, "#67e8f9")
-        text_centered(graphics, tostring(run.cleared), WIDTH * 0.5, 325.0, 44, "#f8fafc")
+        text_centered(graphics, "VAULTS TAKEN", 480.0, 250.0, 18, "#67e8f9")
+        text_centered(graphics, tostring(run.cleared), 480.0, 325.0, 44, "#f8fafc")
     else
         modal_shell(
             graphics, "VAULT " .. tostring(run.vault) .. " IS YOURS",
             "FIVE BREACHES COMPLETE. THE RUN GOES ON")
-        text_centered(graphics, "MANA CARRIED ON", WIDTH * 0.5, 250.0, 18, "#67e8f9")
-        text_centered(graphics, tostring(state.player_points), WIDTH * 0.5, 325.0, 44, "#f8fafc")
+        text_centered(graphics, "MANA CARRIED ON", 480.0, 250.0, 18, "#67e8f9")
+        text_centered(graphics, tostring(state.player_points), 480.0, 325.0, 44, "#f8fafc")
     end
-    text_centered(graphics, "BREACHES WON " .. tostring(state.player_tricks) .. " / 5", WIDTH * 0.5, 376.0, 13, "#d4d4d8")
+    text_centered(graphics, "BREACHES WON " .. tostring(state.player_tricks) .. " / 5", 480.0, 376.0, 13, "#d4d4d8")
     if cleared then
         local ahead: string = "NEXT: VAULT " .. tostring(run.vault + 1)
         if run.next_is_boss then ahead = ahead .. "   BOSS BATTLE" end
-        text_centered(graphics, ahead, WIDTH * 0.5, 424.0, 13, "#fbbf24")
+        text_centered(graphics, ahead, 480.0, 424.0, 13, "#fbbf24")
         -- The next vault is not dealt straight off the verdict any more: the
         -- fence stands between them, spending this pile of mana.
-        text_centered(graphics, "ENTER OR CLICK VISITS THE FENCE   H OPENS THE LEDGER", WIDTH * 0.5, 482.0, 12, "#fbbf24")
+        text_centered(graphics, "ENTER OR CLICK VISITS THE FENCE   H OPENS THE LEDGER", 480.0, 482.0, 12, "#fbbf24")
     else
-        text_centered(graphics, "ENTER OR CLICK STARTS A NEW RUN   H OPENS THE LEDGER", WIDTH * 0.5, 482.0, 12, "#fbbf24")
+        text_centered(graphics, "ENTER OR CLICK STARTS A NEW RUN   H OPENS THE LEDGER", 480.0, 482.0, 12, "#fbbf24")
     end
-    text_centered(graphics, "R RESTARTS THE RUN   M RETURNS TO MENU", WIDTH * 0.5, 508.0, 12, "#8a8a92")
+    text_centered(graphics, "R RESTARTS THE RUN   M RETURNS TO MENU", 480.0, 508.0, 12, "#8a8a92")
+    graphics:pop()
 end
 
 function draw(graphics: Graphics, effects: EffectShaders, frame: Frame): unit
@@ -2483,21 +2518,25 @@ end
 
 function draw_shader_error(graphics: Graphics, detail: string): unit
     draw_backdrop(graphics)
-    panel(graphics, 90.0, 170.0, WIDTH - 180.0, 260.0, "#220016", "#ff00ff")
-    text_centered(graphics, "SHADER COMPILATION FAILED", WIDTH * 0.5, 235.0, 21, "#ff66ff")
-    text_centered(graphics, "THE RESULT EFFECT IS REQUIRED", WIDTH * 0.5, 282.0, 13, "#f8fafc")
-    text(graphics, detail, 125.0, 340.0, 11, "#fecdd3")
+    local viewport: layout.State = layout.calculate(graphics.width, graphics.height)
+    local top: f64 = viewport.center_y - 130.0
+    panel(graphics, 90.0, top, viewport.width - 180.0, 260.0, "#220016", "#ff00ff")
+    text_centered(graphics, "SHADER COMPILATION FAILED", viewport.center_x, top + 65.0, 21, "#ff66ff")
+    text_centered(graphics, "THE RESULT EFFECT IS REQUIRED", viewport.center_x, top + 112.0, 13, "#f8fafc")
+    text(graphics, detail, 125.0, top + 170.0, 11, "#fecdd3")
 end
 
 function draw_audio_error(graphics: Graphics, path: string, code: string, detail: string): unit
     draw_backdrop(graphics)
-    panel(graphics, 70.0, 135.0, WIDTH - 140.0, 330.0, "#260b08", "#fb7185")
-    text_centered(graphics, "REQUIRED SOUND EFFECT FAILED", WIDTH * 0.5, 205.0, 21, "#fb7185")
-    text_centered(graphics, "ARCANE HEIST HAS STOPPED", WIDTH * 0.5, 248.0, 13, "#f8fafc")
-    text(graphics, "ASSET: " .. path, 105.0, 310.0, 11, "#fecdd3")
-    text(graphics, "CODE: " .. code, 105.0, 342.0, 11, "#fecdd3")
-    text(graphics, "HOST: " .. detail, 105.0, 374.0, 11, "#fecdd3")
-    text(graphics, "CHECK THE TYPED ASSET MANIFEST AND BROWSER AUDIO HOST.", 105.0, 421.0, 10, "#fda4af")
+    local viewport: layout.State = layout.calculate(graphics.width, graphics.height)
+    local top: f64 = viewport.center_y - 165.0
+    panel(graphics, 70.0, top, viewport.width - 140.0, 330.0, "#260b08", "#fb7185")
+    text_centered(graphics, "REQUIRED SOUND EFFECT FAILED", viewport.center_x, top + 70.0, 21, "#fb7185")
+    text_centered(graphics, "ARCANE HEIST HAS STOPPED", viewport.center_x, top + 113.0, 13, "#f8fafc")
+    text(graphics, "ASSET: " .. path, 105.0, top + 175.0, 11, "#fecdd3")
+    text(graphics, "CODE: " .. code, 105.0, top + 207.0, 11, "#fecdd3")
+    text(graphics, "HOST: " .. detail, 105.0, top + 239.0, 11, "#fecdd3")
+    text(graphics, "CHECK THE TYPED ASSET MANIFEST AND BROWSER AUDIO HOST.", 105.0, top + 286.0, 10, "#fda4af")
 end
 
 return {

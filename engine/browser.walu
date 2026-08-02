@@ -14,6 +14,13 @@ type Config = {
     update_hz: f64,
     max_frame_seconds: f64,
     background: string,
+    -- "fluid" lets the canvas occupy all space available in the browser and
+    -- uses its current CSS dimensions as the game's logical viewport. Games
+    -- can then derive semantic placement from that live space. Omitted keeps
+    -- the fixed logical viewport above.
+    -- TODO(waluau-vnfx): Replace this string mode with a nullable bool and
+    -- read it directly once optional bool record fields emit valid Wasm.
+    canvas_sizing: string?,
     -- The id of an element to put the game inside. A game that owns the page
     -- leaves this out and the document body hosts it; a host that already owns
     -- the page — Storybook's preview, a docs page — names its own element, and
@@ -66,19 +73,29 @@ end
 -- browser upscaling a low-resolution WebGL buffer on high-density displays.
 -- DOM test hosts do not perform layout, so fall back to the configured logical
 -- size when clientWidth/clientHeight are unavailable.
-function sync_canvas_size(canvas: HTMLCanvasElement, fallback_width: u32, fallback_height: u32): bool
-    local available_width: f64 = (window.innerWidth - 16)::f64
-    local available_height: f64 = (window.innerHeight - 16)::f64
+function sync_canvas_size(
+    canvas: HTMLCanvasElement,
+    fallback_width: u32,
+    fallback_height: u32,
+    fluid: bool
+): bool
+    local inset: i32 = 16
+    if fluid then inset = 0 end
+    local available_width: f64 = (window.innerWidth - inset)::f64
+    local available_height: f64 = (window.innerHeight - inset)::f64
     if available_width < 1.0 then available_width = 1.0 end
     if available_height < 1.0 then available_height = 1.0 end
-    local display_scale: f64 = 1.0
-    local width_scale: f64 = available_width / (fallback_width::f64)
-    local height_scale: f64 = available_height / (fallback_height::f64)
-    if width_scale < display_scale then display_scale = width_scale end
-    if height_scale < display_scale then display_scale = height_scale end
-
-    local display_width: i32 = math.floor((fallback_width::f64) * display_scale + 0.5)::i32
-    local display_height: i32 = math.floor((fallback_height::f64) * display_scale + 0.5)::i32
+    local display_width: i32 = math.floor(available_width + 0.5)::i32
+    local display_height: i32 = math.floor(available_height + 0.5)::i32
+    if not fluid then
+        local display_scale: f64 = 1.0
+        local width_scale: f64 = available_width / (fallback_width::f64)
+        local height_scale: f64 = available_height / (fallback_height::f64)
+        if width_scale < display_scale then display_scale = width_scale end
+        if height_scale < display_scale then display_scale = height_scale end
+        display_width = math.floor((fallback_width::f64) * display_scale + 0.5)::i32
+        display_height = math.floor((fallback_height::f64) * display_scale + 0.5)::i32
+    end
     local css_width: i32 = canvas.clientWidth
     local css_height: i32 = canvas.clientHeight
     if css_width ~= display_width or css_height ~= display_height then
@@ -116,6 +133,9 @@ function start(config: Config, game: Game): Session
         if target ~= nil then host = target::Element end
     end
     local owns_page: bool = host == body
+    local fluid: bool = false
+    local canvas_sizing: string? = config.canvas_sizing
+    if canvas_sizing ~= nil then fluid = canvas_sizing::string == "fluid" end
     if owns_page then
         body:set_attribute("style", "margin:0;min-height:100vh;overflow:hidden;background:" .. config.background .. ";")
     end
@@ -129,6 +149,7 @@ function start(config: Config, game: Game): Session
     -- mounted game paints nothing outside the canvas: the host's page keeps
     -- its own background, and the canvas stays a measurable box on it.
     local root_box: string = "width:100vw;min-height:100vh;padding:8px;background:" .. config.background .. ";"
+    if fluid then root_box = "width:100vw;height:100vh;padding:0;background:" .. config.background .. ";" end
     if not owns_page then root_box = "width:100%;min-height:100%;padding:0;" end
     root:set_attribute("style", "box-sizing:border-box;display:flex;" .. root_box .. "align-items:center;justify-content:center;overflow:hidden;")
     host:append_child(root)
@@ -152,20 +173,32 @@ function start(config: Config, game: Game): Session
         local style: CSSStyleProperties = game_canvas.style
         style:setProperty("width", tostring(config.width) .. "px")
         style:setProperty("height", tostring(config.height) .. "px")
-        style:setProperty("aspect-ratio", tostring(config.width) .. " / " .. tostring(config.height))
+        if not fluid then
+            style:setProperty("aspect-ratio", tostring(config.width) .. " / " .. tostring(config.height))
+        end
         style:setProperty("display", "block")
         style:setProperty("background-color", config.background)
         style:setProperty("image-rendering", "pixelated")
 
         -- The logical viewport is config's to begin with and the session's
         -- from then on, so a resize is what the frame loop reads next.
-        local viewport: {width: u32, height: u32} = { width = config.width, height = config.height }
-        sync_canvas_size(game_canvas, viewport.width, viewport.height)
+        sync_canvas_size(game_canvas, config.width, config.height, fluid)
+        local viewport_width: u32 = config.width
+        local viewport_height: u32 = config.height
+        if fluid and game_canvas.clientWidth > 0 and game_canvas.clientHeight > 0 then
+            viewport_width = game_canvas.clientWidth::u32
+            viewport_height = game_canvas.clientHeight::u32
+        end
+        local viewport: {width: u32, height: u32} = {
+            width = viewport_width,
+            height = viewport_height,
+        }
 
         local maybe_gl: WebGL2RenderingContext? = game_canvas:get_context_webgl2()
         assert(maybe_gl ~= nil)
         local gl: WebGL2RenderingContext = maybe_gl::WebGL2RenderingContext
-        local graphics: graphics_module.Graphics = graphics_module.new(gl, config.width::f64, config.height::f64)
+        local graphics: graphics_module.Graphics = graphics_module.new(
+            gl, viewport.width::f64, viewport.height::f64)
         local input: input_module.Input = input_module.new()
         local clock: time_module.Clock = time_module.new(config.update_hz, config.max_frame_seconds)
 
@@ -200,12 +233,12 @@ function start(config: Config, game: Game): Session
         local function mouse_logical_x(mouse_event: MouseEvent): f64
             local css_width: f64 = game_canvas.clientWidth::f64
             if css_width <= 0.0 then return mouse_event.offsetX end
-            return mouse_event.offsetX * (config.width::f64) / css_width
+            return mouse_event.offsetX * (viewport.width::f64) / css_width
         end
         local function mouse_logical_y(mouse_event: MouseEvent): f64
             local css_height: f64 = game_canvas.clientHeight::f64
             if css_height <= 0.0 then return mouse_event.offsetY end
-            return mouse_event.offsetY * (config.height::f64) / css_height
+            return mouse_event.offsetY * (viewport.height::f64) / css_height
         end
 
         local function on_mousedown(event: Event): unit
@@ -258,7 +291,19 @@ function start(config: Config, game: Game): Session
         local frame_handle: u32 = 0
         local function frame(timestamp_ms: f64): unit
             if stopped then return end
-            if sync_canvas_size(game_canvas, viewport.width, viewport.height) then
+            local canvas_changed: bool = sync_canvas_size(
+                game_canvas, viewport.width, viewport.height, fluid)
+            if fluid and game_canvas.clientWidth > 0 and game_canvas.clientHeight > 0 then
+                local next_width: u32 = game_canvas.clientWidth::u32
+                local next_height: u32 = game_canvas.clientHeight::u32
+                if next_width ~= viewport.width or next_height ~= viewport.height then
+                    viewport.width = next_width
+                    viewport.height = next_height
+                    graphics:set_logical_size(next_width::f64, next_height::f64)
+                    canvas_changed = true
+                end
+            end
+            if canvas_changed then
                 graphics:resize()
             end
             local steps: i32 = clock:advance(timestamp_ms)
@@ -301,7 +346,7 @@ function start(config: Config, game: Game): Session
             style:setProperty("height", tostring(height) .. "px")
             style:setProperty("aspect-ratio", tostring(width) .. " / " .. tostring(height))
             graphics:set_logical_size(width::f64, height::f64)
-            sync_canvas_size(game_canvas, width, height)
+            sync_canvas_size(game_canvas, width, height, fluid)
             graphics:resize()
         end
 

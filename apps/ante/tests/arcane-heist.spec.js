@@ -2,7 +2,9 @@ import { test, expect } from '@playwright/test';
 import {
   GAME_READY_TIMEOUT,
   beginHeist,
+  clickMenuItem,
   countCardBackInk,
+  countDesignInk,
   frameSignature,
   openGame,
 } from './game-driver.js';
@@ -11,22 +13,12 @@ import {
 // heist screen keeps that band free of gold, so this distinguishes the menu
 // from the game without depending on a perfectly still frame.
 function countMenuTitleInk(canvas) {
-  return canvas.evaluate((node) => {
-    const width = Math.min(600, node.width - 300);
-    const height = 120;
-    const gl = node.getContext('webgl2');
-    const pixels = new Uint8Array(width * height * 4);
-    gl.readPixels(300, node.height - 280, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-    let count = 0;
-    for (let index = 0; index < pixels.length; index += 4) {
-      if (
-        Math.abs(pixels[index] - 251) <= 20
-        && Math.abs(pixels[index + 1] - 191) <= 20
-        && Math.abs(pixels[index + 2] - 36) <= 20
-      ) count += 1;
-    }
-    return count;
-  });
+  return countDesignInk(
+    canvas,
+    { centerOffsetX: -300, heightRatio: 0.3533333333, yOffset: -52, width: 600, height: 120 },
+    [251, 191, 36],
+    [20, 20, 20],
+  );
 }
 
 // Cyan stall ink where the city map stands the stop the run is on. Every map
@@ -34,26 +26,12 @@ function countMenuTitleInk(canvas) {
 // sets out from a vendor, so a positive count is the map really being under the
 // screen rather than a backdrop that happens to look like one.
 function countMapStopInk(canvas) {
-  return canvas.evaluate((node) => {
-    const gl = node.getContext('webgl2');
-    const left = Math.round(node.width * 0.740);
-    const width = Math.round(node.width * 0.058);
-    // readPixels counts up from the bottom; the stall sits at 288..322 of the
-    // 600-tall board.
-    const bottom = Math.round(node.height * 0.463);
-    const height = Math.round(node.height * 0.057);
-    const pixels = new Uint8Array(width * height * 4);
-    gl.readPixels(left, bottom, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-    let count = 0;
-    for (let index = 0; index < pixels.length; index += 4) {
-      if (
-        Math.abs(pixels[index] - 103) <= 45
-        && Math.abs(pixels[index + 1] - 232) <= 45
-        && Math.abs(pixels[index + 2] - 249) <= 45
-      ) count += 1;
-    }
-    return count;
-  });
+  return countDesignInk(
+    canvas,
+    { x: 710, y: 288, width: 56, height: 34 },
+    [103, 232, 249],
+    [45, 45, 45],
+  );
 }
 
 test('boots to a menu with new run, boss rush, and how to play options', async ({ page }) => {
@@ -81,9 +59,8 @@ test('boots to a menu with new run, boss rush, and how to play options', async (
   // Clicking the NEW RUN option opens the starting-spell list; the same
   // top-row spot now names FIREBOLT, and clicking it starts the run. M
   // returns to the menu.
-  const box = await canvas.boundingBox();
-  await page.mouse.click(box.x + box.width * (480 / 960), box.y + box.height * (356 / 600));
-  await page.mouse.click(box.x + box.width * (480 / 960), box.y + box.height * (356 / 600));
+  await clickMenuItem(page, canvas);
+  await clickMenuItem(page, canvas);
   await expect
     .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
     .toBeGreaterThan(40);
@@ -193,6 +170,35 @@ test.describe('on high-DPI displays', () => {
   });
 });
 
+test('reflows semantic layout and pointer targets through wide and tall canvases', async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 600 });
+  const canvas = await openGame(page);
+  await expect.poll(() => canvas.evaluate((node) => ({
+    width: node.clientWidth,
+    height: node.clientHeight,
+  }))).toEqual({ width: 1200, height: 600 });
+
+  // The title and option list are centered in the added width, and the first
+  // option's live hit target advances to the spell stage.
+  await expect
+    .poll(() => countMenuTitleInk(canvas), { timeout: GAME_READY_TIMEOUT })
+    .toBeGreaterThan(300);
+  await clickMenuItem(page, canvas);
+  await page.setViewportSize({ width: 600, height: 800 });
+  await expect.poll(() => canvas.evaluate((node) => ({
+    width: node.clientWidth,
+    height: node.clientHeight,
+  }))).toEqual({ width: 600, height: 800 });
+
+  // Tall space separates the heading, list, board rows, and footer. Clicking
+  // the relocated first row starts the run; the deck then appears on the live
+  // ward band rather than at a fixed 600-high board coordinate.
+  await clickMenuItem(page, canvas);
+  await expect
+    .poll(() => countCardBackInk(canvas), { timeout: GAME_READY_TIMEOUT })
+    .toBeGreaterThan(40);
+});
+
 // Moved from the conformance runner: exercising Arcane Heist's packaged asset
 // manifest is this app's concern, not the compiler's. The probe wraps the real
 // AudioContext before the app boots so decode and playback are observable.
@@ -274,26 +280,12 @@ test('stops on the fatal audio diagnostic when the flip sound cannot load', asyn
 // the breach phase writes its own amber prompt across the band, and that
 // prompt stops short of where the capsule ends.
 function countPassInk(canvas) {
-  return canvas.evaluate((node) => {
-    const gl = node.getContext('webgl2');
-    const left = Math.round(node.width * 0.612);
-    const width = Math.round(node.width * 0.042);
-    // readPixels counts up from the bottom; the capsule sits at 412..438 of
-    // the 600-tall board.
-    const bottom = Math.round(node.height * 0.27);
-    const height = Math.round(node.height * 0.044);
-    const pixels = new Uint8Array(width * height * 4);
-    gl.readPixels(left, bottom, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-    let count = 0;
-    for (let index = 0; index < pixels.length; index += 4) {
-      if (
-        Math.abs(pixels[index] - 251) <= 40
-        && Math.abs(pixels[index + 1] - 191) <= 40
-        && Math.abs(pixels[index + 2] - 36) <= 60
-      ) count += 1;
-    }
-    return count;
-  });
+  return countDesignInk(
+    canvas,
+    { centerOffsetX: 108, actionOffsetY: 0, width: 40, height: 26 },
+    [251, 191, 36],
+    [40, 40, 60],
+  );
 }
 
 // Cyan ink where the fence prints the mana on hand: a 24px number right-aligned
@@ -301,28 +293,12 @@ function countPassInk(canvas) {
 // mana readout sits in the HUD above it, and the verdict's headings are gold —
 // so this is how these tests tell the fence apart from a dealt vault.
 function countFenceManaInk(canvas) {
-  return canvas.evaluate((node) => {
-    const gl = node.getContext('webgl2');
-    // The fence keeps to a column down the left of the city map, so its mana
-    // readout is right-aligned at 550 of the 960-wide board.
-    const left = Math.round(node.width * 0.52);
-    const width = Math.round(node.width * 0.06);
-    // readPixels counts up from the bottom; the number sits at 100..132 of the
-    // 600-tall board.
-    const bottom = Math.round(node.height * 0.78);
-    const height = Math.round(node.height * 0.053);
-    const pixels = new Uint8Array(width * height * 4);
-    gl.readPixels(left, bottom, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-    let count = 0;
-    for (let index = 0; index < pixels.length; index += 4) {
-      if (
-        Math.abs(pixels[index] - 103) <= 40
-        && Math.abs(pixels[index + 1] - 232) <= 40
-        && Math.abs(pixels[index + 2] - 249) <= 40
-      ) count += 1;
-    }
-    return count;
-  });
+  return countDesignInk(
+    canvas,
+    { x: 499, heightRatio: 0.1133333333, yOffset: 32, width: 58, height: 32 },
+    [103, 232, 249],
+    [40, 40, 40],
+  );
 }
 
 const PRESS_MS = 200;

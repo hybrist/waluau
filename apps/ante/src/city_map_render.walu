@@ -19,8 +19,6 @@ local city_map = require("./city_map")
 type Graphics = engine.Graphics
 type Point = city_map.Point
 
-const WIDTH: f64 = 960.0
-const HEIGHT: f64 = 600.0
 const STREAK_LENGTH: f64 = 118.0
 
 const NIGHT: string = "#05060a"
@@ -357,7 +355,7 @@ function draw(state: city_map.State, graphics: Graphics, streak_color: string, a
     -- must leave the vault underneath it to come through.
     if alpha >= 1.0 then graphics:clear(NIGHT) end
     graphics:set_color(render.fade(ASPHALT, alpha))
-    graphics:fill_rectangle(0.0, 0.0, WIDTH, HEIGHT)
+    graphics:fill_rectangle(0.0, 0.0, state.view_width, state.view_height)
 
     -- Going into a house sheds the map in two passes, so the last thing left
     -- growing is the house itself: the route furniture goes first, because at
@@ -367,9 +365,9 @@ function draw(state: city_map.State, graphics: Graphics, streak_color: string, a
     local city_ink: f64 = alpha * (1.0 - ramp(state.dive, 0.16, 0.62))
 
     local left: f64 = state.camera_x - (state.anchor_x / state.zoom + 60.0)
-    local right: f64 = state.camera_x + ((WIDTH - state.anchor_x) / state.zoom + 60.0)
+    local right: f64 = state.camera_x + ((state.view_width - state.anchor_x) / state.zoom + 60.0)
     local top: f64 = state.camera_y - (state.anchor_y / state.zoom + 60.0)
-    local bottom: f64 = state.camera_y + ((HEIGHT - state.anchor_y) / state.zoom + 60.0)
+    local bottom: f64 = state.camera_y + ((state.view_height - state.anchor_y) / state.zoom + 60.0)
 
     if city_ink > 0.0 then
         apply_camera(state, graphics)
@@ -401,7 +399,7 @@ function draw(state: city_map.State, graphics: Graphics, streak_color: string, a
     -- The rooftops go under a scrim so a list of options reads over them; the
     -- route goes on top of it, because the route is the thing being said.
     graphics:set_color(render.fade(SCRIM, SCRIM_STRENGTH * city_ink))
-    graphics:fill_rectangle(0.0, 0.0, WIDTH, HEIGHT)
+    graphics:fill_rectangle(0.0, 0.0, state.view_width, state.view_height)
 
     apply_camera(state, graphics)
     if furniture > 0.0 then

@@ -29,6 +29,7 @@ local city_map = require("./city_map")
 local flow = require("./flow")
 local shop = require("./shop")
 local shop_render = require("./shop_render")
+local layout = require("./layout")
 
 type State = {
     run: run_module.State,
@@ -54,6 +55,10 @@ function new(): State
         leaving_fence = false,
         fence_fade = 0.0,
     }
+end
+
+function resize(state: State, viewport: layout.State): unit
+    choreography.resize(state.presentation, viewport)
 end
 
 -- Whether the map is the screen. The fence stands on it; a vault that has been
@@ -273,8 +278,9 @@ end
 -- The fence's offers, at the opacity of the street they are laid out on: they
 -- arrive as the camera comes back out of the last vault, and are gone before
 -- the walk to the next house begins.
-function draw_fence(state: State, city: city_map.State, graphics: engine.Graphics): unit
-    shop_render.draw(state.shop, state.run, graphics, state.fence_fade * city.street)
+function draw_fence(state: State, city: city_map.State, viewport: layout.State, graphics: engine.Graphics): unit
+    shop_render.draw(
+        state.shop, state.run, viewport, graphics, state.fence_fade * city.street)
 end
 
 function submit_swap(state: State): unit
@@ -468,10 +474,11 @@ function keypressed(state: State, city: city_map.State, key: string): i32
 end
 
 function mousemoved(state: State, x: f64, y: f64): unit
+    local viewport: layout.State = state.presentation.viewport
     if on_map(state) then
         shop.focus(
             state.shop, state.run,
-            shop_render.row_at(x, y, shop.row_count(state.shop, state.run)))
+            shop_render.row_at(viewport, x, y, shop.row_count(state.shop, state.run)))
         return
     end
     local ui: flow.State = state.ui
@@ -484,7 +491,7 @@ function mousemoved(state: State, x: f64, y: f64): unit
     -- While aiming a cast, the pointer only steers the ward the spell would
     -- hit; the fan below stays folded and unfocused.
     if ui.casting then
-        local target: i32 = render.hit_ward(at)
+        local target: i32 = render.hit_ward(viewport, at)
         if target >= 0 then ui.ward_cursor = target end
         return
     end
@@ -495,7 +502,7 @@ function mousemoved(state: State, x: f64, y: f64): unit
         return
     end
     if state.rules:feint_open() then
-        local ward: i32 = render.hit_ward(at)
+        local ward: i32 = render.hit_ward(viewport, at)
         if ward >= 0 then
             ui.cursor_area = flow.cursor_wards
             ui.ward_cursor = ward
@@ -505,12 +512,13 @@ end
 
 function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button: i32): unit
     if button ~= 1 then return end
+    local viewport: layout.State = state.presentation.viewport
     -- Clicking an offer buys it the same way Enter on it does; a click on the
     -- chrome between the lines buys nothing rather than taking whatever the
     -- cursor happened to rest on.
     if on_map(state) then
         local row: i32 = shop_render.row_at(
-            x, y, shop.row_count(state.shop, state.run))
+            viewport, x, y, shop.row_count(state.shop, state.run))
         if row < 0 then return end
         shop.focus(state.shop, state.run, row)
         if shop.activate(state.shop, state.run) == shop.result_leave then
@@ -527,14 +535,14 @@ function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button
     -- Clicking a ward while aiming confirms the cast on it; anywhere else
     -- keeps targeting open for the keyboard to finish or cancel.
     if ui.casting then
-        local target: i32 = render.hit_ward(at)
+        local target: i32 = render.hit_ward(viewport, at)
         if target >= 0 then
             ui.ward_cursor = target
             confirm_cast(state, ui.cast_slot, target)
         end
         return
     end
-    if render.hit_help(at) then
+    if render.hit_help(viewport, at) then
         flow.gate(
             ui, rules:is_finished(), false,
             choreography.reveal_finished(state.presentation), flow.command_help)
@@ -549,21 +557,21 @@ function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button
         return
     end
     if rules:feint_open() then
-        local ward: i32 = render.hit_ward(at)
+        local ward: i32 = render.hit_ward(viewport, at)
         if ward >= 0 then
             ui.cursor_area = flow.cursor_wards
             ui.ward_cursor = ward
             if not rules:is_frozen(ward) then flow.toggle(ui.swap_wards, ward, 3) end
             return
         end
-        if render.hit_pass(at) then
+        if render.hit_pass(viewport, at) then
             ui.swap_hand = {}
             ui.swap_wards = {}
             submit_swap(state)
             return
         end
     end
-    if render.hit_commit(at, rules:feint_open()) then
+    if render.hit_commit(viewport, at, rules:feint_open()) then
         if rules:feint_open() then submit_swap(state) else submit_breach(state) end
     end
 end
@@ -624,6 +632,7 @@ end
 
 return {
     new = new,
+    resize = resize,
     reset = reset,
     update = update,
     steer_city = steer_city,

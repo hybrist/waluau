@@ -19,8 +19,8 @@ end
 function on_screen(state: city_map.State, point: city_map.Point): bool
     local screen_x: f64 = state.anchor_x + (point.x - state.camera_x) * state.zoom
     local screen_y: f64 = state.anchor_y + (point.y - state.camera_y) * state.zoom
-    return screen_x >= 0.0 and screen_x <= city_map.view_width
-        and screen_y >= 0.0 and screen_y <= city_map.view_height
+    return screen_x >= 0.0 and screen_x <= state.view_width
+        and screen_y >= 0.0 and screen_y <= state.view_height
 end
 
 -- Whether the camera has the point exactly where the screens leave room for it,
@@ -124,11 +124,28 @@ describe("city map", function()
         -- The visible rectangle never runs off the generated city.
         expect(city.camera_x - city.anchor_x / city.zoom):toBeGreaterThanOrEqual(0.0)
         expect(
-            city.camera_x + (city_map.view_width - city.anchor_x) / city.zoom
+            city.camera_x + (city.view_width - city.anchor_x) / city.zoom
         ):toBeLessThanOrEqual(city_map.width)
         expect(city.camera_y - city.anchor_y / city.zoom):toBeGreaterThanOrEqual(0.0)
         expect(
-            city.camera_y + (city_map.view_height - city.anchor_y) / city.zoom
+            city.camera_y + (city.view_height - city.anchor_y) / city.zoom
+        ):toBeLessThanOrEqual(city_map.height)
+    end)
+
+    it("exposes additional city when the logical viewport grows", function()
+        local city: city_map.State = city_map.new(53)
+        city_map.resize(city, 1200.0, 800.0)
+
+        expect(city.view_width):toBe(1200.0)
+        expect(city.view_height):toBe(800.0)
+        step_seconds(city, 10.0)
+        expect(city.camera_x - city.anchor_x / city.zoom):toBeGreaterThanOrEqual(0.0)
+        expect(
+            city.camera_x + (city.view_width - city.anchor_x) / city.zoom
+        ):toBeLessThanOrEqual(city_map.width)
+        expect(city.camera_y - city.anchor_y / city.zoom):toBeGreaterThanOrEqual(0.0)
+        expect(
+            city.camera_y + (city.view_height - city.anchor_y) / city.zoom
         ):toBeLessThanOrEqual(city_map.height)
     end)
 

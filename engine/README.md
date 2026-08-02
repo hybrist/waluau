@@ -57,13 +57,17 @@ body hosts it and the game owns the page; named, the engine styles only what it
 mounted, which is what lets a host page — Storybook's preview — keep its own
 layout around the canvas.
 
+`Config.canvas_sizing = "fluid"` makes the canvas fill the browser's available
+space and updates `Graphics.width` and `Graphics.height` to its live CSS size.
+Without it, `width` and `height` remain the fixed logical viewport.
+
 ## Package and version contract
 
 The compiler embeds the engine sources. `waluau:engine` selects the current
 stable major version and `waluau:engine/v1` pins major version 1. Both expose
 the same aggregate facade:
 
-- `VERSION`: the semantic API version (`1.4.0`)
+- `VERSION`: the semantic API version (`1.5.0`)
 - `start`: the browser lifecycle entry point
 - `Config`, `Game`, `Session`, `Input`, `Graphics`, and `ParticleSystem`:
   canonical public types
