@@ -245,6 +245,13 @@ fn needs_lua_error_tag(module: &Module) -> bool {
 /// (`$anyref_array`, `$func_val`, `$boxed_f64`, `$boxed_bool`) to be declared in
 /// the type section.
 fn needs_closure_gc_types(module: &Module, declared_imports: &[&DeclaredImport]) -> bool {
+    if module
+        .globals
+        .iter()
+        .any(|global| type_contains_function_value(&global.ty))
+    {
+        return true;
+    }
     for import in declared_imports {
         if import.params.iter().any(type_contains_function_value)
             || type_contains_function_value(&import.return_type)
@@ -346,6 +353,7 @@ struct IncrementalEmitContext {
     string_constants: Vec<String>,
     bytes_constants: Vec<Vec<u8>>,
     user_type_base: u32,
+    user_global_base: u32,
     coroutine_plan: CoroutinePlan,
     coroutine_body_wrapper_type: Option<u32>,
     coroutine_push_frame_func: Option<u32>,
@@ -708,7 +716,9 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
     let string_constants = host::collect_string_constants(module);
     let bytes_constants = host::collect_bytes_constants(module);
     let buffer_plan = BufferPlan::new(module);
-    let mut coroutine_plan = CoroutinePlan::new(module, string_constants.len() as u32);
+    let user_global_base = string_constants.len() as u32;
+    let mut coroutine_plan =
+        CoroutinePlan::new(module, user_global_base + module.globals.len() as u32);
     let start_thunk = module.start;
 
     // Typed nullable box structs (`$nullable_box_K`, backing `i32?` etc.) come
@@ -1583,15 +1593,39 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
             + record_helper_func_count
             + nullable_box_helper_func_count
     });
-    // Defined globals follow the imported string-constant globals; the heap
-    // pointer sits after the coroutine active-instance global when present.
+    // Defined globals follow the imported string constants. Module bindings
+    // come first, then the active coroutine instance and linear-memory heap.
     let buffer_heap_ptr_global =
-        string_constants.len() as u32 + u32::from(coroutine_plan.has_state());
+        user_global_base + module.globals.len() as u32 + u32::from(coroutine_plan.has_state());
 
     let mut functions = FunctionSection::new();
     let mut tables = TableSection::new();
     let mut elements = ElementSection::new();
     let mut globals = GlobalSection::new();
+    for global in &module.globals {
+        let val_type = wasm_type(&global.ty, &array_registry)?;
+        let init = match val_type {
+            ValType::I32 => ConstExpr::i32_const(0),
+            ValType::I64 => ConstExpr::i64_const(0),
+            ValType::F32 => ConstExpr::f32_const(0.0),
+            ValType::F64 => ConstExpr::f64_const(0.0),
+            ValType::Ref(reference) => ConstExpr::ref_null(reference.heap_type),
+            other => {
+                return Err(Diagnostic::new(format!(
+                    "module binding '{}' has unsupported Wasm global type {other:?}",
+                    global.name
+                )));
+            }
+        };
+        globals.global(
+            wasm_encoder::GlobalType {
+                val_type,
+                mutable: true,
+                shared: false,
+            },
+            &init,
+        );
+    }
     if let Some(state_type) = coroutine_state_type {
         coroutine_plan.emit_globals(&mut globals, state_type);
     }
@@ -1676,6 +1710,7 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
                 &string_constants,
                 &bytes_constants,
                 user_type_base,
+                user_global_base,
                 &coroutine_plan,
                 coroutine_body_wrapper_type,
                 coroutine_push_frame_func,
@@ -1720,6 +1755,7 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
                                 string_constants,
                                 bytes_constants,
                                 user_type_base,
+                                user_global_base,
                                 coroutine_plan,
                                 coroutine_body_wrapper_type,
                                 coroutine_push_frame_func,
@@ -2037,7 +2073,7 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
     if !tags.is_empty() {
         wasm.section(&tags);
     }
-    if coroutine_plan.has_state() || buffer_plan.uses_memory {
+    if !module.globals.is_empty() || coroutine_plan.has_state() || buffer_plan.uses_memory {
         wasm.section(&globals);
     }
     wasm.section(&exports);
@@ -2091,6 +2127,7 @@ fn emit_inner(module: &Module, cache: Option<&mut EmitCache>) -> Result<EmitResu
             string_constants,
             bytes_constants: result.bytes_constants.clone(),
             user_type_base,
+            user_global_base,
             coroutine_plan,
             coroutine_body_wrapper_type,
             coroutine_push_frame_func,
@@ -2157,6 +2194,7 @@ fn try_emit_incremental(
     }
     if module.declared_imports != previous.declared_imports
         || module.start != previous.start
+        || module.globals != previous.globals
         || module.tag_ids != previous.tag_ids
         || module.functions.len() != previous.functions.len()
     {
@@ -2191,6 +2229,7 @@ fn try_emit_incremental(
         &context.string_constants,
         &context.bytes_constants,
         context.user_type_base,
+        context.user_global_base,
         &context.coroutine_plan,
         context.coroutine_body_wrapper_type,
         context.coroutine_push_frame_func,
@@ -2320,6 +2359,7 @@ struct EmissionContext<'a> {
     string_constants: &'a [String],
     bytes_constants: &'a [Vec<u8>],
     user_type_base: u32,
+    user_global_base: u32,
     coroutine_plan: &'a CoroutinePlan,
     /// Wrapper type index for zero-arg coroutine bodies stored as `func_val` continuations.
     coroutine_body_wrapper_type: Option<u32>,
@@ -2424,6 +2464,7 @@ fn emit_function(
     string_constants: &[String],
     bytes_constants: &[Vec<u8>],
     user_type_base: u32,
+    user_global_base: u32,
     coroutine_plan: &CoroutinePlan,
     coroutine_body_wrapper_type: Option<u32>,
     coroutine_push_frame_func: Option<u32>,
@@ -2441,6 +2482,7 @@ fn emit_function(
         string_constants,
         bytes_constants,
         user_type_base,
+        user_global_base,
         coroutine_plan,
         coroutine_body_wrapper_type,
         closure_wrapper_slots,
@@ -3713,6 +3755,23 @@ fn emit_block_instructions(
     for (value, instruction) in block.instructions.iter().skip(start_index) {
         match instruction {
             IrInstruction::Param(_) | IrInstruction::Phi(_) => {}
+            IrInstruction::GlobalGet { global, .. } => {
+                out.instruction(&Instruction::GlobalGet(
+                    ctx.user_global_base + *global as u32,
+                ));
+                emit_value_store(out, local_plan, *value)?;
+            }
+            IrInstruction::GlobalSet {
+                global,
+                value: stored,
+                ..
+            } => {
+                emit_value_operand(out, local_plan, *stored)?;
+                out.instruction(&Instruction::GlobalSet(
+                    ctx.user_global_base + *global as u32,
+                ));
+                emit_value_store(out, local_plan, *value)?;
+            }
             IrInstruction::Unit => {
                 emit_value_store(out, local_plan, *value)?;
             }

@@ -2139,6 +2139,88 @@ mod tests {
     }
 
     #[test]
+    fn compile_file_reads_nullable_bool_from_exported_module_record() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("config.walu"),
+            r#"
+                type Config = { enabled: bool? }
+
+                function enabled(config: Config): bool
+                    local value: bool? = config.enabled
+                    if value ~= nil then
+                        return value::bool
+                    end
+                    return false
+                end
+
+                return {
+                    enabled = enabled,
+                }
+            "#,
+        )
+        .expect("config module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local config = require("./config")
+
+                type Config = config.Config
+
+                function entry(value: bool?): bool
+                    return config.enabled({ enabled = value })
+                end
+            "#,
+        )
+        .expect("main module should write");
+
+        let wasm = super::compile_file(&input_path).expect("compile should succeed");
+        assert!(!wasm.is_empty());
+    }
+
+    #[test]
+    fn compile_file_supports_stateful_module_local_bindings() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("counter.walu"),
+            r#"
+                type State = { value: i32 }
+
+                local state: State = { value = 0::i32 }
+
+                local function set(value: i32): unit
+                    state.value = value
+                end
+
+                local function get(): i32
+                    return state.value
+                end
+
+                return {
+                    set = set,
+                    get = get,
+                }
+            "#,
+        )
+        .expect("counter module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local counter = require("./counter")
+
+                counter.set(41)
+                assert(counter.get() == 41)
+            "#,
+        )
+        .expect("main module should write");
+
+        let wasm = super::compile_file(&input_path).expect("compile should succeed");
+        assert!(!wasm.is_empty());
+    }
+
+    #[test]
     fn compile_file_exports_module_constants() {
         let tempdir = tempdir().expect("tempdir should exist");
         fs::write(

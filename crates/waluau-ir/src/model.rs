@@ -7,9 +7,17 @@ pub struct ValueId(pub usize);
 #[derive(Clone, Debug, PartialEq)]
 pub struct Module {
     pub functions: Vec<Function>,
+    pub globals: Vec<Global>,
     pub declared_imports: Vec<DeclaredImport>,
     pub start: Option<usize>,
     pub tag_ids: std::collections::BTreeMap<String, i32>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Global {
+    pub name: String,
+    pub symbol_id: SymbolId,
+    pub ty: Type,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -47,6 +55,15 @@ pub struct BasicBlock {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Instruction {
     Param(usize),
+    GlobalGet {
+        global: usize,
+        ty: Type,
+    },
+    GlobalSet {
+        global: usize,
+        value: ValueId,
+        ty: Type,
+    },
     Number {
         ty: NumericType,
         literal: NumberLiteral,

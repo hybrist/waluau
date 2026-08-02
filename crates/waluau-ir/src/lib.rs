@@ -223,8 +223,8 @@ mod lower {
 pub(crate) use lower::build_function;
 pub use lower::{BuildCache, build, build_cached, build_cached_with_changes};
 pub use model::{
-    BasicBlock, BitwiseIntrinsic, BlockId, DeclaredImport, Function, Instruction, MathIntrinsic,
-    Module, Terminator, ValueId,
+    BasicBlock, BitwiseIntrinsic, BlockId, DeclaredImport, Function, Global, Instruction,
+    MathIntrinsic, Module, Terminator, ValueId,
 };
 pub use verify::verify;
 

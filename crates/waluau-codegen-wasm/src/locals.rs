@@ -360,6 +360,8 @@ pub(crate) fn infer_value_types(
                         ty.clone()
                     }
                 }
+                IrInstruction::GlobalGet { ty, .. } => ty.clone(),
+                IrInstruction::GlobalSet { .. } => Type::Unit,
                 IrInstruction::Number { ty, .. } => Type::Numeric(*ty),
                 IrInstruction::Unit => Type::Unit,
                 IrInstruction::Bool(_) => Type::Bool,
@@ -796,12 +798,14 @@ fn assign_locals_by_live_range(
 fn instruction_operands(instruction: &IrInstruction) -> Vec<ValueId> {
     match instruction {
         IrInstruction::Param(_)
+        | IrInstruction::GlobalGet { .. }
         | IrInstruction::Number { .. }
         | IrInstruction::Unit
         | IrInstruction::Bool(_)
         | IrInstruction::Null { .. }
         | IrInstruction::String(_)
         | IrInstruction::Bytes(_) => Vec::new(),
+        IrInstruction::GlobalSet { value, .. } => vec![*value],
         IrInstruction::IsNull { value, .. } | IrInstruction::ExternCastTest { value, .. } => {
             vec![*value]
         }
@@ -930,12 +934,14 @@ fn instruction_use_requires_local(instruction: &IrInstruction) -> bool {
 fn instruction_can_consume_stack_value(instruction: &IrInstruction, value: ValueId) -> bool {
     match instruction {
         IrInstruction::Param(_)
+        | IrInstruction::GlobalGet { .. }
         | IrInstruction::Number { .. }
         | IrInstruction::Unit
         | IrInstruction::Bool(_)
         | IrInstruction::Null { .. }
         | IrInstruction::String(_)
         | IrInstruction::Bytes(_) => false,
+        IrInstruction::GlobalSet { value: stored, .. } => *stored == value,
         IrInstruction::IsNull { value: tested, .. }
         | IrInstruction::ExternCastTest { value: tested, .. } => *tested == value,
         IrInstruction::ToString { .. } => false,

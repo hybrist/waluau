@@ -519,7 +519,8 @@ pub(super) fn check_function(
     fn_signatures: &HashMap<String, FnSignature>,
     outer_type_params: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
-    let mut diagnostics = check_function_collect(function, fn_signatures, outer_type_params);
+    let mut diagnostics =
+        check_function_collect(function, fn_signatures, outer_type_params, &HashMap::new());
     if diagnostics.is_empty() {
         Ok(())
     } else {
@@ -535,6 +536,7 @@ pub(super) fn check_function_collect(
     function: &Function,
     fn_signatures: &HashMap<String, FnSignature>,
     outer_type_params: &HashSet<String>,
+    module_bindings: &HashMap<String, Binding>,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     if let Err(error) = validate_type_param_list(&function.type_params, outer_type_params) {
@@ -572,7 +574,7 @@ pub(super) fn check_function_collect(
         });
         return diagnostics;
     };
-    let mut vars: HashMap<String, Binding> = HashMap::new();
+    let mut vars = module_bindings.clone();
     for param in &function.params {
         vars.insert(
             param.name.clone(),

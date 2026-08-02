@@ -86,6 +86,56 @@ fn binding_for(ty: Type, rebindability: Rebindability) -> Binding {
     }
 }
 
+fn collect_module_bindings(
+    top_level: &[Stmt],
+    fn_signatures: &HashMap<String, FnSignature>,
+) -> Result<HashMap<String, Binding>, Diagnostic> {
+    let mut bindings = HashMap::new();
+    for stmt in top_level {
+        match stmt {
+            Stmt::Let {
+                name,
+                rebindability,
+                ty,
+                value,
+                ..
+            } => {
+                let ty = match ty {
+                    Some(ty) => ty.clone(),
+                    None => infer_expr(value, &bindings, fn_signatures, &HashSet::new(), None)
+                        .unwrap_or(Type::Unknown),
+                };
+                bindings.insert(name.clone(), binding_for(ty, *rebindability));
+            }
+            Stmt::LetMulti { bindings: lets, .. } => {
+                for binding in lets {
+                    if let Some(ty) = &binding.ty {
+                        bindings.insert(
+                            binding.name.clone(),
+                            binding_for(ty.clone(), binding.rebindability),
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(bindings)
+}
+
+fn function_module_bindings<'a>(
+    function: &Function,
+    bindings: &'a HashMap<String, Binding>,
+) -> &'a HashMap<String, Binding> {
+    if function.name.to_string() == "__waluau_top_level_init" {
+        static EMPTY: std::sync::LazyLock<HashMap<String, Binding>> =
+            std::sync::LazyLock::new(HashMap::new);
+        &EMPTY
+    } else {
+        bindings
+    }
+}
+
 fn is_builtin_callee(expr: &Expr) -> bool {
     match expr {
         Expr::Name(name, _, _) => matches!(
@@ -2180,6 +2230,7 @@ fn resolve_expr_implicit_self(
 fn annotate_resolved_extern_members(
     program: &mut Program,
     fn_signatures: &HashMap<String, FnSignature>,
+    module_bindings: &HashMap<String, Binding>,
     reusable: &[bool],
 ) -> Result<(), Diagnostic> {
     #[cfg(target_family = "wasm")]
@@ -2191,7 +2242,7 @@ fn annotate_resolved_extern_members(
             if *reusable {
                 Ok(())
             } else {
-                annotate_function_resolved_members(function, fn_signatures)
+                annotate_function_resolved_members(function, fn_signatures, module_bindings)
             }
         })
         .collect::<Vec<_>>();
@@ -2215,7 +2266,11 @@ fn annotate_resolved_extern_members(
                                 if *reusable {
                                     Ok(())
                                 } else {
-                                    annotate_function_resolved_members(function, fn_signatures)
+                                    annotate_function_resolved_members(
+                                        function,
+                                        fn_signatures,
+                                        module_bindings,
+                                    )
                                 }
                             })
                             .collect::<Vec<_>>()
@@ -2240,9 +2295,10 @@ fn annotate_resolved_extern_members(
 fn annotate_function_resolved_members(
     function: &mut Function,
     fn_signatures: &HashMap<String, FnSignature>,
+    module_bindings: &HashMap<String, Binding>,
 ) -> Result<(), Diagnostic> {
     let active_type_params = active_type_param_set(&function.type_params);
-    let mut vars: HashMap<String, Binding> = HashMap::new();
+    let mut vars = function_module_bindings(function, module_bindings).clone();
     for param in &function.params {
         vars.insert(
             param.name.clone(),
@@ -3293,6 +3349,9 @@ fn type_check_and_infer_collect_inner(
         }
     }
 
+    let mut module_bindings = collect_module_bindings(&typed.top_level, &fn_signatures)
+        .map_err(|error| vec![error.with_file_path_if_missing(typed.entry_file_path.clone())])?;
+
     let mut unresolved: Vec<usize> = typed
         .functions
         .iter()
@@ -3325,8 +3384,12 @@ fn type_check_and_infer_collect_inner(
                 .iter()
                 .map(|param| param.ty.clone())
                 .collect();
-            match infer_top_level_function_return_type(function, &fn_signatures, &unresolved_names)
-            {
+            match infer_top_level_function_return_type(
+                function,
+                &fn_signatures,
+                &unresolved_names,
+                function_module_bindings(function, &module_bindings),
+            ) {
                 Ok(Some(ret)) => {
                     typed.functions[idx].return_type = Some(ret.clone());
                     fn_signatures.insert(
@@ -3369,6 +3432,9 @@ fn type_check_and_infer_collect_inner(
         unresolved = next_unresolved;
     }
 
+    module_bindings = collect_module_bindings(&typed.top_level, &fn_signatures)
+        .map_err(|error| vec![error.with_file_path_if_missing(typed.entry_file_path.clone())])?;
+
     if let Some(top_level_init) = typed
         .functions
         .iter_mut()
@@ -3393,10 +3459,15 @@ fn type_check_and_infer_collect_inner(
             if *reusable || errored_functions.contains(&function.name.to_string()) {
                 Vec::new()
             } else {
-                statements::check_function_collect(function, &fn_signatures, &HashSet::new())
-                    .into_iter()
-                    .map(|error| error.with_file_path_if_missing(function.file_path.clone()))
-                    .collect()
+                statements::check_function_collect(
+                    function,
+                    &fn_signatures,
+                    &HashSet::new(),
+                    function_module_bindings(function, &module_bindings),
+                )
+                .into_iter()
+                .map(|error| error.with_file_path_if_missing(function.file_path.clone()))
+                .collect()
             }
         })
         .collect::<Vec<_>>();
@@ -3414,6 +3485,7 @@ fn type_check_and_infer_collect_inner(
                 .map(|(chunk, reusable)| {
                     let errored_functions = &errored_functions;
                     let fn_signatures = &fn_signatures;
+                    let module_bindings = &module_bindings;
                     scope.spawn(move || {
                         let mut diagnostics = Vec::new();
                         for (function, reusable) in chunk.iter().zip(reusable) {
@@ -3428,6 +3500,7 @@ fn type_check_and_infer_collect_inner(
                                     function,
                                     fn_signatures,
                                     &HashSet::new(),
+                                    function_module_bindings(function, module_bindings),
                                 )
                                 .into_iter()
                                 .map(|error| {
@@ -3462,16 +3535,13 @@ fn type_check_and_infer_collect_inner(
             if *reusable {
                 return Ok(());
             }
-            let mut vars = function
-                .params
-                .iter()
-                .map(|param| {
-                    (
-                        param.name.clone(),
-                        binding_for(param.ty.clone(), Rebindability::Const),
-                    )
-                })
-                .collect::<HashMap<_, _>>();
+            let mut vars = function_module_bindings(function, &module_bindings).clone();
+            vars.extend(function.params.iter().map(|param| {
+                (
+                    param.name.clone(),
+                    binding_for(param.ty.clone(), Rebindability::Const),
+                )
+            }));
             let active = active_type_param_set(&function.type_params);
             annotate_inferred_stmt_locals(&mut function.body, &mut vars, &fn_signatures, &active)
                 .map_err(|error| error.with_file_path_if_missing(function.file_path.clone()))
@@ -3485,6 +3555,7 @@ fn type_check_and_infer_collect_inner(
             .zip(reusable.chunks(chunk_size))
             .map(|(chunk, reusable)| {
                 let fn_signatures = &fn_signatures;
+                let module_bindings = &module_bindings;
                 scope.spawn(move || {
                     chunk
                         .iter_mut()
@@ -3493,16 +3564,14 @@ fn type_check_and_infer_collect_inner(
                             if *reusable {
                                 return Ok(());
                             }
-                            let mut vars = function
-                                .params
-                                .iter()
-                                .map(|param| {
-                                    (
-                                        param.name.clone(),
-                                        binding_for(param.ty.clone(), Rebindability::Const),
-                                    )
-                                })
-                                .collect::<HashMap<_, _>>();
+                            let mut vars =
+                                function_module_bindings(function, module_bindings).clone();
+                            vars.extend(function.params.iter().map(|param| {
+                                (
+                                    param.name.clone(),
+                                    binding_for(param.ty.clone(), Rebindability::Const),
+                                )
+                            }));
                             let active = active_type_param_set(&function.type_params);
                             annotate_inferred_stmt_locals(
                                 &mut function.body,
@@ -3529,7 +3598,7 @@ fn type_check_and_infer_collect_inner(
 
     let inferred = started.elapsed();
 
-    annotate_resolved_extern_members(&mut typed, &fn_signatures, &reusable)
+    annotate_resolved_extern_members(&mut typed, &fn_signatures, &module_bindings, &reusable)
         .map_err(|error| vec![error])?;
 
     if CompilerTimer::enabled() {

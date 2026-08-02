@@ -4,11 +4,6 @@
 -- available canvas pixel. Render modules place semantic regions against these
 -- live dimensions instead of drawing a fixed board into a letterbox.
 --
--- TODO(waluau-teu2): Once exported module functions can close over mutable
--- module-local bindings, own the current State here behind update/current
--- functions. Then remove the viewport parameters threaded through menu,
--- shop_render, render, and choreography, plus their repeated calculate calls.
-
 type State = {
     canvas_width: f64,
     canvas_height: f64,
@@ -70,16 +65,27 @@ function calculate(canvas_width: f64, canvas_height: f64): State
     }
 end
 
-function canvas_x(state: State, value: f64): f64
-    return value / state.scale
+local current_state: State = calculate(REFERENCE_WIDTH, REFERENCE_HEIGHT)
+
+function update(canvas_width: f64, canvas_height: f64): unit
+    current_state = calculate(canvas_width, canvas_height)
 end
 
-function canvas_y(state: State, value: f64): f64
-    return value / state.scale
+function current(): State
+    return current_state
+end
+
+function canvas_x(value: f64): f64
+    return value / current_state.scale
+end
+
+function canvas_y(value: f64): f64
+    return value / current_state.scale
 end
 
 return {
-    calculate = calculate,
+    update = update,
+    current = current,
     canvas_x = canvas_x,
     canvas_y = canvas_y,
 }

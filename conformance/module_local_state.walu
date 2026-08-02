@@ -1,0 +1,15 @@
+type State = { value: i32 }
+
+local state: State = { value = 0::i32 }
+
+local function set(value: i32): unit
+    state.value = value
+end
+
+local function get(): i32
+    return state.value
+end
+
+assert(get() == 0)
+set(41)
+assert(get() == 41)
