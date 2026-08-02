@@ -12,18 +12,18 @@ local card_warp = require("./card_warp")
 local card_draw = require("./card_draw")
 local presentation_resources = require("./presentation_resources")
 
-const WIDTH: f64 = 420.0
-const HEIGHT: f64 = 280.0
-const SCHOOLS_WIDTH: f64 = 560.0
-const BACKGROUND: string = "#0b0b12"
+const WIDTH = 420.0
+const HEIGHT = 280.0
+const SCHOOLS_WIDTH = 560.0
+const BACKGROUND = "#0b0b12"
 
 -- The card back, the display font, and the school shaders every story here
 -- draws with. One set is loaded for the whole file: Storybook moves between
 -- these stories constantly, and the assets do not change between them.
-local assets: presentation_resources.State = presentation_resources.new()
+local assets = presentation_resources.new()
 -- Loading is asynchronous and happens once, however many times a story is
 -- mounted. The clock is a story's own and restarts with it.
-local shared: {started: bool, clock: f64} = { started = false, clock = 0.0 }
+local shared = { started = false, clock = 0.0 }
 
 local function load_assets(): i32
     return presentation_resources.load_async(assets)
@@ -33,7 +33,7 @@ local function load(): unit
     shared.clock = 0.0
     if shared.started then return end
     shared.started = true
-    local loader: thread = coroutine.create(load_assets)
+    local loader = coroutine.create(load_assets)
     coroutine.resume(loader)
 end
 
@@ -128,9 +128,9 @@ end
 -- pattern legible. Nothing else on the board shows them together.
 local function draw_schools(graphics: engine.Graphics, alpha: f64): unit
     ready(graphics)
-    const GAP: f64 = 12.0
-    local span: f64 = render.card_width * 4.0 + GAP * 3.0
-    local x: f64 = (SCHOOLS_WIDTH - span) * 0.5
+    const GAP = 12.0
+    local span = render.card_width * 4.0 + GAP * 3.0
+    local x = (SCHOOLS_WIDTH - span) * 0.5
     for suit = 0::i32, 3::i32 do
         render.draw_card(
             graphics,
@@ -150,11 +150,11 @@ end
 
 -- The turn itself, looping: the same flip the board plays when a relic is
 -- revealed, off a clock this story owns.
-const FLIP_PERIOD: f64 = 1.7
+const FLIP_PERIOD = 1.7
 
 local function draw_turning(graphics: engine.Graphics, alpha: f64): unit
     ready(graphics)
-    local clock: f64 = shared.clock - math.floor(shared.clock / FLIP_PERIOD) * FLIP_PERIOD
+    local clock = shared.clock - math.floor(shared.clock / FLIP_PERIOD) * FLIP_PERIOD
     render.draw_flipping_card(
         graphics,
         assets.effects,
@@ -174,10 +174,10 @@ const FAN_COUNT: i32 = 5
 
 local function draw_fan(graphics: engine.Graphics, alpha: f64): unit
     ready(graphics)
-    local hand: {game.Card} = {
+    local hand = {
         card(14, 0), card(13, 1), card(9, 2), card(6, 3), card(3, 0)
     }
-    for index = 0::i32, FAN_COUNT - 1 do
+    for index = 0, FAN_COUNT - 1 do
         render.draw_hand_card(
             graphics,
             assets.effects,
@@ -198,16 +198,16 @@ end
 -- caught in the air. The card is a sheet of geometry here rather than a
 -- rectangle, so what happens to it is a corner leaving ahead of the rest of
 -- the card and the rest of the card answering for it.
-const DRAW_WIDTH: f64 = 760.0
-const DRAW_HEIGHT: f64 = 480.0
+const DRAW_WIDTH = 760.0
+const DRAW_HEIGHT = 480.0
 -- Fine enough that a bend across the sheet is a curve and not a crease. Every
 -- cell is two triangles, so this is 1152 vertices — one batch.
 const DRAW_COLUMNS: i32 = 12
 const DRAW_ROWS: i32 = 16
-const DECK_X: f64 = 168.0
-const DECK_Y: f64 = 322.0
-const CAUGHT_X: f64 = 505.0
-const CAUGHT_Y: f64 = 196.0
+const DECK_X = 168.0
+const DECK_Y = 322.0
+const CAUGHT_X = 505.0
+const CAUGHT_Y = 196.0
 -- The card the deck gives up. It is sealed the whole way out of the stack and
 -- has turned over by the time it is caught.
 const DRAWN_RANK: i32 = 14
@@ -236,11 +236,11 @@ end
 -- arrived there is nothing worth capturing, so this simply waits.
 local function capture(graphics: engine.Graphics): bool
     if sheet.captured then return true end
-    local card_back: graphics_module.Texture? = assets.texture
+    local card_back = assets.texture
     if card_back == nil then return false end
-    local back: graphics_module.RenderTarget? = render.capture_card(
+    local back = render.capture_card(
         graphics, assets.effects, card_back, drawn_card(), false, false, true)
-    local face: graphics_module.RenderTarget? = render.capture_card(
+    local face = render.capture_card(
         graphics, assets.effects, card_back, drawn_card(), false, false, false)
     if back == nil or face == nil then return false end
     sheet.back = back
@@ -256,15 +256,15 @@ local function draw_pose(
     alpha: f64
 ): unit
     card_warp.build(sheet.mesh, pose)
-    local target: graphics_module.RenderTarget? = sheet.back
+    local target = sheet.back
     if face_up then target = sheet.face end
     if target == nil then return end
     local texture: graphics_module.Texture = graphics:texture_from_render_target(
-        target::graphics_module.RenderTarget)
+        target)
     -- Seen from behind, a card's face reads the wrong way round unless its
     -- source region is taken right to left.
-    local source_x: f64 = 0.0
-    local source_width: f64 = render.card_width
+    local source_x = 0.0
+    local source_width = render.card_width
     if face_up then
         source_x = render.card_width
         source_width = -render.card_width
@@ -287,8 +287,8 @@ end
 -- The stack the card comes out of. A pull needs something to be pulled from,
 -- and the thinning silhouette is the same one the board's draw pile uses.
 local function draw_deck(graphics: engine.Graphics): unit
-    local x: f64 = DECK_X - render.card_width * 0.5
-    local y: f64 = DECK_Y - render.card_height * 0.5
+    local x = DECK_X - render.card_width * 0.5
+    local y = DECK_Y - render.card_height * 0.5
     render.panel(graphics, x + 6.0, y + 6.0, render.card_width, render.card_height, "#17171c", "#3f3f46")
     render.panel(graphics, x + 3.0, y + 3.0, render.card_width, render.card_height, "#17171c", "#3f3f46")
     render.panel(graphics, x, y, render.card_width, render.card_height, "#17171c", "#52525b")
@@ -303,9 +303,9 @@ local function draw_hold(graphics: engine.Graphics, pose: card_warp.Pose, streng
     -- Enough rings, faint enough, that the falloff is a glow rather than the
     -- set of circles it is made of.
     graphics:set_blend_mode("add")
-    for ring = 0::i32, 11::i32 do
-        local spread: f64 = 40.0 + (ring::f64) * 9.0
-        local weight: f64 = strength * 0.022 * (1.0 - (ring::f64) / 12.0)
+    for ring = 0, 11 do
+        local spread = 40.0 + ring * 9.0
+        local weight = strength * 0.022 * (1.0 - ring / 12.0)
         graphics:set_color_rgba(0.36, 0.55, 0.95, weight)
         graphics:fill_circle(pose.center_x, pose.center_y, spread)
     end
@@ -318,14 +318,14 @@ end
 -- through happens in the first two thirds of a second, and a slider that
 -- spent three quarters of its travel on the hover would be a slider that
 -- cannot reach the whip.
-const SCRUB_TAIL: f64 = 0.35
+const SCRUB_TAIL = 0.35
 
 local function draw_clock(): f64
     if storybook.arg_i32("playback") == 1 then
-        local scrubbed: f64 = card_draw.catch_end + SCRUB_TAIL
+        local scrubbed = card_draw.catch_end + SCRUB_TAIL
         return scrubbed * (storybook.arg_i32("phase")::f64) / 100.0
     end
-    local total: f64 = card_draw.total_seconds()
+    local total = card_draw.total_seconds()
     return shared.clock - math.floor(shared.clock / total) * total
 end
 
@@ -345,17 +345,17 @@ local function draw_drawing(graphics: engine.Graphics, alpha: f64): unit
     ready(graphics)
     draw_deck(graphics)
     if not capture(graphics) then return end
-    local draw: card_draw.Draw = drawing()
-    local clock: f64 = draw_clock()
+    local draw = drawing()
+    local clock = draw_clock()
 
     -- The slam is the only beat fast enough to leave anything behind it, and
     -- the ghosts are earlier states of the same sheet rather than smears of
     -- the last frame — a stretched card trailing an unstretched copy of
     -- itself is what gives the deformation away.
     if card_draw.trails(clock) then
-        local offsets: {f64} = card_draw.ghost_offsets()
-        for index = 0::i32, #offsets - 1 do
-            local past: f64 = clock - offsets[index]
+        local offsets = card_draw.ghost_offsets()
+        for index = 0, #offsets - 1 do
+            local past = clock - offsets[index]
             if card_draw.ghost_visible(past) then
                 draw_pose(
                     graphics,
@@ -367,8 +367,8 @@ local function draw_drawing(graphics: engine.Graphics, alpha: f64): unit
         end
     end
 
-    local pose: card_warp.Pose = card_draw.pose_at(draw, clock)
-    local hold: f64 = 0.0
+    local pose = card_draw.pose_at(draw, clock)
+    local hold = 0.0
     if clock >= card_draw.slam_end then hold = 1.0 end
     draw_hold(graphics, pose, hold)
     draw_pose(graphics, pose, card_draw.shows_face(draw, clock), 1.0)
