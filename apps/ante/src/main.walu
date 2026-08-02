@@ -156,10 +156,11 @@ function install_arcane_heist(): unit
         game_screen.mousepressed(heist, city, x, y, button)
     end
 
+    -- No configured viewport: the canvas takes the browser's space and the
+    -- layout module derives everything from whatever size that turns out to
+    -- be, frame by frame.
     local session: engine.Session? = engine.start({
         title = "Arcane Heist",
-        width = 960,
-        height = 600,
         update_hz = 60.0,
         max_frame_seconds = 0.25,
         background = "#09090b",

@@ -63,6 +63,9 @@ describe("city map", function()
 
     it("alternates vendors and vaults along streets it generated", function()
         local city: city_map.State = city_map.new(17)
+        -- A realistic measured viewport: the anchor claims below are about a
+        -- screen someone is actually looking at, not the unmeasured default.
+        city_map.resize(city, 1100.0, 620.0)
         city_map.ensure_stops(city, 24)
 
         expect(city_map.stop_count(city)):toBeGreaterThanOrEqual(24)
@@ -115,6 +118,7 @@ describe("city map", function()
 
     it("pans slowly within the generated map while no route is followed", function()
         local city: city_map.State = city_map.new(52)
+        city_map.resize(city, 1050.0, 600.0)
         local start_x: f64 = city.camera_x
         local start_y: f64 = city.camera_y
         step_seconds(city, 10.0)
@@ -151,6 +155,7 @@ describe("city map", function()
 
     it("walks to a followed stop instead of jumping to it", function()
         local city: city_map.State = city_map.new(64)
+        city_map.resize(city, 1050.0, 600.0)
         city_map.follow(city, 4)
 
         city_map.update(city, 1.0 / 60.0)
@@ -174,6 +179,7 @@ describe("city map", function()
 
     it("sets a restarted route down without walking the city back to it", function()
         local city: city_map.State = city_map.new(77)
+        city_map.resize(city, 1050.0, 600.0)
         city_map.follow(city, 6)
         step_seconds(city, 12.0)
 
@@ -256,6 +262,7 @@ describe("city map", function()
 
     it("settles a dissolve that has nothing to play for", function()
         local city: city_map.State = city_map.new(99)
+        city_map.resize(city, 1050.0, 600.0)
         city_map.follow(city, 5)
         city_map.hide(city)
         city_map.settle(city)

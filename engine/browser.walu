@@ -9,8 +9,11 @@ local window = require("dom:window")
 
 type Config = {
     title: string,
-    width: u32,
-    height: u32,
+    -- The fixed logical viewport. Left out, the engine measures the
+    -- browser's available space instead — the natural pairing with
+    -- canvas_sizing, where the canvas has no one true size to be given.
+    width: u32?,
+    height: u32?,
     update_hz: f64,
     max_frame_seconds: f64,
     background: string,
@@ -134,6 +137,16 @@ function start(config: Config, game: Game): Session
     local fluid: bool = false
     local canvas_sizing: bool? = config.canvas_sizing
     if canvas_sizing ~= nil then fluid = canvas_sizing::bool end
+    -- A config without a viewport falls back to the browser's own space, so
+    -- a fluid game never has to invent a size just to satisfy the record.
+    local config_width: u32 = 1
+    local config_height: u32 = 1
+    if window.innerWidth > 0 then config_width = window.innerWidth::u32 end
+    if window.innerHeight > 0 then config_height = window.innerHeight::u32 end
+    local maybe_width: u32? = config.width
+    if maybe_width ~= nil then config_width = maybe_width::u32 end
+    local maybe_height: u32? = config.height
+    if maybe_height ~= nil then config_height = maybe_height::u32 end
     if owns_page then
         body:set_attribute("style", "margin:0;min-height:100vh;overflow:hidden;background:" .. config.background .. ";")
     end
@@ -166,13 +179,13 @@ function start(config: Config, game: Game): Session
         -- Give the pattern-bound handle an ordinary local before capturing it
         -- in the animation-frame closure.
         local game_canvas: HTMLCanvasElement = canvas
-        game_canvas.width = config.width
-        game_canvas.height = config.height
+        game_canvas.width = config_width
+        game_canvas.height = config_height
         local style: CSSStyleProperties = game_canvas.style
-        style:setProperty("width", tostring(config.width) .. "px")
-        style:setProperty("height", tostring(config.height) .. "px")
+        style:setProperty("width", tostring(config_width) .. "px")
+        style:setProperty("height", tostring(config_height) .. "px")
         if not fluid then
-            style:setProperty("aspect-ratio", tostring(config.width) .. " / " .. tostring(config.height))
+            style:setProperty("aspect-ratio", tostring(config_width) .. " / " .. tostring(config_height))
         end
         style:setProperty("display", "block")
         style:setProperty("background-color", config.background)
@@ -180,9 +193,9 @@ function start(config: Config, game: Game): Session
 
         -- The logical viewport is config's to begin with and the session's
         -- from then on, so a resize is what the frame loop reads next.
-        sync_canvas_size(game_canvas, config.width, config.height, fluid)
-        local viewport_width: u32 = config.width
-        local viewport_height: u32 = config.height
+        sync_canvas_size(game_canvas, config_width, config_height, fluid)
+        local viewport_width: u32 = config_width
+        local viewport_height: u32 = config_height
         if fluid and game_canvas.clientWidth > 0 and game_canvas.clientHeight > 0 then
             viewport_width = game_canvas.clientWidth::u32
             viewport_height = game_canvas.clientHeight::u32

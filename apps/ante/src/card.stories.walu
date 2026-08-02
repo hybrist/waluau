@@ -7,6 +7,7 @@ local storybook = require("waluau:engine/storybook")
 local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
 local game = require("./game")
+local layout = require("./layout")
 local render = require("./render")
 local card_warp = require("./card_warp")
 local card_draw = require("./card_draw")
@@ -18,8 +19,8 @@ const SCHOOLS_WIDTH = 560.0
 const BACKGROUND = "#0b0b12"
 
 -- Every story here draws under the same kind of uniform viewport scale the
--- game plays at: main.walu fits its canvas against a 960x600 reference, which
--- lands near this value on a fullscreen board. Story coordinates stay in
+-- game plays at: main.walu derives one unit scale from the live canvas, and
+-- a fullscreen board lands near this value. Story coordinates stay in
 -- logical pixels and only the canvas grows. A story drawn at unit scale is
 -- misleading — it hides any rendering that quietly depends on the screen
 -- transform, which is exactly the kind of bug a capture into a fixed-size
@@ -191,11 +192,18 @@ local function draw_turning(graphics: engine.Graphics, alpha: f64): unit
 end
 
 -- The player's fan, which is where a relic is normally seen: tilted, lifted
--- when bound, and amber where the cursor sits.
+-- when bound, and amber where the cursor sits. The fan reads its geometry
+-- off the live viewport layout exactly as the board does, so this story
+-- runs the real pipeline: measure the stage, then draw under the unit scale
+-- the layout derived for it.
 const FAN_COUNT: i32 = 5
 
 local function draw_fan(graphics: engine.Graphics, alpha: f64): unit
     ready(graphics)
+    layout.update(graphics.width, graphics.height)
+    local viewport = layout.current()
+    graphics:push()
+    graphics:scale(viewport.scale, viewport.scale)
     local hand = {
         card(14, 0), card(13, 1), card(9, 2), card(6, 3), card(3, 0)
     }
@@ -214,6 +222,7 @@ local function draw_fan(graphics: engine.Graphics, alpha: f64): unit
             false
         )
     end
+    graphics:pop()
 end
 
 -- The draw: sealed cards thrown off the deck one after another, up off the
@@ -519,11 +528,13 @@ storybook.publish({
         storybook.select("arc", 2, { "Even", "Late", "Very late", "Early" }),
     }),
     storybook.story("In the fan", {
-        draw = staged(draw_fan),
+        draw = draw_fan,
         load = load,
         update = tick,
-        width = staged_size(960.0),
-        height = staged_size(600.0),
+        -- A fullscreen-ish stage. Any size works: the story derives the
+        -- fan's geometry from whatever stage it is given, like the game.
+        width = 1152,
+        height = 720,
         background = BACKGROUND
     }),
 })

@@ -22,9 +22,10 @@ function countMenuTitleInk(canvas) {
 }
 
 // Cyan stall ink where the city map stands the stop the run is on. Every map
-// screen anchors that stop at 736,306 of the 960-wide board and the run always
-// sets out from a vendor, so a positive count is the map really being under the
-// screen rather than a backdrop that happens to look like one.
+// screen parks that stop 736 logical units in from the left and just past half
+// the height (a height-driven canvas is always 600 units tall, so 306), and
+// the run always sets out from a vendor, so a positive count is the map really
+// being under the screen rather than a backdrop that happens to look like one.
 function countMapStopInk(canvas) {
   return countDesignInk(
     canvas,

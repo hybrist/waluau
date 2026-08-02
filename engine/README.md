@@ -61,6 +61,11 @@ layout around the canvas.
 space and updates `Graphics.width` and `Graphics.height` to its live CSS size.
 Without it, `width` and `height` remain the fixed logical viewport.
 
+`Config.width` and `Config.height` are optional. Left out, the engine measures
+the browser's available space instead — the natural pairing with
+`canvas_sizing`, where the canvas has no one true size to be given and the
+game derives its layout from the live dimensions each frame.
+
 ## Package and version contract
 
 The compiler embeds the engine sources. `waluau:engine` selects the current

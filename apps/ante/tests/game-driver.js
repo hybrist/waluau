@@ -17,14 +17,21 @@ export function frameSignature(canvas) {
 
 // Read a rectangle expressed in Ante's live logical coordinates. Anchors let
 // assertions follow semantic regions as added width or height moves them.
+//
+// The scale and band formulas mirror layout.walu: the unit scale is the
+// largest card size at which the packed board — 700 units across, 600 units
+// down, both sums of the board's own content — fits the canvas, and any
+// height beyond the packed board is shared between the bands.
 export function countDesignInk(canvas, rect, color, tolerance) {
   return canvas.evaluate((node, sample) => {
     const gl = node.getContext('webgl2');
-    const cssScale = Math.min(node.clientWidth / 960, node.clientHeight / 600);
+    const cssScale = Math.min(node.clientWidth / 700, node.clientHeight / 600);
     const logicalWidth = node.clientWidth / cssScale;
     const logicalHeight = node.clientHeight / cssScale;
-    const playerY = logicalHeight - 91;
-    const wardY = ((180 + playerY) * 0.5 + 12) - 64;
+    const extra = Math.max(0, logicalHeight - 600);
+    const computerY = 116 + extra * 0.3;
+    const playerY = logicalHeight - 91 - extra * 0.2;
+    const wardY = ((computerY + 64 + playerY) * 0.5 + 12) - 64;
     const actionY = wardY + 120;
     const densityX = node.width / node.clientWidth;
     const densityY = node.height / node.clientHeight;
@@ -58,7 +65,7 @@ export function countDesignInk(canvas, rect, color, tolerance) {
 export async function clickDesignPoint(page, canvas, x, y) {
   const point = await canvas.evaluate((node, designPoint) => {
     const bounds = node.getBoundingClientRect();
-    const scale = Math.min(bounds.width / 960, bounds.height / 600);
+    const scale = Math.min(bounds.width / 700, bounds.height / 600);
     return {
       x: bounds.x + designPoint.x * scale,
       y: bounds.y + designPoint.y * scale,
@@ -70,7 +77,7 @@ export async function clickDesignPoint(page, canvas, x, y) {
 export async function clickMenuItem(page, canvas, index = 0) {
   const point = await canvas.evaluate((node, itemIndex) => {
     const bounds = node.getBoundingClientRect();
-    const scale = Math.min(bounds.width / 960, bounds.height / 600);
+    const scale = Math.min(bounds.width / 700, bounds.height / 600);
     const logicalHeight = bounds.height / scale;
     return {
       x: bounds.x + bounds.width * 0.5,

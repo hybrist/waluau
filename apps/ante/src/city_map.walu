@@ -64,8 +64,6 @@ type State = {
     streak_suit: i32
 }
 
-const VIEW_WIDTH: f64 = 960.0
-const VIEW_HEIGHT: f64 = 600.0
 -- Wide enough that a route of a dozen stops is a journey across a city rather
 -- than a lap of one neighbourhood.
 const CITY_WIDTH: f64 = 2560.0
@@ -80,12 +78,31 @@ const RANDOM_MULTIPLIER: f64 = 16807.0
 -- doubling would be a telescope; five puts a map marker across the screen.
 const MAP_ZOOM: f64 = 1.0
 const DIVE_OCTAVES: f64 = 4.9
--- Where on the screen the stop being followed sits. A map screen carries a list
--- of options down its left, so the heist stands clear of it on the right and
--- the player can read both at once; a vault is dived into head-on, so the push
--- in walks that anchor back to the middle of the screen as the map goes.
-const MAP_ANCHOR_X: f64 = 736.0
-const MAP_ANCHOR_Y: f64 = 306.0
+-- Where on the screen the stop being followed sits. A map screen carries a
+-- list of options down its left — the fence's offers, the menu's spells — so
+-- the stop stands a fixed length in from the left edge, clear of that column;
+-- a canvas too narrow for that length parks it at three-quarters of whatever
+-- width there is instead. The length is fixed rather than a share of the
+-- width because the route's streets are chosen before any canvas is measured
+-- (see the route margins below): a stop can only be brought under an anchor
+-- the route's own margins cover, so the anchor must not wander further right
+-- on wider canvases. Vertically the stop rides just past half the live
+-- height. A vault is dived into head-on, so the push in walks both anchors
+-- back to the middle of the screen as the map goes.
+const STOP_ANCHOR_X: f64 = 736.0
+const STOP_ANCHOR_MAX_SHARE_X: f64 = 0.75
+const STOP_ANCHOR_SHARE_Y: f64 = 0.51
+-- The band of the city the route keeps to, as margins off the city's edges.
+-- The left margin matches the anchor above so a followed stop always has
+-- anchor-width of city on its left; the right margin gives canvases up to
+-- roughly STOP_ANCHOR_X + ROUTE_MARGIN_RIGHT logical units of width the room
+-- to centre a stop, and the vertical margins do the same for the anchor's
+-- share of any height that keeps the fit constraints of layout.walu. Wider
+-- or taller screens see the whole city and simply clamp, which parks a stop
+-- a little wide of its mark rather than showing the void past the streets.
+const ROUTE_MARGIN_RIGHT: f64 = 560.0
+const ROUTE_MARGIN_TOP: f64 = 320.0
+const ROUTE_MARGIN_BOTTOM: f64 = 320.0
 -- The two movements a screen change is made of, each walked at a steady pace so
 -- it takes the same time every time: the robbers cross a block to the door, and
 -- then the camera goes in after them. They never overlap — a push into a house
@@ -233,12 +250,12 @@ end
 
 function begin_route(state: State): unit
     state.stops = {}
-    state.column_low = first_street_past(state.vertical_streets, MAP_ANCHOR_X)
+    state.column_low = first_street_past(state.vertical_streets, STOP_ANCHOR_X)
     state.column_high = last_street_before(
-        state.vertical_streets, CITY_WIDTH - (VIEW_WIDTH - MAP_ANCHOR_X))
-    state.row_low = first_street_past(state.horizontal_streets, MAP_ANCHOR_Y)
+        state.vertical_streets, CITY_WIDTH - ROUTE_MARGIN_RIGHT)
+    state.row_low = first_street_past(state.horizontal_streets, ROUTE_MARGIN_TOP)
     state.row_high = last_street_before(
-        state.horizontal_streets, CITY_HEIGHT - (VIEW_HEIGHT - MAP_ANCHOR_Y))
+        state.horizontal_streets, CITY_HEIGHT - ROUTE_MARGIN_BOTTOM)
     state.walk_column = state.column_low
         + random_index(state, state.column_high - state.column_low + 1)
     state.walk_row = state.row_low
@@ -350,14 +367,26 @@ function dive_cover(dive: f64): f64
     return 1.0 - smooth((dive - DIVE_HANDOVER) / (1.0 - DIVE_HANDOVER))
 end
 
+-- The stop anchor for the live viewport: the fixed length in from the left,
+-- unless the canvas is too narrow to hold it, and the height's share down.
+function stop_anchor_x(state: State): f64
+    return math.min(STOP_ANCHOR_X, state.view_width * STOP_ANCHOR_MAX_SHARE_X)
+end
+
+function stop_anchor_y(state: State): f64
+    return state.view_height * STOP_ANCHOR_SHARE_Y
+end
+
 function dive_anchor_x(state: State, dive: f64): f64
+    local map_anchor: f64 = stop_anchor_x(state)
     local vault_anchor: f64 = state.view_width * 0.5
-    return MAP_ANCHOR_X + (vault_anchor - MAP_ANCHOR_X) * smooth(dive / DIVE_HANDOVER)
+    return map_anchor + (vault_anchor - map_anchor) * smooth(dive / DIVE_HANDOVER)
 end
 
 function dive_anchor_y(state: State, dive: f64): f64
+    local map_anchor: f64 = stop_anchor_y(state)
     local vault_anchor: f64 = state.view_height * 0.5
-    return MAP_ANCHOR_Y + (vault_anchor - MAP_ANCHOR_Y) * smooth(dive / DIVE_HANDOVER)
+    return map_anchor + (vault_anchor - map_anchor) * smooth(dive / DIVE_HANDOVER)
 end
 
 -- Put every value the dive owns where its progress says they are. `street` is
@@ -481,10 +510,13 @@ function new(seed: i32): State
         dive_target = 0.0,
         camera_x = CITY_WIDTH * 0.5,
         camera_y = CITY_HEIGHT * 0.5,
-        view_width = VIEW_WIDTH,
-        view_height = VIEW_HEIGHT,
-        anchor_x = MAP_ANCHOR_X,
-        anchor_y = MAP_ANCHOR_Y,
+        -- Unmeasured until the first frame: the entry module resizes the map
+        -- from the live canvas before anything is drawn, and the settle below
+        -- recomputes the anchors from whatever the view is.
+        view_width = 1.0,
+        view_height = 1.0,
+        anchor_x = 0.0,
+        anchor_y = 0.0,
         zoom = MAP_ZOOM,
         cover = 1.0,
         street = 1.0,
