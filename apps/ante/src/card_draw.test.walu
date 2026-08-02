@@ -32,12 +32,13 @@ function thrown(overshoot: f64, rise: f64): card_draw.Draw
         height = CARD_H,
         stretch_limit = 1.26,
         overshoot = overshoot,
-        rise = rise
+        rise = rise,
+        arc = card_draw.arc_late
     }
 end
 
 function drawing(): card_draw.Draw
-    return thrown(0.05, 190.0)
+    return thrown(0.2, 270.0)
 end
 
 -- Where the card actually appears to be: the middle of the shape on screen,
@@ -172,14 +173,29 @@ describe("the card's arc off the surface", function(): unit
         expect(pose(card_draw.land_end).rise):toBeCloseTo(0.0, 6)
     end)
 
-    -- The rise dial is the apex itself, and the apex sits at the middle of
-    -- the flight, where the half sine tops out.
+    -- The rise dial is the apex itself. On the even arc that apex sits at
+    -- the exact middle of the flight, where the unwarped half sine tops out.
     it("tops out at exactly the height it is asked for", function(): unit
         local high: card_draw.Draw = thrown(0.05, 320.0)
+        high.arc = card_draw.arc_even
         local apex: f64 = card_draw.pose_at(high, card_draw.flight_end * 0.5).rise
         expect(apex):toBeCloseTo(320.0, 6)
         local flat: card_draw.Draw = thrown(0.05, 0.0)
         expect(card_draw.pose_at(flat, card_draw.flight_end * 0.5).rise):toBeCloseTo(0.0, 9)
+    end)
+
+    -- The arc dial only moves the apex in time. A late arc is still low at
+    -- the middle of the flight and near its full height past it; an early
+    -- one has already been up and is on its way down by the middle.
+    it("puts the top of the arc where the dial asks", function(): unit
+        local late: card_draw.Draw = thrown(0.05, 270.0)
+        late.arc = card_draw.arc_late
+        expect(card_draw.pose_at(late, card_draw.flight_end * 0.7).rise)
+            :toBeGreaterThan(card_draw.pose_at(late, card_draw.flight_end * 0.5).rise)
+        local early: card_draw.Draw = thrown(0.05, 270.0)
+        early.arc = card_draw.arc_early
+        expect(card_draw.pose_at(early, card_draw.flight_end * 0.3).rise)
+            :toBeGreaterThan(card_draw.pose_at(early, card_draw.flight_end * 0.5).rise)
     end)
 
     -- The end of the flight is the slam: the sweep has all but arrived, so

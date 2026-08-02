@@ -172,12 +172,38 @@ type Draw = {
     overshoot: f64,
     -- How high the card gets off the surface at the top of its arc, in
     -- logical pixels of depth toward the viewer — against the pose's 900
-    -- pixel focal length, 190 reads as about a quarter larger. The rise is a
-    -- half sine over the flight: leaving the surface is the first thing the
-    -- card does and falling back to it is the last, and because the sweep
-    -- has all but arrived by then, the final approach is nearly all descent.
-    rise: f64
+    -- pixel focal length, 270 reads as about two fifths larger. The rise is
+    -- a half sine over the flight: leaving the surface is the first thing
+    -- the card does and falling back to it is the last, and because the
+    -- sweep has all but arrived by then, the final approach is nearly all
+    -- descent.
+    rise: f64,
+    -- When the top of the arc comes: one of the arc_* shapes below.
+    arc: i32
 }
+
+-- The shapes the arc can take. The height is always a half sine — off the
+-- surface first thing, back onto it last — but the clock that sine runs on
+-- can be warped, which moves the apex in time without touching the ends.
+-- Even is the plain sine, whose middle reads nearly linear. Late and very
+-- late hold the card low while it accelerates and lob it up just before the
+-- turn — the rise easing in — and pay for the late apex with a steeper
+-- drop, which is where the slam lives. Early throws the card high at once
+-- and lets it drift down.
+const ARC_EVEN: i32 = 0
+const ARC_LATE: i32 = 1
+const ARC_VERY_LATE: i32 = 2
+const ARC_EARLY: i32 = 3
+
+function arc_warp(arc: i32, part: f64): f64
+    if arc == ARC_LATE then return part * part end
+    if arc == ARC_VERY_LATE then return part * part * part end
+    if arc == ARC_EARLY then
+        local inverse: f64 = 1.0 - part
+        return 1.0 - inverse * inverse
+    end
+    return part
+end
 
 type Point3 = { x: f64, y: f64, z: f64 }
 
@@ -189,7 +215,7 @@ function flight_at(draw: Draw, part: f64): Point3
     return {
         x = draw.from_x + (draw.to_x - draw.from_x) * swept,
         y = draw.from_y + (draw.to_y - draw.from_y) * swept,
-        z = draw.rise * ease_arc(part)
+        z = draw.rise * ease_arc(arc_warp(draw.arc, part))
     }
 end
 
@@ -337,6 +363,10 @@ return {
     total_seconds = total_seconds,
     flight_end = FLIGHT_END,
     land_end = LAND_END,
+    arc_even = ARC_EVEN,
+    arc_late = ARC_LATE,
+    arc_very_late = ARC_VERY_LATE,
+    arc_early = ARC_EARLY,
     beat_flight = BEAT_FLIGHT,
     beat_land = BEAT_LAND,
     beat_hover = BEAT_HOVER
