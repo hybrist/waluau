@@ -321,13 +321,25 @@ end
 -- the turn.
 const SCRUB_TAIL = 0.35
 
+-- How fast the throw plays, against the clock it was authored on. The dial
+-- exists to answer one question — should the draw be quicker than it is —
+-- so it scales the flight and the landing only, and the hover breathes at
+-- real time whatever the throw did.
+local function playback_rate(): f64
+    return (storybook.arg_i32("speed")::f64) / 100.0
+end
+
 local function draw_clock(): f64
     if storybook.arg_i32("playback") == 1 then
         local scrubbed = card_draw.land_end + SCRUB_TAIL
         return scrubbed * (storybook.arg_i32("phase")::f64) / 100.0
     end
-    local total = card_draw.total_seconds()
-    return shared.clock - math.floor(shared.clock / total) * total
+    local rate = playback_rate()
+    local throw_seconds = card_draw.land_end / rate
+    local total = throw_seconds + card_draw.total_seconds() - card_draw.land_end
+    local looped = shared.clock - math.floor(shared.clock / total) * total
+    if looped < throw_seconds then return looped * rate end
+    return card_draw.land_end + (looped - throw_seconds)
 end
 
 local function drawing(): card_draw.Draw
@@ -357,9 +369,12 @@ local function draw_drawing(graphics: engine.Graphics, alpha: f64): unit
     -- rather than smears of the last frame — a stretched card trailing an
     -- unstretched copy of itself is what gives the deformation away.
     if card_draw.trails(clock) then
+        -- The offsets are frames of real time behind the card, so a faster
+        -- playback spaces the same ghosts further apart in animation time —
+        -- which is exactly how a faster throw would leave longer trails.
         local offsets = card_draw.ghost_offsets()
         for index = 0, #offsets - 1 do
-            local past = clock - offsets[index]
+            local past = clock - offsets[index] * playback_rate()
             if card_draw.ghost_visible(past) then
                 draw_pose(
                     graphics,
@@ -420,6 +435,9 @@ storybook.publish({
     }, {
         storybook.select("playback", 0, { "Loop", "Scrub" }),
         storybook.range("phase", 0, 0, 100, 1),
+        -- How fast the throw plays, in hundredths of the authored clock.
+        -- The hover is untouched; only the draw itself quickens.
+        storybook.range("speed", 100, 25, 300, 5),
         -- The one number that decides whether this reads as a card with
         -- weight or as a rubber toy.
         storybook.range("stretch", 160, 100, 200, 1),
