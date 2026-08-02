@@ -1,0 +1,140 @@
+-- Where the drawn card is, beat by beat. The shape of the card is checked in
+-- card_warp.test.walu; what this file is about is the path, because a card
+-- that arrives at the right pose by way of the wrong route still looks wrong.
+
+require("waluau:vitest")
+
+local card_draw = require("./card_draw")
+local card_warp = require("./card_warp")
+
+const DECK_X: f64 = 168.0
+const DECK_Y: f64 = 322.0
+const CAUGHT_X: f64 = 505.0
+const CAUGHT_Y: f64 = 196.0
+const CARD_W: f64 = 104.0
+const CARD_H: f64 = 128.0
+const SAMPLES: i32 = 240
+-- How far the middle of the card is allowed to slip backwards between two
+-- samples, in logical pixels. It is not zero because the perspective divide
+-- is not linear: a displacement that sums to nothing in space does not quite
+-- sum to nothing once near points have spread more than far points have
+-- shrunk. That residue measures a couple of thousandths of a pixel, and the
+-- backtracking this test is here to catch measured about twenty, so a
+-- twentieth of a pixel separates the two by a wide margin.
+const BACKSTEP: f64 = 0.05
+
+function drawing(): card_draw.Draw
+    return {
+        from_x = DECK_X,
+        from_y = DECK_Y,
+        to_x = CAUGHT_X,
+        to_y = CAUGHT_Y,
+        width = CARD_W,
+        height = CARD_H,
+        stretch_limit = 1.26
+    }
+end
+
+-- Where the card actually appears to be: the middle of the shape on screen,
+-- not the pose's centre. The two are only the same because the pull is
+-- centroid-free, and it is exactly that difference this file is here to
+-- watch — a deformation that drags the card along with it moves the card
+-- without the travel knowing anything about it.
+const COLUMNS: i32 = 10
+const ROWS: i32 = 14
+
+function seen_at(clock: f64): card_warp.Mesh
+    local mesh: card_warp.Mesh = card_warp.new_mesh(COLUMNS, ROWS)
+    card_warp.build(mesh, card_draw.pose_at(drawing(), clock))
+    return mesh
+end
+
+-- How far along the deck-to-catch line the card has got. The pull leaves at an
+-- angle to that line, so this is not the whole story of where the card is —
+-- but it is the axis the whole animation is a journey along, and a card that
+-- goes backwards along it is a card that has backtracked.
+function progress(clock: f64): f64
+    local mesh: card_warp.Mesh = seen_at(clock)
+    local count: i32 = card_warp.point_count(COLUMNS, ROWS)
+    local middle_x: f64 = 0.0
+    local middle_y: f64 = 0.0
+    for index = 0::i32, count - 1 do
+        middle_x += mesh.xs[index]
+        middle_y += mesh.ys[index]
+    end
+    middle_x /= count::f64
+    middle_y /= count::f64
+    local run_x: f64 = CAUGHT_X - DECK_X
+    local run_y: f64 = CAUGHT_Y - DECK_Y
+    local length: f64 = math.sqrt(run_x * run_x + run_y * run_y)
+    return ((middle_x - DECK_X) * run_x + (middle_y - DECK_Y) * run_y) / length
+end
+
+function centre_x(clock: f64): f64
+    return card_draw.pose_at(drawing(), clock).center_x
+end
+
+function centre_y(clock: f64): f64
+    return card_draw.pose_at(drawing(), clock).center_y
+end
+
+describe("the card's path out of the deck", function(): unit
+    -- The complaint this test exists for: the card used to creep along the
+    -- drag as the pull grew and slide back as it relaxed, so it left, returned
+    -- to where it came from, and left again. One journey, one direction.
+    it("never goes backwards on its way to being caught", function(): unit
+        local furthest: f64 = progress(0.0) - BACKSTEP
+        for step = 0::i32, SAMPLES do
+            local clock: f64 = card_draw.slam_end * (step::f64) / (SAMPLES::f64)
+            local reached: f64 = progress(clock)
+            expect(reached):toBeGreaterThanOrEqual(furthest)
+            furthest = reached - BACKSTEP
+        end
+    end)
+
+    -- Anticipation is a press on the sheet, not a dip of the whole card. A
+    -- body that moves south before being pulled north is two changes of
+    -- direction before the animation has started.
+    it("holds perfectly still while it is being leaned on", function(): unit
+        for step = 0::i32, 20::i32 do
+            local clock: f64 = card_draw.settle_end * (step::f64) / 20.0
+            expect(centre_x(clock)):toBeCloseTo(DECK_X, 9)
+            expect(centre_y(clock)):toBeCloseTo(DECK_Y, 9)
+        end
+    end)
+
+    it("is being held by the corner nearest the direction it is pulled", function(): unit
+        local pose: card_warp.Pose = card_draw.pose_at(drawing(), 0.2)
+        expect(pose.grab_u):toBe(1.0)
+        expect(pose.grab_v):toBe(0.0)
+    end)
+
+    it("leaves the deck and arrives where it is caught", function(): unit
+        expect(centre_x(0.0)):toBeCloseTo(DECK_X, 6)
+        expect(centre_y(0.0)):toBeCloseTo(DECK_Y, 6)
+        expect(centre_x(card_draw.catch_end)):toBeCloseTo(CAUGHT_X, 6)
+        expect(centre_y(card_draw.catch_end)):toBeCloseTo(CAUGHT_Y, 6)
+    end)
+
+    -- The card is stopped short and caught, rather than travelling all the way
+    -- there under its own steam. Whatever catches it does the last of the work.
+    it("is still short of its destination when the slam ends", function(): unit
+        expect(progress(card_draw.slam_end)):toBeLessThan(progress(card_draw.catch_end))
+    end)
+end)
+
+describe("the card's turn", function(): unit
+    it("leaves the deck sealed and is face up by the time it is caught", function(): unit
+        expect(card_draw.shows_face(drawing(), 0.0)):toBe(false)
+        expect(card_draw.shows_face(drawing(), card_draw.whip_end)):toBe(false)
+        expect(card_draw.shows_face(drawing(), card_draw.catch_end)):toBe(true)
+    end)
+
+    it("keeps the face up for the whole hover", function(): unit
+        for step = 0::i32, 40::i32 do
+            local clock: f64 = card_draw.catch_end
+                + (card_draw.total_seconds() - card_draw.catch_end) * (step::f64) / 40.0
+            expect(card_draw.shows_face(drawing(), clock)):toBe(true)
+        end
+    end)
+end)

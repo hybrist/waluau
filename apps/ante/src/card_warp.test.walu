@@ -111,13 +111,33 @@ describe("a corner pull", function(): unit
 
     -- The corner goes the whole distance and the far side of the card takes
     -- only the share the sheet has caught up with. Everything the pull looks
-    -- like follows from that one gap.
-    it("carries the held corner the full distance and the far one only its share", function(): unit
-        local pose: card_warp.Pose = pulled(0.15, 24.0)
-        local mesh: card_warp.Mesh = built(pose)
+    -- like follows from that one gap — and the gap is what the pull promises,
+    -- not where either end of it sits, because the sheet is displaced about
+    -- its own average so that pulling a card never moves it.
+    it("opens the whole distance between the held corner and the far one", function(): unit
+        local mesh: card_warp.Mesh = built(pulled(0.15, 24.0))
         local resting: card_warp.Mesh = built(rest())
-        expect(carried(mesh, resting, held_corner())):toBeCloseTo(24.0, 4)
-        expect(carried(mesh, resting, far_corner())):toBeCloseTo(24.0 * 0.15, 4)
+        local gap: f64 = carried(mesh, resting, held_corner())
+            - carried(mesh, resting, far_corner())
+        expect(gap):toBeCloseTo(24.0 * 0.85, 4)
+    end)
+
+    -- A card being pulled out of shape is not a card going anywhere. Travel
+    -- is the pose's centre, and the pull may not quietly add to it: when it
+    -- did, the card drifted along the drag as the pull grew and drifted back
+    -- as it relaxed, which reads as backtracking.
+    it("does not move the card it is deforming", function(): unit
+        local resting: card_warp.Mesh = built(rest())
+        local mesh: card_warp.Mesh = built(pulled(0.1, 40.0))
+        local count: i32 = card_warp.point_count(COLUMNS, ROWS)
+        local moved_x: f64 = 0.0
+        local moved_y: f64 = 0.0
+        for index = 0::i32, count - 1 do
+            moved_x += mesh.xs[index] - resting.xs[index]
+            moved_y += mesh.ys[index] - resting.ys[index]
+        end
+        expect(moved_x / (count::f64)):toBeCloseTo(0.0, 6)
+        expect(moved_y / (count::f64)):toBeCloseTo(0.0, 6)
     end)
 
     -- Follow above one is the whip: the pull is over, and the body of the
@@ -153,14 +173,16 @@ describe("a corner pull", function(): unit
         expect(card_warp.limited_pull(pose)):toBeCloseTo(5.0, 6)
     end)
 
-    it("is no deformation at all once the sheet has fully caught up", function(): unit
+    -- With the sheet level with the corner there is no gap to draw, and since
+    -- the pull cannot move the card either, the whole thing is a no-op. A
+    -- card that has caught up with its own corner has simply travelled, and
+    -- travelling is not this function's job.
+    it("does nothing at all once the sheet has fully caught up", function(): unit
         local mesh: card_warp.Mesh = built(pulled(1.0, 60.0))
         local resting: card_warp.Mesh = built(rest())
-        -- Every point has moved by the same offset, which is a card that has
-        -- travelled rather than a card that has been pulled out of shape.
-        local shift: f64 = mesh.xs[0] - resting.xs[0]
         for index = 0::i32, card_warp.point_count(COLUMNS, ROWS) - 1 do
-            expect(mesh.xs[index] - resting.xs[index]):toBeCloseTo(shift, 6)
+            expect(mesh.xs[index]):toBeCloseTo(resting.xs[index], 6)
+            expect(mesh.ys[index]):toBeCloseTo(resting.ys[index], 6)
         end
     end)
 end)

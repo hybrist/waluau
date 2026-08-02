@@ -8,9 +8,9 @@
 --
 -- The beats, and what each is for:
 --
---   settle       the card leans away from the pull before it goes, so the
---                pull has something to break away from
---   pull         the bottom right corner leaves and the sheet trails it
+--   settle       the held corner presses back into the stack before it goes,
+--                so the pull has something to break away from
+--   pull         the top right corner leaves and the sheet trails it
 --   whip         the pull ends, the trailing sheet arrives past the corner
 --   slam         the card drives at its destination, turning over on the way
 --   catch        it is stopped short, in the air, and pays for the stop
@@ -32,9 +32,19 @@ const CATCH_END: f64 = 0.68
 -- How long the card hovers before the story starts over.
 const HOVER_SECONDS: f64 = 1.9
 
--- The drag: up and to the right, off the bottom right corner.
+-- The drag: up and to the right, off the top right corner. Pulling the bottom
+-- right corner in this direction was the first thing tried, and it reads as
+-- the card being dragged across itself — the corner that leaves is nowhere
+-- near the direction it leaves in. The corner nearest the drag is the one a
+-- hand would take.
+const GRAB_U: f64 = 1.0
+const GRAB_V: f64 = 0.0
 const DRAG_X: f64 = 0.6
 const DRAG_Y: f64 = -0.8
+-- How hard the corner leans back into the stack before it goes. Anticipation
+-- is a press, not a move: the card has one direction of travel, and a body
+-- that dips south before being pulled north is two.
+const PRESS_REACH: f64 = 26.0
 -- How far the held corner gets ahead of the sheet at the height of the pull,
 -- in logical pixels. The stretch limit is what actually decides how much of
 -- this reaches the card.
@@ -42,6 +52,11 @@ const PULL_REACH: f64 = 78.0
 -- How far up and right the whole card travels while it is being pulled free.
 const LIFT_X: f64 = 54.0
 const LIFT_Y: f64 = -66.0
+-- How much of the way to the catch the whip and the slam each cover. The slam
+-- stops short on purpose: the last of the distance belongs to whatever catches
+-- the card, which is the difference between being caught and arriving.
+const WHIP_DRIFT: f64 = 0.06
+const SLAM_REACH: f64 = 0.86
 
 -- The two turns the hover breathes with, at periods that do not divide into
 -- each other, so the loop never lands where the eye can find it.
@@ -146,7 +161,9 @@ type Draw = {
 -- the corner is leaving, races past it on the whip, and is level with it from
 -- the slam onward — from there the card is travelling, not deforming.
 function follow_at(beat: Beat): f64
-    if beat.index == BEAT_SETTLE then return 1.0 end
+    -- The press needs the sheet to be behind the corner too, or there is
+    -- nothing for the corner to press against.
+    if beat.index == BEAT_SETTLE then return 0.4 end
     if beat.index == BEAT_PULL then
         -- The sheet is furthest behind early, when the corner has just gone.
         return 0.08 + 0.5 * ease_in_cubic(beat.part)
@@ -158,7 +175,12 @@ function follow_at(beat: Beat): f64
 end
 
 -- How far the held corner has been dragged from where the sheet would put it.
+-- Negative is the corner leaning back the other way, which is the whole of
+-- the anticipation.
 function reach_at(beat: Beat): f64
+    if beat.index == BEAT_SETTLE then
+        return -PRESS_REACH * ease_arc(beat.part)
+    end
     if beat.index == BEAT_PULL then
         return PULL_REACH * ease_out_cubic(beat.part)
     end
@@ -175,8 +197,10 @@ type Travel = { x: f64, y: f64, speed: f64 }
 
 function travel_at(draw: Draw, beat: Beat): Travel
     if beat.index == BEAT_SETTLE then
-        -- Anticipation: a shade down and back, into the deck.
-        return { x = draw.from_x, y = draw.from_y + 3.0 * ease_arc(beat.part), speed = 0.0 }
+        -- The card does not move at all while it is being leaned on. The
+        -- anticipation is entirely in the sheet's shape, so the first bulk
+        -- motion of the whole animation is already the pull.
+        return { x = draw.from_x, y = draw.from_y, speed = 0.0 }
     end
     if beat.index == BEAT_PULL then
         -- The body leaves late and the corner leaves at once. Easing the two
@@ -193,20 +217,30 @@ function travel_at(draw: Draw, beat: Beat): Travel
     local lifted_x: f64 = draw.from_x + LIFT_X
     local lifted_y: f64 = draw.from_y + LIFT_Y
     if beat.index == BEAT_WHIP then
-        return { x = lifted_x, y = lifted_y, speed = 0.0 }
+        -- The whip is the sheet's beat, not the card's, but the card may not
+        -- stand still for it: the held corner is snapping back into the body
+        -- here, and a corner retracting over a card that has stopped dead
+        -- reads as the card itself reversing. It keeps drifting instead.
+        local part: f64 = WHIP_DRIFT * ease_out_cubic(beat.part)
+        return {
+            x = lifted_x + (draw.to_x - lifted_x) * part,
+            y = lifted_y + (draw.to_y - lifted_y) * part,
+            speed = 0.0
+        }
     end
     if beat.index == BEAT_SLAM then
-        -- Driving, and still short of the destination when the catch takes
-        -- over: the card never gets there under its own steam.
-        local part: f64 = ease_in_cubic(beat.part) * 0.86
+        -- Driving, from wherever the whip's drift left it, and still short of
+        -- the destination when the catch takes over: the card never gets
+        -- there under its own steam.
+        local part: f64 = WHIP_DRIFT + (SLAM_REACH - WHIP_DRIFT) * ease_in_cubic(beat.part)
         return {
             x = lifted_x + (draw.to_x - lifted_x) * part,
             y = lifted_y + (draw.to_y - lifted_y) * part,
             speed = part
         }
     end
-    local stopped_x: f64 = lifted_x + (draw.to_x - lifted_x) * 0.86
-    local stopped_y: f64 = lifted_y + (draw.to_y - lifted_y) * 0.86
+    local stopped_x: f64 = lifted_x + (draw.to_x - lifted_x) * SLAM_REACH
+    local stopped_y: f64 = lifted_y + (draw.to_y - lifted_y) * SLAM_REACH
     if beat.index == BEAT_CATCH then
         local part: f64 = ease_out_back(beat.part)
         return {
@@ -251,6 +285,8 @@ function pose_at(draw: Draw, clock: f64): card_warp.Pose
     local travel: Travel = travel_at(draw, beat)
     local pose: card_warp.Pose = card_warp.rest_pose(
         draw.width, draw.height, travel.x, travel.y)
+    pose.grab_u = GRAB_U
+    pose.grab_v = GRAB_V
     pose.stretch_limit = draw.stretch_limit
     pose.follow = follow_at(beat)
     local reach: f64 = reach_at(beat)

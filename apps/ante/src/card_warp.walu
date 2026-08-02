@@ -225,12 +225,38 @@ function narrow_across(x: f64, y: f64, axis_x: f64, axis_y: f64, amount: f64): O
         x, y, axis_x, axis_y, 1.0, amount ^ (-AREA_PRESERVATION))
 end
 
-function place_point(pose: Pose, u: f64, v: f64, reach: f64, narrowing: f64): Space
+-- The average share of the lead across the sheet. Every point is displaced by
+-- its own share less this one, which is what keeps a pull from moving the
+-- card. Without it the sheet drifts along the drag as the pull grows and
+-- drifts back as it relaxes — the card leaves, returns to where it came from,
+-- and leaves again, which reads as backtracking rather than as a pull. Where
+-- the card is belongs to travel; the pull only ever changes its shape.
+function mean_pull_weight(pose: Pose, columns: i32, rows: i32): f64
+    local total: f64 = 0.0
+    for row = 0::i32, rows do
+        local v: f64 = (row::f64) / (rows::f64)
+        for column = 0::i32, columns do
+            total += pull_weight(pose, (column::f64) / (columns::f64), v)
+        end
+    end
+    return total / (point_count(columns, rows)::f64)
+end
+
+function place_point(
+    pose: Pose,
+    u: f64,
+    v: f64,
+    reach: f64,
+    narrowing: f64,
+    mean: f64
+): Space
     local x: f64 = (u - 0.5) * pose.width
     local y: f64 = (v - 0.5) * pose.height
 
-    -- The pull, shared out across the sheet, and the narrowing it owes.
-    local weight: f64 = pull_weight(pose, u, v)
+    -- The pull, shared out across the sheet, and the narrowing it owes. The
+    -- share is measured against the sheet's average, so the corner leading
+    -- and the body trailing are both movement relative to the card itself.
+    local share: f64 = pull_weight(pose, u, v) - mean
     local scaled: f64 = 1.0
     local total: f64 = math.sqrt(
         pose.pull_x * pose.pull_x + pose.pull_y * pose.pull_y + pose.pull_z * pose.pull_z)
@@ -239,9 +265,9 @@ function place_point(pose: Pose, u: f64, v: f64, reach: f64, narrowing: f64): Sp
         x, y, pose.pull_x * scaled, pose.pull_y * scaled, narrowing)
     x = narrowed.x
     y = narrowed.y
-    local z: f64 = pose.pull_z * scaled * weight
-    x += pose.pull_x * scaled * weight
-    y += pose.pull_y * scaled * weight
+    local z: f64 = pose.pull_z * scaled * share
+    x += pose.pull_x * scaled * share
+    y += pose.pull_y * scaled * share
 
     -- Travel's own stretch, then the size the hover breathes at.
     local shaped: Offset = apply_axial(x, y, pose.axis_x, pose.axis_y, pose.axial)
@@ -309,11 +335,12 @@ function build(mesh: Mesh, pose: Pose): unit
     local stride: i32 = columns + 1
     local reach: f64 = limited_pull(pose)
     local narrowing: f64 = stretch_ratio(pose, reach)
+    local mean: f64 = mean_pull_weight(pose, columns, rows)
     for row = 0::i32, rows do
         local v: f64 = (row::f64) / (rows::f64)
         for column = 0::i32, columns do
             local u: f64 = (column::f64) / (columns::f64)
-            local point: Space = place_point(pose, u, v, reach, narrowing)
+            local point: Space = place_point(pose, u, v, reach, narrowing, mean)
             local index: i32 = row * stride + column
             mesh.px[index] = point.x
             mesh.py[index] = point.y
