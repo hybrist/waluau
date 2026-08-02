@@ -10,6 +10,8 @@ local spell_cast = require("./spell_cast")
 local spell_launch = require("./spell_launch")
 local game = require("./game")
 local layout = require("./layout")
+local card_warp = require("./card_warp")
+local card_draw = require("./card_draw")
 
 type Graphics = engine.Graphics
 type EffectShaders = effect_shaders.EffectShaders
@@ -337,6 +339,16 @@ const EASE_IN_OUT_CUBIC: i32 = 2
 const EASE_OUT_BACK: i32 = 3
 const ANIM_EFFECT_MOVE: i32 = 0
 const ANIM_EFFECT_ASH_REAPPEAR: i32 = 1
+const ANIM_EFFECT_THROW: i32 = 2
+
+-- The thrown card's dials, straight from the tuning the card stories settled
+-- on: how long the sheet may get, how far past its slot the throw carries it
+-- as a share of the journey, and how high off the board it rises toward the
+-- viewer. The clock inside a throw leg is card_draw's authored one, scaled
+-- to whatever duration the leg was given.
+const THROW_STRETCH: f64 = 1.6
+const THROW_OVERSHOOT: f64 = 0.3
+const THROW_RISE: f64 = 270.0
 
 -- One leg of a card's journey across the board. The card renders at `from`
 -- until start, travels to `to` over duration, and only exists on screen
@@ -448,6 +460,10 @@ type Frame = {
     -- update tick advanced.
     ash: CardAsh,
     spells: SpellParticles,
+    -- Scratch geometry for thrown cards, owned by choreography like the ash:
+    -- one deformable sheet, rebuilt each frame a throw is in the air. A card
+    -- deformed sixty times a second should not be sixty allocations.
+    sheet: card_warp.Mesh,
     card_back: graphics_module.Texture?
 }
 
@@ -1050,16 +1066,89 @@ function draw_ash_reappearance(
     graphics:release_render_target(captured)
 end
 
+-- A card thrown to a ward slot: the deck draw the card stories rehearse,
+-- played on the live board. The card is card_warp's sheet rather than a
+-- rectangle — it rises toward the viewer, stretches with its own momentum,
+-- turns over past its leading edge, overshoots and drops onto the slot — so
+-- this leg projects the sheet itself instead of using the transform stack.
+-- The face is captured fresh each frame, the same bargain ash reappearance
+-- strikes: a throw is short and rare, and a captured card is exact.
+function draw_throw_card(
+    graphics: Graphics,
+    effects: EffectShaders,
+    card_back: graphics_module.Texture?,
+    anim: Anim,
+    part: f64,
+    sheet: card_warp.Mesh
+): unit
+    local clock: f64 = part * card_draw.land_end
+    local throw: card_draw.Draw = {
+        from_x = anim.from.x + CARD_W * 0.5,
+        from_y = anim.from.y + CARD_H * 0.5,
+        to_x = anim.to.x + CARD_W * 0.5,
+        to_y = anim.to.y + CARD_H * 0.5,
+        width = CARD_W,
+        height = CARD_H,
+        stretch_limit = THROW_STRETCH,
+        overshoot = THROW_OVERSHOOT,
+        rise = THROW_RISE,
+        arc = card_draw.arc_very_late
+    }
+    local pose: card_warp.Pose = card_draw.pose_at(throw, clock)
+    local face_up: bool = card_draw.shows_face(throw, clock)
+    local target: graphics_module.RenderTarget? = capture_card(
+        graphics, effects, card_back, anim.card, false, anim.known, not face_up)
+    if target == nil then
+        -- Without a capture there is no texture for the sheet; the plain
+        -- card at the pose's centre keeps the deal legible until assets are
+        -- ready to be captured.
+        draw_card(
+            graphics, effects, card_back, anim.card,
+            pose.center_x - CARD_W * 0.5, pose.center_y - CARD_H * 0.5,
+            false, false, not face_up, false, anim.known)
+        return
+    end
+    local captured: graphics_module.RenderTarget = target::graphics_module.RenderTarget
+    card_warp.build(sheet, pose)
+    -- Seen from behind, a card's face reads the wrong way round unless its
+    -- source region is taken right to left.
+    local source_x: f64 = 0.0
+    local source_width: f64 = CARD_W
+    if face_up then
+        source_x = CARD_W
+        source_width = -CARD_W
+    end
+    local texture: graphics_module.Texture = graphics:texture_from_render_target(
+        captured)
+    graphics:set_color_rgba(1.0, 1.0, 1.0, 1.0)
+    graphics:draw_sprite_mesh(
+        texture,
+        sheet.columns,
+        sheet.rows,
+        sheet.xs,
+        sheet.ys,
+        sheet.shades,
+        source_x,
+        0.0,
+        source_width,
+        CARD_H)
+    graphics:release_render_target(captured)
+end
+
 -- A card mid-deal or mid-swap: eased travel between two board anchors with
 -- an optional mid-flight flip, turning to meet the tilt of wherever it lands
 -- and lifted slightly toward the viewer while it moves (matching the reveal
 -- flip's midair feel).
-function draw_anim_card(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, anim: Anim, clock: f64): unit
+function draw_anim_card(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, anim: Anim, clock: f64, sheet: card_warp.Mesh): unit
     if clock < anim.appear or clock >= anim.vanish then return end
     local t: f64 = 1.0
     if anim.duration > 0.0 then t = (clock - anim.start) / anim.duration end
     if t < 0.0 then t = 0.0 end
     if t > 1.0 then t = 1.0 end
+    if anim.effect == ANIM_EFFECT_THROW then
+        draw_throw_card(graphics, effects, card_back, anim, t, sheet)
+        return
+    end
     local ease: f64 = ease_progress(t, anim.easing)
     local at: Point = lerp(anim.from, anim.to, ease)
     if anim.effect == ANIM_EFFECT_ASH_REAPPEAR then
@@ -1086,9 +1175,9 @@ function draw_anim_card(graphics: Graphics, effects: EffectShaders, card_back: g
     graphics:pop()
 end
 
-function draw_anims(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, anims: {Anim}, clock: f64): unit
+function draw_anims(graphics: Graphics, effects: EffectShaders, card_back: graphics_module.Texture?, anims: {Anim}, clock: f64, sheet: card_warp.Mesh): unit
     for anim in anims do
-        draw_anim_card(graphics, effects, card_back, anim, clock)
+        draw_anim_card(graphics, effects, card_back, anim, clock, sheet)
     end
 end
 
@@ -1284,6 +1373,11 @@ function capture_card(graphics: Graphics, effects: EffectShaders, card_back: gra
         graphics:release_render_target(target)
         return nil
     end
+    -- A capture draws in the target's own pixels, whatever transform the
+    -- screen was under. Without this, a board drawn at a viewport scale
+    -- captures a card too large for its target and every consumer of the
+    -- capture shows a zoomed crop of a face.
+    graphics:push_identity()
     graphics:clear("#00000000")
     draw_card(
         graphics, effects, card_back, card, 0.0, 0.0,
@@ -1302,6 +1396,7 @@ function capture_card(graphics: Graphics, effects: EffectShaders, card_back: gra
         graphics:set_color(school_color(card.suit))
         graphics:fill_rectangle(7.0, 7.0, 5.0, CARD_H - 14.0)
     end
+    graphics:pop()
     graphics:set_screen_target()
     return target
 end
@@ -2374,7 +2469,7 @@ function draw_playfield(graphics: Graphics, effects: EffectShaders, frame: Frame
         draw_hand_slot(graphics, effects, card_back, state, i, hand_focus, fan_parts, play_picks, swap_hand, anims, anim_clock)
     end
     draw_footer(graphics, state)
-    draw_anims(graphics, effects, card_back, anims, anim_clock)
+    draw_anims(graphics, effects, card_back, anims, anim_clock, frame.sheet)
     draw_spell_launch(
         graphics, effects, power_kind, power_clock, frame.spell.target,
         frame.spells.sparks)
@@ -2618,6 +2713,7 @@ return {
     ease_out_back = EASE_OUT_BACK,
     anim_effect_move = ANIM_EFFECT_MOVE,
     anim_effect_ash_reappear = ANIM_EFFECT_ASH_REAPPEAR,
+    anim_effect_throw = ANIM_EFFECT_THROW,
     firebolt_burn_finished = firebolt_burn_finished,
     -- The ash emitters and the two readings that steer them. Choreography owns
     -- the systems and ticks them; this module owns their tuning and how far

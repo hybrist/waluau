@@ -17,6 +17,28 @@ const HEIGHT = 280.0
 const SCHOOLS_WIDTH = 560.0
 const BACKGROUND = "#0b0b12"
 
+-- Every story here draws under the same kind of uniform viewport scale the
+-- game plays at: main.walu fits its canvas against a 960x600 reference, which
+-- lands near this value on a fullscreen board. Story coordinates stay in
+-- logical pixels and only the canvas grows. A story drawn at unit scale is
+-- misleading — it hides any rendering that quietly depends on the screen
+-- transform, which is exactly the kind of bug a capture into a fixed-size
+-- render target can have.
+const STAGE_SCALE = 1.2
+
+local function staged(draw: (engine.Graphics, f64) -> unit): (engine.Graphics, f64) -> unit
+    return function(graphics: engine.Graphics, alpha: f64): unit
+        graphics:push()
+        graphics:scale(STAGE_SCALE, STAGE_SCALE)
+        draw(graphics, alpha)
+        graphics:pop()
+    end
+end
+
+local function staged_size(size: f64): u32
+    return (size * STAGE_SCALE)::u32
+end
+
 -- The card back, the display font, and the school shaders every story here
 -- draws with. One set is loaded for the whole file: Storybook moves between
 -- these stories constantly, and the assets do not change between them.
@@ -430,11 +452,11 @@ end
 -- own geometry, because that is the space its slots are laid out in.
 local function card_scene(draw: (engine.Graphics, f64) -> unit): storybook.Scene
     return {
-        draw = draw,
+        draw = staged(draw),
         load = load,
         update = tick,
-        width = WIDTH::u32,
-        height = HEIGHT::u32,
+        width = staged_size(WIDTH),
+        height = staged_size(HEIGHT),
         background = BACKGROUND
     }
 end
@@ -451,19 +473,19 @@ storybook.publish({
     storybook.story("Watched", card_scene(draw_watched)),
     storybook.story("Turning over", card_scene(draw_turning)),
     storybook.story("Every school", {
-        draw = draw_schools,
+        draw = staged(draw_schools),
         load = load,
         update = tick,
-        width = SCHOOLS_WIDTH::u32,
-        height = HEIGHT::u32,
+        width = staged_size(SCHOOLS_WIDTH),
+        height = staged_size(HEIGHT),
         background = BACKGROUND
     }),
     storybook.story("Drawn from the deck", {
-        draw = draw_drawing,
+        draw = staged(draw_drawing),
         load = load,
         update = tick,
-        width = DRAW_WIDTH::u32,
-        height = DRAW_HEIGHT::u32,
+        width = staged_size(DRAW_WIDTH),
+        height = staged_size(DRAW_HEIGHT),
         background = BACKGROUND
     }, {
         storybook.select("playback", 0, { "Loop", "Scrub" }),
@@ -497,11 +519,11 @@ storybook.publish({
         storybook.select("arc", 2, { "Even", "Late", "Very late", "Early" }),
     }),
     storybook.story("In the fan", {
-        draw = draw_fan,
+        draw = staged(draw_fan),
         load = load,
         update = tick,
-        width = 960,
-        height = 600,
+        width = staged_size(960.0),
+        height = staged_size(600.0),
         background = BACKGROUND
     }),
 })

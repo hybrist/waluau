@@ -8,6 +8,7 @@ local game = require("./game")
 local render = require("./render")
 local snapshot_data = require("./snapshot")
 local layout = require("./layout")
+local card_warp = require("./card_warp")
 
 type State = {
     fan_parts: {f64},
@@ -34,7 +35,12 @@ type State = {
     spells: render.SpellParticles,
     discards: {game.Card},
     computer_won: {game.Card},
-    player_won: {game.Card}
+    player_won: {game.Card},
+    -- Scratch geometry for the thrown ward cards: one deformable sheet the
+    -- renderer rebuilds each frame a throw is in the air. Working state like
+    -- the ash, never snapshotted — and kept here because a card deformed
+    -- sixty times a second should not be sixty allocations.
+    sheet: card_warp.Mesh
 }
 type Interaction = {
     hand_focus: i32,
@@ -63,6 +69,17 @@ const FAN_EASE_RESPONSE: f64 = 14.0
 const FAN_EASE_SNAP: f64 = 0.001
 const DEAL_STEP: f64 = 0.1
 const DEAL_SECONDS: f64 = 0.38
+-- How long a ward's throw takes: card_draw's authored 0.7 second draw at
+-- the 130 playback the card stories settled on.
+const THROW_SECONDS: f64 = 0.54
+-- Where in a throw leg the card is edge on. The throw turns late — the
+-- half-turn point of its part^2.4 flip lands here, not at the midpoint the
+-- affine flip cues from.
+const THROW_FLIP_PART: f64 = 0.62
+-- Fine enough that a bend across the thrown sheet is a curve and not a
+-- crease; the same grid the card stories draw with.
+const THROW_COLUMNS: i32 = 12
+const THROW_ROWS: i32 = 16
 const SWAP_STEP: f64 = 0.12
 const SWAP_LEAVE_SECONDS: f64 = 0.4
 const SWAP_ASIDE_SECONDS: f64 = 0.4
@@ -105,6 +122,7 @@ function new(): State
         discards = {},
         computer_won = {},
         player_won = {},
+        sheet = card_warp.new_mesh(THROW_COLUMNS, THROW_ROWS),
     }
 end
 
@@ -255,6 +273,18 @@ function flip_sound_time(start: f64, duration: f64): f64
     return event_time
 end
 
+-- The moment a leg's card is edge on, which is what the flip cue leads. The
+-- affine flip turns through its midpoint; the throw turns late.
+function turn_sound_time(anim: render.Anim): f64
+    if anim.effect ~= render.anim_effect_throw then
+        return flip_sound_time(anim.start, anim.duration)
+    end
+    local event_time: f64 = anim.start
+        + anim.duration * THROW_FLIP_PART - FLIP_SOUND_LEAD_SECONDS
+    if event_time < anim.start then return anim.start end
+    return event_time
+end
+
 -- Advance active choreography and return the number of card turns whose sound
 -- cue crossed this frame. The engine adapter decides how the sound is played,
 -- but it no longer knows face modes or timing implementation.
@@ -265,7 +295,7 @@ function update(state: State, dt: f64): i32
     local cues: i32 = 0
     for anim in state.anims do
         if anim.faces == render.faces_flip_up or anim.faces == render.faces_flip_down then
-            if crossed(previous, state.anim_clock, flip_sound_time(anim.start, anim.duration)) then
+            if crossed(previous, state.anim_clock, turn_sound_time(anim)) then
                 cues += 1
             end
         end
@@ -373,20 +403,31 @@ function slot_tilt_now(state: State, kind: i32, index: i32): f64
     return 0.0
 end
 
+-- One card off the deck. A card bound for a ward slot is thrown — the full
+-- three-dimensional draw the card stories rehearse: up off the board, turned
+-- over past its leading edge, overshooting its slot and dropping onto it.
+-- The hands keep the flat slide: five relics arriving as aerial throws would
+-- be a juggling act, not a deal, and the sealed row has nothing to show off.
 function push_deal(viewport: layout.State, anims: {render.Anim}, card: game.Card, kind: i32, index: i32, count: i32, faces: i32, start: f64): f64
-    local finish: f64 = start + DEAL_SECONDS
+    local effect: i32 = render.anim_effect_move
+    local duration: f64 = DEAL_SECONDS
+    if kind == render.slot_middle then
+        effect = render.anim_effect_throw
+        duration = THROW_SECONDS
+    end
+    local finish: f64 = start + duration
     table.insert(anims, {
         card = card,
         faces = faces,
         known = false,
-        effect = render.anim_effect_move,
+        effect = effect,
         from = render.slot_pos(viewport, render.slot_deck, 0),
         to = render.slot_pos_at(viewport, kind, index, count),
         angle0 = 0.0,
         angle1 = slot_tilt_at(kind, index, count),
         easing = render.ease_out_quint,
         start = start,
-        duration = DEAL_SECONDS,
+        duration = duration,
         appear = start,
         vanish = finish,
         dest_kind = kind,
@@ -857,6 +898,7 @@ function draw(
         },
         ash = state.ash,
         spells = state.spells,
+        sheet = state.sheet,
         card_back = card_back,
     })
 end
