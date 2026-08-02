@@ -2485,10 +2485,27 @@ function modal_shell(graphics: Graphics, title: string, subtitle: string): unit
     text(graphics, subtitle, 126.0, 145.0, 11, "#a1a1aa")
 end
 
+-- Secondary screens draw in one fixed design space — the shell at 92,68,
+-- 776x476 and every line laid out inside it — parked with its own anchor on
+-- the canvas centre. On a canvas too narrow or short for the shell plus a
+-- small margin, the whole composition scales down as one: a modal is a
+-- page, and a page shrinks rather than reflowing its lines.
+const MODAL_ANCHOR_X: f64 = 480.0
+const MODAL_ANCHOR_Y: f64 = 300.0
+const MODAL_FIT_W: f64 = 824.0
+const MODAL_FIT_H: f64 = 524.0
+
 function begin_modal(graphics: Graphics): unit
     local viewport: layout.State = layout.current()
+    local fit: f64 = 1.0
+    local fit_w: f64 = viewport.width / MODAL_FIT_W
+    local fit_h: f64 = viewport.height / MODAL_FIT_H
+    if fit_w < fit then fit = fit_w end
+    if fit_h < fit then fit = fit_h end
     graphics:push()
-    graphics:translate(viewport.center_x - 480.0, viewport.center_y - 300.0)
+    graphics:translate(viewport.center_x, viewport.center_y)
+    graphics:scale(fit, fit)
+    graphics:translate(-MODAL_ANCHOR_X, -MODAL_ANCHOR_Y)
 end
 
 function draw_help(graphics: Graphics, effects: EffectShaders): unit

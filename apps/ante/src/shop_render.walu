@@ -27,8 +27,18 @@ const ROW_W: f64 = 476.0
 const ROW_H: f64 = 54.0
 const ROW_PITCH: f64 = 64.0
 
+-- The panel opens a share of the live height down the screen, and its header
+-- — title, subtitle, and the mana readout — takes a fixed band before the
+-- first offer line.
+const PANEL_TOP_SHARE: f64 = 0.1133333333
+const PANEL_HEADER_H: f64 = 128.0
+
+function panel_top(viewport: layout.State): f64
+    return viewport.height * PANEL_TOP_SHARE
+end
+
 function row_top(viewport: layout.State, index: i32): f64
-    return viewport.height * 0.3266666667 + (index::f64) * ROW_PITCH
+    return panel_top(viewport) + PANEL_HEADER_H + (index::f64) * ROW_PITCH
 end
 
 -- The offer line under a point, or -1. The gaps between lines are dead space,
@@ -138,7 +148,7 @@ function draw(
     alpha: f64
 ): unit
     if alpha <= 0.0 then return end
-    local panel_y: f64 = viewport.height * 0.1133333333
+    local panel_y: f64 = panel_top(viewport)
     local panel_h: f64 = viewport.height - panel_y - 56.0
     local choosing: bool = shop.choosing(state)
     render.panel(
