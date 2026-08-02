@@ -77,6 +77,12 @@ type Pose = {
     -- Distance from the viewer to the card plane, in logical pixels. Smaller
     -- values foreshorten harder.
     focal: f64,
+    -- How far the whole card sits off the surface, toward the viewer. Unlike
+    -- pull_z this is bulk height, not shape: every point takes all of it, so
+    -- it never bends the sheet and never touches the lighting — what it does
+    -- is feed the perspective divide, which is how a card in the air reads as
+    -- nearer rather than merely elsewhere.
+    rise: f64,
     -- Overall size, which the hover breathes with.
     scale: f64
 }
@@ -120,6 +126,7 @@ function rest_pose(width: f64, height: f64, center_x: f64, center_y: f64): Pose
         tilt = 0.0,
         roll = 0.0,
         focal = 900.0,
+        rise = 0.0,
         scale = 1.0
     }
 end
@@ -288,7 +295,7 @@ function place_point(
     local tilt_sin: f64 = math.sin(pose.tilt)
     local tilted_y: f64 = rolled_y * tilt_cos - flipped_z * tilt_sin
     local tilted_z: f64 = flipped_z * tilt_cos + rolled_y * tilt_sin
-    return { x = flipped_x, y = tilted_y, z = tilted_z }
+    return { x = flipped_x, y = tilted_y, z = tilted_z + pose.rise }
 end
 
 -- A point in card space to a point on the screen. Nearer is larger, which is

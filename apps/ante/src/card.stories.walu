@@ -194,10 +194,11 @@ local function draw_fan(graphics: engine.Graphics, alpha: f64): unit
     end
 end
 
--- The draw: a sealed card pulled off the deck by its bottom right corner and
--- caught in the air. The card is a sheet of geometry here rather than a
--- rectangle, so what happens to it is a corner leaving ahead of the rest of
--- the card and the rest of the card answering for it.
+-- The draw: a sealed card thrown off the deck, up off the surface, turned
+-- over past its own leading edge and dropped onto its spot. The card is a
+-- sheet of geometry here rather than a rectangle, so what happens to it is a
+-- corner leaving ahead of the rest of the card and the rest of the card
+-- answering for it.
 const DRAW_WIDTH = 760.0
 const DRAW_HEIGHT = 480.0
 -- Fine enough that a bend across the sheet is a curve and not a crease. Every
@@ -315,14 +316,14 @@ end
 -- Where the story's clock is: running, or held wherever the scrub control put
 -- it. Scrubbing is what a beat this short is actually judged in — which is
 -- also why the scrub does not cover the whole loop. Everything worth stepping
--- through happens in the first two thirds of a second, and a slider that
--- spent three quarters of its travel on the hover would be a slider that
--- cannot reach the whip.
+-- through happens before the card has settled, and a slider that spent three
+-- quarters of its travel on the hover would be a slider that cannot reach
+-- the turn.
 const SCRUB_TAIL = 0.35
 
 local function draw_clock(): f64
     if storybook.arg_i32("playback") == 1 then
-        local scrubbed = card_draw.catch_end + SCRUB_TAIL
+        local scrubbed = card_draw.land_end + SCRUB_TAIL
         return scrubbed * (storybook.arg_i32("phase")::f64) / 100.0
     end
     local total = card_draw.total_seconds()
@@ -348,10 +349,10 @@ local function draw_drawing(graphics: engine.Graphics, alpha: f64): unit
     local draw = drawing()
     local clock = draw_clock()
 
-    -- The slam is the only beat fast enough to leave anything behind it, and
-    -- the ghosts are earlier states of the same sheet rather than smears of
-    -- the last frame — a stretched card trailing an unstretched copy of
-    -- itself is what gives the deformation away.
+    -- The heart of the flight is the only stretch fast enough to leave
+    -- anything behind it, and the ghosts are earlier states of the same sheet
+    -- rather than smears of the last frame — a stretched card trailing an
+    -- unstretched copy of itself is what gives the deformation away.
     if card_draw.trails(clock) then
         local offsets = card_draw.ghost_offsets()
         for index = 0, #offsets - 1 do
@@ -369,7 +370,7 @@ local function draw_drawing(graphics: engine.Graphics, alpha: f64): unit
 
     local pose = card_draw.pose_at(draw, clock)
     local hold = 0.0
-    if clock >= card_draw.slam_end then hold = 1.0 end
+    if clock >= card_draw.flight_end then hold = 1.0 end
     draw_hold(graphics, pose, hold)
     draw_pose(graphics, pose, card_draw.shows_face(draw, clock), 1.0)
 end
