@@ -57,10 +57,6 @@ function new(): State
     }
 end
 
-function resize(state: State, viewport: layout.State): unit
-    choreography.resize(state.presentation, viewport)
-end
-
 -- Whether the map is the screen. The fence stands on it; a vault that has been
 -- walked into has taken it over, and so has one whose fence is being left.
 function on_map(state: State): bool
@@ -474,7 +470,7 @@ function keypressed(state: State, city: city_map.State, key: string): i32
 end
 
 function mousemoved(state: State, x: f64, y: f64): unit
-    local viewport: layout.State = state.presentation.viewport
+    local viewport: layout.State = layout.current()
     if on_map(state) then
         shop.focus(
             state.shop, state.run,
@@ -512,7 +508,7 @@ end
 
 function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button: i32): unit
     if button ~= 1 then return end
-    local viewport: layout.State = state.presentation.viewport
+    local viewport: layout.State = layout.current()
     -- Clicking an offer buys it the same way Enter on it does; a click on the
     -- chrome between the lines buys nothing rather than taking whatever the
     -- cursor happened to rest on.
@@ -632,7 +628,6 @@ end
 
 return {
     new = new,
-    resize = resize,
     reset = reset,
     update = update,
     steer_city = steer_city,

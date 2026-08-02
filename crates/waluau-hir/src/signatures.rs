@@ -565,8 +565,9 @@ pub(super) fn infer_top_level_function_return_type(
     function: &Function,
     fn_signatures: &HashMap<String, FnSignature>,
     unresolved_names: &[String],
+    module_bindings: &HashMap<String, Binding>,
 ) -> Result<Option<Type>, Diagnostic> {
-    let mut vars: HashMap<String, Binding> = HashMap::new();
+    let mut vars = module_bindings.clone();
     for param in &function.params {
         vars.insert(
             param.name.clone(),

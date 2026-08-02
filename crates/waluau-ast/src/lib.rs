@@ -902,6 +902,39 @@ impl Resolver {
         Ok(())
     }
 
+    fn resolve_top_level_init_function(
+        &mut self,
+        function: &mut Function,
+    ) -> Result<(), Diagnostic> {
+        for stmt in &mut function.body {
+            match stmt {
+                Stmt::Let {
+                    name,
+                    symbol_id,
+                    value,
+                    ..
+                } => {
+                    self.resolve_expr(value)?;
+                    *symbol_id = Some(self.lookup(name).ok_or_else(|| {
+                        Diagnostic::new(format!("unknown module binding '{name}'"))
+                    })?);
+                }
+                Stmt::LetMulti { bindings, values } => {
+                    for value in values {
+                        self.resolve_expr(value)?;
+                    }
+                    for binding in bindings {
+                        binding.symbol_id = Some(self.lookup(&binding.name).ok_or_else(|| {
+                            Diagnostic::new(format!("unknown module binding '{}'", binding.name))
+                        })?);
+                    }
+                }
+                _ => self.resolve_stmt(stmt)?,
+            }
+        }
+        Ok(())
+    }
+
     fn resolve_stmt(&mut self, stmt: &mut Stmt) -> Result<(), Diagnostic> {
         match stmt {
             Stmt::Let {
@@ -1257,7 +1290,11 @@ pub fn resolve_symbols(program: &mut Program) -> Result<(), Diagnostic> {
 
     // Resolve each function's body
     for function in &mut program.functions {
-        resolver.resolve_function(function)?;
+        if function.name.to_string() == "__waluau_top_level_init" {
+            resolver.resolve_top_level_init_function(function)?;
+        } else {
+            resolver.resolve_function(function)?;
+        }
     }
 
     Ok(())

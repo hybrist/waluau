@@ -57,7 +57,7 @@ body hosts it and the game owns the page; named, the engine styles only what it
 mounted, which is what lets a host page — Storybook's preview — keep its own
 layout around the canvas.
 
-`Config.canvas_sizing = "fluid"` makes the canvas fill the browser's available
+`Config.canvas_sizing = true` makes the canvas fill the browser's available
 space and updates `Graphics.width` and `Graphics.height` to its live CSS size.
 Without it, `width` and `height` remain the fixed logical viewport.
 

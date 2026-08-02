@@ -536,6 +536,9 @@ fn merge_with_ambient_declarations(
             .iter()
             .map(|decl| decl.name.clone())
             .collect();
+        let global_names = collect_top_level_local_renames(&module.program.top_level, "")
+            .into_keys()
+            .collect::<HashSet<_>>();
 
         let mut imports = HashMap::new();
         for (raw, &target_id) in &module.requires {
@@ -560,6 +563,7 @@ fn merge_with_ambient_declarations(
             func_names: &func_names,
             type_names: &type_names,
             type_namespaces: &type_namespaces,
+            global_names: &global_names,
             imports: &imports,
             re_exports,
             namespaces,
@@ -863,7 +867,11 @@ fn compute_module_export(
     if let Some(export) = &module.program.export {
         hoist_table_export_functions(&mut module_functions, export)?;
     }
-    let top_level_names = module_function_names(&module_functions, &module.program.export);
+    let top_level_names = module_function_names(
+        &module_functions,
+        &module.program.top_level,
+        &module.program.export,
+    );
     let (re_exports, namespaces, _) =
         process_reexport_bindings(&module.program.top_level, &imports);
     let constants = module_constants(&module.program.top_level)?;
@@ -881,11 +889,25 @@ fn compute_module_export(
     Ok(resolved)
 }
 
-fn module_function_names(functions: &[Function], export: &Option<Expr>) -> HashSet<String> {
+fn module_function_names(
+    functions: &[Function],
+    top_level: &[Stmt],
+    export: &Option<Expr>,
+) -> HashSet<String> {
     let mut names: HashSet<String> = functions
         .iter()
         .map(|function| function.name.to_string())
         .collect();
+    for stmt in top_level {
+        if let Stmt::Let {
+            name,
+            value: Expr::Function(_),
+            ..
+        } = stmt
+        {
+            names.insert(name.clone());
+        }
+    }
     if let Some(Expr::TableLiteral { fields, .. }) = export {
         for field in fields {
             if matches!(field.value, Expr::Function(_)) {
@@ -997,6 +1019,7 @@ fn process_reexport_bindings(
         func_names: &empty,
         type_names: &empty,
         type_namespaces: &empty_type_namespaces,
+        global_names: &empty,
         imports,
         re_exports: HashMap::new(),
         namespaces: HashMap::new(),
@@ -1204,6 +1227,7 @@ struct Rewriter<'a> {
     type_names: &'a HashSet<String>,
     /// Require-binding name -> exported type name -> canonical linked name.
     type_namespaces: &'a HashMap<String, HashMap<String, String>>,
+    global_names: &'a HashSet<String>,
     imports: &'a HashMap<String, ResolvedImport>,
     re_exports: HashMap<String, String>,
     namespaces: HashMap<String, ModuleNamespace>,
@@ -1559,7 +1583,12 @@ impl Rewriter<'_> {
                 }
                 bound.insert(name.clone());
             }
-            Stmt::Assign { value, .. } => self.rewrite_expr(value, bound),
+            Stmt::Assign { name, value, .. } => {
+                self.rewrite_expr(value, bound);
+                if !bound.contains(name) && self.global_names.contains(name) {
+                    *name = format!("{}{name}", self.prefix);
+                }
+            }
             Stmt::IndexAssign {
                 base, index, value, ..
             } => {
@@ -1647,9 +1676,16 @@ impl Rewriter<'_> {
                     bound.insert(binding.name.clone());
                 }
             }
-            Stmt::AssignMulti { values, .. } => {
+            Stmt::AssignMulti {
+                targets, values, ..
+            } => {
                 for value in values {
                     self.rewrite_expr(value, bound);
+                }
+                for target in targets {
+                    if !bound.contains(target) && self.global_names.contains(target) {
+                        *target = format!("{}{target}", self.prefix);
+                    }
                 }
             }
             Stmt::Expr(expr) => self.rewrite_expr(expr, bound),
@@ -1718,7 +1754,7 @@ impl Rewriter<'_> {
                         *expr = Expr::Name(resolved.clone(), None, None);
                     } else if let Some(alias) = self.value_aliases.get(name) {
                         *expr = alias.clone();
-                    } else if self.func_names.contains(name) {
+                    } else if self.func_names.contains(name) || self.global_names.contains(name) {
                         *name = format!("{}{name}", self.prefix);
                     }
                 }

@@ -39,10 +39,6 @@ function install_arcane_heist(): unit
     local heist: game_screen.State = game_screen.new()
     local city: city_map.State = city_map.new(math.random(2147483646))
     local assets: presentation_resources.State = presentation_resources.new()
-    -- TODO(waluau-teu2): Remove this adapter-owned copy and the resize
-    -- propagation below when layout can own its live module-local State.
-    local canvas: layout.State = layout.calculate(960.0, 600.0)
-
     local function load_assets_async(): i32
         return presentation_resources.load_async(assets)
     end
@@ -93,8 +89,8 @@ function install_arcane_heist(): unit
         -- The canvas itself is the viewport. One uniform unit scale preserves
         -- local shape proportions; the logical width and height stay live, so
         -- every screen can place its semantic regions in all available space.
-        canvas = layout.calculate(graphics.width, graphics.height)
-        game_screen.resize(heist, canvas)
+        layout.update(graphics.width, graphics.height)
+        local canvas: layout.State = layout.current()
         city_map.resize(city, canvas.width, canvas.height)
         graphics:clear("#09090b")
         graphics:push()
@@ -138,8 +134,9 @@ function install_arcane_heist(): unit
 
     local function mousemoved(x: f64, y: f64, dx: f64, dy: f64): unit
         if #assets.fatal_audio_code > 0 then return end
-        x = layout.canvas_x(canvas, x)
-        y = layout.canvas_y(canvas, y)
+        local canvas: layout.State = layout.current()
+        x = layout.canvas_x(x)
+        y = layout.canvas_y(y)
         if screen == SCREEN_MENU then
             menu.mousemoved(menu_state, canvas, x, y)
             return
@@ -149,8 +146,9 @@ function install_arcane_heist(): unit
 
     local function mousepressed(x: f64, y: f64, button: i32): unit
         if #assets.fatal_audio_code > 0 then return end
-        x = layout.canvas_x(canvas, x)
-        y = layout.canvas_y(canvas, y)
+        local canvas: layout.State = layout.current()
+        x = layout.canvas_x(x)
+        y = layout.canvas_y(y)
         if screen == SCREEN_MENU then
             menu_action(menu.mousepressed(menu_state, canvas, x, y, button))
             return
@@ -165,7 +163,7 @@ function install_arcane_heist(): unit
         update_hz = 60.0,
         max_frame_seconds = 0.25,
         background = "#09090b",
-        canvas_sizing = "fluid",
+        canvas_sizing = true,
     }, {
         load = load,
         update = update,

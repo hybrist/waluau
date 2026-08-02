@@ -264,6 +264,9 @@ fn type_key(ty: &Type) -> String {
 pub(crate) fn collect_array_types(module: &Module) -> Vec<Type> {
     let mut seen = BTreeSet::new();
     let mut types = Vec::new();
+    for global in &module.globals {
+        insert_array_type(&global.ty, &mut seen, &mut types);
+    }
     for function in &module.functions {
         for (_, ty) in &function.params {
             insert_array_type(ty, &mut seen, &mut types);
@@ -282,6 +285,9 @@ pub(crate) fn collect_array_types(module: &Module) -> Vec<Type> {
 pub(crate) fn collect_record_types(module: &Module) -> Vec<Type> {
     let mut seen = BTreeSet::new();
     let mut types = Vec::new();
+    for global in &module.globals {
+        insert_record_type(&global.ty, &mut seen, &mut types);
+    }
     for function in &module.functions {
         for (_, ty) in &function.params {
             insert_record_type(ty, &mut seen, &mut types);
@@ -305,6 +311,9 @@ pub(crate) fn collect_nullable_box_kinds(
     declared_imports: &[&waluau_ir::DeclaredImport],
 ) -> Vec<NullableBoxKind> {
     let mut kinds = BTreeSet::new();
+    for global in &module.globals {
+        insert_nullable_box_kinds(&global.ty, &mut kinds);
+    }
     for import in declared_imports {
         for param in &import.params {
             insert_nullable_box_kinds(param, &mut kinds);
@@ -384,6 +393,7 @@ fn collect_nullable_box_kinds_from_instruction(
 ) {
     let mut add = |ty: &Type| insert_nullable_box_kinds(ty, out);
     match instruction {
+        IrInstruction::GlobalGet { ty, .. } | IrInstruction::GlobalSet { ty, .. } => add(ty),
         IrInstruction::Null { ty } | IrInstruction::IsNull { ty, .. } => add(ty),
         IrInstruction::Cast { from, to, .. } => {
             add(from);
@@ -446,12 +456,35 @@ fn array_type_depth(ty: &Type) -> usize {
 }
 
 fn insert_array_type(ty: &Type, seen: &mut BTreeSet<String>, out: &mut Vec<Type>) {
-    if let Type::Array(element) | Type::Variadic(element) = ty {
-        insert_array_type(element, seen, out);
-        let array_ty = Type::Array(element.clone());
-        if seen.insert(type_key(&array_ty)) {
-            out.push(array_ty);
+    match ty {
+        Type::Array(element) | Type::Variadic(element) => {
+            insert_array_type(element, seen, out);
+            let array_ty = Type::Array(element.clone());
+            if seen.insert(type_key(&array_ty)) {
+                out.push(array_ty);
+            }
         }
+        Type::Record(fields) => {
+            for field_ty in fields.values() {
+                insert_array_type(field_ty, seen, out);
+            }
+        }
+        Type::Nullable(inner) => insert_array_type(inner, seen, out),
+        Type::Multi(types) => {
+            for nested in types {
+                insert_array_type(nested, seen, out);
+            }
+        }
+        Type::Function {
+            params,
+            return_type,
+        } => {
+            for param in params {
+                insert_array_type(param, seen, out);
+            }
+            insert_array_type(return_type, seen, out);
+        }
+        _ => {}
     }
 }
 
@@ -466,6 +499,7 @@ fn insert_record_type(ty: &Type, seen: &mut BTreeSet<String>, out: &mut Vec<Type
             }
         }
         Type::Array(element) | Type::Variadic(element) => insert_record_type(element, seen, out),
+        Type::Nullable(inner) => insert_record_type(inner, seen, out),
         Type::Multi(types) => {
             for nested in types {
                 insert_record_type(nested, seen, out);
@@ -516,6 +550,9 @@ fn collect_record_types_from_instruction(
     out: &mut Vec<Type>,
 ) {
     match instruction {
+        IrInstruction::GlobalGet { ty, .. } | IrInstruction::GlobalSet { ty, .. } => {
+            insert_record_type(ty, seen, out)
+        }
         IrInstruction::StructNew { struct_ty, .. } => insert_record_type(struct_ty, seen, out),
         IrInstruction::StructGet { field_ty, .. } => insert_record_type(field_ty, seen, out),
         IrInstruction::ArrayNew { element_ty, .. }

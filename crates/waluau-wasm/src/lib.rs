@@ -695,6 +695,43 @@ mod tests {
     }
 
     #[test]
+    fn compile_multi_supports_stateful_module_local_bindings() {
+        let files = HashMap::from([
+            (
+                "/main.walu".to_string(),
+                r#"
+                    local counter = require("./counter")
+                    counter.set(41)
+                    assert(counter.get() == 41)
+                "#
+                .to_string(),
+            ),
+            (
+                "/counter.walu".to_string(),
+                r#"
+                    type State = { value: i32 }
+                    local state: State = { value = 0::i32 }
+
+                    local function set(value: i32): unit
+                        state.value = value
+                    end
+
+                    local function get(): i32
+                        return state.value
+                    end
+
+                    return { set = set, get = get }
+                "#
+                .to_string(),
+            ),
+        ]);
+
+        let result = super::compile_sources(&files, "/main.walu")
+            .expect("stateful module locals should compile");
+        assert!(result.wat.contains("(global"));
+    }
+
+    #[test]
     fn compile_multi_supports_negated_module_constants_in_functions() {
         let files = std::collections::HashMap::from([(
             "main.walu".to_string(),

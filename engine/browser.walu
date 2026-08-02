@@ -14,13 +14,11 @@ type Config = {
     update_hz: f64,
     max_frame_seconds: f64,
     background: string,
-    -- "fluid" lets the canvas occupy all space available in the browser and
+    -- True lets the canvas occupy all space available in the browser and
     -- uses its current CSS dimensions as the game's logical viewport. Games
     -- can then derive semantic placement from that live space. Omitted keeps
     -- the fixed logical viewport above.
-    -- TODO(waluau-vnfx): Replace this string mode with a nullable bool and
-    -- read it directly once optional bool record fields emit valid Wasm.
-    canvas_sizing: string?,
+    canvas_sizing: bool?,
     -- The id of an element to put the game inside. A game that owns the page
     -- leaves this out and the document body hosts it; a host that already owns
     -- the page — Storybook's preview, a docs page — names its own element, and
@@ -134,8 +132,8 @@ function start(config: Config, game: Game): Session
     end
     local owns_page: bool = host == body
     local fluid: bool = false
-    local canvas_sizing: string? = config.canvas_sizing
-    if canvas_sizing ~= nil then fluid = canvas_sizing::string == "fluid" end
+    local canvas_sizing: bool? = config.canvas_sizing
+    if canvas_sizing ~= nil then fluid = canvas_sizing::bool end
     if owns_page then
         body:set_attribute("style", "margin:0;min-height:100vh;overflow:hidden;background:" .. config.background .. ";")
     end

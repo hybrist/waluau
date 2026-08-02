@@ -39,6 +39,226 @@ pub fn build(program: &Program) -> Result<Module, Diagnostic> {
     build_inner(program, None, None)
 }
 
+fn collect_referenced_symbols_from_expr(expr: &Expr, symbols: &mut HashSet<SymbolId>) {
+    match expr {
+        Expr::Name(_, Some(symbol_id), _) => {
+            symbols.insert(*symbol_id);
+        }
+        Expr::Unary { expr, .. }
+        | Expr::Cast { expr, .. }
+        | Expr::IsVariant { expr, .. }
+        | Expr::Field { base: expr, .. } => collect_referenced_symbols_from_expr(expr, symbols),
+        Expr::Binary { left, right, .. } | Expr::Index { base: left, index: right, .. } => {
+            collect_referenced_symbols_from_expr(left, symbols);
+            collect_referenced_symbols_from_expr(right, symbols);
+        }
+        Expr::If {
+            condition,
+            then_expr,
+            else_expr,
+            ..
+        } => {
+            collect_referenced_symbols_from_expr(condition, symbols);
+            collect_referenced_symbols_from_expr(then_expr, symbols);
+            collect_referenced_symbols_from_expr(else_expr, symbols);
+        }
+        Expr::Call {
+            callee,
+            args,
+            method_call_origin,
+            ..
+        } => {
+            collect_referenced_symbols_from_expr(callee, symbols);
+            for arg in args {
+                collect_referenced_symbols_from_expr(arg, symbols);
+            }
+            if let Some(origin) = method_call_origin {
+                collect_referenced_symbols_from_expr(&origin.original_receiver, symbols);
+            }
+        }
+        Expr::MethodCall { receiver, args, .. } => {
+            collect_referenced_symbols_from_expr(receiver, symbols);
+            for arg in args {
+                collect_referenced_symbols_from_expr(arg, symbols);
+            }
+        }
+        Expr::Function(function) => {
+            collect_referenced_symbols_from_stmts(&function.body, symbols);
+        }
+        Expr::ArrayLiteral { elements, .. } => {
+            for element in elements {
+                collect_referenced_symbols_from_expr(element, symbols);
+            }
+        }
+        Expr::TableLiteral { fields, .. } => {
+            for field in fields {
+                collect_referenced_symbols_from_expr(&field.value, symbols);
+            }
+        }
+        Expr::Number(..)
+        | Expr::Bool(..)
+        | Expr::Nil(..)
+        | Expr::String(..)
+        | Expr::Bytes(..)
+        | Expr::Name(_, None, _)
+        | Expr::Vararg(_)
+        | Expr::Require(..) => {}
+    }
+}
+
+fn collect_referenced_symbols_from_stmts(stmts: &[Stmt], symbols: &mut HashSet<SymbolId>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Let { value, .. } | Stmt::Expr(value) | Stmt::Return(value) => {
+                collect_referenced_symbols_from_expr(value, symbols);
+            }
+            Stmt::Assign {
+                symbol_id, value, ..
+            } => {
+                if let Some(symbol_id) = symbol_id {
+                    symbols.insert(*symbol_id);
+                }
+                collect_referenced_symbols_from_expr(value, symbols);
+            }
+            Stmt::IndexAssign {
+                base, index, value, ..
+            } => {
+                collect_referenced_symbols_from_expr(base, symbols);
+                collect_referenced_symbols_from_expr(index, symbols);
+                collect_referenced_symbols_from_expr(value, symbols);
+            }
+            Stmt::FieldAssign { base, value, .. } => {
+                collect_referenced_symbols_from_expr(base, symbols);
+                collect_referenced_symbols_from_expr(value, symbols);
+            }
+            Stmt::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                collect_referenced_symbols_from_expr(condition, symbols);
+                collect_referenced_symbols_from_stmts(then_body, symbols);
+                collect_referenced_symbols_from_stmts(else_body, symbols);
+            }
+            Stmt::IfCast {
+                value,
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_referenced_symbols_from_expr(value, symbols);
+                collect_referenced_symbols_from_stmts(then_body, symbols);
+                collect_referenced_symbols_from_stmts(else_body, symbols);
+            }
+            Stmt::While { condition, body } => {
+                collect_referenced_symbols_from_expr(condition, symbols);
+                collect_referenced_symbols_from_stmts(body, symbols);
+            }
+            Stmt::Repeat { body, condition } => {
+                collect_referenced_symbols_from_stmts(body, symbols);
+                collect_referenced_symbols_from_expr(condition, symbols);
+            }
+            Stmt::NumericFor {
+                start,
+                stop,
+                step,
+                body,
+                ..
+            } => {
+                collect_referenced_symbols_from_expr(start, symbols);
+                collect_referenced_symbols_from_expr(stop, symbols);
+                if let Some(step) = step {
+                    collect_referenced_symbols_from_expr(step, symbols);
+                }
+                collect_referenced_symbols_from_stmts(body, symbols);
+            }
+            Stmt::ForIn { iterator, body, .. } => {
+                collect_referenced_symbols_from_expr(iterator, symbols);
+                collect_referenced_symbols_from_stmts(body, symbols);
+            }
+            Stmt::ReturnMulti(values) | Stmt::LetMulti { values, .. } => {
+                for value in values {
+                    collect_referenced_symbols_from_expr(value, symbols);
+                }
+            }
+            Stmt::AssignMulti {
+                symbol_ids, values, ..
+            } => {
+                if let Some(symbol_ids) = symbol_ids {
+                    symbols.extend(symbol_ids.iter().copied());
+                }
+                for value in values {
+                    collect_referenced_symbols_from_expr(value, symbols);
+                }
+            }
+            Stmt::Break | Stmt::Continue => {}
+        }
+    }
+}
+
+fn collect_module_globals(program: &Program) -> Result<Vec<Global>, Diagnostic> {
+    let Some(init) = program
+        .functions
+        .iter()
+        .find(|function| function.name.to_string() == "__waluau_top_level_init")
+    else {
+        return Ok(Vec::new());
+    };
+    let mut referenced = HashSet::new();
+    for function in &program.functions {
+        if function.name.to_string() != "__waluau_top_level_init" {
+            collect_referenced_symbols_from_stmts(&function.body, &mut referenced);
+        }
+    }
+    let mut globals = Vec::new();
+    for stmt in &init.body {
+        match stmt {
+            Stmt::Let {
+                name,
+                symbol_id,
+                ty,
+                ..
+            } => {
+                if let Some(symbol_id) = symbol_id
+                    && referenced.contains(symbol_id)
+                {
+                    let ty = ty.clone().ok_or_else(|| {
+                        Diagnostic::new(format!(
+                            "module binding '{name}' must have a concrete type"
+                        ))
+                    })?;
+                    globals.push(Global {
+                        name: name.clone(),
+                        symbol_id: *symbol_id,
+                        ty,
+                    });
+                }
+            }
+            Stmt::LetMulti { bindings, .. } => {
+                for binding in bindings {
+                    if let Some(symbol_id) = binding.symbol_id
+                        && referenced.contains(&symbol_id)
+                    {
+                        let ty = binding.ty.clone().ok_or_else(|| {
+                            Diagnostic::new(format!(
+                                "module binding '{}' must have a concrete type",
+                                binding.name
+                            ))
+                        })?;
+                        globals.push(Global {
+                            name: binding.name.clone(),
+                            symbol_id,
+                            ty,
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(globals)
+}
+
 pub fn build_cached<'a>(
     program: &Program,
     cache: &'a mut BuildCache,
@@ -135,6 +355,12 @@ fn build_inner(
     }
     let monomorphic = Monomorphizer::new(&erased).run(&erased)?;
     let monomorphic_at = started.elapsed();
+    let globals = collect_module_globals(&monomorphic)?;
+    let global_indices = globals
+        .iter()
+        .enumerate()
+        .map(|(index, global)| (global.symbol_id, (index, global.ty.clone())))
+        .collect::<HashMap<_, _>>();
     let tag_ids = collect_variant_tag_ids(&monomorphic, &resolved.type_declarations);
     let mut signatures = HashMap::new();
     let mut field_call_signatures = HashMap::new();
@@ -231,6 +457,7 @@ fn build_inner(
                 &host_import_names,
                 &field_call_signatures,
                 &declared_constants,
+                &global_indices,
                 &monomorphic.sources,
                 &tag_ids,
             )
@@ -251,6 +478,7 @@ fn build_inner(
                 let host_import_names = &host_import_names;
                 let field_call_signatures = &field_call_signatures;
                 let declared_constants = &declared_constants;
+                let global_indices = &global_indices;
                 let sources = &monomorphic.sources;
                 let tag_ids = &tag_ids;
                 scope.spawn(move || {
@@ -264,6 +492,7 @@ fn build_inner(
                                 host_import_names,
                                 field_call_signatures,
                                 declared_constants,
+                                global_indices,
                                 sources,
                                 tag_ids,
                             )
@@ -293,6 +522,7 @@ fn build_inner(
 
     let module = Module {
         functions,
+        globals,
         declared_imports,
         start,
         tag_ids,
@@ -458,6 +688,15 @@ fn try_build_incremental(
             )
         })
         .collect::<HashMap<_, _>>();
+    let globals = collect_module_globals(&monomorphic)?;
+    if globals != previous_module.globals {
+        return Ok(None);
+    }
+    let global_indices = globals
+        .iter()
+        .enumerate()
+        .map(|(index, global)| (global.symbol_id, (index, global.ty.clone())))
+        .collect::<HashMap<_, _>>();
     let lowered = build_function(
         &monomorphic.functions[monomorphic_index],
         &signatures,
@@ -465,6 +704,7 @@ fn try_build_incremental(
         &host_import_names,
         &field_call_signatures,
         &declared_constants,
+        &global_indices,
         &monomorphic.sources,
         &tag_ids,
     )?;
@@ -1267,6 +1507,7 @@ pub(crate) fn build_function(
     host_import_names: &HashMap<String, SymbolId>,
     field_call_signatures: &HashMap<String, (Vec<Type>, Type)>,
     declared_constants: &HashMap<String, (Type, NumberLiteral)>,
+    globals: &HashMap<SymbolId, (usize, Type)>,
     sources: &BTreeMap<String, String>,
     tag_ids: &BTreeMap<String, i32>,
 ) -> Result<Vec<Function>, Diagnostic> {
@@ -1316,7 +1557,10 @@ pub(crate) fn build_function(
     );
 
     let mut env = HashMap::new();
-    let mut type_env = HashMap::new();
+    let mut type_env = globals
+        .iter()
+        .map(|(symbol_id, (_, ty))| (*symbol_id, ty.clone()))
+        .collect::<HashMap<_, _>>();
     let entry = out.entry;
     let captured_symbols: HashSet<SymbolId> = collect_nested_function_capture_names(function);
 
@@ -1362,6 +1606,7 @@ pub(crate) fn build_function(
         host_import_names,
         field_call_signatures,
         declared_constants,
+        globals,
         lifted_functions: Vec::new(),
         lambda_counter: 0,
         loop_stack: Vec::new(),
@@ -1411,6 +1656,7 @@ struct Builder<'a> {
     /// Declared namespace constants (`declare const math.pi: f64 = ...`),
     /// keyed by qualified name; field reads fold to the literal.
     declared_constants: &'a HashMap<String, (Type, NumberLiteral)>,
+    globals: &'a HashMap<SymbolId, (usize, Type)>,
     lifted_functions: Vec<Function>,
     lambda_counter: usize,
     loop_stack: Vec<LoopContext>,
@@ -2280,16 +2526,54 @@ impl Builder<'_> {
                     }
                 };
                 let value = self.lower_expr(value, env, types, Some(inferred_ty.clone()))?;
-                // If this local is captured by any nested function, represent it as a 1-element
-                // array cell so closures can observe and mutate the same storage location.
-                self.bind_local_value(symbol_id, value, inferred_ty, env, types);
+                if let Some((global, _)) = self.globals.get(&symbol_id) {
+                    self.emit(Instruction::GlobalSet {
+                        global: *global,
+                        value,
+                        ty: to_runtime_type(&inferred_ty),
+                    });
+                } else {
+                    // If this local is captured by any nested function, represent it as a 1-element
+                    // array cell so closures can observe and mutate the same storage location.
+                    self.bind_local_value(symbol_id, value, inferred_ty, env, types);
+                }
             }
             Stmt::Assign { op, name, symbol_id, value } => {
                 let symbol_id = symbol_id.expect("symbol_id should be resolved");
                 let ty = types.get(&symbol_id).cloned().ok_or_else(|| {
                     Diagnostic::new(format!("unknown local '{name}' during IR lowering"))
                 })?;
-                if self.cell_names.contains(&symbol_id) {
+                if let Some((global, _)) = self.globals.get(&symbol_id).cloned() {
+                    let stored = match op {
+                        AssignOp::Set => self.lower_expr(value, env, types, Some(ty.clone()))?,
+                        AssignOp::Compound(bin_op) => {
+                            if !bin_op.compound_target_ok(&ty) {
+                                return Err(Diagnostic::new(format!(
+                                    "compound assignment to '{}' requires a {} target",
+                                    name,
+                                    bin_op.compound_target_kind()
+                                )));
+                            }
+                            let current = self.emit(Instruction::GlobalGet {
+                                global,
+                                ty: to_runtime_type(&ty),
+                            });
+                            let rhs = self.lower_expr(value, env, types, Some(ty.clone()))?;
+                            self.emit(Instruction::Binary {
+                                op: *bin_op,
+                                left: current,
+                                right: rhs,
+                                operand_ty: ty.clone(),
+                                result_ty: ty.clone(),
+                            })
+                        }
+                    };
+                    self.emit(Instruction::GlobalSet {
+                        global,
+                        value: stored,
+                        ty: to_runtime_type(&ty),
+                    });
+                } else if self.cell_names.contains(&symbol_id) {
                     // Captured local: stored in a 1-element array (cell). Perform ArraySet
                     // rather than rebinding the env entry.
                     let cell = env.get(&symbol_id).copied().ok_or_else(|| {
@@ -4561,6 +4845,12 @@ impl Builder<'_> {
                     } else {
                         self.coerce_value(value, actual, expected)?
                     }
+                } else if let Some((global, actual)) = self.globals.get(&symbol_id).cloned() {
+                    let value = self.emit(Instruction::GlobalGet {
+                        global,
+                        ty: to_runtime_type(&actual),
+                    });
+                    self.coerce_value(value, actual, expected)?
                 } else if let Some((params, return_type)) = self.signatures.get(&symbol_id).cloned() {
                     let value = self.emit(Instruction::Closure {
                         name: name.clone(),
@@ -5826,7 +6116,11 @@ impl Builder<'_> {
         }
 
         let mut nested_env = HashMap::new();
-        let mut nested_types = HashMap::new();
+        let mut nested_types = self
+            .globals
+            .iter()
+            .map(|(symbol_id, (_, ty))| (*symbol_id, ty.clone()))
+            .collect::<HashMap<_, _>>();
         let lifted_entry = lifted.entry;
         for (index, (symbol_id, ty)) in captures.iter().cloned().enumerate() {
             let value = lifted.next_value();
@@ -5897,6 +6191,7 @@ impl Builder<'_> {
             host_import_names: self.host_import_names,
             field_call_signatures: self.field_call_signatures,
             declared_constants: self.declared_constants,
+            globals: self.globals,
             lifted_functions: Vec::new(),
             lambda_counter: 0,
             loop_stack: Vec::new(),

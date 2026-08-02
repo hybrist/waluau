@@ -1034,12 +1034,28 @@ fn verify_function(
                     }
                 }
                 Instruction::Param(_)
+                | Instruction::GlobalGet { .. }
                 | Instruction::Number { .. }
                 | Instruction::Unit
                 | Instruction::Bool(_)
                 | Instruction::Null { .. }
                 | Instruction::String(_)
                 | Instruction::Bytes(_) => {}
+                Instruction::GlobalSet { value, ty, .. } => {
+                    let value_ty = require_dominating_definition(
+                        &definitions,
+                        &dominators,
+                        &seen_in_block,
+                        block.id,
+                        *value,
+                    )?;
+                    if !types_match(&value_ty, ty) {
+                        return Err(Diagnostic::new(format!(
+                            "global store in block {:?} expects {}, got {}",
+                            block.id, ty, value_ty
+                        )));
+                    }
+                }
                 Instruction::IsNull { value, ty } => {
                     let value_ty = require_dominating_definition(
                         &definitions,
@@ -1344,6 +1360,8 @@ fn infer_instruction_type(
                 }
             })
             .ok_or_else(|| Diagnostic::new(format!("param index {} out of bounds", index))),
+        Instruction::GlobalGet { ty, .. } => Ok(ty.clone()),
+        Instruction::GlobalSet { .. } => Ok(Type::Unit),
         Instruction::Number { ty, .. } => Ok(Type::Numeric(*ty)),
         Instruction::Unit => Ok(Type::Unit),
         Instruction::Bool(_) => Ok(Type::Bool),
