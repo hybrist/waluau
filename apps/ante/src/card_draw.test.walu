@@ -22,7 +22,7 @@ const SAMPLES: i32 = 240
 -- catch measured about twenty.
 const BACKSTEP: f64 = 2.5
 
-function drawing(): card_draw.Draw
+function thrown(overshoot: f64, rise: f64): card_draw.Draw
     return {
         from_x = DECK_X,
         from_y = DECK_Y,
@@ -30,8 +30,14 @@ function drawing(): card_draw.Draw
         to_y = CAUGHT_Y,
         width = CARD_W,
         height = CARD_H,
-        stretch_limit = 1.26
+        stretch_limit = 1.26,
+        overshoot = overshoot,
+        rise = rise
     }
+end
+
+function drawing(): card_draw.Draw
+    return thrown(0.05, 190.0)
 end
 
 -- Where the card actually appears to be: the middle of the shape on screen,
@@ -113,6 +119,40 @@ describe("the card's path out of the deck", function(): unit
         expect(pose(card_draw.land_end).center_y):toBeCloseTo(CAUGHT_Y, 6)
     end)
 
+    -- The dial is the honest number: it promises the excess itself, as a
+    -- share of the journey, not some curvature constant that merely grows
+    -- with it. Measured off the pose's centre, where the sweep lives.
+    it("overshoots by as much as it is asked to", function(): unit
+        local length: f64 = journey_length()
+        local asked: card_draw.Draw = thrown(0.1, 190.0)
+        local beyond: f64 = 0.0
+        for step = 0::i32, SAMPLES do
+            local clock: f64 = card_draw.flight_end * (step::f64) / (SAMPLES::f64)
+            local centre: card_warp.Pose = card_draw.pose_at(asked, clock)
+            local run_x: f64 = CAUGHT_X - DECK_X
+            local run_y: f64 = CAUGHT_Y - DECK_Y
+            local past: f64 = ((centre.center_x - DECK_X) * run_x
+                + (centre.center_y - DECK_Y) * run_y) / length - length
+            if past > beyond then beyond = past end
+        end
+        expect(beyond):toBeGreaterThan(length * 0.098)
+        expect(beyond):toBeLessThan(length * 0.102)
+    end)
+
+    it("pulls up exactly on the mark when asked not to overshoot", function(): unit
+        local parked: card_draw.Draw = thrown(0.0, 190.0)
+        local length: f64 = journey_length()
+        for step = 0::i32, SAMPLES do
+            local clock: f64 = card_draw.land_end * (step::f64) / (SAMPLES::f64)
+            local centre: card_warp.Pose = card_draw.pose_at(parked, clock)
+            local run_x: f64 = CAUGHT_X - DECK_X
+            local run_y: f64 = CAUGHT_Y - DECK_Y
+            local reached: f64 = ((centre.center_x - DECK_X) * run_x
+                + (centre.center_y - DECK_Y) * run_y) / length
+            expect(reached):toBeLessThanOrEqual(length + 0.000001)
+        end
+    end)
+
     it("leaves the deck from rest, exactly where the deck is", function(): unit
         expect(pose(0.0).center_x):toBeCloseTo(DECK_X, 6)
         expect(pose(0.0).center_y):toBeCloseTo(DECK_Y, 6)
@@ -130,6 +170,16 @@ describe("the card's arc off the surface", function(): unit
         expect(pose(card_draw.flight_end * 0.5).rise):toBeGreaterThan(100.0)
         expect(pose(card_draw.flight_end).rise):toBeCloseTo(0.0, 4)
         expect(pose(card_draw.land_end).rise):toBeCloseTo(0.0, 6)
+    end)
+
+    -- The rise dial is the apex itself, and the apex sits at the middle of
+    -- the flight, where the half sine tops out.
+    it("tops out at exactly the height it is asked for", function(): unit
+        local high: card_draw.Draw = thrown(0.05, 320.0)
+        local apex: f64 = card_draw.pose_at(high, card_draw.flight_end * 0.5).rise
+        expect(apex):toBeCloseTo(320.0, 6)
+        local flat: card_draw.Draw = thrown(0.05, 0.0)
+        expect(card_draw.pose_at(flat, card_draw.flight_end * 0.5).rise):toBeCloseTo(0.0, 9)
     end)
 
     -- The end of the flight is the slam: the sweep has all but arrived, so

@@ -32,17 +32,9 @@ const HOVER_SECONDS: f64 = 1.9
 -- carries it past the mark near the end and settles it back on. The overshoot
 -- is what replaced being stopped short and carried the rest of the way: a
 -- thrown card does not pause outside its destination, it arrives with the
--- momentum it was thrown with and gives the excess back.
+-- momentum it was thrown with and gives the excess back. How far past the
+-- mark it goes is the draw's own dial, not a constant here.
 const FLIGHT_ATTACK: f64 = 1.8
-const BACK_OVERSHOOT: f64 = 1.2
-
--- How high the card gets off the surface, toward the viewer, in logical
--- pixels of depth against a 900 pixel focal length — about a quarter larger
--- at the top of the arc. The rise is a half sine over the flight: leaving
--- the surface is the first thing the card does and falling back to it is the
--- last, and because the sweep has all but arrived by then, the final
--- approach is nearly all descent.
-const RISE_APEX: f64 = 190.0
 
 -- The turn, as part^FLIP_ATTACK of a half turn. Negative, so the leading
 -- edge sweeps toward the viewer — the card turns over the way it is already
@@ -126,15 +118,47 @@ function ease_arc(t: f64): f64
 end
 
 -- A settling overshoot: past the mark and back to it. This is the far end of
--- the sweep — the difference between arriving and being parked.
-function ease_out_back(t: f64): f64
+-- the sweep — the difference between arriving and being parked. The
+-- coefficient decides how far past; zero of it is a plain cubic ease out.
+function ease_out_back(t: f64, back: f64): f64
     local past: f64 = t - 1.0
     return 1.0
-        + (BACK_OVERSHOOT + 1.0) * past * past * past
-        + BACK_OVERSHOOT * past * past
+        + (back + 1.0) * past * past * past
+        + back * past * past
 end
 
--- Where the deck sits and where the card lands, both as the card's centre.
+-- How far past the mark a given coefficient carries the curve, at the top of
+-- its excursion. The curve's own turning point, evaluated.
+function back_excess(back: f64): f64
+    local turning: f64 = -2.0 * back / (3.0 * (back + 1.0))
+    return (back + 1.0) * turning * turning * turning
+        + back * turning * turning
+end
+
+-- The coefficient for a wanted excess. The dial the animation is tuned by is
+-- the honest number — how far past its spot the card may go, as a share of
+-- the journey — and the coefficient grows with it but not linearly, with no
+-- closed form the other way. Bisection instead: the excess is monotone in
+-- the coefficient, and two dozen halvings pin it far inside what a pixel can
+-- show.
+function back_coefficient(overshoot: f64): f64
+    if overshoot <= 0.0 then return 0.0 end
+    local low: f64 = 0.0
+    local high: f64 = 8.0
+    for _ = 1, 24 do
+        local middle: f64 = (low + high) * 0.5
+        if back_excess(middle) < overshoot then
+            low = middle
+        else
+            high = middle
+        end
+    end
+    return (low + high) * 0.5
+end
+
+-- Where the deck sits and where the card lands, both as the card's centre —
+-- and the dials of the throw itself, carried with it so a story can put
+-- sliders on them.
 type Draw = {
     from_x: f64,
     from_y: f64,
@@ -142,7 +166,17 @@ type Draw = {
     to_y: f64,
     width: f64,
     height: f64,
-    stretch_limit: f64
+    stretch_limit: f64,
+    -- How far past its landing spot the sweep may carry the card, as a share
+    -- of the whole journey. Zero is a card that pulls up exactly on the mark.
+    overshoot: f64,
+    -- How high the card gets off the surface at the top of its arc, in
+    -- logical pixels of depth toward the viewer — against the pose's 900
+    -- pixel focal length, 190 reads as about a quarter larger. The rise is a
+    -- half sine over the flight: leaving the surface is the first thing the
+    -- card does and falling back to it is the last, and because the sweep
+    -- has all but arrived by then, the final approach is nearly all descent.
+    rise: f64
 }
 
 type Point3 = { x: f64, y: f64, z: f64 }
@@ -150,11 +184,12 @@ type Point3 = { x: f64, y: f64, z: f64 }
 -- Where the card is at a moment of the flight, in all three dimensions:
 -- the sweep across the screen and the arc off the surface, one point.
 function flight_at(draw: Draw, part: f64): Point3
-    local swept: f64 = ease_out_back(part ^ FLIGHT_ATTACK)
+    local swept: f64 = ease_out_back(
+        part ^ FLIGHT_ATTACK, back_coefficient(draw.overshoot))
     return {
         x = draw.from_x + (draw.to_x - draw.from_x) * swept,
         y = draw.from_y + (draw.to_y - draw.from_y) * swept,
-        z = RISE_APEX * ease_arc(part)
+        z = draw.rise * ease_arc(part)
     }
 end
 

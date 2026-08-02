@@ -338,7 +338,9 @@ local function drawing(): card_draw.Draw
         to_y = CAUGHT_Y,
         width = render.card_width,
         height = render.card_height,
-        stretch_limit = (storybook.arg_i32("stretch")::f64) / 100.0
+        stretch_limit = (storybook.arg_i32("stretch")::f64) / 100.0,
+        overshoot = (storybook.arg_i32("overshoot")::f64) / 100.0,
+        rise = storybook.arg_i32("rise")::f64
     }
 end
 
@@ -420,6 +422,11 @@ storybook.publish({
         -- The one number that decides whether this reads as a card with
         -- weight or as a rubber toy.
         storybook.range("stretch", 118, 100, 160, 1),
+        -- How far past its spot the throw carries the card, in hundredths of
+        -- the whole journey. Zero pulls up exactly on the mark.
+        storybook.range("overshoot", 5, 0, 20, 1),
+        -- The top of the arc, in logical pixels of depth toward the viewer.
+        storybook.range("rise", 190, 0, 400, 10),
     }),
     storybook.story("In the fan", {
         draw = draw_fan,
