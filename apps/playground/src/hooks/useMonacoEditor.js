@@ -275,10 +275,11 @@ export default function useMonacoEditor({ files, entryFile, exportsList, outputW
     };
   }, [monacoInstance, editorInstance]);
 
-  // Language features (hover, go-to-definition, completion) served by the
-  // worker-owned language server through asynchronous JSON-RPC requests. The
-  // LSP speaks the same virtual paths the document-sync effect opened, so a
-  // model's path is mapped back to its files-map key before each request.
+  // Language features (hover, go-to-definition, find-references, completion)
+  // served by the worker-owned language server through asynchronous JSON-RPC
+  // requests. The LSP speaks the same virtual paths the document-sync effect
+  // opened, so a model's path is mapped back to its files-map key before each
+  // request.
   useEffect(() => {
     if (!monacoInstance || !sendLspRequest) return;
 
@@ -333,6 +334,26 @@ export default function useMonacoEditor({ files, entryFile, exportsList, outputW
       },
     });
 
+    const referenceProvider = monacoInstance.languages.registerReferenceProvider('waluau', {
+      async provideReferences(model, position, context) {
+        const result = await sendLspRequest(
+          'textDocument/references',
+          {
+            ...positionParams(model, position),
+            context: { includeDeclaration: context?.includeDeclaration ?? true },
+          },
+          liveDocument(model)
+        );
+        if (!Array.isArray(result)) return [];
+        return result
+          .map((location) => {
+            const target = modelForLspUri(location.uri);
+            return target ? { uri: target.uri, range: toMonacoRange(location.range) } : null;
+          })
+          .filter(Boolean);
+      },
+    });
+
     // LSP CompletionItemKind -> Monaco CompletionItemKind (they use
     // different numbering).
     const kinds = monacoInstance.languages.CompletionItemKind;
@@ -373,6 +394,7 @@ export default function useMonacoEditor({ files, entryFile, exportsList, outputW
     return () => {
       hoverProvider.dispose();
       definitionProvider.dispose();
+      referenceProvider.dispose();
       completionProvider.dispose();
     };
   }, [monacoInstance, sendLspRequest]);

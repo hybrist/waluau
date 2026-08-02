@@ -358,6 +358,7 @@ fn initialize_advertises_language_features() {
     let capabilities = &responses[0]["result"]["capabilities"];
     assert_eq!(capabilities["hoverProvider"], json!(true));
     assert_eq!(capabilities["definitionProvider"], json!(true));
+    assert_eq!(capabilities["referencesProvider"], json!(true));
     assert_eq!(
         capabilities["completionProvider"]["triggerCharacters"],
         json!([".", ":"])
@@ -841,5 +842,534 @@ assert(point.x == 10::i32)\n";
     assert!(
         !labels.contains(&"i32"),
         "type names should not appear: {labels:?}"
+    );
+}
+
+/// A marked-up fixture file: `<|>` is the cursor and `<def>`/`</def>` bracket
+/// the identifier the request should land on. Markers are stripped before the
+/// file is written.
+struct Marked {
+    name: &'static str,
+    text: String,
+    cursor: Option<u32>,
+    expected: Option<(u32, u32)>,
+}
+
+fn strip_markers(name: &'static str, raw: &str) -> Marked {
+    let mut text = String::new();
+    let mut cursor = None;
+    let (mut start, mut end) = (None, None);
+    let mut rest = raw;
+    while let Some((index, marker)) = ["<|>", "<def>", "</def>"]
+        .iter()
+        .filter_map(|marker| rest.find(marker).map(|index| (index, *marker)))
+        .min_by_key(|(index, _)| *index)
+    {
+        text.push_str(&rest[..index]);
+        let at = text.chars().count() as u32;
+        match marker {
+            "<|>" => cursor = Some(at),
+            "<def>" => start = Some(at),
+            _ => end = Some(at),
+        }
+        rest = &rest[index + marker.len()..];
+    }
+    text.push_str(rest);
+    Marked {
+        name,
+        text,
+        cursor,
+        expected: start.zip(end),
+    }
+}
+
+/// LSP position of a character offset, matching the server's own conversion.
+fn lsp_position(text: &str, offset: u32) -> (u32, u32) {
+    let mut line = 0u32;
+    let mut character = 0u32;
+    for ch in text.chars().take(offset as usize) {
+        if ch == '\n' {
+            line += 1;
+            character = 0;
+        } else {
+            character += ch.len_utf16() as u32;
+        }
+    }
+    (line, character)
+}
+
+/// Run one marked-up go-to-definition case end to end through the server.
+/// Returns a failure description, or `None` when the jump landed exactly on
+/// the `<def>` marker.
+fn definition_case(case: &str, files: &[(&'static str, &str)]) -> Option<String> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let marked: Vec<Marked> = files
+        .iter()
+        .map(|(name, raw)| strip_markers(name, raw))
+        .collect();
+    for file in &marked {
+        let path = dir.path().join(file.name);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        std::fs::write(&path, &file.text).expect("write fixture");
+    }
+    let query = marked.iter().find(|file| file.cursor.is_some())?;
+    let target = marked.iter().find(|file| file.expected.is_some())?;
+    let (expected_start, expected_end) = target.expected.expect("target marker");
+
+    let mut server = LspServer::new();
+    let query_path = dir.path().join(query.name);
+    open(&mut server, &query_path, &query.text);
+    let (line, character) = lsp_position(&query.text, query.cursor.expect("cursor"));
+    let location = request(
+        &mut server,
+        "textDocument/definition",
+        &query_path,
+        line,
+        character,
+    );
+
+    let want_start = lsp_position(&target.text, expected_start);
+    let want_end = lsp_position(&target.text, expected_end);
+    let Some(uri) = location["uri"].as_str() else {
+        return Some(format!("{case}: no definition"));
+    };
+    let got = (
+        location["range"]["start"]["line"].as_u64().unwrap_or(0) as u32,
+        location["range"]["start"]["character"]
+            .as_u64()
+            .unwrap_or(0) as u32,
+    );
+    let got_end = (
+        location["range"]["end"]["line"].as_u64().unwrap_or(0) as u32,
+        location["range"]["end"]["character"].as_u64().unwrap_or(0) as u32,
+    );
+    if !uri.ends_with(target.name) {
+        return Some(format!("{case}: landed in {uri}, want {}", target.name));
+    }
+    (got != want_start || got_end != want_end)
+        .then(|| format!("{case}: got {got:?}..{got_end:?}, want {want_start:?}..{want_end:?}"))
+}
+
+/// Go-to-definition across the shapes a function or method reference takes.
+/// Every case is one cursor and one expected target; the table is the point,
+/// so a regression names the shape it broke.
+#[test]
+fn definition_resolves_functions_and_methods_through_every_receiver_shape() {
+    let cases: Vec<(&str, Vec<(&'static str, &str)>)> = vec![
+        (
+            "top-level function call",
+            vec![(
+                "main.walu",
+                "function <def>add</def>(a: i32): i32\n    return a\nend\nlocal x = <|>add(1)\n",
+            )],
+        ),
+        (
+            "local function call",
+            vec![(
+                "main.walu",
+                "local function <def>helper</def>(): i32\n    return 1\nend\nlocal x = <|>helper()\n",
+            )],
+        ),
+        (
+            "forward reference to a later function",
+            vec![(
+                "main.walu",
+                "function first(): i32\n    return <|>later()\nend\nfunction <def>later</def>(): i32\n    return 1\nend\n",
+            )],
+        ),
+        (
+            "dot-named function",
+            vec![(
+                "main.walu",
+                "function <def>State.new</def>(): i32\n    return 1\nend\nlocal s = State.<|>new()\n",
+            )],
+        ),
+        (
+            "method on an annotated local",
+            vec![(
+                "main.walu",
+                "type P = { x: i32 }\nfunction <def>P:get</def>(): i32\n    return self.x\nend\nlocal p: P = { x = 1 }\nlocal v = p:<|>get()\n",
+            )],
+        ),
+        (
+            "method on a local inferred from a constructor",
+            vec![(
+                "main.walu",
+                "type P = { x: i32 }\nfunction P.new(): P\n    return { x = 1 }\nend\nfunction <def>P:get</def>(): i32\n    return self.x\nend\nlocal p = P.new()\nlocal v = p:<|>get()\n",
+            )],
+        ),
+        (
+            "method on self inside another method",
+            vec![(
+                "main.walu",
+                "type P = { x: i32 }\nfunction <def>P:helper</def>(): i32\n    return self.x\nend\nfunction P:outer(): i32\n    return self:<|>helper()\nend\n",
+            )],
+        ),
+        (
+            "chained call receiver",
+            vec![(
+                "main.walu",
+                "type P = { x: i32 }\nfunction P.new(): P\n    return { x = 1 }\nend\nfunction <def>P:get</def>(): i32\n    return self.x\nend\nlocal v = P.new():<|>get()\n",
+            )],
+        ),
+        (
+            "method on an indexed element",
+            vec![(
+                "main.walu",
+                "type Q = { y: i32 }\nfunction <def>Q:get</def>(): i32\n    return self.y\nend\nlocal items: [Q] = {}\nlocal v = items[1]:<|>get()\n",
+            )],
+        ),
+        (
+            "method on a record field",
+            vec![(
+                "main.walu",
+                "type Q = { y: i32 }\ntype P = { q: Q }\nfunction <def>Q:get</def>(): i32\n    return self.y\nend\nlocal p: P = { q = { y = 1 } }\nlocal v = p.q:<|>get()\n",
+            )],
+        ),
+        (
+            "method on a local from a method call",
+            vec![(
+                "main.walu",
+                "type P = { x: i32 }\ntype Q = { y: i32 }\nfunction P:to_q(): Q\n    return { y = 1 }\nend\nfunction <def>Q:get</def>(): i32\n    return self.y\nend\nlocal p: P = { x = 1 }\nlocal q = p:to_q()\nlocal v = q:<|>get()\n",
+            )],
+        ),
+        (
+            "same method name on two types",
+            vec![(
+                "main.walu",
+                "type A = { x: i32 }\ntype B = { x: i32 }\nfunction A:get(): i32\n    return self.x\nend\nfunction <def>B:get</def>(): i32\n    return self.x\nend\nlocal b: B = { x = 1 }\nlocal v = b:<|>get()\n",
+            )],
+        ),
+        (
+            "cursor at the end of the identifier",
+            vec![(
+                "main.walu",
+                "function <def>add</def>(a: i32): i32\n    return a\nend\nlocal x = add<|>(1)\n",
+            )],
+        ),
+        (
+            "function referenced as a value",
+            vec![(
+                "main.walu",
+                "function <def>add</def>(a: i32): i32\n    return a\nend\nlocal f = <|>add\n",
+            )],
+        ),
+        (
+            "reference before a syntax error later in the file",
+            vec![(
+                "main.walu",
+                "function <def>add</def>(a: i32): i32\n    return a\nend\nlocal x = <|>add(1)\nlocal y = = =\n",
+            )],
+        ),
+        (
+            "cross-module function through a require alias",
+            vec![
+                (
+                    "lib.walu",
+                    "function <def>double</def>(x: i32): i32\n    return x * 2\nend\n",
+                ),
+                (
+                    "main.walu",
+                    "local m = require(\"./lib\")\nlocal y = m.<|>double(4)\n",
+                ),
+            ],
+        ),
+        (
+            "cross-module dot-named function through a require alias",
+            vec![
+                (
+                    "lib.walu",
+                    "type P = { x: i32 }\nfunction <def>P.new</def>(): P\n    return { x = 1 }\nend\n",
+                ),
+                (
+                    "main.walu",
+                    "local m = require(\"./lib\")\nlocal p = m.P.<|>new()\n",
+                ),
+            ],
+        ),
+        (
+            "method on a value built through a module-qualified constructor",
+            vec![
+                (
+                    "lib.walu",
+                    "type P = { x: i32 }\nfunction P.new(): P\n    return { x = 1 }\nend\nfunction <def>P:get</def>(): i32\n    return self.x\nend\n",
+                ),
+                (
+                    "main.walu",
+                    "local m = require(\"./lib\")\nlocal p = m.P.new()\nlocal v = p:<|>get()\n",
+                ),
+            ],
+        ),
+        (
+            "method on a module-qualified annotation",
+            vec![
+                (
+                    "lib.walu",
+                    "type P = { x: i32 }\nfunction <def>P:get</def>(): i32\n    return self.x\nend\n",
+                ),
+                (
+                    "main.walu",
+                    "local m = require(\"./lib\")\nfunction use(p: m.P): i32\n    return p:<|>get()\nend\n",
+                ),
+            ],
+        ),
+        (
+            "same function name in two modules",
+            vec![
+                ("a.walu", "function shared(): i32\n    return 1\nend\n"),
+                (
+                    "b.walu",
+                    "function <def>shared</def>(): i32\n    return 2\nend\n",
+                ),
+                (
+                    "main.walu",
+                    "local a = require(\"./a\")\nlocal b = require(\"./b\")\nlocal v = b.<|>shared()\n",
+                ),
+            ],
+        ),
+        (
+            "require from a subdirectory",
+            vec![
+                (
+                    "sub/lib.walu",
+                    "function <def>double</def>(x: i32): i32\n    return x * 2\nend\n",
+                ),
+                (
+                    "main.walu",
+                    "local m = require(\"./sub/lib\")\nlocal v = m.<|>double(4)\n",
+                ),
+            ],
+        ),
+    ];
+
+    let failures: Vec<String> = cases
+        .iter()
+        .filter_map(|(name, files)| definition_case(name, files))
+        .collect();
+    assert!(failures.is_empty(), "\n{}\n", failures.join("\n"));
+}
+
+/// Compiler spans count characters, but editors send UTF-16 columns and Rust
+/// slices bytes. A non-ASCII character anywhere earlier in the file used to
+/// shift every later jump; this pins all three units together.
+#[test]
+fn positions_survive_non_ascii_text_earlier_in_the_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("main.walu");
+    // Three em-dashes: two extra bytes each over their character count.
+    let text = "-- a note — with an em-dash — and another —\n\
+function double(x: i32): i32\n\
+    return x * 2\n\
+end\n\
+local y: i32 = double(4)\n";
+    std::fs::write(&path, text).expect("write fixture");
+
+    let mut server = LspServer::new();
+    open(&mut server, &path, text);
+
+    let (line, character) = position_of(text, "double(4)");
+    let location = request(
+        &mut server,
+        "textDocument/definition",
+        &path,
+        line,
+        character,
+    );
+    // `function double` is on line 1; the name starts at column 9.
+    assert_eq!(location["range"]["start"]["line"], json!(1), "{location:?}");
+    assert_eq!(
+        location["range"]["start"]["character"],
+        json!(9),
+        "{location:?}"
+    );
+    assert_eq!(
+        location["range"]["end"]["character"],
+        json!(15),
+        "{location:?}"
+    );
+
+    // Hover resolves from the same position, proving the inbound conversion
+    // agrees with the outbound one.
+    let hover = request(&mut server, "textDocument/hover", &path, line, character);
+    let contents = hover["contents"]["value"].as_str().expect("hover text");
+    assert!(
+        contents.contains("function double(x: i32): i32"),
+        "{contents}"
+    );
+}
+
+fn references_request(
+    server: &mut LspServer,
+    path: &Path,
+    line: u32,
+    character: u32,
+    include_declaration: bool,
+) -> Vec<(String, u32, u32)> {
+    let responses = send(
+        server,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "textDocument/references",
+            "params": {
+                "textDocument": {"uri": format!("file://{}", path.display())},
+                "position": {"line": line, "character": character},
+                "context": {"includeDeclaration": include_declaration},
+            },
+        }),
+    );
+    responses[0]["result"]
+        .as_array()
+        .expect("locations")
+        .iter()
+        .map(|location| {
+            let uri = location["uri"].as_str().expect("uri");
+            (
+                uri.rsplit('/').next().expect("file name").to_string(),
+                location["range"]["start"]["line"].as_u64().expect("line") as u32,
+                location["range"]["start"]["character"]
+                    .as_u64()
+                    .expect("character") as u32,
+            )
+        })
+        .collect()
+}
+
+/// A function passed as a value — not called — is still a reference.
+#[test]
+fn references_find_a_function_used_as_a_value() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("main.walu");
+    let text = "local function draw_drawing(alpha: f64): unit\n\
+end\n\
+local story = { draw = draw_drawing }\n\
+local again = draw_drawing\n";
+    std::fs::write(&path, text).expect("write fixture");
+
+    let mut server = LspServer::new();
+    open(&mut server, &path, text);
+
+    let (line, character) = position_of(text, "draw_drawing }");
+    let found = references_request(&mut server, &path, line, character, true);
+    assert_eq!(
+        found,
+        vec![
+            ("main.walu".to_string(), 0, 15),
+            ("main.walu".to_string(), 2, 23),
+            ("main.walu".to_string(), 3, 14),
+        ],
+        "declaration plus both value uses"
+    );
+
+    let without = references_request(&mut server, &path, line, character, false);
+    assert_eq!(
+        without,
+        vec![
+            ("main.walu".to_string(), 2, 23),
+            ("main.walu".to_string(), 3, 14),
+        ],
+        "declaration excluded on request"
+    );
+}
+
+/// References resolve each occurrence rather than matching text, so a
+/// shadowing inner binding does not absorb the outer one's uses.
+#[test]
+fn references_separate_shadowed_bindings() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("main.walu");
+    // Written without line continuations: the indentation is load-bearing,
+    // and `\` at a line end would strip it.
+    let text = concat!(
+        "local function run(): i32\n",
+        "    return 1\n",
+        "end\n",
+        "local outer = run()\n",
+        "do\n",
+        "    local function run(): i32\n",
+        "        return 2\n",
+        "    end\n",
+        "    local inner = run()\n",
+        "end\n",
+        "local after = run()\n",
+    );
+    std::fs::write(&path, text).expect("write fixture");
+
+    let mut server = LspServer::new();
+    open(&mut server, &path, text);
+
+    // The outer binding: its own declaration and the two uses outside the block.
+    let (line, character) = position_of(text, "run()");
+    let found = references_request(&mut server, &path, line, character, true);
+    assert_eq!(
+        found,
+        vec![
+            ("main.walu".to_string(), 0, 15),
+            ("main.walu".to_string(), 3, 14),
+            ("main.walu".to_string(), 10, 14),
+        ],
+        "outer `run` must not absorb the shadowed use"
+    );
+
+    // The inner binding: only the shadowed declaration and its single use.
+    let (line, character) = position_of(text, "run(): i32\n        return 2");
+    let found = references_request(&mut server, &path, line, character, true);
+    assert_eq!(
+        found,
+        vec![
+            ("main.walu".to_string(), 5, 19),
+            ("main.walu".to_string(), 8, 18),
+        ],
+        "inner `run` sees only its own scope"
+    );
+}
+
+/// A method's uses are found through the receiver's type, and a same-named
+/// method on another type is not swept in.
+#[test]
+fn references_follow_methods_and_cross_module_uses() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let lib = dir.path().join("lib.walu");
+    let lib_text = "type P = { x: i32 }\n\
+type Other = { x: i32 }\n\
+function P.new(): P\n\
+    return { x = 1 }\n\
+end\n\
+function P:get(): i32\n\
+    return self.x\n\
+end\n\
+function Other:get(): i32\n\
+    return self.x\n\
+end\n";
+    std::fs::write(&lib, lib_text).expect("write fixture");
+    let main = dir.path().join("main.walu");
+    let main_text = "local m = require(\"./lib\")\n\
+local p = m.P.new()\n\
+local a: i32 = p:get()\n\
+local b: i32 = p:get()\n";
+    std::fs::write(&main, main_text).expect("write fixture");
+
+    let mut server = LspServer::new();
+    open(&mut server, &main, main_text);
+    // The workspace walk needs a root; `initialize` supplies it.
+    send(
+        &mut server,
+        json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"rootUri": format!("file://{}", dir.path().display())},
+        }),
+    );
+
+    let (line, character) = position_of(main_text, "get()");
+    let found = references_request(&mut server, &main, line, character, true);
+    assert_eq!(
+        found,
+        vec![
+            // `function P:get` in the module, then both call sites.
+            ("lib.walu".to_string(), 5, 11),
+            ("main.walu".to_string(), 2, 17),
+            ("main.walu".to_string(), 3, 17),
+        ],
+        "`Other:get` must not be swept in"
     );
 }

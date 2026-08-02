@@ -57,6 +57,10 @@ pub struct LspServer<B: AnalysisBackend = CompilerSession> {
     backend: B,
     /// Open documents by filesystem path, holding the latest buffer text.
     open_documents: HashMap<PathBuf, String>,
+    /// Workspace roots from `initialize`, searched for `.walu` files by
+    /// workspace-wide requests. Empty in hosts that have no filesystem (the
+    /// playground), where the open documents are the whole workspace.
+    workspace_roots: Vec<PathBuf>,
     /// URIs we last published diagnostics for, so stale ones can be cleared.
     published_uris: HashSet<String>,
     shutdown_requested: bool,
@@ -80,6 +84,7 @@ impl<B: AnalysisBackend> LspServer<B> {
         Self {
             backend,
             open_documents: HashMap::new(),
+            workspace_roots: Vec::new(),
             published_uris: HashSet::new(),
             shutdown_requested: false,
             exit_requested: false,
@@ -149,22 +154,26 @@ impl<B: AnalysisBackend> LspServer<B> {
         let params = parsed.get("params").cloned().unwrap_or(Value::Null);
 
         match (method.as_str(), id) {
-            ("initialize", Some(id)) => vec![response(
-                id,
-                json!({
-                    "capabilities": {
-                        // 1 = full-document sync: every change carries the
-                        // complete buffer, matching the session overlay model.
-                        "textDocumentSync": 1,
-                        "hoverProvider": true,
-                        "definitionProvider": true,
-                        "completionProvider": {"triggerCharacters": [".", ":"]},
-                        "documentFormattingProvider": true,
-                        "documentRangeFormattingProvider": true,
-                    },
-                    "serverInfo": {"name": "waluau-lsp", "version": env!("CARGO_PKG_VERSION")},
-                }),
-            )],
+            ("initialize", Some(id)) => {
+                self.workspace_roots = initialize_roots(&params);
+                vec![response(
+                    id,
+                    json!({
+                        "capabilities": {
+                            // 1 = full-document sync: every change carries the
+                            // complete buffer, matching the session overlay model.
+                            "textDocumentSync": 1,
+                            "hoverProvider": true,
+                            "definitionProvider": true,
+                            "referencesProvider": true,
+                            "completionProvider": {"triggerCharacters": [".", ":"]},
+                            "documentFormattingProvider": true,
+                            "documentRangeFormattingProvider": true,
+                        },
+                        "serverInfo": {"name": "waluau-lsp", "version": env!("CARGO_PKG_VERSION")},
+                    }),
+                )]
+            }
             ("initialized", _) => Vec::new(),
             ("shutdown", Some(id)) => {
                 self.shutdown_requested = true;
@@ -212,6 +221,7 @@ impl<B: AnalysisBackend> LspServer<B> {
             ("textDocument/didSave", _) => Vec::new(),
             ("textDocument/hover", Some(id)) => vec![self.handle_hover(id, &params)],
             ("textDocument/definition", Some(id)) => vec![self.handle_definition(id, &params)],
+            ("textDocument/references", Some(id)) => vec![self.handle_references(id, &params)],
             ("textDocument/completion", Some(id)) => vec![self.handle_completion(id, &params)],
             ("textDocument/formatting", Some(id)) => vec![self.handle_formatting(id, &params)],
             ("textDocument/rangeFormatting", Some(id)) => {
@@ -387,6 +397,52 @@ impl<B: AnalysisBackend> LspServer<B> {
         )
     }
 
+    /// The search space for workspace-wide requests: every open document
+    /// plus every `.walu` file under the workspace roots. Hosts without a
+    /// filesystem contribute nothing from the walk, leaving the open
+    /// documents — which there are the entire workspace.
+    fn workspace_files(&self, current: &Path) -> Vec<PathBuf> {
+        let mut files: Vec<PathBuf> = self.open_documents.keys().cloned().collect();
+        files.push(current.to_path_buf());
+        for root in &self.workspace_roots {
+            collect_walu_files(root, MAX_WORKSPACE_WALK_DEPTH, &mut files);
+        }
+        files.sort();
+        files.dedup();
+        files
+    }
+
+    fn handle_references(&self, id: Value, params: &Value) -> String {
+        let Some((path, text, offset)) = self.request_document(params) else {
+            return response(id, Value::Null);
+        };
+        let include_declaration = params["context"]["includeDeclaration"]
+            .as_bool()
+            .unwrap_or(true);
+        let load = self.workspace_loader();
+        let files = self.workspace_files(&path);
+        let locations: Vec<Value> =
+            features::references(&text, &path, offset, &files, &load, include_declaration)
+                .into_iter()
+                .filter_map(|reference| {
+                    // Spans are byte ranges in the target file's current text.
+                    let target_text = if reference.file == path {
+                        text.clone()
+                    } else {
+                        load(&reference.file)?
+                    };
+                    Some(json!({
+                        "uri": path_to_uri(&reference.file),
+                        "range": {
+                            "start": position(&target_text, reference.span.start as usize),
+                            "end": position(&target_text, reference.span.end as usize),
+                        },
+                    }))
+                })
+                .collect();
+        response(id, json!(locations))
+    }
+
     fn handle_completion(&self, id: Value, params: &Value) -> String {
         let Some((path, text, offset)) = self.request_document(params) else {
             return response(id, Value::Null);
@@ -425,7 +481,7 @@ impl<B: AnalysisBackend> LspServer<B> {
         let edit = json!({
             "range": {
                 "start": {"line": 0, "character": 0},
-                "end": position(&text, text.len()),
+                "end": position(&text, character_count(&text) as usize),
             },
             "newText": formatted,
         });
@@ -516,32 +572,38 @@ fn line_diff_edit(original: &str, formatted: &str) -> Option<LineEdit> {
     })
 }
 
-/// LSP position (zero-based line, UTF-16 column) to a byte offset in `text`;
-/// the inverse of [`position`]. Positions past a line's end clamp to the line
-/// break; positions past the last line clamp to the text's end.
+/// LSP position (zero-based line, UTF-16 column) to a character offset in
+/// `text`; the inverse of [`position`]. Positions past a line's end clamp to
+/// the line break; positions past the last line clamp to the text's end.
+///
+/// Three units meet at this boundary: editors count UTF-16 code units,
+/// compiler spans count characters (the lexer indexes a `Vec<char>`), and
+/// Rust string indexing counts bytes. Spans crossing the protocol are
+/// characters, never bytes — a single em-dash in a comment misplaces every
+/// later span if the two are confused.
 fn offset_at(text: &str, line: u32, character: u32) -> u32 {
     let mut current_line = 0u32;
     let mut utf16_column = 0u32;
-    for (index, ch) in text.char_indices() {
+    for (offset, ch) in text.chars().enumerate() {
         if current_line == line {
             if utf16_column >= character || ch == '\n' {
-                return index as u32;
+                return offset as u32;
             }
             utf16_column += ch.len_utf16() as u32;
         } else if ch == '\n' {
             current_line += 1;
         }
     }
-    text.len() as u32
+    character_count(text)
 }
 
-/// Byte offset in `text` to an LSP position (zero-based line, UTF-16 column).
-fn position(text: &str, byte_offset: usize) -> Value {
-    let clamped = byte_offset.min(text.len());
+/// Character offset in `text` to an LSP position (zero-based line, UTF-16
+/// column).
+fn position(text: &str, offset: usize) -> Value {
     let mut line = 0u32;
     let mut character = 0u32;
-    for (index, ch) in text.char_indices() {
-        if index >= clamped {
+    for (index, ch) in text.chars().enumerate() {
+        if index >= offset {
             break;
         }
         if ch == '\n' {
@@ -552,6 +614,10 @@ fn position(text: &str, byte_offset: usize) -> Value {
         }
     }
     json!({"line": line, "character": character})
+}
+
+fn character_count(text: &str) -> u32 {
+    text.chars().count() as u32
 }
 
 fn document_path(params: &Value) -> Option<(PathBuf, String)> {
@@ -596,6 +662,62 @@ fn response(id: Value, result: Value) -> String {
 
 fn error_response(id: Value, code: i64, message: &str) -> String {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}}).to_string()
+}
+
+/// How deep the workspace walk descends looking for `.walu` files.
+const MAX_WORKSPACE_WALK_DEPTH: u32 = 16;
+
+/// Directories that never hold workspace sources and can hide very large
+/// trees behind them.
+const SKIPPED_DIRECTORIES: &[&str] = &[".git", "node_modules", "target", "dist", "build"];
+
+/// The workspace roots an `initialize` request declares, preferring
+/// `workspaceFolders` and falling back to the older `rootUri`/`rootPath`.
+fn initialize_roots(params: &Value) -> Vec<PathBuf> {
+    if let Some(folders) = params["workspaceFolders"].as_array() {
+        let roots: Vec<PathBuf> = folders
+            .iter()
+            .filter_map(|folder| folder["uri"].as_str())
+            .filter_map(uri_to_path)
+            .collect();
+        if !roots.is_empty() {
+            return roots;
+        }
+    }
+    if let Some(root) = params["rootUri"].as_str().and_then(uri_to_path) {
+        return vec![root];
+    }
+    params["rootPath"]
+        .as_str()
+        .map(|root| vec![PathBuf::from(root)])
+        .unwrap_or_default()
+}
+
+/// Append every `.walu` file under `directory` to `files`.
+fn collect_walu_files(directory: &Path, depth: u32, files: &mut Vec<PathBuf>) {
+    if depth == 0 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        // Symlinks are not followed: a link back up the tree would loop.
+        if file_type.is_dir() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('.') || SKIPPED_DIRECTORIES.contains(&name.as_ref()) {
+                continue;
+            }
+            collect_walu_files(&path, depth - 1, files);
+        } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "walu") {
+            files.push(path);
+        }
+    }
 }
 
 fn notification(method: &str, params: Value) -> String {

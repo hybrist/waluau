@@ -203,20 +203,123 @@ fn resolve_member<'a>(
         .find(|definition| definition.name == dotted || definition.name == method)
 }
 
+/// One postfix step of a receiver expression, in source order.
+#[derive(Clone, Debug)]
+enum Access {
+    /// `.name`
+    Field(String),
+    /// `:name(...)` — a method call; its argument list folds into this step.
+    Method(String),
+    /// `(...)` applied to whatever precedes it.
+    Call,
+    /// `[...]`
+    Index,
+}
+
+/// The receiver of a member access, as written: a root identifier plus the
+/// postfix steps applied to it. `m.P.new()` has root `m` and the steps
+/// `.P`, `.new`, `()`.
+#[derive(Clone, Debug)]
+struct Receiver {
+    root: String,
+    accesses: Vec<Access>,
+}
+
+impl Receiver {
+    /// The name written immediately before the separator — what a member
+    /// access is qualified by in the source text. `None` when the receiver
+    /// ends in a call or an index, which name nothing.
+    fn qualifier(&self) -> Option<&str> {
+        match self.accesses.last() {
+            None => Some(&self.root),
+            Some(Access::Field(name) | Access::Method(name)) => Some(name),
+            Some(Access::Call | Access::Index) => None,
+        }
+    }
+}
+
 /// What the cursor is on, classified from the token stream.
 enum RefTarget {
     /// A definition site's own name.
     Definition(usize),
     /// A plain identifier reference.
     Name { name: String, span: Span },
-    /// The member part of `base.member` or `base:member`.
+    /// The member part of `receiver.member` or `receiver:member`.
     Member {
-        base: String,
+        receiver: Receiver,
         name: String,
         span: Span,
     },
     /// The string argument of a `require("...")` call.
     Require { raw: String, span: Span },
+}
+
+/// The index of the opening delimiter matching the closer at `close`,
+/// counting nesting of that same delimiter pair only (a `[` inside parens
+/// does not disturb the paren depth).
+fn matching_open(
+    tokens: &[Token],
+    close: usize,
+    open_kind: &TokenKind,
+    close_kind: &TokenKind,
+) -> Option<usize> {
+    let mut depth = 0usize;
+    for at in (0..=close).rev() {
+        if tokens[at].kind == *close_kind {
+            depth += 1;
+        } else if tokens[at].kind == *open_kind {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(at);
+            }
+        }
+    }
+    None
+}
+
+/// Walk backwards from `end` — the last token of a receiver expression —
+/// over postfix steps down to the root identifier. A receiver need not be a
+/// bare name: `P.new()`, `items[1]` and `p:to_q()` are all chaseable. Any
+/// other token (a literal, an operator, a keyword) means the receiver is not
+/// a static path and there is nothing to follow.
+fn receiver_before(tokens: &[Token], end: usize) -> Option<Receiver> {
+    let mut accesses = Vec::new();
+    let mut at = end;
+    loop {
+        match &tokens[at].kind {
+            TokenKind::RParen => {
+                accesses.push(Access::Call);
+                at = matching_open(tokens, at, &TokenKind::LParen, &TokenKind::RParen)?;
+            }
+            TokenKind::RBracket => {
+                accesses.push(Access::Index);
+                at = matching_open(tokens, at, &TokenKind::LBracket, &TokenKind::RBracket)?;
+            }
+            TokenKind::Identifier(name) => {
+                match at.checked_sub(1).map(|before| &tokens[before].kind) {
+                    Some(TokenKind::Dot) => accesses.push(Access::Field(name.clone())),
+                    Some(TokenKind::Colon) => accesses.push(Access::Method(name.clone())),
+                    // Nothing qualifies this identifier: it is the root.
+                    _ => {
+                        accesses.reverse();
+                        // `recv:m(...)` scans as a `Call` and then a
+                        // `Method`; the call belongs to the method.
+                        accesses.dedup_by(|next, previous| {
+                            matches!(next, Access::Call) && matches!(previous, Access::Method(_))
+                        });
+                        return Some(Receiver {
+                            root: name.clone(),
+                            accesses,
+                        });
+                    }
+                }
+                // Step over the identifier onto its separator.
+                at = at.checked_sub(1)?;
+            }
+            _ => return None,
+        }
+        at = at.checked_sub(1)?;
+    }
 }
 
 /// The reference at `offset`, also accepting a cursor sitting immediately
@@ -246,14 +349,14 @@ fn find_target_at(index: &DocumentIndex, offset: u32) -> Option<RefTarget> {
     let token = &index.tokens[at];
     match &token.kind {
         TokenKind::Identifier(name) => {
-            // `base.name` / `base:name` — the member part of a namespaced or
-            // method reference.
+            // `receiver.name` / `receiver:name` — the member part of a
+            // namespaced or method reference.
             if at >= 2
                 && matches!(index.tokens[at - 1].kind, TokenKind::Dot | TokenKind::Colon)
-                && let TokenKind::Identifier(base) = &index.tokens[at - 2].kind
+                && let Some(receiver) = receiver_before(&index.tokens, at - 2)
             {
                 return Some(RefTarget::Member {
-                    base: base.clone(),
+                    receiver,
                     name: name.clone(),
                     span: token.span,
                 });
@@ -407,56 +510,6 @@ fn resolved_in_scope(def: &DefinitionSite, scope: &TypeScope, current: &Path) ->
     }
 }
 
-/// Resolve a value member path (`new` or `game.new`) to its definition:
-/// bare names in the scope (then the prelude), dotted names through a
-/// require alias's module or a namespace definition.
-fn resolve_value_path(
-    path_str: &str,
-    offset: u32,
-    scope: &TypeScope,
-    load: Loader,
-) -> Option<(DefinitionSite, TypeScope)> {
-    if let Some((alias, member)) = path_str.split_once('.') {
-        if let Some(alias_def) = resolve_name(&scope.definitions, alias, offset)
-            && let Some(raw) = &alias_def.require_path
-            && let Some(file) = resolve_require_path(&scope.file, raw)
-            && let Some(module) = module_scope(&file, load)
-        {
-            let def = module
-                .definitions
-                .iter()
-                .find(|definition| definition.name == member)?
-                .clone();
-            return Some((def, module));
-        }
-        // A namespace member (`math.abs`, dot-named `State.new`).
-        if let Some(def) = scope
-            .definitions
-            .iter()
-            .find(|definition| definition.name == path_str)
-        {
-            return Some((def.clone(), scope.clone()));
-        }
-        let prelude = TypeScope::prelude();
-        let def = prelude
-            .definitions
-            .iter()
-            .find(|definition| definition.name == path_str)?
-            .clone();
-        return Some((def, prelude));
-    }
-    if let Some(def) = resolve_name(&scope.definitions, path_str, offset) {
-        return Some((def.clone(), scope.clone()));
-    }
-    let prelude = TypeScope::prelude();
-    let def = prelude
-        .definitions
-        .iter()
-        .find(|definition| definition.name == path_str)?
-        .clone();
-    Some((def, prelude))
-}
-
 /// A record type's fields plus the type declaration that provided them (for
 /// go-to-definition on field names).
 struct RecordInfo {
@@ -542,6 +595,52 @@ fn named_type_member(
     Some((def, type_scope))
 }
 
+/// A parser initializer hint restated as a receiver path, so an initializer
+/// and a written member access chase through exactly the same code.
+fn initializer_receiver(hint: &waluau_parser::InitializerHint) -> Receiver {
+    use waluau_parser::InitializerHint;
+    let path_receiver = |path: &str| {
+        let mut parts = path.split('.');
+        let root = parts.next().unwrap_or_default().to_string();
+        let accesses = parts
+            .map(|part| Access::Field(part.to_string()))
+            .collect::<Vec<_>>();
+        Receiver { root, accesses }
+    };
+    match hint {
+        InitializerHint::Call { callee } => {
+            let mut receiver = path_receiver(callee);
+            receiver.accesses.push(Access::Call);
+            receiver
+        }
+        InitializerHint::MethodCall {
+            receiver: base,
+            method,
+        } => {
+            let mut receiver = path_receiver(base);
+            receiver.accesses.push(Access::Method(method.clone()));
+            receiver
+        }
+        InitializerHint::Field {
+            base,
+            field,
+            indexed,
+        } => {
+            let mut receiver = path_receiver(base);
+            receiver.accesses.push(Access::Field(field.clone()));
+            if *indexed {
+                receiver.accesses.push(Access::Index);
+            }
+            receiver
+        }
+        InitializerHint::Index { base } => {
+            let mut receiver = path_receiver(base);
+            receiver.accesses.push(Access::Index);
+            receiver
+        }
+    }
+}
+
 /// The static type of a definition's value: its annotation when present,
 /// otherwise the chased shape of its initializer (`local state = game.new()`
 /// gets `new`'s declared return type). Returns the type plus the scope its
@@ -558,51 +657,172 @@ fn definition_static_type(
     if let Some(ty) = &def.ty {
         return Some((ty.clone(), scope.clone()));
     }
-    let at = def.visible_from;
-    match def.initializer.as_ref()? {
-        waluau_parser::InitializerHint::Call { callee } => {
-            let (function_def, function_scope) = resolve_value_path(callee, at, scope, load)?;
-            let Some(Type::Function { return_type, .. }) = function_def.ty else {
+    let receiver = initializer_receiver(def.initializer.as_ref()?);
+    match receiver_standing(&receiver, def.visible_from, scope, load, depth - 1)? {
+        Standing::Value(ty, type_scope) => Some((ty, type_scope)),
+        Standing::Module(_) | Standing::Namespace(..) => None,
+    }
+}
+
+/// What a receiver expression denotes once its path has been followed.
+enum Standing {
+    /// A value whose static type is known, plus the scope its type names
+    /// resolve in.
+    Value(Type, TypeScope),
+    /// A `require`d module: its members are that file's own definitions.
+    Module(TypeScope),
+    /// A name prefix inside a scope — a type or a builtin namespace — whose
+    /// members are the scope's `ns.member` / `ns:member` definitions.
+    Namespace(String, TypeScope),
+}
+
+/// A `type Name = ...` declaration binds a namespace, not a value; receiver
+/// roots and module members must not mistake one for a variable.
+fn binds_a_value(definition: &DefinitionSite) -> bool {
+    definition.kind != DefinitionKind::TypeName
+}
+
+/// Classify the root identifier of a receiver path: a `require` alias stands
+/// for its module, a typed binding for its value, and anything else — a type
+/// name, a builtin namespace, a table that methods hang off — for a namespace
+/// of the same name.
+fn root_standing(root: &str, offset: u32, scope: &TypeScope, load: Loader, depth: u8) -> Standing {
+    if let Some(definition) = resolve_name(&scope.definitions, root, offset)
+        && binds_a_value(definition)
+    {
+        if let Some(raw) = &definition.require_path
+            && let Some(file) = resolve_require_path(&scope.file, raw)
+            && let Some(module) = module_scope(&file, load)
+        {
+            return Standing::Module(module);
+        }
+        if let Some((ty, type_scope)) = definition_static_type(definition, scope, load, depth) {
+            return Standing::Value(ty, type_scope);
+        }
+    } else if let Some(ty) = prelude_definitions()
+        .iter()
+        .find(|definition| definition.name == root && binds_a_value(definition))
+        .and_then(|definition| definition.ty.clone())
+    {
+        // A bare prelude declare as the root (`tostring(x)`).
+        return Standing::Value(ty, TypeScope::prelude());
+    }
+    Standing::Namespace(root.to_string(), scope.clone())
+}
+
+/// The definition a `.name` / `:name` step names, plus the scope it lives in.
+fn member_definition(
+    standing: &Standing,
+    name: &str,
+    load: Loader,
+) -> Option<(DefinitionSite, TypeScope)> {
+    match standing {
+        Standing::Module(module) => {
+            let definition = module
+                .definitions
+                .iter()
+                .find(|definition| definition.name == name && binds_a_value(definition))?;
+            Some((definition.clone(), module.clone()))
+        }
+        Standing::Namespace(namespace, scope) => {
+            let dotted = format!("{namespace}.{name}");
+            let method = format!("{namespace}:{name}");
+            let matches = |definition: &&DefinitionSite| {
+                definition.name == dotted || definition.name == method
+            };
+            if let Some(definition) = scope.definitions.iter().find(matches) {
+                return Some((definition.clone(), scope.clone()));
+            }
+            let prelude = TypeScope::prelude();
+            let definition = prelude.definitions.iter().find(matches)?.clone();
+            Some((definition, prelude))
+        }
+        Standing::Value(ty, scope) => named_type_member(ty, name, scope, load),
+    }
+}
+
+/// A module member that names a namespace rather than a value: a type
+/// declaration, or a name that exists only as the `name.member` prefix of
+/// other definitions. This is what lets `m.P.new()` walk from the module to
+/// the type `P` and on to `P.new`.
+fn namespace_step(standing: &Standing, name: &str) -> Option<Standing> {
+    let Standing::Module(module) = standing else {
+        return None;
+    };
+    let dotted = format!("{name}.");
+    let method = format!("{name}:");
+    let is_namespace = module.definitions.iter().any(|definition| {
+        (definition.kind == DefinitionKind::TypeName && definition.name == name)
+            || definition.name.starts_with(&dotted)
+            || definition.name.starts_with(&method)
+    });
+    is_namespace.then(|| Standing::Namespace(name.to_string(), module.clone()))
+}
+
+/// Follow one postfix step of a receiver path.
+fn apply_access(standing: Standing, access: &Access, load: Loader, depth: u8) -> Option<Standing> {
+    match access {
+        Access::Field(name) => {
+            if let Some((definition, definition_scope)) = member_definition(&standing, name, load)
+                && let Some(ty) = definition.ty
+            {
+                return Some(Standing::Value(ty, definition_scope));
+            }
+            if let Some(next) = namespace_step(&standing, name) {
+                return Some(next);
+            }
+            // A record field of a typed value.
+            let Standing::Value(ty, scope) = &standing else {
                 return None;
             };
-            Some((*return_type, function_scope))
-        }
-        waluau_parser::InitializerHint::MethodCall { receiver, method } => {
-            let receiver_def = resolve_name(&scope.definitions, receiver, at)?.clone();
-            let (receiver_ty, receiver_scope) =
-                definition_static_type(&receiver_def, scope, load, depth - 1)?;
-            let (method_def, method_scope) =
-                named_type_member(&receiver_ty, method, &receiver_scope, load)?;
-            let Some(Type::Function { return_type, .. }) = method_def.ty else {
-                return None;
-            };
-            Some((*return_type, method_scope))
-        }
-        waluau_parser::InitializerHint::Field {
-            base,
-            field,
-            indexed,
-        } => {
-            let base_def = resolve_name(&scope.definitions, base, at)?.clone();
-            let (base_ty, base_scope) = definition_static_type(&base_def, scope, load, depth - 1)?;
-            let record = resolve_type_to_record(&base_ty, &base_scope, load, depth - 1)?;
+            let record = resolve_type_to_record(ty, scope, load, depth)?;
+            let field_ty = record.fields.get(name)?.clone();
             let field_scope = record
                 .declared_by
-                .as_ref()
-                .map(|(_, scope)| scope.clone())
-                .unwrap_or(base_scope);
-            let mut ty = record.fields.get(field)?.clone();
-            if *indexed {
-                ty = ty.element_type()?;
-            }
-            Some((ty, field_scope))
+                .map(|(_, declaring)| declaring)
+                .unwrap_or_else(|| scope.clone());
+            Some(Standing::Value(field_ty, field_scope))
         }
-        waluau_parser::InitializerHint::Index { base } => {
-            let base_def = resolve_name(&scope.definitions, base, at)?.clone();
-            let (base_ty, base_scope) = definition_static_type(&base_def, scope, load, depth - 1)?;
-            Some((base_ty.element_type()?, base_scope))
+        Access::Method(name) => {
+            let (definition, definition_scope) = member_definition(&standing, name, load)?;
+            let Some(Type::Function { return_type, .. }) = definition.ty else {
+                return None;
+            };
+            Some(Standing::Value(*return_type, definition_scope))
+        }
+        Access::Call => {
+            let Standing::Value(Type::Function { return_type, .. }, scope) = standing else {
+                return None;
+            };
+            Some(Standing::Value(*return_type, scope))
+        }
+        Access::Index => {
+            let Standing::Value(ty, scope) = standing else {
+                return None;
+            };
+            Some(Standing::Value(ty.element_type()?, scope))
         }
     }
+}
+
+/// Follow a whole receiver path to what it denotes, giving up as soon as a
+/// step cannot be chased statically. `depth` bounds the mutual recursion
+/// through [`definition_static_type`] on cyclic or pathological sources.
+fn receiver_standing(
+    receiver: &Receiver,
+    offset: u32,
+    scope: &TypeScope,
+    load: Loader,
+    depth: u8,
+) -> Option<Standing> {
+    if depth == 0 {
+        return None;
+    }
+    let mut standing = root_standing(&receiver.root, offset, scope, load, depth);
+    for access in &receiver.accesses {
+        standing = apply_access(standing, access, load, depth)?;
+    }
+    Some(standing)
 }
 
 fn resolve_target(
@@ -638,39 +858,33 @@ fn resolve_target(
                 .any(|known| known.starts_with(&dotted_prefix));
             is_namespace.then(|| Resolved::Info(format!("(builtin namespace) {name}")))
         }
-        RefTarget::Member { base, name, .. } => {
-            // A local bound to `require(...)`: resolve into that module.
-            if let Some(base_def) = resolve_name(&index.definitions, base, offset)
-                && let Some(raw) = &base_def.require_path
+        RefTarget::Member { receiver, name, .. } => {
+            // Follow the receiver path — a name, a require alias, a call
+            // chain — and look the member up in whatever it lands on.
+            // Methods resolve as `T:name`/`T.name` in the type's declaring
+            // module; fields resolve through the type's record shape.
+            let scope = TypeScope::current(index, path);
+            if let Some(standing) =
+                receiver_standing(receiver, offset, &scope, load, TYPE_CHASE_DEPTH)
             {
-                let file = resolve_require_path(path, raw)?;
-                let def = module_exports(&file, load)
-                    .into_iter()
-                    .find(|definition| &definition.name == name)?;
-                return Some(Resolved::Module { file, def });
-            }
-            // A base with a statically known type — annotated, or chased
-            // through its initializer (`local state = game.new()`). Methods
-            // resolve as `T:name`/`T.name` in the type's declaring module;
-            // fields resolve through the type declaration's record shape.
-            if let Some(base_def) = resolve_name(&index.definitions, base, offset) {
-                let scope = TypeScope::current(index, path);
-                if let Some((base_ty, base_scope)) =
-                    definition_static_type(base_def, &scope, load, TYPE_CHASE_DEPTH)
+                if let Some((definition, definition_scope)) =
+                    member_definition(&standing, name, load)
                 {
-                    if let Some((method_def, method_scope)) =
-                        named_type_member(&base_ty, name, &base_scope, load)
-                    {
-                        return Some(resolved_in_scope(&method_def, &method_scope, path));
-                    }
+                    return Some(resolved_in_scope(&definition, &definition_scope, path));
+                }
+                if let Standing::Value(base_ty, base_scope) = &standing {
                     if let Some(record) =
-                        resolve_type_to_record(&base_ty, &base_scope, load, TYPE_CHASE_DEPTH)
+                        resolve_type_to_record(base_ty, base_scope, load, TYPE_CHASE_DEPTH)
                         && let Some(field_ty) = record.fields.get(name)
                     {
                         // Fields whose type the table literal doesn't reveal
                         // are shown without the unhelpful `: unknown`.
+                        let qualified = match receiver.qualifier() {
+                            Some(base) => format!("{base}.{name}"),
+                            None => name.clone(),
+                        };
                         let summary = if matches!(field_ty, Type::Unknown) {
-                            format!("(field) {base}.{name}")
+                            format!("(field) {qualified}")
                         } else {
                             format!("{name}: {field_ty}")
                         };
@@ -694,23 +908,27 @@ fn resolve_target(
                     }
                 }
             }
-            // A builtin/user namespace member (`math.abs`, `State.new`).
-            if let Some(definition) = resolve_member(&index.definitions, base, name) {
-                let resolved = definition.clone();
-                let from_file = index
-                    .definitions
-                    .iter()
-                    .any(|candidate| candidate.name == resolved.name);
-                return Some(if from_file {
-                    Resolved::File(resolved)
-                } else {
-                    Resolved::Prelude(resolved)
-                });
-            }
-            // An intrinsic namespace member (`string.upper`, `table.insert`).
-            let dotted = format!("{base}.{name}");
-            if INTRINSIC_MEMBERS.contains(&dotted.as_str()) {
-                return Some(Resolved::Info(format!("(builtin) {dotted}")));
+            // The path could not be typed. Fall back to the name written
+            // right before the separator: a namespaced definition on it
+            // (`math.abs`, `State.new`, a method hung off an untyped table),
+            // then an intrinsic namespace member.
+            if let Some(base) = receiver.qualifier() {
+                if let Some(definition) = resolve_member(&index.definitions, base, name) {
+                    let resolved = definition.clone();
+                    let from_file = index
+                        .definitions
+                        .iter()
+                        .any(|candidate| candidate.name == resolved.name);
+                    return Some(if from_file {
+                        Resolved::File(resolved)
+                    } else {
+                        Resolved::Prelude(resolved)
+                    });
+                }
+                let dotted = format!("{base}.{name}");
+                if INTRINSIC_MEMBERS.contains(&dotted.as_str()) {
+                    return Some(Resolved::Info(format!("(builtin) {dotted}")));
+                }
             }
             // Last resort: a unique method/member name anywhere in scope
             // (covers `obj:method()` calls on values with inferred types).
@@ -832,6 +1050,118 @@ pub fn definition(text: &str, path: &Path, offset: u32, load: Loader) -> Option<
         Resolved::Module { file, def } => Some((file, def.name_span)),
         Resolved::Prelude(_) | Resolved::Info(_) | Resolved::MemberOfType { .. } => None,
     }
+}
+
+/// One occurrence of a symbol, as the exact identifier token that spells it.
+pub struct Reference {
+    pub file: PathBuf,
+    pub span: Span,
+}
+
+/// The definition a find-references request is anchored to. A definition is
+/// identified by where it is written — file plus name span — so two symbols
+/// sharing a name never collapse into one.
+struct Anchor {
+    file: PathBuf,
+    name_span: Span,
+    /// The identifier token an occurrence must spell: the last dotted or
+    /// method segment of the display name (`get` for a `P:get` method).
+    token: String,
+}
+
+/// The identifier token a definition's display name ends in.
+fn last_segment(name: &str) -> &str {
+    name.rsplit([':', '.']).next().unwrap_or(name)
+}
+
+/// The written definition a [`Resolved`] points at, if any. Prelude declares
+/// and pure hover info have no navigable site and cannot anchor or match.
+fn resolved_site(resolved: Resolved, current: &Path) -> Option<(PathBuf, DefinitionSite)> {
+    let resolved = match resolved {
+        Resolved::MemberOfType { declared_by, .. } => *declared_by,
+        other => other,
+    };
+    match resolved {
+        Resolved::File(def) => Some((current.to_path_buf(), def)),
+        Resolved::Module { file, def } => Some((file, def)),
+        Resolved::Prelude(_) | Resolved::Info(_) | Resolved::MemberOfType { .. } => None,
+    }
+}
+
+fn reference_anchor(text: &str, path: &Path, offset: u32, load: Loader) -> Option<Anchor> {
+    let index = index_document(text, path);
+    let target = find_target(&index, offset)?;
+    let resolved = resolve_target(&index, &target, path, offset, load)?;
+    let (file, def) = resolved_site(resolved, path)?;
+    // A `require("./mod")` target is a whole file, not a name; it has no
+    // identifier occurrences to find.
+    (def.name_span.end > def.name_span.start).then(|| Anchor {
+        token: last_segment(&def.name).to_string(),
+        file,
+        name_span: def.name_span,
+    })
+}
+
+/// Every occurrence of the symbol at `offset`, searched across `files`.
+///
+/// Each candidate identifier is resolved the same way go-to-definition
+/// resolves it and kept only when it lands on the same definition site. That
+/// costs a resolve per name match, but it is what makes shadowed locals,
+/// same-named methods on different types, and module members resolve to
+/// distinct symbols instead of one text-matched blur.
+pub fn references(
+    text: &str,
+    path: &Path,
+    offset: u32,
+    files: &[PathBuf],
+    load: Loader,
+    include_declaration: bool,
+) -> Vec<Reference> {
+    let Some(anchor) = reference_anchor(text, path, offset, load) else {
+        return Vec::new();
+    };
+    let mut found: Vec<Reference> = Vec::new();
+    for file in files {
+        let Some(file_text) = load(file) else {
+            continue;
+        };
+        let index = index_document(&file_text, file);
+        for token in &index.tokens {
+            let TokenKind::Identifier(name) = &token.kind else {
+                continue;
+            };
+            if name != &anchor.token {
+                continue;
+            }
+            // The declaration itself: its identifier sits inside the name
+            // span (`get` within a `P:get` method name).
+            let is_declaration = *file == anchor.file
+                && token.span.start >= anchor.name_span.start
+                && token.span.end <= anchor.name_span.end;
+            if is_declaration && !include_declaration {
+                continue;
+            }
+            let at = token.span.start;
+            let Some(target) = find_target_at(&index, at) else {
+                continue;
+            };
+            let Some(resolved) = resolve_target(&index, &target, file, at, load) else {
+                continue;
+            };
+            let Some((site_file, site_def)) = resolved_site(resolved, file) else {
+                continue;
+            };
+            if site_file == anchor.file && site_def.name_span == anchor.name_span {
+                found.push(Reference {
+                    file: file.clone(),
+                    span: token.span,
+                });
+            }
+        }
+    }
+    found.sort_by(|a, b| a.file.cmp(&b.file).then(a.span.start.cmp(&b.span.start)));
+    found.dedup_by(|a, b| a.file == b.file && a.span == b.span);
+    found
 }
 
 /// What kind of completion the cursor position asks for.
