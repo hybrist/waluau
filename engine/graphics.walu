@@ -1445,6 +1445,19 @@ function Graphics:push(): unit
     end
 end
 
+-- Pushes the identity instead of a copy of the current transform: the escape
+-- hatch for drawing that owns its own pixel space, like a capture into a
+-- fixed-size render target while the screen is drawn under a viewport scale.
+-- Restored by the same pop as push.
+function Graphics:push_identity(): unit
+    table.insert(self.transforms, 1.0)
+    table.insert(self.transforms, 0.0)
+    table.insert(self.transforms, 0.0)
+    table.insert(self.transforms, 1.0)
+    table.insert(self.transforms, 0.0)
+    table.insert(self.transforms, 0.0)
+end
+
 function Graphics:pop(): unit
     if #self.transforms > 6 then
         for _ = 1::i32, 6::i32 do

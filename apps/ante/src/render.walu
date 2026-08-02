@@ -1373,6 +1373,11 @@ function capture_card(graphics: Graphics, effects: EffectShaders, card_back: gra
         graphics:release_render_target(target)
         return nil
     end
+    -- A capture draws in the target's own pixels, whatever transform the
+    -- screen was under. Without this, a board drawn at a viewport scale
+    -- captures a card too large for its target and every consumer of the
+    -- capture shows a zoomed crop of a face.
+    graphics:push_identity()
     graphics:clear("#00000000")
     draw_card(
         graphics, effects, card_back, card, 0.0, 0.0,
@@ -1391,6 +1396,7 @@ function capture_card(graphics: Graphics, effects: EffectShaders, card_back: gra
         graphics:set_color(school_color(card.suit))
         graphics:fill_rectangle(7.0, 7.0, 5.0, CARD_H - 14.0)
     end
+    graphics:pop()
     graphics:set_screen_target()
     return target
 end
