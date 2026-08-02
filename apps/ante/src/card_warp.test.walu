@@ -1,0 +1,260 @@
+-- Deterministic, DOM-free checks on the sheet a card is deformed as. What a
+-- corner pull does to the rest of the card, what the stretch limit refuses to
+-- let it do, and which face a turn leaves pointing at the viewer are all
+-- arithmetic, so none of it needs a canvas to be pinned down.
+
+require("waluau:vitest")
+
+local card_warp = require("./card_warp")
+
+const WIDTH: f64 = 84.0
+const HEIGHT: f64 = 130.0
+const CENTER_X: f64 = 300.0
+const CENTER_Y: f64 = 200.0
+const COLUMNS: i32 = 8
+const ROWS: i32 = 12
+-- The drag every pull here uses: up and to the right, off the bottom right
+-- corner, which is the motion the animation is built around. Three-four-five
+-- so the direction is exactly one long and a distance along it is exact.
+const DRAG_X: f64 = 0.6
+const DRAG_Y: f64 = -0.8
+
+function rest(): card_warp.Pose
+    return card_warp.rest_pose(WIDTH, HEIGHT, CENTER_X, CENTER_Y)
+end
+
+function built(pose: card_warp.Pose): card_warp.Mesh
+    local mesh: card_warp.Mesh = card_warp.new_mesh(COLUMNS, ROWS)
+    card_warp.build(mesh, pose)
+    return mesh
+end
+
+function at(column: i32, row: i32): i32
+    return row * (COLUMNS + 1) + column
+end
+
+function held_corner(): i32
+    return at(COLUMNS, ROWS)
+end
+
+function far_corner(): i32
+    return at(0, 0)
+end
+
+-- How far a point has been carried in the direction of the drag, which is the
+-- one measurement the pull makes a promise about.
+function carried(mesh: card_warp.Mesh, resting: card_warp.Mesh, index: i32): f64
+    local dx: f64 = mesh.xs[index] - resting.xs[index]
+    local dy: f64 = mesh.ys[index] - resting.ys[index]
+    return dx * DRAG_X + dy * DRAG_Y
+end
+
+-- How wide the card is across the drag: the thing a sheet gives up when it
+-- lengthens along it.
+function width_across_drag(mesh: card_warp.Mesh): f64
+    local lowest: f64 = 0.0
+    local highest: f64 = 0.0
+    local seen: bool = false
+    for row = 0::i32, ROWS do
+        for column = 0::i32, COLUMNS do
+            local index: i32 = at(column, row)
+            local across: f64 = mesh.xs[index] * -DRAG_Y + mesh.ys[index] * DRAG_X
+            if not seen or across < lowest then lowest = across end
+            if not seen or across > highest then highest = across end
+            seen = true
+        end
+    end
+    return highest - lowest
+end
+
+function pulled(follow: f64, reach: f64): card_warp.Pose
+    local pose: card_warp.Pose = rest()
+    pose.follow = follow
+    pose.pull_x = DRAG_X * reach
+    pose.pull_y = DRAG_Y * reach
+    return pose
+end
+
+describe("a card at rest", function(): unit
+    it("projects to the plain rectangle the board would have drawn", function(): unit
+        local mesh: card_warp.Mesh = built(rest())
+        expect(mesh.xs[far_corner()]):toBeCloseTo(CENTER_X - WIDTH * 0.5, 6)
+        expect(mesh.ys[far_corner()]):toBeCloseTo(CENTER_Y - HEIGHT * 0.5, 6)
+        expect(mesh.xs[held_corner()]):toBeCloseTo(CENTER_X + WIDTH * 0.5, 6)
+        expect(mesh.ys[held_corner()]):toBeCloseTo(CENTER_Y + HEIGHT * 0.5, 6)
+    end)
+
+    it("keeps every edge straight", function(): unit
+        local mesh: card_warp.Mesh = built(rest())
+        local left: f64 = mesh.xs[far_corner()]
+        for row = 0::i32, ROWS do
+            expect(mesh.xs[at(0, row)]):toBeCloseTo(left, 6)
+        end
+    end)
+
+    it("is lit as though none of this were happening to it", function(): unit
+        local mesh: card_warp.Mesh = built(rest())
+        for index = 0::i32, card_warp.point_count(COLUMNS, ROWS) - 1 do
+            expect(mesh.shades[index]):toBeCloseTo(1.0, 6)
+        end
+    end)
+end)
+
+describe("a corner pull", function(): unit
+    -- The hand is on the corner, so the corner is the one part of the sheet
+    -- that is never early and never late.
+    it("hands the held corner its whole lead, whatever the sheet does", function(): unit
+        expect(card_warp.pull_weight(rest(), 1.0, 1.0)):toBeCloseTo(1.0, 9)
+        expect(card_warp.pull_weight(pulled(0.0, 40.0), 1.0, 1.0)):toBeCloseTo(1.0, 9)
+        expect(card_warp.pull_weight(pulled(1.4, 40.0), 1.0, 1.0)):toBeCloseTo(1.0, 9)
+    end)
+
+    -- The corner goes the whole distance and the far side of the card takes
+    -- only the share the sheet has caught up with. Everything the pull looks
+    -- like follows from that one gap — and the gap is what the pull promises,
+    -- not where either end of it sits, because the sheet is displaced about
+    -- its own average so that pulling a card never moves it.
+    it("opens the whole distance between the held corner and the far one", function(): unit
+        local mesh: card_warp.Mesh = built(pulled(0.15, 24.0))
+        local resting: card_warp.Mesh = built(rest())
+        local gap: f64 = carried(mesh, resting, held_corner())
+            - carried(mesh, resting, far_corner())
+        expect(gap):toBeCloseTo(24.0 * 0.85, 4)
+    end)
+
+    -- A card being pulled out of shape is not a card going anywhere. Travel
+    -- is the pose's centre, and the pull may not quietly add to it: when it
+    -- did, the card drifted along the drag as the pull grew and drifted back
+    -- as it relaxed, which reads as backtracking.
+    it("does not move the card it is deforming", function(): unit
+        local resting: card_warp.Mesh = built(rest())
+        local mesh: card_warp.Mesh = built(pulled(0.1, 40.0))
+        local count: i32 = card_warp.point_count(COLUMNS, ROWS)
+        local moved_x: f64 = 0.0
+        local moved_y: f64 = 0.0
+        for index = 0::i32, count - 1 do
+            moved_x += mesh.xs[index] - resting.xs[index]
+            moved_y += mesh.ys[index] - resting.ys[index]
+        end
+        expect(moved_x / (count::f64)):toBeCloseTo(0.0, 6)
+        expect(moved_y / (count::f64)):toBeCloseTo(0.0, 6)
+    end)
+
+    -- Follow above one is the whip: the pull is over, and the body of the
+    -- card arrives past the corner that dragged it there.
+    it("throws the far corner past the held one on release", function(): unit
+        local pose: card_warp.Pose = pulled(1.35, 20.0)
+        local mesh: card_warp.Mesh = built(pose)
+        local resting: card_warp.Mesh = built(rest())
+        expect(carried(mesh, resting, far_corner())):toBeGreaterThan(
+            carried(mesh, resting, held_corner()))
+    end)
+
+    it("necks across the drag while the sheet is stretched along it", function(): unit
+        local stretched: f64 = width_across_drag(built(pulled(0.1, 40.0)))
+        expect(stretched):toBeLessThan(width_across_drag(built(rest())))
+    end)
+
+    it("necks on the whip too, where the sheet is stretched the other way", function(): unit
+        local whipped: f64 = width_across_drag(built(pulled(1.4, 40.0)))
+        expect(whipped):toBeLessThan(width_across_drag(built(rest())))
+    end)
+
+    it("refuses to stretch further than its limit however hard it is pulled", function(): unit
+        local pose: card_warp.Pose = pulled(0.0, 4000.0)
+        pose.stretch_limit = 1.2
+        local diagonal: f64 = math.sqrt(WIDTH * WIDTH + HEIGHT * HEIGHT)
+        expect(card_warp.limited_pull(pose)):toBeCloseTo(0.2 * diagonal, 6)
+    end)
+
+    it("leaves a pull inside the limit exactly as it was asked for", function(): unit
+        local pose: card_warp.Pose = pulled(0.0, 5.0)
+        pose.stretch_limit = 1.2
+        expect(card_warp.limited_pull(pose)):toBeCloseTo(5.0, 6)
+    end)
+
+    -- With the sheet level with the corner there is no gap to draw, and since
+    -- the pull cannot move the card either, the whole thing is a no-op. A
+    -- card that has caught up with its own corner has simply travelled, and
+    -- travelling is not this function's job.
+    it("does nothing at all once the sheet has fully caught up", function(): unit
+        local mesh: card_warp.Mesh = built(pulled(1.0, 60.0))
+        local resting: card_warp.Mesh = built(rest())
+        for index = 0::i32, card_warp.point_count(COLUMNS, ROWS) - 1 do
+            expect(mesh.xs[index]):toBeCloseTo(resting.xs[index], 6)
+            expect(mesh.ys[index]):toBeCloseTo(resting.ys[index], 6)
+        end
+    end)
+end)
+
+describe("squash and stretch", function(): unit
+    it("pays for length along the travel with width across it", function(): unit
+        local pose: card_warp.Pose = rest()
+        pose.axis_x = 0.0
+        pose.axis_y = 1.0
+        pose.axial = 1.25
+        local mesh: card_warp.Mesh = built(pose)
+        expect(mesh.ys[held_corner()] - mesh.ys[far_corner()]):toBeGreaterThan(HEIGHT)
+        expect(mesh.xs[held_corner()] - mesh.xs[far_corner()]):toBeLessThan(WIDTH)
+    end)
+
+    it("squashes the other way against a stop", function(): unit
+        local pose: card_warp.Pose = rest()
+        pose.axis_x = 0.0
+        pose.axis_y = 1.0
+        pose.axial = 0.8
+        local mesh: card_warp.Mesh = built(pose)
+        expect(mesh.ys[held_corner()] - mesh.ys[far_corner()]):toBeLessThan(HEIGHT)
+        expect(mesh.xs[held_corner()] - mesh.xs[far_corner()]):toBeGreaterThan(WIDTH)
+    end)
+end)
+
+describe("a card turning over", function(): unit
+    it("shows one face until it has gone a quarter turn, and the other after", function(): unit
+        local pose: card_warp.Pose = rest()
+        pose.flip = 1.2
+        expect(card_warp.facing_front(pose)):toBe(true)
+        pose.flip = 1.9
+        expect(card_warp.facing_front(pose)):toBe(false)
+        pose.flip = 3.4
+        expect(card_warp.facing_front(pose)):toBe(false)
+    end)
+
+    it("narrows to nothing edge on", function(): unit
+        local pose: card_warp.Pose = rest()
+        pose.flip = math.pi * 0.5
+        local mesh: card_warp.Mesh = built(pose)
+        expect(math.abs(mesh.xs[held_corner()] - mesh.xs[far_corner()])):toBeLessThan(1.0)
+    end)
+
+    -- The near edge of a turned card is taller on screen than the far edge.
+    -- Nothing affine can do this, and it is the whole reason a card here has
+    -- three dimensions instead of two.
+    it("brings the near edge closer than the far one", function(): unit
+        local pose: card_warp.Pose = rest()
+        pose.flip = 0.6
+        local mesh: card_warp.Mesh = built(pose)
+        local near: f64 = math.abs(mesh.ys[at(0, ROWS)] - mesh.ys[at(0, 0)])
+        local far: f64 = math.abs(mesh.ys[at(COLUMNS, ROWS)] - mesh.ys[at(COLUMNS, 0)])
+        expect(near):toBeGreaterThan(far)
+    end)
+
+    -- Leaning changes how square the card is to the light, so one direction
+    -- of lean has to dim it and the other has to lift it.
+    it("catches the light differently as it leans", function(): unit
+        local flat: f64 = built(rest()).shades[0]
+        local toward: card_warp.Pose = rest()
+        toward.tilt = 0.9
+        local away: card_warp.Pose = rest()
+        away.tilt = -0.9
+        local lit: f64 = built(toward).shades[0]
+        local dim: f64 = built(away).shades[0]
+        if lit < dim then
+            expect(lit):toBeLessThan(flat)
+            expect(dim):toBeGreaterThan(flat)
+        else
+            expect(dim):toBeLessThan(flat)
+            expect(lit):toBeGreaterThan(flat)
+        end
+    end)
+end)

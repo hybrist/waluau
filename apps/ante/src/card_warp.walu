@@ -1,0 +1,386 @@
+-- A card as a sheet in space rather than as a rectangle on a surface.
+--
+-- The board draws every card through one affine transform, which can move it,
+-- turn it, scale it and skew it — but an affine map keeps parallel edges
+-- parallel, so under it a card can never be pulled by one corner while the
+-- opposite corner stays put, can never bend, and can never foreshorten. This
+-- module holds a card's points in three dimensions instead, deforms them
+-- there, and projects each one through a single perspective divide on the way
+-- to logical pixels. The result is a grid of positions for draw_sprite_mesh.
+--
+-- Everything here is arithmetic on a pose; nothing touches the renderer, so
+-- what the deformation actually does to a card can be checked without a
+-- canvas. Where the beats of an animation come from is card_draw.walu's
+-- business, not this module's.
+
+-- How much of its area a sheet keeps while it stretches. Perfect preservation
+-- is what liquid does; a card is stiff, and a card that conserved area exactly
+-- would read as rubber. Four fifths keeps the weight and loses the toy.
+const AREA_PRESERVATION: f64 = 0.8
+
+-- The light every card here is lit by: over the viewer's left shoulder. The
+-- ambient term is chosen so a flat card facing the viewer shades to exactly
+-- 1.0, which is what lets a card at rest look untouched by any of this.
+const LIGHT_X: f64 = -0.35
+const LIGHT_Y: f64 = -0.55
+const LIGHT_Z: f64 = 0.757
+const DIFFUSE: f64 = 0.5
+
+-- An offset within the card's own plane, and a point in the space the card
+-- is deformed in. Card space runs x right, y down and z toward the viewer,
+-- which is the screen's own sense of direction with depth added to it.
+type Offset = { x: f64, y: f64 }
+type Space = { x: f64, y: f64, z: f64 }
+
+type Pose = {
+    -- The card's own size, in logical pixels.
+    width: f64,
+    height: f64,
+    -- Where the card's centre sits on screen. All bulk travel lives here, so
+    -- the deformation below is only ever about the card's shape.
+    center_x: f64,
+    center_y: f64,
+    -- Which corner is being held, in 0..1 card coordinates. The bottom right
+    -- corner is (1, 1).
+    grab_u: f64,
+    grab_v: f64,
+    -- How far the held corner leads the rest of the sheet, in logical pixels
+    -- of card space. This is not travel: it is the distance between where the
+    -- corner is and where the sheet would have put it.
+    pull_x: f64,
+    pull_y: f64,
+    pull_z: f64,
+    -- How much of that lead the rest of the sheet has taken on. Below one the
+    -- body trails the corner, which is the stretch. Above one it has passed
+    -- the corner, which is the whip on release. At exactly one the sheet is
+    -- undeformed, because every point has moved together.
+    follow: f64,
+    -- How tightly the pull concentrates at the held corner. Higher grip keeps
+    -- the far side of the card out of it for longer, and high enough turns the
+    -- stretch into a spike at one corner rather than a card being pulled.
+    grip: f64,
+    -- The longest the sheet may get, as a multiple of its rest diagonal. This
+    -- is the dial between a card with weight and a rubber toy; nothing else
+    -- in here matters half as much to whether the effect reads as cartoon.
+    stretch_limit: f64,
+    -- A scale along `axis` and, by area, the opposite across it. Travel uses
+    -- it to stretch into its own direction and to squash against a stop.
+    axis_x: f64,
+    axis_y: f64,
+    axial: f64,
+    -- Turn about the card's own vertical axis. Past a quarter turn the far
+    -- face is the one pointing at the viewer.
+    flip: f64,
+    -- Lean about the card's horizontal axis, and roll in the screen plane.
+    tilt: f64,
+    roll: f64,
+    -- Distance from the viewer to the card plane, in logical pixels. Smaller
+    -- values foreshorten harder.
+    focal: f64,
+    -- Overall size, which the hover breathes with.
+    scale: f64
+}
+
+-- The grid a pose is written into, kept across frames so a card being drawn
+-- sixty times a second is not sixty allocations. `xs` and `ys` are what
+-- draw_sprite_mesh takes; the three point arrays behind them hold the same
+-- points before they were projected, which is where the shading comes from.
+type Mesh = {
+    columns: i32,
+    rows: i32,
+    xs: {f64},
+    ys: {f64},
+    shades: {f64},
+    px: {f64},
+    py: {f64},
+    pz: {f64},
+    -- Whether the face pointing at the viewer is the front of the card. A
+    -- turning card samples a different texture the moment this changes.
+    front: bool
+}
+
+function rest_pose(width: f64, height: f64, center_x: f64, center_y: f64): Pose
+    return {
+        width = width,
+        height = height,
+        center_x = center_x,
+        center_y = center_y,
+        grab_u = 1.0,
+        grab_v = 1.0,
+        pull_x = 0.0,
+        pull_y = 0.0,
+        pull_z = 0.0,
+        follow = 1.0,
+        grip = 2.2,
+        stretch_limit = 1.26,
+        axis_x = 0.0,
+        axis_y = 1.0,
+        axial = 1.0,
+        flip = 0.0,
+        tilt = 0.0,
+        roll = 0.0,
+        focal = 900.0,
+        scale = 1.0
+    }
+end
+
+function point_count(columns: i32, rows: i32): i32
+    return (columns + 1) * (rows + 1)
+end
+
+function filled(count: i32): {f64}
+    local values: {f64} = {}
+    for _ = 0::i32, count - 1 do
+        table.insert(values, 0.0)
+    end
+    return values
+end
+
+function new_mesh(columns: i32, rows: i32): Mesh
+    local count: i32 = point_count(columns, rows)
+    return {
+        columns = columns,
+        rows = rows,
+        xs = filled(count),
+        ys = filled(count),
+        shades = filled(count),
+        px = filled(count),
+        py = filled(count),
+        pz = filled(count),
+        front = true
+    }
+end
+
+-- How far a point sits along the diagonal that runs to the held corner: one
+-- at the corner itself, zero at the corner opposite it, and a half at the two
+-- corners either side. Everything the pull does is a function of this.
+function grip_coordinate(pose: Pose, u: f64, v: f64): f64
+    local toward_u: f64 = math.abs(u - (1.0 - pose.grab_u))
+    local toward_v: f64 = math.abs(v - (1.0 - pose.grab_v))
+    return (toward_u + toward_v) * 0.5
+end
+
+-- The share of the corner's lead that reaches a point. At the held corner it
+-- is always exactly one, whatever the rest of the sheet is doing — the corner
+-- is where the hand is, so it is never the thing that lags or overshoots.
+function pull_weight(pose: Pose, u: f64, v: f64): f64
+    local along: f64 = grip_coordinate(pose, u, v)
+    return pose.follow + (1.0 - pose.follow) * (along ^ pose.grip)
+end
+
+-- The length of the lead once the stretch limit has had its say. The limit is
+-- a multiple of the rest diagonal, because the pull runs corner to corner.
+function limited_pull(pose: Pose): f64
+    local diagonal: f64 = math.sqrt(pose.width * pose.width + pose.height * pose.height)
+    local reach: f64 = math.sqrt(
+        pose.pull_x * pose.pull_x + pose.pull_y * pose.pull_y + pose.pull_z * pose.pull_z)
+    local spread: f64 = reach * math.abs(1.0 - pose.follow)
+    local allowed: f64 = (pose.stretch_limit - 1.0) * diagonal
+    if allowed <= 0.0 or spread <= allowed or reach <= 0.0 then return reach end
+    return reach * allowed / spread
+end
+
+-- How much longer the sheet has become along the pull, which is what it has
+-- to narrow across to pay for.
+function stretch_ratio(pose: Pose, reach: f64): f64
+    local diagonal: f64 = math.sqrt(pose.width * pose.width + pose.height * pose.height)
+    if diagonal <= 0.0 then return 1.0 end
+    return 1.0 + reach * math.abs(1.0 - pose.follow) / diagonal
+end
+
+-- Scales a card-space offset along an axis and across it independently.
+function scale_about_axis(
+    x: f64,
+    y: f64,
+    axis_x: f64,
+    axis_y: f64,
+    along_factor: f64,
+    across_factor: f64
+): Offset
+    local length: f64 = math.sqrt(axis_x * axis_x + axis_y * axis_y)
+    if length <= 0.0 then return { x = x, y = y } end
+    local ax: f64 = axis_x / length
+    local ay: f64 = axis_y / length
+    local along: f64 = (x * ax + y * ay) * along_factor
+    local across: f64 = (x * -ay + y * ax) * across_factor
+    return { x = along * ax + across * -ay, y = along * ay + across * ax }
+end
+
+-- Squash and stretch, once, for everything that needs it: what lengthens
+-- along a direction narrows across it. Travel stretches into its own
+-- direction and squashes against a stop this way; the pull pays for the
+-- length it gains the same way, through `narrow_across`.
+function apply_axial(x: f64, y: f64, axis_x: f64, axis_y: f64, amount: f64): Offset
+    if amount == 1.0 then return { x = x, y = y } end
+    return scale_about_axis(
+        x, y, axis_x, axis_y, amount, amount ^ (-AREA_PRESERVATION))
+end
+
+-- The narrowing alone. The pull has already lengthened the sheet by handing
+-- the held corner further than the rest of it, so charging it a second time
+-- along the axis would count that length twice.
+function narrow_across(x: f64, y: f64, axis_x: f64, axis_y: f64, amount: f64): Offset
+    if amount == 1.0 then return { x = x, y = y } end
+    return scale_about_axis(
+        x, y, axis_x, axis_y, 1.0, amount ^ (-AREA_PRESERVATION))
+end
+
+-- The average share of the lead across the sheet. Every point is displaced by
+-- its own share less this one, which is what keeps a pull from moving the
+-- card. Without it the sheet drifts along the drag as the pull grows and
+-- drifts back as it relaxes — the card leaves, returns to where it came from,
+-- and leaves again, which reads as backtracking rather than as a pull. Where
+-- the card is belongs to travel; the pull only ever changes its shape.
+function mean_pull_weight(pose: Pose, columns: i32, rows: i32): f64
+    local total: f64 = 0.0
+    for row = 0::i32, rows do
+        local v: f64 = (row::f64) / (rows::f64)
+        for column = 0::i32, columns do
+            total += pull_weight(pose, (column::f64) / (columns::f64), v)
+        end
+    end
+    return total / (point_count(columns, rows)::f64)
+end
+
+function place_point(
+    pose: Pose,
+    u: f64,
+    v: f64,
+    reach: f64,
+    narrowing: f64,
+    mean: f64
+): Space
+    local x: f64 = (u - 0.5) * pose.width
+    local y: f64 = (v - 0.5) * pose.height
+
+    -- The pull, shared out across the sheet, and the narrowing it owes. The
+    -- share is measured against the sheet's average, so the corner leading
+    -- and the body trailing are both movement relative to the card itself.
+    local share: f64 = pull_weight(pose, u, v) - mean
+    local scaled: f64 = 1.0
+    local total: f64 = math.sqrt(
+        pose.pull_x * pose.pull_x + pose.pull_y * pose.pull_y + pose.pull_z * pose.pull_z)
+    if total > 0.0 then scaled = reach / total end
+    local narrowed: Offset = narrow_across(
+        x, y, pose.pull_x * scaled, pose.pull_y * scaled, narrowing)
+    x = narrowed.x
+    y = narrowed.y
+    local z: f64 = pose.pull_z * scaled * share
+    x += pose.pull_x * scaled * share
+    y += pose.pull_y * scaled * share
+
+    -- Travel's own stretch, then the size the hover breathes at.
+    local shaped: Offset = apply_axial(x, y, pose.axis_x, pose.axis_y, pose.axial)
+    x = shaped.x * pose.scale
+    y = shaped.y * pose.scale
+    z *= pose.scale
+
+    -- Roll in the plane, then the two turns out of it.
+    local roll_cos: f64 = math.cos(pose.roll)
+    local roll_sin: f64 = math.sin(pose.roll)
+    local rolled_x: f64 = x * roll_cos - y * roll_sin
+    local rolled_y: f64 = x * roll_sin + y * roll_cos
+    local flip_cos: f64 = math.cos(pose.flip)
+    local flip_sin: f64 = math.sin(pose.flip)
+    local flipped_x: f64 = rolled_x * flip_cos + z * flip_sin
+    local flipped_z: f64 = z * flip_cos - rolled_x * flip_sin
+    local tilt_cos: f64 = math.cos(pose.tilt)
+    local tilt_sin: f64 = math.sin(pose.tilt)
+    local tilted_y: f64 = rolled_y * tilt_cos - flipped_z * tilt_sin
+    local tilted_z: f64 = flipped_z * tilt_cos + rolled_y * tilt_sin
+    return { x = flipped_x, y = tilted_y, z = tilted_z }
+end
+
+-- A point in card space to a point on the screen. Nearer is larger, which is
+-- the whole of the perspective: one divide, no depth buffer, no camera.
+function project_x(pose: Pose, point: Space): f64
+    local depth: f64 = pose.focal - point.z
+    if depth < 1.0 then depth = 1.0 end
+    return pose.center_x + point.x * pose.focal / depth
+end
+
+function project_y(pose: Pose, point: Space): f64
+    local depth: f64 = pose.focal - point.z
+    if depth < 1.0 then depth = 1.0 end
+    return pose.center_y + point.y * pose.focal / depth
+end
+
+-- The brightness of one grid point, from the surface it is part of. Both
+-- faces of a card are opaque and both catch the light, so what matters is how
+-- square the surface is to it and not which way it happens to point.
+function shade_at(mesh: Mesh, left: i32, right: i32, above: i32, below: i32): f64
+    local ux: f64 = mesh.px[right] - mesh.px[left]
+    local uy: f64 = mesh.py[right] - mesh.py[left]
+    local uz: f64 = mesh.pz[right] - mesh.pz[left]
+    local vx: f64 = mesh.px[below] - mesh.px[above]
+    local vy: f64 = mesh.py[below] - mesh.py[above]
+    local vz: f64 = mesh.pz[below] - mesh.pz[above]
+    local nx: f64 = uy * vz - uz * vy
+    local ny: f64 = uz * vx - ux * vz
+    local nz: f64 = ux * vy - uy * vx
+    local length: f64 = math.sqrt(nx * nx + ny * ny + nz * nz)
+    local ambient: f64 = 1.0 - DIFFUSE * LIGHT_Z
+    if length <= 0.0 then return ambient end
+    local facing: f64 = math.abs(
+        (nx * LIGHT_X + ny * LIGHT_Y + nz * LIGHT_Z) / length)
+    return ambient + DIFFUSE * facing
+end
+
+-- Writes a pose into a mesh: every point placed in space, then lit from the
+-- surface its neighbours describe, then projected. Lighting reads the placed
+-- points, which is why it is a second pass rather than part of the first.
+function build(mesh: Mesh, pose: Pose): unit
+    local columns: i32 = mesh.columns
+    local rows: i32 = mesh.rows
+    local stride: i32 = columns + 1
+    local reach: f64 = limited_pull(pose)
+    local narrowing: f64 = stretch_ratio(pose, reach)
+    local mean: f64 = mean_pull_weight(pose, columns, rows)
+    for row = 0::i32, rows do
+        local v: f64 = (row::f64) / (rows::f64)
+        for column = 0::i32, columns do
+            local u: f64 = (column::f64) / (columns::f64)
+            local point: Space = place_point(pose, u, v, reach, narrowing, mean)
+            local index: i32 = row * stride + column
+            mesh.px[index] = point.x
+            mesh.py[index] = point.y
+            mesh.pz[index] = point.z
+        end
+    end
+    for row = 0::i32, rows do
+        for column = 0::i32, columns do
+            local index: i32 = row * stride + column
+            local left: i32 = index - 1
+            local right: i32 = index + 1
+            if column == 0 then left = index end
+            if column == columns then right = index end
+            local above: i32 = index - stride
+            local below: i32 = index + stride
+            if row == 0 then above = index end
+            if row == rows then below = index end
+            mesh.shades[index] = shade_at(mesh, left, right, above, below)
+            local point: Space = { x = mesh.px[index], y = mesh.py[index], z = mesh.pz[index] }
+            mesh.xs[index] = project_x(pose, point)
+            mesh.ys[index] = project_y(pose, point)
+        end
+    end
+    mesh.front = facing_front(pose)
+end
+
+-- Which face the viewer is looking at. A quarter turn either way is where the
+-- card goes edge on and the other side comes into view.
+function facing_front(pose: Pose): bool
+    return math.cos(pose.flip) * math.cos(pose.tilt) >= 0.0
+end
+
+return {
+    rest_pose = rest_pose,
+    new_mesh = new_mesh,
+    point_count = point_count,
+    build = build,
+    facing_front = facing_front,
+    pull_weight = pull_weight,
+    grip_coordinate = grip_coordinate,
+    limited_pull = limited_pull,
+    stretch_ratio = stretch_ratio
+}
