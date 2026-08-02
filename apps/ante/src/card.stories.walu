@@ -437,7 +437,7 @@ storybook.publish({
         storybook.range("phase", 0, 0, 100, 1),
         -- How fast the throw plays, in hundredths of the authored clock.
         -- The hover is untouched; only the draw itself quickens.
-        storybook.range("speed", 100, 25, 300, 5),
+        storybook.range("speed", 130, 25, 300, 5),
         -- The one number that decides whether this reads as a card with
         -- weight or as a rubber toy.
         storybook.range("stretch", 160, 100, 200, 1),
