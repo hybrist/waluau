@@ -194,10 +194,13 @@ local function draw_fan(graphics: engine.Graphics, alpha: f64): unit
     end
 end
 
--- The draw: a sealed card pulled off the deck by its bottom right corner and
--- caught in the air. The card is a sheet of geometry here rather than a
+-- The draw: sealed cards thrown off the deck one after another, up off the
+-- surface, turned over past their own leading edge and dropped onto their
+-- spots in a row. Each card is a sheet of geometry here rather than a
 -- rectangle, so what happens to it is a corner leaving ahead of the rest of
--- the card and the rest of the card answering for it.
+-- the card and the rest of the card answering for it. The deal shares one
+-- clock: every card runs the same throw, offset by the stagger, and the
+-- throws overlap unless the stagger outlasts a whole throw.
 const DRAW_WIDTH = 760.0
 const DRAW_HEIGHT = 480.0
 -- Fine enough that a bend across the sheet is a curve and not a crease. Every
@@ -315,29 +318,68 @@ end
 -- Where the story's clock is: running, or held wherever the scrub control put
 -- it. Scrubbing is what a beat this short is actually judged in — which is
 -- also why the scrub does not cover the whole loop. Everything worth stepping
--- through happens in the first two thirds of a second, and a slider that
--- spent three quarters of its travel on the hover would be a slider that
--- cannot reach the whip.
+-- through happens before the card has settled, and a slider that spent three
+-- quarters of its travel on the hover would be a slider that cannot reach
+-- the turn.
 const SCRUB_TAIL = 0.35
 
-local function draw_clock(): f64
-    if storybook.arg_i32("playback") == 1 then
-        local scrubbed = card_draw.catch_end + SCRUB_TAIL
-        return scrubbed * (storybook.arg_i32("phase")::f64) / 100.0
-    end
-    local total = card_draw.total_seconds()
-    return shared.clock - math.floor(shared.clock / total) * total
+-- How fast the throw plays, against the clock it was authored on. The dial
+-- exists to answer one question — should the draw be quicker than it is —
+-- so it scales the throws and the deal's cadence, and the hover breathes at
+-- real time whatever the throw did.
+local function playback_rate(): f64
+    return (storybook.arg_i32("speed")::f64) / 100.0
 end
 
-local function drawing(): card_draw.Draw
+local function stagger_seconds(): f64
+    return (storybook.arg_i32("stagger")::f64) / 100.0
+end
+
+-- Where one card's own clock is. The deal shares a single story clock and
+-- card `index` starts a stagger later than the one before it — a stagger
+-- measured in the animation's own seconds, so the speed dial quickens the
+-- cadence of the deal along with the throws it spaces out. A card whose
+-- clock has not begun is not anywhere yet: it is still the top of the deck.
+local function card_clock(index: i32, count: i32): f64
+    local stagger = stagger_seconds()
+    if storybook.arg_i32("playback") == 1 then
+        local scrubbed = ((count - 1)::f64) * stagger
+            + card_draw.land_end + SCRUB_TAIL
+        return scrubbed * (storybook.arg_i32("phase")::f64) / 100.0
+            - (index::f64) * stagger
+    end
+    local rate = playback_rate()
+    local stagger_real = stagger / rate
+    local throw_real = card_draw.land_end / rate
+    local hover = card_draw.total_seconds() - card_draw.land_end
+    local total = ((count - 1)::f64) * stagger_real + throw_real + hover
+    local looped = shared.clock - math.floor(shared.clock / total) * total
+    local elapsed = looped - (index::f64) * stagger_real
+    if elapsed < throw_real then return elapsed * rate end
+    return card_draw.land_end + (elapsed - throw_real)
+end
+
+-- One card's throw. The slots make a row that keeps the same centre however
+-- many cards are dealt into it; which end fills first is the order dial's
+-- business, and only the slots care — the deal's clock is the same either
+-- way. The gap dial is the daylight between neighbouring cards, so zero is
+-- edges touching and negative is a row that overlaps like a loose hand.
+local function drawing(index: i32, count: i32): card_draw.Draw
+    local filled = index
+    if storybook.arg_i32("order") == 1 then filled = count - 1 - index end
+    local spacing = render.card_width + (storybook.arg_i32("gap")::f64)
+    local slot = ((filled::f64) - ((count - 1)::f64) * 0.5) * spacing
     return {
         from_x = DECK_X,
         from_y = DECK_Y,
-        to_x = CAUGHT_X,
+        to_x = CAUGHT_X + slot,
         to_y = CAUGHT_Y,
         width = render.card_width,
         height = render.card_height,
-        stretch_limit = (storybook.arg_i32("stretch")::f64) / 100.0
+        stretch_limit = (storybook.arg_i32("stretch")::f64) / 100.0,
+        overshoot = (storybook.arg_i32("overshoot")::f64) / 100.0,
+        rise = storybook.arg_i32("rise")::f64,
+        arc = storybook.arg_i32("arc")
     }
 end
 
@@ -345,33 +387,43 @@ local function draw_drawing(graphics: engine.Graphics, alpha: f64): unit
     ready(graphics)
     draw_deck(graphics)
     if not capture(graphics) then return end
-    local draw = drawing()
-    local clock = draw_clock()
+    local count = storybook.arg_i32("count")
+    for index = 0, count - 1 do
+        local clock = card_clock(index, count)
+        if clock >= 0.0 then
+            local draw = drawing(index, count)
 
-    -- The slam is the only beat fast enough to leave anything behind it, and
-    -- the ghosts are earlier states of the same sheet rather than smears of
-    -- the last frame — a stretched card trailing an unstretched copy of
-    -- itself is what gives the deformation away.
-    if card_draw.trails(clock) then
-        local offsets = card_draw.ghost_offsets()
-        for index = 0, #offsets - 1 do
-            local past = clock - offsets[index]
-            if card_draw.ghost_visible(past) then
-                draw_pose(
-                    graphics,
-                    card_draw.pose_at(draw, past),
-                    card_draw.shows_face(draw, past),
-                    0.16 + 0.1 * (index::f64)
-                )
+            -- The heart of the flight is the only stretch fast enough to
+            -- leave anything behind it, and the ghosts are earlier states of
+            -- the same sheet rather than smears of the last frame — a
+            -- stretched card trailing an unstretched copy of itself is what
+            -- gives the deformation away.
+            if card_draw.trails(clock) then
+                -- The offsets are frames of real time behind the card, so a
+                -- faster playback spaces the same ghosts further apart in
+                -- animation time — which is exactly how a faster throw would
+                -- leave longer trails.
+                local offsets = card_draw.ghost_offsets()
+                for ghost = 0, #offsets - 1 do
+                    local past = clock - offsets[ghost] * playback_rate()
+                    if card_draw.ghost_visible(past) then
+                        draw_pose(
+                            graphics,
+                            card_draw.pose_at(draw, past),
+                            card_draw.shows_face(draw, past),
+                            0.16 + 0.1 * (ghost::f64)
+                        )
+                    end
+                end
             end
+
+            local pose = card_draw.pose_at(draw, clock)
+            local hold = 0.0
+            if clock >= card_draw.flight_end then hold = 1.0 end
+            draw_hold(graphics, pose, hold)
+            draw_pose(graphics, pose, card_draw.shows_face(draw, clock), 1.0)
         end
     end
-
-    local pose = card_draw.pose_at(draw, clock)
-    local hold = 0.0
-    if clock >= card_draw.slam_end then hold = 1.0 end
-    draw_hold(graphics, pose, hold)
-    draw_pose(graphics, pose, card_draw.shows_face(draw, clock), 1.0)
 end
 
 -- A card story is one card on one small canvas; only the fan needs the board's
@@ -416,9 +468,33 @@ storybook.publish({
     }, {
         storybook.select("playback", 0, { "Loop", "Scrub" }),
         storybook.range("phase", 0, 0, 100, 1),
+        -- How fast the throw plays, in hundredths of the authored clock.
+        -- The hover is untouched; only the draw itself quickens.
+        storybook.range("speed", 130, 25, 300, 5),
+        -- How many cards the deck gives up, into a row that keeps its
+        -- centre however many there are.
+        storybook.range("count", 3, 1, 5, 1),
+        -- Which end of the row the deal fills first.
+        storybook.select("order", 0, { "Left first", "Right first" }),
+        -- The daylight between neighbouring landed cards, in logical pixels.
+        -- Zero is edges touching; negative overlaps the row.
+        storybook.range("gap", -5, -60, 40, 1),
+        -- The pause between one card leaving and the next, in hundredths of
+        -- a second of the animation's clock. Small values overlap the
+        -- throws; past the length of a whole throw the deal turns single
+        -- file.
+        storybook.range("stagger", 15, 0, 100, 5),
         -- The one number that decides whether this reads as a card with
         -- weight or as a rubber toy.
-        storybook.range("stretch", 118, 100, 160, 1),
+        storybook.range("stretch", 160, 100, 200, 1),
+        -- How far past its spot the throw carries the card, in hundredths of
+        -- the whole journey. Zero pulls up exactly on the mark.
+        storybook.range("overshoot", 30, 0, 40, 1),
+        -- The top of the arc, in logical pixels of depth toward the viewer.
+        storybook.range("rise", 270, 0, 400, 10),
+        -- When that top comes. The options are card_draw's arc shapes, in
+        -- the same order it declares them.
+        storybook.select("arc", 2, { "Even", "Late", "Very late", "Early" }),
     }),
     storybook.story("In the fan", {
         draw = draw_fan,

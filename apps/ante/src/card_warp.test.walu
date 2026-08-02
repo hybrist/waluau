@@ -209,6 +209,22 @@ describe("squash and stretch", function(): unit
     end)
 end)
 
+describe("a card off the surface", function(): unit
+    -- Rise is bulk height, so it may only do what nearness does under the
+    -- projection: the whole card grows, and nothing about its shape or its
+    -- light changes.
+    it("projects larger the nearer the viewer it gets", function(): unit
+        local raised: card_warp.Pose = rest()
+        raised.rise = 200.0
+        local mesh: card_warp.Mesh = built(raised)
+        expect(mesh.xs[held_corner()] - mesh.xs[far_corner()]):toBeGreaterThan(WIDTH)
+        expect(mesh.ys[held_corner()] - mesh.ys[far_corner()]):toBeGreaterThan(HEIGHT)
+        for index = 0::i32, card_warp.point_count(COLUMNS, ROWS) - 1 do
+            expect(mesh.shades[index]):toBeCloseTo(1.0, 6)
+        end
+    end)
+end)
+
 describe("a card turning over", function(): unit
     it("shows one face until it has gone a quarter turn, and the other after", function(): unit
         local pose: card_warp.Pose = rest()
