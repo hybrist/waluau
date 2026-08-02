@@ -80,10 +80,13 @@ pub struct DefinitionSite {
 }
 
 /// The statically chaseable shape of a local's initializer expression.
+///
+/// Every `base`/`callee`/`receiver` is a dotted path rooted at a name — `f`,
+/// `ns.f`, `m.State.new` — so a value reached through a module alias chases
+/// as readily as a local one.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InitializerHint {
-    /// `local x = f(...)` or `local x = ns.f(...)` — `callee` is `f` or
-    /// `ns.f`.
+    /// `local x = f(...)`, `local x = ns.f(...)`, `local x = m.T.new(...)`.
     Call { callee: String },
     /// `local x = recv:m(...)`.
     MethodCall { receiver: String, method: String },

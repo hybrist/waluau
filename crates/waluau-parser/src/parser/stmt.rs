@@ -28,43 +28,43 @@ fn literal_value_type(value: &Expr) -> Type {
     }
 }
 
+/// The dotted path an expression names — `m`, `game.new`, `m.State.new` —
+/// when every step is a plain field access rooted at a name. Tooling splits
+/// the path back apart, so nesting depth is not capped here.
+fn dotted_path(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Name(name, _, _) => Some(name.clone()),
+        Expr::Field { base, name, .. } => Some(format!("{}.{name}", dotted_path(base)?)),
+        _ => None,
+    }
+}
+
 /// The statically chaseable shape of an initializer expression, if any.
 fn initializer_hint(value: &Expr) -> Option<InitializerHint> {
-    let simple_name = |expr: &Expr| match expr {
-        Expr::Name(name, _, _) => Some(name.clone()),
-        _ => None,
-    };
     match value {
-        Expr::Call { callee, .. } => match callee.as_ref() {
-            Expr::Name(name, _, _) => Some(InitializerHint::Call {
-                callee: name.clone(),
-            }),
-            Expr::Field { base, name, .. } => simple_name(base).map(|base| InitializerHint::Call {
-                callee: format!("{base}.{name}"),
-            }),
-            _ => None,
-        },
+        Expr::Call { callee, .. } => {
+            dotted_path(callee).map(|callee| InitializerHint::Call { callee })
+        }
         Expr::MethodCall { receiver, name, .. } => {
-            simple_name(receiver).map(|receiver| InitializerHint::MethodCall {
+            dotted_path(receiver).map(|receiver| InitializerHint::MethodCall {
                 receiver,
                 method: name.clone(),
             })
         }
-        Expr::Field { base, name, .. } => simple_name(base).map(|base| InitializerHint::Field {
+        Expr::Field { base, name, .. } => dotted_path(base).map(|base| InitializerHint::Field {
             base,
             field: name.clone(),
             indexed: false,
         }),
         Expr::Index { base, .. } => match base.as_ref() {
-            Expr::Name(name, _, _) => Some(InitializerHint::Index { base: name.clone() }),
             Expr::Field {
                 base: inner, name, ..
-            } => simple_name(inner).map(|base| InitializerHint::Field {
+            } => dotted_path(inner).map(|base| InitializerHint::Field {
                 base,
                 field: name.clone(),
                 indexed: true,
             }),
-            _ => None,
+            other => dotted_path(other).map(|base| InitializerHint::Index { base }),
         },
         _ => None,
     }
