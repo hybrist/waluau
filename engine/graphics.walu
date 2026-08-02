@@ -450,19 +450,28 @@ function Graphics:push_float(value: f64): unit
     self.used += 1
 end
 
-function Graphics:emit_vertex_data(x: f64, y: f64, u: f64, v: f64, textured: f64): unit
+-- The shared emitter, with one brightness factor on the color channels. A
+-- mesh whose surface is not flat carries its lighting this way, per vertex,
+-- because the pixel shader already multiplies the vertex color into whatever
+-- it samples. Alpha keeps its own value: a shade darkens a surface, it does
+-- not make it see-through.
+function Graphics:emit_shaded_vertex(x: f64, y: f64, u: f64, v: f64, textured: f64, shade: f64): unit
     local base: i32 = #self.transforms - 6
     local world_x: f64 = self.transforms[base] * x + self.transforms[base + 2] * y + self.transforms[base + 4]
     local world_y: f64 = self.transforms[base + 1] * x + self.transforms[base + 3] * y + self.transforms[base + 5]
     self:push_float(world_x / self.draw_width * 2.0 - 1.0)
     self:push_float(1.0 - world_y / self.draw_height * 2.0)
-    self:push_float(self.red)
-    self:push_float(self.green)
-    self:push_float(self.blue)
+    self:push_float(self.red * shade)
+    self:push_float(self.green * shade)
+    self:push_float(self.blue * shade)
     self:push_float(self.alpha)
     self:push_float(u)
     self:push_float(v)
     self:push_float(textured)
+end
+
+function Graphics:emit_vertex_data(x: f64, y: f64, u: f64, v: f64, textured: f64): unit
+    self:emit_shaded_vertex(x, y, u, v, textured, 1.0)
 end
 
 function Graphics:emit_vertex(x: f64, y: f64): unit
@@ -918,6 +927,90 @@ end
 -- Consecutive sprites using the same texture remain in one vertex batch.
 function Graphics:draw_sprite(texture: Texture, x: f64, y: f64, width: f64, height: f64, source_x: f64, source_y: f64, source_width: f64, source_height: f64): bool
     return self:draw_sprite_region(texture, x, y, width, height, source_x, source_y, source_width, source_height)
+end
+
+-- One grid point of a mesh: it carries the position the caller shaped it into,
+-- its own place in the source region as a UV, and its own brightness.
+function emit_mesh_vertex(
+    graphics: Graphics,
+    index: i32,
+    xs: {f64},
+    ys: {f64},
+    shades: {f64},
+    lit: bool,
+    u: f64,
+    v: f64
+): unit
+    local shade: f64 = 1.0
+    if lit then shade = shades[index] end
+    graphics:emit_shaded_vertex(xs[index], ys[index], u, v, 1.0, shade)
+end
+
+-- Draws a texture across a grid the caller has shaped. `xs` and `ys` hold one
+-- logical-pixel position per grid point, row-major, (columns + 1) across and
+-- (rows + 1) down; `shades` holds one brightness each, or nothing at all for a
+-- mesh that wants none. Every point's UV comes from its own place in the
+-- source region.
+--
+-- This is how a sprite that is not an affine image of itself reaches the
+-- screen. The transform stack can move, turn, scale and skew a sprite, but it
+-- keeps parallel edges parallel — so a corner pulled away from its neighbours,
+-- a bend running across a surface, or a face turned far enough to foreshorten
+-- has to arrive already shaped, as geometry. Cells use the same two-triangle
+-- split every quad here uses and reach the same batch as every other
+-- primitive; a mesh too large for one batch splits across a flush, which is
+-- invisible because nothing about the draw state changes between its cells.
+function Graphics:draw_sprite_mesh(
+    texture: Texture,
+    columns: i32,
+    rows: i32,
+    xs: {f64},
+    ys: {f64},
+    shades: {f64},
+    source_x: f64,
+    source_y: f64,
+    source_width: f64,
+    source_height: f64
+): bool
+    if texture.released or texture.width <= 0 or texture.height <= 0 then return false end
+    if columns < 1 or rows < 1 then return false end
+    local stride: i32 = columns + 1
+    local points: i32 = stride * (rows + 1)
+    if #xs < points or #ys < points then return false end
+    if not self:bind_sprite_texture(texture.handle) then return false end
+    local lit: bool = #shades >= points
+    local u_origin: f64 = source_x / (texture.width::f64)
+    local u_span: f64 = source_width / (texture.width::f64)
+    local v_origin: f64 = source_y / (texture.height::f64)
+    local v_span: f64 = source_height / (texture.height::f64)
+    -- Framebuffer storage keeps the logical top at v=1, the same inversion
+    -- draw_sprite_region applies to its two corners.
+    if texture.flip_v then
+        v_origin = 1.0 - v_origin
+        v_span = -v_span
+    end
+    for row = 0::i32, rows - 1 do
+        local top: f64 = v_origin + v_span * ((row::f64) / (rows::f64))
+        local bottom: f64 = v_origin + v_span * (((row + 1)::f64) / (rows::f64))
+        local top_row: i32 = row * stride
+        local bottom_row: i32 = top_row + stride
+        for column = 0::i32, columns - 1 do
+            local left: f64 = u_origin + u_span * ((column::f64) / (columns::f64))
+            local right: f64 = u_origin + u_span * (((column + 1)::f64) / (columns::f64))
+            local top_left: i32 = top_row + column
+            local top_right: i32 = top_left + 1
+            local bottom_left: i32 = bottom_row + column
+            local bottom_right: i32 = bottom_left + 1
+            self:ensure_capacity(6)
+            emit_mesh_vertex(self, top_left, xs, ys, shades, lit, left, top)
+            emit_mesh_vertex(self, top_right, xs, ys, shades, lit, right, top)
+            emit_mesh_vertex(self, bottom_right, xs, ys, shades, lit, right, bottom)
+            emit_mesh_vertex(self, top_left, xs, ys, shades, lit, left, top)
+            emit_mesh_vertex(self, bottom_right, xs, ys, shades, lit, right, bottom)
+            emit_mesh_vertex(self, bottom_left, xs, ys, shades, lit, left, bottom)
+        end
+    end
+    return true
 end
 
 function Graphics:draw_image(texture: Texture, x: f64, y: f64): bool
