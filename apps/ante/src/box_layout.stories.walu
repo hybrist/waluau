@@ -1,0 +1,275 @@
+-- Visual laboratory for the intrinsic box solver. These stories deliberately
+-- use synthetic leaves instead of Ante cards, menus, or shop rows: the layout
+-- system can be tuned and understood before any live game code adopts it.
+
+local storybook = require("waluau:engine/storybook")
+local engine = require("waluau:engine")
+local layout = require("./box_layout")
+
+const WIDTH: u32 = 820
+const HEIGHT: u32 = 500
+const BACKGROUND: string = "#09090b"
+const ROOT_KEY: i32 = 9000
+const LABEL_KEY: i32 = 1000
+const BUTTON_KEY: i32 = 2000
+
+local COLORS: {string} = {
+    "#38bdf8", "#a78bfa", "#4ade80", "#fbbf24",
+    "#fb7185", "#22d3ee", "#c084fc", "#f97316",
+}
+
+function padding(horizontal: f64, vertical: f64): layout.Edges
+    return {
+        left = horizontal,
+        top = vertical,
+        right = horizontal,
+        bottom = vertical,
+    }
+end
+
+function measured(
+    min_width: f64, preferred_width: f64, max_width: f64,
+    min_height: f64, preferred_height: f64, max_height: f64,
+    baseline: f64
+): layout.Intrinsic
+    return {
+        min_width = min_width,
+        preferred_width = preferred_width,
+        max_width = max_width,
+        min_height = min_height,
+        preferred_height = preferred_height,
+        max_height = max_height,
+        baseline = baseline,
+    }
+end
+
+function color_for(key: i32): string
+    local index: i32 = key
+    if index >= BUTTON_KEY then index -= BUTTON_KEY
+    elseif index >= LABEL_KEY then index -= LABEL_KEY end
+    if index < 0 then index = 0 end
+    return COLORS[index % #COLORS]
+end
+
+function draw_text(graphics: engine.Graphics, value: string, x: f64, y: f64, size: i32, color: string): unit
+    graphics:set_font(tostring(size) .. "px monospace")
+    graphics:set_color(color)
+    graphics:print(value, x, y)
+end
+
+function draw_result(
+    graphics: engine.Graphics,
+    result: layout.Result,
+    bounds: layout.Rect,
+    title: string,
+    detail: string
+): unit
+    graphics:set_line_width(1.0)
+    graphics:set_color("#52525b")
+    graphics:stroke_rectangle(bounds.x, bounds.y, bounds.width, bounds.height)
+
+    for item in result.frames do
+        local rect: layout.Rect = item.rect
+        if item.key == ROOT_KEY then
+            graphics:set_color("#18181b")
+            graphics:fill_rectangle(rect.x, rect.y, rect.width, rect.height)
+            graphics:set_color("#71717a")
+        elseif item.key >= BUTTON_KEY then
+            graphics:set_color("#18181b")
+            graphics:fill_rectangle(rect.x, rect.y, rect.width, rect.height)
+            graphics:set_color(color_for(item.key))
+        else
+            local color: string = color_for(item.key)
+            graphics:set_color(color .. "33")
+            graphics:fill_rectangle(rect.x, rect.y, rect.width, rect.height)
+            graphics:set_color(color)
+        end
+        graphics:stroke_rectangle(rect.x, rect.y, rect.width, rect.height)
+        if item.key ~= ROOT_KEY then
+            draw_text(
+                graphics, tostring(item.key), rect.x + 6.0, rect.y + 16.0,
+                10, "#e4e4e7")
+        end
+    end
+
+    draw_text(graphics, title, 34.0, 34.0, 20, "#f4f4f5")
+    draw_text(graphics, detail, 34.0, 56.0, 11, "#a1a1aa")
+    local measured_root: layout.Frame? = layout.frame(result, ROOT_KEY)
+    if measured_root ~= nil then
+        local status: string = "FITS"
+        local ink: string = "#4ade80"
+        if result.overflowed then
+            status = "OVERFLOW  X " .. tostring(result.overflow_x)
+                .. "  Y " .. tostring(result.overflow_y)
+            ink = "#fb7185"
+        end
+        draw_text(graphics, status, 34.0, 480.0, 11, ink)
+    end
+end
+
+function row_leaf(tree: layout.Tree, index: i32): i32
+    local preferred_width: f64 = 52.0 + ((index % 3)::f64) * 18.0
+    local preferred_height: f64 = 48.0 + ((index % 2)::f64) * 18.0
+    local intrinsic: layout.Intrinsic = measured(
+        34.0, preferred_width, 132.0,
+        34.0, preferred_height, 92.0,
+        preferred_height - 10.0)
+    return tree:flex(tree:leaf(index, intrinsic), 1.0 + ((index % 3)::f64), 1.0)
+end
+
+function draw_intrinsic_row(graphics: engine.Graphics, alpha: f64): unit
+    local count: i32 = storybook.arg_i32("count")
+    local tree: layout.Tree = layout.new()
+    local children: {i32} = {}
+    for index = 0::i32, count - 1 do table.insert(children, row_leaf(tree, index)) end
+    local root: i32 = tree:flow(ROOT_KEY, children, {
+        axis = layout.axis_row,
+        gap = storybook.arg_i32("gap")::f64,
+        justify = storybook.arg_i32("justify"),
+        align = storybook.arg_i32("align"),
+        padding = padding(
+            storybook.arg_i32("padding_x")::f64,
+            storybook.arg_i32("padding_y")::f64),
+    })
+    local available_width: f64 = storybook.arg_i32("width")::f64
+    local bounds: layout.Rect = {
+        x = ((WIDTH::f64) - available_width) * 0.5,
+        y = 112.0,
+        width = available_width,
+        height = 220.0,
+    }
+    local result: layout.Result = tree:solve(root, bounds)
+    local natural: layout.Intrinsic = tree:measure(root)
+    draw_result(
+        graphics, result, bounds,
+        "INTRINSIC ROW",
+        "NATURAL " .. tostring(natural.preferred_width)
+            .. " x " .. tostring(natural.preferred_height)
+            .. "   AVAILABLE " .. tostring(available_width))
+end
+
+function menu_button(
+    tree: layout.Tree, index: i32, padding_x: f64, padding_y: f64
+): i32
+    -- The label owns its text-like intrinsic measurement. Its button derives
+    -- everything else by wrapping that leaf in a padded one-child flow.
+    local label_width: f64 = 92.0 + ((index % 3)::f64) * 38.0
+    local label: i32 = tree:leaf(
+        LABEL_KEY + index,
+        measured(label_width, label_width, label_width, 18.0, 18.0, 18.0, 14.0))
+    return tree:flow(BUTTON_KEY + index, { label }, {
+        axis = layout.axis_row,
+        gap = 0.0,
+        justify = layout.justify_center,
+        align = layout.align_baseline,
+        padding = padding(padding_x, padding_y),
+    })
+end
+
+function draw_nested_menu(graphics: engine.Graphics, alpha: f64): unit
+    local count: i32 = storybook.arg_i32("count")
+    local padding_x: f64 = storybook.arg_i32("padding_x")::f64
+    local padding_y: f64 = storybook.arg_i32("padding_y")::f64
+    local tree: layout.Tree = layout.new()
+    local buttons: {i32} = {}
+    for index = 0::i32, count - 1 do
+        table.insert(buttons, menu_button(tree, index, padding_x, padding_y))
+    end
+    local root: i32 = tree:flow(ROOT_KEY, buttons, {
+        axis = layout.axis_column,
+        gap = storybook.arg_i32("gap")::f64,
+        justify = storybook.arg_i32("justify"),
+        align = storybook.arg_i32("align"),
+        padding = padding(18.0, 18.0),
+    })
+    local available_width: f64 = storybook.arg_i32("width")::f64
+    local bounds: layout.Rect = {
+        x = ((WIDTH::f64) - available_width) * 0.5,
+        y = 92.0,
+        width = available_width,
+        height = 330.0,
+    }
+    local result: layout.Result = tree:solve(root, bounds)
+    local natural: layout.Intrinsic = tree:measure(root)
+    draw_result(
+        graphics, result, bounds,
+        "NESTED MENU",
+        "LABEL -> PADDED BUTTON -> COLUMN   NATURAL "
+            .. tostring(natural.preferred_width) .. " x "
+            .. tostring(natural.preferred_height))
+end
+
+function draw_flex_pressure(graphics: engine.Graphics, alpha: f64): unit
+    local tree: layout.Tree = layout.new()
+    local first: i32 = tree:flex(tree:leaf(0, measured(
+        64.0, 150.0, 320.0, 70.0, 70.0, 70.0, 52.0)),
+        storybook.arg_i32("grow_a")::f64, 1.0)
+    local second: i32 = tree:flex(tree:leaf(1, measured(
+        64.0, 150.0, 320.0, 70.0, 70.0, 70.0, 52.0)),
+        storybook.arg_i32("grow_b")::f64, 1.0)
+    local root: i32 = tree:flow(ROOT_KEY, { first, second }, {
+        axis = layout.axis_row,
+        gap = storybook.arg_i32("gap")::f64,
+        justify = layout.justify_center,
+        align = layout.align_center,
+        padding = padding(
+            storybook.arg_i32("padding_x")::f64,
+            storybook.arg_i32("padding_y")::f64),
+    })
+    local available_width: f64 = storybook.arg_i32("width")::f64
+    local bounds: layout.Rect = {
+        x = ((WIDTH::f64) - available_width) * 0.5,
+        y = 140.0,
+        width = available_width,
+        height = 180.0,
+    }
+    local result: layout.Result = tree:solve(root, bounds)
+    draw_result(
+        graphics, result, bounds,
+        "GROW / SHRINK / OVERFLOW",
+        "EACH LEAF: MIN 64   PREFERRED 150   MAX 320")
+end
+
+storybook.publish({
+    storybook.story("Intrinsic row", {
+        draw = draw_intrinsic_row,
+        width = WIDTH,
+        height = HEIGHT,
+        background = BACKGROUND,
+    }, {
+        storybook.range("count", 5, 1, 8, 1),
+        storybook.range("width", 600, 180, 760, 10),
+        storybook.range("gap", 12, -30, 48, 2),
+        storybook.range("padding_x", 20, 0, 64, 2),
+        storybook.range("padding_y", 16, 0, 48, 2),
+        storybook.select("justify", 1, { "Start", "Center", "End", "Space between" }),
+        storybook.select("align", 1, { "Start", "Center", "End", "Stretch", "Baseline" }),
+    }),
+    storybook.story("Nested menu", {
+        draw = draw_nested_menu,
+        width = WIDTH,
+        height = HEIGHT,
+        background = BACKGROUND,
+    }, {
+        storybook.range("count", 4, 1, 6, 1),
+        storybook.range("width", 430, 180, 720, 10),
+        storybook.range("gap", 12, -12, 36, 2),
+        storybook.range("padding_x", 28, 0, 72, 2),
+        storybook.range("padding_y", 14, 0, 40, 2),
+        storybook.select("justify", 1, { "Start", "Center", "End", "Space between" }),
+        storybook.select("align", 1, { "Start", "Center", "End", "Stretch" }),
+    }),
+    storybook.story("Flex pressure", {
+        draw = draw_flex_pressure,
+        width = WIDTH,
+        height = HEIGHT,
+        background = BACKGROUND,
+    }, {
+        storybook.range("width", 420, 100, 760, 10),
+        storybook.range("gap", 16, -40, 64, 2),
+        storybook.range("padding_x", 20, 0, 80, 2),
+        storybook.range("padding_y", 18, 0, 48, 2),
+        storybook.range("grow_a", 1, 0, 5, 1),
+        storybook.range("grow_b", 2, 0, 5, 1),
+    }),
+})
