@@ -112,7 +112,7 @@ function row_leaf(tree: layout.Tree, index: i32): i32
     local preferred_height: f64 = 48.0 + ((index % 2)::f64) * 18.0
     local intrinsic: layout.Intrinsic = measured(
         34.0, preferred_width, 132.0,
-        34.0, preferred_height, 92.0,
+        preferred_height, preferred_height, 92.0,
         preferred_height - 10.0)
     return tree:flex(tree:leaf(index, intrinsic), 1.0 + ((index % 3)::f64), 1.0)
 end
