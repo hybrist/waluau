@@ -1791,9 +1791,9 @@ mod tests {
     }
 
     #[test]
-    fn compiles_arcane_heist_game_engine_fixture() {
+    fn compiles_ante_magic_game_engine_fixture() {
         super::compile_file(&app_path("ante/src/main.walu"))
-            .expect("Arcane Heist game engine fixture should compile");
+            .expect("Ante Magic game engine fixture should compile");
     }
 
     #[test]

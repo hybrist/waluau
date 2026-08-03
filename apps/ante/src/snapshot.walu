@@ -1,4 +1,4 @@
--- Shared framing and primitive validation for Arcane Heist development
+-- Shared framing and primitive validation for Ante Magic development
 -- snapshots. Rules and presentation modules keep ownership of their fields;
 -- this module owns the token format both use.
 

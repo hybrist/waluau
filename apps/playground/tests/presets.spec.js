@@ -190,7 +190,7 @@ test.describe('preset selector', () => {
     });
   });
 
-  test('file search finds the Arcane Heist entry and loads the preset', async ({ page }) => {
+  test('file search finds the Ante Magic entry and loads the preset', async ({ page }) => {
     await page.getByRole('button', { name: 'Search (Cmd+P)' }).click();
     await page.locator('.search-input-field').fill('poker-tricks');
 
@@ -201,7 +201,7 @@ test.describe('preset selector', () => {
     await expect(page.locator('.file-item.active')).toContainText(
       'fixtures/poker-tricks/main.walu',
     );
-    await expect(page.locator('.code-textarea')).toContainText('function install_arcane_heist');
+    await expect(page.locator('.code-textarea')).toContainText('function install_ante_magic');
     await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
       timeout: COMPILER_READY_TIMEOUT,
     });

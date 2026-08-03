@@ -204,7 +204,7 @@ function draw(state: State, viewport: layout.State, graphics: engine.Graphics, e
         draw_spell_stage(state, viewport, graphics)
         return
     end
-    render.text_centered(graphics, "ARCANE HEIST", viewport.center_x, heading_y, 52, "#fbbf24")
+    render.text_centered(graphics, "ANTE MAGIC", viewport.center_x, heading_y, 52, "#fbbf24")
     render.text_centered(
         graphics, "VAULT AFTER VAULT ON ONE POOL OF MANA. FIVE BREACHES EACH",
         viewport.center_x, heading_y + 40.0, 12, "#d4d4d8")

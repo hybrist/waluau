@@ -213,7 +213,7 @@ export default function useFiles() {
       });
     }
 
-    // 5. Arcane Heist fixture files
+    // 5. Ante Magic fixture files
     for (const [path, source] of Object.entries(pokerTricksFixtures)) {
       const filename = path.slice('/fixtures/poker-tricks/'.length);
       items.push({

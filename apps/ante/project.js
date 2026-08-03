@@ -1,4 +1,4 @@
-// Stable project interface for hosts that embed Arcane Heist from source.
+// Stable project interface for hosts that embed Ante Magic from source.
 // Callers choose a logical root; this adapter owns production-module discovery
 // so adding, removing, or reorganizing internal Waluau modules does not require
 // updates across conformance and playground consumers.

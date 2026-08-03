@@ -1,4 +1,4 @@
-// The Arcane Heist example, defined independently of the playground UI so the
+// The Ante Magic example, defined independently of the playground UI so the
 // standalone /output/poker-tricks page can render it without pulling in the
 // editor, the preset list, or the rest of the fixtures.
 
@@ -24,7 +24,7 @@ const anteProject = createAnteProject('/fixtures/poker-tricks');
 
 export const POKER_TRICKS_EXAMPLE = {
   key: 'poker-tricks',
-  label: 'Arcane Heist',
+  label: 'Ante Magic',
   files: {
     ...filesUnder(engineModules, '/engine'),
     ...anteProject.files,

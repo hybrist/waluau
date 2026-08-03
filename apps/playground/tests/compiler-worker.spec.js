@@ -33,7 +33,7 @@ test('complex project analysis runs in a dedicated worker without starving the U
     }, interval);
   });
 
-  await page.getByRole('button', { name: 'Arcane Heist' }).click();
+  await page.getByRole('button', { name: 'Ante Magic' }).click();
   await expect(page.locator('.status-text')).toHaveText('Compilation Succeeded', {
     timeout: COMPILER_READY_TIMEOUT,
   });
