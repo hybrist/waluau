@@ -7,7 +7,6 @@ local storybook = require("waluau:engine/storybook")
 local engine = require("waluau:engine")
 local graphics_module = require("waluau:engine/graphics")
 local game = require("./game")
-local layout = require("./layout")
 local render = require("./render")
 local card_warp = require("./card_warp")
 local card_draw = require("./card_draw")
@@ -189,40 +188,6 @@ local function draw_turning(graphics: engine.Graphics, alpha: f64): unit
         0.35,
         false
     )
-end
-
--- The player's fan, which is where a relic is normally seen: tilted, lifted
--- when bound, and amber where the cursor sits. The fan reads its geometry
--- off the live viewport layout exactly as the board does, so this story
--- runs the real pipeline: measure the stage, then draw under the unit scale
--- the layout derived for it.
-const FAN_COUNT: i32 = 5
-
-local function draw_fan(graphics: engine.Graphics, alpha: f64): unit
-    ready(graphics)
-    layout.update(graphics.width, graphics.height)
-    local viewport = layout.current()
-    graphics:push()
-    graphics:scale(viewport.scale, viewport.scale)
-    local hand = {
-        card(14, 0), card(13, 1), card(9, 2), card(6, 3), card(3, 0)
-    }
-    for index = 0, FAN_COUNT - 1 do
-        render.draw_hand_card(
-            graphics,
-            assets.effects,
-            assets.texture,
-            hand[index],
-            index,
-            1.0,
-            FAN_COUNT,
-            index == 1,
-            index == 2,
-            false,
-            false
-        )
-    end
-    graphics:pop()
 end
 
 -- The draw: sealed cards thrown off the deck one after another, up off the
@@ -526,15 +491,5 @@ storybook.publish({
         -- When that top comes. The options are card_draw's arc shapes, in
         -- the same order it declares them.
         storybook.select("arc", 2, { "Even", "Late", "Very late", "Early" }),
-    }),
-    storybook.story("In the fan", {
-        draw = draw_fan,
-        load = load,
-        update = tick,
-        -- A fullscreen-ish stage. Any size works: the story derives the
-        -- fan's geometry from whatever stage it is given, like the game.
-        width = 1152,
-        height = 720,
-        background = BACKGROUND
     }),
 })
