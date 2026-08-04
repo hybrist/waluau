@@ -9,6 +9,7 @@ local burn_particles = require("./burn_particles")
 local spell_cast = require("./spell_cast")
 local spell_launch = require("./spell_launch")
 local game = require("./game")
+local run_module = require("./run")
 local layout = require("./layout")
 local card_warp = require("./card_warp")
 local card_draw = require("./card_draw")
@@ -406,7 +407,21 @@ type RunView = {
     cleared: i32,
     boss: bool,
     next_is_boss: bool,
-    carried_mana: i32
+    carried_mana: i32,
+    -- What clearing this vault costs, and how many the authored curve runs to.
+    -- The ante is legible on the board it is owed from rather than only on the
+    -- screen that charges it: a toll nobody can see while there is still time
+    -- to make it is a trap, not a difficulty.
+    ante: i32,
+    -- What the vault after this one will ask for, so the verdict that offers
+    -- the fence says what the shopping is being done against.
+    ante_ahead: i32,
+    run_length: i32,
+    -- What the fought vault turned out to be, as `run.outcome_of` reads it, or
+    -- `outcome_none` while it is still live. The verdict screen branches on
+    -- this rather than re-deciding from the board, so what it says and what
+    -- the run then does are the same answer.
+    outcome: i32
 }
 type Motion = {
     fan_parts: {f64},
@@ -1237,21 +1252,32 @@ function draw_round_orbs(graphics: Graphics, state: game.View): unit
     end
 end
 
--- The run marker under the title: which vault of the sequence the robbers are
--- standing in, how many they have already taken, and whether this is one of
--- the boss battles the run lands on every third vault. Boss vaults wear the
--- warning ink so the shrinking fan is never a surprise.
+-- The run marker under the title: how far along the sequence the robbers are
+-- standing, and whether this is one of the boss battles the run lands on every
+-- third vault. Boss vaults wear the warning ink so the shrinking fan is never a
+-- surprise, and the last vault of the table wears it too.
+--
+-- Past that vault the denominator would be a lie — the city keeps going — so a
+-- run walking on says so instead, and counts what it has taken.
 function draw_run_marker(graphics: Graphics, run: RunView): unit
     -- Spaces rather than a dash: the vault font has no em dash glyph, so a
     -- separator written as one renders as a gap anyway.
     local label: string = "VAULT " .. tostring(run.vault)
     local ink: string = "#155e75"
-    if run.boss then
-        label = label .. "   BOSS"
+    if run.vault > run.run_length then
+        label = label .. "   ENDLESS   CLEARED " .. tostring(run.cleared)
         ink = "#b45309"
+    else
+        label = label .. " / " .. tostring(run.run_length)
+        if run.vault == run.run_length then
+            label = label .. "   FINAL VAULT"
+            ink = "#b45309"
+        elseif run.boss then
+            label = label .. "   BOSS"
+            ink = "#b45309"
+        end
     end
-    text(graphics, label .. "   CLEARED " .. tostring(run.cleared),
-        32.0, 64.0, 9, ink)
+    text(graphics, label, 32.0, 64.0, 9, ink)
 end
 
 function draw_hud(graphics: Graphics, state: game.View, run: RunView): unit
@@ -1259,11 +1285,17 @@ function draw_hud(graphics: Graphics, state: game.View, run: RunView): unit
     text(graphics, "ANTE MAGIC", 32.0, 47.0, 22, "#fbbf24")
     draw_run_marker(graphics, run)
     draw_round_orbs(graphics, state)
+    -- The mana on hand against the ante it owes, and the one glance that says
+    -- whether the vault is being fought from above water or below it: the pile
+    -- turns to warning ink the moment it stops covering what leaving costs.
+    local ink: string = "#67e8f9"
+    if state.player_points < run.ante then ink = "#fb7185" end
     local score: string = tostring(state.player_points)
     graphics:set_font("22px monospace")
-    graphics:set_color("#67e8f9")
+    graphics:set_color(ink)
     graphics:print_aligned(score, right, 47.0, "right")
-    text_right(graphics, "MANA", right, 64.0, 9, "#155e75")
+    text_right(
+        graphics, "MANA   ANTE " .. tostring(run.ante), right, 64.0, 9, "#155e75")
 end
 
 -- One cast hint per spell the robbers carry, each on the key that casts it and
@@ -2514,7 +2546,7 @@ function draw_help(graphics: Graphics, effects: EffectShaders): unit
     -- Arch Mage actually wins end the vault early.
     modal_shell(
         graphics, "THE JOB",
-        "SURVIVE FIVE BREACHES PER VAULT. THREE ARCH MAGE WINS END THE RUN")
+        "SURVIVE FIVE BREACHES, THEN PAY THE ANTE TO WALK OUT")
     -- Four equal school tiles form one row centred on the modal. Each dark
     -- field uses that school's live shader before its ordinary sigil and name
     -- are drawn on top, so the help legend demonstrates both halves of the
@@ -2550,18 +2582,23 @@ function draw_help(graphics: Graphics, effects: EffectShaders): unit
     text(graphics, "1. FEINT", 126.0, 270.0, 16, "#67e8f9")
     text(graphics, "BIND UP TO 3 RELICS AND THE SAME NUMBER OF WARDS.", 126.0, 296.0, 11, "#d4d4d8")
     text(graphics, "EACH CARD RISKS 1 MANA. PRESS P TO PASS.", 126.0, 318.0, 11, "#d4d4d8")
-    text(graphics, "2. BREACH", 126.0, 356.0, 16, "#67e8f9")
-    text(graphics, "BIND 2 RELICS. THE STRONGEST FIVE-SIGIL FORMATION WINS.", 126.0, 382.0, 11, "#d4d4d8")
-    text(graphics, "LATER BREACHES ARE WORTH MORE MANA. IT CARRIES TO THE NEXT VAULT.", 126.0, 404.0, 11, "#d4d4d8")
-    draw_orb(graphics, 133.0, 436.0, ORB_ROBBERS_EDGE, ORB_ROBBERS_FILL, true)
-    text(graphics, "WIN", 148.0, 440.0, 11, "#d4d4d8")
-    draw_orb(graphics, 225.0, 436.0, ORB_ARCH_MAGE_EDGE, ORB_ARCH_MAGE_FILL, true)
-    text(graphics, "LOSS", 240.0, 440.0, 11, "#d4d4d8")
-    draw_orb(graphics, 330.0, 436.0, ORB_STALEMATE_EDGE, ORB_STALEMATE_FILL, true)
-    text(graphics, "TIE", 345.0, 440.0, 11, "#d4d4d8")
-    text(graphics, "ARROWS MOVE   SPACE BIND   ENTER COMMIT   H HISTORY", 126.0, 474.0, 11, "#fbbf24")
-    text(graphics, "C SORT BY COLOR   V SORT BY RANK   1 AND 2 CAST SPELLS", 126.0, 498.0, 11, "#fbbf24")
-    text(graphics, "MOUSE: HOVER FOCUSES   CLICK BINDS   BUTTONS COMMIT OR PASS", 126.0, 522.0, 11, "#fbbf24")
+    text(graphics, "2. BREACH", 126.0, 348.0, 16, "#67e8f9")
+    text(graphics, "BIND 2 RELICS. THE STRONGEST FIVE-SIGIL FORMATION WINS.", 126.0, 374.0, 11, "#d4d4d8")
+    text(graphics, "LATER BREACHES ARE WORTH MORE MANA. THREE ARCH MAGE WINS END THE RUN.", 126.0, 396.0, 11, "#d4d4d8")
+    -- The shell is a fixed 776x476 and the controls below are pinned to its
+    -- foot, so the ante's line is bought by tightening the breach block rather
+    -- than by pushing anything past the bottom edge.
+    text(graphics, "3. THE ANTE", 126.0, 428.0, 16, "#67e8f9")
+    text(graphics, "CLEARING A VAULT COSTS ITS ANTE IN MANA. WHAT IS LEFT CARRIES ON.", 126.0, 450.0, 11, "#d4d4d8")
+    draw_orb(graphics, 133.0, 468.0, ORB_ROBBERS_EDGE, ORB_ROBBERS_FILL, true)
+    text(graphics, "WIN", 148.0, 472.0, 11, "#d4d4d8")
+    draw_orb(graphics, 225.0, 468.0, ORB_ARCH_MAGE_EDGE, ORB_ARCH_MAGE_FILL, true)
+    text(graphics, "LOSS", 240.0, 472.0, 11, "#d4d4d8")
+    draw_orb(graphics, 330.0, 468.0, ORB_STALEMATE_EDGE, ORB_STALEMATE_FILL, true)
+    text(graphics, "TIE", 345.0, 472.0, 11, "#d4d4d8")
+    text(graphics, "ARROWS MOVE   SPACE BIND   ENTER COMMIT   H HISTORY", 126.0, 496.0, 11, "#fbbf24")
+    text(graphics, "C SORT BY COLOR   V SORT BY RANK   1 AND 2 CAST SPELLS", 126.0, 517.0, 11, "#fbbf24")
+    text(graphics, "MOUSE: HOVER FOCUSES   CLICK BINDS   BUTTONS COMMIT OR PASS", 126.0, 538.0, 11, "#fbbf24")
     graphics:pop()
 end
 
@@ -2589,31 +2626,68 @@ end
 -- The verdict of the vault just fought, read as a moment in the run. Taking it
 -- is an intermission — the mana on the table is the stake the next vault opens
 -- with — while losing it is where the whole run stops.
+-- Two numbers side by side under the heading, for the verdict that is about a
+-- comparison: what was held against what was owed. A screen that showed only
+-- the shortfall would read as an arbitrary death.
+function draw_final_ledger(
+    graphics: Graphics, left_label: string, left_value: i32,
+    right_label: string, right_value: i32
+): unit
+    text_centered(graphics, left_label, 366.0, 250.0, 15, "#67e8f9")
+    text_centered(graphics, tostring(left_value), 366.0, 325.0, 40, "#f8fafc")
+    text_centered(graphics, right_label, 594.0, 250.0, 15, "#fb7185")
+    text_centered(graphics, tostring(right_value), 594.0, 325.0, 40, "#fb7185")
+end
+
 function draw_final(graphics: Graphics, state: game.View, run: RunView): unit
     begin_modal(graphics)
-    local cleared: bool = game.view_cleared(state)
-    if not cleared then
+    local walks_on: bool = run.outcome == run_module.outcome_advance
+        or run.outcome == run_module.outcome_won
+    if run.outcome == run_module.outcome_lost_vault then
         modal_shell(
             graphics, "THE RUN ENDS",
             "THE ARCH MAGE HELD VAULT " .. tostring(run.vault)
                 .. ". THE CARRIED MANA GOES WITH IT")
         text_centered(graphics, "VAULTS TAKEN", 480.0, 250.0, 18, "#67e8f9")
         text_centered(graphics, tostring(run.cleared), 480.0, 325.0, 44, "#f8fafc")
+    elseif run.outcome == run_module.outcome_lost_ante then
+        -- The vault opened and the robbers still could not afford to leave it.
+        modal_shell(
+            graphics, "THE RUN ENDS",
+            "VAULT " .. tostring(run.vault)
+                .. " OPENED, BUT THE ANTE WAS SHORT")
+        draw_final_ledger(
+            graphics, "MANA HELD", state.player_points, "ANTE OWED", run.ante)
+    elseif run.outcome == run_module.outcome_won then
+        modal_shell(
+            graphics, "THE HEIST IS DONE",
+            "ALL " .. tostring(run.run_length)
+                .. " VAULTS TAKEN. THE CITY GOES ON PAST THEM")
+        text_centered(graphics, "MANA WALKED OUT WITH", 480.0, 250.0, 18, "#67e8f9")
+        text_centered(
+            graphics, tostring(state.player_points - run.ante),
+            480.0, 325.0, 44, "#fbbf24")
     else
         modal_shell(
             graphics, "VAULT " .. tostring(run.vault) .. " IS YOURS",
             "FIVE BREACHES COMPLETE. THE RUN GOES ON")
-        text_centered(graphics, "MANA CARRIED ON", 480.0, 250.0, 18, "#67e8f9")
-        text_centered(graphics, tostring(state.player_points), 480.0, 325.0, 44, "#f8fafc")
+        draw_final_ledger(
+            graphics, "MANA CARRIED ON", state.player_points - run.ante,
+            "ANTE PAID", run.ante)
     end
     text_centered(graphics, "BREACHES WON " .. tostring(state.player_tricks) .. " / 5", 480.0, 376.0, 13, "#d4d4d8")
-    if cleared then
+    if walks_on then
         local ahead: string = "NEXT: VAULT " .. tostring(run.vault + 1)
         if run.next_is_boss then ahead = ahead .. "   BOSS BATTLE" end
+        ahead = ahead .. "   ANTE " .. tostring(run.ante_ahead)
         text_centered(graphics, ahead, 480.0, 424.0, 13, "#fbbf24")
         -- The next vault is not dealt straight off the verdict any more: the
         -- fence stands between them, spending this pile of mana.
-        text_centered(graphics, "ENTER OR CLICK VISITS THE FENCE   H OPENS THE LEDGER", 480.0, 482.0, 12, "#fbbf24")
+        local prompt: string = "ENTER OR CLICK VISITS THE FENCE   H OPENS THE LEDGER"
+        if run.outcome == run_module.outcome_won then
+            prompt = "ENTER OR CLICK WALKS ON INTO THE ENDLESS CITY"
+        end
+        text_centered(graphics, prompt, 480.0, 482.0, 12, "#fbbf24")
     else
         text_centered(graphics, "ENTER OR CLICK STARTS A NEW RUN   H OPENS THE LEDGER", 480.0, 482.0, 12, "#fbbf24")
     end
