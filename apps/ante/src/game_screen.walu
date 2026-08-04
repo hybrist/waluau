@@ -188,14 +188,28 @@ function fence_open(state: State): bool
 end
 
 -- What the renderer needs to know about the run behind the live board.
+-- The outcome is read here, before the run has settled on it, because the
+-- verdict is drawn over a finished board and settling only happens once the
+-- player asks for what comes next. Reading it from the same classifier the
+-- settle uses is what keeps the screen and the movement it announces in
+-- agreement. A live vault has no verdict yet.
 function run_view(state: State): render.RunView
     local run: run_module.State = state.run
+    local outcome: i32 = run_module.outcome_none
+    if state.rules:is_finished() then
+        outcome = run_module.outcome_of(
+            run.vault, run.rush, state.rules:is_victory(), state.rules:mana())
+    end
     return {
         vault = run.vault,
         cleared = run.cleared,
         boss = run:boss(),
         next_is_boss = run:next_is_boss(),
         carried_mana = run.mana,
+        ante = run:ante(),
+        ante_ahead = run_module.ante_at(run.vault + 1, run.rush),
+        run_length = run_module.run_length(run.rush),
+        outcome = outcome,
     }
 end
 

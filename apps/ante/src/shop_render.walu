@@ -88,7 +88,7 @@ function row_label(row: shop.Row, run: run_module.State, offer: i32): string
     if row.action == shop.action_cancel then return "KEEP BOTH SPELLS" end
     local vault: string = "ENTER VAULT " .. tostring(run.vault)
     if run:boss() then vault = vault .. "   BOSS BATTLE" end
-    return vault
+    return vault .. "   ANTE " .. tostring(run:ante())
 end
 
 -- Idle ink: an offer about a spell wears that spell's colour the way the menu's
@@ -166,6 +166,13 @@ function draw(
         graphics, tostring(run.mana), 550.0, panel_y + 54.0, 24, render.fade("#67e8f9", alpha))
     render.text_right(
         graphics, "MANA ON HAND", 550.0, panel_y + 77.0, 9, render.fade("#155e75", alpha))
+    -- What the vault beyond this list will cost to walk out of, under the purse
+    -- it will be paid from. The fence informs rather than refuses — the ante is
+    -- charged on the way out and there is a whole heist in between to earn it —
+    -- but it cannot inform once the mana is already spent.
+    render.text_right(
+        graphics, "ANTE " .. tostring(run:ante()) .. " TO CLEAR IT",
+        550.0, panel_y + 95.0, 9, render.fade("#b45309", alpha))
 
     local rows: {shop.Row} = shop.rows(state, run)
     for index, row in rows do
