@@ -13,6 +13,7 @@ local run_module = require("./run")
 local layout = require("./layout")
 local card_warp = require("./card_warp")
 local card_draw = require("./card_draw")
+local divine_intervention = require("./divine_intervention")
 
 type Graphics = engine.Graphics
 type EffectShaders = effect_shaders.EffectShaders
@@ -1336,6 +1337,95 @@ end
 function slot_center(viewport: layout.State, kind: i32, index: i32, count: i32): Point
     local slot: Point = slot_pos_at(viewport, kind, index, count)
     return point(slot.x + CARD_W * 0.5, slot.y + CARD_H * 0.5)
+end
+
+-- The fairy visits the three shared wards, then the two relics that complete
+-- their five-card formation. Relic targets follow the live fan rather than its
+-- closed layout, so the light lands on the card even while the row settles.
+function divine_target(
+    viewport: layout.State, target: i32, fan_parts: {f64}
+): Point
+    if target < 3 then return slot_center(viewport, SLOT_MIDDLE, target, #fan_parts) end
+    local hand_index: i32 = target - 3
+    local slot: Point = hand_pos_at(
+        viewport, hand_index, fan_parts[hand_index], #fan_parts)
+    return point(slot.x + CARD_W * 0.5, slot.y + CARD_H * 0.5)
+end
+
+function divine_fairy_position(
+    viewport: layout.State, clock: f64, fan_parts: {f64}
+): Point
+    local first_time: f64 = divine_intervention.contact_time(0)
+    local entrance: Point = point(-34.0, viewport.ward_y - 92.0)
+    if clock < first_time then
+        return lerp(
+            entrance, divine_target(viewport, 0, fan_parts),
+            ease_in_out_cubic(clock / first_time))
+    end
+    for target = 1::i32, divine_intervention.target_count - 1 do
+        local finish: f64 = divine_intervention.contact_time(target)
+        if clock < finish then
+            local start: f64 = divine_intervention.contact_time(target - 1)
+            return lerp(
+                divine_target(viewport, target - 1, fan_parts),
+                divine_target(viewport, target, fan_parts),
+                ease_in_out_cubic((clock - start) / (finish - start)))
+        end
+    end
+    local last: i32 = divine_intervention.target_count - 1
+    local depart: f64 = divine_intervention.contact_time(last)
+    local exit: Point = point(viewport.width + 38.0, viewport.player_y - 118.0)
+    return lerp(
+        divine_target(viewport, last, fan_parts), exit,
+        ease_in_out_cubic(
+            (clock - depart) / (divine_intervention.total_seconds - depart)))
+end
+
+function divine_flash(clock: f64): f64
+    local flash: f64 = 0.0
+    for target = 0::i32, divine_intervention.target_count - 1 do
+        local distance: f64 = math.abs(clock - divine_intervention.contact_time(target))
+        if distance < 0.13 then
+            local strength: f64 = 1.0 - distance / 0.13
+            if strength > flash then flash = strength end
+        end
+    end
+    return flash
+end
+
+-- A tiny, restless ball of white light. Its mismatched sine rhythms keep the
+-- halo flickering without random state; at every landing the halo and core
+-- swell together into a bright contact flash over the converted card.
+function draw_divine_intervention(
+    graphics: Graphics, clock: f64, active: bool, fan_parts: {f64}
+): unit
+    if not active or #fan_parts < 2 then return end
+    local viewport: layout.State = layout.current()
+    local at: Point = divine_fairy_position(viewport, clock, fan_parts)
+    local flicker: f64 = (math.sin(clock * 37.0) + math.sin(clock * 61.0)) * 1.4
+    local flash: f64 = divine_flash(clock)
+    local halo: f64 = 16.0 + flicker + flash * 20.0
+
+    graphics:set_color("#71717a")
+    graphics:fill_circle(at.x, at.y, halo)
+    graphics:set_color("#d4d4d8")
+    graphics:fill_circle(at.x, at.y, 11.0 + flash * 10.0)
+    graphics:set_color("#ffffff")
+    graphics:fill_circle(at.x, at.y, 6.0 + flash * 7.0)
+    -- Four orbiting motes sell the light as a living visitor rather than a
+    -- cursor, while staying entirely in the existing WebGL2 shape vocabulary.
+    for mote = 0::i32, 3::i32 do
+        local angle: f64 = clock * (4.0 + (mote::f64) * 0.35)
+            + (mote::f64) * math.pi * 0.5
+        local reach: f64 = halo + 5.0 + (mote::f64)
+        graphics:fill_circle(
+            at.x + math.cos(angle) * reach,
+            at.y + math.sin(angle) * reach,
+            1.6 + flash * 1.5)
+    end
+    text_centered(
+        graphics, "DIVINE INTERVENTION", viewport.center_x,
+        viewport.ward_y - 72.0, 11.0, "#ffffff")
 end
 
 -- Centre of a bound relic in the fan: the bind lift rises along the card's
@@ -2739,6 +2829,7 @@ return {
     draw = draw,
     draw_shader_error = draw_shader_error,
     draw_audio_error = draw_audio_error,
+    draw_divine_intervention = draw_divine_intervention,
     -- One relic, drawn the way the board draws it. The card is the smallest
     -- piece of this presentation that can be looked at on its own, which is
     -- what the storybook does with it.

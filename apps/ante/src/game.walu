@@ -479,6 +479,26 @@ function State:sort_player_hand(by_school: bool): {i32}
     return order
 end
 
+-- Transmute the three wards followed by the first two player relics into the
+-- five cards the scoring rules combine. Red school is suit zero, so the final
+-- formation is 10-J-Q-K-A of red regardless of the hand that was dealt.
+-- The changed relics are known because the Arch Mage watches the miracle too.
+function State:divine_intervention(target: i32): bool
+    if target >= 0 and target < 3 then
+        self.middle[target] = { rank = 10 + target, suit = 0 }
+        return true
+    end
+    local hand_index: i32 = target - 3
+    if hand_index >= 0 and hand_index < 2 and hand_index < #self.player_hand then
+        self.player_hand[hand_index] = {
+            card = { rank = 13 + hand_index, suit = 0 },
+            known = true,
+        }
+        return true
+    end
+    return false
+end
+
 function State:resolve_swap(hand_indices: {i32}, middle_indices: {i32}): FeintOutcome?
     if self.finished or not self.swap_open then return nil end
     local player_wager: i32 = #hand_indices

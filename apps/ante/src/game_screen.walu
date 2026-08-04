@@ -30,6 +30,7 @@ local flow = require("./flow")
 local shop = require("./shop")
 local shop_render = require("./shop_render")
 local layout = require("./layout")
+local divine_intervention = require("./divine_intervention")
 
 type State = {
     run: run_module.State,
@@ -37,6 +38,7 @@ type State = {
     ui: flow.State,
     presentation: choreography.State,
     shop: shop.State,
+    intervention: divine_intervention.State,
     leaving_fence: bool,
     fence_fade: f64
 }
@@ -52,6 +54,7 @@ function new(): State
         ui = flow.new(),
         presentation = choreography.new(),
         shop = shop.new(),
+        intervention = divine_intervention.new(),
         leaving_fence = false,
         fence_fade = 0.0,
     }
@@ -71,6 +74,7 @@ function deal_vault(state: State): unit
     state.rules:reset(run:boss(), run.spells, run.mana)
     flow.reset(state.ui)
     choreography.reset(state.presentation)
+    divine_intervention.reset(state.intervention)
     -- The opening deal is already reflected in rules state; choreography
     -- reveals that settled result as the screen comes alive.
     choreography.opening_deal(game.view(state.rules), state.presentation)
@@ -240,6 +244,12 @@ function update(state: State, city: city_map.State, dt: f64): i32
     -- the map under them to finish dissolving before they are taken down.
     if on_map(state) then return 0 end
     if state.leaving_fence and not city_map.visible(city) then close_fence(state) end
+    if state.intervention.active then
+        choreography.update_fan(state.presentation, flow.fan_focus(state.ui, true), dt)
+        local touched: {i32} = divine_intervention.update(state.intervention, dt)
+        for target in touched do state.rules:divine_intervention(target) end
+        return 0
+    end
     local ui: flow.State = state.ui
     local presentation: choreography.State = state.presentation
     local animating: bool = choreography.is_animating(presentation)
@@ -294,6 +304,9 @@ function draw_vault(
         },
         card_back
     )
+    render.draw_divine_intervention(
+        graphics, state.intervention.clock, state.intervention.active,
+        state.presentation.fan_parts)
 end
 
 -- The fence's offers, at the opacity of the street they are laid out on: they
@@ -404,6 +417,21 @@ function keypressed(state: State, city: city_map.State, key: string): i32
         end
         return ACTION_NONE
     end
+    -- Recognition sits ahead of ordinary board controls so the completing A
+    -- belongs to the invocation, not to one last cursor movement. Earlier
+    -- arrows remain normal play until the full hidden sequence is known.
+    if state.intervention.active then return ACTION_NONE end
+    if not rules:is_finished()
+        and not ui.revealing
+        and ui.modal == flow.modal_none
+        and not choreography.firebolt_pending(presentation)
+        and divine_intervention.keypressed(state.intervention, key)
+    then
+        choreography.skip(presentation)
+        flow.clear_picks(ui)
+        ui.casting = false
+        return ACTION_NONE
+    end
     -- Keep the struck ward stable until Firebolt's burn commits its discard
     -- and replacement. Other spell conditions are persistent and do not lock
     -- the board, but advancing the turn during this one-shot effect could make
@@ -502,6 +530,7 @@ function mousemoved(state: State, x: f64, y: f64): unit
             shop_render.row_at(viewport, x, y, shop.row_count(state.shop, state.run)))
         return
     end
+    if state.intervention.active then return end
     local ui: flow.State = state.ui
     if flow.gate(
         ui, state.rules:is_finished(),
@@ -547,6 +576,7 @@ function mousepressed(state: State, city: city_map.State, x: f64, y: f64, button
         end
         return
     end
+    if state.intervention.active then return end
     if choreography.firebolt_pending(state.presentation) then return end
     if consume_gate(state, city, flow.command_primary) then return end
 
@@ -642,6 +672,7 @@ function restore(
         ui = restored_ui,
         presentation = presentation::choreography.State,
         shop = intermission::shop.State,
+        intervention = divine_intervention.new(),
         -- Leaving a fence is a moment of movement, not a phase of the run. A
         -- snapshot lands on one side of it: an open fence comes back standing,
         -- and `place_city` puts the map and the offers where that leaves the
