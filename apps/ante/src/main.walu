@@ -101,8 +101,15 @@ function install_arcane_heist(): unit
                 game_screen.draw_vault(heist, graphics, assets.effects, assets.texture)
             end
             if city_map.visible(city) then
+                -- The menu's map is a drifting view of a city nobody is running,
+                -- so it has no last vault to mark.
+                local landmark: i32 = -1
+                if screen ~= SCREEN_MENU then
+                    landmark = game_screen.landmark_stop(heist)
+                end
                 city_map_render.draw(
-                    city, graphics, render.school_color(city.streak_suit), city.cover)
+                    city, graphics, render.school_color(city.streak_suit),
+                    city.cover, landmark)
             end
             if screen == SCREEN_MENU then
                 menu.draw(menu_state, canvas, graphics, assets.effects, assets.sound_finished)

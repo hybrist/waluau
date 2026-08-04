@@ -132,6 +132,13 @@ function leave_shop(state: State): unit
     deal_vault(state)
 end
 
+-- Which stop of the route carries the last vault the run's ante table is
+-- written for. The route runs past it — a run that takes it walks on into the
+-- endless city — so this names a landmark, not an end.
+function landmark_stop(state: State): i32
+    return city_map.vault_stop(run_module.run_length(state.run.rush))
+end
+
 -- Which stop of the route the run stands on: the vendor before the live vault
 -- while the intermission is up, and the vault's own house otherwise.
 function city_stop(state: State): i32
@@ -658,6 +665,7 @@ return {
     mousepressed = mousepressed,
     snapshot = snapshot,
     restore = restore,
+    landmark_stop = landmark_stop,
     action_none = ACTION_NONE,
     action_exit = ACTION_EXIT,
 }
