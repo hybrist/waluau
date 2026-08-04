@@ -1,0 +1,159 @@
+-- The player's relic hand as a layout laboratory. Unlike a card story, this
+-- is about the relationship between several cards: their shared centre,
+-- overlap, arc, tilt, parting, and stacking states.
+local storybook = require("waluau:engine/storybook")
+local engine = require("waluau:engine")
+local game = require("./game")
+local render = require("./render")
+local presentation_resources = require("./presentation_resources")
+
+const WIDTH: u32 = 900
+const HEIGHT: u32 = 420
+const BACKGROUND: string = "#0b0b12"
+const CENTRE_X: f64 = 450.0
+const CENTRE_Y: f64 = 210.0
+
+local assets = presentation_resources.new()
+local shared = { started = false }
+
+local function load_assets(): i32
+    return presentation_resources.load_async(assets)
+end
+
+local function load(): unit
+    if shared.started then
+        return
+    end
+    shared.started = true
+    local loader = coroutine.create(load_assets)
+    coroutine.resume(loader)
+end
+
+local function card_at(index: i32): game.Card
+    return { rank = 14 - index, suit = index % 4 }
+end
+
+-- State controls name useful positions instead of raw indices, so they keep
+-- meaning as the count changes. For an even hand, Middle is the left of the
+-- two central cards.
+local function controlled_index(choice: i32, count: i32): i32
+    if choice == 0 then
+        return -1
+    end
+    if choice == 1 then
+        return 0
+    end
+    if choice == 5 then
+        return count - 1
+    end
+    local middle: i32 = math.floor(((count - 1)::f64) * 0.5)::i32
+    if choice == 2 then
+        middle -= 1
+        if middle < 0 then
+            middle = 0
+        end
+    elseif choice == 4 then
+        middle += 1
+        if middle >= count then
+            middle = count - 1
+        end
+    end
+    return middle
+end
+
+local function draw_hand(graphics: engine.Graphics, alpha: f64): unit
+    presentation_resources.prepare(assets, graphics)
+
+    local count: i32 = storybook.arg_i32("count")
+    local selected: i32 = controlled_index(storybook.arg_i32("selected"), count)
+    local focused: i32 = controlled_index(storybook.arg_i32("focused"), count)
+    local pitch: f64 = storybook.arg_i32("pitch")::f64
+    local maximum_span: f64 = storybook.arg_i32("maximum_span")::f64
+    if count > 1 then
+        pitch = math.min(pitch, maximum_span / ((count - 1)::f64))
+    end
+    local parting: f64 = (storybook.arg_i32("parting")::f64) / 100.0
+    local maximum_angle: f64 = (storybook.arg_i32("maximum_angle")::f64) * math.pi / 180.0
+    local maximum_drop: f64 = storybook.arg_i32("maximum_drop")::f64
+    local middle: f64 = ((count - 1)::f64) * 0.5
+    local outer_step: f64 = middle
+    if focused >= 0 then
+        outer_step += parting
+    end
+    if outer_step < 1.0 then
+        outer_step = 1.0
+    end
+
+    for index = 0::i32, count - 1 do
+        local step: f64 = (index::f64) - middle
+        if focused >= 0 then
+            if index < focused then
+                step -= parting
+            elseif index > focused then
+                step += parting
+            end
+        end
+        local normalized: f64 = step / outer_step
+        local angle: f64 = normalized * maximum_angle
+        local center_x: f64 = CENTRE_X + step * pitch
+        local center_y: f64 = CENTRE_Y + normalized * normalized * maximum_drop
+
+        graphics:push()
+        graphics:translate(center_x, center_y)
+        graphics:rotate(angle)
+        render.draw_card(
+            graphics,
+            assets.effects,
+            assets.texture,
+            card_at(index),
+            -(render.card_width * 0.5),
+            -(render.card_height * 0.5),
+            index == selected,
+            index == focused,
+            false,
+            false,
+            false
+        )
+        graphics:pop()
+    end
+end
+
+storybook.publish(
+    {
+        storybook.story(
+            "Fan",
+            {
+                draw = draw_hand,
+                load = load,
+                width = WIDTH,
+                height = HEIGHT,
+                background = BACKGROUND
+            },
+            {
+                storybook.range("count", 5, 1, 11, 1),
+                storybook.select(
+                    "selected",
+                    0,
+                    {"None", "First", "Left of middle", "Middle", "Right of middle", "Last"}
+                ),
+                storybook.select(
+                    "focused",
+                    0,
+                    {"None", "First", "Left of middle", "Middle", "Right of middle", "Last"}
+                ),
+                -- Horizontal centre-to-centre distance before the whole hand reaches
+                -- its width cap. Values below the card width overlap.
+                storybook.range("pitch", 74, 36, 124, 2),
+                storybook.range("maximum_span", 520, 220, 760, 10),
+                -- How far cards on either side of the focused card open, in
+                -- hundredths of one pitch step.
+                storybook.range("parting", 23, 0, 60, 1),
+                -- The outer card's absolute tilt, in degrees. Every inner angle is
+                -- interpolated from the hand's exact midpoint.
+                storybook.range("maximum_angle", 9, 0, 30, 1),
+                -- How far the outer cards dip below the middle card.
+                storybook.range("maximum_drop", 11, 0, 60, 1)
+            }
+        )
+    }
+)
