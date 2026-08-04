@@ -103,13 +103,17 @@ end
 -- run, or the first of a fresh one.
 --
 -- A taken vault is followed by the fence rather than by a deal: the run has
--- already moved on and is holding the mana it carried out, which is exactly
--- what the intermission spends. A lost run has nothing to spend and no loadout
--- to spend it on, so its fresh first vault is dealt straight away.
+-- already moved on and is holding what the ante left of the mana it carried
+-- out, which is exactly what the intermission spends. Taking the last vault of
+-- the table walks the same way — the run is won and goes on regardless. A lost
+-- run has nothing to spend and no loadout to spend it on, so its fresh first
+-- vault is dealt straight away.
 function advance_run(state: State, city: city_map.State): unit
-    local cleared: bool = state.rules:is_victory()
-    state.run:settle(cleared, state.rules:mana())
-    if cleared then
+    local outcome: i32 = state.run:settle(
+        state.rules:is_victory(), state.rules:mana())
+    if outcome == run_module.outcome_advance
+        or outcome == run_module.outcome_won
+    then
         shop.open_for(state.shop, state.run)
         state.leaving_fence = false
         return

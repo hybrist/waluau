@@ -64,14 +64,15 @@ describe("Arcane Heist run cadence", function()
         state:settle(true, 31)
         expect(state.vault):toBe(2)
         expect(state.cleared):toBe(1)
-        expect(state.mana):toBe(31)
+        -- The vault charged its ante on the way out; the rest carries.
+        expect(state.mana):toBe(31 - run.ante_at(1, false))
         expect(state:boss()):toBe(false)
         -- The vault after this one is where the cadence lands, so the board can
         -- warn about it while this one is still being fought.
         expect(state:next_is_boss()):toBe(true)
         state:settle(true, 18)
         expect(state.vault):toBe(3)
-        expect(state.mana):toBe(18)
+        expect(state.mana):toBe(18 - run.ante_at(2, false))
         expect(state:boss()):toBe(true)
     end)
 
@@ -108,7 +109,7 @@ describe("Arcane Heist run cadence", function()
         if restored ~= nil then
             expect(restored.vault):toBe(2)
             expect(restored.cleared):toBe(1)
-            expect(restored.mana):toBe(27)
+            expect(restored.mana):toBe(27 - run.ante_at(1, true))
             expect(restored.spells[0].kind):toBe(game.spell_raise_card)
             expect(restored.start_spell):toBe(game.spell_raise_card)
             expect(restored.rush):toBe(true)
@@ -224,6 +225,150 @@ describe("Arcane Heist run loadout", function()
     end)
 end)
 
+describe("Arcane Heist ante", function()
+    it("climbs across the run and takes its largest steps on boss vaults", function()
+        local previous: i32 = 0
+        for vault = 1::i32, run.run_length(false) do
+            local ante: i32 = run.ante_at(vault, false)
+            expect(ante):toBeGreaterThan(previous)
+            previous = ante
+        end
+        -- Every boss vault asks for more of a step up than the standard vault
+        -- before it, so the end of an act is a mana wall as well as an
+        -- eleven-relic one.
+        for vault = 3::i32, run.run_length(false) do
+            if run.boss_at(vault, false) then
+                local boss_step: i32 = run.ante_at(vault, false)
+                    - run.ante_at(vault - 1, false)
+                local before: i32 = run.ante_at(vault - 1, false)
+                    - run.ante_at(vault - 2, false)
+                expect(boss_step):toBeGreaterThan(before)
+            end
+        end
+        -- Priced under what a cleared vault pays (about eleven, measured in
+        -- economy.test.walu), so the run keeps a surplus a bad vault can wipe
+        -- out rather than draining on average play.
+        local total: i32 = 0
+        for vault = 1::i32, run.run_length(false) do
+            total += run.ante_at(vault, false)
+        end
+        expect(total / run.run_length(false)):toBeLessThan(11)
+    end)
+
+    it("keeps climbing past the table, faster than a vault can pay", function()
+        local finish: i32 = run.run_length(false)
+        local previous_step: i32 = 0
+        for past = 1::i32, 4 do
+            local step: i32 = run.ante_at(finish + past, false)
+                - run.ante_at(finish + past - 1, false)
+            expect(step):toBeGreaterThan(previous_step)
+            previous_step = step
+            -- The tail always ends. Every vault past the finish asks for more
+            -- than the eleven a cleared one pays (measured in
+            -- economy.test.walu), and the shortfall widens with the step, so a
+            -- run walks on out of whatever surplus it arrived with and no
+            -- further.
+            expect(run.ante_at(finish + past, false)):toBeGreaterThan(11)
+        end
+        -- Concretely: a run that finished the table holding fifty walks about
+        -- two more vaults, not twenty.
+        local purse: i32 = 50
+        local walked: i32 = 0
+        for past = 1::i32, 20 do
+            local ante: i32 = run.ante_at(finish + past, false)
+            if purse + 11 < ante then break end
+            purse = purse + 11 - ante
+            walked = past
+        end
+        expect(walked):toBeGreaterThan(0)
+        expect(walked):toBeLessThan(5)
+    end)
+
+    it("asks a boss rush for a steeper ante over a shorter run", function()
+        expect(run.run_length(true)):toBeLessThan(run.run_length(false))
+        expect(run.ante_at(1, true)):toBeGreaterThan(run.ante_at(1, false))
+        expect(run.ante_at(3, true)):toBeGreaterThan(run.ante_at(3, false))
+    end)
+end)
+
+describe("Arcane Heist run outcomes", function()
+    it("names the four things a fought vault can turn out to be", function()
+        local ante: i32 = run.ante_at(1, false)
+        expect(run.outcome_of(1, false, false, 99)):toBe(run.outcome_lost_vault)
+        -- Holding exactly the ante clears; a single mana short does not.
+        expect(run.outcome_of(1, false, true, ante)):toBe(run.outcome_advance)
+        expect(run.outcome_of(1, false, true, ante - 1)):toBe(run.outcome_lost_ante)
+        -- The Arch Mage holding the vault outranks the purse: a run that lost
+        -- the breaches is over for that reason, whatever it was carrying.
+        expect(run.outcome_of(1, false, false, 0)):toBe(run.outcome_lost_vault)
+    end)
+
+    it("passes through the finish line once and walks on", function()
+        local finish: i32 = run.run_length(false)
+        expect(run.outcome_of(finish, false, true, 999)):toBe(run.outcome_won)
+        expect(run.outcome_of(finish - 1, false, true, 999)):toBe(run.outcome_advance)
+        -- Not a state the run stays in: the vault after the finish is an
+        -- ordinary one again, however far past the table it is.
+        expect(run.outcome_of(finish + 1, false, true, 999)):toBe(run.outcome_advance)
+        expect(run.outcome_of(finish + 7, false, true, 999)):toBe(run.outcome_advance)
+    end)
+
+    it("takes the last vault of the table and keeps the run going", function()
+        local state: run.State = run.new(game.spell_firebolt, false)
+        local finish: i32 = run.run_length(false)
+        state.vault = finish
+        state.cleared = finish - 1
+        expect(state:settle(true, 200)):toBe(run.outcome_won)
+        -- Won, and still standing in the city: the next vault is dealt, the
+        -- purse survived, and the loadout was never reset.
+        expect(state.vault):toBe(finish + 1)
+        expect(state.cleared):toBe(finish)
+        expect(state.mana):toBe(200 - run.ante_at(finish, false))
+        expect(state:endless()):toBe(true)
+        expect(state:settle(true, 200)):toBe(run.outcome_advance)
+        expect(state.vault):toBe(finish + 2)
+    end)
+
+    it("ends a run that opened the vault but could not pay the ante", function()
+        local state: run.State = run.new(game.spell_freeze_ray, false)
+        state:settle(true, 40)
+        local short: i32 = run.ante_at(state.vault, false) - 1
+        expect(state:settle(true, short)):toBe(run.outcome_lost_ante)
+        -- The same ending as the Arch Mage taking it: a fresh first vault, the
+        -- starting spell back at full price, and the purse gone.
+        expect(state.vault):toBe(1)
+        expect(state.cleared):toBe(0)
+        expect(state.mana):toBe(game.starting_mana)
+        expect(state.start_spell):toBe(game.spell_freeze_ray)
+    end)
+
+    it("still charges an endless run, and still ends it", function()
+        local state: run.State = run.new(game.spell_clone, false)
+        state.vault = run.run_length(false) + 3
+        state.cleared = run.run_length(false) + 2
+        local ante: i32 = state:ante()
+        expect(state:settle(true, ante - 1)):toBe(run.outcome_lost_ante)
+        expect(state.vault):toBe(1)
+        expect(state:endless()):toBe(false)
+    end)
+
+    it("carries a run past the finish line through a snapshot", function()
+        local state: run.State = run.new(game.spell_raise_card, false)
+        state.vault = run.run_length(false) + 3
+        state.cleared = run.run_length(false) + 2
+        state.mana = 61
+        local restored: run.State? = run.restore(run.snapshot(state))
+        expect(restored == nil):toBe(false)
+        if restored ~= nil then
+            expect(restored.vault):toBe(run.run_length(false) + 3)
+            expect(restored.mana):toBe(61)
+            -- The ante is read back off the vault rather than stored, so a
+            -- payload from before the finish line needs nothing added to it.
+            expect(restored:ante()):toBe(state:ante())
+        end
+    end)
+end)
+
 describe("Arcane Heist vault verdicts", function()
     it("clears a vault the Arch Mage failed to hold three times", function()
         math.randomseed(71)
@@ -289,7 +434,7 @@ describe("Arcane Heist run progression", function()
         expect(state.cleared):toBe(1)
 
         local second: game.State = game.new(state:boss(), state.spells, state.mana)
-        expect(second:mana()):toBe(42)
+        expect(second:mana()):toBe(42 - run.ante_at(1, false))
         expect(second:is_boss()):toBe(false)
         expect(second:is_finished()):toBe(false)
         expect(second:spell_kind(0)):toBe(game.spell_firebolt)
@@ -299,7 +444,7 @@ describe("Arcane Heist run progression", function()
         expect(state.cleared):toBe(2)
         -- The third vault is the boss battle: eleven relics, no replacements.
         local third: game.State = game.new(state:boss(), state.spells, state.mana)
-        expect(third:mana()):toBe(30)
+        expect(third:mana()):toBe(30 - run.ante_at(2, false))
         expect(third:is_boss()):toBe(true)
         expect(third:hand_size()):toBe(11)
     end)
@@ -329,7 +474,7 @@ describe("Arcane Heist run progression", function()
         expect(state:boss()):toBe(true)
         expect(state:next_is_boss()):toBe(true)
         local second: game.State = game.new(state:boss(), state.spells, state.mana)
-        expect(second:mana()):toBe(25)
+        expect(second:mana()):toBe(25 - run.ante_at(1, true))
         expect(second:hand_size()):toBe(11)
     end)
 end)

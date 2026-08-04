@@ -34,6 +34,16 @@ type State = {
 -- Every third vault is the boss battle variant, so a run's cadence is two
 -- standard heists and then eleven relics with no replacements.
 const BOSS_EVERY: i32 = 3
+-- Nine vaults is the run the ante table is written for: three acts of two
+-- heists and a boss, ending on one. The boss rush is a shorter, steeper sprint
+-- rather than nine consecutive eleven-relic battles.
+const RUN_LENGTH: i32 = 9
+const RUSH_LENGTH: i32 = 5
+-- Past the last vault the city keeps going and the table runs out, so the ante
+-- takes over on a formula. The step grows with every vault beyond the finish,
+-- which is what makes the tail end: a vault pays about eleven and the demand
+-- climbs past that immediately and never comes back down.
+const ENDLESS_STEP: i32 = 6
 -- Two spells are as many as the robbers can hold ready at once — keys 1 and 2
 -- in the vault. Learning a third is a trade, not an addition.
 const MAX_SPELLS: i32 = 2
@@ -71,21 +81,94 @@ function State:next_is_boss(): bool
     return boss_at(self.vault + 1, self.rush)
 end
 
--- The live vault has been fought to a verdict. Taking it advances the run and
--- carries the mana that survived into the next vault; losing it ends the run,
--- and what follows is the first vault of a fresh one — a vault the run already
--- spent mana in is never fought twice.
+-- How many vaults the authored curve covers. The run does not stop there — what
+-- it marks is where the table ends and the endless formula takes over.
+function run_length(rush: bool): i32
+    if rush then return RUSH_LENGTH end
+    return RUN_LENGTH
+end
+
+-- What clearing the numbered vault costs, taken out of the mana the robbers
+-- walk out holding. Priced against measured play rather than guessed: a cleared
+-- vault pays about eleven mana (see `economy.test.walu`), so a table averaging
+-- nine leaves a run a thin surplus that a bad vault can wipe out and a good one
+-- can rebuild. Boss vaults take the largest steps, which is what makes the end
+-- of an act a mana wall as well as an eleven-relic one.
+--
+-- The table is written out inside the function rather than held module-side: a
+-- top-level `local` is invisible to a `function` declaration, and the values
+-- belong next to the reasoning about them anyway.
+function ante_at(vault: i32, rush: bool): i32
+    local table_values: {i32} = { 3, 4, 6, 7, 8, 11, 12, 13, 16 }
+    if rush then table_values = { 4, 8, 11, 15, 19 } end
+    local length: i32 = #table_values
+    if vault < 1 then return table_values[0] end
+    if vault <= length then return table_values[vault - 1] end
+    -- Past the table the demand climbs by a step that itself grows, so the gap
+    -- between what a vault pays and what it costs to leave widens every time.
+    local ante: i32 = table_values[length - 1]
+    for step = 1::i32, vault - length do
+        ante += ENDLESS_STEP + step
+    end
+    return ante
+end
+
+function State:ante(): i32
+    return ante_at(self.vault, self.rush)
+end
+
+-- Whether the run is past the vault its table was written for, and walking on
+-- for the sake of walking on.
+function State:endless(): bool
+    return self.vault > run_length(self.rush)
+end
+
+-- The verdict of a fought vault, read as a moment in the run. There are two
+-- ways to lose a vault and two ways to leave one, and this says which without
+-- applying any of them — one classifier, so the screen showing a verdict and
+-- the settle that acts on it can never disagree about what happened.
+--
+-- `OUTCOME_WON` is a milestone rather than a stop: the last vault of the table
+-- is cleared exactly the way any other is, and the run walks on into the
+-- endless city. Only the two losses end a run.
+const OUTCOME_NONE: i32 = 0
+const OUTCOME_LOST_VAULT: i32 = 1
+const OUTCOME_LOST_ANTE: i32 = 2
+const OUTCOME_ADVANCE: i32 = 3
+const OUTCOME_WON: i32 = 4
+
+function outcome_of(
+    vault: i32, rush: bool, cleared: bool, carried_mana: i32
+): i32
+    if not cleared then return OUTCOME_LOST_VAULT end
+    if carried_mana < ante_at(vault, rush) then return OUTCOME_LOST_ANTE end
+    -- The finish line is a moment the run passes through once, not a state it
+    -- stays in, so this is the vault the table ends on and no vault after it.
+    if vault == run_length(rush) then return OUTCOME_WON end
+    return OUTCOME_ADVANCE
+end
+
+-- The live vault has been fought to a verdict. Taking it advances the run,
+-- charges the vault its ante, and carries what is left into the next one;
+-- losing it — to the Arch Mage or to an ante the purse could not cover — ends
+-- the run, and what follows is the first vault of a fresh one. A vault the run
+-- already spent mana in is never fought twice.
 --
 -- The verdict is the rules module's answer, passed in rather than re-derived:
 -- what a finished heist decided is not this module's to decide again.
-function State:settle(cleared: bool, carried_mana: i32): unit
-    if not cleared then
+function State:settle(cleared: bool, carried_mana: i32): i32
+    local outcome: i32 = outcome_of(
+        self.vault, self.rush, cleared, carried_mana)
+    if outcome == OUTCOME_LOST_VAULT or outcome == OUTCOME_LOST_ANTE then
         self:restart(self.start_spell, self.rush)
-        return
+        return outcome
     end
+    -- Taking the last vault of the table and taking any other one are the same
+    -- movement; what differs is only the screen that says so.
+    self.mana = carried_mana - self:ante()
     self.cleared += 1
     self.vault += 1
-    self.mana = carried_mana
+    return outcome
 end
 
 function State:restart(spell: i32, rush: bool): unit
@@ -208,6 +291,8 @@ function restore(snapshot_value: string): State?
         rush = rush,
     }
     if not reader:complete() then return nil end
+    -- No upper bound on the vault: a run past the end of its table is a run
+    -- that won and kept walking, not a payload from another build.
     if vault < 1 then return nil end
     -- A run always carries at least the spell it set out with, and never more
     -- than the two the robbers can hold ready.
@@ -218,9 +303,17 @@ end
 return {
     new = new,
     boss_at = boss_at,
+    ante_at = ante_at,
+    run_length = run_length,
+    outcome_of = outcome_of,
     snapshot = snapshot,
     restore = restore,
     boss_every = BOSS_EVERY,
     max_spells = MAX_SPELLS,
     min_spell_cost = MIN_SPELL_COST,
+    outcome_none = OUTCOME_NONE,
+    outcome_lost_vault = OUTCOME_LOST_VAULT,
+    outcome_lost_ante = OUTCOME_LOST_ANTE,
+    outcome_advance = OUTCOME_ADVANCE,
+    outcome_won = OUTCOME_WON,
 }
