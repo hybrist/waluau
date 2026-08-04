@@ -114,7 +114,7 @@ async function installRuntimeProbe(page) {
 
 async function openGame(page, url = '/') {
   await page.goto(url);
-  await expect(page.locator('h1')).toHaveText('Arcane Heist', {
+  await expect(page.locator('h1')).toHaveText('Ante Magic', {
     timeout: GAME_READY_TIMEOUT,
   });
   return page.locator('canvas#walua-game-canvas');

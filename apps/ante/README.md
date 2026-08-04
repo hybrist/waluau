@@ -1,4 +1,4 @@
-# Arcane Heist fixture
+# Ante Magic fixture
 
 A five-breach, player-versus-Arch-Mage trick-taking game built on the Waluau 2D
 game engine. It preserves Poker Tricks' deck, exchange, wager, hand-ranking,
@@ -286,7 +286,7 @@ README for how a story file is written.
 
 ```bash
 cargo run -p waluau-cli -- fixtures/poker-tricks/main.walu \
-  -o dist/arcane-heist.wasm --emit-js \
+  -o dist/ante-magic.wasm --emit-js \
   --manifest fixtures/poker-tricks/waluau.assets.json
 ```
 

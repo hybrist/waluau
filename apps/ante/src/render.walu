@@ -1,4 +1,4 @@
--- Engine-rendered presentation for Arcane Heist. Everything visible to the
+-- Engine-rendered presentation for Ante Magic. Everything visible to the
 -- player lives on this one logical canvas, including secondary modal screens.
 
 local engine = require("waluau:engine")
@@ -1282,7 +1282,7 @@ end
 
 function draw_hud(graphics: Graphics, state: game.View, run: RunView): unit
     local right: f64 = layout.current().width - 32.0
-    text(graphics, "ARCANE HEIST", 32.0, 47.0, 22, "#fbbf24")
+    text(graphics, "ANTE MAGIC", 32.0, 47.0, 22, "#fbbf24")
     draw_run_marker(graphics, run)
     draw_round_orbs(graphics, state)
     -- The mana on hand against the ante it owes, and the one glance that says
@@ -2728,7 +2728,7 @@ function draw_audio_error(graphics: Graphics, path: string, code: string, detail
     local top: f64 = viewport.center_y - 165.0
     panel(graphics, 70.0, top, viewport.width - 140.0, 330.0, "#260b08", "#fb7185")
     text_centered(graphics, "REQUIRED SOUND EFFECT FAILED", viewport.center_x, top + 70.0, 21, "#fb7185")
-    text_centered(graphics, "ARCANE HEIST HAS STOPPED", viewport.center_x, top + 113.0, 13, "#f8fafc")
+    text_centered(graphics, "ANTE MAGIC HAS STOPPED", viewport.center_x, top + 113.0, 13, "#f8fafc")
     text(graphics, "ASSET: " .. path, 105.0, top + 175.0, 11, "#fecdd3")
     text(graphics, "CODE: " .. code, 105.0, top + 207.0, 11, "#fecdd3")
     text(graphics, "HOST: " .. detail, 105.0, top + 239.0, 11, "#fecdd3")

@@ -1,4 +1,4 @@
--- Deterministic, DOM-free checks for Arcane Heist.
+-- Deterministic, DOM-free checks for Ante Magic.
 
 require("waluau:vitest")
 
@@ -52,7 +52,7 @@ local function force_stalemate(state: game.State): unit
     )
 end
 
-describe("Arcane Heist scoring", function()
+describe("Ante Magic scoring", function()
     it("orders every five-card hand category", function()
         local straight_flush: i32 = game.rank_five({ card(10, 3), card(11, 3), card(12, 3), card(13, 3), card(14, 3) })
         local four_kind: i32 = game.rank_five({ card(9, 0), card(9, 1), card(9, 2), card(9, 3), card(2, 0) })
@@ -125,7 +125,7 @@ describe("Arcane Heist scoring", function()
     end)
 end)
 
-describe("Arcane Heist swaps", function()
+describe("Ante Magic swaps", function()
     it("exchanges a winning proposal once without consuming the deck", function()
         math.randomseed(7)
         local state = game.new(false, starter_loadout(), game.starting_mana)
@@ -328,7 +328,7 @@ describe("Arcane Heist swaps", function()
     end)
 end)
 
-describe("Arcane Heist development snapshots", function()
+describe("Ante Magic development snapshots", function()
     it("round-trips the complete rules state and rejects incompatible data", function()
         math.randomseed(49)
         local state: game.State = game.new(false, starter_loadout(), game.starting_mana)
@@ -393,7 +393,7 @@ describe("Arcane Heist development snapshots", function()
     end)
 end)
 
-describe("Arcane Heist heist flow", function()
+describe("Ante Magic heist flow", function()
     it("applies the same modal and animation gates to both input adapters", function()
         local keyboard: flow.State = flow.new()
         local mouse: flow.State = flow.new()
@@ -425,7 +425,7 @@ describe("Arcane Heist heist flow", function()
     end)
 end)
 
-describe("Arcane Heist game flow", function()
+describe("Ante Magic game flow", function()
     it("plays all five rounds after three player wins", function()
         math.randomseed(42)
         local state = game.new(false, starter_loadout(), game.starting_mana)
@@ -550,7 +550,7 @@ local function force_boss_player_win(state: game.State): unit
         state, { card(10, 0), card(11, 0), card(12, 0) }, player, computer)
 end
 
-describe("Arcane Heist boss battle", function()
+describe("Ante Magic boss battle", function()
     it("deals eleven relics and never replaces a spent one", function()
         math.randomseed(50)
         local state = game.new(true, starter_loadout(), game.starting_mana)
@@ -668,7 +668,7 @@ describe("Arcane Heist boss battle", function()
     end)
 end)
 
-describe("Arcane Heist spell casting", function()
+describe("Ante Magic spell casting", function()
     it("charges each spell its own price and refuses the rest", function()
         math.randomseed(57)
         local state = game.new(false, loadout_of(game.spell_raise_card), game.starting_mana)

@@ -1,4 +1,4 @@
--- External shader source polling and GPU lifetime for Arcane Heist effects.
+-- External shader source polling and GPU lifetime for Ante Magic effects.
 -- The registry names programs once; shader_program owns the repeated source,
 -- rebuild, diagnostic, and release lifecycle behind a small interface.
 local engine = require("waluau:engine")

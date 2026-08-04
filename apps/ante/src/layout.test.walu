@@ -4,7 +4,7 @@ require("waluau:vitest")
 
 local layout = require("./layout")
 
-describe("Arcane Heist canvas layout", function()
+describe("Ante Magic canvas layout", function()
     it("uses additional width as logical layout space", function()
         layout.update(1200.0, 600.0)
         local state: layout.State = layout.current()

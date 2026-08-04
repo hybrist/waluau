@@ -1,4 +1,4 @@
--- Arcane Heist's live viewport. The board is laid out from the canvas's
+-- Ante Magic's live viewport. The board is laid out from the canvas's
 -- actual dimensions every frame: one derived unit scale keeps cards, text,
 -- circles, and line widths proportional to each other, while the logical
 -- width and height stay live so every screen places its semantic regions

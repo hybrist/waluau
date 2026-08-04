@@ -136,7 +136,7 @@ const BOSS_TRIALS: i32 = 25
 -- misplays — the Arch Mage is the same policy, so half the breaches go to it.
 -- And a cleared vault pays about eleven, which is what the ante has to stay
 -- under to leave a run alive across nine of them.
-describe("Arcane Heist vault economy", function()
+describe("Ante Magic vault economy", function()
     it("makes a standard vault close to a coin flip and pays the winner", function()
         local sample: Sample = measure(false, game.starting_mana, STANDARD_TRIALS)
         -- A mirror match, so a band reaching 100 would mean the Arch Mage never
@@ -240,7 +240,7 @@ const RUN_TRIALS: i32 = 300
 -- a feint is mana that has to be won back before the vault will let go of the
 -- robbers — and it changes it most in act three, where the table asks for more
 -- than any vault can pay.
-describe("Arcane Heist run economy", function()
+describe("Ante Magic run economy", function()
     it("ends every run it plays", function()
         local held: i32 = 0
         local short: i32 = 0
