@@ -245,14 +245,16 @@ describe("Arcane Heist ante", function()
                 expect(boss_step):toBeGreaterThan(before)
             end
         end
-        -- Priced under what a cleared vault pays (about eleven, measured in
-        -- economy.test.walu), so the run keeps a surplus a bad vault can wipe
-        -- out rather than draining on average play.
-        local total: i32 = 0
-        for vault = 1::i32, run.run_length(false) do
-            total += run.ante_at(vault, false)
-        end
-        expect(total / run.run_length(false)):toBeLessThan(11)
+        -- The table crosses what a vault pays rather than staying under it.
+        -- Early vaults ask for well below the eleven a cleared one pays
+        -- (measured in economy.test.walu), so a run that is going well banks a
+        -- surplus; late vaults ask for more than any vault can pay, so the run
+        -- is spent out of that pile and arrives at the last one on fumes.
+        expect(run.ante_at(1, false)):toBeLessThan(11)
+        expect(run.ante_at(2, false)):toBeLessThan(11)
+        expect(run.ante_at(3, false)):toBeLessThan(11)
+        expect(run.ante_at(run.run_length(false), false)):toBeGreaterThan(22)
+        expect(run.ante_at(run.run_length(false) - 1, false)):toBeGreaterThan(11)
     end)
 
     it("keeps climbing past the table, faster than a vault can pay", function()

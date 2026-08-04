@@ -9,19 +9,33 @@ The four suits are now the Red, Blue, Black, and Green schools of magic. Cards
 are relics, the shared board is the vault's wards, points are sparks, exchanges
 are feints, and each trick is a breach. Poker categories are presented as magical
 formations such as a bound pair, arcane sequence, and perfect convergence.
-The Arch Mage can commit any valid feint without a spark balance. Its third
+The Arch Mage can commit any valid feint without a mana balance. Its third
 breach win ends the heist, while player wins never end the five-breach vault
-early, leaving room to maximize the mana carried out of it.
+early — which is the room a vault leaves to earn its ante and then some.
 
-A vault is one heist inside a longer roguelike run. Clearing all five breaches
-opens the next vault, which is dealt with whatever mana survived the last one:
-the pool is the run's, not the vault's, and every cast spends from it for good.
-Between two vaults the run stops at the fence, where that same mana buys spell
-upgrades before the next vault is dealt.
-The Arch Mage holding three wards ends the whole run, carried mana included, and
+A vault is one heist inside a longer roguelike run of nine, and clearing one
+costs its ante: the vault takes a cut of the mana the robbers are holding, and
+what is left is what the next vault is dealt with. The pool is the run's, not
+the vault's, and every cast spends from it for good. Between two vaults the run
+stops at the fence, where that same mana buys spell upgrades.
+
+The ante climbs, and it climbs past what a vault pays. Early vaults ask for well
+under it, so a run that is going well banks a surplus; the last act asks for
+more than any heist can earn, so the third act is spent out of the pile the
+first two banked and the ninth vault is reached on fumes. That is the ramp: not
+a breach that is harder to win, but a win that has to be worth more.
+
+There are two ways a run ends. The Arch Mage holding three wards ends it, carried
+mana included — that is far and away the common one, since a vault is close to a
+coin flip. Opening a vault and then not holding its ante ends it too. Either way
 the next heist is the first vault of a fresh run rather than a retry. R restarts
 the run from vault one at any point, which is also why a settled vault is never
 left standing on the board.
+
+Clearing the ninth vault wins the run — and does not stop it. The city goes on,
+the table runs out, and the ante takes over on a formula whose step grows every
+vault, so an endless run walks on out of whatever surplus it arrived with and no
+further.
 
 The robbers set out with the one spell the menu picked and can hold two ready at
 once, on keys 1 and 2. A visit to the fence stocks exactly two offers, drawn
@@ -34,13 +48,16 @@ keys are taken, learning a third asks which spell it trades away, and the one
 traded out is gone. An offer names the spell it is about rather than the key, so
 trading a spell away closes an offer to sharpen it instead of redirecting it.
 Losing a vault ends the run and everything it bought with it: a fresh run sets
-out with its starting spell at full price again.
+out with its starting spell at full price again. The fence prints the next
+vault's ante under the purse, because it informs rather than refuses — the ante
+is charged on the way out and there is a whole heist in between to earn it.
 
 Every third vault of a run is a boss battle: both sides are dealt eleven relics
 up front and spent pairs are never replaced from the draw pile, so the hands
 shrink by two every breach and the fifth breach is fought from a three-card
 fan. Everything else — feints, wagers, scoring, and the five breaches — matches
-a standard vault. The menu's BOSS RUSH starts a run made of nothing else. Both
+a standard vault. The menu's BOSS RUSH starts a run made of nothing else: five
+vaults rather than nine, on its own steeper ante. Both
 hand rows lay themselves out for however many cards they hold, tightening their
 pitch (and the fan its tilt and arc) so an eleven-relic row still clears the
 deck and the three right-edge piles.
@@ -155,7 +172,8 @@ Keyboard (in the vault):
   the aimed spell's own key calls the cast off.
 - H opens the breach ledger, ? opens help, and R restarts the run.
 - On the vault's verdict, Enter, Space, or a click takes whatever the run has
-  next: the fence before the following vault, or the first vault of a fresh run.
+  next: the fence before the following vault, the walk on into the endless city
+  after the ninth, or the first vault of a fresh run after either kind of loss.
 - At the fence, arrows move between the offers, Enter or a click buys the one
   under the cursor, and Esc walks past all of them into the vault. R still
   restarts the run and M still returns to the menu.
@@ -182,7 +200,7 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `city_map.walu` | DOM-free city generation, the alternating vendor/vault route, and the camera pans and dissolves that carry it between screens. |
 | `city_map_render.walu` | WebGL2 primitive drawing for the city, its walked and upcoming route, and the colored street streak, all at one opacity. |
 | `game_screen.walu` | The heist screen: rules/flow/choreography wiring and its input adapters. |
-| `run.walu` | DOM-free run state: the vault sequence, its boss cadence, the spell loadout, and the mana carried between vaults. |
+| `run.walu` | DOM-free run state: the vault sequence, its boss cadence and ante table, the finish line and the endless tail past it, the spell loadout, and the mana carried between vaults. |
 | `shop.walu` | DOM-free intermission between vaults: the two offers a visit stocks, what they charge, which are spent, and which the cursor holds. |
 | `shop_render.walu` | Where the fence's offer list sits on the city map, at the map's own opacity, and the pointer's row lookup for it. |
 | `game.walu` | DOM-free rules, AI, commands, outcomes, and read-only presentation view. |
@@ -200,7 +218,8 @@ Mouse (Love2D-style engine callbacks in logical canvas coordinates):
 | `snapshot.walu` | Shared validated snapshot primitives and atomic payload framing. |
 | `test/game_fixture.walu` | Narrow mutable test adapter for deterministic rule arrangements. |
 | `sim.test.walu` | Deterministic Vitest assertions for rules, flow, snapshots, and full-game completion. |
-| `run.test.walu` | Deterministic Vitest assertions for the boss cadence, mana carryover, the carried loadout, and where a run ends. |
+| `run.test.walu` | Deterministic Vitest assertions for the boss cadence, the ante table and its endless tail, mana carryover, the carried loadout, and the four things a fought vault can turn out to be. |
+| `economy.test.walu` | Aggregate Vitest measurements of what a vault pays and how a run ends, played from a shuffled deck by a reference policy — the numbers the ante table is priced against. |
 | `shop.test.walu` | Deterministic Vitest assertions for the fence's stock, prices, spent offers, and trades. |
 | `city_map.test.walu` | Deterministic Vitest assertions for the generated streets, the route's alternating stops, and the pans and dissolves between screens. |
 | `card.stories.walu` | Storybook stories for the relic: every state the board can put a card in, without dealing a heist that produces it. |

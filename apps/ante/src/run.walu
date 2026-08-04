@@ -90,17 +90,26 @@ end
 
 -- What clearing the numbered vault costs, taken out of the mana the robbers
 -- walk out holding. Priced against measured play rather than guessed: a cleared
--- vault pays about eleven mana (see `economy.test.walu`), so a table averaging
--- nine leaves a run a thin surplus that a bad vault can wipe out and a good one
--- can rebuild. Boss vaults take the largest steps, which is what makes the end
--- of an act a mana wall as well as an eleven-relic one.
+-- vault pays about eleven mana (see `economy.test.walu`), and the table is
+-- built around that number crossing it.
+--
+-- The first act asks for well under eleven, so a run that is going well banks a
+-- surplus. The second holds near it. The third asks for more than a vault can
+-- pay, so the pile that took two acts to build is what act three is spent out
+-- of — a run arrives at the last vault on fumes, and one that stumbled anywhere
+-- along the way does not arrive at all. That is where the difficulty ramps: not
+-- in making a breach harder to win, which nothing here touches, but in what
+-- winning has to be worth by the time the run is deep.
+--
+-- Boss vaults take the largest steps, which is what makes the end of an act a
+-- mana wall as well as an eleven-relic one.
 --
 -- The table is written out inside the function rather than held module-side: a
 -- top-level `local` is invisible to a `function` declaration, and the values
 -- belong next to the reasoning about them anyway.
 function ante_at(vault: i32, rush: bool): i32
-    local table_values: {i32} = { 3, 4, 6, 7, 8, 11, 12, 13, 16 }
-    if rush then table_values = { 4, 8, 11, 15, 19 } end
+    local table_values: {i32} = { 3, 5, 8, 12, 16, 21, 25, 29, 34 }
+    if rush then table_values = { 5, 10, 16, 23, 30 } end
     local length: i32 = #table_values
     if vault < 1 then return table_values[0] end
     if vault <= length then return table_values[vault - 1] end

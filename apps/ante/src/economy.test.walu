@@ -21,6 +21,7 @@
 require("waluau:vitest")
 
 local game = require("./game")
+local run = require("./run")
 
 -- One vault fought to a verdict.
 type Trial = {
@@ -195,5 +196,118 @@ describe("Arcane Heist vault economy", function()
         local funded: Sample = measure(false, game.starting_mana, STANDARD_TRIALS)
         expect(clear_percent(broke)):toBe(clear_percent(funded))
         expect(mean_income(broke)):toBeGreaterThan(mean_income(funded))
+    end)
+end)
+
+-- One whole run, vault after vault, until something ends it. The reference
+-- player never shops and never casts, so the only things mana moves for are
+-- feints and antes — which is the comparison this is here to make.
+type RunTrial = {
+    vaults: i32,
+    ended_by: i32,
+    purse: i32
+}
+
+local function play_run(seed: i32): RunTrial
+    local state: run.State = run.new(game.spell_firebolt, false)
+    -- Bounded well past anything the ante curve allows so a mis-tuned table
+    -- fails as an assertion rather than as a hung suite.
+    for attempt = 1::i32, 40 do
+        math.randomseed(seed * 1000 + attempt)
+        local vault: game.State = game.new(state:boss(), state.spells, state.mana)
+        autopilot(vault)
+        local reached: i32 = state.vault
+        local outcome: i32 = state:settle(vault:is_victory(), vault:mana())
+        if outcome == run.outcome_lost_vault or outcome == run.outcome_lost_ante then
+            return { vaults = reached - 1, ended_by = outcome, purse = vault:mana() }
+        end
+    end
+    return { vaults = 40, ended_by = run.outcome_none, purse = state.mana }
+end
+
+-- Enough runs to see the tail of the depth distribution without the suite
+-- turning into a simulation job. A run is mostly short, so most trials cost
+-- one or two vaults' worth of play.
+const RUN_TRIALS: i32 = 300
+
+-- Measured, 2026-08-04, over 600 runs: 598 ended on the Arch Mage, 2 on the
+-- ante, none reached vault 9, and the deepest got to 8.
+--
+-- That is the honest shape of this ramp, and it is worth writing down rather
+-- than wishing away. A vault is a coin flip, so the Arch Mage is and stays the
+-- executioner; the ante almost never lands the killing blow. What the ante
+-- changes is what a run can afford to risk on the way — every mana wagered in
+-- a feint is mana that has to be won back before the vault will let go of the
+-- robbers — and it changes it most in act three, where the table asks for more
+-- than any vault can pay.
+describe("Arcane Heist run economy", function()
+    it("ends every run it plays", function()
+        local held: i32 = 0
+        local short: i32 = 0
+        local unfinished: i32 = 0
+        local deepest: i32 = 0
+        local total: i32 = 0
+        for seed = 1::i32, RUN_TRIALS do
+            local trial: RunTrial = play_run(seed)
+            if trial.ended_by == run.outcome_lost_vault then held += 1
+            elseif trial.ended_by == run.outcome_lost_ante then short += 1
+            else unfinished += 1 end
+            total += trial.vaults
+            if trial.vaults > deepest then deepest = trial.vaults end
+        end
+        -- Nothing walks forever: past the table the ante outruns what a vault
+        -- pays, so even a run that never loses a breach is eventually stopped.
+        expect(unfinished):toBe(0)
+        -- The Arch Mage stays the executioner by a wide margin. An ante that
+        -- took a large share of these would have overtaken the eleven a cleared
+        -- vault pays and turned the ramp into a second loss condition.
+        expect(held):toBeGreaterThan(RUN_TRIALS / 2)
+        expect(short * 10):toBeLessThan(held)
+        -- Runs get deep enough for the table's back half to be reachable, which
+        -- is the only reason writing a back half is worth anything.
+        expect(deepest):toBeGreaterThanOrEqual(4)
+        -- A run clears about one vault on average — the coin flip compounding,
+        -- p/(1-p) at a 54 percent clear rate. Hundredths, because a mean under
+        -- two does not survive integer division.
+        expect((total * 100) / RUN_TRIALS):toBeGreaterThanOrEqual(70)
+        expect((total * 100) / RUN_TRIALS):toBeLessThan(200)
+    end)
+
+    it("spends act three out of the pile the first two acts banked", function()
+        -- The design claim, checked against the table directly rather than
+        -- through the shuffle: at a cleared vault's measured pay, the purse
+        -- rises through act one, holds through act two, and falls through act
+        -- three. A statistical version of this would need runs to reach vault
+        -- nine, and a coin-flip vault means almost none do.
+        local income: i32 = 16
+        local purse: i32 = game.starting_mana
+        local peak: i32 = purse
+        local peak_vault: i32 = 0
+        for vault = 1::i32, run.run_length(false) do
+            purse = purse + income - run.ante_at(vault, false)
+            if purse > peak then
+                peak = purse
+                peak_vault = vault
+            end
+        end
+        -- The pile peaks in the middle of the run, not at the end of it.
+        expect(peak_vault):toBeGreaterThanOrEqual(3)
+        expect(peak_vault):toBeLessThanOrEqual(6)
+        -- And the last vault is reached on fumes: cleared, but with nothing to
+        -- spare, so any vault along the way that paid less than average is a
+        -- run that does not get there at all.
+        expect(purse):toBeGreaterThanOrEqual(0)
+        expect(purse):toBeLessThan(income)
+        -- At the pay of an ordinary rather than a lucky run, the table wins.
+        local lean: i32 = game.starting_mana
+        local died_at: i32 = 0
+        for vault = 1::i32, run.run_length(false) do
+            if died_at == 0 then
+                lean = lean + 11 - run.ante_at(vault, false)
+                if lean < 0 then died_at = vault end
+            end
+        end
+        expect(died_at):toBeGreaterThanOrEqual(6)
+        expect(died_at):toBeLessThanOrEqual(run.run_length(false))
     end)
 end)
