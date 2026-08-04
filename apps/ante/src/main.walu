@@ -1,4 +1,4 @@
--- Arcane Heist hosted by the 2D engine. This entry module is intentionally an
+-- Ante Magic hosted by the 2D engine. This entry module is intentionally an
 -- adapter: it owns the engine session, the shared presentation resources, the
 -- city map every screen stands on, and which screen is live. The menu and the
 -- heist board each live behind their own screen module; neither knows the other
@@ -33,7 +33,7 @@ function play_flip_cues(assets: presentation_resources.State, count: i32): unit
     for _ = 1, count do presentation_resources.play_flip(assets) end
 end
 
-function install_arcane_heist(): unit
+function install_ante_magic(): unit
     local screen: i32 = SCREEN_MENU
     local menu_state: menu.State = menu.new()
     local heist: game_screen.State = game_screen.new()
@@ -160,7 +160,7 @@ function install_arcane_heist(): unit
     -- layout module derives everything from whatever size that turns out to
     -- be, frame by frame.
     local session: engine.Session? = engine.start({
-        title = "Arcane Heist",
+        title = "Ante Magic",
         update_hz = 60.0,
         max_frame_seconds = 0.25,
         background = "#09090b",
@@ -220,4 +220,4 @@ function install_arcane_heist(): unit
     })
 end
 
-install_arcane_heist()
+install_ante_magic()

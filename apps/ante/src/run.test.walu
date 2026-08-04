@@ -1,4 +1,4 @@
--- Deterministic, DOM-free checks for the roguelike run around Arcane Heist:
+-- Deterministic, DOM-free checks for the roguelike run around Ante Magic:
 -- the boss cadence, mana carrying between vaults, the spell loadout carried
 -- with it, and where a run ends.
 
@@ -28,7 +28,7 @@ local function clear_vault(state: run.State, mana: i32): unit
     settle_vault(state, 0, mana)
 end
 
-describe("Arcane Heist run cadence", function()
+describe("Ante Magic run cadence", function()
     it("makes every third vault a boss battle", function()
         expect(run.boss_at(1, false)):toBe(false)
         expect(run.boss_at(2, false)):toBe(false)
@@ -142,7 +142,7 @@ describe("Arcane Heist run cadence", function()
     end)
 end)
 
-describe("Arcane Heist run loadout", function()
+describe("Ante Magic run loadout", function()
     it("gives a learned spell the next cast key while there is room", function()
         local state: run.State = run.new(game.spell_firebolt, false)
         expect(state:open_slot()):toBe(1)
@@ -224,7 +224,7 @@ describe("Arcane Heist run loadout", function()
     end)
 end)
 
-describe("Arcane Heist vault verdicts", function()
+describe("Ante Magic vault verdicts", function()
     it("clears a vault the Arch Mage failed to hold three times", function()
         math.randomseed(71)
         local state: game.State = game.new(
@@ -279,7 +279,7 @@ end)
 -- variant, spell, and opening mana are all the run's to say. What the screen
 -- adds on top is choreography, which needs a canvas and is covered by the
 -- app's browser suite instead.
-describe("Arcane Heist run progression", function()
+describe("Ante Magic run progression", function()
     it("deals the next vault with the mana the last one left", function()
         math.randomseed(79)
         local state: run.State = run.new(game.spell_firebolt, false)

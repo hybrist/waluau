@@ -1,4 +1,4 @@
--- Resource lifetime and failure policy for Arcane Heist presentation assets.
+-- Resource lifetime and failure policy for Ante Magic presentation assets.
 -- Engine callbacks ask this module to load, prepare, unlock, play, diagnose,
 -- and dispose; source/GPU ownership no longer leaks across the entry module.
 
