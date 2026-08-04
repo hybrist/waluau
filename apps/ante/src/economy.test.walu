@@ -1,0 +1,199 @@
+-- What a vault actually pays out, measured rather than guessed.
+--
+-- Every other test here is deterministic: it pins a seed and asserts an exact
+-- structural fact, or arranges the cards outright through the fixture. This one
+-- is the opposite kind — it plays whole vaults from a shuffled deck to a natural
+-- verdict and aggregates what came out, because the ante the run charges to
+-- clear a vault has to be a number somebody measured against real play.
+--
+-- The reference player is the Arch Mage's own policy played from the robbers'
+-- side: the strongest feint the purse covers, then the strongest pair. That
+-- makes this a mirror match, so what it reports is a strong player's income
+-- rather than a median one — which is the number the ante needs, because an
+-- ante tuned to weak play never becomes a wall. It is also why income is
+-- structurally positive: the player pays a mana per relic offered in a feint
+-- and wins `round + pot` back, and half of every pot is the Arch Mage's wager,
+-- which nothing ever charged it for.
+--
+-- Bands, not values. Shuffles move these numbers around and a regression fence
+-- that has to be re-pinned every time the deal changes is a fence nobody keeps.
+
+require("waluau:vitest")
+
+local game = require("./game")
+
+-- One vault fought to a verdict.
+type Trial = {
+    cleared: bool,
+    exit_mana: i32,
+    income: i32,
+    breaches_won: i32
+}
+
+-- What a batch of trials came to. `income` is exit mana less what the vault
+-- opened with, so it is what the vault paid the run rather than what the run
+-- was holding when it left.
+type Sample = {
+    trials: i32,
+    cleared: i32,
+    income_sum: i32,
+    income_low: i32,
+    income_high: i32,
+    cleared_income_sum: i32
+}
+
+local function starter_loadout(): {game.Spell}
+    return { game.new_spell(game.spell_firebolt) }
+end
+
+-- The strongest feint this hand can propose, or nothing when the purse will not
+-- cover it. Wards are never frozen here — the reference player casts no spells,
+-- so `best_swap` sees the whole board.
+local function reference_feint(state: game.State): unit
+    local choice: game.SwapChoice = game.best_swap(
+        game.hand_cards(state.player_hand), state.middle)
+    if #choice.hand_indices > state:mana() then
+        state:resolve_swap({}, {})
+        return
+    end
+    if state:resolve_swap(choice.hand_indices, choice.middle_indices) == nil then
+        -- A proposal the rules turned down costs nothing and passes instead, so
+        -- a rejected feint can never leave the phase open and hang the trial.
+        state:resolve_swap({}, {})
+    end
+end
+
+-- Play the live vault out. Bounded by the rounds a vault has rather than by the
+-- finished flag, so a trial cannot spin even if the rules refuse a move.
+local function autopilot(state: game.State): unit
+    for _ = 1, 5 do
+        if state:is_finished() then return end
+        if state:feint_open() then reference_feint(state) end
+        local pair: game.PairChoice = game.best_pair(
+            game.hand_cards(state.player_hand), state.middle)
+        state:play(pair.first, pair.second)
+    end
+end
+
+local function play_vault(boss: bool, mana: i32, seed: i32): Trial
+    math.randomseed(seed)
+    local state: game.State = game.new(boss, starter_loadout(), mana)
+    autopilot(state)
+    return {
+        cleared = state:is_victory(),
+        exit_mana = state.player_points,
+        income = state.player_points - mana,
+        breaches_won = state.player_tricks,
+    }
+end
+
+local function measure(boss: bool, mana: i32, trials: i32): Sample
+    local sample: Sample = {
+        trials = trials,
+        cleared = 0,
+        income_sum = 0,
+        income_low = 9999,
+        income_high = -9999,
+        cleared_income_sum = 0,
+    }
+    for seed = 1::i32, trials do
+        local trial: Trial = play_vault(boss, mana, seed)
+        sample.income_sum += trial.income
+        if trial.income < sample.income_low then sample.income_low = trial.income end
+        if trial.income > sample.income_high then sample.income_high = trial.income end
+        if trial.cleared then
+            sample.cleared += 1
+            sample.cleared_income_sum += trial.income
+        end
+    end
+    return sample
+end
+
+-- Percentages rather than fractions: these assertions are about bands, and a
+-- band reads better as "between 45 and 95 out of a hundred" than as a ratio.
+local function clear_percent(sample: Sample): i32
+    return (sample.cleared * 100) / sample.trials
+end
+
+local function mean_income(sample: Sample): i32
+    return sample.income_sum / sample.trials
+end
+
+-- A standard vault is cheap to play; a boss vault searches an eleven-card hand
+-- for every one-, two-, and three-card feint against seven ward subsets, each
+-- candidate ranking all fifty-five pairs, so it gets far fewer trials.
+const STANDARD_TRIALS: i32 = 200
+const BOSS_TRIALS: i32 = 25
+
+-- Measured, 2026-08-04, 200 standard and 25 boss trials:
+--
+--   standard  clear 54%  mean income +6  cleared +11  range -7 .. +24
+--   boss      clear 48%  mean income +4  cleared +11  range -7 .. +20
+--
+-- Two of those are worth saying out loud, because the ante's whole design rests
+-- on them. A vault is close to a coin flip even for a player that never
+-- misplays — the Arch Mage is the same policy, so half the breaches go to it.
+-- And a cleared vault pays about eleven, which is what the ante has to stay
+-- under to leave a run alive across nine of them.
+describe("Arcane Heist vault economy", function()
+    it("makes a standard vault close to a coin flip and pays the winner", function()
+        local sample: Sample = measure(false, game.starting_mana, STANDARD_TRIALS)
+        -- A mirror match, so a band reaching 100 would mean the Arch Mage never
+        -- wins one and a band reaching 0 would mean the vault is not winnable.
+        expect(clear_percent(sample)):toBeGreaterThanOrEqual(40)
+        expect(clear_percent(sample)):toBeLessThanOrEqual(70)
+        -- The number the ante table is tuned against.
+        expect(sample.cleared_income_sum / sample.cleared):toBeGreaterThanOrEqual(7)
+        expect(sample.cleared_income_sum / sample.cleared):toBeLessThanOrEqual(16)
+        expect(mean_income(sample)):toBeGreaterThanOrEqual(2)
+        expect(mean_income(sample)):toBeLessThanOrEqual(12)
+        -- A vault can be walked out of poorer than it was walked into: every
+        -- feint a breach then loses is wagered mana that never comes back.
+        expect(sample.income_low):toBeLessThan(0)
+        expect(sample.income_low):toBeGreaterThanOrEqual(-15)
+    end)
+
+    it("pays a boss vault on the same order as a standard one", function()
+        local sample: Sample = measure(true, game.starting_mana, BOSS_TRIALS)
+        expect(clear_percent(sample)):toBeGreaterThanOrEqual(30)
+        expect(clear_percent(sample)):toBeLessThanOrEqual(65)
+        expect(sample.cleared_income_sum / sample.cleared):toBeGreaterThanOrEqual(7)
+        expect(sample.cleared_income_sum / sample.cleared):toBeLessThanOrEqual(16)
+    end)
+
+    it("pays a vault the same however big the purse it opened with", function()
+        -- The load-bearing fact under the ante. What a vault pays is fixed by
+        -- the breaches won, and the mana a feint wagers comes back inside the
+        -- pot that feint wins — so carrying more in buys nothing, and a run
+        -- cannot outrun a rising ante by hoarding. The samples are identical
+        -- rather than merely close: same seeds, same deals, and a purse this
+        -- size never once failed to cover the feint the policy wanted.
+        local lean: Sample = measure(false, game.starting_mana, STANDARD_TRIALS)
+        local flush: Sample = measure(false, 40, STANDARD_TRIALS)
+        expect(mean_income(flush)):toBe(mean_income(lean))
+        expect(clear_percent(flush)):toBe(clear_percent(lean))
+    end)
+
+    it("charges for contesting a feint and hands back no breaches for it", function()
+        -- Not the result this harness was written expecting, and the one most
+        -- worth keeping a fence around. A purse of nothing cannot wager, so the
+        -- Arch Mage's exchange executes unopposed every round — and the vault is
+        -- cleared exactly as often as when every feint is contested to the hilt.
+        --
+        -- The arithmetic behind it: a wager is paid with certainty and only
+        -- comes back inside a pot the breach has to win, which in a mirror match
+        -- is a coin flip, so contesting costs about half of every mana staked.
+        -- What it buys is that the player's exchange runs instead of the Arch
+        -- Mage's — and the exchange lands on the shared wards, which both hands
+        -- then play through. Improving the board improves the board for two.
+        --
+        -- So the feint, the mechanic the game is built around, is dominated by
+        -- passing. That is a rules problem rather than an ante problem, tracked
+        -- separately; the ante only has to be designed knowing it is true, since
+        -- charging for mana gives a player one more reason to never wager.
+        local broke: Sample = measure(false, 0, STANDARD_TRIALS)
+        local funded: Sample = measure(false, game.starting_mana, STANDARD_TRIALS)
+        expect(clear_percent(broke)):toBe(clear_percent(funded))
+        expect(mean_income(broke)):toBeGreaterThan(mean_income(funded))
+    end)
+end)
