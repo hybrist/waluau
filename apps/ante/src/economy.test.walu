@@ -52,7 +52,7 @@ end
 -- so `best_swap` sees the whole board.
 local function reference_feint(state: game.State): unit
     local choice: game.SwapChoice = game.best_swap(
-        game.hand_cards(state.player_hand), state.middle)
+        game.hand_cards(game.view(state).player_hand), game.view(state).middle)
     if #choice.hand_indices > state:mana() then
         state:resolve_swap({}, {})
         return
@@ -71,7 +71,7 @@ local function autopilot(state: game.State): unit
         if state:is_finished() then return end
         if state:feint_open() then reference_feint(state) end
         local pair: game.PairChoice = game.best_pair(
-            game.hand_cards(state.player_hand), state.middle)
+            game.hand_cards(game.view(state).player_hand), game.view(state).middle)
         state:play(pair.first, pair.second)
     end
 end
@@ -82,9 +82,9 @@ local function play_vault(boss: bool, mana: i32, seed: i32): Trial
     autopilot(state)
     return {
         cleared = state:is_victory(),
-        exit_mana = state.player_points,
-        income = state.player_points - mana,
-        breaches_won = state.player_tricks,
+        exit_mana = game.view(state).player_points,
+        income = game.view(state).player_points - mana,
+        breaches_won = game.view(state).player_tricks,
     }
 end
 

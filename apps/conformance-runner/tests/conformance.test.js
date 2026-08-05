@@ -419,6 +419,52 @@ describe('browser conformance', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('passes opaque records through module operations without exposing fields', async () => {
+    const counter = `
+      opaque type Counter = { value: i32 }
+      local shared: Counter = { value = 10::i32 }
+
+      function new(value: i32): Counter
+          return { value = value }
+      end
+
+      function Counter:add(delta: i32): unit
+          self.value += delta
+      end
+
+      function Counter:value(): i32
+          return self.value
+      end
+
+      function shared_counter(): Counter
+          return shared
+      end
+
+      return { new = new, shared_counter = shared_counter }
+    `;
+    const main = `
+      local counters = require("./counter")
+
+      local first: counters.Counter = counters.new(40)
+      first:add(2)
+      assert(first:value() == 42)
+
+      local shared: counters.Counter = counters.shared_counter()
+      shared:add(5)
+      assert(shared:value() == 15)
+
+      function pass_through(value: counters.Counter): counters.Counter
+          return value
+      end
+
+      assert(pass_through(first):value() == 42)
+    `;
+
+    await expect(
+      compileAndInstantiate({ '/counter.walu': counter, '/main.walu': main }, '/main.walu'),
+    ).resolves.toBeUndefined();
+  });
+
   it('passes type aliases imported across require boundaries', async () => {
     const state = `
       type State = { score: i32 }

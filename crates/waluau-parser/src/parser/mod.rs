@@ -159,6 +159,7 @@ impl Parser {
         let mut declared_constants = Vec::new();
         let mut type_declarations = Vec::new();
         let mut top_level = Vec::new();
+        let mut top_level_file_paths = Vec::new();
         let mut export = None;
         while self.peek().is_some() {
             // Luau allows `;` as an optional statement separator.
@@ -236,7 +237,10 @@ impl Parser {
                     Ok(Stmt::ReturnMulti(_)) => self.record_error(Diagnostic::new(
                         "a module return must export a single value",
                     )),
-                    Ok(stmt) => top_level.push(stmt),
+                    Ok(stmt) => {
+                        top_level.push(stmt);
+                        top_level_file_paths.push(self.file_path.clone());
+                    }
                     Err(error) => {
                         self.record_error(error);
                         self.synchronize_statement(&[], self.index);
@@ -251,6 +255,7 @@ impl Parser {
             declared_constants,
             type_declarations,
             top_level,
+            top_level_file_paths,
             export,
             sources: std::collections::BTreeMap::from([(
                 self.file_path.clone(),

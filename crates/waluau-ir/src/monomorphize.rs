@@ -447,6 +447,7 @@ impl<'a> Monomorphizer<'a> {
             declared_constants: program.declared_constants.clone(),
             type_declarations: program.type_declarations.clone(),
             top_level: program.top_level.clone(),
+            top_level_file_paths: program.top_level_file_paths.clone(),
             export: program.export.clone(),
             sources: program.sources.clone(),
             entry_file_path: program.entry_file_path.clone(),

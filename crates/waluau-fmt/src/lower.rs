@@ -363,9 +363,23 @@ fn declare_const(t: &Tree) -> Doc {
 
 /// `type Name<T> = Type`.
 fn type_decl(t: &Tree) -> Doc {
-    // 0 `type`,1 name,[TypeParams],`=`,type
-    let mut parts = vec![node(&t.children[0]), text(" "), node(&t.children[1])];
-    let mut idx = 2;
+    // [`opaque`],`type`,name,[TypeParams],`=`,type
+    let opaque = matches!(
+        tok_kind_at(t, 0),
+        Some(TokenKind::Identifier(keyword)) if keyword == "opaque"
+    );
+    let type_index = usize::from(opaque);
+    let name_index = type_index + 1;
+    let mut parts = Vec::new();
+    if opaque {
+        parts.extend([node(&t.children[0]), text(" ")]);
+    }
+    parts.extend([
+        node(&t.children[type_index]),
+        text(" "),
+        node(&t.children[name_index]),
+    ]);
+    let mut idx = name_index + 1;
     if kind_at(t, idx) == Some(SyntaxKind::TypeParams) {
         parts.push(node(&t.children[idx]));
         idx += 1;

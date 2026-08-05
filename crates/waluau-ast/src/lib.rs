@@ -51,6 +51,10 @@ pub struct Program {
     pub declared_constants: Vec<DeclaredConstant>,
     pub type_declarations: Vec<TypeDeclaration>,
     pub top_level: Vec<Stmt>,
+    /// Source owner for each top-level statement. Linkers preserve this
+    /// parallel list so module initializers can be checked with the same
+    /// private-type visibility as ordinary functions.
+    pub top_level_file_paths: Vec<String>,
     /// The value a module exports through a trailing top-level `return`.
     ///
     /// The value is a function name or a table of functions. Module linkers

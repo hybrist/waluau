@@ -731,6 +731,198 @@ mod tests {
         assert!(result.wat.contains("(global"));
     }
 
+    fn opaque_counter_module() -> String {
+        r#"
+            opaque type Counter = { value: i32 }
+            local shared: Counter = { value = 0::i32 }
+
+            function new(value: i32): Counter
+                return { value = value }
+            end
+
+            function Counter:get(): i32
+                return self.value
+            end
+
+            function Counter:add(delta: i32): unit
+                self.value += delta
+            end
+
+            return { new = new }
+        "#
+        .to_string()
+    }
+
+    #[test]
+    fn compile_multi_supports_module_opaque_record_operations() {
+        let files = HashMap::from([
+            (
+                "/main.walu".to_string(),
+                r#"
+                    local counters = require("./counter")
+
+                    function run(): i32
+                        local counter: counters.Counter = counters.new(40)
+                        counter:add(2)
+                        return counter:get()
+                    end
+                "#
+                .to_string(),
+            ),
+            ("/counter.walu".to_string(), opaque_counter_module()),
+        ]);
+
+        let result = compile_sources(&files, "/main.walu")
+            .expect("opaque values should cross the module seam through operations");
+        assert!(result.wat.contains("(module"));
+        assert!(result.ir.contains("StructGet"), "{}", result.ir);
+    }
+
+    #[test]
+    fn compile_multi_rejects_module_opaque_record_construction() {
+        let files = HashMap::from([
+            (
+                "/main.walu".to_string(),
+                r#"
+                    local counters = require("./counter")
+
+                    function bad(): unit
+                        local counter: counters.Counter = { value = 1::i32 }
+                    end
+                "#
+                .to_string(),
+            ),
+            ("/counter.walu".to_string(), opaque_counter_module()),
+        ]);
+
+        let error = compile_sources(&files, "/main.walu")
+            .expect_err("consumers must not construct an opaque representation");
+        assert!(
+            error.contains("cannot construct opaque type 'Counter' outside its defining module"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn compile_multi_rejects_module_opaque_record_field_reads() {
+        let files = HashMap::from([
+            (
+                "/main.walu".to_string(),
+                r#"
+                    local counters = require("./counter")
+
+                    function bad(): i32
+                        local counter: counters.Counter = counters.new(1)
+                        return counter.value
+                    end
+                "#
+                .to_string(),
+            ),
+            ("/counter.walu".to_string(), opaque_counter_module()),
+        ]);
+
+        let error = compile_sources(&files, "/main.walu")
+            .expect_err("consumers must not read opaque representation fields");
+        assert!(
+            error.contains("cannot access private field 'value' of opaque type 'Counter'"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn compile_multi_rejects_module_opaque_record_field_writes() {
+        let files = HashMap::from([
+            (
+                "/main.walu".to_string(),
+                r#"
+                    local counters = require("./counter")
+
+                    function bad(): unit
+                        local counter: counters.Counter = counters.new(1)
+                        counter.value = 2
+                    end
+                "#
+                .to_string(),
+            ),
+            ("/counter.walu".to_string(), opaque_counter_module()),
+        ]);
+
+        let error = compile_sources(&files, "/main.walu")
+            .expect_err("consumers must not write opaque representation fields");
+        assert!(
+            error.contains("cannot assign private field 'value' of opaque type 'Counter'"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn compile_multi_rejects_top_level_module_opaque_record_construction() {
+        let files = HashMap::from([
+            (
+                "/main.walu".to_string(),
+                r#"
+                    local counters = require("./counter")
+                    local counter: counters.Counter = { value = 1::i32 }
+                "#
+                .to_string(),
+            ),
+            ("/counter.walu".to_string(), opaque_counter_module()),
+        ]);
+
+        let error = compile_sources(&files, "/main.walu")
+            .expect_err("consumer initializers must not construct opaque records");
+        assert!(
+            error.contains("cannot construct opaque type 'Counter' outside its defining module"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn compile_multi_rejects_top_level_module_opaque_record_field_reads() {
+        let files = HashMap::from([
+            (
+                "/main.walu".to_string(),
+                r#"
+                    local counters = require("./counter")
+                    local counter: counters.Counter = counters.new(1)
+                    assert(counter.value == 1)
+                "#
+                .to_string(),
+            ),
+            ("/counter.walu".to_string(), opaque_counter_module()),
+        ]);
+
+        let error = compile_sources(&files, "/main.walu")
+            .expect_err("consumer initializers must not read opaque fields");
+        assert!(
+            error.contains("cannot access private field 'value' of opaque type 'Counter'"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn compile_multi_rejects_top_level_module_opaque_record_field_writes() {
+        let files = HashMap::from([
+            (
+                "/main.walu".to_string(),
+                r#"
+                    local counters = require("./counter")
+                    local counter: counters.Counter = counters.new(1)
+                    counter.value = 2
+                "#
+                .to_string(),
+            ),
+            ("/counter.walu".to_string(), opaque_counter_module()),
+        ]);
+
+        let error = compile_sources(&files, "/main.walu")
+            .expect_err("consumer initializers must not write opaque fields");
+        assert!(
+            error.contains("cannot assign private field 'value' of opaque type 'Counter'"),
+            "{error}"
+        );
+    }
+
     #[test]
     fn compile_multi_keeps_record_module_local_used_by_public_functions() {
         let files = HashMap::from([

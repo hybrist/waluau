@@ -146,6 +146,16 @@ fn parses_type_declarations_and_named_type_references() {
 }
 
 #[test]
+fn parses_module_opaque_type_declarations() {
+    let program = parse_with_path("opaque type State = { value: i32 }", "/game.walu")
+        .expect("opaque type declaration should parse");
+    let declaration = &program.type_declarations[0];
+    assert_eq!(declaration.name, "State");
+    assert!(declaration.module_opaque);
+    assert_eq!(declaration.file_path, "/game.walu");
+}
+
+#[test]
 fn parses_extern_type_declaration() {
     let source = r#"
         type Element = extern

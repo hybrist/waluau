@@ -510,6 +510,7 @@ fn merge_with_builtins(
         extern_sources.extend(vitest_program.sources);
     }
     let mut top_level = Vec::new();
+    let mut top_level_file_paths = Vec::new();
     let mut export_cache = HashMap::new();
 
     for (id, _) in modules.iter().enumerate() {
@@ -622,6 +623,10 @@ fn merge_with_builtins(
         if id != entry_id {
             rename_imported_top_level_locals(&mut lowered, &prefix);
         }
+        top_level_file_paths.extend(std::iter::repeat_n(
+            module.program.entry_file_path.clone(),
+            lowered.len(),
+        ));
         top_level.extend(lowered);
     }
     let entry_file_path = modules[entry_id].program.entry_file_path.clone();
@@ -636,6 +641,7 @@ fn merge_with_builtins(
         declared_constants,
         type_declarations,
         top_level,
+        top_level_file_paths,
         // A trailing return is dependency-facing module metadata, not the
         // entry module's Wasm export declaration. Inline functions from every
         // module export were hoisted above; discard the entry expression so

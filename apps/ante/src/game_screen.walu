@@ -293,10 +293,11 @@ function update(state: State, city: city_map.State, dt: f64): i32
     if burned_ward >= 0 then
         local discarded: game.Card? = state.rules:resolve_firebolt(burned_ward)
         if discarded ~= nil then
+            local rules_view: game.View = game.view(state.rules)
             choreography.firebolt_resolved(
                 presentation,
                 discarded::game.Card,
-                state.rules.middle[burned_ward],
+                rules_view.middle[burned_ward],
                 burned_ward)
         end
     end

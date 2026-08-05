@@ -158,6 +158,7 @@ fn empty_program(source: &str, file_path: &str) -> Program {
         declared_constants: Vec::new(),
         type_declarations: Vec::new(),
         top_level: Vec::new(),
+        top_level_file_paths: Vec::new(),
         export: None,
         sources: std::collections::BTreeMap::from([(file_path.to_string(), source.to_string())]),
         entry_file_path: file_path.to_string(),

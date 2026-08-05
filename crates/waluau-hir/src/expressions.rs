@@ -1404,6 +1404,17 @@ fn infer_expr_inner(
             if matches!(base_ty, Type::Array(_)) && name == "n" {
                 return coerce_type(Type::Numeric(NumericType::I32), expected);
             }
+            if let Type::Opaque {
+                name: opaque_name,
+                ty,
+            } = &base_ty
+                && ty.as_ref() == &Type::Unknown
+            {
+                return Err(Diagnostic::new(format!(
+                    "cannot access private field '{name}' of opaque type '{}'",
+                    super::module_type_display_name(opaque_name)
+                )));
+            }
             let Some(field_ty) = base_ty.record_field(name) else {
                 if matches!(
                     base_ty,
