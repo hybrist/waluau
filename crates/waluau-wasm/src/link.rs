@@ -550,12 +550,15 @@ fn merge_with_ambient_declarations(
 
         let (re_exports, namespaces, mut value_aliases) =
             process_reexport_bindings(&module.program.top_level, &imports);
-        // The module's own constants inline wherever the name is visible but
-        // the top-level local is not — most importantly function bodies.
-        // Top-level statements after the `local` keep using the local itself
-        // (the binding gates the alias), which is equivalent: the initializer
-        // is a literal and const locals cannot be rebound.
-        value_aliases.extend(module_constants(&module.program.top_level)?);
+        // Module constants are cloned at each use. Aggregate declarations are
+        // removed from executable top-level code below so top-level uses also
+        // receive independent values instead of sharing mutable table state.
+        let module_constants = module_constants(&module.program)?;
+        let aggregate_constants = module_constants
+            .iter()
+            .filter_map(|(name, value)| is_aggregate_constant(value).then_some(name.clone()))
+            .collect::<HashSet<_>>();
+        value_aliases.extend(module_constants);
         let type_namespaces = module_type_namespaces(modules, module, entry_id);
 
         let mut rewriter = Rewriter {
@@ -599,7 +602,7 @@ fn merge_with_ambient_declarations(
                 .map(|param| param.name.clone())
                 .collect();
             rewriter.rewrite_block(&mut lowered.body, &mut bound);
-            strip_unused_namespace_lets(&mut lowered.body);
+            strip_unused_namespace_lets(&mut lowered.body, &rewriter.namespaces);
             lowered.name = match &function.name {
                 FunctionName::Simple(name) => FunctionName::Simple(format!("{prefix}{name}")),
                 FunctionName::Method { table, method } => FunctionName::Method {
@@ -611,15 +614,16 @@ fn merge_with_ambient_declarations(
         }
 
         let mut lowered = module.program.top_level.clone();
+        lowered.retain(|stmt| !is_named_const(stmt, &aggregate_constants));
         for stmt in &mut lowered {
             rewriter.rewrite_stmt_types(stmt);
         }
         let mut bound = HashSet::new();
         rewriter.rewrite_block(&mut lowered, &mut bound);
+        strip_unused_namespace_lets(&mut lowered, &rewriter.namespaces);
         if id != entry_id {
             rename_imported_top_level_locals(&mut lowered, &prefix);
         }
-        strip_unused_namespace_lets(&mut lowered);
         top_level.extend(lowered);
     }
 
@@ -874,7 +878,7 @@ fn compute_module_export(
     );
     let (re_exports, namespaces, _) =
         process_reexport_bindings(&module.program.top_level, &imports);
-    let constants = module_constants(&module.program.top_level)?;
+    let constants = module_constants(&module.program)?;
 
     let resolved = resolve_module_export(
         module.program.export.as_ref(),
@@ -1038,11 +1042,17 @@ fn process_reexport_bindings(
 /// Collects a module's constants: top-level `local NAME <const> = <literal>`
 /// bindings. Their values are inlined wherever the name is referenced from a
 /// function body (top-level locals are otherwise invisible there) and
-/// wherever a consumer reads them off the module's export table. A numeric
-/// literal keeps its annotated type through an explicit cast.
-fn module_constants(top_level: &[Stmt]) -> Result<HashMap<String, Expr>, String> {
+/// wherever a consumer reads them off the module's export table. Numeric
+/// literals keep their annotated types through explicit casts; aggregate
+/// literals are recursively typed and cloned so each use owns its value.
+fn module_constants(program: &Program) -> Result<HashMap<String, Expr>, String> {
     let mut constants = HashMap::new();
-    for stmt in top_level {
+    let type_declarations = program
+        .type_declarations
+        .iter()
+        .map(|declaration| (declaration.name.as_str(), &declaration.ty))
+        .collect::<HashMap<_, _>>();
+    for stmt in &program.top_level {
         let Stmt::Let {
             name,
             rebindability: waluau_ast::Rebindability::Const,
@@ -1053,17 +1063,26 @@ fn module_constants(top_level: &[Stmt]) -> Result<HashMap<String, Expr>, String>
         else {
             continue;
         };
-        let literal = constant_literal(ty.as_ref(), value).ok_or_else(|| {
-            format!("top-level const '{name}' initializer must be an inlinable literal")
-        })?;
+        let resolved_ty = ty
+            .as_ref()
+            .map(|ty| resolve_constant_type(ty, &type_declarations, &mut HashSet::new()));
+        let literal =
+            constant_literal(resolved_ty.as_ref(), value, &constants).ok_or_else(|| {
+                format!("top-level const '{name}' initializer must be an inlinable literal")
+            })?;
         constants.insert(name.clone(), literal);
     }
     Ok(constants)
 }
 
 /// The inlinable expression for a constant initializer, or `None` when the
-/// initializer is not a literal (only literals can be duplicated freely).
-fn constant_literal(ty: Option<&Type>, value: &Expr) -> Option<Expr> {
+/// initializer cannot be duplicated without evaluating mutable state or
+/// effects.
+fn constant_literal(
+    ty: Option<&Type>,
+    value: &Expr,
+    constants: &HashMap<String, Expr>,
+) -> Option<Expr> {
     match value {
         Expr::Number(..) => numeric_constant_literal(ty, value),
         Expr::Unary {
@@ -1071,9 +1090,126 @@ fn constant_literal(ty: Option<&Type>, value: &Expr) -> Option<Expr> {
             expr,
             ..
         } if matches!(&**expr, Expr::Number(..)) => numeric_constant_literal(ty, value),
-        Expr::Bool(..) | Expr::String(..) => Some(value.clone()),
+        Expr::Bool(..) | Expr::String(..) | Expr::Bytes(..) | Expr::Nil(..) => Some(value.clone()),
+        Expr::Cast { expr, ty, span } => Some(Expr::Cast {
+            expr: Box::new(constant_literal(Some(ty), expr, constants)?),
+            ty: ty.clone(),
+            span: *span,
+        }),
+        Expr::Name(name, _, _) => constants.get(name).cloned(),
+        Expr::TableLiteral { fields, span } => {
+            let expected_fields = match ty {
+                Some(Type::Record(fields)) => Some(fields),
+                _ => None,
+            };
+            let fields = fields
+                .iter()
+                .map(|field| {
+                    Some(TableField {
+                        name: field.name.clone(),
+                        value: constant_literal(
+                            expected_fields.and_then(|fields| fields.get(&field.name)),
+                            &field.value,
+                            constants,
+                        )?,
+                    })
+                })
+                .collect::<Option<Vec<_>>>()?;
+            typed_aggregate_literal(
+                Expr::TableLiteral {
+                    fields,
+                    span: *span,
+                },
+                ty,
+            )
+        }
+        Expr::ArrayLiteral { elements, span } => {
+            let element_ty = match ty {
+                Some(Type::Array(element_ty)) => Some(element_ty.as_ref()),
+                _ => None,
+            };
+            let elements = elements
+                .iter()
+                .map(|element| constant_literal(element_ty, element, constants))
+                .collect::<Option<Vec<_>>>()?;
+            typed_aggregate_literal(
+                Expr::ArrayLiteral {
+                    elements,
+                    span: *span,
+                },
+                ty,
+            )
+        }
         _ => None,
     }
+}
+
+fn typed_aggregate_literal(value: Expr, ty: Option<&Type>) -> Option<Expr> {
+    match ty {
+        Some(ty @ (Type::Record(_) | Type::Array(_))) => Some(Expr::Cast {
+            expr: Box::new(value),
+            ty: ty.clone(),
+            span: None,
+        }),
+        None => Some(value),
+        Some(_) => None,
+    }
+}
+
+fn resolve_constant_type(
+    ty: &Type,
+    declarations: &HashMap<&str, &Type>,
+    visiting: &mut HashSet<String>,
+) -> Type {
+    match ty {
+        Type::Named { name, type_args } if type_args.is_empty() => {
+            let Some(declared) = declarations.get(name.as_str()) else {
+                return ty.clone();
+            };
+            if !visiting.insert(name.clone()) {
+                return ty.clone();
+            }
+            let resolved = resolve_constant_type(declared, declarations, visiting);
+            visiting.remove(name);
+            resolved
+        }
+        Type::Array(element) => Type::Array(Box::new(resolve_constant_type(
+            element,
+            declarations,
+            visiting,
+        ))),
+        Type::Record(fields) => Type::Record(
+            fields
+                .iter()
+                .map(|(name, ty)| {
+                    (
+                        name.clone(),
+                        resolve_constant_type(ty, declarations, visiting),
+                    )
+                })
+                .collect(),
+        ),
+        _ => ty.clone(),
+    }
+}
+
+fn is_aggregate_constant(expr: &Expr) -> bool {
+    match expr {
+        Expr::TableLiteral { .. } | Expr::ArrayLiteral { .. } => true,
+        Expr::Cast { expr, .. } => is_aggregate_constant(expr),
+        _ => false,
+    }
+}
+
+fn is_named_const(stmt: &Stmt, names: &HashSet<String>) -> bool {
+    matches!(
+        stmt,
+        Stmt::Let {
+            name,
+            rebindability: waluau_ast::Rebindability::Const,
+            ..
+        } if names.contains(name)
+    )
 }
 
 fn numeric_constant_literal(ty: Option<&Type>, value: &Expr) -> Option<Expr> {
@@ -1823,15 +1959,21 @@ impl Rewriter<'_> {
     }
 }
 
-fn strip_unused_namespace_lets(stmts: &mut Vec<Stmt>) {
+fn strip_unused_namespace_lets(
+    stmts: &mut Vec<Stmt>,
+    namespaces: &HashMap<String, ModuleNamespace>,
+) {
     for stmt in stmts.iter_mut() {
-        strip_unused_namespace_lets_in_stmt(stmt);
+        strip_unused_namespace_lets_in_stmt(stmt, namespaces);
     }
     let unused: HashSet<String> = stmts
         .iter()
         .filter_map(|stmt| {
             if let Stmt::Let { name, value, .. } = stmt {
-                if matches!(value, Expr::TableLiteral { .. }) && !stmt_mentions_name(name, stmts) {
+                if namespaces.contains_key(name)
+                    && matches!(value, Expr::TableLiteral { .. })
+                    && !stmt_mentions_name(name, stmts)
+                {
                     return Some(name.clone());
                 }
             }
@@ -1844,33 +1986,36 @@ fn strip_unused_namespace_lets(stmts: &mut Vec<Stmt>) {
     stmts.retain(|stmt| !matches!(stmt, Stmt::Let { name, .. } if unused.contains(name)));
 }
 
-fn strip_unused_namespace_lets_in_stmt(stmt: &mut Stmt) {
+fn strip_unused_namespace_lets_in_stmt(
+    stmt: &mut Stmt,
+    namespaces: &HashMap<String, ModuleNamespace>,
+) {
     match stmt {
         Stmt::Let { value, .. }
         | Stmt::Assign { value, .. }
         | Stmt::Return(value)
         | Stmt::Expr(value) => {
-            strip_unused_namespace_lets_in_expr(value);
+            strip_unused_namespace_lets_in_expr(value, namespaces);
         }
         Stmt::IndexAssign {
             base, index, value, ..
         } => {
-            strip_unused_namespace_lets_in_expr(base);
-            strip_unused_namespace_lets_in_expr(index);
-            strip_unused_namespace_lets_in_expr(value);
+            strip_unused_namespace_lets_in_expr(base, namespaces);
+            strip_unused_namespace_lets_in_expr(index, namespaces);
+            strip_unused_namespace_lets_in_expr(value, namespaces);
         }
         Stmt::FieldAssign { base, value, .. } => {
-            strip_unused_namespace_lets_in_expr(base);
-            strip_unused_namespace_lets_in_expr(value);
+            strip_unused_namespace_lets_in_expr(base, namespaces);
+            strip_unused_namespace_lets_in_expr(value, namespaces);
         }
         Stmt::If {
             condition,
             then_body,
             else_body,
         } => {
-            strip_unused_namespace_lets_in_expr(condition);
-            strip_unused_namespace_lets(then_body);
-            strip_unused_namespace_lets(else_body);
+            strip_unused_namespace_lets_in_expr(condition, namespaces);
+            strip_unused_namespace_lets(then_body, namespaces);
+            strip_unused_namespace_lets(else_body, namespaces);
         }
         Stmt::IfCast {
             value,
@@ -1878,17 +2023,17 @@ fn strip_unused_namespace_lets_in_stmt(stmt: &mut Stmt) {
             else_body,
             ..
         } => {
-            strip_unused_namespace_lets_in_expr(value);
-            strip_unused_namespace_lets(then_body);
-            strip_unused_namespace_lets(else_body);
+            strip_unused_namespace_lets_in_expr(value, namespaces);
+            strip_unused_namespace_lets(then_body, namespaces);
+            strip_unused_namespace_lets(else_body, namespaces);
         }
         Stmt::While { condition, body } => {
-            strip_unused_namespace_lets_in_expr(condition);
-            strip_unused_namespace_lets(body);
+            strip_unused_namespace_lets_in_expr(condition, namespaces);
+            strip_unused_namespace_lets(body, namespaces);
         }
         Stmt::Repeat { body, condition } => {
-            strip_unused_namespace_lets(body);
-            strip_unused_namespace_lets_in_expr(condition);
+            strip_unused_namespace_lets(body, namespaces);
+            strip_unused_namespace_lets_in_expr(condition, namespaces);
         }
         Stmt::NumericFor {
             start,
@@ -1897,36 +2042,39 @@ fn strip_unused_namespace_lets_in_stmt(stmt: &mut Stmt) {
             body,
             ..
         } => {
-            strip_unused_namespace_lets_in_expr(start);
-            strip_unused_namespace_lets_in_expr(stop);
+            strip_unused_namespace_lets_in_expr(start, namespaces);
+            strip_unused_namespace_lets_in_expr(stop, namespaces);
             if let Some(step) = step {
-                strip_unused_namespace_lets_in_expr(step);
+                strip_unused_namespace_lets_in_expr(step, namespaces);
             }
-            strip_unused_namespace_lets(body);
+            strip_unused_namespace_lets(body, namespaces);
         }
         Stmt::ForIn { iterator, body, .. } => {
-            strip_unused_namespace_lets_in_expr(iterator);
-            strip_unused_namespace_lets(body);
+            strip_unused_namespace_lets_in_expr(iterator, namespaces);
+            strip_unused_namespace_lets(body, namespaces);
         }
         Stmt::ReturnMulti(values)
         | Stmt::LetMulti { values, .. }
         | Stmt::AssignMulti { values, .. } => {
             for value in values {
-                strip_unused_namespace_lets_in_expr(value);
+                strip_unused_namespace_lets_in_expr(value, namespaces);
             }
         }
         Stmt::Break | Stmt::Continue => {}
     }
 }
 
-fn strip_unused_namespace_lets_in_expr(expr: &mut Expr) {
+fn strip_unused_namespace_lets_in_expr(
+    expr: &mut Expr,
+    namespaces: &HashMap<String, ModuleNamespace>,
+) {
     match expr {
         Expr::Unary { expr, .. } | Expr::Cast { expr, .. } | Expr::IsVariant { expr, .. } => {
-            strip_unused_namespace_lets_in_expr(expr);
+            strip_unused_namespace_lets_in_expr(expr, namespaces);
         }
         Expr::Binary { left, right, .. } => {
-            strip_unused_namespace_lets_in_expr(left);
-            strip_unused_namespace_lets_in_expr(right);
+            strip_unused_namespace_lets_in_expr(left, namespaces);
+            strip_unused_namespace_lets_in_expr(right, namespaces);
         }
         Expr::If {
             condition,
@@ -1934,37 +2082,37 @@ fn strip_unused_namespace_lets_in_expr(expr: &mut Expr) {
             else_expr,
             ..
         } => {
-            strip_unused_namespace_lets_in_expr(condition);
-            strip_unused_namespace_lets_in_expr(then_expr);
-            strip_unused_namespace_lets_in_expr(else_expr);
+            strip_unused_namespace_lets_in_expr(condition, namespaces);
+            strip_unused_namespace_lets_in_expr(then_expr, namespaces);
+            strip_unused_namespace_lets_in_expr(else_expr, namespaces);
         }
         Expr::Call { callee, args, .. } => {
-            strip_unused_namespace_lets_in_expr(callee);
+            strip_unused_namespace_lets_in_expr(callee, namespaces);
             for arg in args {
-                strip_unused_namespace_lets_in_expr(arg);
+                strip_unused_namespace_lets_in_expr(arg, namespaces);
             }
         }
         Expr::MethodCall { receiver, args, .. } => {
-            strip_unused_namespace_lets_in_expr(receiver);
+            strip_unused_namespace_lets_in_expr(receiver, namespaces);
             for arg in args {
-                strip_unused_namespace_lets_in_expr(arg);
+                strip_unused_namespace_lets_in_expr(arg, namespaces);
             }
         }
-        Expr::Function(function) => strip_unused_namespace_lets(&mut function.body),
+        Expr::Function(function) => strip_unused_namespace_lets(&mut function.body, namespaces),
         Expr::ArrayLiteral { elements, .. } => {
             for element in elements {
-                strip_unused_namespace_lets_in_expr(element);
+                strip_unused_namespace_lets_in_expr(element, namespaces);
             }
         }
         Expr::TableLiteral { fields, .. } => {
             for field in fields {
-                strip_unused_namespace_lets_in_expr(&mut field.value);
+                strip_unused_namespace_lets_in_expr(&mut field.value, namespaces);
             }
         }
-        Expr::Field { base, .. } => strip_unused_namespace_lets_in_expr(base),
+        Expr::Field { base, .. } => strip_unused_namespace_lets_in_expr(base, namespaces),
         Expr::Index { base, index, .. } => {
-            strip_unused_namespace_lets_in_expr(base);
-            strip_unused_namespace_lets_in_expr(index);
+            strip_unused_namespace_lets_in_expr(base, namespaces);
+            strip_unused_namespace_lets_in_expr(index, namespaces);
         }
         Expr::Name(..)
         | Expr::Vararg(..)

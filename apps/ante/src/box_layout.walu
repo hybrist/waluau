@@ -56,29 +56,23 @@ const ALIGN_BASELINE: i32 = 4
 const UNBOUNDED: f64 = 1000000000000.0
 const EPSILON: f64 = 0.000001
 
--- TODO(waluau-2lue): Replace these constructors with typed top-level record
--- constants once aggregate const values have immutable value semantics.
-function zero_intrinsic(): Intrinsic
-    return {
-        min_width = 0.0,
-        preferred_width = 0.0,
-        max_width = 0.0,
-        min_height = 0.0,
-        preferred_height = 0.0,
-        max_height = 0.0,
-        baseline = -1.0
-    }
-end
+const ZERO_INTRINSIC: Intrinsic = {
+    min_width = 0.0,
+    preferred_width = 0.0,
+    max_width = 0.0,
+    min_height = 0.0,
+    preferred_height = 0.0,
+    max_height = 0.0,
+    baseline = -1.0
+}
 
-function leaf_style(): Style
-    return {
-        axis = AXIS_ROW,
-        gap = 0.0,
-        justify = JUSTIFY_START,
-        align = ALIGN_START,
-        padding = { left = 0.0, top = 0.0, right = 0.0, bottom = 0.0 }
-    }
-end
+const LEAF_STYLE: Style = {
+    axis = AXIS_ROW,
+    gap = 0.0,
+    justify = JUSTIFY_START,
+    align = ALIGN_START,
+    padding = { left = 0.0, top = 0.0, right = 0.0, bottom = 0.0 }
+}
 
 function valid_number(value: f64): bool
     return value == value and value >= -UNBOUNDED and value <= UNBOUNDED
@@ -134,7 +128,7 @@ function leaf(key: i32, intrinsic: Intrinsic): Tree
         key = key,
         intrinsic = intrinsic,
         children = {},
-        style = leaf_style(),
+        style = LEAF_STYLE,
         grow = 0.0,
         shrink = 1.0
     }
@@ -149,7 +143,7 @@ function flow(key: i32, children: {Tree}, style: Style): Tree
     return {
         kind = FLOW,
         key = key,
-        intrinsic = zero_intrinsic(),
+        intrinsic = ZERO_INTRINSIC,
         children = owned,
         style = style,
         grow = 0.0,

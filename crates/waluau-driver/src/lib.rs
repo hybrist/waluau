@@ -2221,6 +2221,106 @@ mod tests {
     }
 
     #[test]
+    fn compile_file_keeps_record_module_local_used_by_public_functions() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("targets.walu"),
+            r#"
+                type Box = { x: f64 }
+                type Targets = { active: Box }
+
+                function nowhere(): Box
+                    return { x = -1.0 }
+                end
+
+                local targets: Targets = { active = nowhere() }
+
+                function set_target(x: f64): unit
+                    targets = { active = { x = x } }
+                end
+
+                function target_x(): f64
+                    return targets.active.x
+                end
+
+                return { set_target = set_target, target_x = target_x }
+            "#,
+        )
+        .expect("targets module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local targets = require("./targets")
+                assert(targets.target_x() == -1.0)
+                targets.set_target(41.0)
+                assert(targets.target_x() == 41.0)
+            "#,
+        )
+        .expect("main module should write");
+
+        let wasm = super::compile_file(&input_path).expect("compile should succeed");
+        assert!(!wasm.is_empty());
+    }
+
+    #[test]
+    fn compile_file_clones_typed_aggregate_constants_at_each_use() {
+        let tempdir = tempdir().expect("tempdir should exist");
+        fs::write(
+            tempdir.path().join("defaults.walu"),
+            r#"
+                type Inner = { value: i32 }
+                type Defaults = { inner: Inner, values: {i32} }
+
+                const BASE: i32 = 7
+                const DEFAULTS: Defaults = {
+                    inner = { value = BASE },
+                    values = { BASE, 8::i32 },
+                }
+
+                local changed = DEFAULTS
+                changed.inner.value = 55
+                changed.values[0] = 55
+                local unchanged = DEFAULTS
+                assert(unchanged.inner.value == BASE)
+                assert(unchanged.values[0] == BASE)
+
+                function defaults_are_independent(): bool
+                    local first: Defaults = DEFAULTS
+                    first.inner.value = 99
+                    first.values[0] = 99
+                    local second: Defaults = DEFAULTS
+                    return second.inner.value == BASE and second.values[0] == BASE
+                end
+
+                return {
+                    DEFAULTS = DEFAULTS,
+                    defaults_are_independent = defaults_are_independent,
+                }
+            "#,
+        )
+        .expect("defaults module should write");
+        let input_path = tempdir.path().join("main.walu");
+        fs::write(
+            &input_path,
+            r#"
+                local defaults = require("./defaults")
+                assert(defaults.defaults_are_independent())
+                local first = defaults.DEFAULTS
+                first.inner.value = 101
+                first.values[0] = 101
+                local second = defaults.DEFAULTS
+                assert(second.inner.value == 7)
+                assert(second.values[0] == 7)
+            "#,
+        )
+        .expect("main module should write");
+
+        let wasm = super::compile_file(&input_path).expect("compile should succeed");
+        assert!(!wasm.is_empty());
+    }
+
+    #[test]
     fn compile_file_exports_module_constants() {
         let tempdir = tempdir().expect("tempdir should exist");
         fs::write(
