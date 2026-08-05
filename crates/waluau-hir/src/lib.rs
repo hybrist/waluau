@@ -4085,6 +4085,43 @@ fn type_check_and_infer_collect_inner(
 
     let prepared_at = started.elapsed();
 
+    // Privacy views depend only on the source file, not on the individual
+    // function. Building them once per file avoids repeatedly cloning and
+    // rewriting the full signature/binding tables for every function in a
+    // large linked browser program.
+    let privacy_file_paths = typed
+        .functions
+        .iter()
+        .map(|function| function.file_path.clone())
+        .chain(typed.top_level_file_paths.iter().cloned())
+        .collect::<HashSet<_>>();
+    let privacy_signatures_by_file = if module_opaque.is_empty() {
+        HashMap::new()
+    } else {
+        privacy_file_paths
+            .iter()
+            .map(|file_path| {
+                (
+                    file_path.clone(),
+                    signatures_visible_from_file(&fn_signatures, file_path, &module_opaque),
+                )
+            })
+            .collect::<HashMap<_, _>>()
+    };
+    let privacy_bindings_by_file = if module_opaque.is_empty() {
+        HashMap::new()
+    } else {
+        privacy_file_paths
+            .into_iter()
+            .map(|file_path| {
+                (
+                    file_path.clone(),
+                    bindings_visible_from_file(&module_bindings, &file_path, &module_opaque),
+                )
+            })
+            .collect::<HashMap<_, _>>()
+    };
+
     // Linked top-level statements execute in one runtime initializer, but
     // privacy is checked per source module. This preserves initializer order
     // and storage while preventing an importing module's top level from seeing
@@ -4097,16 +4134,18 @@ fn type_check_and_infer_collect_inner(
         .unwrap_or_default();
     for function in top_level_functions_for_check(&typed, top_level_body) {
         let visible_function = function_visible_from_file(&function, &module_opaque);
-        let visible_signatures =
-            signatures_visible_from_file(&fn_signatures, &function.file_path, &module_opaque);
-        let visible_bindings =
-            bindings_visible_from_file(&module_bindings, &function.file_path, &module_opaque);
+        let visible_signatures = privacy_signatures_by_file
+            .get(&function.file_path)
+            .unwrap_or(&fn_signatures);
+        let visible_bindings = privacy_bindings_by_file
+            .get(&function.file_path)
+            .unwrap_or(&module_bindings);
         errors.extend(
             statements::check_function_collect(
                 &visible_function,
-                &visible_signatures,
+                visible_signatures,
                 &HashSet::new(),
-                &visible_bindings,
+                visible_bindings,
             )
             .into_iter()
             .map(|error| error.with_file_path_if_missing(function.file_path.clone())),
@@ -4126,21 +4165,17 @@ fn type_check_and_infer_collect_inner(
                 Vec::new()
             } else {
                 let visible_function = function_visible_from_file(function, &module_opaque);
-                let visible_signatures = signatures_visible_from_file(
-                    &fn_signatures,
-                    &function.file_path,
-                    &module_opaque,
-                );
-                let visible_bindings = bindings_visible_from_file(
-                    function_module_bindings(function, &module_bindings),
-                    &function.file_path,
-                    &module_opaque,
-                );
+                let visible_signatures = privacy_signatures_by_file
+                    .get(&function.file_path)
+                    .unwrap_or(&fn_signatures);
+                let visible_bindings = privacy_bindings_by_file
+                    .get(&function.file_path)
+                    .unwrap_or_else(|| function_module_bindings(function, &module_bindings));
                 statements::check_function_collect(
                     &visible_function,
-                    &visible_signatures,
+                    visible_signatures,
                     &HashSet::new(),
-                    &visible_bindings,
+                    visible_bindings,
                 )
                 .into_iter()
                 .map(|error| error.with_file_path_if_missing(function.file_path.clone()))
@@ -4164,6 +4199,8 @@ fn type_check_and_infer_collect_inner(
                     let fn_signatures = &fn_signatures;
                     let module_bindings = &module_bindings;
                     let module_opaque = &module_opaque;
+                    let privacy_signatures_by_file = &privacy_signatures_by_file;
+                    let privacy_bindings_by_file = &privacy_bindings_by_file;
                     scope.spawn(move || {
                         let mut diagnostics = Vec::new();
                         for (function, reusable) in chunk.iter().zip(reusable) {
@@ -4178,22 +4215,20 @@ fn type_check_and_infer_collect_inner(
                             }
                             let visible_function =
                                 function_visible_from_file(function, module_opaque);
-                            let visible_signatures = signatures_visible_from_file(
-                                fn_signatures,
-                                &function.file_path,
-                                module_opaque,
-                            );
-                            let visible_bindings = bindings_visible_from_file(
-                                function_module_bindings(function, module_bindings),
-                                &function.file_path,
-                                module_opaque,
-                            );
+                            let visible_signatures = privacy_signatures_by_file
+                                .get(&function.file_path)
+                                .unwrap_or(fn_signatures);
+                            let visible_bindings = privacy_bindings_by_file
+                                .get(&function.file_path)
+                                .unwrap_or_else(|| {
+                                    function_module_bindings(function, module_bindings)
+                                });
                             diagnostics.extend(
                                 statements::check_function_collect(
                                     &visible_function,
-                                    &visible_signatures,
+                                    visible_signatures,
                                     &HashSet::new(),
-                                    &visible_bindings,
+                                    visible_bindings,
                                 )
                                 .into_iter()
                                 .map(|error| {
